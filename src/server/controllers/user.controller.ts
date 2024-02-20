@@ -770,6 +770,7 @@ export const getLeaderboardHandler = async ({ input }: { input: GetAllSchema }) 
             ratingCountMonth: true,
             downloadCountMonth: true,
             favoriteCountMonth: true,
+            thumbsUpCountMonth: true,
             uploadCountMonth: true,
             answerCountMonth: true,
           },

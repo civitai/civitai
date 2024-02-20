@@ -218,6 +218,7 @@ const onFetchItemsToIndex = async ({
             select: {
               commentCount: true,
               favoriteCount: true,
+              thumbsUpCount: true,
               downloadCount: true,
               rating: true,
               ratingCount: true,
@@ -232,6 +233,7 @@ const onFetchItemsToIndex = async ({
             select: {
               [`downloadCount${MetricTimeframe.AllTime}`]: true,
               [`favoriteCount${MetricTimeframe.AllTime}`]: true,
+              [`thumbsUpCount${MetricTimeframe.AllTime}`]: true,
               [`commentCount${MetricTimeframe.AllTime}`]: true,
               [`ratingCount${MetricTimeframe.AllTime}`]: true,
               [`rating${MetricTimeframe.AllTime}`]: true,
@@ -368,6 +370,7 @@ const onFetchItemsToIndex = async ({
             rank: {
               downloadCount: rank?.[`downloadCount${MetricTimeframe.AllTime}`] ?? 0,
               favoriteCount: rank?.[`favoriteCount${MetricTimeframe.AllTime}`] ?? 0,
+              thumbsUpCount: rank?.[`thumbsUpCount${MetricTimeframe.AllTime}`] ?? 0,
               commentCount: rank?.[`commentCount${MetricTimeframe.AllTime}`] ?? 0,
               ratingCount: rank?.[`ratingCount${MetricTimeframe.AllTime}`] ?? 0,
               rating: rank?.[`rating${MetricTimeframe.AllTime}`] ?? 0,

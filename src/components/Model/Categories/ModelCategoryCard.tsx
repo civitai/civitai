@@ -120,7 +120,7 @@ export function ModelCategoryCard({ data }: { data: ModelGetByCategoryModel; hei
     </IconBadge>
   );
 
-  const modelLikes = !!rank.favoriteCount && (
+  const modelLikes = !!rank.thumbsUpCount && (
     <IconBadge
       className={classes.statBadge}
       icon={
@@ -130,7 +130,7 @@ export function ModelCategoryCard({ data }: { data: ModelGetByCategoryModel; hei
       }
       color={hasReview ? 'success.5' : 'gray'}
     >
-      <Text size="xs">{abbreviateNumber(rank.favoriteCount)}</Text>
+      <Text size="xs">{abbreviateNumber(rank.thumbsUpCount)}</Text>
     </IconBadge>
   );
 

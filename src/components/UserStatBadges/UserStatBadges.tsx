@@ -15,9 +15,8 @@ import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 // };
 
 export function UserStatBadges({
-  rating,
   followers,
-  favorite,
+  favorites,
   uploads,
   downloads,
   answers,
@@ -86,10 +85,10 @@ export function UserStatBadges({
               </Text>
             </IconBadge>
           ) : null}
-          {favorite != null ? (
+          {favorites != null ? (
             <IconBadge
               p={0}
-              tooltip={<StatTooltip label="Likes" value={favorite} />}
+              tooltip={<StatTooltip label="Likes" value={favorites} />}
               icon={<ThumbsUpIcon size={14} />}
               color="gray"
               // @ts-ignore: transparent variant does work
@@ -97,8 +96,7 @@ export function UserStatBadges({
               size="lg"
             >
               <Text size="xs" weight={600} inline>
-                {/* TODO.review: fix this */}
-                {abbreviateNumber(favorite)}
+                {abbreviateNumber(favorites)}
               </Text>
             </IconBadge>
           ) : null}
@@ -138,10 +136,9 @@ export function UserStatBadges({
 
 type Props = {
   followers?: number;
-  rating?: { value: number; count: number };
   ratingValue?: number;
   uploads?: number;
-  favorite?: number;
+  favorites?: number;
   downloads?: number;
   answers?: number;
   username?: string | null;

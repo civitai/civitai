@@ -32,19 +32,22 @@ export function ToggleModelNotification({ modelId, userId }: { modelId: number; 
         Hide: [],
         Mute: [],
         Recommended: [],
+        Favorite: [],
       };
       const previousModel = queryUtils.model.getById.getData({ id: modelId });
       const shouldRemove = previousEngaged.Notify?.find((id) => id === modelId);
-      // Update the favorite count
-      queryUtils.model.getById.setData({ id: modelId }, (model) => {
-        // TODO.review: set correct value
-        if (model?.rank) model.rank.favoriteCountAllTime += shouldRemove ? -1 : 1;
-        return model;
-      });
       // Remove from favorites list
       queryUtils.user.getEngagedModels.setData(
         undefined,
-        ({ Notify = [], ...old } = { Notify: [], Hide: [], Mute: [], Recommended: [] }) => {
+        (
+          { Notify = [], ...old } = {
+            Notify: [],
+            Hide: [],
+            Mute: [],
+            Recommended: [],
+            Favorite: [],
+          }
+        ) => {
           if (shouldRemove) return { Notify: Notify.filter((id) => id !== modelId), ...old };
           return { Notify: [...Notify, modelId], ...old };
         }

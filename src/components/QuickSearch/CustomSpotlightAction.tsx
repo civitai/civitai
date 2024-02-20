@@ -4,7 +4,6 @@ import {
   Group,
   Highlight,
   Image,
-  Rating,
   Stack,
   Text,
   ThemeIcon,
@@ -19,7 +18,6 @@ import {
   IconDownload,
   IconEye,
   IconHash,
-  IconHeart,
   IconMessageCircle2,
   IconMoodSmile,
   IconPhoto,
@@ -244,15 +242,8 @@ function ModelSpotlightAction({
           {category && <Badge size="xs">{category.tag.name}</Badge>}
         </Group>
         <Group spacing={4}>
-          {/* <ActionIconBadge
-            // @ts-ignore: ignoring because size doesn't allow number
-            icon={<Rating value={metrics.rating} size={12} readOnly />}
-          >
-            {abbreviateNumber(metrics.ratingCount)}
-          </ActionIconBadge> */}
           <ActionIconBadge icon={<ThumbsUpIcon size={12} stroke={2.5} />}>
-            {/* TODO.review: fix this */}
-            {abbreviateNumber(metrics.favoriteCount)}
+            {abbreviateNumber(metrics.thumbsUpCount)}
           </ActionIconBadge>
           <ActionIconBadge icon={<IconMessageCircle2 size={12} stroke={2.5} />}>
             {abbreviateNumber(metrics.commentCount)}
@@ -300,12 +291,6 @@ function UserSpotlightAction({
         </Text>
         {stats && (
           <Group spacing={4}>
-            {/* <ActionIconBadge
-              // @ts-ignore: ignoring because size doesn't allow number
-              icon={<Rating value={stats.ratingAllTime} size={12} readOnly />}
-            >
-              {abbreviateNumber(stats.ratingCountAllTime)}
-            </ActionIconBadge> */}
             <ActionIconBadge icon={<IconUpload size={12} stroke={2.5} />}>
               {abbreviateNumber(stats.uploadCountAllTime)}
             </ActionIconBadge>
@@ -313,8 +298,7 @@ function UserSpotlightAction({
               {abbreviateNumber(stats.followerCountAllTime)}
             </ActionIconBadge>
             <ActionIconBadge icon={<ThumbsUpIcon size={12} stroke={2.5} />}>
-              {/* TODO.review: fix this */}
-              {abbreviateNumber(stats.favoriteCountAllTime)}
+              {abbreviateNumber(stats.thumbsUpCountAllTime)}
             </ActionIconBadge>
             <ActionIconBadge icon={<IconDownload size={16} />}>
               {abbreviateNumber(stats.downloadCountAllTime)}

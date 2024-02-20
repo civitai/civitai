@@ -117,6 +117,7 @@ type ModelRaw = {
   rank: {
     downloadCount: number;
     favoriteCount: number;
+    thumbsUpCount: number;
     commentCount: number;
     ratingCount: number;
     rating: number;
@@ -460,7 +461,7 @@ export const getModelsRaw = async ({
   let orderBy = `m."lastVersionAt" DESC NULLS LAST`;
 
   if (sort === ModelSort.HighestRated) orderBy = `mr."rating${period}Rank" ASC`;
-  else if (sort === ModelSort.MostLiked) orderBy = `mr."favoriteCount${period}Rank" ASC`;
+  else if (sort === ModelSort.MostLiked) orderBy = `mr."thumbsUpCount${period}Rank" ASC`;
   else if (sort === ModelSort.MostDownloaded) orderBy = `mr."downloadCount${period}Rank" ASC`;
   else if (sort === ModelSort.MostDiscussed) orderBy = `mr."commentCount${period}Rank" ASC`;
   else if (sort === ModelSort.MostCollected) orderBy = `mr."collectedCount${period}Rank" ASC`;
@@ -565,6 +566,7 @@ export const getModelsRaw = async ({
         jsonb_build_object(
           'downloadCount', mr."downloadCount${input.period}",
           'favoriteCount', mr."favoriteCount${input.period}",
+          'thumbsUpCount', mr."thumbsUpCount${input.period}",
           'commentCount', mr."commentCount${input.period}",
           'ratingCount', mr."ratingCount${input.period}",
           'rating', mr."rating${input.period}",
@@ -667,6 +669,7 @@ export const getModelsRaw = async ({
       rank: {
         [`downloadCount${input.period}`]: rank.downloadCount,
         [`favoriteCount${input.period}`]: rank.favoriteCount,
+        [`thumbsUpCount${input.period}`]: rank.thumbsUpCount,
         [`commentCount${input.period}`]: rank.commentCount,
         [`ratingCount${input.period}`]: rank.ratingCount,
         [`rating${input.period}`]: rank.rating,
@@ -927,7 +930,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
 
   if (sort === ModelSort.HighestRated) orderBy = { rank: { [`rating${period}Rank`]: 'asc' } };
   else if (sort === ModelSort.MostLiked)
-    orderBy = { rank: { [`favoriteCount${period}Rank`]: 'asc' } };
+    orderBy = { rank: { [`thumbsUpCount${period}Rank`]: 'asc' } };
   else if (sort === ModelSort.MostDownloaded)
     orderBy = { rank: { [`downloadCount${period}Rank`]: 'asc' } };
   else if (sort === ModelSort.MostDiscussed)
@@ -1050,6 +1053,7 @@ export const getModelsWithImagesAndModelVersions = async ({
           rank: {
             downloadCount: rank?.[`downloadCount${input.period}`] ?? 0,
             favoriteCount: rank?.[`favoriteCount${input.period}`] ?? 0,
+            thumbsUpCount: rank?.[`thumbsUpCount${input.period}`] ?? 0,
             commentCount: rank?.[`commentCount${input.period}`] ?? 0,
             ratingCount: rank?.[`ratingCount${input.period}`] ?? 0,
             collectedCount: rank?.[`collectedCount${input.period}`] ?? 0,
@@ -1643,6 +1647,7 @@ export const getModelsByCategory = async ({
             select: {
               [`downloadCount${input.period}`]: true,
               [`favoriteCount${input.period}`]: true,
+              [`thumbsUpCount${input.period}`]: true,
               [`commentCount${input.period}`]: true,
               [`ratingCount${input.period}`]: true,
               [`rating${input.period}`]: true,
@@ -1710,6 +1715,7 @@ export const getModelsByCategory = async ({
             rank: {
               downloadCount: rank?.[`downloadCount${input.period}`] ?? 0,
               favoriteCount: rank?.[`favoriteCount${input.period}`] ?? 0,
+              thumbsUpCount: rank?.[`thumbsUpCount${input.period}`] ?? 0,
               commentCount: rank?.[`commentCount${input.period}`] ?? 0,
               ratingCount: rank?.[`ratingCount${input.period}`] ?? 0,
               rating: rank?.[`rating${input.period}`] ?? 0,

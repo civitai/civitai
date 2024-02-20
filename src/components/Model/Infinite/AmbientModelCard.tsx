@@ -251,7 +251,7 @@ export function AmbientModelCard({ data, height }: Props) {
     </InteractiveTipBuzzButton>
   );
 
-  const modelLikes = !!rank.favoriteCount && (
+  const modelLikes = !!rank.thumbsUpCount && (
     <IconBadge
       className={classes.statBadge}
       icon={
@@ -261,8 +261,7 @@ export function AmbientModelCard({ data, height }: Props) {
       }
       color={hasReview ? 'success.5' : 'gray'}
     >
-      {/* TODO.review: fix this */}
-      <Text size="xs">{abbreviateNumber(rank.favoriteCount)}</Text>
+      <Text size="xs">{abbreviateNumber(rank.thumbsUpCount)}</Text>
     </IconBadge>
   );
 

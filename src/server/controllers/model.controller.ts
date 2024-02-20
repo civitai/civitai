@@ -518,6 +518,7 @@ export const getModelsWithVersionsHandler = async ({
         stats: {
           downloadCount: rank?.downloadCountAllTime ?? 0,
           favoriteCount: rank?.favoriteCountAllTime ?? 0,
+          thumbsUpCount: rank?.thumbsUpCountAllTime ?? 0,
           commentCount: rank?.commentCountAllTime ?? 0,
           ratingCount: rank?.ratingCountAllTime ?? 0,
           rating: Number(rank?.ratingAllTime?.toFixed(2) ?? 0),
@@ -1107,6 +1108,7 @@ export const getAssociatedResourcesCardDataHandler = async ({
                   [`commentCount${period}`]: true,
                   [`ratingCount${period}`]: true,
                   [`rating${period}`]: true,
+                  [`thumbsUpCount${period}`]: true,
                 },
               },
               modelVersions: {
@@ -1176,6 +1178,7 @@ export const getAssociatedResourcesCardDataHandler = async ({
               favoriteCount: rank?.[`favoriteCount${period}`] ?? 0,
               commentCount: rank?.[`commentCount${period}`] ?? 0,
               ratingCount: rank?.[`ratingCount${period}`] ?? 0,
+              thumbsUpCount: rank?.[`thumbsUpCount${period}`] ?? 0,
               rating: rank?.[`rating${period}`] ?? 0,
             },
             image:

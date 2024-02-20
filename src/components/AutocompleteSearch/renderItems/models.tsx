@@ -93,13 +93,9 @@ export const ModelSearchItem = forwardRef<
           {category && <Badge size="xs">{category.name}</Badge>}
         </Group>
         <Group spacing={4}>
-          <IconBadge icon={<ThumbsUpIcon size={12} filled />}>
-            {/* TODO.review: fix this */}
-            {abbreviateNumber(metrics.ratingCount)}
+          <IconBadge icon={<ThumbsUpIcon size={12} />}>
+            {abbreviateNumber(metrics.thumbsUpCount)}
           </IconBadge>
-          {/* <IconBadge icon={<IconHeart size={12} stroke={2.5} />}>
-            {abbreviateNumber(metrics.favoriteCount)}
-          </IconBadge> */}
           <IconBadge icon={<IconMessageCircle2 size={12} stroke={2.5} />}>
             {abbreviateNumber(metrics.commentCount)}
           </IconBadge>

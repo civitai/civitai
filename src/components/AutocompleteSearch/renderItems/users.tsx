@@ -44,12 +44,8 @@ export const UserSearchItem = forwardRef<
               {abbreviateNumber(stats.followerCountAllTime)}
             </ActionIconBadge>
             <ActionIconBadge icon={<ThumbsUpIcon size={12} filled />}>
-              {/* TODO.review: fix this */}
-              {abbreviateNumber(stats.ratingCountAllTime)}
+              {abbreviateNumber(stats.thumbsUpCountAllTime)}
             </ActionIconBadge>
-            {/* <ActionIconBadge icon={<IconHeart size={12} stroke={2.5} />}>
-              {abbreviateNumber(stats.favoriteCountAllTime)}
-            </ActionIconBadge> */}
             <ActionIconBadge icon={<IconDownload size={16} />}>
               {abbreviateNumber(stats.downloadCountAllTime)}
             </ActionIconBadge>

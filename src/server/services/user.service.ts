@@ -102,6 +102,7 @@ export const getUserCreator = async ({
           ratingCountAllTime: true,
           downloadCountAllTime: true,
           favoriteCountAllTime: true,
+          thumbsUpCountAllTime: true,
           followerCountAllTime: true,
         },
       },

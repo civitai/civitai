@@ -431,19 +431,7 @@ export function ModelCard({ data, forceInView }: Props) {
                   </Text>
                   {data.rank && (
                     <>
-                      {/* {!data.locked && !!data.rank.ratingCount && (
-                        <Badge
-                          className={cx(classes.statChip, classes.chip)}
-                          variant="light"
-                          radius="xl"
-                        >
-                          <Group spacing={4}>
-                            <StarRating size={14} value={data.rank.rating} />
-                            <Text size="xs">{data.rank.ratingCount}</Text>
-                          </Group>
-                        </Badge>
-                      )} */}
-                      {(!!data.rank.favoriteCount ||
+                      {(!!data.rank.thumbsUpCount ||
                         !!data.rank.downloadCount ||
                         !!data.rank.collectedCount ||
                         !!data.rank.tippedAmountCount) && (
@@ -460,8 +448,7 @@ export function ModelCard({ data, forceInView }: Props) {
                             <Text color={hasReview ? 'success.5' : undefined} inline>
                               <ThumbsUpIcon size={14} filled={hasReview} />
                             </Text>
-                            {/* TODO.review: get right count */}
-                            <Text size="xs">{abbreviateNumber(data.rank.ratingCount)}</Text>
+                            <Text size="xs">{abbreviateNumber(data.rank.thumbsUpCount)}</Text>
                           </Group>
                           <Group spacing={2}>
                             <IconBookmark size={14} strokeWidth={2.5} />

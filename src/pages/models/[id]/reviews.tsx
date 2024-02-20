@@ -269,7 +269,7 @@ function ReviewCard({ creatorId, ...review }: ResourceReviewPagedModel & { creat
       <Stack spacing="sm">
         {(review.exclude || isCreator) && (
           <Group position="left">
-            <Badge color="red">Excluded from average</Badge>
+            <Badge color="red">Excluded from count</Badge>
           </Group>
         )}
 
