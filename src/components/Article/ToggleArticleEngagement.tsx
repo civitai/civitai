@@ -3,6 +3,7 @@ import produce from 'immer';
 import { useMemo } from 'react';
 import { useSystemCollections } from '~/components/Collections/collection.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 export function ToggleArticleEngagement({
@@ -28,12 +29,12 @@ export function ToggleArticleEngagement({
     const keys = Object.keys(data) as ArticleEngagementType[];
     const engagements = keys.reduce<Partial<Record<ArticleEngagementType, boolean>>>((acc, key) => {
       const ids = data[key] ?? [];
-      return { ...acc, [key]: !!ids.find((id) => id === articleId) };
+      return { ...acc, [key]: !!ids.includes(articleId) };
     }, {});
 
     return {
       ...engagements,
-      [ArticleEngagementType.Favorite]: !!bookmarkedArticles?.find((id) => id === articleId),
+      [ArticleEngagementType.Favorite]: !!bookmarkedArticles?.includes(articleId),
     };
   }, [data, articleId, bookmarkedArticles]);
 
@@ -66,9 +67,13 @@ export function ToggleArticleEngagement({
       onError: (_error, _variables, context) => {
         queryUtils.user.getArticleEngagement.setData(undefined, context?.previousEngagements);
         queryUtils.article.getById.setData({ id: articleId }, context?.previousArticle);
+
+        showErrorNotification({
+          title: 'There was an error while hiding this article',
+          error: new Error(_error.message),
+        });
       },
       onSuccess: async (response, { type, articleId }) => {
-        await queryUtils.article.getInfinite.invalidate({ favorites: true });
         await queryUtils.article.getInfinite.invalidate({ hidden: true });
       },
     });
@@ -100,9 +105,13 @@ export function ToggleArticleEngagement({
       onError: (_error, _variables, context) => {
         queryUtils.user.getBookmarkedArticles.setData(undefined, context?.previousBookmarks);
         queryUtils.article.getById.setData({ id: articleId }, context?.previousArticle);
+
+        showErrorNotification({
+          title: 'There was an error while bookmarking this article',
+          error: new Error(_error.message),
+        });
       },
       onSuccess: async () => {
-        await queryUtils.article.getInfinite.invalidate({ favorites: true });
         await queryUtils.article.getInfinite.invalidate({ hidden: true });
       },
     });
