@@ -77,7 +77,7 @@ export const useCFImageUpload: UseCFImageUpload = () => {
         ...pendingTrackedFile,
         ...imageData,
         abort: xhr.abort.bind(xhr),
-        url: imageData.objectUrl,
+        url: id,
       },
     ]);
 
@@ -88,7 +88,7 @@ export const useCFImageUpload: UseCFImageUpload = () => {
           return {
             ...y,
             ...trackedFile,
-            url: trackedFile.status === 'success' ? id : imageData?.objectUrl,
+            url: id,
           } as TrackedFile;
         })
       );
@@ -123,7 +123,7 @@ export const useCFImageUpload: UseCFImageUpload = () => {
         const success = xhr.readyState === 4 && xhr.status === 200;
         if (success) {
           updateFile({ status: 'success' });
-          URL.revokeObjectURL(imageData.objectUrl);
+          // URL.revokeObjectURL(imageData.objectUrl);
         }
         resolve(success);
       });

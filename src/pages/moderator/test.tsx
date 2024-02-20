@@ -1,4 +1,4 @@
-import { Text, useMantineTheme } from '@mantine/core';
+import { Text } from '@mantine/core';
 import pLimit from 'p-limit';
 import { useEffect, useRef, useState } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
@@ -6,13 +6,9 @@ import { fetchBlob } from '~/utils/file-utils';
 import { getDataFromFile } from '~/utils/metadata';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
-import produce from 'immer';
 
 const limit = pLimit(10);
 export default function Test() {
-  const theme = useMantineTheme();
-  const queryUtils = trpc.useUtils();
-  const filters = { limit: 10, missingCover: true, includeDrafts: true };
   const { data } = trpc.article.getAllForImageProcessing.useQuery(undefined);
   const [complete, setComplete] = useState(0);
 
@@ -27,7 +23,7 @@ export default function Test() {
       const fileData = await Promise.all(
         data
           .filter(({ id, coverId, cover }) => !processedRef.current[id] || !coverId || !cover)
-          .map(({ id, cover }) =>
+          .map(({ id, cover, userId }) =>
             limit(async () => {
               if (!cover) return;
               processedRef.current[id] = true;
@@ -47,6 +43,7 @@ export default function Test() {
                 entityId: id,
                 ...data,
                 url: cover,
+                userId,
               });
               setComplete((c) => c + 1);
               return { articleId: id, coverId };

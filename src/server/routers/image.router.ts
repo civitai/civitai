@@ -16,6 +16,7 @@ import {
   getImageSchema,
   getEntitiesCoverImage,
   imageReviewQueueInputSchema,
+  imageSchema,
   createImageSchema,
 } from './../schema/image.schema';
 import {
@@ -43,6 +44,7 @@ import {
   get404Images,
   reportCsamImages,
   createImage,
+  createArticleCoverImage,
 } from '~/server/services/image.service';
 import { CacheTTL } from '~/server/common/constants';
 import { z } from 'zod';
@@ -77,8 +79,8 @@ export const imageRouter = router({
     .input(createImageSchema)
     .mutation(({ input, ctx }) => createImage({ ...input, userId: ctx.user.id })),
   createArticleCoverImage: protectedProcedure
-    .input(createImageSchema)
-    .mutation(({ input, ctx }) => createImage({ ...input, userId: ctx.user.id })),
+    .input(createImageSchema.extend({ userId: z.number() }))
+    .mutation(({ input }) => createArticleCoverImage({ ...input })),
   moderate: moderatorProcedure.input(imageModerationSchema).mutation(moderateImageHandler),
   delete: protectedProcedure
     .input(getByIdSchema)

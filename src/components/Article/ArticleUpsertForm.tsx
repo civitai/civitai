@@ -50,13 +50,11 @@ import { ContentPolicyLink } from '../ContentPolicyLink/ContentPolicyLink';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { constants } from '~/server/common/constants';
 
-const schema = upsertArticleInput.extend({
+const schema = upsertArticleInput.omit({ coverImage: true }).extend({
   categoryId: z.number().min(0, 'Please select a valid category'),
-  cover: z
-    .preprocess(
-      (val) => (typeof val === 'string' ? { url: val } : val),
-      z.object({ id: z.number().optional(), url: z.string().nonempty() })
-    )
+  coverImage: z
+    .object({ id: z.number().optional(), url: z.string().nonempty() })
+    .passthrough()
     .refine((data) => !!data.url, { message: 'Please upload a cover image' }),
 });
 const querySchema = z.object({
@@ -90,12 +88,12 @@ export function ArticleUpsertForm({ article }: Props) {
     schema,
     shouldUnregister: false,
     // defaultValues: {
-    //   ...article,
+    //   ...defaultValues,
     //   title: article?.title ?? '',
     //   content: article?.content ?? '',
     //   categoryId: article?.tags.find((tag) => tag.isCategory)?.id ?? defaultCategory,
     //   tags: article?.tags.filter((tag) => !tag.isCategory) ?? [],
-    //   cover: article?.cover ? { url: article.cover ?? '' } : { url: '' },
+    //   coverImage: (coverImage ? { ...coverImage } : { url: '' }) as any,
     // },
   });
   const clearStorage = useFormStorage({
@@ -103,9 +101,9 @@ export function ArticleUpsertForm({ article }: Props) {
     form,
     timeout: 1000,
     key: `article${article?.id ? `_${article?.id}` : 'new'}`,
-    watch: ({ content, cover, categoryId, nsfw, tags, title }) => ({
+    watch: ({ content, coverImage, categoryId, nsfw, tags, title }) => ({
       content,
-      cover,
+      coverImage,
       categoryId,
       nsfw,
       tags,
@@ -120,9 +118,7 @@ export function ArticleUpsertForm({ article }: Props) {
       content: article?.content ?? '',
       categoryId: article?.tags.find((tag) => tag.isCategory)?.id ?? defaultCategory,
       tags: article?.tags.filter((tag) => !tag.isCategory) ?? [],
-      cover: article?.coverImage
-        ? { url: article.coverImage.url, id: article.coverImage.id }
-        : { url: '' },
+      coverImage: article?.coverImage ?? null,
     });
     if (result.success) form.reset({ ...result.data });
     else console.error(result.error);
@@ -145,7 +141,7 @@ export function ArticleUpsertForm({ article }: Props) {
   const handleSubmit = ({
     categoryId,
     tags: selectedTags,
-    cover,
+    coverImage,
     ...rest
   }: z.infer<typeof schema>) => {
     const selectedCategory = data?.items.find((cat) => cat.id === categoryId);
@@ -156,9 +152,7 @@ export function ArticleUpsertForm({ article }: Props) {
         ...rest,
         tags,
         publishedAt: publishing ? new Date() : null,
-        coverId: cover.id,
-        // cover: cover.url,
-        // coverImage: cover.url !== article?.cover ? cover : undefined,
+        coverImage: coverImage,
       },
       {
         async onSuccess(result) {
@@ -247,7 +241,7 @@ export function ArticleUpsertForm({ article }: Props) {
               }
             />
             <InputSimpleImageUpload
-              name="cover"
+              name="coverImage"
               label="Cover Image"
               description={`Suggested resolution: ${constants.profile.coverImageWidth} x ${constants.profile.coverImageHeight}`}
               withAsterisk

@@ -48,7 +48,7 @@ export function SimpleImageUpload({
   const { uploadToCF, files: imageFiles, resetFiles } = useCFImageUpload();
   const imageFile = imageFiles[0];
   // const [files, filesHandlers] = useListState<CustomFile>(value ? [{ url: value }] : []);
-  const [image, setImage] = useState<CustomFile | undefined>();
+  const [image, setImage] = useState<{ url: string; objectUrl?: string } | undefined>();
 
   const [error, setError] = useState('');
 
@@ -89,7 +89,7 @@ export function SimpleImageUpload({
 
   useDidUpdate(() => {
     if (!imageFile) return;
-    setImage({ url: imageFile.url });
+    setImage({ url: imageFile.url, objectUrl: imageFile.objectUrl });
 
     if (imageFile.status === 'success') {
       onChange?.(imageFile);
@@ -98,7 +98,7 @@ export function SimpleImageUpload({
   }, [imageFile]); // eslint-disable-line
 
   const [match] = imageFiles;
-  const showLoading = match && match.progress < 100 && !image?.url;
+  const showLoading = match && match.progress < 100;
 
   return (
     <Input.Wrapper {...props} error={props.error ?? error}>
@@ -164,7 +164,7 @@ export function SimpleImageUpload({
             }
           >
             <EdgeMedia
-              src={image.url}
+              src={image.objectUrl ?? image.url}
               type={MediaType.image}
               width={previewWidth}
               style={{ maxWidth: aspectRatio ? '100%' : undefined }}

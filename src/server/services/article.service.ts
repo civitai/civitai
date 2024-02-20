@@ -40,12 +40,12 @@ import { postgresSlugify, removeTags } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { getFilesByEntity } from './file.service';
 import { imageSelect, profileImageSelect } from '~/server/selectors/image.selector';
-import { deleteImageById } from '~/server/services/image.service';
+import { createImage, deleteImageById } from '~/server/services/image.service';
 
 type ArticleRaw = {
   id: number;
-  cover: string;
-  coverId?: number;
+  cover?: string | null;
+  coverId?: number | null;
   title: string;
   publishedAt: Date | null;
   nsfw: boolean;
@@ -609,16 +609,23 @@ export const upsertArticle = async ({
   userId,
   tags,
   attachments,
+  coverImage,
   ...data
 }: UpsertArticleInput & { userId: number }) => {
   try {
     // create image entity to be attached to article
+    let coverId = coverImage?.id;
+    if (coverImage && !coverImage.id) {
+      const result = await createImage({ ...coverImage, userId });
+      coverId = result.id;
+    }
 
     if (!id) {
       const result = await dbWrite.$transaction(async (tx) => {
         const article = await tx.article.create({
           data: {
             ...data,
+            coverId,
             userId,
             tags: tags
               ? {
@@ -665,6 +672,7 @@ export const upsertArticle = async ({
         where: { id },
         data: {
           ...data,
+          coverId,
           tags: tags
             ? {
                 deleteMany: {
@@ -719,7 +727,7 @@ export const upsertArticle = async ({
     });
 
     // remove old cover image
-    if (article.coverId !== data.coverId && article.coverId) {
+    if (article.coverId !== coverId && article.coverId) {
       await deleteImageById({ id: article.coverId });
     }
 
@@ -818,7 +826,7 @@ export const getDraftArticlesByUserId = async ({
 // TODO.Briant - remove this after done updating article images
 export async function getAllArticlesForImageProcessing() {
   return await dbRead.article.findMany({
-    where: { coverId: null },
-    select: { id: true, cover: true, coverId: true },
+    where: { coverId: null, cover: { not: null } },
+    select: { id: true, cover: true, coverId: true, userId: true },
   });
 }

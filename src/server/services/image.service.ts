@@ -1945,7 +1945,7 @@ export async function createArticleCoverImage({
   const data = parseImageCreateData({ entityType, entityId, ...image });
   const result = await dbWrite.image.create({ data, select: { id: true } });
 
-  await dbWrite.article.update({
+  return await dbWrite.article.update({
     where: { id: entityId },
     data: { coverId: result.id },
     select: { id: true },

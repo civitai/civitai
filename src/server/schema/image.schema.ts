@@ -97,6 +97,7 @@ export const isNotImageResource = (
 
 export type CreateImageSchema = z.infer<typeof createImageSchema>;
 export const createImageSchema = z.object({
+  id: z.number().optional(),
   name: z.string().nullish(),
   url: z.string().url().or(z.string().uuid()),
   hash: z.string().nullish(),

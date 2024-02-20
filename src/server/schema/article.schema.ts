@@ -35,28 +35,7 @@ export const articleWhereSchema = z.object({
   clubId: z.number().optional(),
 });
 
-// export const articleSortSchema = z.object({
-//   period: z.nativeEnum(MetricTimeframe).default(constants.articleFilterDefaults.period),
-//   sort: z.nativeEnum(ArticleSort).default(constants.articleFilterDefaults.sort),
-// });
-
 export type GetInfiniteArticlesSchema = z.infer<typeof getInfiniteArticlesSchema>;
-// export const getInfiniteArticlesSchemaOld = getAllQuerySchema.extend({
-//   page: z.never().optional(),
-//   cursor: z.number().optional(),
-//   period: z.nativeEnum(MetricTimeframe).default(constants.articleFilterDefaults.period),
-//   sort: z.nativeEnum(ArticleSort).default(constants.articleFilterDefaults.sort),
-//   browsingMode: z.nativeEnum(BrowsingMode).default(constants.articleFilterDefaults.browsingMode),
-//   tags: z.array(z.number()).optional(),
-//   excludedUserIds: z.array(z.number()).optional(),
-//   excludedTagIds: z.array(z.number()).optional(),
-//   userIds: z.array(z.number()).optional(),
-//   excludedIds: z.array(z.number()).optional(),
-//   favorites: z.boolean().optional(),
-//   hidden: z.boolean().optional(),
-//   username: z.string().optional(),
-// });
-
 export const getInfiniteArticlesSchema = infiniteQuerySchema
   .extend({ cursor: z.preprocess((val) => Number(val), z.number()).optional() })
   .merge(userPreferencesForArticlesSchema)
@@ -69,7 +48,7 @@ export const upsertArticleInput = z.object({
   content: getSanitizedStringSchema().refine((data) => {
     return data && data.length > 0 && data !== '<p></p>';
   }, 'Cannot be empty'),
-  coverId: z.number().optional(),
+  coverImage: imageSchema.nullish(),
   tags: z.array(tagSchema).nullish(),
   nsfw: z.boolean().optional(),
   publishedAt: z.date().nullish(),
