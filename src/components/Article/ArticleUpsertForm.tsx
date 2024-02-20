@@ -49,13 +49,11 @@ import { HelpButton } from '../HelpButton/HelpButton';
 import { ContentPolicyLink } from '../ContentPolicyLink/ContentPolicyLink';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { constants } from '~/server/common/constants';
+import { imageSchema } from '~/server/schema/image.schema';
 
 const schema = upsertArticleInput.omit({ coverImage: true }).extend({
   categoryId: z.number().min(0, 'Please select a valid category'),
-  coverImage: z
-    .object({ id: z.number().optional(), url: z.string().nonempty() })
-    .passthrough()
-    .refine((data) => !!data.url, { message: 'Please upload a cover image' }),
+  coverImage: imageSchema.refine((data) => !!data.url, { message: 'Please upload a cover image' }),
 });
 const querySchema = z.object({
   category: z.preprocess(parseNumericString, z.number().optional().default(-1)),
@@ -84,7 +82,19 @@ export function ArticleUpsertForm({ article }: Props) {
   const result = querySchema.safeParse(router.query);
 
   const defaultCategory = result.success ? result.data.category : -1;
-  const form = useForm({ schema, shouldUnregister: false });
+
+  const form = useForm({
+    schema,
+    shouldUnregister: false,
+    defaultValues: {
+      ...article,
+      title: article?.title ?? '',
+      content: article?.content ?? '',
+      categoryId: article?.tags.find((tag) => tag.isCategory)?.id ?? defaultCategory,
+      tags: article?.tags.filter((tag) => !tag.isCategory) ?? [],
+      coverImage: article?.coverImage ?? null,
+    } as any,
+  });
   const clearStorage = useFormStorage({
     schema,
     form,
@@ -100,19 +110,19 @@ export function ArticleUpsertForm({ article }: Props) {
     }),
   });
 
-  useEffect(() => {
-    const result = schema.safeParse({
-      ...article,
-      title: article?.title ?? '',
-      content: article?.content ?? '',
-      categoryId: article?.tags.find((tag) => tag.isCategory)?.id ?? defaultCategory,
-      tags: article?.tags.filter((tag) => !tag.isCategory) ?? [],
-      coverImage: article?.coverImage ?? null,
-    });
-    if (result.success) form.reset({ ...result.data });
-    else console.error(result.error);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [article]);
+  // useEffect(() => {
+  //   const result = schema.safeParse({
+  //     ...article,
+  //     title: article?.title ?? '',
+  //     content: article?.content ?? '',
+  //     categoryId: article?.tags.find((tag) => tag.isCategory)?.id ?? defaultCategory,
+  //     tags: article?.tags.filter((tag) => !tag.isCategory) ?? [],
+  //     coverImage: article?.coverImage ?? null,
+  //   });
+  //   if (result.success) form.reset({ ...result.data });
+  //   else console.error(result.error);
+  //   // eslint-disable-next-line react-hooks/exhaustive-deps
+  // }, [article]);
 
   const [publishing, setPublishing] = useState(false);
 
