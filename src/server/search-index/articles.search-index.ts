@@ -9,6 +9,7 @@ import { Availability, Prisma, PrismaClient } from '@prisma/client';
 import { articleDetailSelect } from '~/server/selectors/article.selector';
 import { ARTICLES_SEARCH_INDEX } from '~/server/common/constants';
 import { isDefined } from '~/utils/type-guards';
+import { ImageMetaProps } from '~/server/schema/image.schema';
 
 const READ_BATCH_SIZE = 1000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 1000;
@@ -160,7 +161,11 @@ const onFetchItemsToIndex = async ({
           : undefined,
         // Flatten tags:
         tags: tags.map((articleTag) => articleTag.tag),
-        coverImage: { ...coverImage, tags: coverImage.tags.map((x) => x.tag) },
+        coverImage: {
+          ...coverImage,
+          meta: coverImage.meta as ImageMetaProps,
+          tags: coverImage.tags.map((x) => x.tag),
+        },
       };
     })
     .filter(isDefined);

@@ -19,7 +19,7 @@ import { ToggleLockComments } from '../CommentsV2';
 import { IconLock } from '@tabler/icons-react';
 import { ToggleSearchableMenuItem } from '../MenuItems/ToggleSearchableMenuItem';
 
-export function ArticleContextMenu({ article: { coverImage, ...article }, ...props }: Props) {
+export function ArticleContextMenu({ article, ...props }: Props) {
   const queryUtils = trpc.useContext();
   const router = useRouter();
   const currentUser = useCurrentUser();

@@ -84,18 +84,7 @@ export function ArticleUpsertForm({ article }: Props) {
   const result = querySchema.safeParse(router.query);
 
   const defaultCategory = result.success ? result.data.category : -1;
-  const form = useForm({
-    schema,
-    shouldUnregister: false,
-    // defaultValues: {
-    //   ...defaultValues,
-    //   title: article?.title ?? '',
-    //   content: article?.content ?? '',
-    //   categoryId: article?.tags.find((tag) => tag.isCategory)?.id ?? defaultCategory,
-    //   tags: article?.tags.filter((tag) => !tag.isCategory) ?? [],
-    //   coverImage: (coverImage ? { ...coverImage } : { url: '' }) as any,
-    // },
-  });
+  const form = useForm({ schema, shouldUnregister: false });
   const clearStorage = useFormStorage({
     schema,
     form,

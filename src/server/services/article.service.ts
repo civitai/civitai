@@ -41,6 +41,7 @@ import { isDefined } from '~/utils/type-guards';
 import { getFilesByEntity } from './file.service';
 import { imageSelect, profileImageSelect } from '~/server/selectors/image.selector';
 import { createImage, deleteImageById } from '~/server/services/image.service';
+import { ImageMetaProps } from '~/server/schema/image.schema';
 
 type ArticleRaw = {
   id: number;
@@ -439,7 +440,12 @@ export const getArticles = async ({
             cosmetics: userCosmetics,
           },
           coverImage: coverImage
-            ? { ...coverImage, tags: coverImage?.tags.flatMap((x) => x.tag.id) }
+            ? {
+                ...coverImage,
+                meta: coverImage.meta as ImageMetaProps,
+                metadata: coverImage.metadata as any,
+                tags: coverImage?.tags.flatMap((x) => x.tag.id),
+              }
             : undefined,
         };
       });
@@ -558,6 +564,8 @@ export const getArticleById = async ({ id, user }: GetByIdInput & { user?: Sessi
       coverImage: article.coverImage
         ? {
             ...article.coverImage,
+            meta: article.coverImage.meta as ImageMetaProps,
+            metadata: article.coverImage.metadata as any,
             tags: article.coverImage?.tags.flatMap((x) => x.tag.id),
           }
         : undefined,
