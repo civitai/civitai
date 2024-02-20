@@ -152,6 +152,7 @@ export function VotableTag({
       component={NextLink}
       radius="xs"
       href={`/images?tags=${tagId}&view=feed`}
+      data-activity="tag-click:image"
       key={tagId}
       sx={{
         position: 'relative',
