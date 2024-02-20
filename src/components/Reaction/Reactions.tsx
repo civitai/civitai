@@ -86,6 +86,7 @@ export function Reactions({
     defaultValue: false,
     getInitialValueInEffect: true,
   });
+  const { buttonStyling } = useReactionSettingsContext();
 
   const ignoredKeys = ['tippedAmountCount'];
   const available = availableReactions[entityType];
@@ -142,6 +143,7 @@ export function Reactions({
             px={0}
             compact
             onClick={() => setShowAll((s) => !s)}
+            {...(buttonStyling ?? {})}
           >
             <Group spacing={2} noWrap>
               <IconPlus size={16} stroke={2.5} />
@@ -233,7 +235,7 @@ function ReactionBadge({
   canClick: boolean;
 }) {
   const color = hasReacted ? 'blue' : 'gray';
-  const { hideReactionCount } = useReactionSettingsContext();
+  const { hideReactionCount, buttonStyling } = useReactionSettingsContext();
   return (
     <Button
       size="xs"
@@ -251,6 +253,7 @@ function ReactionBadge({
       pr={3}
       color={color}
       compact
+      {...(buttonStyling ?? {})}
     >
       <Group spacing={4} align="center" noWrap>
         <Text sx={{ fontSize: '1.2em', lineHeight: 1.1 }}>
@@ -284,6 +287,7 @@ function BuzzTippingBadge({
   entityId: number;
   hideLoginPopover?: boolean;
 }) {
+  const { buttonStyling } = useReactionSettingsContext();
   const theme = useMantineTheme();
   const typeToBuzzTipType: Partial<Record<ReactionEntityType, string>> = {
     image: 'Image',
@@ -302,7 +306,15 @@ function BuzzTippingBadge({
       entityId={entityId}
       {...props}
     >
-      <Badge size="md" radius="xs" variant="light" py={10} px={3} color="yellow.7">
+      <Badge
+        size="md"
+        radius="xs"
+        py={10}
+        px={3}
+        color="yellow.7"
+        variant="light"
+        {...buttonStyling}
+      >
         <Group spacing={2} align="center" noWrap>
           <IconBolt color="yellow.7" style={{ fill: theme.colors.yellow[7] }} size={16} />
           <Text inherit>{abbreviateNumber(tippedAmountCount + tippedAmount)}</Text>
