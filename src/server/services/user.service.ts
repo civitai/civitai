@@ -285,9 +285,9 @@ export const updateOnboardingSteps = async ({
   });
 };
 
-export const getUserEngagedModels = ({ id }: { id: number }) => {
+export const getUserEngagedModels = ({ id, type }: { id: number; type?: ModelEngagementType }) => {
   return dbRead.modelEngagement.findMany({
-    where: { userId: id },
+    where: { userId: id, type },
     select: { modelId: true, type: true },
   });
 };
@@ -384,19 +384,14 @@ export const toggleModelEngagement = async ({
   if (type === 'Hide') {
     await refreshHiddenModelsForUser({ userId });
     // await playfab.trackEvent(userId, { eventName: 'user_hide_model', modelId });
-  } else if (type === 'Favorite') {
+  } else if (type === 'Notify') {
     // await playfab.trackEvent(userId, { eventName: 'user_favorite_model', modelId });
   }
   return true;
 };
 
-export const toggleModelFavorite = async ({
-  userId,
-  modelId,
-}: {
-  userId: number;
-  modelId: number;
-}) => toggleModelEngagement({ userId, modelId, type: 'Favorite' });
+export const toggleModelNotify = async ({ userId, modelId }: { userId: number; modelId: number }) =>
+  toggleModelEngagement({ userId, modelId, type: 'Notify' });
 
 export const toggleModelHide = async ({ userId, modelId }: { userId: number; modelId: number }) =>
   toggleModelEngagement({ userId, modelId, type: 'Hide' });

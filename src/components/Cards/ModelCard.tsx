@@ -6,12 +6,10 @@ import {
   Menu,
   Stack,
   Text,
-  ThemeIcon,
   UnstyledButton,
 } from '@mantine/core';
 import {
   IconDownload,
-  IconHeart,
   IconMessageCircle2,
   IconTagOff,
   IconDotsVertical,
@@ -23,7 +21,7 @@ import {
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React from 'react';
-import { z } from 'zod';
+// import { z } from 'zod';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -48,7 +46,6 @@ import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { CivitiaLinkManageButton } from '~/components/CivitaiLink/CivitiaLinkManageButton';
 import { generationPanel } from '~/store/generation.store';
 import { UseQueryModelReturn } from '~/components/Model/model.utils';
-import { StarRating } from '../StartRating/StarRating';
 import { env } from '~/env/client.mjs';
 import {
   InteractiveTipBuzzButton,
@@ -62,13 +59,14 @@ import { HolidayFrame } from '../Decorations/HolidayFrame';
 import { truncate } from 'lodash-es';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { ToggleSearchableMenuItem } from '../MenuItems/ToggleSearchableMenuItem';
+import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 
 const IMAGE_CARD_WIDTH = 450;
 // To validate url query string
-const querySchema = z.object({
-  model: z.coerce.number().optional(),
-  hidden: z.coerce.boolean().optional(),
-});
+// const querySchema = z.object({
+//   model: z.coerce.number().optional(),
+//   hidden: z.coerce.boolean().optional(),
+// });
 
 export function ModelCard({ data, forceInView }: Props) {
   const { ref, inView } = useInView({
@@ -77,25 +75,25 @@ export function ModelCard({ data, forceInView }: Props) {
     initialInView: forceInView,
   });
   const image = data.images[0];
-  const { classes, cx, theme } = useCardStyles({
+  const { classes, cx } = useCardStyles({
     aspectRatio: image && image.width && image.height ? image.width / image.height : 1,
   });
 
   const router = useRouter();
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
-  const queryResult = querySchema.safeParse(router.query);
-  const hiddenQuery = queryResult.success ? queryResult.data.hidden : false;
-  const modelId = queryResult.success ? queryResult.data.model : undefined;
+  // const queryResult = querySchema.safeParse(router.query);
+  // const hiddenQuery = queryResult.success ? queryResult.data.hidden : false;
+  // const modelId = queryResult.success ? queryResult.data.model : undefined;
   const tippedAmount = useBuzzTippingStore({ entityType: 'Model', entityId: data.id });
 
-  const { data: { Favorite: favoriteModels = [] } = { Favorite: [] } } =
+  const { data: { Recommended: reviewedModels = [] } = { Recommended: [] } } =
     trpc.user.getEngagedModels.useQuery(undefined, {
       enabled: !!currentUser,
       cacheTime: Infinity,
       staleTime: Infinity,
     });
-  const isFavorite = favoriteModels.find((modelId) => modelId === data.id);
+  const hasReview = reviewedModels.includes(data.id);
 
   // const { users: hiddenUsers, models: hiddenModels } = useHiddenPreferencesContext();
   // const isHidden = hiddenUsers.get(data.user.id) || hiddenModels.get(data.id);
@@ -115,8 +113,7 @@ export function ModelCard({ data, forceInView }: Props) {
       onReport={() =>
         openContext('report', {
           entityType: ReportEntity.Image,
-          // Explicitly cast to number because we know it's not undefined
-          entityId: image?.id as number,
+          entityId: image.id,
         })
       }
     />
@@ -271,7 +268,7 @@ export function ModelCard({ data, forceInView }: Props) {
                                       radius="xl"
                                       sx={(theme) => ({
                                         backgroundColor: isUpdated
-                                          ? '#1EBD8E'
+                                          ? theme.colors.success[5]
                                           : theme.colors.blue[theme.fn.primaryShade()],
                                       })}
                                     >
@@ -428,7 +425,7 @@ export function ModelCard({ data, forceInView }: Props) {
                   </Text>
                   {data.rank && (
                     <>
-                      {!data.locked && !!data.rank.ratingCount && (
+                      {/* {!data.locked && !!data.rank.ratingCount && (
                         <Badge
                           className={cx(classes.statChip, classes.chip)}
                           variant="light"
@@ -439,7 +436,7 @@ export function ModelCard({ data, forceInView }: Props) {
                             <Text size="xs">{data.rank.ratingCount}</Text>
                           </Group>
                         </Badge>
-                      )}
+                      )} */}
                       {(!!data.rank.favoriteCount ||
                         !!data.rank.downloadCount ||
                         !!data.rank.collectedCount ||
@@ -454,13 +451,11 @@ export function ModelCard({ data, forceInView }: Props) {
                             <Text size="xs">{abbreviateNumber(data.rank.downloadCount)}</Text>
                           </Group>
                           <Group spacing={2}>
-                            <IconHeart
-                              size={14}
-                              strokeWidth={2.5}
-                              style={{ fill: isFavorite ? theme.colors.red[6] : undefined }}
-                              color={isFavorite ? theme.colors.red[6] : undefined}
-                            />
-                            <Text size="xs">{abbreviateNumber(data.rank.favoriteCount)}</Text>
+                            <Text color={hasReview ? 'success.5' : undefined} inline>
+                              <ThumbsUpIcon size={14} filled={hasReview} />
+                            </Text>
+                            {/* TODO.review: get right count */}
+                            <Text size="xs">{abbreviateNumber(data.rank.ratingCount)}</Text>
                           </Group>
                           <Group spacing={2}>
                             <IconBookmark size={14} strokeWidth={2.5} />

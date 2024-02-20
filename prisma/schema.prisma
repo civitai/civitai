@@ -543,6 +543,8 @@ model ModelInterest {
 enum ModelEngagementType {
   Favorite
   Hide
+  Mute
+  Notify
 }
 
 model ModelEngagement {
@@ -761,6 +763,8 @@ model ModelMetric {
   tippedCount       Int             @default(0)
   tippedAmountCount Int             @default(0)
   generationCount   Int             @default(0)
+  thumbsUpCount     Int             @default(0)
+  thumbsDownCount   Int             @default(0)
 
   @@id([modelId, timeframe])
 }
@@ -779,6 +783,8 @@ model ModelVersionMetric {
   tippedCount       Int             @default(0)
   tippedAmountCount Int             @default(0)
   generationCount   Int             @default(0)
+  thumbsUpCount     Int             @default(0)
+  thumbsDownCount   Int             @default(0)
 
   @@id([modelVersionId, timeframe])
 }
@@ -1013,6 +1019,7 @@ model ResourceReview {
   modelVersionId Int
   modelVersion   ModelVersion             @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
   rating         Int
+  recommended    Boolean
   details        String?
   userId         Int
   user           User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -2916,6 +2923,26 @@ model ModelRank {
   generationCountMonth         Int   @default(0)
   generationCountYear          Int   @default(0)
   generationCountAllTime       Int   @default(0)
+  thumbsUpCountDayRank         Int   @default(0)
+  thumbsUpCountWeekRank        Int   @default(0)
+  thumbsUpCountMonthRank       Int   @default(0)
+  thumbsUpCountYearRank        Int   @default(0)
+  thumbsUpCountAllTimeRank     Int   @default(0)
+  thumbsUpCountDay             Int   @default(0)
+  thumbsUpCountWeek            Int   @default(0)
+  thumbsUpCountMonth           Int   @default(0)
+  thumbsUpCountYear            Int   @default(0)
+  thumbsUpCountAllTime         Int   @default(0)
+  thumbsDownCountDayRank       Int   @default(0)
+  thumbsDownCountWeekRank      Int   @default(0)
+  thumbsDownCountMonthRank     Int   @default(0)
+  thumbsDownCountYearRank      Int   @default(0)
+  thumbsDownCountAllTimeRank   Int   @default(0)
+  thumbsDownCountDay           Int   @default(0)
+  thumbsDownCountWeek          Int   @default(0)
+  thumbsDownCountMonth         Int   @default(0)
+  thumbsDownCountYear          Int   @default(0)
+  thumbsDownCountAllTime       Int   @default(0)
   newRank                      Int   @default(0)
 }
 
@@ -3193,6 +3220,16 @@ model UserStat {
   answerAcceptCountMonth   Int
   answerAcceptCountYear    Int
   answerAcceptCountAllTime Int
+  thumbsUpCountDay         Int
+  thumbsUpCountWeek        Int
+  thumbsUpCountMonth       Int
+  thumbsUpCountYear        Int
+  thumbsUpCountAllTime     Int
+  thumbsDownCountDay       Int
+  thumbsDownCountWeek      Int
+  thumbsDownCountMonth     Int
+  thumbsDownCountYear      Int
+  thumbsDownCountAllTime   Int
 }
 
 /// @view
@@ -3234,6 +3271,16 @@ model UserRank {
   answerAcceptCountMonthRank   Int     @default(0)
   answerAcceptCountYearRank    Int     @default(0)
   answerAcceptCountAllTimeRank Int     @default(0)
+  thumbsUpCountDayRank         Int     @default(0)
+  thumbsUpCountWeekRank        Int     @default(0)
+  thumbsUpCountMonthRank       Int     @default(0)
+  thumbsUpCountYearRank        Int     @default(0)
+  thumbsUpCountAllTimeRank     Int     @default(0)
+  thumbsDownCountDayRank       Int     @default(0)
+  thumbsDownCountWeekRank      Int     @default(0)
+  thumbsDownCountMonthRank     Int     @default(0)
+  thumbsDownCountYearRank      Int     @default(0)
+  thumbsDownCountAllTimeRank   Int     @default(0)
   leaderboardRank              Int?
   leaderboardId                String?
   leaderboardTitle             String?

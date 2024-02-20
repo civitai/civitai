@@ -31,7 +31,6 @@ import {
   getResourceReview,
   getResourceReviewsInfinite,
   getUserResourceReview,
-  toggleExcludeResourceReview,
 } from '~/server/services/resourceReview.service';
 import { moderatorProcedure } from '~/server/trpc';
 import { getByUsernameSchema } from '~/server/schema/user.schema';

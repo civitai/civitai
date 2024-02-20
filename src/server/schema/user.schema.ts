@@ -2,6 +2,7 @@ import {
   ArticleEngagementType,
   BountyEngagementType,
   MediaType,
+  ModelEngagementType,
   NsfwLevel,
   OnboardingStep,
   TagEngagementType,
@@ -99,7 +100,10 @@ export const userUpdateSchema = z.object({
 });
 export type UserUpdateInput = z.input<typeof userUpdateSchema>;
 
-export const toggleModelEngagementInput = z.object({ modelId: z.number() });
+export const toggleModelEngagementInput = z.object({
+  modelId: z.number(),
+  type: z.nativeEnum(ModelEngagementType).optional(),
+});
 export type ToggleModelEngagementInput = z.infer<typeof toggleModelEngagementInput>;
 
 export const toggleFollowUserSchema = z.object({

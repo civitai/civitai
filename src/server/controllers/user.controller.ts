@@ -56,7 +56,7 @@ import {
   toggleBlockedTag,
   toggleFollowUser,
   toggleHideUser,
-  toggleModelFavorite,
+  toggleModelNotify,
   toggleModelHide,
   toggleUserArticleEngagement,
   toggleUserBountyEngagement,
@@ -69,6 +69,7 @@ import {
   getUserSettings,
   setUserSetting,
   unequipCosmeticByType,
+  toggleModelEngagement,
 } from '~/server/services/user.service';
 import {
   handleLogError,
@@ -97,6 +98,7 @@ import { getUserNotificationCount } from '~/server/services/notification.service
 import { createRecaptchaAssesment } from '../recaptcha/client';
 import { FeatureAccess, toggleableFeatures } from '../services/feature-flags.service';
 import { isDefined } from '~/utils/type-guards';
+import { getResourceReviewsByUserId } from '~/server/services/resourceReview.service';
 
 export const getAllUsersHandler = async ({
   input,
@@ -434,26 +436,29 @@ export const deleteUserHandler = async ({
   }
 };
 
+type EngagedModelType = ModelEngagementType | 'Recommended';
+
 export const getUserEngagedModelsHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
   const { id } = ctx.user;
 
   try {
     const engagementsCache = await redis.get(`user:${id}:model-engagements`);
-    if (engagementsCache)
-      return JSON.parse(engagementsCache) as Record<ModelEngagementType, number[]>;
+    if (engagementsCache) return JSON.parse(engagementsCache) as Record<EngagedModelType, number[]>;
 
-    const engagements = await getUserEngagedModels({ id });
+    const hiddenEngagements = await getUserEngagedModels({ id, type: ModelEngagementType.Hide });
+    const recommendedReviews = await getResourceReviewsByUserId({ userId: id, recommended: true });
 
     // turn array of user.engagedModels into object with `type` as key and array of modelId as value
-    const engagedModels = engagements.reduce<Record<ModelEngagementType, number[]>>(
+    const engagedModels = hiddenEngagements.reduce<Record<EngagedModelType, number[]>>(
       (acc, model) => {
         const { type, modelId } = model;
         if (!acc[type]) acc[type] = [];
         acc[type].push(modelId);
         return acc;
       },
-      {} as Record<ModelEngagementType, number[]>
+      {} as Record<EngagedModelType, number[]>
     );
+    engagedModels.Recommended = recommendedReviews.map((r) => r.modelId).filter(isDefined);
 
     await redis.set(`user:${id}:model-engagements`, JSON.stringify(engagedModels), {
       EX: 60 * 60 * 24,
@@ -466,6 +471,8 @@ export const getUserEngagedModelsHandler = async ({ ctx }: { ctx: DeepNonNullabl
   }
 };
 
+type EngagedModelVersionType = ModelVersionEngagementType | 'Recommended';
+
 export const getUserEngagedModelVersionsHandler = async ({
   ctx,
 }: {
@@ -475,17 +482,21 @@ export const getUserEngagedModelVersionsHandler = async ({
 
   try {
     const engagements = await getUserEngagedModelVersions({ id });
+    const recommendedReviews = await getResourceReviewsByUserId({ userId: id, recommended: true });
 
     // turn array of user.engagedModelVersions into object with `type` as key and array of modelId as value
-    const engagedModelVersions = engagements.reduce<Record<ModelVersionEngagementType, number[]>>(
+    const engagedModelVersions = engagements.reduce<Record<EngagedModelVersionType, number[]>>(
       (acc, engagement) => {
         const { type, modelVersionId } = engagement;
         if (!acc[type]) acc[type] = [];
         acc[type].push(modelVersionId);
         return acc;
       },
-      {} as Record<ModelVersionEngagementType, number[]>
+      {} as Record<EngagedModelVersionType, number[]>
     );
+    engagedModelVersions.Recommended = recommendedReviews
+      .map((r) => r.modelVersionId)
+      .filter(isDefined);
 
     return engagedModelVersions;
   } catch (error) {
@@ -701,7 +712,7 @@ export const toggleHideModelHandler = async ({
   }
 };
 
-export const toggleFavoriteModelHandler = async ({
+export const toggleNotifyModelHandler = async ({
   input,
   ctx,
 }: {
@@ -710,19 +721,23 @@ export const toggleFavoriteModelHandler = async ({
 }) => {
   try {
     const { id: userId } = ctx.user;
-    const result = await toggleModelFavorite({ ...input, userId });
-    if (result) {
-      await ctx.track.modelEngagement({
-        type: 'Favorite',
-        modelId: input.modelId,
-      });
-    } else {
-      await ctx.track.modelEngagement({
-        type: 'Delete',
-        modelId: input.modelId,
-      });
-    }
+    const result = input.type
+      ? toggleModelEngagement({ modelId: input.modelId, type: input.type, userId })
+      : await toggleModelNotify({ ...input, userId });
+    // if (result) {
+    //   await ctx.track.modelEngagement({
+    //     type: 'Favorite',
+    //     modelId: input.modelId,
+    //   });
+    // } else {
+    //   await ctx.track.modelEngagement({
+    //     type: 'Delete',
+    //     modelId: input.modelId,
+    //   });
+    // }
     await redis.del(`user:${userId}:model-engagements`);
+
+    return result;
   } catch (error) {
     throw throwDbError(error);
   }

@@ -118,7 +118,6 @@ function YoutubeShort({ url }: { url: string }) {
           playerVars: {
             // autoplay: 1,
             loop: 1,
-            showinfo: 0,
             // playlist: videoId,
           },
         },

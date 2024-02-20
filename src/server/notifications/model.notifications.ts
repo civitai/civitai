@@ -88,21 +88,21 @@ export const modelNotifications = createNotificationProcessor({
       ), affected_models AS (
         SELECT DISTINCT
           "modelId" model_id
-        FROM "ModelEngagement" fm
-        JOIN "Model" m ON fm."modelId" = m.id
-        WHERE fm."createdAt" > '${lastSent}' AND fm.type = 'Favorite'
+        FROM "ResourceReview" rr
+        JOIN "Model" m ON rr."modelId" = m.id
+        WHERE rr."createdAt" > '${lastSent}' AND rr.recommended = true
         AND m."userId" > 0
       ), model_value AS (
         SELECT
           "modelId" model_id,
-          "favoriteCountAllTime" favorite_count
+          "thumbsUpCountAllTime" thumbs_up_count
         FROM "ModelRank" mr
         JOIN affected_models am ON am.model_id = mr."modelId"
-        WHERE "favoriteCountAllTime" > ${modelLikeMilestones[0]}
+        WHERE "thumbsUpCountAllTime" > ${modelLikeMilestones[0]}
       ), prior_milestones AS (
         SELECT DISTINCT
           model_id,
-          cast(details->'favoriteCount' as int) favorite_count
+          cast(details->'thumbsUpCount' as int) thumbs_up_count
         FROM "Notification"
         JOIN affected_models ON model_id = cast(details->'modelId' as int)
         WHERE type = 'model-like-milestone'
@@ -112,12 +112,12 @@ export const modelNotifications = createNotificationProcessor({
           JSON_BUILD_OBJECT(
             'modelName', m.name,
             'modelId', m.id,
-            'favoriteCount', ms.value
+            'thumbsUpCount', ms.value
           ) "details"
         FROM model_value mval
         JOIN "Model" m on m.id = mval.model_id
-        JOIN milestones ms ON ms.value <= mval.favorite_count
-        LEFT JOIN prior_milestones pm ON pm.favorite_count >= ms.value AND pm.model_id = mval.model_id
+        JOIN milestones ms ON ms.value <= mval.thumbs_up_count
+        LEFT JOIN prior_milestones pm ON pm.thumbs_up_count >= ms.value AND pm.model_id = mval.model_id
         WHERE pm.model_id IS NULL
       )
       INSERT INTO "Notification"("id", "userId", "type", "details", "category")
@@ -152,7 +152,7 @@ export const modelNotifications = createNotificationProcessor({
           ) "details"
         FROM "ModelVersion" mv
         JOIN "Model" m ON m.id = mv."modelId"
-        JOIN "ModelEngagement" fm ON m.id = fm."modelId" AND mv."publishedAt" >= fm."createdAt" AND fm.type = 'Favorite'
+        JOIN "ModelEngagement" fm ON m.id = fm."modelId" AND mv."publishedAt" >= fm."createdAt" AND fm.type = 'Notify'
         WHERE
             mv."availability" = 'Public'::"Availability"
             AND (

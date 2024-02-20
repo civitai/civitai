@@ -36,6 +36,7 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { IconBadge, IconBadgeProps } from '~/components/IconBadge/IconBadge';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { applyQueryMatchers } from '~/components/QuickSearch/util';
+import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { Username } from '~/components/User/Username';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -243,13 +244,14 @@ function ModelSpotlightAction({
           {category && <Badge size="xs">{category.tag.name}</Badge>}
         </Group>
         <Group spacing={4}>
-          <ActionIconBadge
+          {/* <ActionIconBadge
             // @ts-ignore: ignoring because size doesn't allow number
             icon={<Rating value={metrics.rating} size={12} readOnly />}
           >
             {abbreviateNumber(metrics.ratingCount)}
-          </ActionIconBadge>
-          <ActionIconBadge icon={<IconHeart size={12} stroke={2.5} />}>
+          </ActionIconBadge> */}
+          <ActionIconBadge icon={<ThumbsUpIcon size={12} stroke={2.5} />}>
+            {/* TODO.review: fix this */}
             {abbreviateNumber(metrics.favoriteCount)}
           </ActionIconBadge>
           <ActionIconBadge icon={<IconMessageCircle2 size={12} stroke={2.5} />}>
@@ -298,19 +300,20 @@ function UserSpotlightAction({
         </Text>
         {stats && (
           <Group spacing={4}>
-            <ActionIconBadge
+            {/* <ActionIconBadge
               // @ts-ignore: ignoring because size doesn't allow number
               icon={<Rating value={stats.ratingAllTime} size={12} readOnly />}
             >
               {abbreviateNumber(stats.ratingCountAllTime)}
-            </ActionIconBadge>
+            </ActionIconBadge> */}
             <ActionIconBadge icon={<IconUpload size={12} stroke={2.5} />}>
               {abbreviateNumber(stats.uploadCountAllTime)}
             </ActionIconBadge>
             <ActionIconBadge icon={<IconUsers size={12} stroke={2.5} />}>
               {abbreviateNumber(stats.followerCountAllTime)}
             </ActionIconBadge>
-            <ActionIconBadge icon={<IconHeart size={12} stroke={2.5} />}>
+            <ActionIconBadge icon={<ThumbsUpIcon size={12} stroke={2.5} />}>
+              {/* TODO.review: fix this */}
               {abbreviateNumber(stats.favoriteCountAllTime)}
             </ActionIconBadge>
             <ActionIconBadge icon={<IconDownload size={16} />}>

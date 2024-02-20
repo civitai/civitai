@@ -1,37 +1,38 @@
 import {
-  Container,
-  Group,
-  Stack,
-  Center,
-  Loader,
-  Text,
-  Title,
   Badge,
-  Divider,
-  CloseButton,
   Button,
+  Center,
+  CloseButton,
+  Container,
+  Divider,
+  Group,
+  Loader,
+  Stack,
+  Text,
+  ThemeIcon,
+  Title,
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
-import { NavigateBack } from '~/components/BackButton/BackButton';
-import { NoContent } from '~/components/NoContent/NoContent';
-import { trpc } from '~/utils/trpc';
-import { removeTags, slugit } from '~/utils/string-helpers';
-import { useRouter } from 'next/router';
-import { ResourceReviewDetailModel } from '~/server/services/resourceReview.service';
-import { ResourceReviewCarousel } from '~/components/ResourceReview/ResourceReviewCarousel';
-import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
-import { ResourceReviewComments } from '~/components/ResourceReview/ResourceReviewComments';
-import { DaysFromNow } from '~/components/Dates/DaysFromNow';
-import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { ResourceReviewMenu } from '~/components/ResourceReview/ResourceReviewMenu';
-import { IconBadge } from '~/components/IconBadge/IconBadge';
-import Link from 'next/link';
-import { formatDate } from '~/utils/date-helpers';
-import { PostSort } from '~/server/common/enums';
-import { Meta } from '~/components/Meta/Meta';
 import { truncate } from 'lodash-es';
-import { StarRating } from '../StartRating/StarRating';
+import Link from 'next/link';
+import { useRouter } from 'next/router';
+
+import { NavigateBack } from '~/components/BackButton/BackButton';
+import { DaysFromNow } from '~/components/Dates/DaysFromNow';
+import { Meta } from '~/components/Meta/Meta';
+import { NoContent } from '~/components/NoContent/NoContent';
+import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
+import { ResourceReviewCarousel } from '~/components/ResourceReview/ResourceReviewCarousel';
+import { ResourceReviewComments } from '~/components/ResourceReview/ResourceReviewComments';
+import { ResourceReviewMenu } from '~/components/ResourceReview/ResourceReviewMenu';
+import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
+import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { env } from '~/env/client.mjs';
+import { PostSort } from '~/server/common/enums';
+import { ResourceReviewDetailModel } from '~/server/services/resourceReview.service';
+import { formatDate } from '~/utils/date-helpers';
+import { removeTags, slugit } from '~/utils/string-helpers';
+import { trpc } from '~/utils/trpc';
 
 export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
   const router = useRouter();
@@ -65,6 +66,7 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
     reviewBody: data.details ? ':' + truncate(removeTags(data.details), { length: 120 }) : '',
     author: data.user.username,
     datePublished: data.createdAt,
+    // TODO.review: is this even necessary?
     reviewRating: {
       '@type': 'Rating',
       bestRating: 5,
@@ -80,11 +82,15 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
     },
   };
 
+  const isThumbsUp = data.recommended === true;
+  const isThumbsDown = data.recommended === false;
+
   return (
     <>
       <Meta
-        title={`${data.model.name} - ${data.modelVersion.name} - Review by ${data.user.username}`}
-        description={`${data.rating} star review${
+        title={`${data.model.name} - ${data.modelVersion.name} - Reviewed by ${data.user.username}`}
+        // TODO.review: double check this
+        description={`Review${
           data.details ? ':' + truncate(removeTags(data.details), { length: 120 }) : ''
         }`}
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/reviews/${reviewId}`, rel: 'canonical' }]}
@@ -114,7 +120,7 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
                 userId={data.user.id}
                 review={{
                   ...data,
-                  details: data.details ?? undefined,
+                  details: data.details ?? '',
                   modelVersionId: data.modelVersion.id,
                 }}
               />
@@ -123,7 +129,7 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
               </NavigateBack>
             </Group>
           </Group>
-          <Group spacing="xs" align="center">
+          <Group spacing="xs" align="center" position="apart">
             <UserAvatar
               user={data.user}
               subText={<DaysFromNow date={data.createdAt} />}
@@ -140,17 +146,16 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
               withUsername
               linkToProfile
             />
-            <IconBadge
-              ml="auto"
-              sx={{
-                userSelect: 'none',
-                paddingTop: 4,
-                paddingBottom: 4,
-                paddingRight: 0,
-                height: 'auto',
-              }}
-              icon={<StarRating value={data.rating} />}
-            ></IconBadge>
+
+            {isThumbsUp ? (
+              <ThemeIcon color="success.5" size="xl" radius="md" variant="light">
+                <ThumbsUpIcon size={32} filled />
+              </ThemeIcon>
+            ) : isThumbsDown ? (
+              <ThemeIcon color="red" size="xl" radius="md" variant="light">
+                <ThumbsDownIcon size={32} />
+              </ThemeIcon>
+            ) : null}
           </Group>
         </Stack>
       </Container>
@@ -205,18 +210,3 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
     </>
   );
 }
-
-// function EditableRating({ id, rating }: { id: number; rating: number }) {
-//   const { mutate, isLoading } = trpc.resourceReview.update.useMutation();
-//   return (
-//     <Rating
-//       value={rating}
-//       onChange={(value) => mutate({ id, rating: value })}
-//       readOnly={isLoading}
-//     />
-//   );
-// }
-
-// function EditableDetails({ id, details }: { id: number; details?: string }) {
-//   return <></>;
-// }

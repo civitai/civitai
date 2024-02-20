@@ -1,8 +1,6 @@
 import { z } from 'zod';
 import { paginationSchema } from '~/server/schema/base.schema';
-import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import { numericString, sanitizedNullableString } from '~/utils/zod-helpers';
-import { ReviewSort } from '~/server/common/enums';
 
 export type GetUserResourceReviewInput = z.infer<typeof getUserResourceReviewSchema>;
 export const getUserResourceReviewSchema = z.object({ modelVersionId: z.number() });
@@ -34,6 +32,7 @@ export const upsertResourceReviewSchema = z.object({
   modelId: z.number(),
   modelVersionId: z.number(),
   rating: z.number(),
+  recommended: z.boolean(),
   details: sanitizedNullableString({
     allowedTags: ['div', 'strong', 'p', 'em', 'u', 's', 'a', 'br', 'span', 'code', 'pre'],
     stripEmpty: true,
@@ -45,6 +44,7 @@ export const createResourceReviewSchema = z.object({
   modelId: z.number(),
   modelVersionId: z.number(),
   rating: z.number(),
+  recommended: z.boolean(),
   details: sanitizedNullableString({
     allowedTags: ['div', 'strong', 'p', 'em', 'u', 's', 'a', 'br', 'span', 'code', 'pre'],
     stripEmpty: true,
@@ -55,6 +55,7 @@ export type UpdateResourceReviewInput = z.infer<typeof updateResourceReviewSchem
 export const updateResourceReviewSchema = z.object({
   id: z.number(),
   rating: z.number().optional(),
+  recommended: z.boolean().optional(),
   details: sanitizedNullableString({
     allowedTags: ['div', 'strong', 'p', 'em', 'u', 's', 'a', 'br', 'span', 'code', 'pre'],
     stripEmpty: true,

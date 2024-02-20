@@ -18,6 +18,7 @@ import { openContext } from '~/providers/CustomModalsProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { ResourceReviewPagedModel } from '~/types/router';
 
 export function ResourceReviewMenu({
   reviewId,
@@ -29,15 +30,7 @@ export function ResourceReviewMenu({
   reviewId: number;
   userId: number;
   size?: MantineNumberSize;
-  review: {
-    id: number;
-    rating: number;
-    details?: string;
-    modelId: number;
-    modelVersionId: number;
-    exclude?: boolean;
-    metadata?: any;
-  };
+  review: ResourceReviewPagedModel & { details?: string; modelVersionId: number; metadata?: any };
 } & MenuProps) {
   const currentUser = useCurrentUser();
   const dialog = useDialogContext();
@@ -46,7 +39,7 @@ export function ResourceReviewMenu({
   const isOwner = currentUser?.id === userId;
   const isMuted = currentUser?.muted ?? false;
 
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const deleteMutation = trpc.resourceReview.delete.useMutation({
     onSuccess: async () => {
       await queryUtils.resourceReview.invalidate();

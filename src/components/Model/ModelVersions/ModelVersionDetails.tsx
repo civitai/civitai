@@ -22,7 +22,6 @@ import {
   IconDownload,
   IconBrush,
   IconExclamationMark,
-  IconHeart,
   IconLicense,
   IconMessageCircle2,
   IconShare3,
@@ -45,7 +44,6 @@ import {
   type Props as DescriptionTableProps,
 } from '~/components/DescriptionTable/DescriptionTable';
 import { FileInfo } from '~/components/FileInfo/FileInfo';
-import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { EarlyAccessAlert } from '~/components/Model/EarlyAccessAlert/EarlyAccessAlert';
 import { HowToButton, HowToUseModel } from '~/components/Model/HowToUseModel/HowToUseModel';
 import { ModelCarousel } from '~/components/Model/ModelCarousel/ModelCarousel';
@@ -56,7 +54,6 @@ import { DownloadButton } from '~/components/Model/ModelVersions/DownloadButton'
 import { ScheduleModal } from '~/components/Model/ScheduleModal/ScheduleModal';
 import { PermissionIndicator } from '~/components/PermissionIndicator/PermissionIndicator';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
-import { ResourceReviewSummary } from '~/components/ResourceReview/Summary/ResourceReviewSummary';
 import { GenerateButton } from '~/components/RunStrategy/GenerateButton';
 import { RunButton } from '~/components/RunStrategy/RunButton';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
@@ -85,17 +82,18 @@ import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { ClubRequirementButton } from '../../Club/ClubRequirementNotice';
 import { ResourceAccessWrap } from '~/components/Access/ResourceAccessWrap';
-import { ContentPolicyLink } from '~/components/ContentPolicyLink/ContentPolicyLink';
-import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { Adunit } from '~/components/Ads/AdUnit';
 import { adsRegistry } from '~/components/Ads/adsRegistry';
+import {
+  EditUserResourceReviewV2,
+  UserResourceReviewComposite,
+} from '~/components/ResourceReview/EditUserResourceReview';
+import { ResourceReviewThumbActions } from '~/components/ResourceReview/ResourceReviewThumbActions';
 
 export function ModelVersionDetails({
   model,
   version,
   user,
-  isFavorite,
-  onFavoriteClick,
   onBrowseClick,
   hasAccess = true,
 }: Props) {
@@ -605,7 +603,7 @@ export function ModelVersionDetails({
                     </ShareButton>
                   </div>
                 </Tooltip>
-                <Tooltip label={isFavorite ? 'Unlike' : 'Like'} position="top" withArrow>
+                {/* <Tooltip label={isFavorite ? 'Unlike' : 'Like'} position="top" withArrow>
                   <div>
                     <LoginRedirect reason="favorite-model">
                       <Button
@@ -617,7 +615,7 @@ export function ModelVersionDetails({
                       </Button>
                     </LoginRedirect>
                   </div>
-                </Tooltip>
+                </Tooltip> */}
               </Group>
               {primaryFileDetails}
             </Stack>
@@ -790,7 +788,7 @@ export function ModelVersionDetails({
                 </Accordion.Panel>
               </Accordion.Item>
             )}
-            {!model.locked && (
+            {/* {!model.locked && (
               <ResourceReviewSummary modelId={model.id} modelVersionId={version.id}>
                 <Accordion.Item value="resource-reviews">
                   <Accordion.Control>
@@ -829,7 +827,7 @@ export function ModelVersionDetails({
                   </Accordion.Panel>
                 </Accordion.Item>
               </ResourceReviewSummary>
-            )}
+            )} */}
             {version.description && (
               <Accordion.Item value="version-description">
                 <Accordion.Control>{`About this version`}</Accordion.Control>
@@ -867,6 +865,46 @@ export function ModelVersionDetails({
               </Accordion.Item>
             )}
           </Accordion>
+
+          {!model.locked && (
+            <UserResourceReviewComposite
+              modelId={model.id}
+              modelVersionId={version.id}
+              modelName={model.name}
+            >
+              {({ modelId, modelVersionId, modelName, userReview }) => (
+                <Card p="sm" withBorder>
+                  <Stack spacing={8}>
+                    <Group spacing={8} position="apart">
+                      <Text size="md" weight={600}>
+                        Reviews
+                      </Text>
+                      <Link
+                        href={`/models/${modelId}/reviews?modelVersionId=${modelVersionId}`}
+                        passHref
+                      >
+                        <Anchor size="sm">See All Reviews</Anchor>
+                      </Link>
+                    </Group>
+                    <ResourceReviewThumbActions
+                      modelId={modelId}
+                      modelVersionId={modelVersionId}
+                      userReview={userReview}
+                    />
+                  </Stack>
+                  {userReview && (
+                    <Card.Section py="sm" mt="sm" inheritPadding withBorder>
+                      <EditUserResourceReviewV2
+                        modelVersionId={modelVersionId}
+                        modelName={modelName}
+                        userReview={userReview}
+                      />
+                    </Card.Section>
+                  )}
+                </Card>
+              )}
+            </UserResourceReviewComposite>
+          )}
           <CreatorCard user={model.user} tipBuzzEntityType="Model" tipBuzzEntityId={model.id} />
           {onSite && (
             <Group
@@ -986,9 +1024,7 @@ export function ModelVersionDetails({
 type Props = {
   version: ModelById['modelVersions'][number];
   model: ModelById;
-  onFavoriteClick: VoidFunction;
   user?: SessionUser | null;
-  isFavorite?: boolean;
   onBrowseClick?: VoidFunction;
   hasAccess?: boolean;
 };

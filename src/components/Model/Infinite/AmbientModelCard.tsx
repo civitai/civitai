@@ -4,7 +4,6 @@ import {
   Badge,
   Box,
   createStyles,
-  DefaultMantineColor,
   Group,
   HoverCard,
   Indicator,
@@ -19,7 +18,6 @@ import { CollectionType, ModelStatus, CosmeticType } from '@prisma/client';
 import {
   IconBrush,
   IconDownload,
-  IconHeart,
   IconMessageCircle2,
   IconFlag,
   IconTagOff,
@@ -51,7 +49,6 @@ import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { BaseModel, baseModelSets, constants } from '~/server/common/constants';
 import { ReportEntity } from '~/server/schema/report.schema';
-import { getRandom } from '~/utils/array-helpers';
 import { isFutureDate } from '~/utils/date-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { slugit, getDisplayName } from '~/utils/string-helpers';
@@ -66,26 +63,9 @@ import { HolidayFrame } from '~/components/Decorations/HolidayFrame';
 import { truncate } from 'lodash-es';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { ToggleSearchableMenuItem } from '../../MenuItems/ToggleSearchableMenuItem';
-
-const mantineColors: DefaultMantineColor[] = [
-  'blue',
-  'cyan',
-  'grape',
-  'green',
-  'indigo',
-  'lime',
-  'orange',
-  'pink',
-  'red',
-  'teal',
-  'violet',
-  'yellow',
-];
+import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 
 const useStyles = createStyles((theme, _, getRef) => {
-  const base = theme.colors[getRandom(mantineColors)];
-  const background = theme.colorScheme === 'dark' ? theme.colors.dark[6] : '#fff';
-
   const infoRef = getRef('info');
 
   return {
@@ -197,7 +177,7 @@ export function AmbientModelCard({ data, height }: Props) {
   const router = useRouter();
   const modelId = router.query.model ? Number(router.query.model) : undefined;
   const currentUser = useCurrentUser();
-  const { classes, cx, theme } = useStyles();
+  const { classes, cx } = useStyles();
   const { push } = useRouter();
   const features = useFeatureFlags();
   const tippedAmount = useBuzzTippingStore({ entityType: 'Model', entityId: data.id });
@@ -208,13 +188,13 @@ export function AmbientModelCard({ data, height }: Props) {
 
   const [loading, setLoading] = useState(false);
 
-  const { data: { Favorite: favoriteModels = [] } = { Favorite: [], Hide: [] } } =
+  const { data: { Recommended: reviewedModels = [] } = { Recommended: [], Hide: [] } } =
     trpc.user.getEngagedModels.useQuery(undefined, {
       enabled: !!currentUser,
       cacheTime: Infinity,
       staleTime: Infinity,
     });
-  const isFavorite = favoriteModels.find((modelId) => modelId === id);
+  const hasReview = reviewedModels.includes(id);
 
   const modelText = (
     <Text size={14} weight={500} color="white" style={{ flex: 1, lineHeight: 1 }}>
@@ -275,14 +255,13 @@ export function AmbientModelCard({ data, height }: Props) {
     <IconBadge
       className={classes.statBadge}
       icon={
-        <IconHeart
-          size={14}
-          style={{ fill: isFavorite ? theme.colors.red[6] : undefined }}
-          color={isFavorite ? theme.colors.red[6] : undefined}
-        />
+        <Text color={hasReview ? 'success.5' : undefined} inline>
+          <ThumbsUpIcon size={14} filled={hasReview} />
+        </Text>
       }
-      color={isFavorite ? 'red' : 'gray'}
+      color={hasReview ? 'success.5' : 'gray'}
     >
+      {/* TODO.review: fix this */}
       <Text size="xs">{abbreviateNumber(rank.favoriteCount)}</Text>
     </IconBadge>
   );
@@ -595,8 +574,8 @@ export function AmbientModelCard({ data, height }: Props) {
                         {modelText}
                       </Group>
                       <Group position="apart" spacing={4}>
-                        {modelRating}
-                        <Group spacing={4} align="center">
+                        {/* {modelRating} */}
+                        <Group spacing={4} align="center" ml="auto">
                           {modelLikes}
                           {modelComments}
                           {modelDownloads}

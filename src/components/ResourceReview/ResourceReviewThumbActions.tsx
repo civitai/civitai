@@ -1,0 +1,136 @@
+import { Button, Group, Text } from '@mantine/core';
+import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
+import {
+  useCreateResourceReview,
+  useDeleteResourceReview,
+  useQueryResourceReviewTotals,
+  useQueryUserResourceReview,
+  useUpdateResourceReview,
+} from '~/components/ResourceReview/resourceReview.utils';
+import { abbreviateNumber } from '~/utils/number-helpers';
+import { IconBadge } from '~/components/IconBadge/IconBadge';
+import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
+import { ResourceReviewModel } from '~/server/selectors/resourceReview.selector';
+import { trpc } from '~/utils/trpc';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+
+export function ResourceReviewThumbActions({
+  modelId,
+  modelVersionId,
+  userReview,
+}: {
+  modelId: number;
+  modelVersionId: number;
+  userReview?: ResourceReviewModel | null;
+}) {
+  const { totals, loading: loadingTotals } = useQueryResourceReviewTotals({
+    modelId,
+    modelVersionId,
+  });
+  const { loading: loadingUserReview } = useQueryUserResourceReview({
+    modelVersionId,
+  });
+
+  const createMutation = useCreateResourceReview();
+  const upddateMutation = useUpdateResourceReview();
+  const deleteMutation = useDeleteResourceReview();
+
+  const handleReviewRatingChange = ({ recommended }: { recommended: boolean }) => {
+    if (userReview?.id) {
+      return upddateMutation.mutate({
+        id: userReview.id,
+        recommended,
+        rating: recommended ? 5 : 1,
+      });
+    }
+
+    return createMutation.mutate({
+      modelId,
+      modelVersionId,
+      recommended,
+      rating: recommended ? 5 : 1,
+    });
+  };
+
+  const handleDeleteReview = () => {
+    if (!userReview) return;
+    deleteMutation.mutate({ id: userReview.id });
+  };
+
+  const isThumbsUp = userReview?.recommended === true;
+  const isThumbsDown = userReview?.recommended === false;
+  const saving = createMutation.isLoading || upddateMutation.isLoading || deleteMutation.isLoading;
+
+  return (
+    <Button.Group style={{ gap: 4 }}>
+      <LoginRedirect reason="create-review">
+        <Button
+          variant={isThumbsUp ? 'light' : 'filled'}
+          color={isThumbsUp ? 'success' : 'dark.4'}
+          radius="md"
+          loading={loadingTotals || loadingUserReview || saving}
+          onClick={() =>
+            isThumbsUp ? handleDeleteReview() : handleReviewRatingChange({ recommended: true })
+          }
+          fullWidth
+        >
+          <Text color="success.5" size="xs" inline>
+            <Group spacing={4} noWrap>
+              <ThumbsUpIcon size={20} filled={isThumbsUp} /> {abbreviateNumber(totals?.up ?? 0)}
+            </Group>
+          </Text>
+        </Button>
+      </LoginRedirect>
+      <LoginRedirect reason="create-review">
+        <Button
+          variant={isThumbsDown ? 'light' : 'filled'}
+          color={isThumbsDown ? 'red' : 'dark.4'}
+          radius="md"
+          loading={loadingTotals || loadingUserReview || saving}
+          onClick={() =>
+            isThumbsDown ? handleDeleteReview() : handleReviewRatingChange({ recommended: false })
+          }
+          fullWidth
+        >
+          <Text color="red" inline>
+            <ThumbsDownIcon size={20} filled={isThumbsDown} />
+          </Text>
+        </Button>
+      </LoginRedirect>
+    </Button.Group>
+  );
+}
+
+export function ResourceReviewThumbBadge({
+  modelId,
+  modelVersionId,
+  count: initialCount,
+  onClick,
+}: {
+  modelId: number;
+  onClick: VoidFunction;
+  modelVersionId?: number;
+  count?: number;
+}) {
+  const currentUser = useCurrentUser();
+  const { totals, loading } = useQueryResourceReviewTotals({ modelId, modelVersionId });
+  const { data: { Recommended: reviewedModels = [] } = { Recommended: [] } } =
+    trpc.user.getEngagedModels.useQuery(undefined, { enabled: !!currentUser });
+
+  if (loading && initialCount === undefined) return null;
+
+  const hasReview = reviewedModels.includes(modelId);
+
+  return (
+    <IconBadge
+      radius="sm"
+      color={hasReview ? 'success.5' : 'gray'}
+      size="lg"
+      icon={<ThumbsUpIcon size={16} filled />}
+      sx={{ cursor: 'pointer' }}
+      onClick={onClick}
+    >
+      <Text>{abbreviateNumber(totals?.up ?? 0)}</Text>
+    </IconBadge>
+  );
+}

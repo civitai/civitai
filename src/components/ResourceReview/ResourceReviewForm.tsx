@@ -19,7 +19,7 @@ export function ResourceReviewForm({
   return (
     <Form form={form} onSubmit={onSubmit}>
       <Stack>
-        <InputRating size="xl" name="rating" label="Rating" />
+        {/* <InputRating size="xl" name="rating" label="Rating" /> */}
         <InputRTE
           name="details"
           label="Comments or feedback"

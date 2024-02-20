@@ -34,7 +34,7 @@ import {
   getAllUsersHandler,
   getCreatorsHandler,
   getUserByIdHandler,
-  toggleFavoriteModelHandler,
+  toggleNotifyModelHandler,
   updateUserHandler,
 } from '~/server/controllers/user.controller';
 import { createToken } from '~/server/integrations/integration-token';
@@ -96,9 +96,9 @@ export const userRouter = router({
   checkNotifications: protectedProcedure.query(checkUserNotificationsHandler),
   update: guardedProcedure.input(userUpdateSchema).mutation(updateUserHandler),
   delete: protectedProcedure.input(deleteUserSchema).mutation(deleteUserHandler),
-  toggleFavoriteModel: protectedProcedure
+  toggleNotifyModel: protectedProcedure
     .input(toggleModelEngagementInput)
-    .mutation(toggleFavoriteModelHandler),
+    .mutation(toggleNotifyModelHandler),
   // toggleHideModel: protectedProcedure
   //   .input(toggleModelEngagementInput)
   //   .mutation(toggleHideModelHandler),

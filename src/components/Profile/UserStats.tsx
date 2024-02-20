@@ -1,5 +1,6 @@
 import { Group, Stack, Text } from '@mantine/core';
 import { IconHeart, IconUser, IconArrowDown, IconStarFilled } from '@tabler/icons-react';
+import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 
 import { abbreviateNumber, formatToLeastDecimals } from '~/utils/number-helpers';
 
@@ -24,13 +25,14 @@ const UserStat = ({
     </Stack>
   );
 };
-export function UserStats({ rating, followers, downloads, favorites }: Props) {
+export function UserStats({ followers, downloads, favorites }: Props) {
   return (
     <Group spacing={0} align="center" position="apart" noWrap>
       {favorites != null && favorites !== 0 && (
         <UserStat
+          // TODO.review: fix this
           value={abbreviateNumber(favorites)}
-          icon={<IconHeart size={16} />}
+          icon={<ThumbsUpIcon size={16} />}
           subtext="Likes"
         />
       )}
@@ -48,13 +50,13 @@ export function UserStats({ rating, followers, downloads, favorites }: Props) {
           subtext="Downloads"
         />
       )}
-      {rating != null && rating?.count !== 0 && (
+      {/* {rating != null && rating?.count !== 0 && (
         <UserStat
           value={formatToLeastDecimals(rating.value)}
           icon={<IconStarFilled size={16} />}
           subtext={`${abbreviateNumber(rating.count)} Ratings`}
         />
-      )}
+      )} */}
     </Group>
   );
 }

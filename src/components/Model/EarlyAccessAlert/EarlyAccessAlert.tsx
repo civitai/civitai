@@ -38,7 +38,7 @@ export function EarlyAccessAlert({ versionId, modelType, deadline }: Props) {
       // Toggle the model in the Notify list
       queryUtils.user.getEngagedModelVersions.setData(
         undefined,
-        ({ Notify = [], ...old } = { Notify: [] }) => {
+        ({ Notify = [], ...old } = { Notify: [], Recommended: [] }) => {
           if (alreadyNotifying) return { Notify: Notify.filter((id) => id !== versionId), ...old };
           return { Notify: [...Notify, versionId], ...old };
         }

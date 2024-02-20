@@ -1,13 +1,16 @@
-import { Card, Group, Rating, Stack, Text, Divider, Button, Alert } from '@mantine/core';
-import { DaysFromNow } from '~/components/Dates/DaysFromNow';
-import { trpc } from '~/utils/trpc';
-import { useState, useEffect, useRef } from 'react';
+import { Alert, Button, Card, Divider, Group, Stack, Text } from '@mantine/core';
 import { IconChevronDown } from '@tabler/icons-react';
-import { InputRTE, useForm, Form } from '~/libs/form';
-import { z } from 'zod';
-import { EditorCommandsRef } from '~/components/RichTextEditor/RichTextEditor';
-import { ResourceAccessWrap } from '../Access/ResourceAccessWrap';
 import Link from 'next/link';
+import { useEffect, useRef, useState } from 'react';
+import { z } from 'zod';
+
+import { DaysFromNow } from '~/components/Dates/DaysFromNow';
+import { EditorCommandsRef } from '~/components/RichTextEditor/RichTextEditor';
+import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
+import { Form, InputRTE, useForm } from '~/libs/form';
+import { abbreviateNumber } from '~/utils/number-helpers';
+import { trpc } from '~/utils/trpc';
+import { ResourceAccessWrap } from '../Access/ResourceAccessWrap';
 
 type EditResourceReviewProps = {
   id?: number | null;
@@ -16,10 +19,14 @@ type EditResourceReviewProps = {
   modelVersionId?: number | null;
   modelVersionName?: string | null;
   rating?: number | null;
+  recommended?: boolean | null;
   details?: string | null;
   createdAt?: Date | null;
   name?: string | null;
   onSuccess?: (id: number) => void;
+  onCancel?: VoidFunction;
+  thumbsUpCount?: number;
+  initialEditing?: boolean;
 };
 
 const schema = z.object({
@@ -33,33 +40,40 @@ export function EditResourceReview({
   modelVersionId,
   modelVersionName,
   rating: initialRating,
+  recommended: initialRecommended,
   details: initialDetails,
   createdAt,
   name,
+  thumbsUpCount,
   onSuccess,
+  onCancel,
+  initialEditing = false,
 }: EditResourceReviewProps) {
   const [id, setId] = useState(initialId ?? undefined);
-  const [rating, setRating] = useState(initialRating ?? undefined);
-  const [details, setDetails] = useState(initialDetails ?? undefined);
+  const [rating, setRating] = useState(initialRating ?? 0);
+  const [recommended, setRecommended] = useState(initialRecommended ?? null);
+  const [details, setDetails] = useState<string | undefined>(initialDetails ?? '');
   const { mutate, isLoading } = trpc.resourceReview.upsert.useMutation();
 
-  const [editDetail, setEditDetail] = useState(false);
+  const [editDetail, setEditDetail] = useState(initialEditing);
   const toggleEditDetail = () => {
     setEditDetail((state) => !state);
-    if (!editDetail) setTimeout(() => commentRef.current?.focus(), 100);
+    // if (!editDetail) setTimeout(() => commentRef.current?.focus(), 100);
   };
   const commentRef = useRef<EditorCommandsRef | null>(null);
 
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
 
   const handleRatingChange = (rating: number) => {
     if (!modelVersionId || !modelId) return;
     // stupid prisma
+    const recommended = rating >= 3;
     mutate(
-      { id: id ?? undefined, rating, modelVersionId, modelId },
+      { id: id ?? undefined, rating, recommended, modelVersionId, modelId },
       {
-        onSuccess: async (response, request) => {
+        onSuccess: async (response) => {
           setRating(rating);
+          setRecommended(recommended);
           setId(response.id);
           await queryUtils.resourceReview.invalidate();
         },
@@ -67,24 +81,32 @@ export function EditResourceReview({
     );
   };
 
-  const form = useForm({ schema, defaultValues: { details: details ?? undefined } });
+  const form = useForm({ schema, defaultValues: { details: details ?? '' } });
   const handleSubmit = ({ details }: z.infer<typeof schema>) => {
     if (!modelId || !modelVersionId || !id || !rating) return;
+
+    const recommended = rating >= 3;
     mutate(
-      { id, modelVersionId, modelId, rating, details },
+      { id, modelVersionId, modelId, rating, recommended, details },
       {
-        onSuccess: async (response, request) => {
+        onSuccess: async () => {
           setDetails(details);
           form.reset({ details });
           toggleEditDetail();
+          onSuccess?.(id);
         },
       }
     );
   };
 
+  // if (details) form.reset({ details });
   useEffect(() => {
     form.reset({ details });
   }, [details]); // eslint-disable-line
+  const { isDirty } = form.formState;
+
+  const isThumbsUp = recommended === true;
+  const isThumbsDown = recommended === false;
 
   return (
     <ResourceAccessWrap
@@ -108,7 +130,7 @@ export function EditResourceReview({
     >
       <Card p={8} withBorder>
         <Stack spacing="xs">
-          {modelVersionId ? (
+          {modelId && modelVersionId ? (
             <Stack spacing={4}>
               <Group align="center" position="apart">
                 <Link href={`/models/${modelId}?modelVersionId=${modelVersionId}`} target="_blank">
@@ -121,13 +143,43 @@ export function EditResourceReview({
                     )}
                   </Stack>
                 </Link>
-                <Rating value={rating} onChange={handleRatingChange} />
+                {/* <Rating value={rating} onChange={handleRatingChange} /> */}
               </Group>
               {createdAt && (
-                <Text size="xs">
+                <Text size="xs" color="dimmed">
                   Reviewed <DaysFromNow date={createdAt} />
                 </Text>
               )}
+
+              <Button.Group style={{ gap: 4 }}>
+                <Button
+                  variant={isThumbsUp ? 'light' : 'filled'}
+                  color={isThumbsUp ? 'success' : 'dark.4'}
+                  radius="md"
+                  loading={isLoading}
+                  onClick={() => (!isThumbsUp ? handleRatingChange(5) : undefined)}
+                  fullWidth
+                >
+                  <Text color="success.5" size="xs" inline>
+                    <Group spacing={4} noWrap>
+                      <ThumbsUpIcon size={20} filled={isThumbsUp} />{' '}
+                      {abbreviateNumber(thumbsUpCount ?? 0)}
+                    </Group>
+                  </Text>
+                </Button>
+                <Button
+                  variant={isThumbsDown ? 'light' : 'filled'}
+                  color={isThumbsDown ? 'red' : 'dark.4'}
+                  radius="md"
+                  loading={isLoading}
+                  onClick={() => (!isThumbsDown ? handleRatingChange(1) : undefined)}
+                  fullWidth
+                >
+                  <Text color="red" inline>
+                    <ThumbsDownIcon size={20} filled={isThumbsDown} />
+                  </Text>
+                </Button>
+              </Button.Group>
             </Stack>
           ) : (
             <Text>{name}</Text>
@@ -156,16 +208,25 @@ export function EditResourceReview({
                         innerRef={commentRef}
                         placeholder={`What did you think of ${modelName}?`}
                         styles={{ content: { maxHeight: 500, overflowY: 'auto' } }}
+                        autoFocus
                         // withLinkValidation
                       />
                       <Group grow spacing="xs">
-                        <Button size="xs" variant="default" onClick={toggleEditDetail}>
+                        <Button
+                          size="xs"
+                          variant="default"
+                          onClick={() => {
+                            toggleEditDetail();
+                            onCancel?.();
+                          }}
+                        >
                           Cancel
                         </Button>
                         <Button
                           size="xs"
                           type="submit"
                           loading={isLoading}
+                          disabled={!isDirty}
                           variant={form.formState.isDirty ? undefined : 'outline'}
                         >
                           Save

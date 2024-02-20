@@ -15,7 +15,7 @@ const useStyles = createStyles(() => ({
   },
 }));
 
-const mapTabName: Record<NotificationCategory, string> = {
+const mapTabName: Partial<Record<NotificationCategory, string>> = {
   [NotificationCategory.Comment]: 'Comments',
   [NotificationCategory.Milestone]: 'Milestones',
   [NotificationCategory.Update]: 'Updates',

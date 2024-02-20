@@ -41,7 +41,13 @@ export function EditPostReviews() {
     if (data) {
       let hasBaseModel = false;
       let hasAdditionalResource = false;
-      for (const review of data) {
+      // remove duplicates items from data based on modelVersionId
+      const filteredReviews = data.filter(
+        (review, index, items) =>
+          !!review.modelVersionId &&
+          items.findIndex((t) => t.modelVersionId === review.modelVersionId) === index
+      );
+      for (const review of filteredReviews) {
         if (review.reviewCreatedAt) {
           previous.push(review);
         } else {
@@ -99,6 +105,8 @@ export function EditPostReviews() {
                 modelVersionId={resource.modelVersionId}
                 modelVersionName={resource.modelVersionName}
                 name={resource.name}
+                // TODO.review: use correct value
+                thumbsUpCount={resource.modelRatingCount ?? 0}
               />
             ))}
             {reviews.previous.length > 0 && (
@@ -116,6 +124,8 @@ export function EditPostReviews() {
                     modelVersionId={resource.modelVersionId}
                     modelVersionName={resource.modelVersionName}
                     name={resource.name}
+                    // TODO.review: use correct value
+                    thumbsUpCount={resource.modelRatingCount ?? 0}
                   />
                 ))}
               </>

@@ -32,10 +32,8 @@ import { NotFound } from '~/components/AppLayout/NotFound';
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
 import { TipBuzzButton } from '~/components/Buzz/TipBuzzButton';
 import { ChatUserButton } from '~/components/Chat/ChatUserButton';
-import { ContentPolicyLink } from '~/components/ContentPolicyLink/ContentPolicyLink';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
-import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
 import { ImageDetailCarousel } from '~/components/Image/Detail/ImageDetailCarousel';
 import { ImageDetailComments } from '~/components/Image/Detail/ImageDetailComments';
@@ -129,9 +127,22 @@ export function ImageDetail() {
                   withUsername
                   linkToProfile
                 />
+                <CloseButton
+                  size="md"
+                  radius="xl"
+                  variant="transparent"
+                  ml="auto"
+                  iconSize={20}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    close();
+                  }}
+                />
                 <Group
                   spacing={8}
+                  w="100%"
                   sx={{ [containerQuery.smallerThan('sm')]: { flexGrow: 1 } }}
+                  grow
                   noWrap
                 >
                   <TipBuzzButton
@@ -143,17 +154,6 @@ export function ImageDetail() {
                   />
                   <ChatUserButton user={image.user} size="md" compact />
                   <FollowUserButton userId={image.user.id} size="md" compact />
-                  <CloseButton
-                    size="md"
-                    radius="xl"
-                    variant="transparent"
-                    ml="auto"
-                    iconSize={20}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      close();
-                    }}
-                  />
                 </Group>
               </Group>
             </Card.Section>
@@ -254,7 +254,7 @@ export function ImageDetail() {
                         size={30}
                         variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
                         radius="xl"
-                        onClick={(e) => {
+                        onClick={() => {
                           openContext('report', {
                             entityType: ReportEntity.Image,
                             entityId: image.id,

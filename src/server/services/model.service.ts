@@ -908,7 +908,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
         }
       : undefined,
     engagements: favorites
-      ? { some: { userId: sessionUser?.id, type: 'Favorite' } }
+      ? { some: { userId: sessionUser?.id, type: 'Notify' } }
       : hidden
       ? { some: { userId: sessionUser?.id, type: 'Hide' } }
       : undefined,

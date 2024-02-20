@@ -29,7 +29,6 @@ import {
   IconEdit,
   IconExclamationMark,
   IconFlag,
-  IconHeart,
   IconMessage,
   IconPlus,
   IconRecycle,
@@ -97,7 +96,6 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { AssociatedModels } from '~/components/AssociatedModels/AssociatedModels';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { ResourceReviewSummary } from '~/components/ResourceReview/Summary/ResourceReviewSummary';
 import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionMenuItem';
 import { env } from '~/env/client.mjs';
 import {
@@ -113,6 +111,8 @@ import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { HowToButton } from '~/components/Model/HowToUseModel/HowToUseModel';
 import { Adunit } from '~/components/Ads/AdUnit';
 import { adsRegistry } from '~/components/Ads/adsRegistry';
+import { ResourceReviewThumbBadge } from '~/components/ResourceReview/ResourceReviewThumbActions';
+import { ToggleModelNotification } from '~/components/Model/Actions/ToggleModelNotification';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -191,13 +191,6 @@ export default function ModelDetailsV2({
       },
     }
   );
-
-  const { data: { Favorite: favoriteModels = [] } = { Favorite: [] } } =
-    trpc.user.getEngagedModels.useQuery(undefined, {
-      enabled: !!currentUser,
-      cacheTime: Infinity,
-      staleTime: Infinity,
-    });
 
   const rawVersionId = router.query.modelVersionId;
   const modelVersionId = Number(
@@ -297,47 +290,6 @@ export default function ModelDetailsV2({
       showErrorNotification({ error: new Error(error.message) });
     },
   });
-  const toggleFavoriteModelMutation = trpc.user.toggleFavoriteModel.useMutation({
-    async onMutate({ modelId }) {
-      await queryUtils.user.getEngagedModels.cancel();
-
-      const previousEngaged = queryUtils.user.getEngagedModels.getData() ?? {
-        Favorite: [],
-        Hide: [],
-      };
-      const previousModel = queryUtils.model.getById.getData({ id: modelId });
-      const shouldRemove = previousEngaged.Favorite?.find((id) => id === modelId);
-      // Update the favorite count
-      queryUtils.model.getById.setData({ id: modelId }, (model) => {
-        if (model?.rank) model.rank.favoriteCountAllTime += shouldRemove ? -1 : 1;
-        return model;
-      });
-      // Remove from favorites list
-      queryUtils.user.getEngagedModels.setData(
-        undefined,
-        ({ Favorite = [], ...old } = { Favorite: [], Hide: [] }) => {
-          if (shouldRemove) return { Favorite: Favorite.filter((id) => id !== modelId), ...old };
-          return { Favorite: [...Favorite, modelId], ...old };
-        }
-      );
-
-      return { previousEngaged, previousModel };
-    },
-    async onSuccess() {
-      await queryUtils.model.getAll.invalidate({ favorites: true });
-    },
-    onError(_error, _variables, context) {
-      queryUtils.user.getEngagedModels.setData(undefined, context?.previousEngaged);
-      if (context?.previousModel?.id)
-        queryUtils.model.getById.setData(
-          { id: context?.previousModel?.id },
-          context?.previousModel
-        );
-    },
-  });
-  const handleToggleFavorite = () => {
-    toggleFavoriteModelMutation.mutate({ modelId: id });
-  };
 
   const handleCollect = () => {
     openContext('addToCollection', {
@@ -533,7 +485,6 @@ export default function ModelDetailsV2({
       </>
     );
 
-  const isFavorite = !!favoriteModels.find((modelId) => modelId === id);
   const published = model.status === ModelStatus.Published;
   const inaccurate = model.modelVersions.some((version) => version.inaccurate);
   const isMuted = currentUser?.muted ?? false;
@@ -569,26 +520,6 @@ export default function ModelDetailsV2({
                   <Title className={classes.title} order={1}>
                     {model?.name}
                   </Title>
-                  <LoginRedirect reason="favorite-model">
-                    <IconBadge
-                      radius="sm"
-                      color={isFavorite ? 'red' : 'gray'}
-                      size="lg"
-                      icon={
-                        <IconHeart
-                          size={18}
-                          color={isFavorite ? theme.colors.red[6] : undefined}
-                          style={{ fill: isFavorite ? theme.colors.red[6] : undefined }}
-                        />
-                      }
-                      sx={{ cursor: 'pointer' }}
-                      onClick={handleToggleFavorite}
-                    >
-                      <Text className={classes.modelBadgeText}>
-                        {abbreviateNumber(model.rank?.favoriteCountAllTime ?? 0)}
-                      </Text>
-                    </IconBadge>
-                  </LoginRedirect>
                   <IconBadge radius="sm" size="lg" icon={<IconDownload size={18} />}>
                     <Text className={classes.modelBadgeText}>
                       {abbreviateNumber(model.rank?.downloadCountAllTime ?? 0)}
@@ -646,15 +577,13 @@ export default function ModelDetailsV2({
                   </InteractiveTipBuzzButton>
 
                   {!model.locked && (
-                    <ResourceReviewSummary modelId={model.id}>
-                      <ResourceReviewSummary.Simple
-                        rating={model.rank?.ratingAllTime}
-                        count={model.rank?.ratingCountAllTime}
-                        onClick={() => {
-                          gallerySectionRef.current?.scrollIntoView({ behavior: 'smooth' });
-                        }}
-                      />
-                    </ResourceReviewSummary>
+                    <ResourceReviewThumbBadge
+                      count={model.rank?.ratingCountAllTime}
+                      modelId={model.id}
+                      onClick={() =>
+                        gallerySectionRef.current?.scrollIntoView({ behavior: 'smooth' })
+                      }
+                    />
                   )}
                   {inEarlyAccess && (
                     <IconBadge radius="sm" color="green" size="lg" icon={<IconClock size={18} />}>
@@ -670,10 +599,11 @@ export default function ModelDetailsV2({
                     href="https://education.civitai.com/civitais-100-beginners-guide-to-generative-ai-art/#heading-77"
                     tooltip="What is this?"
                   />
+                  <ToggleModelNotification modelId={model.id} userId={model.user.id} />
                   <Menu position="bottom-end" transition="pop-top-right" withinPortal>
                     <Menu.Target>
-                      <ActionIcon variant="outline">
-                        <IconDotsVertical size={16} />
+                      <ActionIcon variant="light" size="xl">
+                        <IconDotsVertical size={20} />
                       </ActionIcon>
                     </Menu.Target>
                     <Menu.Dropdown>
@@ -1006,8 +936,6 @@ export default function ModelDetailsV2({
               model={model}
               version={selectedVersion}
               user={currentUser}
-              isFavorite={isFavorite}
-              onFavoriteClick={handleToggleFavorite}
               onBrowseClick={() => {
                 gallerySectionRef.current?.scrollIntoView({ behavior: 'smooth' });
               }}

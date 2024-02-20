@@ -1,25 +1,18 @@
-import { Badge, Group, MantineSize, Rating, Text, useMantineTheme } from '@mantine/core';
-import {
-  IconStar,
-  IconUpload,
-  IconUsers,
-  IconHeart,
-  IconDownload,
-  IconChecks,
-} from '@tabler/icons-react';
+import { Badge, Group, MantineSize, Text, useMantineTheme } from '@mantine/core';
+import { IconUpload, IconUsers, IconDownload, IconChecks } from '@tabler/icons-react';
 
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { abbreviateNumber, formatToLeastDecimals } from '~/utils/number-helpers';
 import { StatTooltip } from '~/components/Tooltips/StatTooltip';
-import { StarRating } from '../StartRating/StarRating';
+import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 
-const mapBadgeTextIconSize: Record<MantineSize, { textSize: MantineSize; iconSize: number }> = {
-  xs: { textSize: 'xs', iconSize: 12 },
-  sm: { textSize: 'xs', iconSize: 14 },
-  md: { textSize: 'sm', iconSize: 14 },
-  lg: { textSize: 'sm', iconSize: 16 },
-  xl: { textSize: 'md', iconSize: 18 },
-};
+// const mapBadgeTextIconSize: Record<MantineSize, { textSize: MantineSize; iconSize: number }> = {
+//   xs: { textSize: 'xs', iconSize: 12 },
+//   sm: { textSize: 'xs', iconSize: 14 },
+//   md: { textSize: 'sm', iconSize: 14 },
+//   lg: { textSize: 'sm', iconSize: 16 },
+//   xl: { textSize: 'md', iconSize: 18 },
+// };
 
 export function UserStatBadges({
   rating,
@@ -34,7 +27,7 @@ export function UserStatBadges({
 
   return (
     <Group spacing={8} position="apart">
-      {rating != null ? (
+      {/* {rating != null ? (
         <IconBadge
           radius="xl"
           tooltip={
@@ -53,7 +46,7 @@ export function UserStatBadges({
             {abbreviateNumber(rating.count)}
           </Text>
         </IconBadge>
-      ) : null}
+      ) : null} */}
       <Badge
         size="lg"
         color="gray"
@@ -96,14 +89,15 @@ export function UserStatBadges({
           {favorite != null ? (
             <IconBadge
               p={0}
-              tooltip={<StatTooltip label="Favorites" value={favorite} />}
-              icon={<IconHeart size={14} />}
+              tooltip={<StatTooltip label="Likes" value={favorite} />}
+              icon={<ThumbsUpIcon size={14} />}
               color="gray"
               // @ts-ignore: transparent variant does work
               variant="transparent"
               size="lg"
             >
               <Text size="xs" weight={600} inline>
+                {/* TODO.review: fix this */}
                 {abbreviateNumber(favorite)}
               </Text>
             </IconBadge>

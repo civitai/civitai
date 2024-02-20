@@ -1,12 +1,12 @@
 import React, { forwardRef } from 'react';
 import { AutocompleteItem, Group, Image, Stack, Text, ThemeIcon } from '@mantine/core';
-import { IconDownload, IconHeart, IconUpload, IconUser, IconUsers } from '@tabler/icons-react';
+import { IconDownload, IconUpload, IconUser, IconUsers } from '@tabler/icons-react';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { ActionIconBadge, ViewMoreItem } from '~/components/AutocompleteSearch/renderItems/common';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { Username } from '~/components/User/Username';
-import { StarRating } from '~/components/StartRating/StarRating';
 import { SearchIndexDataMap } from '~/components/Search/search.utils2';
+import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 
 export const UserSearchItem = forwardRef<
   HTMLDivElement,
@@ -37,18 +37,19 @@ export const UserSearchItem = forwardRef<
         </Text>
         {stats && (
           <Group spacing={4}>
-            <ActionIconBadge icon={<StarRating value={stats.ratingAllTime} size={12} />}>
-              {abbreviateNumber(stats.ratingCountAllTime)}
-            </ActionIconBadge>
             <ActionIconBadge icon={<IconUpload size={12} stroke={2.5} />}>
               {abbreviateNumber(stats.uploadCountAllTime)}
             </ActionIconBadge>
             <ActionIconBadge icon={<IconUsers size={12} stroke={2.5} />}>
               {abbreviateNumber(stats.followerCountAllTime)}
             </ActionIconBadge>
-            <ActionIconBadge icon={<IconHeart size={12} stroke={2.5} />}>
-              {abbreviateNumber(stats.favoriteCountAllTime)}
+            <ActionIconBadge icon={<ThumbsUpIcon size={12} filled />}>
+              {/* TODO.review: fix this */}
+              {abbreviateNumber(stats.ratingCountAllTime)}
             </ActionIconBadge>
+            {/* <ActionIconBadge icon={<IconHeart size={12} stroke={2.5} />}>
+              {abbreviateNumber(stats.favoriteCountAllTime)}
+            </ActionIconBadge> */}
             <ActionIconBadge icon={<IconDownload size={16} />}>
               {abbreviateNumber(stats.downloadCountAllTime)}
             </ActionIconBadge>

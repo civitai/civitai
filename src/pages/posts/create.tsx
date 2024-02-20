@@ -1,15 +1,14 @@
 import {
   Anchor,
-  Box,
   Center,
   Container,
   Group,
-  Input,
   Loader,
   Select,
   Stack,
   Text,
   Title,
+  Card,
 } from '@mantine/core';
 import { IconLock } from '@tabler/icons-react';
 import Link from 'next/link';
@@ -26,14 +25,16 @@ import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import { useEditPostContext } from '~/components/Post/Edit/EditPostProvider';
 import { PostEditLayout } from '~/components/Post/Edit/PostEditLayout';
 import {
-  EditUserResourceReview,
   ReviewEditCommandsRef,
+  EditUserResourceReviewV2,
+  UserResourceReviewComposite,
 } from '~/components/ResourceReview/EditUserResourceReview';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { POST_IMAGE_LIMIT } from '~/server/common/constants';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { ResourceReviewThumbActions } from '~/components/ResourceReview/ResourceReviewThumbActions';
 
 export default function PostCreate() {
   const currentUser = useCurrentUser();
@@ -181,27 +182,44 @@ export default function PostCreate() {
             />
           )}
           {displayReview && version && (
-            <>
-              <Input.Wrapper label="What did you think of this resource?">
-                <Box mt={5}>
-                  <EditUserResourceReview
-                    modelVersionId={version.id}
-                    modelId={version.model.id}
-                    modelName={version.model.name}
-                    modelVersionName={version.name}
-                    resourceReview={currentUserReview}
-                    openedCommentBox
-                    innerRef={reviewEditRef}
-                    showNoAccessAlert
-                  />
-                </Box>
-              </Input.Wrapper>
-              {currentUserReview && (
-                <Text size="sm" color="dimmed">
-                  {`We've saved your review. Now, consider adding images below to create a post showcasing the resource.`}
-                </Text>
+            <UserResourceReviewComposite
+              modelId={version.model.id}
+              modelVersionId={version.id}
+              modelName={version.model.name}
+            >
+              {({ modelId, modelVersionId, modelName, userReview }) => (
+                <>
+                  <Card p="sm" withBorder>
+                    <Stack spacing={8}>
+                      <Text size="md" weight={600}>
+                        What did you think of this resource?
+                      </Text>
+                      <ResourceReviewThumbActions
+                        modelId={modelId}
+                        modelVersionId={modelVersionId}
+                        userReview={userReview}
+                      />
+                    </Stack>
+                    {userReview && (
+                      <Card.Section py="sm" mt="sm" inheritPadding withBorder>
+                        <EditUserResourceReviewV2
+                          modelVersionId={modelVersionId}
+                          modelName={modelName}
+                          userReview={userReview}
+                          innerRef={reviewEditRef}
+                        />
+                      </Card.Section>
+                    )}
+                  </Card>
+
+                  {userReview && (
+                    <Text size="sm" color="dimmed">
+                      {`We've saved your review. Now, consider adding images below to create a post showcasing the resource.`}
+                    </Text>
+                  )}
+                </>
               )}
-            </>
+            </UserResourceReviewComposite>
           )}
           {!displayReview && (
             <Text size="xs" color="dimmed">
