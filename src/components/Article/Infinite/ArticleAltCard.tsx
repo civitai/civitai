@@ -11,6 +11,8 @@ import { ArticleGetAll } from '~/types/router';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { slugit } from '~/utils/string-helpers';
 import { ArticleContextMenu } from '../ArticleContextMenu';
+import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
+import { MediaHash } from '~/components/ImageHash/ImageHash';
 
 export function ArticleAltCard({ data }: Props) {
   const { classes } = useStyles();
@@ -45,36 +47,53 @@ export function ArticleAltCard({ data }: Props) {
             zIndex: 8,
           }}
         />
-        <div style={{ position: 'relative', flex: 1, overflow: 'hidden', height: '100%' }}>
-          <Group
-            spacing={4}
-            sx={(theme) => ({
-              position: 'absolute',
-              top: theme.spacing.xs,
-              left: theme.spacing.xs,
-              zIndex: 1,
-            })}
-          >
-            <Badge
-              size="sm"
-              sx={{
-                background: 'rgb(30 133 230 / 40%)',
-                color: 'white',
-                backdropFilter: 'blur(7px)',
-                boxShadow: '1px 2px 3px -1px rgba(37,38,43,0.2)',
-              }}
-            >
-              Article
-            </Badge>
-            {category && (
-              <Badge size="sm" variant="gradient" gradient={{ from: 'cyan', to: 'blue' }}>
-                {category.name}
-              </Badge>
+        {coverImage && (
+          <ImageGuard
+            connect={{ entityId: id, entityType: 'article' }}
+            images={[coverImage]}
+            render={(image) => (
+              <div style={{ position: 'relative', flex: 1, overflow: 'hidden', height: '100%' }}>
+                <Group
+                  spacing={4}
+                  sx={(theme) => ({
+                    position: 'absolute',
+                    top: theme.spacing.xs,
+                    left: theme.spacing.xs,
+                    zIndex: 1,
+                  })}
+                >
+                  <ImageGuard.ToggleConnect position="static" />
+                  <Badge
+                    size="sm"
+                    sx={{
+                      background: 'rgb(30 133 230 / 40%)',
+                      color: 'white',
+                      backdropFilter: 'blur(7px)',
+                      boxShadow: '1px 2px 3px -1px rgba(37,38,43,0.2)',
+                    }}
+                  >
+                    Article
+                  </Badge>
+                  {category && (
+                    <Badge size="sm" variant="gradient" gradient={{ from: 'cyan', to: 'blue' }}>
+                      {category.name}
+                    </Badge>
+                  )}
+                </Group>
+                <ImageGuard.Content>
+                  {({ safe }) =>
+                    !safe ? (
+                      <MediaHash {...image} />
+                    ) : (
+                      <EdgeMedia className={classes.image} src={image.url} width={450} />
+                    )
+                  }
+                </ImageGuard.Content>
+              </div>
             )}
-          </Group>
-          {/* TODO.Briant - ImageGuard */}
-          {coverImage && <EdgeMedia className={classes.image} src={coverImage.url} width={450} />}
-        </div>
+          />
+        )}
+
         <Stack className={classes.info} spacing={8}>
           {data.user.image && (
             <CivitaiTooltip

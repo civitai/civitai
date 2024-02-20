@@ -23,7 +23,6 @@ export const FeaturedArticle = ({
     <Box className={cx(classes.card, className)} {...props}>
       {article.coverImage && (
         <Box className={classes.imageContainer}>
-          {/* TODO.Briant - ImageGuard */}
           <EdgeMedia
             src={article.coverImage.url}
             width={512}

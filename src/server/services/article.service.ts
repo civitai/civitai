@@ -407,10 +407,13 @@ export const getArticles = async ({
       select: { ...profileImageSelect, ingestion: true },
     });
 
-    const coverImages = await dbRead.image.findMany({
-      where: { id: { in: articles.map((x) => x.coverId).filter(isDefined) } },
-      select: imageSelect,
-    });
+    const coverIds = articles.map((x) => x.coverId).filter(isDefined);
+    const coverImages = coverIds.length
+      ? await dbRead.image.findMany({
+          where: { id: { in: coverIds } },
+          select: imageSelect,
+        })
+      : [];
 
     const articleCategories = await getCategoryTags('article');
 
@@ -493,10 +496,13 @@ export const getCivitaiNews = async () => {
     select: userWithCosmeticsSelect,
   });
 
-  const coverImages = await dbRead.image.findMany({
-    where: { id: { in: articlesRaw.map((x) => x.coverId).filter(isDefined) } },
-    select: imageSelect,
-  });
+  const coverIds = articlesRaw.map((x) => x.coverId).filter(isDefined);
+  const coverImages = coverIds.length
+    ? await dbRead.image.findMany({
+        where: { id: { in: coverIds } },
+        select: imageSelect,
+      })
+    : [];
 
   const articles = articlesRaw.map((article) => {
     const user = users.find((x) => x.id === article.userId);

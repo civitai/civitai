@@ -20,7 +20,9 @@ import {
   InteractiveTipBuzzButton,
   useBuzzTippingStore,
 } from '~/components/Buzz/InteractiveTipBuzzButton';
+import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 
+// TODO.remove component
 export function ArticleCard({ data, height = 450 }: Props) {
   const { id, title, coverImage, publishedAt, user, tags, stats } = data;
   const category = tags?.find((tag) => tag.isCategory);
@@ -72,10 +74,23 @@ export function ArticleCard({ data, height = 450 }: Props) {
                 {category.name}
               </Badge>
             )}
-            {/* <Box sx={{ height: height / 2, '& > img': { height: '100%', objectFit: 'cover' } }}>
-            </Box> */}
-            {/* TODO.Briant - ImageGuard */}
-            {coverImage && <EdgeMedia className={classes.image} src={coverImage.url} width={450} />}
+
+            {coverImage && (
+              <ImageGuard
+                images={[coverImage]}
+                connect={{ entityId: id, entityType: 'article' }}
+                render={(image) => (
+                  <ImageGuard.Content>
+                    {
+                      ({ safe }) =>
+                        safe ? (
+                          <EdgeMedia className={classes.image} src={coverImage.url} width={450} />
+                        ) : null // this doesn't really matter since this file should be gone
+                    }
+                  </ImageGuard.Content>
+                )}
+              />
+            )}
           </div>
           {/* <Card.Section py="xs" inheritPadding> */}
           <Stack spacing={4} px="sm" py="xs">

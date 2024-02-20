@@ -1,7 +1,13 @@
 import React, { forwardRef } from 'react';
-import { AutocompleteItem, Badge, Center, Group, Stack } from '@mantine/core';
+import { AutocompleteItem, Badge, Center, Group, Stack, ThemeIcon } from '@mantine/core';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { IconBookmark, IconEye, IconMessageCircle2, IconMoodSmile } from '@tabler/icons-react';
+import {
+  IconBookmark,
+  IconEye,
+  IconMessageCircle2,
+  IconMoodSmile,
+  IconPhotoOff,
+} from '@tabler/icons-react';
 import { Highlight } from 'react-instantsearch';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { abbreviateNumber } from '~/utils/number-helpers';
@@ -11,6 +17,7 @@ import {
   ViewMoreItem,
 } from '~/components/AutocompleteSearch/renderItems/common';
 import { SearchIndexDataMap } from '~/components/Search/search.utils2';
+import { MediaHash } from '~/components/ImageHash/ImageHash';
 
 export const ArticlesSearchItem = forwardRef<
   HTMLDivElement,
@@ -20,7 +27,7 @@ export const ArticlesSearchItem = forwardRef<
 
   if (!hit) return <ViewMoreItem ref={ref} value={value} {...props} />;
 
-  const { coverImage, user, nsfw, tags, stats } = hit;
+  const { coverImage, user, nsfw, tags, stats, title } = hit;
   const { commentCount, viewCount, favoriteCount, ...reactionStats } = stats || {
     commentCount: 0,
     viewCount: 0,
@@ -40,13 +47,31 @@ export const ArticlesSearchItem = forwardRef<
           borderRadius: '10px',
         }}
       >
-        {/* TODO.Briant - ImageGuard */}
-        {coverImage && (
-          <EdgeMedia
-            src={coverImage.url}
-            width={450}
-            style={{ minWidth: '100%', minHeight: '100%', objectFit: 'cover' }}
-          />
+        {coverImage ? (
+          nsfw || coverImage.nsfw !== 'None' ? (
+            <MediaHash {...coverImage} cropFocus="top" />
+          ) : (
+            <EdgeMedia
+              src={coverImage.url}
+              name={coverImage.name ?? coverImage.id.toString()}
+              type={coverImage.type}
+              alt={title}
+              anim={false}
+              width={450}
+              style={{
+                minWidth: '100%',
+                minHeight: '100%',
+                objectFit: 'cover',
+                position: 'absolute',
+                top: 0,
+                left: 0,
+              }}
+            />
+          )
+        ) : (
+          <ThemeIcon variant="light" size={64} radius={0}>
+            <IconPhotoOff size={32} />
+          </ThemeIcon>
         )}
       </Center>
       <Stack spacing={4} sx={{ flex: '1 !important' }}>

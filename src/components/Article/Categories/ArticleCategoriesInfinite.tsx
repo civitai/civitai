@@ -12,6 +12,7 @@ import { GetArticlesByCategorySchema } from '~/server/schema/article.schema';
 //   articleId?: number;
 // };
 
+// TODO.remove component
 export function ArticleCategoriesInfinite({
   filters: filterOverrides = {},
   limit = 6,

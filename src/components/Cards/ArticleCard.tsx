@@ -18,6 +18,8 @@ import {
 } from '~/components/Buzz/InteractiveTipBuzzButton';
 import { HolidayFrame } from '../Decorations/HolidayFrame';
 import { CosmeticType } from '@prisma/client';
+import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
+import { MediaHash } from '~/components/ImageHash/ImageHash';
 
 const IMAGE_CARD_WIDTH = 450;
 
@@ -50,44 +52,51 @@ export function ArticleCard({ data, aspectRatio }: Props) {
         className={classes.link}
       >
         <div className={classes.root}>
-          <Group
-            spacing={4}
-            position="apart"
-            className={cx(classes.contentOverlay, classes.top)}
-            noWrap
-          >
-            {category && (
-              <Badge
-                color="dark"
-                size="sm"
-                variant="light"
-                radius="xl"
-                sx={(theme) => ({
-                  position: 'absolute',
-                  top: theme.spacing.xs,
-                  left: theme.spacing.xs,
-                  zIndex: 1,
-                })}
-              >
-                <Text color="white">{category.name}</Text>
-              </Badge>
-            )}
-
-            <Stack ml="auto">
-              <ArticleContextMenu article={data} />
-            </Stack>
-          </Group>
-          {/* TODO.Briant - ImageGuard */}
           {coverImage && (
-            <EdgeMedia
-              src={coverImage.url}
-              // TODO: hardcoding upscaling because cover images look awful with the new card since we don't store width/height
-              width={IMAGE_CARD_WIDTH * 2.5}
-              placeholder="empty"
-              className={classes.image}
-              loading="lazy"
+            <ImageGuard
+              connect={{ entityId: id, entityType: 'article' }}
+              images={[coverImage]}
+              render={(image) => (
+                <>
+                  <Group
+                    spacing={4}
+                    position="apart"
+                    align="top"
+                    className={cx(classes.contentOverlay, classes.top)}
+                    noWrap
+                  >
+                    <ImageGuard.ToggleConnect position="static" />
+                    {category && (
+                      <Badge color="dark" size="sm" variant="light" radius="xl">
+                        <Text color="white">{category.name}</Text>
+                      </Badge>
+                    )}
+
+                    <Stack ml="auto">
+                      <ArticleContextMenu article={data} />
+                    </Stack>
+                  </Group>
+                  <ImageGuard.Content>
+                    {({ safe }) =>
+                      !safe ? (
+                        <MediaHash {...image} />
+                      ) : (
+                        <EdgeMedia
+                          src={image.url}
+                          // TODO: hardcoding upscaling because cover images look awful with the new card since we don't store width/height
+                          width={IMAGE_CARD_WIDTH * 2.5}
+                          placeholder="empty"
+                          className={classes.image}
+                          loading="lazy"
+                        />
+                      )
+                    }
+                  </ImageGuard.Content>
+                </>
+              )}
             />
           )}
+
           <Stack
             className={cx('footer', classes.contentOverlay, classes.bottom, classes.fullOverlay)}
             spacing="sm"
