@@ -84,8 +84,10 @@ export function ArticleCard({ data, height = 450 }: Props) {
                     {
                       ({ safe }) =>
                         safe ? (
-                          <EdgeMedia className={classes.image} src={coverImage.url} width={450} />
-                        ) : null // this doesn't really matter since this file should be gone
+                          <EdgeMedia className={classes.image} src={image.url} width={450} />
+                        ) : (
+                          <></>
+                        ) // this doesn't really matter since this file should be gone
                     }
                   </ImageGuard.Content>
                 )}
