@@ -1,3 +1,4 @@
+BEGIN;
 -- AlterEnum
 ALTER TYPE "CollectionMode" ADD VALUE 'Bookmark';
 
@@ -9,7 +10,9 @@ CREATE INDEX "Collection_mode_idx" ON "Collection" USING HASH ("mode");
 
 -- CreateIndex
 CREATE INDEX "CollectionContributor_userId_idx" ON "CollectionContributor" USING HASH ("userId");
+COMMIT;
  
+BEGIN;
 -- Ensure users have a single Bookmark collection of each type:
 CREATE UNIQUE INDEX "User_bookmark_collection" ON "Collection"("userId", "type", "mode")
 WHERE ("mode" = 'Bookmark');
@@ -41,3 +44,4 @@ INSERT INTO "CollectionItem" ("collectionId", "articleId", "createdAt", "addedBy
   WHERE ae."type" = 'Favorite'
 )
 ON CONFLICT DO NOTHING;
+COMMIT;

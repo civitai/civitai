@@ -14,6 +14,7 @@ import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvid
 import { ImagesInfiniteModel } from '~/server/services/image.service';
 import { removeEmpty } from '../../../utils/object-helpers';
 import { useMantineTheme } from '@mantine/core';
+import { useIsMobile } from '~/hooks/useIsMobile';
 
 type ImageDetailState = {
   images: ImageGetInfinite;
@@ -63,9 +64,10 @@ export function ImageDetailProvider({
   } & Record<string, unknown>;
 }) {
   const theme = useMantineTheme();
+  const isMobile = useIsMobile();
   const [active, setActive] = useLocalStorage({
     key: `image-detail-open`,
-    defaultValue: false,
+    defaultValue: !isMobile,
   });
 
   const router = useRouter();
