@@ -18,7 +18,6 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
 import {
   articleWhereSchema,
-  GetArticlesByCategorySchema,
   GetInfiniteArticlesSchema,
   UpsertArticleInput,
 } from '~/server/schema/article.schema';
@@ -580,42 +579,6 @@ export const getArticleById = async ({ id, user }: GetByIdInput & { user?: Sessi
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
   }
-};
-
-export const getArticlesByCategory = async ({
-  user,
-  cursor,
-  ...input
-}: GetArticlesByCategorySchema & {
-  user?: SessionUser;
-}) => {
-  input.limit ??= 10;
-  let categories = await getTypeCategories({
-    type: 'article',
-    excludeIds: input.excludedTagIds,
-    limit: input.limit + 1,
-    cursor,
-  });
-
-  let nextCursor: number | null = null;
-  if (categories.length > input.limit) nextCursor = categories.pop()?.id ?? null;
-  categories = categories.sort((a, b) => {
-    if (a.priority !== b.priority) return a.priority - b.priority;
-    return Math.random() - 0.5;
-  });
-
-  const items = await Promise.all(
-    categories.map((c) =>
-      getArticles({
-        ...input,
-        limit: Math.ceil((input.articleLimit ?? 12) * 1.25),
-        tags: [c.id],
-        sessionUser: user,
-      }).then(({ items }) => ({ ...c, items }))
-    )
-  );
-
-  return { items, nextCursor };
 };
 
 export const upsertArticle = async ({

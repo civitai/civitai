@@ -1040,6 +1040,16 @@ export const findResourcesToAssociateHandler = async ({
 };
 
 // Used to get the associated resources for a model
+type AssociatedResourceData = AsyncReturnType<typeof getAssociatedResourcesCardDataHandler>;
+type AssociatedResourceCardData = AssociatedResourceData[number];
+export type AssociatedResourceModelCardData = Extract<
+  AssociatedResourceCardData,
+  { resourceType: 'model' }
+>;
+export type AssociatedResourceArticleCardData = Extract<
+  AssociatedResourceCardData,
+  { resourceType: 'article' }
+>;
 export const getAssociatedResourcesCardDataHandler = async ({
   input,
   ctx,
@@ -1139,63 +1149,59 @@ export const getAssociatedResourcesCardDataHandler = async ({
       ,
     ]);
 
-    if (!models.length) {
-      return resourcesIds
-        .map(({ id, resourceType }) =>
-          resourceType === 'model' ? null : articles.find((article) => article.id === id)
-        )
-        .filter(isDefined);
-    } else {
-      const modelVersionIds = models.flatMap((m) => m.modelVersions).map((m) => m.id);
-      const images = !!modelVersionIds.length
-        ? await getImagesForModelVersion({
-            modelVersionIds,
-            excludedTagIds: modelInput.excludedImageTagIds,
-            excludedIds: await getHiddenImagesForUser({ userId: user?.id }),
-            excludedUserIds: modelInput.excludedUserIds,
-            currentUserId: user?.id,
-          })
-        : [];
-
-      const completeModels = models
-        .map(({ hashes, modelVersions, rank, ...model }) => {
-          const [version] = modelVersions;
-          if (!version) return null;
-          const [image] = images.filter((i) => i.modelVersionId === version.id);
-          const showImageless =
-            (user?.isModerator || model.user.id === user?.id) &&
-            (modelInput.user || modelInput.username);
-          if (!image && !showImageless) return null;
-          const canGenerate = !!version.generationCoverage?.covered;
-
-          return {
-            ...model,
-            hashes: hashes.map((hash) => hash.hash.toLowerCase()),
-            rank: {
-              downloadCount: rank?.downloadCountAllTime ?? 0,
-              favoriteCount: rank?.[`favoriteCount${period}`] ?? 0,
-              commentCount: rank?.[`commentCount${period}`] ?? 0,
-              ratingCount: rank?.[`ratingCount${period}`] ?? 0,
-              rating: rank?.[`rating${period}`] ?? 0,
-            },
-            image:
-              model.mode !== ModelModifier.TakenDown
-                ? (image as (typeof images)[0] | undefined)
-                : undefined,
-            canGenerate,
-            version,
-          };
+    const modelVersionIds = models.flatMap((m) => m.modelVersions).map((m) => m.id);
+    const images = !!modelVersionIds.length
+      ? await getImagesForModelVersion({
+          modelVersionIds,
+          excludedTagIds: modelInput.excludedImageTagIds,
+          excludedIds: await getHiddenImagesForUser({ userId: user?.id }),
+          excludedUserIds: modelInput.excludedUserIds,
+          currentUserId: user?.id,
         })
-        .filter(isDefined);
+      : [];
 
-      return resourcesIds
-        .map(({ id, resourceType }) =>
-          resourceType === 'model'
-            ? completeModels.find((model) => model.id === id)
-            : articles.find((article) => article.id === id)
-        )
-        .filter(isDefined);
-    }
+    const completeModels = models
+      .map(({ hashes, modelVersions, rank, ...model }) => {
+        const [version] = modelVersions;
+        if (!version) return null;
+        const versionImages = images.filter((i) => i.modelVersionId === version.id);
+        const showImageless =
+          (user?.isModerator || model.user.id === user?.id) &&
+          (modelInput.user || modelInput.username);
+        if (!versionImages.length && !showImageless) return null;
+        const canGenerate = !!version.generationCoverage?.covered;
+
+        return {
+          ...model,
+          hashes: hashes.map((hash) => hash.hash.toLowerCase()),
+          rank: {
+            downloadCount: rank?.downloadCountAllTime ?? 0,
+            favoriteCount: rank?.[`favoriteCount${period}`] ?? 0,
+            commentCount: rank?.[`commentCount${period}`] ?? 0,
+            ratingCount: rank?.[`ratingCount${period}`] ?? 0,
+            rating: rank?.[`rating${period}`] ?? 0,
+          },
+          images: model.mode !== ModelModifier.TakenDown ? (versionImages as typeof images) : [],
+          canGenerate,
+          version,
+        };
+      })
+      .filter(isDefined);
+
+    return resourcesIds
+      .map(({ id, resourceType }) => {
+        switch (resourceType) {
+          case 'article':
+            const article = articles.find((article) => article.id === id);
+            if (!article) return null;
+            return { resourceType: 'article' as const, ...article };
+          case 'model':
+            const model = completeModels.find((model) => model.id === id);
+            if (!model) return null;
+            return { resourceType: 'model' as const, ...model };
+        }
+      })
+      .filter(isDefined);
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);

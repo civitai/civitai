@@ -69,7 +69,7 @@ const imageFilterSchema = z.object({
   periodMode: periodModeSchema.optional(),
   sort: z.nativeEnum(ImageSort).default(ImageSort.MostReactions),
   generation: z.nativeEnum(ImageGenerationProcess).array().optional(),
-  view: viewModeSchema.default('feed'),
+  view: viewModeSchema.default('feed'), // TODO.remove
   excludeCrossPosts: z.boolean().optional(),
   types: z.array(z.nativeEnum(MediaType)).default([MediaType.image]),
   withMeta: z.boolean().optional(),

@@ -5,7 +5,7 @@ import { useZodRouteParams } from '~/hooks/useZodRouteParams';
 import { FilterKeys, useFiltersContext } from '~/providers/FiltersProvider';
 import { ImageSort } from '~/server/common/enums';
 import { periodModeSchema } from '~/server/schema/base.schema';
-import { GetImagesByCategoryInput, GetInfiniteImagesInput } from '~/server/schema/image.schema';
+import { GetInfiniteImagesInput } from '~/server/schema/image.schema';
 import { removeEmpty } from '~/utils/object-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -97,28 +97,6 @@ export const useQueryImages = (
     isLoading: isLoading || loadingPreferences,
     ...rest,
   };
-};
-
-export const useQueryImageCategories = (
-  filters?: Partial<GetImagesByCategoryInput>,
-  options?: { keepPreviousData?: boolean; enabled?: boolean }
-) => {
-  filters ??= {};
-  // const browsingMode = useFiltersContext((state) => state.browsingMode);
-  const { data, ...rest } = trpc.image.getImagesByCategory.useInfiniteQuery(
-    { ...filters },
-    {
-      getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
-      getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),
-      trpc: { context: { skipBatch: true } },
-      keepPreviousData: true,
-      ...options,
-    }
-  );
-
-  const categories = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data]);
-
-  return { data, categories, ...rest };
 };
 
 const CSAM_NOTIFICATION_ID = 'sending-report';

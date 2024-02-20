@@ -50,7 +50,6 @@ export function ArticleContextMenu({ article, ...props }: Props) {
 
               if (atDetailsPage) await router.push('/articles');
               await queryUtils.article.getInfinite.invalidate();
-              await queryUtils.article.getByCategory.invalidate();
             },
             onError(error) {
               showErrorNotification({
@@ -76,7 +75,6 @@ export function ArticleContextMenu({ article, ...props }: Props) {
 
           await queryUtils.article.getById.invalidate({ id: result.id });
           await queryUtils.article.getInfinite.invalidate();
-          await queryUtils.article.getByCategory.invalidate();
           await queryUtils.article.getMyDraftArticles.invalidate();
         },
         onError(error) {

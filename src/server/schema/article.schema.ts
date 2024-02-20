@@ -54,24 +54,3 @@ export const upsertArticleInput = z.object({
   publishedAt: z.date().nullish(),
   attachments: z.array(baseFileSchema).optional(),
 });
-
-export type GetArticlesByCategorySchema = z.infer<typeof getArticlesByCategorySchema>;
-// export const getArticlesByCategorySchemaOld = z.object({
-//   limit: z.number().min(1).max(30).optional(),
-//   articleLimit: z.number().min(1).max(30).optional(),
-//   cursor: z.preprocess((val) => Number(val), z.number()).optional(),
-//   period: z.nativeEnum(MetricTimeframe).default(constants.articleFilterDefaults.period),
-//   sort: z.nativeEnum(ArticleSort).default(constants.articleFilterDefaults.sort),
-//   browsingMode: z.nativeEnum(BrowsingMode).default(constants.articleFilterDefaults.browsingMode),
-//   excludedUserIds: z.array(z.number()).optional(),
-//   excludedTagIds: z.array(z.number()).optional(),
-// });
-
-export const getArticlesByCategorySchema = z
-  .object({
-    limit: z.number().min(1).max(30).optional(),
-    articleLimit: z.number().min(1).max(30).optional(),
-    cursor: z.number().optional(),
-  })
-  .merge(userPreferencesForArticlesSchema)
-  .merge(articleWhereSchema);

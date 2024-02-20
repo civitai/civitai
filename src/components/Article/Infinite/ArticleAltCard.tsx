@@ -13,6 +13,7 @@ import { slugit } from '~/utils/string-helpers';
 import { ArticleContextMenu } from '../ArticleContextMenu';
 import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { AssociatedResourceArticleCardData } from '~/server/controllers/model.controller';
 
 export function ArticleAltCard({ data }: Props) {
   const { classes } = useStyles();
@@ -152,7 +153,7 @@ export function ArticleAltCard({ data }: Props) {
 }
 
 type Props = {
-  data: ArticleGetAll['items'][number];
+  data: AssociatedResourceArticleCardData;
   height?: number;
 };
 

@@ -264,27 +264,6 @@ export const getInfiniteImagesSchema = z
     return value;
   });
 
-export type GetImagesByCategoryInput = z.infer<typeof getImagesByCategorySchema>;
-export const getImagesByCategorySchema = z.object({
-  cursor: z.number().optional(),
-  limit: z.number().min(1).max(30).optional(),
-  imageLimit: z.number().min(1).max(30).optional(),
-  sort: z.nativeEnum(ImageSort).optional(),
-  period: z.nativeEnum(MetricTimeframe).optional(),
-  periodMode: periodModeSchema,
-  // browsingMode: z.nativeEnum(BrowsingMode).optional(),
-  excludedTagIds: z.array(z.number()).optional(),
-  excludedUserIds: z.array(z.number()).optional(),
-  excludedImageIds: z.array(z.number()).optional(),
-  tags: z.number().array().optional(),
-  username: z
-    .string()
-    .transform((data) => postgresSlugify(data))
-    .nullish(),
-  modelVersionId: z.number().optional(),
-  modelId: z.number().optional(),
-});
-
 export type GetImageInput = z.infer<typeof getImageSchema>;
 export const getImageSchema = z.object({
   id: z.number(),

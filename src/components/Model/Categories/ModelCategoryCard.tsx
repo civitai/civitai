@@ -47,7 +47,6 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
 import { constants } from '~/server/common/constants';
 import { ReportEntity } from '~/server/schema/report.schema';
-import { ModelGetByCategoryModel } from '~/types/router';
 import { isFutureDate } from '~/utils/date-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { getDisplayName, slugit } from '~/utils/string-helpers';
@@ -56,10 +55,16 @@ import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuIte
 import { truncate } from 'lodash-es';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { ToggleSearchableMenuItem } from '../../MenuItems/ToggleSearchableMenuItem';
+import type { AssociatedResourceModelCardData } from '~/server/controllers/model.controller';
 
 const aDayAgo = dayjs().subtract(1, 'day').toDate();
 
-export function ModelCategoryCard({ data }: { data: ModelGetByCategoryModel; height: number }) {
+export function ModelCategoryCard({
+  data,
+}: {
+  data: AssociatedResourceModelCardData;
+  height: number;
+}) {
   const { classes, theme, cx } = useStyles();
   const router = useRouter();
   const modelId = router.query.model ? Number(router.query.model) : undefined;
@@ -68,7 +73,8 @@ export function ModelCategoryCard({ data }: { data: ModelGetByCategoryModel; hei
 
   const [loading, setLoading] = useState(false);
 
-  const { id, image, name, rank, user, locked, earlyAccessDeadline } = data;
+  const { id, images, name, rank, user, locked, earlyAccessDeadline } = data;
+  const image = images[0];
   const inEarlyAccess = earlyAccessDeadline && isFutureDate(earlyAccessDeadline);
   const isNew = data.publishedAt && data.publishedAt > aDayAgo;
   const isUpdated =

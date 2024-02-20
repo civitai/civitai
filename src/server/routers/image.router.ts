@@ -12,7 +12,6 @@ import {
   updateImageSchema,
   getInfiniteImagesSchema,
   imageModerationSchema,
-  getImagesByCategorySchema,
   getImageSchema,
   getEntitiesCoverImage,
   imageReviewQueueInputSchema,
@@ -37,7 +36,6 @@ import {
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { applyUserPreferences } from '~/server/middleware.trpc';
 import {
-  getImagesByCategory,
   ingestImageById,
   removeImageResource,
   getModeratorPOITags,
@@ -116,11 +114,6 @@ export const imageRouter = router({
     .input(getByIdSchema)
     .mutation(({ input, ctx }) => removeImageResource({ ...input, user: ctx.user })),
   rescan: moderatorProcedure.input(getByIdSchema).mutation(({ input }) => ingestImageById(input)),
-  getImagesByCategory: publicProcedure
-    .input(getImagesByCategorySchema)
-    .use(applyUserPreferences())
-    // .use(cacheIt())
-    .query(({ input, ctx }) => getImagesByCategory({ ...input, userId: ctx.user?.id })),
   getEntitiesCoverImage: publicProcedure
     .input(getEntitiesCoverImage)
     .query(getEntitiesCoverImageHandler),
