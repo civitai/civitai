@@ -9,10 +9,11 @@ import {
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { constants } from '~/server/common/constants';
 import { generationPanel } from '~/store/generation.store';
-import { postImageTransmitter } from '~/store/post-image-transmitter.store';
+import { orchestratorMediaTransmitter } from '~/store/post-image-transmitter.store';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { showErrorNotification } from '~/utils/notifications';
+import { getOrchestratorMediaFilesFromUrls } from '~/utils/orchestration';
 
 export function GeneratedImageActions({
   actionIconSize = 'lg',
@@ -115,25 +116,13 @@ export const useGeneratedImageActions = () => {
   const isMutating = bulkDeleteImagesMutation.isLoading || createPostMutation.isLoading;
 
   const postSelectedImages = async () => {
-    const selectedImages = images.filter((x) => selected.includes(x.id));
-    const files = (
-      await Promise.all(
-        selectedImages.map(async (image) => {
-          const result = await fetch(image.url);
-          if (!result.ok) return;
-          const blob = await result.blob();
-          const lastIndex = image.url.lastIndexOf('/');
-          const name = image.url.substring(lastIndex + 1);
-          return new File([blob], name, { type: blob.type });
-        })
-      )
-    ).filter(isDefined);
-    if (!files.length) return;
+    const urls = images.filter((x) => selected.includes(x.id)).map((x) => x.url);
     try {
+      const key = 'generator';
+      orchestratorMediaTransmitter.setUrls(key, urls);
       const post = await createPostMutation.mutateAsync({});
-      const pathname = `/posts/${post.id}/edit`;
+      const pathname = `/posts/${post.id}/edit?src=${key}`;
       await router.push(pathname);
-      postImageTransmitter.setData(files);
       generationPanel.close();
       deselect();
     } catch (e) {

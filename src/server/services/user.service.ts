@@ -11,6 +11,8 @@ import {
 import {
   ArticleEngagementType,
   BountyEngagementType,
+  CollectionMode,
+  CollectionType,
   CosmeticSource,
   CosmeticType,
   ModelEngagementType,
@@ -798,6 +800,32 @@ export const getUserArticleEngagements = async ({ userId }: { userId: number }) 
   );
 };
 
+export const getUserBookmarkedArticles = async ({ userId }: { userId: number }) => {
+  let collection = await dbRead.collection.findFirst({
+    where: { userId, type: CollectionType.Article, mode: CollectionMode.Bookmark },
+  });
+
+  if (!collection) {
+    // Create the collection if it doesn't exist
+    collection = await dbWrite.collection.create({
+      data: {
+        userId,
+        type: CollectionType.Article,
+        mode: CollectionMode.Bookmark,
+        name: 'Bookmarked Articles',
+        description: 'Your bookmarked articles will appear in this collection.',
+      },
+    });
+  }
+
+  const bookmarked = await dbRead.collectionItem.findMany({
+    where: { collectionId: collection.id },
+    select: { articleId: true },
+  });
+
+  return bookmarked.map(({ articleId }) => articleId);
+};
+
 export const updateLeaderboardRank = async ({
   userIds,
   leaderboardIds,
@@ -929,6 +957,43 @@ export const toggleUserArticleEngagement = async ({
 
   if (!exists) {
     await dbWrite.articleEngagement.create({ data: { userId, articleId, type } });
+  }
+
+  return !exists;
+};
+
+export const toggleBookmarkedArticle = async ({
+  articleId,
+  userId,
+}: {
+  articleId: number;
+  userId: number;
+}) => {
+  const collection = await dbRead.collection.findFirstOrThrow({
+    where: { userId, type: CollectionType.Article, mode: CollectionMode.Bookmark },
+  });
+
+  const collectionItem = await dbRead.collectionItem.findFirst({
+    where: {
+      articleId,
+      collectionId: collection.id,
+    },
+  });
+
+  const exists = collectionItem;
+
+  // if the engagement exists, we only need to remove the existing engagmement
+  if (exists) {
+    await dbWrite.collectionItem.delete({
+      where: {
+        id: collectionItem.id,
+      },
+    });
+    await articleMetrics.queueUpdate(articleId);
+  } else {
+    await dbWrite.collectionItem.create({
+      data: { collectionId: collection.id, articleId },
+    });
   }
 
   return !exists;
@@ -1118,8 +1183,10 @@ export async function equipCosmetic({
   userId: number;
 }) {
   if (!Array.isArray(cosmeticId)) cosmeticId = [cosmeticId];
+  if (!cosmeticId.length) return;
+
   const userCosmetics = await dbRead.userCosmetic.findMany({
-    where: { userId, cosmeticId: cosmeticId.length > 0 ? { in: cosmeticId } : undefined },
+    where: { userId, cosmeticId: { in: cosmeticId } },
     select: { obtainedAt: true, cosmetic: { select: { type: true } } },
   });
   if (!userCosmetics.length) throw new Error("You don't have that cosmetic");
@@ -1154,3 +1221,9 @@ export async function unequipCosmeticByType({
   });
   await deleteUserCosmeticCache(userId);
 }
+
+export const getUserBookmarkCollections = async ({ userId }: { userId: number }) => {
+  return dbRead.collection.findMany({
+    where: { userId, mode: CollectionMode.Bookmark },
+  });
+};

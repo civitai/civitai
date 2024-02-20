@@ -23,7 +23,7 @@ import {
   useMantineColorScheme,
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
-import { Currency } from '@prisma/client';
+import { CollectionType, Currency } from '@prisma/client';
 import {
   IconBarbell,
   IconBookmark,
@@ -52,6 +52,7 @@ import {
   IconUsers,
   IconVideoPlus,
   IconWriting,
+  IconClubs,
 } from '@tabler/icons-react';
 import { signOut } from 'next-auth/react';
 import Link from 'next/link';
@@ -92,6 +93,8 @@ import { openBuyBuzzModal } from '../Modals/BuyBuzzModal';
 import { GenerateButton } from '../RunStrategy/GenerateButton';
 import { UserBuzz } from '../User/UserBuzz';
 import { FeatureIntroduction } from '~/components/FeatureIntroduction/FeatureIntroduction';
+import { trpc } from '~/utils/trpc';
+import { useSystemCollections } from '~/components/Collections/collection.utils';
 
 const HEADER_HEIGHT = 70;
 
@@ -251,7 +254,6 @@ export function AppHeader({
   const router = useRouter();
   const features = useFeatureFlags();
   const isMobile = useIsMobile();
-
   const [burgerOpened, setBurgerOpened] = useState(false);
   const [userMenuOpened, setUserMenuOpened] = useState(false);
   // const ref = useClickOutside(() => setBurgerOpened(false));
@@ -259,6 +261,10 @@ export function AppHeader({
 
   const isMuted = currentUser?.muted ?? false;
   const isMember = !!currentUser?.tier;
+  const { systemCollections } = useSystemCollections();
+  const bookmarkedArticlesCollection = systemCollections.find(
+    (c) => c.type === CollectionType.Article
+  );
 
   const mainActions = useMemo<MenuLink[]>(
     () => [
@@ -349,6 +355,18 @@ export function AppHeader({
         ),
         rel: 'nofollow',
       },
+      {
+        href: '/clubs/create',
+        visible: !isMuted && features.clubs,
+        redirectReason: 'create-club',
+        label: (
+          <Group align="center" spacing="xs">
+            <IconClubs stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
+            <Text>Create a club</Text>
+          </Group>
+        ),
+        rel: 'nofollow',
+      },
     ],
     [features.bounties, features.imageTraining, isMuted, theme]
   );
@@ -395,8 +413,8 @@ export function AppHeader({
         ),
       },
       {
-        href: '/articles?favorites=true&view=feed',
-        visible: !!currentUser,
+        href: `/collections/${bookmarkedArticlesCollection?.id}`,
+        visible: !!currentUser && !!bookmarkedArticlesCollection,
         label: (
           <Group align="center" spacing="xs">
             <IconBookmarkEdit stroke={1.5} color={theme.colors.pink[theme.fn.primaryShade()]} />
@@ -415,17 +433,17 @@ export function AppHeader({
           </Group>
         ),
       },
-      // {
-      //   href: '/clubs?engagement=engaged',
-      //   as: '/clubs',
-      //   visible: !!currentUser && features.clubs,
-      //   label: (
-      //     <Group align="center" spacing="xs">
-      //       <IconClubs stroke={1.5} color={theme.colors.pink[theme.fn.primaryShade()]} />
-      //       My clubs
-      //     </Group>
-      //   ),
-      // },
+      {
+        href: '/clubs?engagement=engaged',
+        as: '/clubs',
+        visible: !!currentUser && features.clubs,
+        label: (
+          <Group align="center" spacing="xs">
+            <IconClubs stroke={1.5} color={theme.colors.pink[theme.fn.primaryShade()]} />
+            My clubs
+          </Group>
+        ),
+      },
       {
         href: '/user/buzz-dashboard',
         visible: !!currentUser && features.buzz,
@@ -492,7 +510,7 @@ export function AppHeader({
       },
       {
         href: '/questions',
-        visible: !!currentUser,
+        visible: !!currentUser && features.questions,
         label: (
           <Group align="center" spacing="xs">
             <IconInfoSquareRounded stroke={1.5} />

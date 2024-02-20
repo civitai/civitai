@@ -98,9 +98,8 @@ export const removeBlockedImages = createJob('remove-blocked-images', '0 23 * * 
     return;
   }
 
-  const toRemove = images.map((x) => x.id);
-  const batches = chunk(toRemove, 3);
-  for (const batch of batches) {
-    await Promise.all(batch.map((id) => deleteImageById({ id })));
-  }
+  const tasks = images.map((x) => async () => {
+    await deleteImageById(x);
+  });
+  await limitConcurrency(tasks, 5);
 });

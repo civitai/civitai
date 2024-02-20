@@ -66,6 +66,7 @@ export const getAllCollectionsInfiniteHandler = async ({
         type: true,
         userId: true,
         image: { select: imageSelect },
+        mode: true,
         _count: {
           select: {
             items: { where: { status: CollectionItemStatus.ACCEPTED } },

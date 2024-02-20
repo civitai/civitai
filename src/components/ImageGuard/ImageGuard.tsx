@@ -1,5 +1,6 @@
 import {
   ActionIcon,
+  ActionIconProps,
   Alert,
   Badge,
   Box,
@@ -18,7 +19,7 @@ import {
   Text,
   ThemeIcon,
 } from '@mantine/core';
-import { CollectionType, NsfwLevel } from '@prisma/client';
+import { CollectionType, ImageIngestionStatus, NsfwLevel } from '@prisma/client';
 import {
   IconAlertTriangle,
   IconCheck,
@@ -29,9 +30,12 @@ import {
   IconLock,
   IconPencil,
   IconPlus,
+  IconRecycle,
+  IconRestore,
   IconTrash,
   IconUser,
   IconUserMinus,
+  IconUserOff,
 } from '@tabler/icons-react';
 import Link from 'next/link';
 import Router, { useRouter } from 'next/router';
@@ -170,6 +174,7 @@ type ImageProps = {
   userId?: number;
   user?: SimpleUser;
   url?: string | null;
+  ingestion?: ImageIngestionStatus;
 };
 
 type ImageGuardProps<T extends ImageProps> = {
@@ -311,6 +316,8 @@ ImageGuard.Report = function ReportImage({
   withinPortal = false,
   context = 'image',
   additionalMenuItems,
+  actionIconProps,
+  iconSize = 26,
 }: {
   position?: 'static' | 'top-left' | 'top-right';
   withinPortal?: boolean;
@@ -318,6 +325,8 @@ ImageGuard.Report = function ReportImage({
   additionalMenuItems?:
     | React.ReactElement<MenuItemProps | MenuDividerProps | MenuLabelProps>[]
     | null;
+  actionIconProps?: Omit<ActionIconProps, 'onClick'>;
+  iconSize?: number;
 }) {
   const utils = trpc.useContext();
   const { getMenuItems } = useImageGuardReportContext();
@@ -326,11 +335,12 @@ ImageGuard.Report = function ReportImage({
   const features = useFeatureFlags();
   const { image, showReportNsfw, isOwner, isModerator } = useImageGuardContentContext();
   const [needsReview, setNeedsReview] = useState(image.needsReview);
+  const [ingestion, setIngestion] = useState(image.ingestion);
 
   const moderateImagesMutation = trpc.image.moderate.useMutation();
   const handleModerate = async (
     e: React.SyntheticEvent,
-    action: 'accept' | 'delete' | 'removeName'
+    action: 'accept' | 'delete' | 'removeName' | 'mistake'
   ) => {
     e.preventDefault();
     e.stopPropagation();
@@ -342,6 +352,7 @@ ImageGuard.Report = function ReportImage({
       reviewType: 'minor',
     });
     setNeedsReview(null);
+    setIngestion('Scanned');
   };
 
   // if (!showReportNsfw) return null;
@@ -391,6 +402,14 @@ ImageGuard.Report = function ReportImage({
           </Menu.Item>
           {needsReview === 'poi' && (
             <Menu.Item
+              onClick={(e) => handleModerate(e, 'mistake')}
+              icon={<IconUserOff size={14} stroke={1.5} />}
+            >
+              Not POI
+            </Menu.Item>
+          )}
+          {needsReview === 'poi' && (
+            <Menu.Item
               onClick={(e) => handleModerate(e, 'removeName')}
               icon={<IconUserMinus size={14} stroke={1.5} />}
             >
@@ -421,6 +440,32 @@ ImageGuard.Report = function ReportImage({
           </Stack>
         </HoverCard.Dropdown>
       </HoverCard>
+    );
+  } else if (isModerator && ingestion === 'Blocked') {
+    NeedsReviewBadge = (
+      <Menu position="bottom">
+        <Menu.Target>
+          <Box
+            style={{ cursor: 'pointer' }}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+            }}
+          >
+            <ThemeIcon size="lg" color="yellow">
+              <IconRecycle strokeWidth={2.5} size={20} />
+            </ThemeIcon>
+          </Box>
+        </Menu.Target>
+        <Menu.Dropdown>
+          <Menu.Item
+            onClick={(e) => handleModerate(e, 'accept')}
+            icon={<IconRestore size={14} stroke={1.5} />}
+          >
+            Restore
+          </Menu.Item>
+        </Menu.Dropdown>
+      </Menu>
     );
   }
 
@@ -583,9 +628,10 @@ ImageGuard.Report = function ReportImage({
                 e.stopPropagation();
               }}
               sx={{ width: 30 }}
+              {...actionIconProps}
             >
               <IconDotsVertical
-                size={26}
+                size={iconSize}
                 color="#fff"
                 filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
               />

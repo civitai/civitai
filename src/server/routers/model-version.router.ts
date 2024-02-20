@@ -4,6 +4,7 @@ import {
   earlyAccessModelVersionsOnTimeframeHandler,
   getModelVersionHandler,
   getModelVersionRunStrategiesHandler,
+  modelVersionGeneratedImagesOnTimeframeHandler,
   publishModelVersionHandler,
   requestReviewHandler,
   toggleNotifyEarlyAccessHandler,
@@ -17,6 +18,7 @@ import {
   getModelVersionByModelTypeSchema,
   getModelVersionSchema,
   modelVersionUpsertSchema2,
+  modelVersionsGeneratedImagesOnTimeframeSchema,
   publishVersionSchema,
   upsertExplorationPromptSchema,
 } from '~/server/schema/model-version.schema';
@@ -102,4 +104,7 @@ export const modelVersionRouter = router({
   earlyAccessModelVersionsOnTimeframe: protectedProcedure
     .input(earlyAccessModelVersionsOnTimeframeSchema)
     .query(earlyAccessModelVersionsOnTimeframeHandler),
+  modelVersionsGeneratedImagesOnTimeframe: protectedProcedure
+    .input(modelVersionsGeneratedImagesOnTimeframeSchema)
+    .query(modelVersionGeneratedImagesOnTimeframeHandler),
 });

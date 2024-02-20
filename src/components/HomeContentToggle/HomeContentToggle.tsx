@@ -9,11 +9,14 @@ import {
   Text,
   ThemeIcon,
   createStyles,
+  Badge,
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import {
   IconCalendar,
   IconCategory,
+  IconClubs,
+  IconCpu,
   IconFileText,
   IconHome,
   IconLayoutList,
@@ -28,7 +31,12 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 
-const homeOptions = {
+type HomeOption = {
+  url: string;
+  icon: (props: TablerIconsProps) => JSX.Element;
+  highlight?: boolean;
+};
+const homeOptions: Record<string, HomeOption> = {
   home: {
     url: '/',
     icon: (props: TablerIconsProps) => <IconHome {...props} />,
@@ -61,7 +69,16 @@ const homeOptions = {
     url: '/events',
     icon: (props: TablerIconsProps) => <IconCalendar {...props} />,
   },
-} as const;
+  clubs: {
+    url: '/clubs',
+    icon: (props: TablerIconsProps) => <IconClubs {...props} />,
+  },
+  builds: {
+    url: '/builds',
+    icon: (props: TablerIconsProps) => <IconCpu {...props} />,
+    highlight: true,
+  },
+};
 type HomeOptions = keyof typeof homeOptions;
 
 const useStyles = createStyles<string, { hideActive?: boolean }>((_, params) => ({
@@ -141,6 +158,11 @@ export function HomeContentToggle({ size, sx, ...props }: Props) {
             <Text size="sm" transform="capitalize" inline>
               {key}
             </Text>
+            {value.highlight && (
+              <Badge color="yellow" variant="filled" size="sm" radius="xl">
+                New
+              </Badge>
+            )}
           </Group>
         </Anchor>
       </Link>
@@ -215,14 +237,30 @@ export function HomeTabs({ sx, ...tabProps }: HomeTabProps) {
   const { classes } = useTabsStyles();
 
   const tabs = Object.entries(homeOptions)
-    .filter(([key]) => ![key === 'bounties' && !features.bounties].some((b) => b))
+    .filter(
+      ([key]) =>
+        ![key === 'bounties' && !features.bounties, key === 'clubs' && !features.clubs].some(
+          (b) => b
+        )
+    )
     .map(([key, value]) => (
       <Link key={key} href={value.url} passHref>
         <Anchor variant="text" onClick={() => set(key as HomeOptions)}>
-          <Tabs.Tab value={key} icon={value.icon({ size: 16 })}>
-            <Text className={classes.tabLabel} inline>
-              {getDisplayName(key)}
-            </Text>
+          <Tabs.Tab
+            value={key}
+            icon={value.icon({ size: 16 })}
+            pr={value.highlight ? 10 : undefined}
+          >
+            <Group spacing={4}>
+              <Text className={classes.tabLabel} inline>
+                {getDisplayName(key)}
+              </Text>
+              {value.highlight && (
+                <Badge color="yellow" variant="filled" size="sm" radius="xl">
+                  New
+                </Badge>
+              )}
+            </Group>
           </Tabs.Tab>
         </Anchor>
       </Link>

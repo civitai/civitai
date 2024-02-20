@@ -254,11 +254,11 @@ export const articleMetrics = createMetricProcessor({
         COALESCE(c.month_comment_count, 0) AS month_comment_count,
         COALESCE(c.week_comment_count, 0) AS week_comment_count,
         COALESCE(c.day_comment_count, 0) AS day_comment_count,
-        COALESCE(ae.favorite_count, 0) AS favorite_count,
-        COALESCE(ae.year_favorite_count, 0) AS year_favorite_count,
-        COALESCE(ae.month_favorite_count, 0) AS month_favorite_count,
-        COALESCE(ae.week_favorite_count, 0) AS week_favorite_count,
-        COALESCE(ae.day_favorite_count, 0) AS day_favorite_count,
+        COALESCE(ab.favorite_count, 0) AS favorite_count,
+        COALESCE(ab.year_favorite_count, 0) AS year_favorite_count,
+        COALESCE(ab.month_favorite_count, 0) AS month_favorite_count,
+        COALESCE(ab.week_favorite_count, 0) AS week_favorite_count,
+        COALESCE(ab.day_favorite_count, 0) AS day_favorite_count,
         COALESCE(ae.hide_count, 0) AS hide_count,
         COALESCE(ae.year_hide_count, 0) AS year_hide_count,
         COALESCE(ae.month_hide_count, 0) AS month_hide_count,
@@ -296,11 +296,21 @@ export const articleMetrics = createMetricProcessor({
       LEFT JOIN (
         SELECT
           "articleId" AS id,
-          SUM(IIF(type = 'Favorite', 1, 0)) AS favorite_count,
-          SUM(IIF(type = 'Favorite' AND "createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_favorite_count,
-          SUM(IIF(type = 'Favorite' AND "createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_favorite_count,
-          SUM(IIF(type = 'Favorite' AND "createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_favorite_count,
-          SUM(IIF(type = 'Favorite' AND "createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_favorite_count,
+          SUM(1) AS favorite_count,
+          SUM(IIF(ci."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_favorite_count,
+          SUM(IIF(ci."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_favorite_count,
+          SUM(IIF(ci."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_favorite_count,
+          SUM(IIF(ci."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_favorite_count
+        FROM "CollectionItem" ci
+        JOIN "Collection" c ON ci."collectionId" = c."id"
+          AND c."mode" = 'Bookmark'
+          AND c."type" = 'Article'
+        WHERE ci."articleId" IS NOT NULL
+        GROUP BY "articleId"
+      ) ab ON q.id = ab.id
+      LEFT JOIN (
+        SELECT
+          "articleId" AS id,
           SUM(IIF(type = 'Hide', 1, 0)) AS hide_count,
           SUM(IIF(type = 'Hide' AND "createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_hide_count,
           SUM(IIF(type = 'Hide' AND "createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_hide_count,
@@ -348,7 +358,8 @@ export const articleMetrics = createMetricProcessor({
           SUM(IIF(aci."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_collected_count,
           SUM(IIF(aci."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_collected_count,
           SUM(IIF(aci."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_collected_count
-        FROM "CollectionItem" aci
+        FROM "CollectionItem" aci 
+        JOIN "Collection" c ON aci."collectionId" = c."id" AND c."mode" IS NULL AND c."type" = 'Article'
         WHERE aci."articleId" IS NOT NULL
         GROUP BY aci."articleId"
       ) ci ON q.id = ci.id

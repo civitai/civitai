@@ -356,9 +356,9 @@ export const imageMetrics = createMetricProcessor({
     await updateMetricAgeGroups();
   },
   async clearDay({ db }) {
-    await db.$executeRaw`
-      UPDATE "ImageMetric" SET "heartCount" = 0, "likeCount" = 0, "dislikeCount" = 0, "laughCount" = 0, "cryCount" = 0, "commentCount" = 0, "collectedCount" = 0, "tippedCount" = 0, "tippedAmountCount" = 0 WHERE timeframe = 'Day';
-    `;
+    // await db.$executeRaw`
+    //   UPDATE "ImageMetric" SET "heartCount" = 0, "likeCount" = 0, "dislikeCount" = 0, "laughCount" = 0, "cryCount" = 0, "commentCount" = 0, "collectedCount" = 0, "tippedCount" = 0, "tippedAmountCount" = 0 WHERE timeframe = 'Day';
+    // `;
   },
 });
 

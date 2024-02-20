@@ -69,6 +69,7 @@ import {
   getUserSettings,
   setUserSetting,
   unequipCosmeticByType,
+  getUserBookmarkCollections,
   toggleModelEngagement,
 } from '~/server/services/user.service';
 import {
@@ -1230,4 +1231,14 @@ export const dismissAlertHandler = async ({
   } catch (error) {
     throw throwDbError(error);
   }
+};
+
+export const getUserBookmarkCollectionsHandler = async ({
+  ctx,
+}: {
+  ctx: DeepNonNullable<Context>;
+}) => {
+  return getUserBookmarkCollections({
+    userId: ctx.user.id,
+  });
 };

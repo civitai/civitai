@@ -12,9 +12,11 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   DeleteExplorationPromptInput,
+  EarlyAccessModelVersionsOnTimeframeSchema,
   GetModelVersionByModelTypeProps,
   ModelVersionMeta,
   ModelVersionUpsertInput,
+  ModelVersionsGeneratedImagesOnTimeframeSchema,
   PublishVersionInput,
   UpsertExplorationPromptInput,
 } from '~/server/schema/model-version.schema';
@@ -30,6 +32,8 @@ import { isDefined } from '~/utils/type-guards';
 import { modelsSearchIndex } from '~/server/search-index';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
 import dayjs from 'dayjs';
+import { clickhouse } from '~/server/clickhouse/client';
+import { maxDate } from '~/utils/date-helpers';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
@@ -510,9 +514,8 @@ export const earlyAccessModelVersionsOnTimeframe = async ({
   userId,
   // Timeframe is on days
   timeframe = 14,
-}: {
+}: EarlyAccessModelVersionsOnTimeframeSchema & {
   userId: number;
-  timeframe?: number;
 }) => {
   type ModelVersionForEarlyAccess = {
     id: number;
@@ -548,4 +551,79 @@ export const earlyAccessModelVersionsOnTimeframe = async ({
   `;
 
   return modelVersions;
+};
+
+export const modelVersionGeneratedImagesOnTimeframe = async ({
+  userId,
+  // Timeframe is on days
+  timeframe = 31,
+}: ModelVersionsGeneratedImagesOnTimeframeSchema & {
+  userId: number;
+}) => {
+  type ModelVersionForGeneratedImages = {
+    id: number;
+    modelName: string;
+    modelVersionName: string;
+    userId: number;
+  };
+
+  const modelVersions = await dbRead.$queryRaw<ModelVersionForGeneratedImages[]>`
+      SELECT
+        mv.id,
+        m."userId",
+        m.name as "modelName",
+        mv.name as "modelVersionName"
+      FROM "ModelVersion" mv
+      JOIN "Model" m ON mv."modelId" = m.id
+      WHERE mv."status" = 'Published' 
+        AND m."userId" = ${userId}
+    `;
+
+  if (!clickhouse || modelVersions.length === 0) return [];
+
+  const date = maxDate(
+    dayjs().startOf('day').subtract(timeframe, 'day').toDate(),
+    dayjs().startOf('month').subtract(1, 'day').toDate()
+  ).toISOString();
+
+  const generationData = await clickhouse
+    .query({
+      query: `
+          SELECT 
+              resourceId as modelVersionId,
+              createdAt,
+              SUM(1) as generations
+          FROM (
+              SELECT 
+                  arrayJoin(resourcesUsed) as resourceId,
+                  createdAt::date as createdAt 
+              FROM orchestration.textToImageJobs
+              WHERE createdAt >= parseDateTimeBestEffortOrNull('${date}')
+          )
+          WHERE resourceId IN (${modelVersions.map((x) => x.id).join(',')})
+          GROUP BY resourceId, createdAt 
+          ORDER BY createdAt DESC, generations DESC;
+    `,
+      format: 'JSONEachRow',
+    })
+    .then((x) => x.json<{ modelVersionId: number; createdAt: Date; generations: number }[]>());
+
+  const versions = modelVersions
+    .map((version) => {
+      const versionData = generationData
+        .filter((x) => x.modelVersionId === version.id)
+        .map((x) => ({
+          createdAt: dayjs(x.createdAt).format('YYYY-MM-DD'),
+          generations: x.generations,
+        }));
+
+      const generations = versionData.reduce((acc, curr) => acc + curr.generations, 0);
+
+      return { ...version, data: versionData, generations };
+    })
+    .filter((v) => v.data.length > 0)
+    // Pre-sort by most generations.
+    .sort((a, b) => b.generations - a.generations);
+
+  return versions;
 };

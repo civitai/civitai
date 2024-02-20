@@ -1,7 +1,7 @@
 import { Box, createStyles } from '@mantine/core';
 import { useId } from '@mantine/hooks';
-import { useEffect, useMemo, useState } from 'react';
-import { InstagramEmbed, TwitterEmbed, YouTubeEmbed } from 'react-social-media-embed';
+import { useEffect, useState } from 'react';
+import { InstagramEmbed, XEmbed, YouTubeEmbed } from 'react-social-media-embed';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 
 export type SocialBlockProps = {
@@ -32,19 +32,27 @@ const useStyles = createStyles((theme, { type }: { type: SocialBlockProps['type'
   },
 }));
 
+const socialBlockComponent: Record<
+  SocialBlockProps['type'],
+  (props: { url: string }) => JSX.Element
+> = {
+  'ig-reel': InstagramReel,
+  'ig-post': InstagramPost,
+  'yt-short': YoutubeShort,
+  'yt-long': Youtube,
+  'tw-post': Tweet,
+  twitch: TwitchStream,
+};
+
 export function SocialBlock({ url, type }: SocialBlockProps) {
   const { classes } = useStyles({ type });
-  const content = useMemo(() => {
-    if (type === 'ig-reel') return <InstagramReel url={url} />;
-    if (type === 'ig-post') return <InstagramPost url={url} />;
-    if (type === 'yt-short') return <YoutubeShort url={url} />;
-    if (type === 'yt-long') return <Youtube url={url} />;
-    if (type === 'tw-post') return <Tweet url={url} />;
-    if (type === 'twitch') return <TwitchStream channel={url} />;
-    return null;
-  }, [type]);
+  const SocialComponent = socialBlockComponent[type];
 
-  return <div className={classes.card}>{content}</div>;
+  return (
+    <div className={classes.card}>
+      <SocialComponent url={url} />
+    </div>
+  );
 }
 
 function InstagramReel({ url }: { url: string }) {
@@ -60,7 +68,6 @@ function useTwitchEmbed() {
   const [ready, setReady] = useState(twitchStarted);
   useEffect(() => {
     if (!twitchStarted) {
-      console.log('loading twitch embed');
       const script = document.createElement('script');
       script.src = 'https://embed.twitch.tv/embed/v1.js';
       document.body.appendChild(script);
@@ -73,7 +80,7 @@ function useTwitchEmbed() {
 
   return { ready };
 }
-function TwitchStream({ channel }: { channel: string }) {
+function TwitchStream({ url }: { url: string }) {
   const { ready } = useTwitchEmbed();
   const [initialized, setInitialized] = useState(false);
   const id = useId();
@@ -83,30 +90,35 @@ function TwitchStream({ channel }: { channel: string }) {
     new window.Twitch.Embed(id, {
       width: '100%',
       height: '100%',
-      channel,
+      channel: url,
       layout: 'video',
       allowfullscreen: true,
       muted: true,
       parent: ['civitai.com'],
     });
     setInitialized(true);
-  }, [ready, id, channel]);
+  }, [ready, id, url, initialized]);
 
-  return <Box id={id} w="100%" h="100%" />;
+  return (
+    // HACK: Needed to prevent the Twitch embed from being removed from the DOM. See: https://stackoverflow.com/questions/54880669/react-domexception-failed-to-execute-removechild-on-node-the-node-to-be-re
+    <div>
+      <Box id={id} w="100%" h="100%" />
+    </div>
+  );
 }
 
-function extractVideoID(url: string) {
-  // Regular expression to find the YouTube video ID
-  const regExp =
-    /^.*((youtu.be\/)|(v\/)|(\/u\/\w\/)|(embed\/)|(watch\?)|(shorts\/))\??v?=?([^#&?]*).*/;
-  const match = url.match(regExp);
+// function extractVideoID(url: string) {
+//   // Regular expression to find the YouTube video ID
+//   const regExp =
+//     /^.*((youtu.be\/)|(v\/)|(\/u\/\w\/)|(embed\/)|(watch\?)|(shorts\/))\??v?=?([^#&?]*).*/;
+//   const match = url.match(regExp);
 
-  return match && match[8].length == 11 ? match[8] : null;
-}
+//   return match && match[8].length == 11 ? match[8] : null;
+// }
 
 function YoutubeShort({ url }: { url: string }) {
   url = url.includes('/shorts/') ? url.replace('/shorts/', '/watch?v=') : url;
-  const videoId = extractVideoID(url);
+  // const videoId = extractVideoID(url);
   return (
     <YouTubeEmbed
       url={url}
@@ -131,5 +143,5 @@ function Youtube({ url }: { url: string }) {
 }
 
 function Tweet({ url }: { url: string }) {
-  return <TwitterEmbed url={url} width="100%" placeholderDisabled />;
+  return <XEmbed url={url} width="100%" placeholderDisabled />;
 }

@@ -69,8 +69,15 @@ export function useApplyHiddenPreferences<
         case 'images':
           return value.filter((image) => {
             const userId = image.userId ?? image.user?.id;
-            if (userId === currentUser?.id && browsingMode !== BrowsingMode.SFW) return true;
-            if (image.ingestion && image.ingestion !== ImageIngestionStatus.Scanned) return false;
+            const isOwner = userId === currentUser?.id;
+            if (isOwner && browsingMode !== BrowsingMode.SFW) return true;
+            if (
+              image.ingestion &&
+              image.ingestion !== ImageIngestionStatus.Scanned &&
+              !isOwner &&
+              !currentUser?.isModerator
+            )
+              return false;
             if (userId && hiddenUsers.get(userId)) return false;
             if (hiddenImages.get(image.id) && !showHidden) return false;
             for (const tag of image.tagIds ?? []) if (hiddenTags.get(tag)) return false;

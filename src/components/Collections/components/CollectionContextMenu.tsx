@@ -14,12 +14,14 @@ import { CollectionContributorPermissionFlags } from '~/server/services/collecti
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { ToggleSearchableMenuItem } from '../../MenuItems/ToggleSearchableMenuItem';
+import { CollectionMode } from '@prisma/client';
 
 export function CollectionContextMenu({
   collectionId,
   ownerId,
   permissions,
   children,
+  mode,
   ...menuProps
 }: Props) {
   const queryUtils = trpc.useContext();
@@ -47,8 +49,10 @@ export function CollectionContextMenu({
                 message: 'Your collection has been deleted',
               });
 
-              if (atDetailsPage) await router.push('/collections');
               await queryUtils.collection.getInfinite.invalidate();
+              await queryUtils.collection.getAllUser.invalidate();
+
+              if (atDetailsPage) await router.push('/collections');
             },
             onError(error) {
               showErrorNotification({
@@ -109,11 +113,13 @@ export function CollectionContextMenu({
     }
   };
 
+  const isBookmarkCollection = mode === CollectionMode.Bookmark;
+
   return (
     <Menu {...menuProps} withArrow>
       <Menu.Target>{children}</Menu.Target>
       <Menu.Dropdown>
-        {(isOwner || isMod) && (
+        {!isBookmarkCollection && (isOwner || isMod) && (
           <>
             <Menu.Item
               color="red"
@@ -150,7 +156,7 @@ export function CollectionContextMenu({
             {collectionHomeBlock ? 'Remove from my home' : 'Add to my home'}
           </Menu.Item>
         )}
-        {permissions?.manage && (
+        {!isBookmarkCollection && permissions?.manage && (
           <Link href={`/collections/${collectionId}/review`} passHref>
             <Menu.Item component="a" icon={<IconPencil size={14} stroke={1.5} />}>
               Review items
@@ -170,11 +176,13 @@ export function CollectionContextMenu({
             }
           />
         )}
-        <ToggleSearchableMenuItem
-          entityType="Collection"
-          entityId={collectionId}
-          key="toggle-searchable-menu-item"
-        />
+        {!isBookmarkCollection && (
+          <ToggleSearchableMenuItem
+            entityType="Collection"
+            entityId={collectionId}
+            key="toggle-searchable-menu-item"
+          />
+        )}
       </Menu.Dropdown>
     </Menu>
   );
@@ -185,4 +193,5 @@ type Props = MenuProps & {
   ownerId: number;
   children: React.ReactNode;
   permissions?: CollectionContributorPermissionFlags;
+  mode?: CollectionMode | null;
 };

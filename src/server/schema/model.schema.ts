@@ -81,23 +81,17 @@ export const getAllModelsSchema = licensingSchema.merge(userPreferencesForModels
     .preprocess((val) => Number(val), z.number())
     .transform((val) => Math.floor(val))
     .optional(),
-  favorites: z.preprocess(
-    (val) => val === true || val === 'true',
-    z.boolean().optional().default(false)
-  ),
-  hidden: z.preprocess(
-    (val) => val === true || val === 'true',
-    z.boolean().optional().default(false)
-  ),
-  needsReview: z.boolean().optional(),
-  earlyAccess: z.boolean().optional(),
+  favorites: z.coerce.boolean().optional().default(false),
+  hidden: z.coerce.boolean().optional().default(false),
+  needsReview: z.coerce.boolean().optional(),
+  earlyAccess: z.coerce.boolean().optional(),
   ids: commaDelimitedNumberArray({ message: 'ids should be a number array' }).optional(),
   modelVersionIds: commaDelimitedNumberArray({
     message: 'modelVersionIds should be a number array',
   }).optional(),
-  supportsGeneration: z.boolean().optional(),
-  followed: z.boolean().optional(),
-  archived: z.boolean().optional(),
+  supportsGeneration: z.coerce.boolean().optional(),
+  followed: z.coerce.boolean().optional(),
+  archived: z.coerce.boolean().optional(),
   collectionId: z.number().optional(),
   collectionItemStatus: z.array(z.nativeEnum(CollectionItemStatus)).optional(),
   fileFormats: z.enum(constants.modelFileFormats).array().optional(),

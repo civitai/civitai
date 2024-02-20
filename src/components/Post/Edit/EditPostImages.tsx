@@ -37,12 +37,13 @@ import { POST_IMAGE_LIMIT } from '~/server/common/constants';
 import { ImageIngestionStatus } from '@prisma/client';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import { useEditPostContext, ImageUpload, ImageBlocked } from './EditPostProvider';
-import { postImageTransmitter } from '~/store/post-image-transmitter.store';
+import { orchestratorMediaTransmitter } from '~/store/post-image-transmitter.store';
 import { IMAGE_MIME_TYPE, MEDIA_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { UnblockImage } from '~/components/Image/UnblockImage/UnblockImage';
 import { useImageStore } from '~/store/image.store';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
+import { useRouter } from 'next/router';
 
 export function EditPostImages({ max = POST_IMAGE_LIMIT }: { max?: number }) {
   const currentUser = useCurrentUser();
@@ -50,6 +51,8 @@ export function EditPostImages({ max = POST_IMAGE_LIMIT }: { max?: number }) {
   const modelVersionId = useEditPostContext((state) => state.modelVersionId);
   const upload = useEditPostContext((state) => state.upload);
   const images = useEditPostContext((state) => state.images);
+  const router = useRouter();
+  const src = router.query.src as string;
 
   const handleDrop = async (files: File[]) => {
     if (currentUser?.muted) return;
@@ -57,8 +60,11 @@ export function EditPostImages({ max = POST_IMAGE_LIMIT }: { max?: number }) {
   };
 
   useEffect(() => {
-    const files = postImageTransmitter.getData();
-    if (files) handleDrop([...files].splice(0, max));
+    async function handleSrc() {
+      const files = await orchestratorMediaTransmitter.getFiles(src);
+      if (files.length) handleDrop([...files].splice(0, max));
+    }
+    handleSrc();
   }, []);
 
   return (

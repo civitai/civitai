@@ -15,15 +15,16 @@ import { ClubAdminPermission } from '@prisma/client';
 import { createServerSideProps } from '../../../../../server/utils/server-side-helpers';
 
 export const getServerSideProps = createServerSideProps({
+  useSession: true,
   resolver: async ({ features }) => {
     if (!features?.clubs) return { notFound: true };
 
-    return {
-      redirect: {
-        destination: '/content/clubs',
-        permanent: false,
-      },
-    };
+    // return {
+    //   redirect: {
+    //     destination: '/content/clubs',
+    //     permanent: false,
+    //   },
+    // };
   },
 });
 
