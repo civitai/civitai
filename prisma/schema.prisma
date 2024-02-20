@@ -1533,6 +1533,8 @@ model Partner {
   poi                Boolean             @default(false)
   personal           Boolean             @default(false)
   token              String?             @unique
+  tier               Int                 @default(0)
+  logo               String?
   runStrategies      RunStrategy[]
 }
 
