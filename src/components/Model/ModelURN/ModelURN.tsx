@@ -68,7 +68,7 @@ export const ModelURN = ({ baseModel, type, modelId, modelVersionId, full = fals
         size="xs"
         onClick={(e) => {
           e.stopPropagation();
-          copy(full ? urn : shortUrn);
+          copy(urn);
         }}
       >
         {copied ? <IconCheck size="20" /> : <IconCopy size="20" />}

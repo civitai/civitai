@@ -69,6 +69,7 @@ import {
   getUserSettings,
   setUserSetting,
   unequipCosmeticByType,
+  getUserBookmarkCollections,
 } from '~/server/services/user.service';
 import {
   handleLogError,
@@ -1215,4 +1216,14 @@ export const dismissAlertHandler = async ({
   } catch (error) {
     throw throwDbError(error);
   }
+};
+
+export const getUserBookmarkCollectionsHandler = async ({
+  ctx,
+}: {
+  ctx: DeepNonNullable<Context>;
+}) => {
+  return getUserBookmarkCollections({
+    userId: ctx.user.id,
+  });
 };

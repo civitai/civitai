@@ -41,9 +41,9 @@ const modelMetricProcessors = [
   updateVersionRatingMetrics,
   updateVersionFavoriteMetrics,
   updateVersionCommentMetrics,
-  updateVersionImageMetrics,
   updateCollectMetrics,
   updateTippedBuzzMetrics,
+  // updateVersionImageMetrics,
   updateModelMetrics,
 ];
 
@@ -490,11 +490,9 @@ async function updateVersionImageMetrics({ db, lastUpdate }: MetricProcessorRunC
 
   const versionIds = affected.map((x) => x.modelVersionId);
 
-  const batches = chunk(versionIds, 1000);
+  const batches = chunk(versionIds, 500);
   let rows = 0;
   for (const batch of batches) {
-    const batchJson = JSON.stringify(batch);
-
     rows += await db.$executeRaw`
       -- update version image metrics
       INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "imageCount")
@@ -520,7 +518,7 @@ async function updateVersionImageMetrics({ db, lastUpdate }: MetricProcessorRunC
         JOIN "Image" i ON i.id = ir."imageId" AND m."userId" != i."userId"
         JOIN "Post" p ON i."postId" = p.id AND p."publishedAt" IS NOT NULL AND p."publishedAt" < now()
         WHERE
-          mv.id = ANY (SELECT json_array_elements(${batchJson}::json)::text::integer)
+          mv.id IN (${Prisma.join(batch)}
       ) i
       CROSS JOIN (
         SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe

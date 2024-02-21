@@ -60,7 +60,7 @@ export const useMarkReadNotification = () => {
       queryUtils.user.checkNotifications.setData(undefined, (old) => {
         const newCounts: Record<string, number> = { ...old, all: old?.all ?? 0 };
         for (const key of Object.keys(newCounts)) {
-          const keyMatch = key === categoryStr || key === 'all';
+          const keyMatch = !categoryStr || key === categoryStr || key === 'all';
           if (keyMatch) {
             if (all) newCounts[key] = 0;
             else newCounts[key]--;
@@ -72,19 +72,24 @@ export const useMarkReadNotification = () => {
       });
 
       // Mark as read in notification feed
-      if (id) {
-        const queryKey = getQueryKey(trpc.notification.getAllByUser);
-        queryClient.setQueriesData(
-          { queryKey, exact: false },
-          produce((old: any) => {
-            console.log(Object.keys(old), id);
-            for (const page of old?.pages ?? []) {
+      const queryKey = getQueryKey(trpc.notification.getAllByUser);
+      queryClient.setQueriesData(
+        { queryKey, exact: false },
+        produce((old: any) => {
+          console.log(Object.keys(old), id);
+          for (const page of old?.pages ?? []) {
+            if (all) {
+              for (const item of page.items) {
+                const categoryMatch = !categoryStr || item.category.toLowerCase() === categoryStr;
+                if (categoryMatch) item.read = true;
+              }
+            } else if (id) {
               const item = page.items?.find((x: any) => x.id == id);
               if (item) item.read = true;
             }
-          })
-        );
-      }
+          }
+        })
+      );
     },
   });
 

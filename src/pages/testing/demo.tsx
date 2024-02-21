@@ -1,32 +1,10 @@
-import {
-  Badge,
-  Box,
-  Button,
-  Card,
-  Container,
-  Group,
-  List,
-  Stack,
-  Text,
-  Textarea,
-  Title,
-} from '@mantine/core';
-import { useState } from 'react';
-import {
-  getTagsFromPrompt,
-  highlightInappropriate,
-  includesInappropriate,
-} from '~/utils/metadata/audit';
-
-type AuditResult = {
-  highlighted: string;
-  tags: string[];
-};
+import { Container } from '@mantine/core';
+import { RunPartners } from '~/components/RunStrategy/RunPartners';
 
 export default function Demo() {
   return (
-    <Container size="md">
-      <img src="/api/image/model/1" />
+    <Container size="xs">
+      <RunPartners modelVersionId={1144} />
     </Container>
   );
 }

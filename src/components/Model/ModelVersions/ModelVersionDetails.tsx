@@ -653,7 +653,12 @@ export function ModelVersionDetails({
             modelType={model.type}
             deadline={version.earlyAccessDeadline}
           />
-          <ModelFileAlert versionId={version.id} modelType={model.type} files={version.files} />
+          <ModelFileAlert
+            versionId={version.id}
+            modelType={model.type}
+            files={version.files}
+            baseModel={version.baseModel}
+          />
           <Accordion
             variant="separated"
             multiple

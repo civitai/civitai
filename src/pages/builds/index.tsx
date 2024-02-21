@@ -16,8 +16,9 @@ import {
   Text,
   Title,
   createStyles,
+  HoverCard,
 } from '@mantine/core';
-import { IconAlertCircle, IconBrandSpeedtest } from '@tabler/icons-react';
+import { IconAlertCircle, IconBrandSpeedtest, IconCircleCheck } from '@tabler/icons-react';
 import { IconCheck } from '@tabler/icons-react';
 import { IconArrowUpRight } from '@tabler/icons-react';
 import { useState } from 'react';
@@ -94,11 +95,11 @@ const useStyles = createStyles((theme) => ({
 const aDayAgo = dayjs().subtract(1, 'day').toDate();
 export default function BuildPage() {
   const { classes } = useStyles();
-  const [state, setState] = useState<State>({ selectedBudget: 'Low', selectedProcessor: 'AMD' });
+  const [state, setState] = useState<State>({ selectedBudget: 'Mid', selectedProcessor: 'AMD' });
   const { data: builds, isLoading } = trpc.buildGuide.getAll.useQuery();
   const buildName = `${state.selectedBudget}_${state.selectedProcessor}`.toLowerCase();
   const data = builds?.find((build) => build.name === buildName);
-  const showPrices = data?.updatedAt && data?.updatedAt > aDayAgo;
+  const showPrices = true; // Always show prices now...
 
   return (
     <>
@@ -107,60 +108,71 @@ export default function BuildPage() {
         description="Find the best hardware for your budget and needs to build your own AI Generation machine. We love these components and we think you will too."
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/builds`, rel: 'canonical' }]}
       />
-      <Container size={800} py="xl">
+      <Container size={800}>
         <Stack spacing="xl">
-          <Title>Hardware we love</Title>
-          <Group position="apart" spacing={8}>
-            <Stack spacing={8}>
-              <Text size="lg" weight={500} color="dimmed">
-                Select your budget
-              </Text>
-              <Chip.Group
-                spacing={4}
-                value={state.selectedBudget}
-                onChange={(value) =>
-                  setState((curr) => ({ ...curr, selectedBudget: value as BuildBudget }))
-                }
-              >
-                {buildBudgets.map((budget) => (
-                  <Chip
-                    key={budget}
-                    classNames={{ label: classes.chipLabel, iconWrapper: classes.chipIconWrapper }}
-                    value={budget}
-                    variant="filled"
-                  >
-                    {budget}
-                  </Chip>
-                ))}
-              </Chip.Group>
-            </Stack>
-            <Stack spacing={8}>
-              <Text size="lg" weight={500} color="dimmed">
-                Processor
-              </Text>
-              <Chip.Group
-                spacing={4}
-                value={state.selectedProcessor}
-                onChange={(value) =>
-                  setState((curr) => ({
-                    ...curr,
-                    selectedProcessor: value as (typeof processors)[number],
-                  }))
-                }
-              >
-                {processors.map((processor) => (
-                  <Chip
-                    key={processor}
-                    classNames={{ label: classes.chipLabel, iconWrapper: classes.chipIconWrapper }}
-                    value={processor}
-                    variant="filled"
-                  >
-                    {processor}
-                  </Chip>
-                ))}
-              </Chip.Group>
-            </Stack>
-          </Group>
+          <Stack spacing={0}>
+            <Title>Hardware We Love</Title>
+            <Text size="sm" color="dimmed" mb="sm">
+              Any purchases made using these links directly contributes to Civitai ❤️
+            </Text>
+            <Group position="apart" spacing={8}>
+              <Stack spacing={8}>
+                <Text size="lg" weight={500} color="dimmed">
+                  Select your budget
+                </Text>
+                <Chip.Group
+                  spacing={4}
+                  value={state.selectedBudget}
+                  onChange={(value) =>
+                    setState((curr) => ({ ...curr, selectedBudget: value as BuildBudget }))
+                  }
+                >
+                  {buildBudgets.map((budget) => (
+                    <Chip
+                      key={budget}
+                      classNames={{
+                        label: classes.chipLabel,
+                        iconWrapper: classes.chipIconWrapper,
+                      }}
+                      value={budget}
+                      variant="filled"
+                    >
+                      {budget}
+                    </Chip>
+                  ))}
+                </Chip.Group>
+              </Stack>
+              <Stack spacing={8}>
+                <Text size="lg" weight={500} color="dimmed">
+                  Processor
+                </Text>
+                <Chip.Group
+                  spacing={4}
+                  value={state.selectedProcessor}
+                  onChange={(value) =>
+                    setState((curr) => ({
+                      ...curr,
+                      selectedProcessor: value as (typeof processors)[number],
+                    }))
+                  }
+                >
+                  {processors.map((processor) => (
+                    <Chip
+                      key={processor}
+                      classNames={{
+                        label: classes.chipLabel,
+                        iconWrapper: classes.chipIconWrapper,
+                      }}
+                      value={processor}
+                      variant="filled"
+                    >
+                      {processor}
+                    </Chip>
+                  ))}
+                </Chip.Group>
+              </Stack>
+            </Group>
+          </Stack>
           {isLoading && !data ? (
             <Center p="xl">
               <Loader />
@@ -170,19 +182,33 @@ export default function BuildPage() {
               <Paper className={classes.section} p="xl" radius="md" withBorder>
                 <Stack>
                   <Group spacing={8} position="apart">
-                    <Stack spacing={8}>
-                      <Group spacing={8} noWrap>
-                        <Text size="xl" weight={600}>
-                          Generation Speed
+                    <HoverCard shadow="md" width={300} zIndex={100} withArrow>
+                      <HoverCard.Target>
+                        <Stack spacing={8}>
+                          <Group spacing={8} noWrap>
+                            <Text size="xl" weight={600}>
+                              Generation Speed
+                            </Text>
+                            <IconBrandSpeedtest size={32} />
+                          </Group>
+                          <Progress
+                            color="success.5"
+                            radius="xl"
+                            value={(data?.capabilities?.speed ?? 0) * 10}
+                          />
+                        </Stack>
+                      </HoverCard.Target>
+                      <HoverCard.Dropdown>
+                        <Text color="yellow" weight={500}>
+                          About Generation Speed
                         </Text>
-                        <IconBrandSpeedtest size={32} />
-                      </Group>
-                      <Progress
-                        color="success.5"
-                        radius="xl"
-                        value={(data?.capabilities?.speed ?? 0) * 10}
-                      />
-                    </Stack>
+                        <Text size="sm">
+                          {`This gauge is based on a very accurate measure we call "Waifu Per Minute"
+                          (WPM). It's a measure of how many waifus can be generated in a minute. The
+                          higher the number, the better.`}
+                        </Text>
+                      </HoverCard.Dropdown>
+                    </HoverCard>
                     <PriceTag price={data?.totalPrice ?? 0} size={48} />
                   </Group>
                   <Group spacing={4}>
@@ -197,7 +223,13 @@ export default function BuildPage() {
                           radius="xl"
                           pl={6}
                           key={key}
-                          leftSection={hasFeature ? <IconCheck /> : <IconAlertCircle />}
+                          leftSection={
+                            hasFeature ? (
+                              <IconCircleCheck size={20} />
+                            ) : (
+                              <IconAlertCircle size={20} />
+                            )
+                          }
                         >
                           {name}
                         </Badge>
@@ -292,9 +324,11 @@ export default function BuildPage() {
                   </Card.Section>
                 ))}
                 {data && data.updatedAt && (
-                  <Text color="dimmed" size="xs" mt={5}>
-                    Prices last updated <DaysFromNow date={data.updatedAt} />
-                  </Text>
+                  <Group position="apart" mt={5}>
+                    <Text color="dimmed" size="xs">
+                      Prices last updated <DaysFromNow date={data.updatedAt} />
+                    </Text>
+                  </Group>
                 )}
               </Card>
             </>

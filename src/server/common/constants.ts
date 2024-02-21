@@ -65,9 +65,11 @@ export const constants = {
     'SD 2.1 Unclip',
     'SDXL 0.9',
     'SDXL 1.0',
+    'Pony',
     'SDXL 1.0 LCM',
     'SDXL Distilled',
     'SDXL Turbo',
+    'SDXL Lightning',
     'Stable Cascade',
     'SVD',
     'SVD XT',
@@ -292,7 +294,7 @@ export type BaseModelSetType = (typeof baseModelSetTypes)[number];
 export const baseModelSets: Record<BaseModelSetType, BaseModel[]> = {
   SD1: ['SD 1.4', 'SD 1.5', 'SD 1.5 LCM'],
   SD2: ['SD 2.0', 'SD 2.0 768', 'SD 2.1', 'SD 2.1 768', 'SD 2.1 Unclip'],
-  SDXL: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
+  SDXL: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM', 'Pony', 'SDXL Lightning'],
   SDXLDistilled: ['SDXL Distilled'],
   SCascade: ['Stable Cascade'],
 };
@@ -357,11 +359,13 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'SDXL 1.0 LCM': baseLicenses['openrail++'],
   'SDXL Distilled': baseLicenses['openrail++'],
   'SDXL Turbo': baseLicenses['sdxl turbo'],
+  'SDXL Lightning': baseLicenses['openrail++'],
   SVD: baseLicenses['svd'],
   'SVD XT': baseLicenses['svd'],
   'Playground v2': baseLicenses['playground v2'],
   'PixArt a': baseLicenses['agpl'],
   'Stable Cascade': baseLicenses['SAI NCRC'],
+  Pony: baseLicenses['openrail++'],
   Other: undefined,
 };
 
