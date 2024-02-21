@@ -99,8 +99,8 @@ function parseSortString(sortString: string): SortField[] {
   });
 }
 
-function parseCursor(fields: SortField[], cursor: string | number | bigint) {
-  if (typeof cursor === 'number' || typeof cursor === 'bigint')
+function parseCursor(fields: SortField[], cursor: string | number | Date | bigint) {
+  if (typeof cursor === 'number' || typeof cursor === 'bigint' || cursor instanceof Date)
     return { [fields[0].field]: cursor };
 
   const values = cursor.split(':').map(Number);
@@ -111,7 +111,7 @@ function parseCursor(fields: SortField[], cursor: string | number | bigint) {
   return result;
 }
 
-export function getCursor(sortString: string, cursor: string | number | bigint | undefined) {
+export function getCursor(sortString: string, cursor: string | number | bigint | Date | undefined) {
   const sortFields = parseSortString(sortString);
   let where: Prisma.Sql | undefined;
   if (cursor) {

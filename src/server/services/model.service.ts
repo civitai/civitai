@@ -199,6 +199,7 @@ export const getModelsRaw = async ({
     ids,
     earlyAccess,
     supportsGeneration,
+    fromPlatform,
     needsReview,
     collectionId,
     fileFormats,
@@ -273,6 +274,13 @@ export const getModelsRaw = async ({
           WHERE tom."modelId" = m."id" AND t."name" = ${tagname ?? tag}
         )`
     );
+  }
+
+  if (fromPlatform) {
+    AND.push(Prisma.sql`EXISTS (
+      SELECT 1 FROM "ModelVersion" mv
+      WHERE mv."trainingStatus" IS NOT NULL AND mv."modelId" = m."id"
+    )`);
   }
 
   if (username || user) {
@@ -466,6 +474,7 @@ export const getModelsRaw = async ({
   else if (sort === ModelSort.MostCollected) orderBy = `mr."collectedCount${period}Rank" ASC`;
   else if (sort === ModelSort.MostTipped) orderBy = `mr."tippedAmountCount${period}Rank" ASC`;
   else if (sort === ModelSort.ImageCount) orderBy = `mr."imageCount${period}Rank" ASC`;
+  else if (sort === ModelSort.Oldest) orderBy = `m."lastVersionAt" ASC`;
 
   // eslint-disable-next-line prefer-const
   let [cursorProp, cursorDirection] = orderBy?.split(' ');
