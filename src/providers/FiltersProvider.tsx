@@ -47,6 +47,7 @@ const modelFilterSchema = z.object({
   status: z.nativeEnum(ModelStatus).array().optional(),
   earlyAccess: z.boolean().optional(),
   supportsGeneration: z.boolean().optional(),
+  fromPlatform: z.boolean().optional(),
   followed: z.boolean().optional(),
   archived: z.boolean().optional(),
   fileFormats: z.enum(constants.modelFileFormats).array().optional(),
@@ -68,6 +69,7 @@ const imageFilterSchema = z.object({
   excludeCrossPosts: z.boolean().optional(),
   types: z.array(z.nativeEnum(MediaType)).default([MediaType.image]),
   withMeta: z.boolean().optional(),
+  fromPlatform: z.boolean().optional(),
   hidden: z.boolean().optional(),
   followed: z.boolean().optional(),
 });

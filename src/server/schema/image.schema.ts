@@ -222,7 +222,7 @@ export type GetInfiniteImagesInput = z.infer<typeof getInfiniteImagesSchema>;
 export const getInfiniteImagesSchema = z
   .object({
     limit: z.number().min(0).max(200).default(100),
-    cursor: z.union([z.bigint(), z.number(), z.string()]).optional(),
+    cursor: z.union([z.bigint(), z.number(), z.string(), z.date()]).optional(),
     skip: z.number().optional(),
     postId: z.number().optional(),
     collectionId: z.number().optional(),
@@ -251,6 +251,7 @@ export const getInfiniteImagesSchema = z
     withMeta: z.boolean().optional(),
     hidden: z.boolean().optional(),
     followed: z.boolean().optional(),
+    fromPlatform: z.coerce.boolean().optional(),
   })
   .transform((value) => {
     if (value.withTags) {

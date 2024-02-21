@@ -143,7 +143,7 @@ export function Reactions({
             px={0}
             compact
             onClick={() => setShowAll((s) => !s)}
-            {...(buttonStyling ?? {})}
+            {...(buttonStyling ? buttonStyling('AddReaction') : {})}
           >
             <Group spacing={2} noWrap>
               <IconPlus size={16} stroke={2.5} />
@@ -253,7 +253,7 @@ function ReactionBadge({
       pr={3}
       color={color}
       compact
-      {...(buttonStyling ?? {})}
+      {...(buttonStyling ? buttonStyling(reaction, hasReacted) : {})}
     >
       <Group spacing={4} align="center" noWrap>
         <Text sx={{ fontSize: '1.2em', lineHeight: 1.1 }}>
@@ -313,7 +313,7 @@ function BuzzTippingBadge({
         px={3}
         color="yellow.7"
         variant="light"
-        {...buttonStyling}
+        {...(buttonStyling ? buttonStyling('BuzzTip') : {})}
       >
         <Group spacing={2} align="center" noWrap>
           <IconBolt color="yellow.7" style={{ fill: theme.colors.yellow[7] }} size={16} />

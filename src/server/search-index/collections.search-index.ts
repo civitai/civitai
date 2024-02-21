@@ -10,6 +10,7 @@ import {
   SearchIndexRunContext,
 } from '~/server/search-index/base.search-index';
 import {
+  CollectionMode,
   CollectionReadConfiguration,
   CollectionType,
   CollectionWriteConfiguration,
@@ -123,6 +124,7 @@ type CollectionForSearchIndex = {
   read: CollectionReadConfiguration;
   write: CollectionWriteConfiguration;
   userId: number;
+  mode: CollectionMode | null;
   metrics: {
     followerCount: number;
     itemCount: number;
@@ -221,7 +223,8 @@ const onFetchItemsToIndex = async ({
     c."userId",
     c."type",
     c."read",
-    c."write"
+    c."write",
+    c."mode"
     FROM "Collection" c
     WHERE ${Prisma.join(WHERE, ' AND ')}
     OFFSET ${offset} LIMIT ${READ_BATCH_SIZE}

@@ -17,6 +17,7 @@ export enum ModelSort {
   MostCollected = 'Most Collected',
   ImageCount = 'Most Images',
   Newest = 'Newest',
+  Oldest = 'Oldest',
 }
 
 export enum ReviewSort {
@@ -49,6 +50,7 @@ export enum ImageSort {
   MostComments = 'Most Comments',
   MostCollected = 'Most Collected',
   Newest = 'Newest',
+  Oldest = 'Oldest',
   Random = 'Random',
 }
 

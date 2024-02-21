@@ -14,6 +14,7 @@ import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvid
 import { ImagesInfiniteModel } from '~/server/services/image.service';
 import { removeEmpty } from '../../../utils/object-helpers';
 import { useMantineTheme } from '@mantine/core';
+import { useIsMobile } from '~/hooks/useIsMobile';
 
 type ImageDetailState = {
   images: ImageGetInfinite;
@@ -63,9 +64,10 @@ export function ImageDetailProvider({
   } & Record<string, unknown>;
 }) {
   const theme = useMantineTheme();
+  const isMobile = useIsMobile();
   const [active, setActive] = useLocalStorage({
     key: `image-detail-open`,
-    defaultValue: false,
+    defaultValue: true,
   });
 
   const router = useRouter();
@@ -106,6 +108,12 @@ export function ImageDetailProvider({
       );
     }
   }, [prefetchedImage]); // eslint-disable-line
+
+  useEffect(() => {
+    if (isMobile && active) {
+      setActive(false);
+    }
+  }, [isMobile]);
 
   // const images = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data]);
   const image = images.find((x) => x.id === imageId) ?? prefetchedImage ?? undefined;
@@ -207,7 +215,7 @@ export function ImageDetailProvider({
       <ReactionSettingsProvider
         settings={{
           hideReactionCount,
-          buttonStyling: {
+          buttonStyling: (reaction, hasReacted) => ({
             radius: 'xl',
             variant: 'light',
             pl: undefined,
@@ -216,10 +224,12 @@ export function ImageDetailProvider({
             h: 30,
             style: {
               color: 'white',
-              background: theme.fn.rgba(theme.colors.gray[8], 0.4),
+              background: hasReacted
+                ? theme.fn.rgba(theme.colors.blue[4], 0.4)
+                : theme.fn.rgba(theme.colors.gray[8], 0.4),
               backdropFilter: 'blur(7px)',
             },
-          },
+          }),
         }}
       >
         {children}
