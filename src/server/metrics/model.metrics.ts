@@ -269,6 +269,7 @@ async function updateVersionGenerationMetrics({ ch, db, lastUpdate }: MetricProc
   return [];
 }
 
+// TODO.justin: confirm changes here
 async function updateVersionRatingMetrics({ ch, db, lastUpdate }: MetricProcessorRunContext) {
   // Disabled clickhouse as it seems to be missing resource reviews somehow...
   const clickhouseSince = dayjs(lastUpdate).toISOString();
@@ -303,51 +304,41 @@ async function updateVersionRatingMetrics({ ch, db, lastUpdate }: MetricProcesso
       -- update version rating metrics
       INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "thumbsUpCount", "thumbsDownCount")
       SELECT
-          mv.id,
-          tf.timeframe,
+        mv.id,
+        tf.timeframe,
+        COALESCE(SUM(
           CASE
-            WHEN rr.recommended = true THEN (
-              COALESCE(SUM(
-                CASE
-                    WHEN rr."userId" IS NULL THEN 0
-                    WHEN tf.timeframe = 'AllTime' THEN 1
-                    WHEN tf.timeframe = 'Year' THEN IIF(rr.created_at >= NOW() - interval '1 year', 1, 0)
-                    WHEN tf.timeframe = 'Month' THEN IIF(rr.created_at >= NOW() - interval '1 month', 1, 0)
-                    WHEN tf.timeframe = 'Week' THEN IIF(rr.created_at >= NOW() - interval '1 week', 1, 0)
-                    WHEN tf.timeframe = 'Day' THEN IIF(rr.created_at >= NOW() - interval '1 day', 1, 0)
-                END
-              ), 0)
-            )
-            WHEN rr.recommended = false THEN 0
-          END,
-          CASE
-            WHEN rr.recommended = false THEN (
-              COALESCE(SUM(
-                CASE
-                    WHEN rr."userId" IS NULL THEN 0
-                    WHEN tf.timeframe = 'AllTime' THEN 1
-                    WHEN tf.timeframe = 'Year' THEN IIF(rr.created_at >= NOW() - interval '1 year', 1, NULL)
-                    WHEN tf.timeframe = 'Month' THEN IIF(rr.created_at >= NOW() - interval '1 month', 1, NULL)
-                    WHEN tf.timeframe = 'Week' THEN IIF(rr.created_at >= NOW() - interval '1 week', 1, NULL)
-                    WHEN tf.timeframe = 'Day' THEN IIF(rr.created_at >= NOW() - interval '1 day', 1, NULL)
-                END
-              ), 0)
-            )
-            WHEN rr.recommended = true THEN 0
+              WHEN rr."userId" IS NULL OR rr.recommended = false THEN 0
+              WHEN tf.timeframe = 'AllTime' THEN 1
+              WHEN tf.timeframe = 'Year' THEN IIF(rr.created_at >= NOW() - interval '1 year', 1, 0)
+              WHEN tf.timeframe = 'Month' THEN IIF(rr.created_at >= NOW() - interval '1 month', 1, 0)
+              WHEN tf.timeframe = 'Week' THEN IIF(rr.created_at >= NOW() - interval '1 week', 1, 0)
+              WHEN tf.timeframe = 'Day' THEN IIF(rr.created_at >= NOW() - interval '1 day', 1, 0)
           END
+        ), 0),
+        COALESCE(SUM(
+          CASE
+              WHEN rr."userId" IS NULL OR rr.recommended = true THEN 0
+              WHEN tf.timeframe = 'AllTime' THEN 1
+              WHEN tf.timeframe = 'Year' THEN IIF(rr.created_at >= NOW() - interval '1 year', 1, NULL)
+              WHEN tf.timeframe = 'Month' THEN IIF(rr.created_at >= NOW() - interval '1 month', 1, NULL)
+              WHEN tf.timeframe = 'Week' THEN IIF(rr.created_at >= NOW() - interval '1 week', 1, NULL)
+              WHEN tf.timeframe = 'Day' THEN IIF(rr.created_at >= NOW() - interval '1 day', 1, NULL)
+          END
+        ), 0)
       FROM "ModelVersion" mv
       LEFT JOIN (
           SELECT
               r."userId",
               r."modelVersionId",
-              r.recommended,
+              BOOL_OR(r.recommended) AS recommended,
               MAX(r."createdAt") AS created_at
           FROM "ResourceReview" r
           JOIN "Model" m ON m.id = r."modelId" AND m."userId" != r."userId"
           WHERE r.exclude = FALSE
           AND r."tosViolation" = FALSE
           AND r."modelVersionId" = ANY (SELECT json_array_elements(${batchJson}::json)::text::integer)
-          GROUP BY r."userId", r."modelVersionId", r.recommended
+          GROUP BY r."userId", r."modelVersionId"
       ) rr ON rr."modelVersionId" = mv.id
       CROSS JOIN (
         SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
@@ -665,7 +656,7 @@ async function updateTippedBuzzMetrics({ db, lastUpdate }: MetricProcessorRunCon
 // TODO.justin: confirm changes here
 async function updateModelMetrics({ db, lastUpdate }: MetricProcessorRunContext) {
   const rows = await db.$executeRaw`
-    INSERT INTO "ModelMetric" ("modelId", timeframe, "downloadCount", rating, "ratingCount", "favoriteCount", "thumbsUpCount", "commentCount", "imageCount", "collectedCount", "tippedCount", "tippedAmountCount", "generationCount")
+    INSERT INTO "ModelMetric" ("modelId", timeframe, "downloadCount", rating, "ratingCount", "favoriteCount", "thumbsUpCount", "thumbsDownCount", "commentCount", "imageCount", "collectedCount", "tippedCount", "tippedAmountCount", "generationCount")
     WITH affected AS (
       SELECT DISTINCT mv."modelId"
       FROM "ModelVersionMetric" mvm
@@ -680,6 +671,7 @@ async function updateModelMetrics({ db, lastUpdate }: MetricProcessorRunContext)
       SUM(mvm."ratingCount") "ratingCount",
       MAX(mvm."favoriteCount") "favoriteCount",
       MAX(mvm."thumbsUpCount") "thumbsUpCount",
+      MAX(mvm."thumbsDownCount") "thumbsDownCount",
       MAX(mvm."commentCount") "commentCount",
       SUM(mvm."imageCount") "imageCount",
       MAX(mvm."collectedCount") "collectedCount",
@@ -696,6 +688,7 @@ async function updateModelMetrics({ db, lastUpdate }: MetricProcessorRunContext)
       "ratingCount" = EXCLUDED."ratingCount",
       "favoriteCount" = EXCLUDED."favoriteCount",
       "thumbsUpCount" = EXCLUDED."thumbsUpCount",
+      "thumbsDownCount" = EXCLUDED."thumbsDownCount",
       "commentCount" = EXCLUDED."commentCount",
       "imageCount" = EXCLUDED."imageCount",
       "collectedCount" = EXCLUDED."collectedCount",

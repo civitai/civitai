@@ -1,11 +1,10 @@
 import { Alert, Button, Card, Divider, Group, Stack, Text } from '@mantine/core';
 import { IconChevronDown } from '@tabler/icons-react';
 import Link from 'next/link';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { z } from 'zod';
 
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
-import { EditorCommandsRef } from '~/components/RichTextEditor/RichTextEditor';
 import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { Form, InputRTE, useForm } from '~/libs/form';
 import { abbreviateNumber } from '~/utils/number-helpers';
@@ -58,9 +57,7 @@ export function EditResourceReview({
   const [editDetail, setEditDetail] = useState(initialEditing);
   const toggleEditDetail = () => {
     setEditDetail((state) => !state);
-    // if (!editDetail) setTimeout(() => commentRef.current?.focus(), 100);
   };
-  const commentRef = useRef<EditorCommandsRef | null>(null);
 
   const queryUtils = trpc.useUtils();
 
@@ -99,7 +96,6 @@ export function EditResourceReview({
     );
   };
 
-  // if (details) form.reset({ details });
   useEffect(() => {
     form.reset({ details });
   }, [details]); // eslint-disable-line
@@ -143,7 +139,6 @@ export function EditResourceReview({
                     )}
                   </Stack>
                 </Link>
-                {/* <Rating value={rating} onChange={handleRatingChange} /> */}
               </Group>
               {createdAt && (
                 <Text size="xs" color="dimmed">
@@ -203,13 +198,11 @@ export function EditResourceReview({
                       <InputRTE
                         name="details"
                         includeControls={['formatting', 'link']}
-                        hideToolbar
                         editorSize="sm"
-                        innerRef={commentRef}
-                        placeholder={`What did you think of ${modelName}?`}
+                        placeholder={`What did you think of ${modelName ?? 'this resource'}?`}
                         styles={{ content: { maxHeight: 500, overflowY: 'auto' } }}
+                        hideToolbar
                         autoFocus
-                        // withLinkValidation
                       />
                       <Group grow spacing="xs">
                         <Button
@@ -222,13 +215,7 @@ export function EditResourceReview({
                         >
                           Cancel
                         </Button>
-                        <Button
-                          size="xs"
-                          type="submit"
-                          loading={isLoading}
-                          disabled={!isDirty}
-                          variant={form.formState.isDirty ? undefined : 'outline'}
-                        >
+                        <Button size="xs" type="submit" loading={isLoading} disabled={!isDirty}>
                           Save
                         </Button>
                       </Group>
