@@ -72,6 +72,7 @@ export function ModelFiltersDropdown(props: Props) {
         checkpointType: undefined,
         earlyAccess: false,
         supportsGeneration: false,
+        fromPlatform: false,
         followed: false,
         archived: false,
         period: MetricTimeframe.AllTime,
@@ -135,6 +136,7 @@ export function DumbModelFiltersDropdown({
     (showCheckpointType && mergedFilters.checkpointType ? 1 : 0) +
     (mergedFilters.earlyAccess ? 1 : 0) +
     (mergedFilters.supportsGeneration ? 1 : 0) +
+    (mergedFilters.fromPlatform ? 1 : 0) +
     (mergedFilters.followed ? 1 : 0) +
     (mergedFilters.archived ? 1 : 0) +
     (mergedFilters.fileFormats?.length ?? 0) +
@@ -245,9 +247,16 @@ export function DumbModelFiltersDropdown({
               onChange={(checked) => setFilters({ supportsGeneration: checked })}
               {...chipProps}
             >
-              Onsite Generation
+              On-site Generation
             </Chip>
           )}
+          <Chip
+            checked={mergedFilters.fromPlatform}
+            onChange={(checked) => setFilters({ fromPlatform: checked })}
+            {...chipProps}
+          >
+            Made On-site
+          </Chip>
         </Group>
       </Stack>
       <Stack spacing={0}>

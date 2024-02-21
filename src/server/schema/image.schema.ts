@@ -231,6 +231,7 @@ export const getInfiniteImagesSchema = z
     withMeta: z.boolean().optional(),
     hidden: z.boolean().optional(),
     followed: z.boolean().optional(),
+    fromPlatform: z.coerce.boolean().optional(),
   })
   .transform((value) => {
     if (value.withTags) {

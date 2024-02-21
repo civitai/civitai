@@ -502,6 +502,7 @@ export const getAllImages = async ({
   types,
   hidden,
   followed,
+  fromPlatform,
 }: GetInfiniteImagesInput & {
   userId?: number;
   isModerator?: boolean;
@@ -547,6 +548,12 @@ export const getAllImages = async ({
 
   if (include.includes('meta')) {
     AND.push(Prisma.sql`NOT (i.meta IS NULL OR jsonb_typeof(i.meta) = 'null')`);
+  }
+
+  if (fromPlatform) {
+    AND.push(
+      Prisma.sql`(i.meta IS NOT NULL AND jsonb_typeof(i.meta->'civitaiResources') != 'undefined')`
+    );
   }
 
   let from = 'FROM "Image" i';
@@ -688,6 +695,7 @@ export const getAllImages = async ({
       orderBy = `im."tippedAmountCount" DESC, im."reactionCount" DESC, im."imageId"`;
       if (!isGallery) AND.push(Prisma.sql`im."tippedAmountCount" > 0`);
     } else if (sort === ImageSort.Random) orderBy = 'ct."randomId" DESC';
+    else if (sort === ImageSort.Oldest) orderBy = `i."id"`;
     else {
       if (from.indexOf(`irr`) !== -1) {
         // Ensure to sort by irr.imageId when reading from imageResources to maximize index utilization
