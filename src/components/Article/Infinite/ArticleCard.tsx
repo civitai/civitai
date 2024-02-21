@@ -11,7 +11,7 @@ import Link from 'next/link';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { ArticleGetAll } from '~/types/router';
+import type { ArticleGetAll } from '~/server/services/article.service';
 import { formatDate } from '~/utils/date-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { slugit } from '~/utils/string-helpers';
@@ -127,7 +127,7 @@ export function ArticleCard({ data, height = 450 }: Props) {
 }
 
 type Props = {
-  data: ArticleGetAll['items'][number];
+  data: ArticleGetAll[number];
   height?: number;
 };
 

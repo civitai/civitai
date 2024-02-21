@@ -12,9 +12,6 @@ export type MyTrainingModelGetAll = ModelRouter['getMyTrainingModels'];
 export type ModelGetAllPagedSimple = ModelRouter['getAllPagedSimple'];
 export type ModelGetAssociatedResourcesSimple = ModelRouter['getAssociatedResourcesSimple'];
 
-type ModelVersionRouter = RouterOutput['modelVersion'];
-export type ModelVersionById = ModelVersionRouter['getById'];
-
 type CommentRouter = RouterOutput['comment'];
 export type CommentGetReactions = CommentRouter['getReactions'];
 export type CommentGetAll = CommentRouter['getAll'];
@@ -51,7 +48,6 @@ export type ResourceReviewPaged = ResourceReviewRouter['getPaged'];
 export type ResourceReviewPagedModel = ResourceReviewRouter['getPaged']['items'][number];
 
 type ArticleRouter = RouterOutput['article'];
-export type ArticleGetAll = ArticleRouter['getInfinite'];
 export type ArticleGetById = ArticleRouter['getById'];
 
 type LeaderboardRouter = RouterOutput['leaderboard'];
@@ -109,7 +105,3 @@ type ChatRouter = RouterOutput['chat'];
 export type ChatListMessage = ChatRouter['getAllByUser'][number];
 export type ChatAllMessages = ChatRouter['getInfiniteMessages']['items'];
 export type ChatCreateChat = ChatRouter['createChat'];
-
-type BuzzWithdrawalRequestRouter = RouterOutput['buzzWithdrawalRequest'];
-export type BuzzWithdrawalRequestForModerator =
-  BuzzWithdrawalRequestRouter['getPaginated']['items'][number];

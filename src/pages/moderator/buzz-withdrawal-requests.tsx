@@ -19,11 +19,9 @@ import {
   Title,
   Tooltip,
   TooltipProps,
-  List,
   TextInput,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
-import { openConfirmModal } from '@mantine/modals';
 import { BuzzWithdrawalRequestStatus, Currency } from '@prisma/client';
 import { IconCashBanknote, IconExternalLink } from '@tabler/icons-react';
 import { IconInfoSquareRounded } from '@tabler/icons-react';
@@ -38,10 +36,9 @@ import { WithdrawalRequestBadgeColor } from '~/components/Buzz/buzz.styles';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { InputText } from '~/libs/form';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { GetPaginatedBuzzWithdrawalRequestSchema } from '~/server/schema/buzz-withdrawal-request.schema';
-import { BuzzWithdrawalRequestForModerator } from '~/types/router';
+import type { BuzzWithdrawalRequestForModerator } from '~/server/services/buzz-withdrawal-request.service';
 import { formatDate } from '~/utils/date-helpers';
 import { showSuccessNotification } from '~/utils/notifications';
 

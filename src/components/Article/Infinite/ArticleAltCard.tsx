@@ -7,7 +7,6 @@ import { CivitaiTooltip } from '~/components/CivitaiWrapped/CivitaiTooltip';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { ArticleGetAll } from '~/types/router';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { slugit } from '~/utils/string-helpers';
 import { ArticleContextMenu } from '../ArticleContextMenu';

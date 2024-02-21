@@ -8,7 +8,7 @@ import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
-import { ArticleGetAll } from '~/types/router';
+import type { ArticleGetAll } from '~/server/services/article.service';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionMenuItem';
@@ -192,5 +192,5 @@ export function ArticleContextMenu({ article, ...props }: Props) {
 }
 
 type Props = Omit<ActionIconProps, 'variant' | 'onClick'> & {
-  article: Omit<ArticleGetAll['items'][number], 'stats'>;
+  article: Omit<ArticleGetAll[number], 'stats'>;
 };

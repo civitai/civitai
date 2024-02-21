@@ -25,13 +25,12 @@ import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
 import { articlesSearchIndex } from '~/server/search-index';
 import { articleDetailSelect } from '~/server/selectors/article.selector';
-import { UserWithCosmetics, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import {
   getAvailableCollectionItemsFilterForUser,
   getUserCollectionPermissionsById,
 } from '~/server/services/collection.service';
 import { getCategoryTags } from '~/server/services/system-cache';
-import { getTypeCategories } from '~/server/services/tag.service';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { decreaseDate } from '~/utils/date-helpers';
@@ -92,6 +91,7 @@ type ArticleRaw = {
 
 export type ArticleGetAllRecord = Awaited<ReturnType<typeof getArticles>>['items'][number];
 
+export type ArticleGetAll = AsyncReturnType<typeof getArticles>['items'];
 export const getArticles = async ({
   limit,
   cursor,
@@ -540,6 +540,7 @@ export const getCivitaiEvents = async () => {
   return events;
 };
 
+export type ArticleGetById = AsyncReturnType<typeof getArticleById>;
 export const getArticleById = async ({ id, user }: GetByIdInput & { user?: SessionUser }) => {
   try {
     const isMod = user?.isModerator ?? false;

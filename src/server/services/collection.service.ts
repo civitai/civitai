@@ -35,7 +35,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { isDefined } from '~/utils/type-guards';
-import { ArticleGetAll } from '~/types/router';
+import type { ArticleGetAll } from '~/server/services/article.service';
 import { getArticles } from '~/server/services/article.service';
 import {
   getModelsWithImagesAndModelVersions,
@@ -674,7 +674,7 @@ interface ImageCollectionItem {
 
 interface ArticleCollectionItem {
   type: 'article';
-  data: ArticleGetAll['items'][0];
+  data: ArticleGetAll[0];
 }
 
 export type CollectionItemExpanded = {

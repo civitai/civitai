@@ -37,7 +37,7 @@ import {
 } from '~/libs/form';
 import { hideMobile, showMobile } from '~/libs/sx-helpers';
 import { upsertArticleInput } from '~/server/schema/article.schema';
-import { ArticleGetById } from '~/types/router';
+import type { ArticleGetById } from '~/server/services/article.service';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { parseNumericString } from '~/utils/query-string-helpers';

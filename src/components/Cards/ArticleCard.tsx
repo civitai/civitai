@@ -10,7 +10,7 @@ import { abbreviateNumber } from '~/utils/number-helpers';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { slugit } from '~/utils/string-helpers';
 import { formatDate } from '~/utils/date-helpers';
-import { ArticleGetAll } from '~/types/router';
+import type { ArticleGetAll } from '~/server/services/article.service';
 import { ArticleContextMenu } from '~/components/Article/ArticleContextMenu';
 import {
   InteractiveTipBuzzButton,
@@ -160,6 +160,6 @@ export function ArticleCard({ data, aspectRatio }: Props) {
 }
 
 type Props = {
-  data: ArticleGetAll['items'][0];
+  data: ArticleGetAll[0];
   aspectRatio?: 'flat' | 'landscape' | 'portrait' | 'square';
 };

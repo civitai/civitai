@@ -49,6 +49,7 @@ export const getModelVersionRunStrategiesHandler = ({ input: { id } }: { input: 
   }
 };
 
+export type ModelVersionById = AsyncReturnType<typeof getModelVersionHandler>;
 export const getModelVersionHandler = async ({ input }: { input: GetModelVersionSchema }) => {
   const { id, withFiles } = input;
 
