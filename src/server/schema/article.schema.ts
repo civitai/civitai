@@ -8,6 +8,7 @@ import { baseFileSchema } from '~/server/schema/file.schema';
 import { tagSchema } from '~/server/schema/tag.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
+import { imageSchema } from '~/server/schema/image.schema';
 
 export const userPreferencesForArticlesSchema = z.object({
   excludedIds: z.array(z.number()).optional(),
@@ -33,28 +34,7 @@ export const articleWhereSchema = z.object({
   clubId: z.number().optional(),
 });
 
-// export const articleSortSchema = z.object({
-//   period: z.nativeEnum(MetricTimeframe).default(constants.articleFilterDefaults.period),
-//   sort: z.nativeEnum(ArticleSort).default(constants.articleFilterDefaults.sort),
-// });
-
 export type GetInfiniteArticlesSchema = z.infer<typeof getInfiniteArticlesSchema>;
-// export const getInfiniteArticlesSchemaOld = getAllQuerySchema.extend({
-//   page: z.never().optional(),
-//   cursor: z.number().optional(),
-//   period: z.nativeEnum(MetricTimeframe).default(constants.articleFilterDefaults.period),
-//   sort: z.nativeEnum(ArticleSort).default(constants.articleFilterDefaults.sort),
-//   browsingMode: z.nativeEnum(BrowsingMode).default(constants.articleFilterDefaults.browsingMode),
-//   tags: z.array(z.number()).optional(),
-//   excludedUserIds: z.array(z.number()).optional(),
-//   excludedTagIds: z.array(z.number()).optional(),
-//   userIds: z.array(z.number()).optional(),
-//   excludedIds: z.array(z.number()).optional(),
-//   favorites: z.boolean().optional(),
-//   hidden: z.boolean().optional(),
-//   username: z.string().optional(),
-// });
-
 export const getInfiniteArticlesSchema = infiniteQuerySchema
   .extend({ cursor: z.preprocess((val) => Number(val), z.number()).optional() })
   .merge(userPreferencesForArticlesSchema)
@@ -67,30 +47,9 @@ export const upsertArticleInput = z.object({
   content: getSanitizedStringSchema().refine((data) => {
     return data && data.length > 0 && data !== '<p></p>';
   }, 'Cannot be empty'),
-  cover: z.string().min(1),
+  coverImage: imageSchema.nullish(),
   tags: z.array(tagSchema).nullish(),
   nsfw: z.boolean().optional(),
   publishedAt: z.date().nullish(),
   attachments: z.array(baseFileSchema).optional(),
 });
-
-export type GetArticlesByCategorySchema = z.infer<typeof getArticlesByCategorySchema>;
-// export const getArticlesByCategorySchemaOld = z.object({
-//   limit: z.number().min(1).max(30).optional(),
-//   articleLimit: z.number().min(1).max(30).optional(),
-//   cursor: z.preprocess((val) => Number(val), z.number()).optional(),
-//   period: z.nativeEnum(MetricTimeframe).default(constants.articleFilterDefaults.period),
-//   sort: z.nativeEnum(ArticleSort).default(constants.articleFilterDefaults.sort),
-//   browsingMode: z.nativeEnum(BrowsingMode).default(constants.articleFilterDefaults.browsingMode),
-//   excludedUserIds: z.array(z.number()).optional(),
-//   excludedTagIds: z.array(z.number()).optional(),
-// });
-
-export const getArticlesByCategorySchema = z
-  .object({
-    limit: z.number().min(1).max(30).optional(),
-    articleLimit: z.number().min(1).max(30).optional(),
-    cursor: z.number().optional(),
-  })
-  .merge(userPreferencesForArticlesSchema)
-  .merge(articleWhereSchema);

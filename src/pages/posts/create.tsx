@@ -192,7 +192,6 @@ export default function PostCreate() {
                     resourceReview={currentUserReview}
                     openedCommentBox
                     innerRef={reviewEditRef}
-                    showNoAccessAlert
                   />
                 </Box>
               </Input.Wrapper>

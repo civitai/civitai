@@ -1,16 +1,18 @@
-import { Anchor } from '@mantine/core';
+import { Anchor, Text } from '@mantine/core';
 import { ModelType } from '@prisma/client';
 import { IconAlertCircle } from '@tabler/icons-react';
 
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { BaseModel } from '~/server/common/constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 
-export const ModelFileAlert = ({ files, modelType, versionId }: ModelFileAlertProps) => {
+export const ModelFileAlert = ({ files, modelType, versionId, baseModel }: ModelFileAlertProps) => {
   let hasNegativeEmbed = false;
   let hasConfig = false;
   let hasVAE = false;
   const isWildcards = modelType === ModelType.Wildcards;
   const isMotion = modelType === ModelType.MotionModule;
+  const isPony = baseModel === 'Pony';
   if (files) {
     for (const file of files) {
       if (modelType === ModelType.TextualInversion && file.type === 'Negative')
@@ -22,6 +24,23 @@ export const ModelFileAlert = ({ files, modelType, versionId }: ModelFileAlertPr
 
   return (
     <>
+      {isPony && (
+        <AlertWithIcon icon={<IconAlertCircle />}>
+          <Text>
+            This asset is designed to work best with the{' '}
+            <Text
+              component="a"
+              variant="link"
+              td="underline"
+              href="/models/257749/pony-diffusion-v6-xl"
+              target="_blank"
+            >
+              Pony Diffusion XL model
+            </Text>
+            , it will work with other SDXL models but may not look as intended.
+          </Text>
+        </AlertWithIcon>
+      )}
       {isWildcards && (
         <AlertWithIcon icon={<IconAlertCircle />}>
           This is a Wildcard collection, it requires an{' '}
@@ -100,6 +119,7 @@ export const ModelFileAlert = ({ files, modelType, versionId }: ModelFileAlertPr
 
 type ModelFileAlertProps = {
   files: { type: string }[];
+  baseModel: BaseModel;
   modelType: ModelType;
   versionId: number;
 };

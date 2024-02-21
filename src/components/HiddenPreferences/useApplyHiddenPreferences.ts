@@ -78,6 +78,10 @@ export function useApplyHiddenPreferences<
               if (article.user && article.user.id === currentUser?.id && !isSfw) return true;
               if (article.user && hiddenUsers.get(article.user.id)) return false;
               for (const tag of article.tags ?? []) if (hiddenTags.get(tag.id)) return false;
+              if (article.coverImage) {
+                if (hiddenImages.get(article.coverImage.id)) return false;
+                for (const tag of article.coverImage.tags) if (hiddenTags.get(tag)) return false;
+              }
               return true;
             });
           case 'users':
@@ -215,6 +219,10 @@ type BaseArticle = {
   tags?: {
     id: number;
   }[];
+  coverImage?: {
+    id: number;
+    tags: number[];
+  };
 };
 
 type BaseUser = {

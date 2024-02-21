@@ -5,24 +5,17 @@ import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { Meta } from '~/components/Meta/Meta';
-import { ModelCategoriesInfinite } from '~/components/Model/Categories/ModelCategoriesInfinite';
 import { ModelsInfinite } from '~/components/Model/Infinite/ModelsInfinite';
 import { useModelQueryParams } from '~/components/Model/model.utils';
 import { env } from '~/env/client.mjs';
-import { useFiltersContext } from '~/providers/FiltersProvider';
 import { PeriodMode } from '~/server/schema/base.schema';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 
 export default function ModelsPage() {
-  const storedView = useFiltersContext((state) => state.models.view);
   const { set, view: queryView, ...queryFilters } = useModelQueryParams();
-  const { username, favorites, hidden, query, collectionId } = queryFilters;
+  const { username, favorites, hidden, query } = queryFilters;
   const periodMode = query || favorites ? ('stats' as PeriodMode) : undefined;
   if (periodMode) queryFilters.periodMode = periodMode;
-  const canToggleView =
-    env.NEXT_PUBLIC_UI_CATEGORY_VIEWS && !username && !favorites && !hidden && !collectionId;
-  const view =
-    env.NEXT_PUBLIC_UI_CATEGORY_VIEWS && canToggleView ? queryView ?? storedView : 'feed';
 
   return (
     <>
@@ -45,14 +38,8 @@ export default function ModelsPage() {
           })}
         />
         <IsClient>
-          {view === 'categories' ? (
-            <ModelCategoriesInfinite />
-          ) : (
-            <>
-              <CategoryTags />
-              <ModelsInfinite filters={queryFilters} showEof showAds />
-            </>
-          )}
+          <CategoryTags />
+          <ModelsInfinite filters={queryFilters} showEof showAds />
         </IsClient>
       </Stack>
     </>

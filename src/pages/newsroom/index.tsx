@@ -24,10 +24,16 @@ export default function CivitaiNewsroom() {
   const { data } = trpc.article.getCivitaiNews.useQuery(undefined, {
     trpc: { context: { skipBatch: true } },
   });
-  const news = data?.news ?? [];
-  const updates = data?.updates ?? [];
+  const news = useMemo(
+    () => data?.articles.filter((x) => x.type === 'news') ?? [],
+    [data?.articles]
+  );
+  const updates = useMemo(
+    () => data?.articles.filter((x) => x.type === 'updates') ?? [],
+    [data?.articles]
+  );
   const pressMentions = data?.pressMentions ?? [];
-  const featuredArticle = useMemo(() => data?.news.find((article) => article.featured), [data]);
+  const featuredArticle = useMemo(() => news.find((article) => article.featured), [news]);
   const features = useFeatureFlags();
   if (!features.newsroom) return <NotFound />;
 

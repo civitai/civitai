@@ -1,22 +1,16 @@
-import { Badge, Group, Stack, Text, ThemeIcon, Tooltip, UnstyledButton } from '@mantine/core';
+import { Badge, Group, Stack, Text, UnstyledButton } from '@mantine/core';
 import React from 'react';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useRouter } from 'next/router';
-import {
-  IconBolt,
-  IconBookmark,
-  IconClubs,
-  IconEye,
-  IconMessageCircle2,
-} from '@tabler/icons-react';
+import { IconBolt, IconBookmark, IconEye, IconMessageCircle2 } from '@tabler/icons-react';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { slugit } from '~/utils/string-helpers';
 import { formatDate } from '~/utils/date-helpers';
-import { ArticleGetAll } from '~/types/router';
+import type { ArticleGetAll } from '~/server/services/article.service';
 import { ArticleContextMenu } from '~/components/Article/ArticleContextMenu';
 import {
   InteractiveTipBuzzButton,
@@ -24,13 +18,15 @@ import {
 } from '~/components/Buzz/InteractiveTipBuzzButton';
 import { HolidayFrame } from '../Decorations/HolidayFrame';
 import { CosmeticType } from '@prisma/client';
+import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
+import { MediaHash } from '~/components/ImageHash/ImageHash';
 
 const IMAGE_CARD_WIDTH = 450;
 
-export function ArticleCard({ data, aspectRatio, useCSSAspectRatio = false }: Props) {
+export function ArticleCard({ data, aspectRatio }: Props) {
   const { classes, cx } = useCardStyles({ aspectRatio: 1 });
   const router = useRouter();
-  const { id, title, cover, publishedAt, user, tags, stats } = data;
+  const { id, title, coverImage, publishedAt, user, tags, stats } = data;
   const category = tags?.find((tag) => tag.isCategory);
   const { commentCount, viewCount, favoriteCount, tippedAmountCount } = stats || {
     commentCount: 0,
@@ -56,43 +52,51 @@ export function ArticleCard({ data, aspectRatio, useCSSAspectRatio = false }: Pr
         className={classes.link}
       >
         <div className={classes.root}>
-          <Group
-            spacing={4}
-            position="apart"
-            className={cx(classes.contentOverlay, classes.top)}
-            noWrap
-          >
-            {category && (
-              <Badge
-                color="dark"
-                size="sm"
-                variant="light"
-                radius="xl"
-                sx={(theme) => ({
-                  position: 'absolute',
-                  top: theme.spacing.xs,
-                  left: theme.spacing.xs,
-                  zIndex: 1,
-                })}
-              >
-                <Text color="white">{category.name}</Text>
-              </Badge>
-            )}
+          {coverImage && (
+            <ImageGuard
+              connect={{ entityId: id, entityType: 'article' }}
+              images={[coverImage]}
+              render={(image) => (
+                <>
+                  <Group
+                    spacing={4}
+                    position="apart"
+                    align="top"
+                    className={cx(classes.contentOverlay, classes.top)}
+                    noWrap
+                  >
+                    <ImageGuard.ToggleConnect position="static" />
+                    {category && (
+                      <Badge color="dark" size="sm" variant="light" radius="xl">
+                        <Text color="white">{category.name}</Text>
+                      </Badge>
+                    )}
 
-            <Stack ml="auto">
-              <ArticleContextMenu article={data} />
-            </Stack>
-          </Group>
-          {cover && (
-            <EdgeMedia
-              src={cover}
-              // TODO: hardcoding upscaling because cover images look awful with the new card since we don't store width/height
-              width={IMAGE_CARD_WIDTH * 2.5}
-              placeholder="empty"
-              className={classes.image}
-              loading="lazy"
+                    <Stack ml="auto">
+                      <ArticleContextMenu article={data} />
+                    </Stack>
+                  </Group>
+                  <ImageGuard.Content>
+                    {({ safe }) =>
+                      !safe ? (
+                        <MediaHash {...image} />
+                      ) : (
+                        <EdgeMedia
+                          src={image.url}
+                          // TODO: hardcoding upscaling because cover images look awful with the new card since we don't store width/height
+                          width={IMAGE_CARD_WIDTH * 2.5}
+                          placeholder="empty"
+                          className={classes.image}
+                          loading="lazy"
+                        />
+                      )
+                    }
+                  </ImageGuard.Content>
+                </>
+              )}
             />
           )}
+
           <Stack
             className={cx('footer', classes.contentOverlay, classes.bottom, classes.fullOverlay)}
             spacing="sm"
@@ -156,7 +160,6 @@ export function ArticleCard({ data, aspectRatio, useCSSAspectRatio = false }: Pr
 }
 
 type Props = {
-  data: ArticleGetAll['items'][0];
+  data: ArticleGetAll[0];
   aspectRatio?: 'flat' | 'landscape' | 'portrait' | 'square';
-  useCSSAspectRatio?: boolean;
 };

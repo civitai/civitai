@@ -28,8 +28,8 @@ export const ModelURN = ({ baseModel, type, modelId, modelVersionId, full = fals
   }, [baseModel]);
   if (!urnType) return null;
 
-  const shortUrn = `${modelId}@${modelVersionId}`;
-  const urn = `urn:air:${urnEcosystem}:${urnType}:civitai:${shortUrn}`;
+  const shortUrn = `civitai:${modelId}@${modelVersionId}`;
+  const urn = `urn:air:${urnEcosystem}:${urnType}:${shortUrn}`;
 
   return (
     <Group spacing={4}>
@@ -68,7 +68,7 @@ export const ModelURN = ({ baseModel, type, modelId, modelVersionId, full = fals
         size="xs"
         onClick={(e) => {
           e.stopPropagation();
-          copy(full ? urn : shortUrn);
+          copy(urn);
         }}
       >
         {copied ? <IconCheck size="20" /> : <IconCopy size="20" />}

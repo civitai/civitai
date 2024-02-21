@@ -1,10 +1,10 @@
-import { useMemo, useEffect, useContext, createContext } from 'react';
+import { useMemo, useEffect, useContext, createContext, useState } from 'react';
 import { trpc } from '~/utils/trpc';
 import { useRouter } from 'next/router';
 import { QS } from '~/utils/qs';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useHasClientHistory } from '~/store/ClientHistoryStore';
-import { useHotkeys } from '@mantine/hooks';
+import { useHotkeys, useLocalStorage } from '@mantine/hooks';
 import { ImageGuardConnect } from '~/components/ImageGuard/ImageGuard';
 import { useQueryImages } from '~/components/Image/image.utils';
 import { ReviewReactions } from '@prisma/client';
@@ -13,6 +13,8 @@ import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettings
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
 import { ImagesInfiniteModel } from '~/server/services/image.service';
 import { removeEmpty } from '../../../utils/object-helpers';
+import { useMantineTheme } from '@mantine/core';
+import { useIsMobile } from '~/hooks/useIsMobile';
 
 type ImageDetailState = {
   images: ImageGetInfinite;
@@ -61,9 +63,15 @@ export function ImageDetailProvider({
     collectionId?: number;
   } & Record<string, unknown>;
 }) {
+  const theme = useMantineTheme();
+  const isMobile = useIsMobile();
+  const [active, setActive] = useLocalStorage({
+    key: `image-detail-open`,
+    defaultValue: true,
+  });
+
   const router = useRouter();
   const browserRouter = useBrowserRouter();
-  const active = browserRouter.query.active;
   const hasHistory = useHasClientHistory();
   const currentUser = useCurrentUser();
   const { postId: queryPostId } = browserRouter.query;
@@ -101,6 +109,12 @@ export function ImageDetailProvider({
     }
   }, [prefetchedImage]); // eslint-disable-line
 
+  useEffect(() => {
+    if (isMobile && active) {
+      setActive(false);
+    }
+  }, [isMobile]);
+
   // const images = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data]);
   const image = images.find((x) => x.id === imageId) ?? prefetchedImage ?? undefined;
   // #endregion
@@ -123,13 +137,7 @@ export function ImageDetailProvider({
 
   // #region [info toggle]
   const toggleInfo = () => {
-    const [, queryString] = browserRouter.asPath.split('?');
-    const { active, ...query } = QS.parse(queryString) as any;
-
-    browserRouter.push(
-      { query: { ...browserRouter.query, active: !active } },
-      { query: { ...query, active: !active } }
-    );
+    setActive(!active);
   };
   // #endregion
 
@@ -204,7 +212,26 @@ export function ImageDetailProvider({
         navigate,
       }}
     >
-      <ReactionSettingsProvider settings={{ hideReactionCount }}>
+      <ReactionSettingsProvider
+        settings={{
+          hideReactionCount,
+          buttonStyling: (reaction, hasReacted) => ({
+            radius: 'xl',
+            variant: 'light',
+            pl: undefined,
+            pr: undefined,
+            px: 4,
+            h: 30,
+            style: {
+              color: 'white',
+              background: hasReacted
+                ? theme.fn.rgba(theme.colors.blue[4], 0.4)
+                : theme.fn.rgba(theme.colors.gray[8], 0.4),
+              backdropFilter: 'blur(7px)',
+            },
+          }),
+        }}
+      >
         {children}
       </ReactionSettingsProvider>
     </ImageDetailContext.Provider>

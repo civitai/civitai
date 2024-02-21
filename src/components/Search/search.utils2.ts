@@ -34,7 +34,10 @@ function imagesTransform(items: Hit<ImageSearchIndexRecord>[]) {
 
 type ArticlesTransformed = ReturnType<typeof articlesTransform>;
 function articlesTransform(items: Hit<ArticleSearchIndexRecord>[]) {
-  return items.map((article) => ({ ...article }));
+  return items.map((article) => ({
+    ...article,
+    coverImage: { ...article.coverImage, tags: article.coverImage.tags.map((x) => x.id) },
+  }));
 }
 
 type BountiesTransformed = ReturnType<typeof bountiesTransform>;

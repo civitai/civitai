@@ -11,6 +11,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
 import { CollectionByIdModel } from '~/types/router';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 const collectionQueryParamSchema = z
   .object({
@@ -94,7 +95,7 @@ export const getCollectionItemReviewData = (collectionItem: CollectionItemExpand
     case 'article': {
       return {
         type: collectionItem.type,
-        cover: collectionItem.data.cover,
+        image: collectionItem.data.coverImage,
         user: collectionItem.data.user,
         title: collectionItem.data.title,
         url: `/articles/${collectionItem.data.id}`,
@@ -193,4 +194,19 @@ export const isCollectionSubsmissionPeriod = (collection?: CollectionByIdModel) 
     new Date(metadata.submissionStartDate) < new Date() &&
     new Date(metadata.submissionEndDate) > new Date()
   );
+};
+
+export const useSystemCollections = () => {
+  const currentUser = useCurrentUser();
+  const { data: systemCollections = [], ...other } = trpc.user.getBookmarkCollections.useQuery(
+    undefined,
+    {
+      enabled: !!currentUser,
+    }
+  );
+
+  return {
+    ...other,
+    systemCollections,
+  };
 };

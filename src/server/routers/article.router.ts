@@ -9,9 +9,9 @@ import { getInfiniteArticlesSchema, upsertArticleInput } from '~/server/schema/a
 import { getAllQuerySchema, getByIdSchema } from '~/server/schema/base.schema';
 import {
   deleteArticleById,
+  getAllArticlesForImageProcessing,
   getArticleById,
   getArticles,
-  getArticlesByCategory,
   getCivitaiEvents,
   getCivitaiNews,
   getDraftArticlesByUserId,
@@ -29,10 +29,6 @@ export const articleRouter = router({
     .use(edgeCacheIt({ ttl: CacheTTL.sm }))
     .query(() => getCivitaiNews()),
   getEvents: publicProcedure.query(() => getCivitaiEvents()),
-  getByCategory: publicProcedure
-    .input(getInfiniteArticlesSchema)
-    .use(isFlagProtected('articles'))
-    .query(({ input, ctx }) => getArticlesByCategory({ ...input, user: ctx?.user })),
   getById: publicProcedure
     .input(getByIdSchema)
     .use(isFlagProtected('articles'))
@@ -49,4 +45,5 @@ export const articleRouter = router({
     .input(getByIdSchema)
     .use(isFlagProtected('articleCreate'))
     .mutation(({ input }) => deleteArticleById(input)),
+  getAllForImageProcessing: protectedProcedure.query(() => getAllArticlesForImageProcessing()),
 });

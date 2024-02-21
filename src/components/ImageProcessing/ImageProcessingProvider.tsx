@@ -27,6 +27,7 @@ const NsfwWorkerCtx = createContext<NsfwWorkerState>({} as any);
 const callbackQueue: Record<string, MessageCallback> = {};
 const processingQueue: Record<string, ImageProcessing> = {};
 
+// TODO.Briant - remove these components
 export const useImageProcessingContext = () => useContext(NsfwWorkerCtx);
 export const ImageProcessingProvider = ({ children }: { children: React.ReactNode }) => {
   const workerRef = useRef<SharedWorker>();

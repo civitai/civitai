@@ -1,8 +1,9 @@
 import { getJobDate } from '~/server/jobs/job';
 import { dbWrite, dbRead } from '~/server/db/client';
-import { Prisma, PrismaClient, SearchIndexUpdateQueueAction } from '@prisma/client';
+import { PrismaClient, SearchIndexUpdateQueueAction } from '@prisma/client';
 import { getOrCreateIndex, swapIndex } from '~/server/meilisearch/util';
 import { chunk } from 'lodash-es';
+import { SearchIndexUpdate } from '~/server/search-index/SearchIndexUpdate';
 
 const DEFAULT_UPDATE_INTERVAL = 60 * 1000;
 
@@ -96,27 +97,7 @@ export function createSearchIndexUpdateProcessor({
       }
     },
     async queueUpdate(items: Array<{ id: number; action?: SearchIndexUpdateQueueAction }>) {
-      if (!items.length) {
-        return;
-      }
-
-      console.log(
-        `createSearchIndexUpdateProcessor :: ${indexName} :: queueUpdate :: Called with ${items.length} items`
-      );
-
-      const batches = chunk(items, 500);
-      for (const batch of batches) {
-        await dbWrite.$executeRawUnsafe(`
-          INSERT INTO "SearchIndexUpdateQueue" ("type", "id", "action")
-          VALUES ${batch
-            .map(
-              ({ id, action }) =>
-                `('${indexName}', ${id}, '${action ?? SearchIndexUpdateQueueAction.Update}')`
-            )
-            .join(', ')}
-          ON CONFLICT ("type", "id", "action") DO NOTHING;
-      `);
-      }
+      await SearchIndexUpdate.queueUpdate({ indexName, items });
     },
   };
 }

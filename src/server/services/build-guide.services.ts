@@ -1,14 +1,9 @@
 import { dbRead } from '~/server/db/client';
-import {
-  BuildCapability,
-  BuildComponent,
-  GetBuildGuideByBudgetSchema,
-} from '~/server/schema/build-guide.schema';
+import { BuildCapability, BuildComponent } from '~/server/schema/build-guide.schema';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 
-export async function getBuildGuideByBudget({ budget, processor }: GetBuildGuideByBudgetSchema) {
-  const result = await dbRead.buildGuide.findFirst({
-    where: { name: { equals: `${budget}_${processor}`, mode: 'insensitive' } },
+export async function getBuildGuides() {
+  const resultRaw = await dbRead.buildGuide.findMany({
     select: {
       id: true,
       name: true,
@@ -19,11 +14,18 @@ export async function getBuildGuideByBudget({ budget, processor }: GetBuildGuide
       user: { select: simpleUserSelect },
     },
   });
-  if (!result) return null;
+  if (!resultRaw) return null;
 
-  return {
-    ...result,
-    components: result.components as BuildComponent[],
-    capabilities: result.capabilities as BuildCapability,
-  };
+  const results = resultRaw.map((result) => {
+    const components = result.components as BuildComponent[];
+    const capabilities = result.capabilities as BuildCapability;
+    return {
+      ...result,
+      components,
+      capabilities,
+      totalPrice: components.reduce((acc, x) => acc + x.price, 0),
+    };
+  });
+
+  return results;
 }

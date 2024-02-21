@@ -11,7 +11,7 @@ import Link from 'next/link';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { ArticleGetAll } from '~/types/router';
+import type { ArticleGetAll } from '~/server/services/article.service';
 import { formatDate } from '~/utils/date-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { slugit } from '~/utils/string-helpers';
@@ -20,9 +20,11 @@ import {
   InteractiveTipBuzzButton,
   useBuzzTippingStore,
 } from '~/components/Buzz/InteractiveTipBuzzButton';
+import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 
+// TODO.remove component
 export function ArticleCard({ data, height = 450 }: Props) {
-  const { id, title, cover, publishedAt, user, tags, stats } = data;
+  const { id, title, coverImage, publishedAt, user, tags, stats } = data;
   const category = tags?.find((tag) => tag.isCategory);
   const { commentCount, viewCount, favoriteCount, tippedAmountCount, ...reactionStats } = stats || {
     commentCount: 0,
@@ -72,9 +74,25 @@ export function ArticleCard({ data, height = 450 }: Props) {
                 {category.name}
               </Badge>
             )}
-            {/* <Box sx={{ height: height / 2, '& > img': { height: '100%', objectFit: 'cover' } }}>
-            </Box> */}
-            <EdgeMedia className={classes.image} src={cover} width={450} />
+
+            {coverImage && (
+              <ImageGuard
+                images={[coverImage]}
+                connect={{ entityId: id, entityType: 'article' }}
+                render={(image) => (
+                  <ImageGuard.Content>
+                    {
+                      ({ safe }) =>
+                        safe ? (
+                          <EdgeMedia className={classes.image} src={image.url} width={450} />
+                        ) : (
+                          <></>
+                        ) // this doesn't really matter since this file should be gone
+                    }
+                  </ImageGuard.Content>
+                )}
+              />
+            )}
           </div>
           {/* <Card.Section py="xs" inheritPadding> */}
           <Stack spacing={4} px="sm" py="xs">
@@ -109,7 +127,7 @@ export function ArticleCard({ data, height = 450 }: Props) {
 }
 
 type Props = {
-  data: ArticleGetAll['items'][number];
+  data: ArticleGetAll[number];
   height?: number;
 };
 

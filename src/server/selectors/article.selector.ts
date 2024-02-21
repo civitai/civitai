@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { imageSelect } from '~/server/selectors/image.selector';
 
 import { getReactionsSelectV2 } from '~/server/selectors/reaction.selector';
 import { simpleTagSelect } from '~/server/selectors/tag.selector';
@@ -35,4 +36,5 @@ export const articleDetailSelect = Prisma.validator<Prisma.ArticleSelect>()({
   },
   availability: true,
   userId: true,
+  coverImage: { select: imageSelect },
 });

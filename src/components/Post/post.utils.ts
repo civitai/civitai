@@ -5,7 +5,7 @@ import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApp
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { PostSort } from '~/server/common/enums';
-import { GetPostsByCategoryInput, PostsQueryInput } from '~/server/schema/post.schema';
+import { PostsQueryInput } from '~/server/schema/post.schema';
 import { removeEmpty } from '~/utils/object-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -55,25 +55,4 @@ export const useQueryPosts = (
     data: flatData,
   });
   return { data, posts, isLoading: isLoading || loadingPreferences, ...rest };
-};
-
-export const useQueryPostCategories = (
-  filters?: Partial<GetPostsByCategoryInput>,
-  options?: { keepPreviousData?: boolean; enabled?: boolean }
-) => {
-  filters ??= {};
-  const { data, ...rest } = trpc.post.getPostsByCategory.useInfiniteQuery(
-    { ...filters },
-    {
-      getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
-      getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),
-      trpc: { context: { skipBatch: true } },
-      keepPreviousData: true,
-      ...options,
-    }
-  );
-
-  const categories = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data]);
-
-  return { data, categories, ...rest };
 };

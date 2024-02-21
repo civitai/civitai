@@ -7,7 +7,15 @@ export default function QuestionCreate() {
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
-  resolver: async ({ session }) => {
+  resolver: async ({ session, features }) => {
+    if (!features?.questions)
+      return {
+        redirect: {
+          destination: '/',
+          permanent: false,
+        },
+      };
+
     if (!session) {
       return {
         redirect: {

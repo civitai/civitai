@@ -1,7 +1,7 @@
 import { Card, Group, Stack, Text, ThemeIcon, createStyles } from '@mantine/core';
 import { IconBrandPython, IconFileText, IconMarkdown, IconTxt, IconZip } from '@tabler/icons-react';
 
-import { ArticleGetById } from '~/types/router';
+import type { ArticleGetById } from '~/server/services/article.service';
 import { formatKBytes } from '~/utils/number-helpers';
 
 const fileCosmetics = {

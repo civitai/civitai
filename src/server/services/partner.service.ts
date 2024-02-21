@@ -1,14 +1,10 @@
-import { Prisma } from '@prisma/client';
-import { dbWrite, dbRead } from '~/server/db/client';
+import { dbRead } from '~/server/db/client';
 import { shuffle } from '~/utils/array-helpers';
 
-export const getAllPartners = async <TSelect extends Prisma.PartnerSelect>(args?: {
-  select?: TSelect;
-}) => {
-  const { select } = args ?? {};
+export const getAllPartners = async () => {
   const partners = await dbRead.partner.findMany({
     where: {},
-    select: select ?? {
+    select: {
       id: true,
       name: true,
       homepage: true,
@@ -20,6 +16,8 @@ export const getAllPartners = async <TSelect extends Prisma.PartnerSelect>(args?
       price: true,
       onDemand: true,
       about: true,
+      tier: true,
+      logo: true,
       // createdAt: true,
     },
   });

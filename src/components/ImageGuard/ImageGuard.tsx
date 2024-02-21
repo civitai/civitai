@@ -1,5 +1,6 @@
 import {
   ActionIcon,
+  ActionIconProps,
   Alert,
   Badge,
   Box,
@@ -34,6 +35,7 @@ import {
   IconTrash,
   IconUser,
   IconUserMinus,
+  IconUserOff,
 } from '@tabler/icons-react';
 import Link from 'next/link';
 import Router, { useRouter } from 'next/router';
@@ -71,7 +73,8 @@ export type ImageGuardConnect = {
     | 'collection'
     | 'bounty'
     | 'bountyEntry'
-    | 'club';
+    | 'club'
+    | 'article';
   entityId: string | number;
 };
 // #region [store]
@@ -314,6 +317,8 @@ ImageGuard.Report = function ReportImage({
   withinPortal = false,
   context = 'image',
   additionalMenuItems,
+  actionIconProps,
+  iconSize = 26,
 }: {
   position?: 'static' | 'top-left' | 'top-right';
   withinPortal?: boolean;
@@ -321,6 +326,8 @@ ImageGuard.Report = function ReportImage({
   additionalMenuItems?:
     | React.ReactElement<MenuItemProps | MenuDividerProps | MenuLabelProps>[]
     | null;
+  actionIconProps?: Omit<ActionIconProps, 'onClick'>;
+  iconSize?: number;
 }) {
   const utils = trpc.useContext();
   const { getMenuItems } = useImageGuardReportContext();
@@ -334,7 +341,7 @@ ImageGuard.Report = function ReportImage({
   const moderateImagesMutation = trpc.image.moderate.useMutation();
   const handleModerate = async (
     e: React.SyntheticEvent,
-    action: 'accept' | 'delete' | 'removeName'
+    action: 'accept' | 'delete' | 'removeName' | 'mistake'
   ) => {
     e.preventDefault();
     e.stopPropagation();
@@ -394,6 +401,14 @@ ImageGuard.Report = function ReportImage({
           >
             Approve
           </Menu.Item>
+          {needsReview === 'poi' && (
+            <Menu.Item
+              onClick={(e) => handleModerate(e, 'mistake')}
+              icon={<IconUserOff size={14} stroke={1.5} />}
+            >
+              Not POI
+            </Menu.Item>
+          )}
           {needsReview === 'poi' && (
             <Menu.Item
               onClick={(e) => handleModerate(e, 'removeName')}
@@ -614,9 +629,10 @@ ImageGuard.Report = function ReportImage({
                 e.stopPropagation();
               }}
               sx={{ width: 30 }}
+              {...actionIconProps}
             >
               <IconDotsVertical
-                size={26}
+                size={iconSize}
                 color="#fff"
                 filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
               />

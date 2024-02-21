@@ -23,6 +23,8 @@ import {
   IconInfoCircle,
   IconBookmark,
   IconShare3,
+  IconLayoutSidebar,
+  IconLayoutSidebarRightCollapse,
 } from '@tabler/icons-react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { Adunit } from '~/components/Ads/AdUnit';
@@ -60,7 +62,7 @@ import { ReportEntity } from '~/server/schema/report.schema';
 const UNFURLABLE: NsfwLevel[] = [NsfwLevel.None, NsfwLevel.Soft];
 export function ImageDetail() {
   const { classes, cx, theme } = useStyles();
-  const { image, isLoading, active, toggleInfo, close, shareUrl } = useImageDetailContext();
+  const { image, isLoading, active, close, toggleInfo, shareUrl } = useImageDetailContext();
   const { query } = useBrowserRouter();
   const currentUser = useCurrentUser();
 
@@ -89,28 +91,15 @@ export function ImageDetail() {
       />
       <TrackView entityId={image.id} entityType="Image" type="ImageView" nsfw={nsfw} />
       <MantineProvider theme={{ colorScheme: 'dark' }} inherit>
-        <Paper className={classes.root}>
-          <CloseButton
-            style={{ position: 'absolute', top: 15, right: 15, zIndex: 10 }}
-            size="lg"
-            variant="default"
-            onClick={close}
-            className={classes.mobileOnly}
-          />
-          <ImageDetailCarousel className={classes.carousel} />
-          <ActionIcon
-            size="lg"
-            className={cx(classes.info, classes.mobileOnly)}
-            onClick={toggleInfo}
-            variant="default"
-          >
-            <IconInfoCircle />
-          </ActionIcon>
-          <Card
-            className={cx(classes.sidebar, {
-              [classes.active]: active,
-            })}
-          >
+        <Paper
+          className={cx(classes.root, {
+            [classes.active]: active,
+          })}
+        >
+          <div className={classes.carouselWrapper}>
+            <ImageDetailCarousel className={classes.carousel} />
+          </div>
+          <Card className={cx(classes.sidebar)}>
             <Card.Section py="xs" withBorder inheritPadding>
               <Group position="apart" spacing={8}>
                 <UserAvatar
@@ -140,17 +129,9 @@ export function ImageDetail() {
                   />
                   <ChatUserButton user={image.user} size="md" compact />
                   <FollowUserButton userId={image.user.id} size="md" compact />
-                  <CloseButton
-                    size="md"
-                    radius="xl"
-                    variant="transparent"
-                    ml="auto"
-                    iconSize={20}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      close();
-                    }}
-                  />
+                  <ActionIcon onClick={toggleInfo} size="md" radius="xl" ml="auto">
+                    <IconLayoutSidebarRightCollapse size={20} />
+                  </ActionIcon>
                 </Group>
               </Group>
             </Card.Section>
@@ -163,22 +144,6 @@ export function ImageDetail() {
               <Stack spacing={8}>
                 <Group position="apart" spacing={8}>
                   <Group spacing={8}>
-                    {currentUser && image.meta && (
-                      <Button
-                        size="md"
-                        radius="xl"
-                        color="blue"
-                        variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                        onClick={() => generationPanel.open({ type: 'image', id: image.id })}
-                        data-activity="remix:image"
-                        compact
-                      >
-                        <Group spacing={4} noWrap>
-                          <IconBrush size={14} />
-                          <Text size="xs">Remix</Text>
-                        </Group>
-                      </Button>
-                    )}
                     {image.postId &&
                       (!query.postId ? (
                         <RoutedDialogLink
@@ -230,20 +195,6 @@ export function ImageDetail() {
                     >
                       <IconBookmark size={14} />
                     </ActionIcon>
-                    <ShareButton
-                      url={shareUrl}
-                      title={`Image by ${image.user.username}`}
-                      collect={{ type: CollectionType.Image, imageId: image.id }}
-                    >
-                      <ActionIcon
-                        size={30}
-                        radius="xl"
-                        color="gray"
-                        variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                      >
-                        <IconShare3 size={14} />
-                      </ActionIcon>
-                    </ShareButton>
                   </Group>
                   <Group spacing={8}>
                     <LoginRedirect reason={'report-content'}>
@@ -306,33 +257,6 @@ export function ImageDetail() {
                   />
                   <Paper p="sm" radius={0}>
                     <Stack spacing={8}>
-                      <Group position="apart">
-                        <Reactions
-                          entityId={image.id}
-                          entityType="image"
-                          reactions={image.reactions}
-                          metrics={{
-                            likeCount: image.stats?.likeCountAllTime,
-                            dislikeCount: image.stats?.dislikeCountAllTime,
-                            heartCount: image.stats?.heartCountAllTime,
-                            laughCount: image.stats?.laughCountAllTime,
-                            cryCount: image.stats?.cryCountAllTime,
-                            tippedAmountCount: image.stats?.tippedAmountCountAllTime,
-                          }}
-                          targetUserId={image.user.id}
-                        />
-                        <Stack spacing={2}>
-                          <Text size="sm" align="center" weight={500} lh={1.1}>
-                            {abbreviateNumber(image.stats?.viewCountAllTime ?? 0)}
-                          </Text>
-                          <Group spacing={4}>
-                            <IconEye size={14} stroke={1.5} />
-                            <Text color="dimmed" size="xs" lh={1} mt={-2}>
-                              total views
-                            </Text>
-                          </Group>
-                        </Stack>
-                      </Group>
                       <ImageDetailComments imageId={image.id} userId={image.user.id} />
                     </Stack>
                   </Paper>
@@ -365,6 +289,7 @@ export function ImageDetail() {
 const useStyles = createStyles((theme, _props, getRef) => {
   const isMobile = containerQuery.smallerThan('md');
   const isDesktop = containerQuery.largerThan('md');
+  const sidebarWidth = 457;
   return {
     root: {
       flex: 1,
@@ -372,18 +297,41 @@ const useStyles = createStyles((theme, _props, getRef) => {
       position: 'relative',
       overflow: 'hidden',
       zIndex: 200,
+      transition: '.3s ease padding-right',
+
+      [`&.${getRef('active')}`]: {
+        paddingRight: sidebarWidth,
+
+        [isMobile]: {
+          paddingRight: 0,
+        },
+      },
     },
-    carousel: {
+    carouselWrapper: {
       flex: 1,
       alignItems: 'stretch',
+      position: 'relative',
+    },
+    carousel: {
+      width: '100%',
+      height: '100%',
     },
     active: { ref: getRef('active') },
     sidebar: {
-      width: 457,
+      width: sidebarWidth,
       borderRadius: 0,
       borderLeft: `1px solid ${theme.colors.dark[4]}`,
       display: 'flex',
       flexDirection: 'column',
+      position: 'absolute',
+      transition: '.3s ease transform',
+      right: 0,
+      transform: 'translateX(100%)',
+      height: '100%',
+
+      [`.${getRef('active')} &`]: {
+        transform: 'translateX(0)',
+      },
 
       [isMobile]: {
         position: 'absolute',
@@ -391,11 +339,10 @@ const useStyles = createStyles((theme, _props, getRef) => {
         left: 0,
         width: '100%',
         height: '100%',
-        transition: '.3s ease transform',
-        // transform: 'translateY(100%)',
+        transform: 'translateY(100%)',
         zIndex: 20,
 
-        [`&.${getRef('active')}`]: {
+        [`.${getRef('active')} &`]: {
           transform: 'translateY(-100%)',
         },
       },

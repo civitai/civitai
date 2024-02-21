@@ -1189,6 +1189,7 @@ model Image {
   clubAvatar         Club[]                @relation("avatarImage")
   clubTierCover      ClubTier[]
   clubPostCoverImage ClubPost[]
+  article            Article?
 
   @@index([featuredAt])
   @@index([postId], type: Hash)
@@ -1534,6 +1535,8 @@ model Partner {
   poi                Boolean             @default(false)
   personal           Boolean             @default(false)
   token              String?             @unique
+  tier               Int                 @default(0)
+  logo               String?
   runStrategies      RunStrategy[]
 }
 
@@ -1968,7 +1971,9 @@ model Article {
   metadata     Json?
   title        String
   content      String
-  cover        String
+  cover        String?
+  coverId      Int?         @unique
+  coverImage   Image?       @relation(fields: [coverId], references: [id], onDelete: NoAction)
   publishedAt  DateTime?
   userId       Int
   user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -2136,6 +2141,7 @@ enum CollectionType {
 
 enum CollectionMode {
   Contest
+  Bookmark
 }
 
 model Collection {
@@ -2167,6 +2173,8 @@ model Collection {
   metrics      CollectionMetric[]
 
   @@index([userId])
+  @@index([type], type: Hash)
+  @@index([mode], type: Hash)
 }
 
 enum CollectionItemStatus {
@@ -2222,6 +2230,7 @@ model CollectionContributor {
   permissions  CollectionContributorPermission[]
 
   @@id([userId, collectionId])
+  @@index([userId], type: Hash)
 }
 
 model TagsOnCollection {

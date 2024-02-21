@@ -5,10 +5,7 @@ import { useZodRouteParams } from '~/hooks/useZodRouteParams';
 
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { ArticleSort } from '~/server/common/enums';
-import {
-  GetArticlesByCategorySchema,
-  GetInfiniteArticlesSchema,
-} from '~/server/schema/article.schema';
+import { GetInfiniteArticlesSchema } from '~/server/schema/article.schema';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
 import { booleanString, numericString, numericStringArray } from '~/utils/zod-helpers';
@@ -67,24 +64,4 @@ export const useQueryArticles = (
   const articles = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data]);
 
   return { data, articles, ...rest };
-};
-
-export const useQueryArticleCategories = (
-  filters?: Partial<GetArticlesByCategorySchema>,
-  options?: { keepPreviousData?: boolean; enabled?: boolean }
-) => {
-  filters ??= {};
-  const { data, ...rest } = trpc.article.getByCategory.useInfiniteQuery(
-    { ...filters },
-    {
-      getNextPageParam: (lastPage) => lastPage.nextCursor,
-      trpc: { context: { skipBatch: true } },
-      keepPreviousData: true,
-      ...options,
-    }
-  );
-
-  const categories = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data]);
-
-  return { data, categories, ...rest };
 };

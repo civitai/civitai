@@ -24,19 +24,26 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getDisplayName } from '~/utils/string-helpers';
 import { IconCalendar } from '@tabler/icons-react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useRouter } from 'next/router';
 
-export default function CollectionEditModal({ collectionId }: { collectionId: number }) {
+export default function CollectionEditModal({ collectionId }: { collectionId?: number }) {
+  const router = useRouter();
   const dialog = useDialogContext();
   const queryUtils = trpc.useContext();
   const currentUser = useCurrentUser();
-  const { data, isLoading } = trpc.collection.getById.useQuery(
-    { id: collectionId },
+  const { data, isLoading: queryLoading } = trpc.collection.getById.useQuery(
+    { id: collectionId as number },
     { enabled: !!collectionId }
   );
+
+  const isLoading = queryLoading && !!collectionId;
 
   const form = useForm({
     schema: upsertCollectionInput,
     shouldUnregister: false,
+    defaultValues: {
+      type: CollectionType.Model,
+    },
   });
 
   const mode = form.watch('mode');
@@ -46,9 +53,16 @@ export default function CollectionEditModal({ collectionId }: { collectionId: nu
     upsertCollectionMutation.mutate(
       { ...data, mode: data.mode || null },
       {
-        onSuccess: async () => {
+        onSuccess: async (collection) => {
           await queryUtils.collection.getInfinite.invalidate();
-          await queryUtils.collection.getById.invalidate({ id: collectionId });
+          if (collectionId) {
+            await queryUtils.collection.getById.invalidate({ id: collectionId });
+          } else {
+            // Redirect to collection page:
+            await queryUtils.collection.getAllUser.invalidate();
+            router.push(`/collections/${collection.id}`);
+          }
+
           dialog.onClose();
         },
       }
@@ -70,14 +84,16 @@ export default function CollectionEditModal({ collectionId }: { collectionId: nu
   }, [data]);
 
   const permissions = data?.permissions ?? { manage: false, write: false };
+  const canEdit = data?.collection && permissions.manage;
+  const isCreate = !collectionId;
 
   return (
-    <Modal {...dialog} title="Edit collection">
+    <Modal {...dialog} title={isCreate ? 'Create collection' : 'Edit collection'}>
       {isLoading ? (
         <Center py="xl">
           <Loader variant="bars" />
         </Center>
-      ) : data?.collection && permissions.manage ? (
+      ) : canEdit || isCreate ? (
         <Form form={form} onSubmit={handleSubmit}>
           <Stack spacing="xs">
             <InputSimpleImageUpload name="image" label="Cover Image" />
@@ -99,6 +115,19 @@ export default function CollectionEditModal({ collectionId }: { collectionId: nu
               label="Privacy"
               data={Object.values(collectionReadPrivacyData)}
             />
+            {isCreate && (
+              <InputSelect
+                name="type"
+                label="Collection Type"
+                data={[
+                  ...Object.values(CollectionType).map((value) => ({
+                    value,
+                    label: getDisplayName(value),
+                  })),
+                ]}
+                clearable
+              />
+            )}
 
             {currentUser?.isModerator && (
               <>

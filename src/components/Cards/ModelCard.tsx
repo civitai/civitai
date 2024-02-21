@@ -20,6 +20,7 @@ import {
   IconInfoCircle,
   IconBolt,
   IconArchiveFilled,
+  IconHorse,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React from 'react';
@@ -196,6 +197,7 @@ export function ModelCard({ data, forceInView }: Props) {
     data.lastVersionAt > aDayAgo &&
     data.lastVersionAt.getTime() - data.publishedAt.getTime() > constants.timeCutOffs.updatedModel;
   const isSDXL = baseModelSets.SDXL.includes(data.version?.baseModel as BaseModel);
+  const isPony = data.version?.baseModel === 'Pony';
   const isArchived = data.mode === ModelModifier.Archived;
   const onSite = !!data.version.trainingStatus;
 
@@ -257,9 +259,13 @@ export function ModelCard({ data, forceInView }: Props) {
                                     {isSDXL && (
                                       <>
                                         <Divider orientation="vertical" />
-                                        <Text color="white" size="xs">
-                                          XL
-                                        </Text>
+                                        {isPony ? (
+                                          <IconHorse size={16} strokeWidth={2.5} />
+                                        ) : (
+                                          <Text color="white" size="xs">
+                                            XL
+                                          </Text>
+                                        )}
                                       </>
                                     )}
                                   </Badge>
@@ -486,71 +492,6 @@ export function ModelCard({ data, forceInView }: Props) {
                       )}
                     </>
                   )}
-                  {/* {data.rank && (
-                    <Group spacing={4} position="apart">
-                      {!data.locked && (
-                        <IconBadge
-                          className={classes.iconBadge}
-                          sx={{ userSelect: 'none' }}
-                          icon={<StarRating size={14} value={data.rank.rating} />}
-                        >
-                          <Text
-                            size="xs"
-                            color={data.rank.ratingCount > 0 ? undefined : 'dimmed'}
-                            inline
-                          >
-                            {abbreviateNumber(data.rank.ratingCount)}
-                          </Text>
-                        </IconBadge>
-                      )}
-                      <Group spacing={4}>
-                        <IconBadge
-                          className={classes.iconBadge}
-                          icon={
-                            <IconHeart
-                              size={14}
-                              style={{ fill: isFavorite ? theme.colors.red[6] : undefined }}
-                              color={isFavorite ? theme.colors.red[6] : undefined}
-                            />
-                          }
-                        >
-                          <Text size="xs">{abbreviateNumber(data.rank.favoriteCount)}</Text>
-                        </IconBadge>
-                        <IconBadge
-                          className={classes.iconBadge}
-                          icon={<IconMessageCircle2 size={14} />}
-                        >
-                          <Text size="xs">{abbreviateNumber(data.rank.commentCount)}</Text>
-                        </IconBadge>
-                        <IconBadge className={classes.iconBadge} icon={<IconDownload size={14} />}>
-                          <Text size="xs">{abbreviateNumber(data.rank.downloadCount)}</Text>
-                        </IconBadge>
-                        <AddToCollectionDropdown
-                          dropdownTrigger={
-                            <IconBadge
-                              className={classes.iconBadge}
-                              icon={<IconBookmark size={14} />}
-                            >
-                              <Text size="xs">{abbreviateNumber(data.rank.collectedCount)}</Text>
-                            </IconBadge>
-                          }
-                          modelId={data.id}
-                          type={CollectionType.Model}
-                        />
-                        <InteractiveTipBuzzButton
-                          toUserId={data.user.id}
-                          entityType={'Model'}
-                          entityId={data.id}
-                        >
-                          <IconBadge className={classes.iconBadge} icon={<IconBolt size={14} />}>
-                            <Text size="xs">
-                              {abbreviateNumber(data.rank.tippedAmountCount + tippedAmount)}
-                            </Text>
-                          </IconBadge>
-                        </InteractiveTipBuzzButton>
-                      </Group>
-                    </Group>
-                  )} */}
                 </Stack>
                 {onSite && <OnsiteIndicator />}
               </>

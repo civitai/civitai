@@ -44,7 +44,6 @@ import {
   getAllModelsSchema,
   getAssociatedResourcesSchema,
   getDownloadSchema,
-  getModelsByCategorySchema,
   getModelsWithCategoriesSchema,
   getModelVersionsSchema,
   modelByHashesInput,
@@ -62,7 +61,6 @@ import {
 import {
   getAllModelsWithCategories,
   getAssociatedResourcesSimple,
-  getModelsByCategory,
   getSimpleModelWithVersions,
   rescanModel,
   setAssociatedResources,
@@ -195,11 +193,6 @@ export const modelRouter = router({
     .input(changeModelModifierSchema)
     .use(isOwnerOrModerator)
     .mutation(changeModelModifierHandler),
-  getByCategory: publicProcedure
-    .input(getModelsByCategorySchema)
-    .use(applyUserPreferences)
-    .use(cacheIt())
-    .query(({ input, ctx }) => getModelsByCategory({ ...input, user: ctx.user })),
   getWithCategoriesSimple: publicProcedure
     .input(getModelsWithCategoriesSchema)
     .query(({ input }) => getAllModelsWithCategories(input)),

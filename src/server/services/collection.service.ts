@@ -1,4 +1,4 @@
-import { uniq } from 'lodash-es';
+import { truncate, uniq } from 'lodash-es';
 import { dbWrite, dbRead } from '~/server/db/client';
 import {
   BulkSaveCollectionItemsInput,
@@ -35,7 +35,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { isDefined } from '~/utils/type-guards';
-import { ArticleGetAll } from '~/types/router';
+import type { ArticleGetAll } from '~/server/services/article.service';
 import { getArticles } from '~/server/services/article.service';
 import {
   getModelsWithImagesAndModelVersions,
@@ -674,7 +674,7 @@ interface ImageCollectionItem {
 
 interface ArticleCollectionItem {
   type: 'article';
-  data: ArticleGetAll['items'][0];
+  data: ArticleGetAll[0];
 }
 
 export type CollectionItemExpanded = {
@@ -965,30 +965,26 @@ export const deleteCollectionById = async ({
   userId,
   isModerator,
 }: GetByIdInput & { userId: number; isModerator?: boolean }) => {
-  try {
-    const collection = await dbRead.collection.findFirst({
-      // Confirm the collection belongs to the user:
-      where: { id, userId: isModerator ? undefined : userId },
-      select: { id: true },
-    });
+  const collection = await dbRead.collection.findFirstOrThrow({
+    // Confirm the collection belongs to the user:
+    where: { id, userId: isModerator ? undefined : userId },
+    select: { id: true, mode: true },
+  });
 
-    if (!collection) {
-      return null;
-    }
-
-    const res = await dbWrite.collection.delete({ where: { id } });
-
-    await collectionsSearchIndex.queueUpdate([
-      {
-        id,
-        action: SearchIndexUpdateQueueAction.Delete,
-      },
-    ]);
-
-    return res;
-  } catch {
-    // Ignore errors
+  if (collection.mode === CollectionMode.Bookmark) {
+    throw throwBadRequestError('You cannot delete a bookmark collection');
   }
+
+  const res = await dbWrite.collection.delete({ where: { id } });
+
+  await collectionsSearchIndex.queueUpdate([
+    {
+      id,
+      action: SearchIndexUpdateQueueAction.Delete,
+    },
+  ]);
+
+  return res;
 };
 
 export const addContributorToCollection = async ({

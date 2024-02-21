@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "Partner" ADD COLUMN     "tier" INTEGER NOT NULL DEFAULT 0;
