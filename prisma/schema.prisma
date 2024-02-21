@@ -246,6 +246,8 @@ model User {
   chatMessages               ChatMessage[]
   chatOwners                 Chat[]
   builds                     BuildGuide[]
+  PurchasableReward          PurchasableReward[]
+  UserPurchasedRewards       UserPurchasedRewards[]
 }
 
 enum OnboardingStep {
@@ -1190,6 +1192,7 @@ model Image {
   clubTierCover      ClubTier[]
   clubPostCoverImage ClubPost[]
   article            Article?
+  purchasableRewards PurchasableReward[]
 
   @@index([featuredAt])
   @@index([postId], type: Hash)
@@ -2737,6 +2740,45 @@ model BuildGuide {
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   components   Json
   capabilities Json
+}
+
+enum PurchasableRewardUsage {
+  SingleUse
+  MultiUse
+}
+
+model PurchasableReward {
+  id             Int                    @id @default(autoincrement())
+  createdAt      DateTime               @default(now())
+  updatedAt      DateTime               @updatedAt
+  title          String
+  unitPrice      Int
+  about          String
+  redeemDetails  String
+  termsOfUse     String
+  usage          PurchasableRewardUsage
+  codes          String[]
+  archived       Boolean                @default(false)
+  availableFrom  DateTime?
+  availableTo    DateTime?
+  availableCount Int?
+  addedById      Int?
+  addedBy        User?                  @relation(fields: [addedById], references: [id])
+  coverImageId   Int?
+  coverImage     Image?                 @relation(fields: [coverImageId], references: [id], onDelete: SetNull)
+  purchases      UserPurchasedRewards[]
+}
+
+model UserPurchasedRewards {
+  buzzTransactionId   String             @id
+  userId              Int?
+  user                User?              @relation(fields: [userId], references: [id], onDelete: SetNull)
+  purchasableRewardId Int?
+  purchasableReward   PurchasableReward? @relation(fields: [purchasableRewardId], references: [id], onDelete: SetNull)
+  createdAt           DateTime           @default(now())
+  // We should store the product name & details in the meta at the time or purchase in case the reward is later on deleted - will be a good safeguard
+  meta                Json               @default("{}")
+  code                String
 }
 
 /// @view
