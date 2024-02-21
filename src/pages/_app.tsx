@@ -49,7 +49,6 @@ import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 import { trpc } from '~/utils/trpc';
 import '~/styles/globals.css';
 import { ActivityReportingProvider } from '~/providers/ActivityReportingProvider';
-import { extendedSessionUser } from '~/utils/session-helpers';
 import { PaypalProvider } from '~/providers/PaypalProvider';
 import { BrowsingModeProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { ParsedCookies, parseCookies } from '~/shared/utils';
@@ -287,9 +286,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
 
   const hasAuthCookie = !isClient && Object.keys(cookies).some((x) => x.endsWith('civitai-token'));
   const session = hasAuthCookie ? await getSession(appContext.ctx) : null;
-  const flags = getFeatureFlags({
-    user: session?.user ? extendedSessionUser(session.user) : undefined,
-  });
+  const flags = getFeatureFlags({ user: session?.user });
 
   // Pass this via the request so we can use it in SSR
   if (session) {

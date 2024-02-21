@@ -9,7 +9,6 @@ import { FeatureAccess, getFeatureFlags } from '~/server/services/feature-flags.
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { parseCookies } from '~/shared/utils';
-import { extendedSessionUser } from '~/utils/session-helpers';
 
 export function parseBrowsingMode(
   cookies: Partial<{ [key: string]: string }>,
@@ -38,7 +37,7 @@ export const getServerProxySSGHelpers = async (
   const ssg = createServerSideHelpers({
     router: appRouter,
     ctx: {
-      user: session?.user ? extendedSessionUser(session.user) : undefined,
+      user: session?.user,
       acceptableOrigin: true,
       browsingLevel,
       showNsfw,

@@ -1,4 +1,3 @@
-import { extendedSessionUser } from '~/utils/session-helpers';
 import { ModelHashType, ModelModifier } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
@@ -39,7 +38,7 @@ export default MixedAuthEndpoint(async function handler(
 
   const apiCaller = appRouter.createCaller({
     ...publicApiContext(req, res),
-    user: user ? extendedSessionUser(user) : undefined,
+    user: user,
     browsingLevel,
     showNsfw,
   });

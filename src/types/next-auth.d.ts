@@ -1,5 +1,4 @@
 import type { DefaultSession } from 'next-auth';
-import { extendedSessionUser } from '~/utils/session-helpers';
 
 interface ExtendedUser {
   id: number;
@@ -38,8 +37,7 @@ declare module 'next-auth' {
     image?: string | null;
   }
 
-  interface TokenUser extends ExtendedUser, DefaultSession['user'] {}
-  type SessionUser = NonNullable<ReturnType<typeof extendedSessionUser>>;
+  interface SessionUser extends ExtendedUser, DefaultSession['user'] {}
   /**
    * Returned by `useSession`, `getSession` and received as a prop on the `SessionProvider` React Context
    */

@@ -2,7 +2,6 @@ import { Session } from 'next-auth';
 import { SessionUser } from 'next-auth';
 import { signIn, useSession } from 'next-auth/react';
 import { createContext, useContext, useMemo, useEffect } from 'react';
-import { extendedSessionUser } from '~/utils/session-helpers';
 import { onboardingSteps } from '~/components/Onboarding/onboarding.utils';
 import { Flags } from '~/shared/utils';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -10,6 +9,7 @@ import dynamic from 'next/dynamic';
 const OnboardingModal = dynamic(() => import('~/components/Onboarding/OnboardingWizard'));
 
 export type CivitaiSessionState = SessionUser & {
+  isMember: boolean;
   refresh: () => Promise<Session | null>;
 };
 const CivitaiSessionContext = createContext<CivitaiSessionState | null>(null);
@@ -23,7 +23,8 @@ export function CivitaiSessionProvider({ children }: { children: React.ReactNode
     if (typeof window !== 'undefined') window.isAuthed = true;
 
     return {
-      ...extendedSessionUser(data.user),
+      ...data.user,
+      isMember: data.user.tier != null,
       refresh: update,
     };
   }, [data?.user, update]);

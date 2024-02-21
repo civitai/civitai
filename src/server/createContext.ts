@@ -4,7 +4,6 @@ import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { Tracker } from './clickhouse/client';
 import requestIp from 'request-ip';
 import { isProd } from '~/env/other';
-import { extendedSessionUser } from '~/utils/session-helpers';
 import { parseBrowsingMode } from '~/server/utils/server-side-helpers';
 import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
@@ -41,7 +40,7 @@ export const createContext = async ({
   };
 
   return {
-    user: session?.user ? extendedSessionUser(session.user) : undefined,
+    user: session?.user,
     browsingLevel,
     showNsfw,
     acceptableOrigin,
