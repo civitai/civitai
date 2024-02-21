@@ -80,18 +80,6 @@ export function ImageUpload({
   const isClient = useIsClient();
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
-
-  // const {
-  //   files,
-  //   filesHandler,
-  //   removeImage,
-  //   upload,
-  //   // isCompleted,
-  //   // isUploading,
-  //   // isProcessing,
-  //   // hasErrors,
-  //   // hasBlocked,
-  // } = useImageUpload({ max, value: Array.isArray(value) ? value : [] });
   const { files: imageFiles, uploadToCF, removeImage } = useCFImageUpload();
   const [files, filesHandler] = useListState<CustomFile>(Array.isArray(value) ? value : []);
   const [activeId, setActiveId] = useState<UniqueIdentifier>();

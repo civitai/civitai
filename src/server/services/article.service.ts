@@ -18,7 +18,6 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
 import {
   articleWhereSchema,
-  GetArticlesByCategorySchema,
   GetInfiniteArticlesSchema,
   UpsertArticleInput,
 } from '~/server/schema/article.schema';
@@ -26,31 +25,26 @@ import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
 import { articlesSearchIndex } from '~/server/search-index';
 import { articleDetailSelect } from '~/server/selectors/article.selector';
-import { UserWithCosmetics, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import {
   getAvailableCollectionItemsFilterForUser,
   getUserCollectionPermissionsById,
 } from '~/server/services/collection.service';
 import { getCategoryTags } from '~/server/services/system-cache';
-import { getTypeCategories } from '~/server/services/tag.service';
-import {
-  throwAuthorizationError,
-  throwDbError,
-  throwNotFoundError,
-} from '~/server/utils/errorHandling';
+import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { decreaseDate } from '~/utils/date-helpers';
 import { postgresSlugify, removeTags } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { getFilesByEntity } from './file.service';
-import { hasEntityAccess } from '~/server/services/common.service';
-import { getClubDetailsForResource, upsertClubResource } from '~/server/services/club.service';
-import { profileImageSelect } from '~/server/selectors/image.selector';
-import { getPrivateEntityAccessForUser } from './user-cache.service';
+import { imageSelect, profileImageSelect } from '~/server/selectors/image.selector';
+import { createImage, deleteImageById } from '~/server/services/image.service';
+import { ImageMetaProps } from '~/server/schema/image.schema';
 
 type ArticleRaw = {
   id: number;
-  cover: string;
+  cover?: string | null;
+  coverId?: number | null;
   title: string;
   publishedAt: Date | null;
   nsfw: boolean;
@@ -97,6 +91,7 @@ type ArticleRaw = {
 
 export type ArticleGetAllRecord = Awaited<ReturnType<typeof getArticles>>['items'][number];
 
+export type ArticleGetAll = AsyncReturnType<typeof getArticles>['items'];
 export const getArticles = async ({
   limit,
   cursor,
@@ -329,6 +324,7 @@ export const getArticles = async ({
       SELECT
         a.id,
         a.cover,
+        a."coverId",
         a.title,
         a."publishedAt",
         a.nsfw,
@@ -410,11 +406,15 @@ export const getArticles = async ({
       select: { ...profileImageSelect, ingestion: true },
     });
 
+    const coverIds = articles.map((x) => x.coverId).filter(isDefined);
+    const coverImages = coverIds.length
+      ? await dbRead.image.findMany({
+          where: { id: { in: coverIds } },
+          select: imageSelect,
+        })
+      : [];
+
     const articleCategories = await getCategoryTags('article');
-    const userEntityAccess = await getPrivateEntityAccessForUser({ userId: sessionUser?.id });
-    const privateArticleAccessIds = userEntityAccess
-      .filter((x) => x.entityType === 'Article')
-      .map((x) => x.entityId);
 
     const items = articles
       .filter((a) => {
@@ -427,6 +427,7 @@ export const getArticles = async ({
       .map(({ tags, stats, user, userCosmetics, cursorId, ...article }) => {
         const { profilePictureId, ...u } = user;
         const profilePicture = profilePictures.find((p) => p.id === profilePictureId) ?? null;
+        const coverImage = coverImages.find((x) => x.id === article.coverId);
 
         return {
           ...article,
@@ -440,6 +441,14 @@ export const getArticles = async ({
             profilePicture,
             cosmetics: userCosmetics,
           },
+          coverImage: coverImage
+            ? {
+                ...coverImage,
+                meta: coverImage.meta as ImageMetaProps,
+                metadata: coverImage.metadata as any,
+                tags: coverImage?.tags.flatMap((x) => x.tag.id),
+              }
+            : undefined,
         };
       });
 
@@ -452,7 +461,7 @@ export const getArticles = async ({
 type CivitaiNewsItemRaw = {
   id: number;
   collection: string;
-  cover: string;
+  coverId?: number;
   title: string;
   content: string;
   publishedAt: Date;
@@ -460,22 +469,13 @@ type CivitaiNewsItemRaw = {
   featured: boolean;
   summary?: string;
 };
-export type CivitaiNewsItem = {
-  id: number;
-  cover: string;
-  title: string;
-  content: string;
-  publishedAt: Date;
-  user: UserWithCosmetics;
-  featured: boolean;
-  summary: string;
-};
+export type CivitaiNewsItem = AsyncReturnType<typeof getCivitaiNews>['articles'][number];
 export const getCivitaiNews = async () => {
   const articlesRaw = await dbRead.$queryRaw<CivitaiNewsItemRaw[]>`
     SELECT
       c.name as "collection",
       a.id,
-      cover,
+      "coverId",
       title,
       content,
       "publishedAt",
@@ -495,25 +495,34 @@ export const getCivitaiNews = async () => {
     select: userWithCosmeticsSelect,
   });
 
-  const news: CivitaiNewsItem[] = [];
-  const updates: CivitaiNewsItem[] = [];
-  for (const article of articlesRaw) {
+  const coverIds = articlesRaw.map((x) => x.coverId).filter(isDefined);
+  const coverImages = coverIds.length
+    ? await dbRead.image.findMany({
+        where: { id: { in: coverIds } },
+        select: imageSelect,
+      })
+    : [];
+
+  const articles = articlesRaw.map((article) => {
     const user = users.find((x) => x.id === article.userId);
-    const item = {
+    const coverImage = coverImages.find((x) => x.id === article.coverId);
+    return {
       ...article,
       user: user ?? null,
       summary: article.summary ?? truncate(removeTags(article.content), { length: 200 }),
-    } as CivitaiNewsItem;
-    if (article.collection === 'Newsroom') news.push(item);
-    if (article.collection === 'Updates') updates.push(item);
-  }
+      coverImage: coverImage
+        ? { ...coverImage, tags: coverImage?.tags.flatMap((x) => x.tag.id) }
+        : undefined,
+      type: article.collection === 'Newsroom' ? 'news' : 'updates',
+    };
+  });
 
   const pressMentions = await dbRead.pressMention.findMany({
     orderBy: { publishedAt: 'desc' },
     where: { publishedAt: { lte: new Date() } },
   });
 
-  return { news, updates, pressMentions };
+  return { articles, pressMentions };
 };
 
 export const getCivitaiEvents = async () => {
@@ -531,16 +540,10 @@ export const getCivitaiEvents = async () => {
   return events;
 };
 
+export type ArticleGetById = AsyncReturnType<typeof getArticleById>;
 export const getArticleById = async ({ id, user }: GetByIdInput & { user?: SessionUser }) => {
   try {
     const isMod = user?.isModerator ?? false;
-    const [access] = await hasEntityAccess({
-      userId: user?.id,
-      isModerator: isMod,
-      entityIds: [id],
-      entityType: 'Article',
-    });
-
     const article = await dbRead.article.findFirst({
       where: {
         id,
@@ -552,21 +555,26 @@ export const getArticleById = async ({ id, user }: GetByIdInput & { user?: Sessi
     if (!article) throw throwNotFoundError(`No article with id ${id}`);
 
     const articleCategories = await getCategoryTags('article');
-    const attachments: Awaited<ReturnType<typeof getFilesByEntity>> = !access.hasAccess
-      ? []
-      : await getFilesByEntity({
-          id,
-          type: 'Article',
-        });
+    const attachments: Awaited<ReturnType<typeof getFilesByEntity>> = await getFilesByEntity({
+      id,
+      type: 'Article',
+    });
 
     return {
       ...article,
-      content: access.hasAccess ? article.content : null,
       attachments,
       tags: article.tags.map(({ tag }) => ({
         ...tag,
         isCategory: articleCategories.some((c) => c.id === tag.id),
       })),
+      coverImage: article.coverImage
+        ? {
+            ...article.coverImage,
+            meta: article.coverImage.meta as ImageMetaProps,
+            metadata: article.coverImage.metadata as any,
+            tags: article.coverImage?.tags.flatMap((x) => x.tag.id),
+          }
+        : undefined,
     };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -574,55 +582,28 @@ export const getArticleById = async ({ id, user }: GetByIdInput & { user?: Sessi
   }
 };
 
-export const getArticlesByCategory = async ({
-  user,
-  cursor,
-  ...input
-}: GetArticlesByCategorySchema & {
-  user?: SessionUser;
-}) => {
-  input.limit ??= 10;
-  let categories = await getTypeCategories({
-    type: 'article',
-    excludeIds: input.excludedTagIds,
-    limit: input.limit + 1,
-    cursor,
-  });
-
-  let nextCursor: number | null = null;
-  if (categories.length > input.limit) nextCursor = categories.pop()?.id ?? null;
-  categories = categories.sort((a, b) => {
-    if (a.priority !== b.priority) return a.priority - b.priority;
-    return Math.random() - 0.5;
-  });
-
-  const items = await Promise.all(
-    categories.map((c) =>
-      getArticles({
-        ...input,
-        limit: Math.ceil((input.articleLimit ?? 12) * 1.25),
-        tags: [c.id],
-        sessionUser: user,
-      }).then(({ items }) => ({ ...c, items }))
-    )
-  );
-
-  return { items, nextCursor };
-};
-
 export const upsertArticle = async ({
   id,
   userId,
   tags,
   attachments,
+  coverImage,
   ...data
 }: UpsertArticleInput & { userId: number }) => {
   try {
+    // create image entity to be attached to article
+    let coverId = coverImage?.id;
+    if (coverImage && !coverImage.id) {
+      const result = await createImage({ ...coverImage, userId });
+      coverId = result.id;
+    }
+
     if (!id) {
       const result = await dbWrite.$transaction(async (tx) => {
         const article = await tx.article.create({
           data: {
             ...data,
+            coverId,
             userId,
             tags: tags
               ? {
@@ -658,11 +639,18 @@ export const upsertArticle = async ({
       return result;
     }
 
+    const article = await dbWrite.article.findUnique({
+      where: { id },
+      select: { id: true, cover: true, coverId: true },
+    });
+    if (!article) throw throwNotFoundError();
+
     const result = await dbWrite.$transaction(async (tx) => {
-      const article = await tx.article.update({
+      const updated = await tx.article.update({
         where: { id },
         data: {
           ...data,
+          coverId,
           tags: tags
             ? {
                 deleteMany: {
@@ -689,7 +677,7 @@ export const upsertArticle = async ({
             : undefined,
         },
       });
-      if (!article) return null;
+      if (!updated) return null;
 
       if (attachments) {
         // Delete any attachments that were removed.
@@ -707,14 +695,19 @@ export const upsertArticle = async ({
             .filter((x) => !x.id)
             .map((attachment) => ({
               ...attachment,
-              entityId: article.id,
+              entityId: updated.id,
               entityType: 'Article',
             })),
         });
       }
 
-      return article;
+      return updated;
     });
+
+    // remove old cover image
+    if (article.coverId !== coverId && article.coverId) {
+      await deleteImageById({ id: article.coverId });
+    }
 
     if (!result) throw throwNotFoundError(`No article with id ${id}`);
 
@@ -748,10 +741,11 @@ export const upsertArticle = async ({
 export const deleteArticleById = async ({ id }: GetByIdInput) => {
   try {
     const deleted = await dbWrite.$transaction(async (tx) => {
-      const article = await tx.article.delete({ where: { id } });
+      const article = await tx.article.delete({ where: { id }, select: { coverId: true } });
       if (!article) return null;
 
       await tx.file.deleteMany({ where: { entityId: id, entityType: 'Article' } });
+      if (article.coverId) await deleteImageById({ id: article.coverId });
 
       return article;
     });
@@ -806,3 +800,16 @@ export const getDraftArticlesByUserId = async ({
     throw throwDbError(error);
   }
 };
+
+// TODO.Briant - remove this after done updating article images
+export async function getAllArticlesForImageProcessing() {
+  return await dbRead.article.findMany({
+    select: {
+      id: true,
+      cover: true,
+      coverId: true,
+      userId: true,
+      coverImage: { select: { scannedAt: true, ingestion: true } },
+    },
+  });
+}

@@ -11,7 +11,7 @@ type ProcessedVideo = { type: 'video' } & AsyncReturnType<typeof preprocessVideo
 
 type PreprocessFileReturnType = SharedProps & (ProcessedImage | ProcessedVideo);
 
-export const preprocessFile = async (file: File): Promise<PreprocessFileReturnType> => {
+export async function preprocessFile(file: File): Promise<PreprocessFileReturnType> {
   const type = MEDIA_TYPE[file.type];
   const data = {
     name: file.name,
@@ -28,4 +28,4 @@ export const preprocessFile = async (file: File): Promise<PreprocessFileReturnTy
     default:
       throw new Error('unhandled preprocessFile type');
   }
-};
+}

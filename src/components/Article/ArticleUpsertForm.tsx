@@ -18,7 +18,7 @@ import {
 import { TagTarget } from '@prisma/client';
 import { IconQuestionMark, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { z } from 'zod';
 
 import { BackButton } from '~/components/BackButton/BackButton';
@@ -37,7 +37,7 @@ import {
 } from '~/libs/form';
 import { hideMobile, showMobile } from '~/libs/sx-helpers';
 import { upsertArticleInput } from '~/server/schema/article.schema';
-import { ArticleGetById } from '~/types/router';
+import type { ArticleGetById } from '~/server/services/article.service';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { parseNumericString } from '~/utils/query-string-helpers';
@@ -49,15 +49,11 @@ import { HelpButton } from '../HelpButton/HelpButton';
 import { ContentPolicyLink } from '../ContentPolicyLink/ContentPolicyLink';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { constants } from '~/server/common/constants';
+import { imageSchema } from '~/server/schema/image.schema';
 
-const schema = upsertArticleInput.extend({
+const schema = upsertArticleInput.omit({ coverImage: true }).extend({
   categoryId: z.number().min(0, 'Please select a valid category'),
-  cover: z
-    .preprocess(
-      (val) => (typeof val === 'string' ? { url: val } : val),
-      z.object({ url: z.string().nonempty() })
-    )
-    .refine((data) => !!data.url, { message: 'Please upload a cover image' }),
+  coverImage: imageSchema.refine((data) => !!data.url, { message: 'Please upload a cover image' }),
 });
 const querySchema = z.object({
   category: z.preprocess(parseNumericString, z.number().optional().default(-1)),
@@ -86,29 +82,47 @@ export function ArticleUpsertForm({ article }: Props) {
   const result = querySchema.safeParse(router.query);
 
   const defaultCategory = result.success ? result.data.category : -1;
-  const defaultValues: z.infer<typeof schema> = {
-    ...article,
-    title: article?.title ?? '',
-    content: article?.content ?? '',
-    categoryId: article?.tags.find((tag) => tag.isCategory)?.id ?? defaultCategory,
-    tags: article?.tags.filter((tag) => !tag.isCategory) ?? [],
-    cover: article?.cover ? { url: article.cover ?? '' } : { url: '' },
-  };
-  const form = useForm({ schema, defaultValues, shouldUnregister: false });
+
+  const form = useForm({
+    schema,
+    shouldUnregister: false,
+    defaultValues: {
+      ...article,
+      title: article?.title ?? '',
+      content: article?.content ?? '',
+      categoryId: article?.tags.find((tag) => tag.isCategory)?.id ?? defaultCategory,
+      tags: article?.tags.filter((tag) => !tag.isCategory) ?? [],
+      coverImage: article?.coverImage ?? null,
+    } as any,
+  });
   const clearStorage = useFormStorage({
     schema,
     form,
     timeout: 1000,
     key: `article${article?.id ? `_${article?.id}` : 'new'}`,
-    watch: ({ content, cover, categoryId, nsfw, tags, title }) => ({
+    watch: ({ content, coverImage, categoryId, nsfw, tags, title }) => ({
       content,
-      cover,
+      coverImage,
       categoryId,
       nsfw,
       tags,
       title,
     }),
   });
+
+  // useEffect(() => {
+  //   const result = schema.safeParse({
+  //     ...article,
+  //     title: article?.title ?? '',
+  //     content: article?.content ?? '',
+  //     categoryId: article?.tags.find((tag) => tag.isCategory)?.id ?? defaultCategory,
+  //     tags: article?.tags.filter((tag) => !tag.isCategory) ?? [],
+  //     coverImage: article?.coverImage ?? null,
+  //   });
+  //   if (result.success) form.reset({ ...result.data });
+  //   else console.error(result.error);
+  //   // eslint-disable-next-line react-hooks/exhaustive-deps
+  // }, [article]);
 
   const [publishing, setPublishing] = useState(false);
 
@@ -126,20 +140,24 @@ export function ArticleUpsertForm({ article }: Props) {
   const handleSubmit = ({
     categoryId,
     tags: selectedTags,
-    cover,
+    coverImage,
     ...rest
   }: z.infer<typeof schema>) => {
     const selectedCategory = data?.items.find((cat) => cat.id === categoryId);
     const tags =
       selectedTags && selectedCategory ? selectedTags.concat([selectedCategory]) : selectedTags;
     upsertArticleMutation.mutate(
-      { ...rest, tags, publishedAt: publishing ? new Date() : null, cover: cover.url },
+      {
+        ...rest,
+        tags,
+        publishedAt: publishing ? new Date() : null,
+        coverImage: coverImage,
+      },
       {
         async onSuccess(result) {
           await router.push(`/articles/${result.id}`);
           await queryUtils.article.getById.invalidate({ id: result.id });
           await queryUtils.article.getInfinite.invalidate();
-          await queryUtils.article.getByCategory.invalidate();
           clearStorage();
         },
         onError(error) {
@@ -221,7 +239,7 @@ export function ArticleUpsertForm({ article }: Props) {
               }
             />
             <InputSimpleImageUpload
-              name="cover"
+              name="coverImage"
               label="Cover Image"
               description={`Suggested resolution: ${constants.profile.coverImageWidth} x ${constants.profile.coverImageHeight}`}
               withAsterisk

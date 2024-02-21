@@ -23,13 +23,14 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
 import {
+  CreateImageSchema,
   GetEntitiesCoverImage,
   ImageEntityType,
   ImageReviewQueueInput,
   ImageUploadProps,
   UpdateImageInput,
 } from '~/server/schema/image.schema';
-import { imagesSearchIndex } from '~/server/search-index';
+import { articlesSearchIndex, imagesSearchIndex } from '~/server/search-index';
 import { ImageV2Model } from '~/server/selectors/imagev2.selector';
 import { imageTagCompositeSelect, simpleTagSelect } from '~/server/selectors/tag.selector';
 import { updatePostNsfwLevel } from '~/server/services/post.service';
@@ -48,7 +49,6 @@ import { hashifyObject } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import {
   GetImageInput,
-  GetImagesByCategoryInput,
   GetInfiniteImagesInput,
   ImageMetaProps,
   ImageModerationSchema,
@@ -67,6 +67,7 @@ import { getPeriods } from '~/server/utils/enum-helpers';
 import { bulkSetReportStatus } from '~/server/services/report.service';
 import { baseS3Client } from '~/utils/s3-client';
 import { pgDbRead, pgDbWrite } from '~/server/db/pgDb';
+import { getImageGenerationProcess } from '~/server/common/model-helpers';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -343,7 +344,7 @@ export const ingestImageBulk = async ({
   const imageIds = images.map(({ id }) => id);
   const dbClient = tx ?? dbWrite;
 
-  if (!isProd && !callbackUrl) {
+  if (!isProd || !callbackUrl) {
     console.log('skip ingest');
     await dbClient.image.updateMany({
       where: { id: { in: imageIds } },
@@ -1445,38 +1446,6 @@ export const getImagesForPosts = async ({
   }));
 };
 
-// type ImageTagResult = { id: number; name: string; isCategory: boolean; postCount: number }[];
-// export const getPostTags = async ({
-//   query,
-//   limit,
-//   excludedTagIds,
-// }: GetPostTagsInput & { excludedTagIds?: number[] }) => {
-//   const showTrending = query === undefined || query.length < 2;
-//   const tags = await dbRead.$queryRaw<PostQueryResult>`
-//     SELECT
-//       t.id,
-//       t.name,
-//       t."isCategory",
-//       COALESCE(${
-//         showTrending ? Prisma.sql`s."postCountDay"` : Prisma.sql`s."postCountAllTime"`
-//       }, 0)::int AS "postCount"
-//     FROM "Tag" t
-//     LEFT JOIN "TagStat" s ON s."tagId" = t.id
-//     LEFT JOIN "TagRank" r ON r."tagId" = t.id
-//     WHERE
-//       ${showTrending ? Prisma.sql`t."isCategory" = true` : Prisma.sql`t.name ILIKE ${query + '%'}`}
-//     ORDER BY ${Prisma.raw(
-//       showTrending ? `r."postCountDayRank" DESC` : `LENGTH(t.name), r."postCountAllTimeRank" DESC`
-//     )}
-//     LIMIT ${limit}
-//   `;
-
-//   return (
-//     !!excludedTagIds?.length ? tags.filter((x) => !excludedTagIds.includes(x.id)) : tags
-//   ).sort((a, b) => b.postCount - a.postCount);
-// };
-// #endregion
-
 export const removeImageResource = async ({ id, user }: GetByIdInput & { user?: SessionUser }) => {
   if (!user?.isModerator) throw throwAuthorizationError();
 
@@ -1519,219 +1488,6 @@ export function applyModRulesSql(
     AND.push(Prisma.sql`(${Prisma.join(publishedOr, ' OR ')})`);
   }
 }
-
-type GetImageByCategoryRaw = {
-  id: number;
-  tagId: number;
-  name: string;
-  url: string;
-  nsfw: NsfwLevel;
-  width: number;
-  height: number;
-  hash: string;
-  meta: Prisma.JsonValue;
-  hideMeta: boolean;
-  generationProcess: ImageGenerationProcess;
-  type: MediaType;
-  metadata: Prisma.JsonValue;
-  scannedAt: Date;
-  ingestion: ImageIngestionStatus;
-  needsReview: string | null;
-  postId: number;
-  modelVersionId: number | null;
-  username: string | null;
-  userImage: string | null;
-  createdAt: Date;
-  publishedAt: Date | null;
-  cryCount: number;
-  laughCount: number;
-  likeCount: number;
-  dislikeCount: number;
-  heartCount: number;
-  commentCount: number;
-  tippedAmountCount: number;
-  userId?: number;
-};
-export const getImagesByCategory = async ({
-  userId,
-  ...input
-}: GetImagesByCategoryInput & { userId?: number }) => {
-  input.limit ??= 10;
-
-  let categories = await getTypeCategories({
-    type: 'image',
-    excludeIds: input.excludedTagIds,
-    limit: input.limit + 1,
-    cursor: input.cursor,
-  });
-
-  let nextCursor: number | null = null;
-  if (categories.length > input.limit) nextCursor = categories.pop()?.id ?? null;
-  categories = categories.sort((a, b) => {
-    if (a.priority !== b.priority) return a.priority - b.priority;
-    return Math.random() - 0.5;
-  });
-
-  const AND = [Prisma.sql`p."publishedAt" < now()`];
-
-  // ensure that only scanned images make it to the main feed
-  AND.push(Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`);
-
-  // Apply excluded tags
-  if (input.excludedTagIds?.length)
-    AND.push(Prisma.sql`NOT EXISTS (
-      SELECT 1 FROM "TagsOnImage" toi
-      WHERE toi."imageId" = i.id
-      AND toi."tagId" IN (${Prisma.join(input.excludedTagIds)})
-    )`);
-
-  // Apply excluded users
-  if (input.excludedUserIds?.length)
-    AND.push(Prisma.sql`i."userId" NOT IN (${Prisma.join(input.excludedUserIds)})`);
-
-  // Limit to selected user
-  if (input.username) {
-    const targetUser = await dbRead.user.findUnique({
-      where: { username: input.username },
-      select: { id: true },
-    });
-    if (!targetUser) throw new Error('User not found');
-    AND.push(Prisma.sql`i."userId" = ${targetUser.id}`);
-  }
-
-  // Limit to selected model/version
-  if (input.modelId) AND.push(Prisma.sql`mv."modelId" = ${input.modelId}`);
-  if (input.modelVersionId) AND.push(Prisma.sql`ir."modelVersionId" = ${input.modelVersionId}`);
-
-  // Apply mod rules
-  applyModRulesSql(AND, { userId });
-
-  let orderBy = `p."publishedAt" DESC, i.index`;
-  if (input.sort === ImageSort.MostReactions)
-    orderBy = `im."likeCount"+im."heartCount"+im."laughCount"+im."cryCount" DESC NULLS LAST, ${orderBy}`;
-  else if (input.sort === ImageSort.MostComments)
-    orderBy = `im."commentCount" DESC NULLS LAST, ${orderBy}`;
-
-  const targets = categories.map((c) => {
-    return Prisma.sql`(
-      SELECT
-        toi."imageId",
-        "tagId",
-        row_number() OVER (ORDER BY ${Prisma.raw(orderBy)}) "index"
-      FROM "TagsOnImage" toi
-      JOIN "Image" i ON i.id = toi."imageId"
-      JOIN "Post" p ON p.id = i."postId"
-        ${Prisma.raw(
-          input.period !== 'AllTime' && input.periodMode !== 'stats'
-            ? `AND p."publishedAt" > now() - INTERVAL '1 ${input.period}'`
-            : 'AND p."publishedAt" < now()'
-        )}
-      ${Prisma.raw(
-        input.modelId || input.modelVersionId
-          ? `JOIN "ImageResource" ir ON ir."imageId" = toi."imageId" AND ir."modelVersionId" IS NOT NULL`
-          : ''
-      )}
-      ${Prisma.raw(input.modelId ? `JOIN "ModelVersion" mv ON mv.id = ir."modelVersionId"` : '')}
-      ${Prisma.raw(
-        orderBy.startsWith('im')
-          ? `LEFT JOIN "ImageMetric" im ON im."imageId" = toi."imageId" AND im.timeframe = '${input.period}'`
-          : ''
-      )}
-      WHERE toi."tagId" = ${c.id}
-      AND ${Prisma.join(AND, ' AND ')}
-      ORDER BY ${Prisma.raw(orderBy)}
-      LIMIT ${input.imageLimit ?? 21}
-    )`;
-  });
-
-  let imagesRaw: GetImageByCategoryRaw[] = [];
-  const cacheKey = `trpc:image:imagesByCategory:${hashifyObject(input)}`;
-  const cache = await redis.get(cacheKey);
-  if (cache) imagesRaw = JSON.parse(cache);
-  else {
-    const exclusions =
-      (input.excludedImageIds?.length ?? 0) +
-      (input.excludedTagIds?.length ?? 0) +
-      (input.excludedUserIds?.length ?? 0);
-    const queryHeader = Object.entries({
-      exclusions,
-      cursor: input.cursor,
-      limit: input.limit,
-    })
-      .filter(([, v]) => v !== undefined)
-      .map(([k, v]) => `${k}: ${v}`)
-      .join(', ');
-
-    imagesRaw = await dbRead.$queryRaw<GetImageByCategoryRaw[]>`
-      WITH targets AS (
-        ${Prisma.join(targets, ' UNION ALL ')}
-      )
-      SELECT
-        i.id,
-        t."tagId",
-        i.name,
-        i.url,
-        i.nsfw,
-        i.width,
-        i.height,
-        i.hash,
-        i.meta,
-        i."hideMeta",
-        i."generationProcess",
-        i.type,
-        i.metadata,
-        i."scannedAt",
-        i."needsReview",
-        i."postId",
-        i.ingestion,
-        u.username,
-        u.image AS "userImage",
-        i."createdAt",
-        p."publishedAt",
-        p."modelVersionId",
-        u.id AS "userId",
-        COALESCE(im."cryCount", 0) "cryCount",
-        COALESCE(im."laughCount", 0) "laughCount",
-        COALESCE(im."likeCount", 0) "likeCount",
-        COALESCE(im."dislikeCount", 0) "dislikeCount",
-        COALESCE(im."heartCount", 0) "heartCount",
-        COALESCE(im."commentCount", 0) "commentCount",
-        COALESCE(im."tippedAmountCount", 0) "tippedAmountCount"
-      FROM targets t
-      JOIN "Image" i ON i.id = t."imageId"
-      JOIN "Post" p ON p.id = i."postId"
-      JOIN "User" u ON u.id = p."userId"
-      LEFT JOIN "ImageMetric" im ON im."imageId" = i.id AND im."timeframe" = 'AllTime'::"MetricTimeframe"
-      ORDER BY t."index"
-    `;
-    await redis.set(cacheKey, JSON.stringify(imagesRaw), { EX: 60 * 3 });
-  }
-
-  const reactions = userId
-    ? await dbRead.imageReaction.findMany({
-        where: { userId, imageId: { in: imagesRaw.map((x) => x.id) } },
-        select: { imageId: true, reaction: true },
-      })
-    : [];
-
-  // Map category record to array
-  const items = categories.map((c) => {
-    const items = imagesRaw
-      .filter((x) => x.tagId === c.id)
-      .map((x) => ({
-        ...x,
-        userId: x.userId || undefined,
-        reactions: userId
-          ? reactions
-              .filter((r) => r.imageId === x.id)
-              .map((r) => ({ userId, reaction: r.reaction }))
-          : [],
-      }));
-    return { ...c, items };
-  });
-
-  return { items, nextCursor };
-};
 
 export type GetIngestionResultsProps = AsyncReturnType<typeof getIngestionResults>;
 export const getIngestionResults = async ({ ids, userId }: { ids: number[]; userId?: number }) => {
@@ -1930,6 +1686,64 @@ export const getImagesByEntity = async ({
     tags: tagsVar?.filter((x) => x.imageId === i.id),
   }));
 };
+
+function parseImageCreateData({
+  entityType,
+  entityId,
+
+  ...image
+}: CreateImageSchema & { userId: number }) {
+  const data = {
+    ...image,
+    meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
+    generationProcess: image.meta
+      ? getImageGenerationProcess(image.meta as Prisma.JsonObject)
+      : null,
+  };
+  switch (entityType) {
+    case 'Post':
+      return { postId: entityId, ...data };
+    default:
+      return data;
+  }
+}
+
+export async function createImage({
+  entityType,
+  entityId,
+  ...image
+}: CreateImageSchema & { userId: number }) {
+  const data = parseImageCreateData({ entityType, entityId, ...image });
+  const result = await dbWrite.image.create({ data, select: { id: true } });
+
+  await ingestImage({
+    image: {
+      id: result.id,
+      url: image.url,
+      type: image.type,
+      height: image.height,
+      width: image.width,
+    },
+  });
+
+  return result;
+}
+
+// TODO - remove this after all article cover images are ingested
+export async function createArticleCoverImage({
+  entityType,
+  entityId,
+  ...image
+}: CreateImageSchema & { userId: number }) {
+  const data = parseImageCreateData({ entityType, entityId, ...image });
+  const result = await dbWrite.image.create({ data, select: { id: true } });
+
+  return await dbWrite.article.update({
+    where: { id: entityId },
+    data: { coverId: result.id },
+    select: { id: true },
+  });
+}
 
 export const createEntityImages = async ({
   tx,
@@ -2628,4 +2442,18 @@ export async function reportCsamImages({
   });
   const reportIds = images.flatMap((x) => x.reports.map((x) => x.reportId));
   await bulkSetReportStatus({ ids: reportIds, status: ReportStatus.Actioned, userId: user.id, ip });
+}
+
+export async function ingestArticleCoverImages(array: { imageId: number; articleId: number }[]) {
+  const imageIds = array.map((x) => x.imageId);
+  const images = await dbRead.image.findMany({
+    where: { id: { in: imageIds } },
+    select: { id: true, url: true, height: true, width: true },
+  });
+
+  await articlesSearchIndex.queueUpdate(
+    array.map((x) => ({ id: x.articleId, action: SearchIndexUpdateQueueAction.Update }))
+  );
+
+  await ingestImageBulk({ images, lowPriority: true });
 }

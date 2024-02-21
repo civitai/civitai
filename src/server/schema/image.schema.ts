@@ -17,13 +17,10 @@ const stringToNumber = z.coerce.number().optional();
 
 const undefinedString = z.preprocess((value) => (value ? value : undefined), z.string().optional());
 
-// TODO: update accordingly once new entities follow this pattern
-export const ImageEntityType = {
-  Bounty: 'Bounty',
-  BountyEntry: 'BountyEntry',
-  User: 'User',
-} as const;
-export type ImageEntityType = (typeof ImageEntityType)[keyof typeof ImageEntityType];
+export type ImageEntityType = (typeof imageEntities)[number];
+const imageEntities = ['Bounty', 'BountyEntry', 'User', 'Post', 'Article'] as const;
+const imageEntitiesSchema = z.enum(imageEntities);
+// export type ImageEntityType = (typeof ImageEntityType)[keyof typeof ImageEntityType];
 
 export type ComfyMetaSchema = z.infer<typeof comfyMetaSchema>;
 export const comfyMetaSchema = z
@@ -98,6 +95,29 @@ export const isNotImageResource = (
 ): entity is Omit<ImageResourceUpsertInput, 'id'> & { id: undefined } => !entity.id;
 // #endregion
 
+export type CreateImageSchema = z.infer<typeof createImageSchema>;
+export const createImageSchema = z.object({
+  id: z.number().optional(),
+  name: z.string().nullish(),
+  url: z.string().url().or(z.string().uuid()),
+  hash: z.string().nullish(),
+  height: z.number().nullish(),
+  width: z.number().nullish(),
+  nsfw: z.nativeEnum(NsfwLevel).optional(),
+  entityId: z.number().optional(),
+  entityType: imageEntitiesSchema.optional(),
+  modelVersionId: z.number().optional(),
+  index: z.number().optional(),
+  mimeType: z.string().optional(),
+  meta: z.preprocess((value) => {
+    if (typeof value !== 'object') return null;
+    if (value && !Object.keys(value).length) return null;
+    return value;
+  }, imageMetaSchema.nullish()),
+  type: z.nativeEnum(MediaType).default(MediaType.image),
+  metadata: z.object({}).passthrough().optional(),
+});
+
 export const imageSchema = z.object({
   id: z.number().optional(),
   name: z.string().nullish(),
@@ -114,7 +134,7 @@ export const imageSchema = z.object({
   height: z.number().nullish(),
   width: z.number().nullish(),
   nsfw: z.nativeEnum(NsfwLevel).optional(),
-  analysis: imageAnalysisSchema.optional(),
+  // analysis: imageAnalysisSchema.optional(),
   // tags: z.array(tagSchema).optional(),
   needsReview: z.string().nullish(),
   mimeType: z.string().optional(),
@@ -244,27 +264,6 @@ export const getInfiniteImagesSchema = z
     }
     return value;
   });
-
-export type GetImagesByCategoryInput = z.infer<typeof getImagesByCategorySchema>;
-export const getImagesByCategorySchema = z.object({
-  cursor: z.number().optional(),
-  limit: z.number().min(1).max(30).optional(),
-  imageLimit: z.number().min(1).max(30).optional(),
-  sort: z.nativeEnum(ImageSort).optional(),
-  period: z.nativeEnum(MetricTimeframe).optional(),
-  periodMode: periodModeSchema,
-  // browsingMode: z.nativeEnum(BrowsingMode).optional(),
-  excludedTagIds: z.array(z.number()).optional(),
-  excludedUserIds: z.array(z.number()).optional(),
-  excludedImageIds: z.array(z.number()).optional(),
-  tags: z.number().array().optional(),
-  username: z
-    .string()
-    .transform((data) => postgresSlugify(data))
-    .nullish(),
-  modelVersionId: z.number().optional(),
-  modelId: z.number().optional(),
-});
 
 export type GetImageInput = z.infer<typeof getImageSchema>;
 export const getImageSchema = z.object({

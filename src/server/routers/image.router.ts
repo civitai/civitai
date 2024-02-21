@@ -12,10 +12,11 @@ import {
   updateImageSchema,
   getInfiniteImagesSchema,
   imageModerationSchema,
-  getImagesByCategorySchema,
   getImageSchema,
   getEntitiesCoverImage,
   imageReviewQueueInputSchema,
+  imageSchema,
+  createImageSchema,
 } from './../schema/image.schema';
 import {
   deleteImageHandler,
@@ -35,12 +36,14 @@ import {
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { applyUserPreferences } from '~/server/middleware.trpc';
 import {
-  getImagesByCategory,
   ingestImageById,
   removeImageResource,
   getModeratorPOITags,
   get404Images,
   reportCsamImages,
+  createImage,
+  createArticleCoverImage,
+  ingestArticleCoverImages,
 } from '~/server/services/image.service';
 import { CacheTTL } from '~/server/common/constants';
 import { z } from 'zod';
@@ -71,6 +74,15 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
 
 // TODO.cleanup - remove unused router methods
 export const imageRouter = router({
+  create: protectedProcedure
+    .input(createImageSchema)
+    .mutation(({ input, ctx }) => createImage({ ...input, userId: ctx.user.id })),
+  createArticleCoverImage: protectedProcedure
+    .input(createImageSchema.extend({ userId: z.number() }))
+    .mutation(({ input }) => createArticleCoverImage({ ...input })),
+  ingestArticleImages: protectedProcedure
+    .input(z.array(z.object({ imageId: z.number(), articleId: z.number() })))
+    .mutation(({ input }) => ingestArticleCoverImages(input)),
   moderate: moderatorProcedure.input(imageModerationSchema).mutation(moderateImageHandler),
   delete: protectedProcedure
     .input(getByIdSchema)
@@ -106,11 +118,6 @@ export const imageRouter = router({
     .input(getByIdSchema)
     .mutation(({ input, ctx }) => removeImageResource({ ...input, user: ctx.user })),
   rescan: moderatorProcedure.input(getByIdSchema).mutation(({ input }) => ingestImageById(input)),
-  getImagesByCategory: publicProcedure
-    .input(getImagesByCategorySchema)
-    .use(applyUserPreferences())
-    // .use(cacheIt())
-    .query(({ input, ctx }) => getImagesByCategory({ ...input, userId: ctx.user?.id })),
   getEntitiesCoverImage: publicProcedure
     .input(getEntitiesCoverImage)
     .query(getEntitiesCoverImageHandler),

@@ -113,7 +113,7 @@ export type EdgeCacheItProps = {
 };
 export function edgeCacheIt({ ttl = 60 * 3, expireAt, tags }: EdgeCacheItProps = {}) {
   return middleware(async ({ next, ctx, input, path }) => {
-    if (!!ctx.req.query.batch) {
+    if (!!ctx.req?.query?.batch) {
       const message = `Content not cached: ${path}`;
       if (!isProd) console.log(message);
       else logToAxiom({ name: 'edge-cache-it', type: 'warn', message }, 'civitai-prod').catch();

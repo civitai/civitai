@@ -7,16 +7,18 @@ import { CivitaiTooltip } from '~/components/CivitaiWrapped/CivitaiTooltip';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { ArticleGetAll } from '~/types/router';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { slugit } from '~/utils/string-helpers';
 import { ArticleContextMenu } from '../ArticleContextMenu';
+import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
+import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { AssociatedResourceArticleCardData } from '~/server/controllers/model.controller';
 
 export function ArticleAltCard({ data }: Props) {
   const { classes } = useStyles();
   const router = useRouter();
 
-  const { id, title, cover, tags, stats } = data;
+  const { id, title, coverImage, tags, stats } = data;
   const category = tags?.find((tag) => tag.isCategory);
   const { commentCount, viewCount, favoriteCount, ...reactionStats } = stats || {
     commentCount: 0,
@@ -45,35 +47,53 @@ export function ArticleAltCard({ data }: Props) {
             zIndex: 8,
           }}
         />
-        <div style={{ position: 'relative', flex: 1, overflow: 'hidden', height: '100%' }}>
-          <Group
-            spacing={4}
-            sx={(theme) => ({
-              position: 'absolute',
-              top: theme.spacing.xs,
-              left: theme.spacing.xs,
-              zIndex: 1,
-            })}
-          >
-            <Badge
-              size="sm"
-              sx={{
-                background: 'rgb(30 133 230 / 40%)',
-                color: 'white',
-                backdropFilter: 'blur(7px)',
-                boxShadow: '1px 2px 3px -1px rgba(37,38,43,0.2)',
-              }}
-            >
-              Article
-            </Badge>
-            {category && (
-              <Badge size="sm" variant="gradient" gradient={{ from: 'cyan', to: 'blue' }}>
-                {category.name}
-              </Badge>
+        {coverImage && (
+          <ImageGuard
+            connect={{ entityId: id, entityType: 'article' }}
+            images={[coverImage]}
+            render={(image) => (
+              <div style={{ position: 'relative', flex: 1, overflow: 'hidden', height: '100%' }}>
+                <Group
+                  spacing={4}
+                  sx={(theme) => ({
+                    position: 'absolute',
+                    top: theme.spacing.xs,
+                    left: theme.spacing.xs,
+                    zIndex: 1,
+                  })}
+                >
+                  <ImageGuard.ToggleConnect position="static" />
+                  <Badge
+                    size="sm"
+                    sx={{
+                      background: 'rgb(30 133 230 / 40%)',
+                      color: 'white',
+                      backdropFilter: 'blur(7px)',
+                      boxShadow: '1px 2px 3px -1px rgba(37,38,43,0.2)',
+                    }}
+                  >
+                    Article
+                  </Badge>
+                  {category && (
+                    <Badge size="sm" variant="gradient" gradient={{ from: 'cyan', to: 'blue' }}>
+                      {category.name}
+                    </Badge>
+                  )}
+                </Group>
+                <ImageGuard.Content>
+                  {({ safe }) =>
+                    !safe ? (
+                      <MediaHash {...image} />
+                    ) : (
+                      <EdgeMedia className={classes.image} src={image.url} width={450} />
+                    )
+                  }
+                </ImageGuard.Content>
+              </div>
             )}
-          </Group>
-          <EdgeMedia className={classes.image} src={cover} width={450} />
-        </div>
+          />
+        )}
+
         <Stack className={classes.info} spacing={8}>
           {data.user.image && (
             <CivitaiTooltip
@@ -132,7 +152,7 @@ export function ArticleAltCard({ data }: Props) {
 }
 
 type Props = {
-  data: ArticleGetAll['items'][number];
+  data: AssociatedResourceArticleCardData;
   height?: number;
 };
 
