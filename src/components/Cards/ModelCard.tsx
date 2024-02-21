@@ -63,11 +63,6 @@ import { ToggleSearchableMenuItem } from '../MenuItems/ToggleSearchableMenuItem'
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 
 const IMAGE_CARD_WIDTH = 450;
-// To validate url query string
-// const querySchema = z.object({
-//   model: z.coerce.number().optional(),
-//   hidden: z.coerce.boolean().optional(),
-// });
 
 export function ModelCard({ data, forceInView }: Props) {
   const { ref, inView } = useInView({
@@ -83,9 +78,6 @@ export function ModelCard({ data, forceInView }: Props) {
   const router = useRouter();
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
-  // const queryResult = querySchema.safeParse(router.query);
-  // const hiddenQuery = queryResult.success ? queryResult.data.hidden : false;
-  // const modelId = queryResult.success ? queryResult.data.model : undefined;
   const tippedAmount = useBuzzTippingStore({ entityType: 'Model', entityId: data.id });
 
   const { data: { Recommended: reviewedModels = [] } = { Recommended: [] } } =
@@ -95,9 +87,6 @@ export function ModelCard({ data, forceInView }: Props) {
       staleTime: Infinity,
     });
   const hasReview = reviewedModels.includes(data.id);
-
-  // const { users: hiddenUsers, models: hiddenModels } = useHiddenPreferencesContext();
-  // const isHidden = hiddenUsers.get(data.user.id) || hiddenModels.get(data.id);
 
   const reportOption = (
     <ReportMenuItem

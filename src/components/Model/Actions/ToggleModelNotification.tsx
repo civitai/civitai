@@ -4,6 +4,7 @@ import { IconBellCheck, IconBellPlus } from '@tabler/icons-react';
 
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 export function ToggleModelNotification({ modelId, userId }: { modelId: number; userId: number }) {
@@ -12,59 +13,30 @@ export function ToggleModelNotification({ modelId, userId }: { modelId: number; 
 
   const {
     data: { Notify: watchedModels = [], Mute: mutedModels = [] } = { Notify: [], Mute: [] },
-  } = trpc.user.getEngagedModels.useQuery(undefined, {
-    enabled: !!currentUser,
-    cacheTime: Infinity,
-    staleTime: Infinity,
-  });
+  } = trpc.user.getEngagedModels.useQuery(undefined, { enabled: !!currentUser });
   const { data: following = [] } = trpc.user.getFollowingUsers.useQuery(undefined, {
     enabled: !!currentUser,
-    cacheTime: Infinity,
-    staleTime: Infinity,
   });
 
   const toggleNotifyModelMutation = trpc.user.toggleNotifyModel.useMutation({
-    async onMutate({ modelId }) {
-      await queryUtils.user.getEngagedModels.cancel();
+    async onSuccess(_, { modelId, type }) {
+      queryUtils.user.getEngagedModels.setData(undefined, (old) => {
+        if (!old) return;
 
-      const previousEngaged = queryUtils.user.getEngagedModels.getData() ?? {
-        Notify: [],
-        Hide: [],
-        Mute: [],
-        Recommended: [],
-        Favorite: [],
-      };
-      const previousModel = queryUtils.model.getById.getData({ id: modelId });
-      const shouldRemove = previousEngaged.Notify?.find((id) => id === modelId);
-      // Remove from favorites list
-      queryUtils.user.getEngagedModels.setData(
-        undefined,
-        (
-          { Notify = [], ...old } = {
-            Notify: [],
-            Hide: [],
-            Mute: [],
-            Recommended: [],
-            Favorite: [],
-          }
-        ) => {
-          if (shouldRemove) return { Notify: Notify.filter((id) => id !== modelId), ...old };
-          return { Notify: [...Notify, modelId], ...old };
-        }
-      );
+        const affected = type === ModelEngagementType.Mute ? 'Mute' : 'Notify';
+        const affectedList = old[affected] ?? [];
+        const shouldRemove = affectedList.find((id) => id === modelId);
 
-      return { previousEngaged, previousModel };
+        if (shouldRemove)
+          return { [affected]: affectedList.filter((id) => id !== modelId), ...old };
+        return { [affected]: [...affectedList, modelId], ...old };
+      });
     },
-    async onSuccess() {
-      await queryUtils.model.getAll.invalidate({ favorites: true });
-    },
-    onError(_error, _variables, context) {
-      queryUtils.user.getEngagedModels.setData(undefined, context?.previousEngaged);
-      if (context?.previousModel?.id)
-        queryUtils.model.getById.setData(
-          { id: context?.previousModel?.id },
-          context?.previousModel
-        );
+    onError(error) {
+      showErrorNotification({
+        title: 'Failed to update notification settings',
+        error,
+      });
     },
   });
 

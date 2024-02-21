@@ -132,17 +132,6 @@ export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
                           >
                             {isThumbsUp ? <ThumbsUpIcon filled /> : <ThumbsDownIcon filled />}
                           </ThemeIcon>
-                          {/* <Badge
-                            radius="xl"
-                            px={8}
-                            py={4}
-                            variant="light"
-                            color={theme.colorScheme === 'dark' ? 'dark' : 'gray'}
-                            style={{ height: '24px' }}
-                            ml="auto"
-                          >
-                            <Rating value={review.rating} fractions={2} readOnly />
-                          </Badge> */}
                         </Group>
                         <Stack w="100%">
                           {review.details && (

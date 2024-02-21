@@ -725,6 +725,8 @@ export const toggleNotifyModelHandler = async ({
     const result = input.type
       ? toggleModelEngagement({ modelId: input.modelId, type: input.type, userId })
       : await toggleModelNotify({ ...input, userId });
+
+    // TODO.justin: confirm we are no longer tracking through clickhouse
     // if (result) {
     //   await ctx.track.modelEngagement({
     //     type: 'Favorite',

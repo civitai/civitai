@@ -42,12 +42,12 @@ export function EditPostReviews() {
       let hasBaseModel = false;
       let hasAdditionalResource = false;
       // remove duplicates items from data based on modelVersionId
-      const filteredReviews = data.filter(
+      const dedupedReviews = data.filter(
         (review, index, items) =>
           !!review.modelVersionId &&
           items.findIndex((t) => t.modelVersionId === review.modelVersionId) === index
       );
-      for (const review of filteredReviews) {
+      for (const review of dedupedReviews) {
         if (review.reviewCreatedAt) {
           previous.push(review);
         } else {

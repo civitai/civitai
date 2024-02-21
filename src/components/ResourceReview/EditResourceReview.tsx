@@ -61,10 +61,10 @@ export function EditResourceReview({
 
   const queryUtils = trpc.useUtils();
 
-  const handleRatingChange = (rating: number) => {
+  const handleRatingChange = (recommended: boolean) => {
     if (!modelVersionId || !modelId) return;
-    // stupid prisma
-    const recommended = rating >= 3;
+
+    const rating = recommended ? 5 : 1;
     mutate(
       { id: id ?? undefined, rating, recommended, modelVersionId, modelId },
       {
@@ -80,9 +80,8 @@ export function EditResourceReview({
 
   const form = useForm({ schema, defaultValues: { details: details ?? '' } });
   const handleSubmit = ({ details }: z.infer<typeof schema>) => {
-    if (!modelId || !modelVersionId || !id || !rating) return;
+    if (!modelId || !modelVersionId || !id || !rating || !recommended) return;
 
-    const recommended = rating >= 3;
     mutate(
       { id, modelVersionId, modelId, rating, recommended, details },
       {
@@ -152,7 +151,7 @@ export function EditResourceReview({
                   color={isThumbsUp ? 'success' : 'dark.4'}
                   radius="md"
                   loading={isLoading}
-                  onClick={() => (!isThumbsUp ? handleRatingChange(5) : undefined)}
+                  onClick={() => (!isThumbsUp ? handleRatingChange(true) : undefined)}
                   fullWidth
                 >
                   <Text color="success.5" size="xs" inline>
@@ -167,7 +166,7 @@ export function EditResourceReview({
                   color={isThumbsDown ? 'red' : 'dark.4'}
                   radius="md"
                   loading={isLoading}
-                  onClick={() => (!isThumbsDown ? handleRatingChange(1) : undefined)}
+                  onClick={() => (!isThumbsDown ? handleRatingChange(false) : undefined)}
                   fullWidth
                 >
                   <Text color="red" inline>

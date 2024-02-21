@@ -302,10 +302,10 @@ export function EditUserResourceReviewV2({
             <InputRTE
               name="details"
               includeControls={['formatting', 'link']}
-              hideToolbar
               editorSize="sm"
               placeholder={`What did you think of ${modelName ?? 'this resource'}?`}
               styles={{ content: { maxHeight: 500, overflowY: 'auto' } }}
+              hideToolbar
               autoFocus
             />
             <Group grow spacing="xs">

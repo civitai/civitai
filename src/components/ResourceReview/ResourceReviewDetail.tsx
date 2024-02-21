@@ -66,7 +66,7 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
     reviewBody: data.details ? ':' + truncate(removeTags(data.details), { length: 120 }) : '',
     author: data.user.username,
     datePublished: data.createdAt,
-    // TODO.review: is this even necessary?
+    // TODO.justin: is this even necessary anymore?
     reviewRating: {
       '@type': 'Rating',
       bestRating: 5,
@@ -89,8 +89,8 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
     <>
       <Meta
         title={`${data.model.name} - ${data.modelVersion.name} - Reviewed by ${data.user.username}`}
-        // TODO.review: double check this
-        description={`Review${
+        // TODO.justin: is this even necessary anymore?
+        description={`${data.rating} star review${
           data.details ? ':' + truncate(removeTags(data.details), { length: 120 }) : ''
         }`}
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/reviews/${reviewId}`, rel: 'canonical' }]}

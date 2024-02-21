@@ -1176,6 +1176,7 @@ export const getImageResources = async ({ id }: GetByIdInput) => {
       irh."modelId",
       irh."modelName",
       irh."modelRating",
+      -- TODO.justin: this should be thumbsUpCount
       irh."modelRatingCount",
       irh."modelDownloadCount",
       irh."modelCommentCount",

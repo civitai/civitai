@@ -2,17 +2,9 @@ import { Badge, Group, MantineSize, Text, useMantineTheme } from '@mantine/core'
 import { IconUpload, IconUsers, IconDownload, IconChecks } from '@tabler/icons-react';
 
 import { IconBadge } from '~/components/IconBadge/IconBadge';
-import { abbreviateNumber, formatToLeastDecimals } from '~/utils/number-helpers';
+import { abbreviateNumber } from '~/utils/number-helpers';
 import { StatTooltip } from '~/components/Tooltips/StatTooltip';
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
-
-// const mapBadgeTextIconSize: Record<MantineSize, { textSize: MantineSize; iconSize: number }> = {
-//   xs: { textSize: 'xs', iconSize: 12 },
-//   sm: { textSize: 'xs', iconSize: 14 },
-//   md: { textSize: 'sm', iconSize: 14 },
-//   lg: { textSize: 'sm', iconSize: 16 },
-//   xl: { textSize: 'md', iconSize: 18 },
-// };
 
 export function UserStatBadges({
   followers,
@@ -26,26 +18,6 @@ export function UserStatBadges({
 
   return (
     <Group spacing={8} position="apart">
-      {/* {rating != null ? (
-        <IconBadge
-          radius="xl"
-          tooltip={
-            <StatTooltip
-              label="Average Rating"
-              value={`${formatToLeastDecimals(rating.value)} (${rating.count})`}
-            />
-          }
-          sx={{ userSelect: 'none' }}
-          size="lg"
-          px={8}
-          icon={<StarRating size={14} value={rating.value} />}
-          variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-        >
-          <Text size="xs" weight={600} inline>
-            {abbreviateNumber(rating.count)}
-          </Text>
-        </IconBadge>
-      ) : null} */}
       <Badge
         size="lg"
         color="gray"

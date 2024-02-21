@@ -1,4 +1,8 @@
-import { CollectionReadConfiguration, CollectionWriteConfiguration } from '@prisma/client';
+import {
+  CollectionReadConfiguration,
+  CollectionType,
+  CollectionWriteConfiguration,
+} from '@prisma/client';
 import { Icon, IconEyeOff, IconLock, IconWorld } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useMemo } from 'react';
@@ -200,13 +204,21 @@ export const useSystemCollections = () => {
   const currentUser = useCurrentUser();
   const { data: systemCollections = [], ...other } = trpc.user.getBookmarkCollections.useQuery(
     undefined,
-    {
-      enabled: !!currentUser,
-    }
+    { enabled: !!currentUser }
   );
+
+  const groupedCollections = useMemo(() => {
+    const grouped = systemCollections.reduce((acc, collection) => {
+      if (collection.type) acc[collection.type] = collection;
+      return acc;
+    }, {} as Record<CollectionType, (typeof systemCollections)[number]>);
+
+    return grouped;
+  }, [systemCollections]);
 
   return {
     ...other,
     systemCollections,
+    groupedCollections,
   };
 };

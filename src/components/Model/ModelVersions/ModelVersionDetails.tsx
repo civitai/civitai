@@ -603,19 +603,6 @@ export function ModelVersionDetails({
                     </ShareButton>
                   </div>
                 </Tooltip>
-                {/* <Tooltip label={isFavorite ? 'Unlike' : 'Like'} position="top" withArrow>
-                  <div>
-                    <LoginRedirect reason="favorite-model">
-                      <Button
-                        onClick={onFavoriteClick}
-                        color={isFavorite ? 'red' : 'gray'}
-                        sx={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
-                      >
-                        <IconHeart color="#fff" />
-                      </Button>
-                    </LoginRedirect>
-                  </div>
-                </Tooltip> */}
               </Group>
               {primaryFileDetails}
             </Stack>
@@ -793,49 +780,9 @@ export function ModelVersionDetails({
                 </Accordion.Panel>
               </Accordion.Item>
             )}
-            {/* {!model.locked && (
-              <ResourceReviewSummary modelId={model.id} modelVersionId={version.id}>
-                <Accordion.Item value="resource-reviews">
-                  <Accordion.Control>
-                    <Group>
-                      <ResourceReviewSummary.Header
-                        rating={version.rank?.ratingAllTime}
-                        count={version.rank?.ratingCountAllTime}
-                      />
-                      <Stack spacing={4} ml="auto">
-                        <ResourceAccessWrap entityId={version.id} entityType="ModelVersion">
-                          <Button
-                            component={NextLink}
-                            href={`/posts/create?modelId=${model.id}&modelVersionId=${version.id}&reviewing=true&returnUrl=${router.asPath}`}
-                            variant="outline"
-                            size="xs"
-                            onClick={(e) => e.stopPropagation()}
-                            compact
-                          >
-                            Add Review
-                          </Button>
-                        </ResourceAccessWrap>
-                        <Text
-                          component={NextLink}
-                          href={`/models/${model.id}/reviews?modelVersionId=${version.id}`}
-                          variant="link"
-                          size="sm"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          See Reviews
-                        </Text>
-                      </Stack>
-                    </Group>
-                  </Accordion.Control>
-                  <Accordion.Panel px="sm" pb="sm">
-                    <ResourceReviewSummary.Totals />
-                  </Accordion.Panel>
-                </Accordion.Item>
-              </ResourceReviewSummary>
-            )} */}
             {version.description && (
               <Accordion.Item value="version-description">
-                <Accordion.Control>{`About this version`}</Accordion.Control>
+                <Accordion.Control>About this version</Accordion.Control>
                 <Accordion.Panel px="sm" pb="sm">
                   <Stack spacing={4}>
                     {version.description && (

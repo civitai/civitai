@@ -19,32 +19,19 @@ export const useCreateResourceReview = () => {
       await queryUtils.resourceReview.getRatingTotals.invalidate({ modelId, modelVersionId });
 
       const previousEngaged = queryUtils.user.getEngagedModels.getData() ?? {
-        Notify: [],
-        Hide: [],
-        Mute: [],
-        Recommended: [],
-        Favorite: [],
+        Recommended: [] as number[],
       };
-
       const shouldRemove =
         !recommended || (previousEngaged.Recommended?.includes(modelId) ?? false);
-      // Remove from recommended list
-      queryUtils.user.getEngagedModels.setData(
-        undefined,
-        (
-          { Recommended = [], ...old } = {
-            Notify: [],
-            Hide: [],
-            Mute: [],
-            Recommended: [],
-            Favorite: [],
-          }
-        ) => {
-          if (shouldRemove)
-            return { Recommended: Recommended.filter((id) => id !== modelId), ...old };
-          return { Recommended: [...Recommended, modelId], ...old };
-        }
-      );
+
+      queryUtils.user.getEngagedModels.setData(undefined, (old) => {
+        if (!old) return;
+
+        const { Recommended = [], ...rest } = old;
+        if (shouldRemove)
+          return { Recommended: Recommended.filter((id) => id !== modelId), ...rest };
+        return { Recommended: [...Recommended, modelId], ...rest };
+      });
     },
   });
 };
@@ -102,32 +89,19 @@ export const useUpdateResourceReview = () => {
 
       // Update model engagements
       const previousEngaged = queryUtils.user.getEngagedModels.getData() ?? {
-        Notify: [],
-        Hide: [],
-        Mute: [],
-        Recommended: [],
-        Favorite: [],
+        Recommended: [] as number[],
       };
-
       const shouldRemove =
         !request.recommended || (previousEngaged.Recommended?.includes(modelId) ?? false);
       // Remove from recommended list
-      queryUtils.user.getEngagedModels.setData(
-        undefined,
-        (
-          { Recommended = [], ...old } = {
-            Notify: [],
-            Hide: [],
-            Mute: [],
-            Recommended: [],
-            Favorite: [],
-          }
-        ) => {
-          if (shouldRemove)
-            return { Recommended: Recommended.filter((id) => id !== modelId), ...old };
-          return { Recommended: [...Recommended, modelId], ...old };
-        }
-      );
+      queryUtils.user.getEngagedModels.setData(undefined, (old) => {
+        if (!old) return;
+
+        const { Recommended = [], ...rest } = old;
+        if (shouldRemove)
+          return { Recommended: Recommended.filter((id) => id !== modelId), ...rest };
+        return { Recommended: [...Recommended, modelId], ...rest };
+      });
     },
   });
 };
@@ -155,20 +129,12 @@ export const useDeleteResourceReview = () => {
       );
 
       // Update engaged models
-      queryUtils.user.getEngagedModels.setData(
-        undefined,
-        (
-          { Recommended = [], ...old } = {
-            Notify: [],
-            Hide: [],
-            Mute: [],
-            Recommended: [],
-            Favorite: [],
-          }
-        ) => {
-          return { Recommended: Recommended.filter((id) => id !== modelId), ...old };
-        }
-      );
+      queryUtils.user.getEngagedModels.setData(undefined, (old) => {
+        if (!old) return;
+
+        const { Recommended = [], ...rest } = old;
+        return { Recommended: Recommended.filter((id) => id !== modelId), ...rest };
+      });
     },
   });
 };

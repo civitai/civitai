@@ -100,74 +100,48 @@ export function ImagesAsPostsCard({
     <MasonryCard withBorder shadow="sm" p={0} height={height} ref={ref} className={classes.card}>
       <Paper p="xs" radius={0}>
         {inView && (
-          <Stack spacing={8}>
-            <Group align="flex-start" noWrap maw="100%">
-              <UserAvatar
-                user={data.user}
-                subText={
-                  <>
-                    <DaysFromNow date={data.createdAt} /> - {modelVersionName ?? 'Cross-post'}
-                  </>
-                }
-                subTextForce
-                size="md"
-                spacing="xs"
-                withUsername
-                linkToProfile
-              />
-              <Group ml="auto" noWrap>
-                {!data.publishedAt && (
-                  <Tooltip label="Post not Published" withArrow>
-                    <Link href={`/posts/${data.postId}/edit`}>
-                      <ActionIcon color="red" variant="outline">
-                        <IconExclamationMark />
-                      </ActionIcon>
-                    </Link>
-                  </Tooltip>
-                )}
-                {data.review ? (
-                  <RoutedDialogLink name="resourceReview" state={{ reviewId: data.review.id }}>
-                    <Badge
-                      variant="light"
-                      radius="md"
-                      size="lg"
-                      style={{ userSelect: 'none', padding: 4, height: 'auto' }}
-                      color={isThumbsUp ? 'success.5' : 'red'}
-                    >
-                      <Group spacing={4} noWrap>
-                        {isThumbsUp ? <ThumbsUpIcon filled /> : <ThumbsDownIcon filled />}
-                        {data.review.details && <IconMessage size={18} strokeWidth={2.5} />}
-                      </Group>
-                    </Badge>
-                    {/* <IconBadge
-                    className={classes.statBadge}
-                    sx={{
-                      userSelect: 'none',
-                      paddingTop: 4,
-                      paddingBottom: 4,
-                      height: 'auto',
-                    }}
-                    style={{ paddingRight: data.review?.details ? undefined : 0 }}
-                    icon={
-                      <Group spacing={2} align="center" noWrap>
-                        <StarRating size={14} value={data.review.rating / 5} count={1} />
-                        <Text size="xs" sx={{ lineHeight: 1.2 }}>
-                          {`${data.review.rating}.0`}
-                        </Text>
-                      </Group>
-                    }
+          <Group align="flex-start" noWrap maw="100%">
+            <UserAvatar
+              user={data.user}
+              subText={
+                <>
+                  <DaysFromNow date={data.createdAt} /> - {modelVersionName ?? 'Cross-post'}
+                </>
+              }
+              subTextForce
+              size="md"
+              spacing="xs"
+              withUsername
+              linkToProfile
+            />
+            <Group ml="auto" noWrap>
+              {!data.publishedAt && (
+                <Tooltip label="Post not Published" withArrow>
+                  <Link href={`/posts/${data.postId}/edit`}>
+                    <ActionIcon color="red" variant="outline">
+                      <IconExclamationMark />
+                    </ActionIcon>
+                  </Link>
+                </Tooltip>
+              )}
+              {data.review ? (
+                <RoutedDialogLink name="resourceReview" state={{ reviewId: data.review.id }}>
+                  <Badge
+                    variant="light"
+                    radius="md"
+                    size="lg"
+                    style={{ userSelect: 'none', padding: 4, height: 'auto' }}
+                    color={isThumbsUp ? 'success.5' : 'red'}
                   >
-                    {data.review?.details && (
-                      <Center>
-                        <IconMessage size={18} strokeWidth={2.5} />
-                      </Center>
-                    )}
-                  </IconBadge> */}
-                  </RoutedDialogLink>
-                ) : null}
-              </Group>
+                    <Group spacing={4} noWrap>
+                      {isThumbsUp ? <ThumbsUpIcon filled /> : <ThumbsDownIcon filled />}
+                      {data.review.details && <IconMessage size={18} strokeWidth={2.5} />}
+                    </Group>
+                  </Badge>
+                </RoutedDialogLink>
+              ) : null}
             </Group>
-          </Stack>
+          </Group>
         )}
       </Paper>
       <div className={classes.container}>

@@ -41,7 +41,6 @@ import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
 import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionMenuItem';
 import { UseQueryModelReturn } from '~/components/Model/model.utils';
-import { StarRating } from '~/components/StartRating/StarRating';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { env } from '~/env/client.mjs';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -224,18 +223,6 @@ export function AmbientModelCard({ data, height }: Props) {
       )}
     </>
   );
-
-  const modelRating = !locked ? (
-    <IconBadge
-      className={cx(classes.floatingBadge, classes.statBadge)}
-      sx={{ userSelect: 'none' }}
-      icon={<StarRating size={14} value={rank.rating} />}
-    >
-      <Text size="xs" color={rank.ratingCount > 0 ? undefined : 'dimmed'}>
-        {abbreviateNumber(rank.ratingCount)}
-      </Text>
-    </IconBadge>
-  ) : null;
 
   const modelDownloads = (
     <IconBadge className={classes.statBadge} icon={<IconDownload size={14} />}>
@@ -573,7 +560,6 @@ export function AmbientModelCard({ data, height }: Props) {
                         {modelText}
                       </Group>
                       <Group position="apart" spacing={4}>
-                        {/* {modelRating} */}
                         <Group spacing={4} align="center" ml="auto">
                           {modelLikes}
                           {modelComments}

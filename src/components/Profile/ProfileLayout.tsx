@@ -45,6 +45,7 @@ export function ProfileLayout({
             stats.ratingCountAllTime
           )}), Models Uploaded: ${abbreviateNumber(0)}, Followers: ${abbreviateNumber(
             stats.followerCountAllTime
+            // TODO.justin: does this still makes sense?
           )}, Total Likes Received: ${abbreviateNumber(
             stats.thumbsUpCountAllTime
           )}, Total Downloads Received: ${abbreviateNumber(stats.downloadCountAllTime)}. `}

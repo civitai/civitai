@@ -158,34 +158,6 @@ ResourceReviewSummary.Simple = function Simple({
   );
 };
 
-ResourceReviewSummary.SimpleThumb = function Thumbs({
-  count: initialCount,
-  onClick,
-}: {
-  count?: number;
-  onClick: () => void;
-}) {
-  const { count, loading } = useSummaryContext();
-  const { classes } = useStyles();
-
-  if (loading && initialCount === undefined) {
-    return null;
-  }
-
-  return (
-    <IconBadge
-      radius="sm"
-      color="success.5"
-      size="lg"
-      icon={<ThumbsUpIcon size={16} filled />}
-      sx={{ cursor: 'pointer' }}
-      onClick={onClick}
-    >
-      <Text className={classes.badgeText}>{abbreviateNumber(count ?? 0)}</Text>
-    </IconBadge>
-  );
-};
-
 const useStyles = createStyles((theme) => ({
   grid: {
     display: 'grid',

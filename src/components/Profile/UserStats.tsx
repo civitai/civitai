@@ -49,13 +49,6 @@ export function UserStats({ followers, downloads, favorites }: Props) {
           subtext="Downloads"
         />
       )}
-      {/* {rating != null && rating?.count !== 0 && (
-        <UserStat
-          value={formatToLeastDecimals(rating.value)}
-          icon={<IconStarFilled size={16} />}
-          subtext={`${abbreviateNumber(rating.count)} Ratings`}
-        />
-      )} */}
     </Group>
   );
 }

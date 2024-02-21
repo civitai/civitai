@@ -3,7 +3,6 @@ import {
   Box,
   Button,
   Card,
-  CloseButton,
   createStyles,
   Divider,
   Group,
@@ -16,14 +15,10 @@ import {
 import { Availability, CollectionType, NsfwLevel } from '@prisma/client';
 import {
   IconAlertTriangle,
-  IconBrush,
   IconDotsVertical,
   IconFlag,
   IconEye,
-  IconInfoCircle,
   IconBookmark,
-  IconShare3,
-  IconLayoutSidebar,
   IconLayoutSidebarRightCollapse,
 } from '@tabler/icons-react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
@@ -45,27 +40,21 @@ import { ImageResources } from '~/components/Image/Detail/ImageResources';
 import { ImageMeta } from '~/components/ImageMeta/ImageMeta';
 import { Meta } from '~/components/Meta/Meta';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
-import { Reactions } from '~/components/Reaction/Reactions';
-import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { env } from '~/env/client.mjs';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { BrowsingMode } from '~/server/common/enums';
-import { generationPanel } from '~/store/generation.store';
 import { containerQuery } from '~/utils/mantine-css-helpers';
-import { abbreviateNumber } from '~/utils/number-helpers';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { ReportEntity } from '~/server/schema/report.schema';
 
 const UNFURLABLE: NsfwLevel[] = [NsfwLevel.None, NsfwLevel.Soft];
 export function ImageDetail() {
   const { classes, cx, theme } = useStyles();
-  const { image, isLoading, active, close, toggleInfo, shareUrl } = useImageDetailContext();
+  const { image, isLoading, active, close, toggleInfo } = useImageDetailContext();
   const { query } = useBrowserRouter();
-  const currentUser = useCurrentUser();
 
   if (isLoading) return <PageLoader />;
   if (!image) return <NotFound />;
@@ -115,21 +104,10 @@ export function ImageDetail() {
                   subTextForce
                   withUsername
                   linkToProfile
-                />    
+                />
                 <ActionIcon onClick={toggleInfo} size="md" radius="xl" ml="auto">
                   <IconLayoutSidebarRightCollapse size={20} />
                 </ActionIcon>
-                <CloseButton
-                  size="md"
-                  radius="xl"
-                  variant="transparent"
-                  ml="auto"
-                  iconSize={20}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    close();
-                  }}
-                />
                 <Group
                   spacing={8}
                   w="100%"
