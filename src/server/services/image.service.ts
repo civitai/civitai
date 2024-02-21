@@ -344,7 +344,7 @@ export const ingestImageBulk = async ({
   const imageIds = images.map(({ id }) => id);
   const dbClient = tx ?? dbWrite;
 
-  if (!isProd && !callbackUrl) {
+  if (!isProd || !callbackUrl) {
     console.log('skip ingest');
     await dbClient.image.updateMany({
       where: { id: { in: imageIds } },
@@ -1489,39 +1489,6 @@ export function applyModRulesSql(
   }
 }
 
-type GetImageByCategoryRaw = {
-  id: number;
-  tagId: number;
-  name: string;
-  url: string;
-  nsfw: NsfwLevel;
-  width: number;
-  height: number;
-  hash: string;
-  meta: Prisma.JsonValue;
-  hideMeta: boolean;
-  generationProcess: ImageGenerationProcess;
-  type: MediaType;
-  metadata: Prisma.JsonValue;
-  scannedAt: Date;
-  ingestion: ImageIngestionStatus;
-  needsReview: string | null;
-  postId: number;
-  modelVersionId: number | null;
-  username: string | null;
-  userImage: string | null;
-  createdAt: Date;
-  publishedAt: Date | null;
-  cryCount: number;
-  laughCount: number;
-  likeCount: number;
-  dislikeCount: number;
-  heartCount: number;
-  commentCount: number;
-  tippedAmountCount: number;
-  userId?: number;
-};
-
 export type GetIngestionResultsProps = AsyncReturnType<typeof getIngestionResults>;
 export const getIngestionResults = async ({ ids, userId }: { ids: number[]; userId?: number }) => {
   const images = await dbRead.image.findMany({
@@ -2475,4 +2442,13 @@ export async function reportCsamImages({
   });
   const reportIds = images.flatMap((x) => x.reports.map((x) => x.reportId));
   await bulkSetReportStatus({ ids: reportIds, status: ReportStatus.Actioned, userId: user.id, ip });
+}
+
+export async function ingestArticleCoverImages({ imageIds }: { imageIds: number[] }) {
+  const images = await dbRead.image.findMany({
+    where: { id: { in: imageIds } },
+    select: { id: true, url: true, height: true, width: true },
+  });
+
+  await ingestImageBulk({ images, lowPriority: true });
 }

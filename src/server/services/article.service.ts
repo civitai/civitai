@@ -804,7 +804,12 @@ export const getDraftArticlesByUserId = async ({
 // TODO.Briant - remove this after done updating article images
 export async function getAllArticlesForImageProcessing() {
   return await dbRead.article.findMany({
-    where: { coverId: null, cover: { not: null } },
-    select: { id: true, cover: true, coverId: true, userId: true },
+    select: {
+      id: true,
+      cover: true,
+      coverId: true,
+      userId: true,
+      coverImage: { select: { scannedAt: true, ingestion: true } },
+    },
   });
 }

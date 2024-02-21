@@ -43,6 +43,7 @@ import {
   reportCsamImages,
   createImage,
   createArticleCoverImage,
+  ingestArticleCoverImages,
 } from '~/server/services/image.service';
 import { CacheTTL } from '~/server/common/constants';
 import { z } from 'zod';
@@ -79,6 +80,9 @@ export const imageRouter = router({
   createArticleCoverImage: protectedProcedure
     .input(createImageSchema.extend({ userId: z.number() }))
     .mutation(({ input }) => createArticleCoverImage({ ...input })),
+  ingestArticleImages: protectedProcedure
+    .input(z.object({ imageIds: z.number().array().min(1) }))
+    .mutation(({ input }) => ingestArticleCoverImages(input)),
   moderate: moderatorProcedure.input(imageModerationSchema).mutation(moderateImageHandler),
   delete: protectedProcedure
     .input(getByIdSchema)

@@ -40,7 +40,6 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useSetFilters } from '~/providers/FiltersProvider';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
-import { ResourceAccessWrap } from '../../Access/ResourceAccessWrap';
 import { IconSettings } from '@tabler/icons-react';
 import { ModelById } from '~/types/router';
 import { GalleryModerationModal } from './GalleryModerationModal';
@@ -263,29 +262,24 @@ export default function ImagesAsPostsInfinite({
               <Group spacing="xs">
                 <Title order={2}>Gallery</Title>
                 {!isMuted && (
-                  <ResourceAccessWrap
-                    entityId={selectedVersionId as number}
-                    entityType="ModelVersion"
-                  >
-                    <Group>
+                  <Group>
+                    <LoginRedirect reason="create-review">
+                      <Link href={addPostLink}>
+                        <Button variant="outline" size="xs" leftIcon={<IconPlus size={16} />}>
+                          Add Post
+                        </Button>
+                      </Link>
+                    </LoginRedirect>
+                    {canReview && (
                       <LoginRedirect reason="create-review">
-                        <Link href={addPostLink}>
-                          <Button variant="outline" size="xs" leftIcon={<IconPlus size={16} />}>
-                            Add Post
+                        <Link href={addPostLink + '&reviewing=true'}>
+                          <Button leftIcon={<IconStar size={16} />} variant="outline" size="xs">
+                            Add Review
                           </Button>
                         </Link>
                       </LoginRedirect>
-                      {canReview && (
-                        <LoginRedirect reason="create-review">
-                          <Link href={addPostLink + '&reviewing=true'}>
-                            <Button leftIcon={<IconStar size={16} />} variant="outline" size="xs">
-                              Add Review
-                            </Button>
-                          </Link>
-                        </LoginRedirect>
-                      )}
-                    </Group>
-                  </ResourceAccessWrap>
+                    )}
+                  </Group>
                 )}
                 {showModerationOptions && (
                   <Group ml="auto" spacing={8}>
