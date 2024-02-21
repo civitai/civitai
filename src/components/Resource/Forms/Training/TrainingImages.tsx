@@ -40,13 +40,10 @@ import {
 import JSZip from 'jszip';
 import { isEqual } from 'lodash-es';
 import React, { useEffect, useState } from 'react';
-import { create } from 'zustand';
-import { immer } from 'zustand/middleware/immer';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import {
   AutoTagModal,
-  AutoTagSchemaType,
   MAX_TAGS,
   MIN_THRESHOLD,
 } from '~/components/Resource/Forms/Training/TrainingAutoTagModal';
@@ -56,140 +53,20 @@ import { UploadType } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE, ZIP_MIME_TYPE } from '~/server/common/mime-types';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { useS3UploadStore } from '~/store/s3-upload.store';
+import {
+  defaultTrainingState,
+  getShortNameFromUrl,
+  type ImageDataType,
+  trainingStore,
+  useTrainingImageStore,
+} from '~/store/training.store';
 import { TrainingModelData } from '~/types/router';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { bytesToKB } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 
-export type ImageDataType = {
-  url: string;
-  name: string;
-  type: string;
-  caption: string;
-};
-
-type UpdateImageDataType = Partial<ImageDataType> & {
-  matcher: string;
-  appendCaption?: boolean;
-};
-export type AutoCaptionType = Nullable<AutoTagSchemaType> & {
-  url: string | null;
-  isRunning: boolean;
-};
-
-type TrainingDataState = {
-  imageList: ImageDataType[];
-  initialImageList: ImageDataType[];
-  ownRights: boolean;
-  initialOwnRights: boolean;
-  shareDataset: boolean;
-  initialShareDataset: boolean;
-  autoCaptioning: AutoCaptionType;
-};
-
-type ImageStore = {
-  [id: number]: TrainingDataState | undefined;
-  updateImage: (modelId: number, data: UpdateImageDataType) => void;
-  setImageList: (modelId: number, data: ImageDataType[]) => void;
-  setInitialImageList: (modelId: number, data: ImageDataType[]) => void;
-  setOwnRights: (modelId: number, data: boolean) => void;
-  setShareDataset: (modelId: number, data: boolean) => void;
-  setInitialOwnRights: (modelId: number, data: boolean) => void;
-  setInitialShareDataset: (modelId: number, data: boolean) => void;
-  setAutoCaptioning: (modelId: number, data: AutoCaptionType) => void;
-};
-
-const defaultState: TrainingDataState = {
-  imageList: [] as ImageDataType[],
-  initialImageList: [] as ImageDataType[],
-  ownRights: false,
-  shareDataset: false,
-  initialOwnRights: false,
-  initialShareDataset: false,
-  autoCaptioning: {
-    maxTags: null,
-    threshold: null,
-    overwrite: null,
-    blacklist: null,
-    prependTags: null,
-    appendTags: null,
-    url: null,
-    isRunning: false,
-  },
-};
-
 const MAX_FILES_ALLOWED = 1000;
-
-export const useImageStore = create<ImageStore>()(
-  immer((set) => ({
-    updateImage: (modelId, { matcher, url, name, type, caption, appendCaption }) => {
-      set((state) => {
-        if (!state[modelId]) state[modelId] = { ...defaultState };
-        // TODO [bw] why is this not understanding the override I just did above?
-        state[modelId]!.imageList = state[modelId]!.imageList.map((i) => {
-          const shortName = getShortNameFromUrl(i);
-          if (shortName === matcher) {
-            return {
-              url: url ?? i.url,
-              name: name ?? i.name,
-              type: type ?? i.type,
-              caption:
-                caption !== undefined
-                  ? appendCaption && i.caption.length > 0
-                    ? `${i.caption}, ${caption}`
-                    : caption
-                  : i.caption,
-            };
-          }
-          return i;
-        });
-      });
-    },
-    setImageList: (modelId, imgData) => {
-      set((state) => {
-        if (!state[modelId]) state[modelId] = { ...defaultState };
-        state[modelId]!.imageList = imgData;
-      });
-    },
-    setInitialImageList: (modelId, imgData) => {
-      set((state) => {
-        if (!state[modelId]) state[modelId] = { ...defaultState };
-        state[modelId]!.initialImageList = imgData;
-      });
-    },
-    setOwnRights: (modelId, v) => {
-      set((state) => {
-        if (!state[modelId]) state[modelId] = { ...defaultState };
-        state[modelId]!.ownRights = v;
-      });
-    },
-    setShareDataset: (modelId, v) => {
-      set((state) => {
-        if (!state[modelId]) state[modelId] = { ...defaultState };
-        state[modelId]!.shareDataset = v;
-      });
-    },
-    setInitialOwnRights: (modelId, v) => {
-      set((state) => {
-        if (!state[modelId]) state[modelId] = { ...defaultState };
-        state[modelId]!.initialOwnRights = v;
-      });
-    },
-    setInitialShareDataset: (modelId, v) => {
-      set((state) => {
-        if (!state[modelId]) state[modelId] = { ...defaultState };
-        state[modelId]!.initialShareDataset = v;
-      });
-    },
-    setAutoCaptioning: (modelId, captionData) => {
-      set((state) => {
-        if (!state[modelId]) state[modelId] = { ...defaultState };
-        state[modelId]!.autoCaptioning = captionData;
-      });
-    },
-  }))
-);
 
 const useStyles = createStyles(() => ({
   imgOverlay: {
@@ -234,10 +111,6 @@ export const getCaptionAsList = (capt: string) => {
     .filter((c) => c.length > 0);
 };
 
-export const getShortNameFromUrl = (i: ImageDataType) => {
-  return `${i.url.split('/').pop() ?? 'unk'}.${i.type.split('/').pop() ?? 'jpg'}`;
-};
-
 export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModelData> }) => {
   const {
     updateImage,
@@ -248,7 +121,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     setInitialOwnRights,
     setInitialShareDataset,
     setAutoCaptioning,
-  } = useImageStore();
+  } = trainingStore;
 
   const {
     imageList,
@@ -258,7 +131,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     initialOwnRights,
     initialShareDataset,
     autoCaptioning,
-  } = useImageStore((state) => state[model.id] ?? { ...defaultState });
+  } = useTrainingImageStore((state) => state[model.id] ?? { ...defaultTrainingState });
 
   const [page, setPage] = useState(1);
   const [zipping, setZipping] = useState<boolean>(false);
@@ -564,7 +437,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         title: 'Images auto-tagged successfully!',
         message: `Tagged ${imageLen} image${imageLen === 1 ? '' : 's'}.`,
       });
-      setAutoCaptioning(model.id, { ...defaultState.autoCaptioning });
+      setAutoCaptioning(model.id, { ...defaultTrainingState.autoCaptioning });
     },
     onError(error) {
       showErrorNotification({
@@ -572,7 +445,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         title: 'Failed to auto-tag',
         autoClose: false,
       });
-      setAutoCaptioning(model.id, { ...defaultState.autoCaptioning });
+      setAutoCaptioning(model.id, { ...defaultTrainingState.autoCaptioning });
     },
   });
 
@@ -1147,7 +1020,11 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         <Button variant="default" onClick={() => goBack(model.id, thisStep)}>
           Back
         </Button>
-        <Button onClick={handleNext} loading={zipping || uploading > 0}>
+        <Button
+          onClick={handleNext}
+          disabled={autoCaptioning.isRunning}
+          loading={zipping || uploading > 0}
+        >
           Next
         </Button>
       </Group>

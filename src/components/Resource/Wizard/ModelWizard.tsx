@@ -26,9 +26,9 @@ import TrainingSelectFile from '~/components/Resource/Forms/TrainingSelectFile';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useS3UploadStore } from '~/store/s3-upload.store';
 import { ModelById } from '~/types/router';
+import { QS } from '~/utils/qs';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
-import { QS } from '../../../utils/qs';
 import { TemplateSelect } from './TemplateSelect';
 
 export type ModelWithTags = Omit<ModelById, 'tagsOnModels'> & {

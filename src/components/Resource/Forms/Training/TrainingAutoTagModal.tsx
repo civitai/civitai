@@ -4,14 +4,14 @@ import React, { useState } from 'react';
 import { z } from 'zod';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
-import {
-  AutoCaptionType,
-  getShortNameFromUrl,
-  ImageDataType,
-} from '~/components/Resource/Forms/Training/TrainingImages';
 import { Form, InputNumberSlider, InputSegmentedControl, InputText, useForm } from '~/libs/form';
 import { UploadType } from '~/server/common/enums';
 import { useS3UploadStore } from '~/store/s3-upload.store';
+import {
+  type AutoCaptionType,
+  getShortNameFromUrl,
+  type ImageDataType,
+} from '~/store/training.store';
 import { showErrorNotification } from '~/utils/notifications';
 import { titleCase } from '~/utils/string-helpers';
 

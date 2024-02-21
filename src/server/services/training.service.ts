@@ -29,8 +29,7 @@ import { Orchestrator } from '../http/orchestrator/orchestrator.types';
 const modelMap: { [key in TrainingDetailsBaseModel]: string } = {
   sdxl: 'civitai:101055@128078',
   sd_1_5: 'SD_1_5',
-  // anime: 'civitai:9409@33672', // TODO [bw] adjust this with rick
-  anime: 'anime',
+  anime: 'civitai:9409@33672',
   realistic: 'civitai:81458@132760',
   semi: 'civitai:4384@128713',
 };
@@ -140,7 +139,9 @@ export const deleteAssets = async (jobId: string, submittedAt?: Date) => {
 export const createTrainingRequest = async ({
   userId,
   modelVersionId,
-}: CreateTrainingRequestInput & { userId?: number }) => {
+}: CreateTrainingRequestInput & {
+  userId?: number;
+}) => {
   const modelVersions = await dbWrite.$queryRaw<TrainingRequest[]>`
     SELECT mv."trainingDetails",
            m.name      "modelName",
@@ -167,7 +168,7 @@ export const createTrainingRequest = async ({
     const setting = trainingSettings.find((ts) => ts.name === key);
     if (!setting) continue;
     // TODO [bw] we should be doing more checking here (like validating this through zod), but this will handle the bad cases for now
-    if (typeof value === 'number') {
+    if (setting.type === 'int' || setting.type === 'number') {
       const override = baseModel ? setting.overrides?.[baseModel] : undefined;
       const overrideSetting = override ?? setting;
       if (
