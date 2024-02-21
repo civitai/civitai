@@ -81,7 +81,7 @@ export const imageRouter = router({
     .input(createImageSchema.extend({ userId: z.number() }))
     .mutation(({ input }) => createArticleCoverImage({ ...input })),
   ingestArticleImages: protectedProcedure
-    .input(z.object({ imageIds: z.number().array().min(1) }))
+    .input(z.array(z.object({ imageId: z.number(), articleId: z.number() })))
     .mutation(({ input }) => ingestArticleCoverImages(input)),
   moderate: moderatorProcedure.input(imageModerationSchema).mutation(moderateImageHandler),
   delete: protectedProcedure

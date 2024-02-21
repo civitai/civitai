@@ -30,7 +30,7 @@ import {
   ImageUploadProps,
   UpdateImageInput,
 } from '~/server/schema/image.schema';
-import { imagesSearchIndex } from '~/server/search-index';
+import { articlesSearchIndex, imagesSearchIndex } from '~/server/search-index';
 import { ImageV2Model } from '~/server/selectors/imagev2.selector';
 import { imageTagCompositeSelect, simpleTagSelect } from '~/server/selectors/tag.selector';
 import { updatePostNsfwLevel } from '~/server/services/post.service';
@@ -2444,11 +2444,16 @@ export async function reportCsamImages({
   await bulkSetReportStatus({ ids: reportIds, status: ReportStatus.Actioned, userId: user.id, ip });
 }
 
-export async function ingestArticleCoverImages({ imageIds }: { imageIds: number[] }) {
+export async function ingestArticleCoverImages(array: { imageId: number; articleId: number }[]) {
+  const imageIds = array.map((x) => x.imageId);
   const images = await dbRead.image.findMany({
     where: { id: { in: imageIds } },
     select: { id: true, url: true, height: true, width: true },
   });
+
+  await articlesSearchIndex.queueUpdate(
+    array.map((x) => ({ id: x.articleId, action: SearchIndexUpdateQueueAction.Update }))
+  );
 
   await ingestImageBulk({ images, lowPriority: true });
 }

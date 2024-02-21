@@ -5,11 +5,12 @@ import {
   createSearchIndexUpdateProcessor,
   SearchIndexRunContext,
 } from '~/server/search-index/base.search-index';
-import { Availability, Prisma, PrismaClient } from '@prisma/client';
+import { Availability, Prisma, PrismaClient, SearchIndexUpdateQueueAction } from '@prisma/client';
 import { articleDetailSelect } from '~/server/selectors/article.selector';
 import { ARTICLES_SEARCH_INDEX } from '~/server/common/constants';
 import { isDefined } from '~/utils/type-guards';
 import { ImageMetaProps } from '~/server/schema/image.schema';
+import { SearchIndexUpdate } from '~/server/search-index/SearchIndexUpdate';
 
 const READ_BATCH_SIZE = 1000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 1000;
@@ -71,7 +72,9 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   console.log('onIndexSetup :: all tasks completed');
 };
 
-export type ArticleSearchIndexRecord = Awaited<ReturnType<typeof onFetchItemsToIndex>>[number];
+export type ArticleSearchIndexRecord = Awaited<
+  ReturnType<typeof onFetchItemsToIndex>
+>['indexReadyRecords'][number];
 
 const onFetchItemsToIndex = async ({
   db,
@@ -135,12 +138,7 @@ const onFetchItemsToIndex = async ({
     whereOr
   );
 
-  // Avoids hitting the DB without data.
-  if (articles.length === 0) {
-    return [];
-  }
-
-  const indexReadyRecords = articles
+  const records = articles
     .map(({ tags, stats, ...articleRecord }) => {
       const coverImage = articleRecord.coverImage;
       if (!coverImage) return null;
@@ -170,7 +168,10 @@ const onFetchItemsToIndex = async ({
     })
     .filter(isDefined);
 
-  return indexReadyRecords;
+  const toRequeue = records.filter((x) => x.coverImage.ingestion !== 'Scanned');
+  const indexReadyRecords = records.filter((x) => x.coverImage.ingestion === 'Scanned');
+
+  return { toRequeue, indexReadyRecords };
 };
 
 const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunContext) => {
@@ -201,7 +202,7 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
       offset,
       offset + READ_BATCH_SIZE - 1
     );
-    const indexReadyRecords = await onFetchItemsToIndex({
+    const { toRequeue, indexReadyRecords } = await onFetchItemsToIndex({
       db,
       indexName,
       skip: offset,
@@ -225,6 +226,14 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
             },
           ],
     });
+
+    if (toRequeue.length) {
+      SearchIndexUpdate.queueUpdate({
+        indexName,
+        items: toRequeue.map((x) => ({ id: x.id, action: SearchIndexUpdateQueueAction.Update })),
+      });
+    }
+
     console.log(
       `onIndexUpdate :: fetching complete for ${indexName} range:`,
       offset,

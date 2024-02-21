@@ -66,10 +66,13 @@ export default function ArticleImages() {
     const limit = pLimit(1);
     setIngesting(true);
     const chunkSize = 50;
-    const arrays: Array<number[]> = [];
+    const arrays: Array<{ imageId: number; articleId: number }[]> = [];
     for (let i = 0; i < toIngest.length; i += chunkSize) {
       const chunk = toIngest
-        .map((x) => x.coverId)
+        .map((x) => {
+          if (!x.coverId) return null;
+          return { imageId: x.coverId, articleId: x.id };
+        })
         .filter(isDefined)
         .slice(i, i + chunkSize);
       arrays.push(chunk);
@@ -77,7 +80,7 @@ export default function ArticleImages() {
     await Promise.all(
       arrays.map((array) =>
         limit(async () => {
-          await articleImageIngestMutation.mutateAsync({ imageIds: array });
+          await articleImageIngestMutation.mutateAsync(array);
           setIngested((c) => c + array.length);
         })
       )
