@@ -215,7 +215,7 @@ export function ImageDetailProvider({
       <ReactionSettingsProvider
         settings={{
           hideReactionCount,
-          buttonStyling: {
+          buttonStyling: (reaction, hasReacted) => ({
             radius: 'xl',
             variant: 'light',
             pl: undefined,
@@ -224,10 +224,12 @@ export function ImageDetailProvider({
             h: 30,
             style: {
               color: 'white',
-              background: theme.fn.rgba(theme.colors.gray[8], 0.4),
+              background: hasReacted
+                ? theme.fn.rgba(theme.colors.blue[4], 0.4)
+                : theme.fn.rgba(theme.colors.gray[8], 0.4),
               backdropFilter: 'blur(7px)',
             },
-          },
+          }),
         }}
       >
         {children}
