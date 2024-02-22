@@ -44,9 +44,6 @@ export default async function runModel(req: NextApiRequest, res: NextApiResponse
   });
   if (!modelVersion) return res.status(404).json({ error: 'Model not found' });
 
-  const session = await getServerAuthSession({ req, res });
-  const userId = session?.user?.id;
-
   // Get selected, partner, or first runStrategy
   let runStrategy: (typeof modelVersion.runStrategies)[0] | undefined;
   if (strategyId) runStrategy = modelVersion.runStrategies.find((x) => x.id == strategyId);
@@ -73,6 +70,7 @@ export default async function runModel(req: NextApiRequest, res: NextApiResponse
   // Append our QS
   const runUrl = new URL(runStrategy.url);
   if (!runUrl.searchParams.has('utm_source')) runUrl.searchParams.append('utm_source', 'civitai');
+  if (!runUrl.searchParams.has('via')) runUrl.searchParams.append('via', 'civitai');
 
   res.redirect(runUrl.href);
 }

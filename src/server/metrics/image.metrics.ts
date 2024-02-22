@@ -3,14 +3,12 @@ import { Prisma, SearchIndexUpdateQueueAction } from '@prisma/client';
 import { imagesSearchIndex } from '~/server/search-index';
 import dayjs from 'dayjs';
 import { chunk } from 'lodash-es';
-import { dbWrite } from '~/server/db/client';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
-import { pgDbWrite } from '~/server/db/pgDb';
 
 export const imageMetrics = createMetricProcessor({
   name: 'Image',
-  async update({ db, ch, lastUpdate }) {
-    const recentEngagementSubquery = Prisma.sql`
+  async update({ pg, ch, lastUpdate, jobContext }) {
+    const updateQuery = await pg.cancellableQuery<{ imageId: number }>(Prisma.sql`
       WITH recent_engagements AS
       (
         SELECT
@@ -44,11 +42,7 @@ export const imageMetrics = createMetricProcessor({
           "id"
         FROM "MetricUpdateQueue"
         WHERE type = 'Image'
-      )
-    `;
-
-    await db.$executeRaw`
-      ${recentEngagementSubquery},
+      ),
       -- Get all affected users
       affected AS
       (
@@ -257,8 +251,11 @@ export const imageMetrics = createMetricProcessor({
         SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
       ) tf
       ON CONFLICT ("imageId", timeframe) DO UPDATE
-        SET "commentCount" = EXCLUDED."commentCount", "heartCount" = EXCLUDED."heartCount", "likeCount" = EXCLUDED."likeCount", "dislikeCount" = EXCLUDED."dislikeCount", "laughCount" = EXCLUDED."laughCount", "cryCount" = EXCLUDED."cryCount", "collectedCount" = EXCLUDED."collectedCount", "tippedCount" = EXCLUDED."tippedCount", "tippedAmountCount" = EXCLUDED."tippedAmountCount";
-    `;
+        SET "commentCount" = EXCLUDED."commentCount", "heartCount" = EXCLUDED."heartCount", "likeCount" = EXCLUDED."likeCount", "dislikeCount" = EXCLUDED."dislikeCount", "laughCount" = EXCLUDED."laughCount", "cryCount" = EXCLUDED."cryCount", "collectedCount" = EXCLUDED."collectedCount", "tippedCount" = EXCLUDED."tippedCount", "tippedAmountCount" = EXCLUDED."tippedAmountCount", "createdAt" = NOW()
+      RETURNING "imageId";
+    `);
+    jobContext.on('cancel', updateQuery.cancel);
+    const affectedImages = await updateQuery.result();
 
     // Update view counts
     //---------------------------------------
@@ -301,7 +298,7 @@ export const imageMetrics = createMetricProcessor({
       // console.log(`Posting batch ${i} of ${batches.length}`);
       try {
         const batchJson = JSON.stringify(batch);
-        await pgDbWrite.query(Prisma.sql`
+        const updateChunkQuery = await pg.cancellableQuery(Prisma.sql`
           INSERT INTO "ImageMetric" ("imageId", timeframe, "viewCount")
           SELECT
             imageId,
@@ -331,6 +328,8 @@ export const imageMetrics = createMetricProcessor({
           ON CONFLICT ("imageId", timeframe) DO UPDATE
             SET "viewCount" = EXCLUDED."viewCount";
         `);
+        jobContext.on('cancel', updateChunkQuery.cancel);
+        await updateChunkQuery.result();
       } catch (err) {
         throw err;
       }
@@ -340,42 +339,37 @@ export const imageMetrics = createMetricProcessor({
 
     //---------------------------------------
 
-    const affectedImages: Array<{ id: number }> = await db.$queryRaw`
-      ${recentEngagementSubquery}
-      SELECT DISTINCT
-            i.id
-      FROM recent_engagements r
-      JOIN "Image" i ON i.id = r.id
-      WHERE r.id IS NOT NULL
-    `;
-
     await imagesSearchIndex.queueUpdate(
-      affectedImages.map(({ id }) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+      affectedImages.map((x) => ({
+        id: x.imageId,
+        action: SearchIndexUpdateQueueAction.Update,
+      }))
     );
 
-    await updateMetricAgeGroups();
+    const updateAgeGroupsQuery = await pg.cancellableQuery(Prisma.sql`
+      UPDATE "ImageMetric"
+      SET "ageGroup" = CASE
+          WHEN "createdAt" >= now() - interval '1 day' THEN 'Day'::"MetricTimeframe"
+          WHEN "createdAt" >= now() - interval '1 week' THEN 'Week'::"MetricTimeframe"
+          WHEN "createdAt" >= now() - interval '1 month' THEN 'Month'::"MetricTimeframe"
+          WHEN "createdAt" >= now() - interval '1 year' THEN 'Year'::"MetricTimeframe"
+          ELSE 'AllTime'::"MetricTimeframe"
+      END
+      WHERE
+        ("ageGroup" = 'Year' AND "createdAt" < now() - interval '1 year') OR
+        ("ageGroup" = 'Month' AND "createdAt" < now() - interval '1 month') OR
+        ("ageGroup" = 'Week' AND "createdAt" < now() - interval '1 week') OR
+        ("ageGroup" = 'Day' AND "createdAt" < now() - interval '1 day');
+    `);
+    jobContext.on('cancel', updateAgeGroupsQuery.cancel);
+    await updateAgeGroupsQuery.result();
   },
-  async clearDay({ db }) {
-    // await db.$executeRaw`
-    //   UPDATE "ImageMetric" SET "heartCount" = 0, "likeCount" = 0, "dislikeCount" = 0, "laughCount" = 0, "cryCount" = 0, "commentCount" = 0, "collectedCount" = 0, "tippedCount" = 0, "tippedAmountCount" = 0 WHERE timeframe = 'Day';
-    // `;
+  async clearDay({ pg, jobContext }) {
+    // Clear day of things updated in the last day
+    const clearDayQuery = await pg.cancellableQuery(Prisma.sql`
+      UPDATE "ImageMetric" SET "heartCount" = 0, "likeCount" = 0, "dislikeCount" = 0, "laughCount" = 0, "cryCount" = 0, "commentCount" = 0, "collectedCount" = 0, "tippedCount" = 0, "tippedAmountCount" = 0 WHERE timeframe = 'Day' AND "createdAt" > date_trunc('day', now() - interval '1 day');
+    `);
+    jobContext.on('cancel', clearDayQuery.cancel);
+    await clearDayQuery.result();
   },
 });
-
-async function updateMetricAgeGroups() {
-  await dbWrite.$executeRaw`
-    UPDATE "ImageMetric"
-    SET "ageGroup" = CASE
-        WHEN "createdAt" >= now() - interval '1 day' THEN 'Day'::"MetricTimeframe"
-        WHEN "createdAt" >= now() - interval '1 week' THEN 'Week'::"MetricTimeframe"
-        WHEN "createdAt" >= now() - interval '1 month' THEN 'Month'::"MetricTimeframe"
-        WHEN "createdAt" >= now() - interval '1 year' THEN 'Year'::"MetricTimeframe"
-        ELSE 'AllTime'::"MetricTimeframe"
-    END
-    WHERE
-      ("ageGroup" = 'Year' AND "createdAt" < now() - interval '1 year') OR
-      ("ageGroup" = 'Month' AND "createdAt" < now() - interval '1 month') OR
-      ("ageGroup" = 'Week' AND "createdAt" < now() - interval '1 week') OR
-      ("ageGroup" = 'Day' AND "createdAt" < now() - interval '1 day');
-  `;
-}
