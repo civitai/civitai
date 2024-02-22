@@ -1,4 +1,4 @@
-import { createJob } from './job';
+import { createJob, JobContext } from './job';
 import * as metrics from '~/server/metrics';
 
 const metricSets = {
@@ -21,17 +21,17 @@ export const metricJobs = Object.entries(metricSets).map(([name, metrics]) =>
   createJob(
     `update-metrics-${name}`,
     '*/1 * * * *',
-    async () => {
+    async (e) => {
       const stats = {
         metrics: {} as Record<string, number>,
         ranks: {} as Record<string, number>,
       };
 
       for (const metric of metrics)
-        stats.metrics[metric.name] = await timedExecution(metric.update);
+        stats.metrics[metric.name] = await timedExecution(metric.update, e);
 
       for (const metric of metrics)
-        stats.ranks[metric.name] = await timedExecution(metric.refreshRank);
+        stats.ranks[metric.name] = await timedExecution(metric.refreshRank, e);
 
       return stats;
     },
@@ -42,8 +42,11 @@ export const metricJobs = Object.entries(metricSets).map(([name, metrics]) =>
   )
 );
 
-async function timedExecution<T>(fn: () => Promise<T>) {
+async function timedExecution<T>(
+  fn: (jobContext: JobContext) => Promise<T>,
+  jobContext: JobContext
+) {
   const start = Date.now();
-  await fn();
+  await fn(jobContext);
   return Date.now() - start;
 }

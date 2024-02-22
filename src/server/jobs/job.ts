@@ -2,7 +2,10 @@ import { dbWrite } from '~/server/db/client';
 
 export type Job = {
   name: string;
-  run: () => Promise<MixedObject | void>;
+  run: () => {
+    result: Promise<MixedObject | void>;
+    cancel: () => Promise<void>;
+  };
   cron: string;
   options: JobOptions;
 };
@@ -15,16 +18,38 @@ export type JobOptions = {
   dedicated?: boolean;
 };
 
+export type JobContext = {
+  on: (event: 'cancel', listener: () => Promise<void>) => void;
+};
+
 export function createJob(
   name: string,
   cron: string,
-  fn: () => Promise<MixedObject | void>,
+  fn: (e: JobContext) => Promise<MixedObject | void>,
   options: Partial<JobOptions> = {}
 ) {
   return {
     name,
     cron,
-    run: fn,
+    run: () => {
+      const onCancel: (() => Promise<void>)[] = [];
+      const jobContext = {
+        on: (event: 'cancel', listener: () => Promise<void>) => {
+          if (event === 'cancel') onCancel.push(listener);
+        },
+      };
+      let running = true;
+      const cancel = () => {
+        if (!running) return;
+        console.log('canceling job');
+        Promise.all(onCancel.map((x) => x()));
+      };
+      const result = fn(jobContext);
+      result.finally(() => {
+        running = false;
+      });
+      return { result, cancel };
+    },
     options: {
       shouldWait: false,
       lockExpiration: 5 * 60,
