@@ -1,7 +1,7 @@
 import { AspectRatio, Group, Stack, ThemeIcon, Tooltip, createStyles } from '@mantine/core';
 
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { ImageGuard, ImageGuardReportContext } from '~/components/ImageGuard/ImageGuard';
+import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
 import { PostsInfiniteModel } from '~/server/services/post.service';

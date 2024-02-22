@@ -19,7 +19,7 @@ export interface Dialog extends DialogSettings {
 
 type DialogStore = {
   dialogs: Dialog[];
-  trigger: (args: DialogSettings) => void;
+  trigger: <TProps extends Record<string, unknown>>(args: DialogSettings<TProps>) => void;
   closeById: (id: string | number | symbol) => void;
   closeLatest: () => void;
   closeAll: () => void;

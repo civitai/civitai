@@ -80,7 +80,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
             {inView && (
               <>
                 {onSite && <OnsiteIndicator />}
-                <ImageGuard2 image={image}>
+                <ImageGuard2 image={image} connectId={2}>
                   {(safe) => (
                     <>
                       <Group

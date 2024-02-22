@@ -22,7 +22,6 @@ export function useApplyHiddenPreferences<
 
   const { hiddenModels, hiddenImages, hiddenTags, hiddenUsers, hiddenLoading, isSfw } =
     useHiddenPreferencesContext();
-  console.log({ hiddenTags });
 
   const items = useMemo(
     () => {

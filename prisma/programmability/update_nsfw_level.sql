@@ -5,19 +5,17 @@ BEGIN
     SELECT
       toi."imageId",
       CASE
-        WHEN bool_or(t."nsfwLevel" = 32) THEN 32
-        WHEN bool_or(t."nsfwLevel" = 16) THEN 16
-        WHEN bool_or(t."nsfwLevel" = 8) THEN 8
-        WHEN bool_or(t."nsfwLevel" = 4) THEN 4
-        WHEN bool_or(t."nsfwLevel" = 2) THEN 2
-        ELSE 1
-      END "nsfwLevel"
+        WHEN bool_or(t.nsfw = 'X') THEN 'X'::"NsfwLevel"
+        WHEN bool_or(t.nsfw = 'Mature') THEN 'Mature'::"NsfwLevel"
+        WHEN bool_or(t.nsfw = 'Soft') THEN 'Soft'::"NsfwLevel"
+        ELSE 'None'::"NsfwLevel"
+      END "nsfw"
     FROM "TagsOnImage" toi
-    LEFT JOIN "Tag" t ON t.id = toi."tagId" AND t."nsfwLevel" > 1
+    LEFT JOIN "Tag" t ON t.id = toi."tagId" AND t.nsfw != 'None'
     WHERE toi."imageId" = ANY(image_ids) AND NOT toi.disabled
     GROUP BY toi."imageId"
   )
-  UPDATE "Image" i SET "nsfwLevel" = il."nsfwLevel"
+  UPDATE "Image" i SET nsfw = il.nsfw
   FROM image_level il
   WHERE il."imageId" = i.id;
 END;

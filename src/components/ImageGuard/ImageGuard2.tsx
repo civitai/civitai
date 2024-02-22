@@ -183,6 +183,7 @@ const useStyles = createStyles((theme) => ({
     borderRight: '1px solid rgba(0,0,0,.15)',
     boxShadow: '0 1px 0 1px rgba(255,255,255,.1)',
     paddingRight: 5,
+    lineHeight: 1,
   },
 }));
 
