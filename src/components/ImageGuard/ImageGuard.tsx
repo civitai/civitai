@@ -105,7 +105,7 @@ type SfwStore = {
   showingConnections: Record<string, boolean>;
   showingImages: Record<string, boolean>;
   toggleImage: (id: number) => void;
-  showImages: (ids: number[]) => void;
+  // showImages: (ids: number[]) => void;
   toggleConnection: ({ entityType, entityId }: ImageGuardConnect) => void;
   limitedToggleCount: number;
   limitedToggleIncrement: () => void;
@@ -127,11 +127,11 @@ const useStore = create<SfwStore>()(
         state.showingImages[id.toString()] = !state.showingImages[id.toString()];
       });
     },
-    showImages: (ids) => {
-      set((state) => {
-        ids.map((id) => (state.showingImages[id.toString()] = true));
-      });
-    },
+    // showImages: (ids) => {
+    //   set((state) => {
+    //     ids.map((id) => (state.showingImages[id.toString()] = true));
+    //   });
+    // },
     toggleConnection: (args) => {
       set((state) => {
         const key = getConnectionKey(args);

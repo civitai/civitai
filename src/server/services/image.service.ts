@@ -3,7 +3,7 @@ import {
   ImageGenerationProcess,
   ImageIngestionStatus,
   MediaType,
-  NsfwLevel,
+  NsfwLevel as NsfwLevelOld,
   Prisma,
   ReportReason,
   ReportStatus,
@@ -18,7 +18,7 @@ import { isProd } from '~/env/other';
 import { env } from '~/env/server.mjs';
 import { nsfwLevelOrder } from '~/libs/moderation';
 import { VotableTagModel } from '~/libs/tags';
-import { BlockedReason, ImageScanType, ImageSort } from '~/server/common/enums';
+import { BlockedReason, ImageScanType, ImageSort, NsfwLevel } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
@@ -35,7 +35,6 @@ import { ImageV2Model } from '~/server/selectors/imagev2.selector';
 import { imageTagCompositeSelect, simpleTagSelect } from '~/server/selectors/tag.selector';
 import { updatePostNsfwLevel } from '~/server/services/post.service';
 import { getModeratedTags, getTagsNeedingReview } from '~/server/services/system-cache';
-import { getTypeCategories } from '~/server/services/tag.service';
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
 import {
   throwAuthorizationError,
@@ -44,7 +43,6 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { logToDb } from '~/utils/logging';
-import { hashifyObject } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import {
   GetImageInput,
@@ -435,7 +433,8 @@ type GetAllImagesRaw = {
   id: number;
   name: string;
   url: string;
-  nsfw: NsfwLevel;
+  nsfw: NsfwLevelOld;
+  nsfwLevel: NsfwLevel;
   width: number;
   height: number;
   hash: string;
@@ -506,7 +505,7 @@ export const getAllImages = async ({
 }: GetInfiniteImagesInput & {
   userId?: number;
   isModerator?: boolean;
-  nsfw?: NsfwLevel;
+  nsfw?: NsfwLevelOld;
   headers?: Record<string, string>; // does this do anything?
 }) => {
   const AND: Prisma.Sql[] = [Prisma.sql`i."postId" IS NOT NULL`];
@@ -709,7 +708,7 @@ export const getAllImages = async ({
   //   AND.push(Prisma.sql`i."id" IN (${Prisma.join(excludedImageIds ?? [])})`);
   // }
 
-  if (nsfw === NsfwLevel.None) AND.push(Prisma.sql`i."nsfw" = 'None'`);
+  if (nsfw === NsfwLevelOld.None) AND.push(Prisma.sql`i."nsfw" = 'None'`);
   else if (nsfw !== undefined) {
     const nsfwLevels = nsfwLevelOrder.slice(1, nsfwLevelOrder.indexOf(nsfw) + 1);
     AND.push(Prisma.sql`i."nsfw" = ANY(ARRAY[${Prisma.join(nsfwLevels)}]::"NsfwLevel"[])`);
@@ -787,6 +786,7 @@ export const getAllImages = async ({
       i.name,
       i.url,
       i.nsfw,
+      i."nsfwLevel",
       i.width,
       i.height,
       i.hash,
@@ -1204,7 +1204,8 @@ type ImagesForModelVersions = {
   userId: number;
   name: string;
   url: string;
-  nsfw: NsfwLevel;
+  nsfw: NsfwLevelOld;
+  nsfwLevel: NsfwLevel;
   width: number;
   height: number;
   hash: string;
@@ -1296,6 +1297,7 @@ export const getImagesForModelVersion = async ({
       i.name,
       i.url,
       i.nsfw,
+      i."nsfwLevel",
       i.width,
       i.height,
       i.hash,
@@ -1360,7 +1362,8 @@ export const getImagesForPosts = async ({
       userId: number;
       name: string;
       url: string;
-      nsfw: NsfwLevel;
+      nsfw: NsfwLevelOld;
+      nsfwLevel: NsfwLevel;
       width: number;
       height: number;
       hash: string;
@@ -1396,6 +1399,7 @@ export const getImagesForPosts = async ({
       i.name,
       i.url,
       i.nsfw,
+      i."nsfwLevel",
       i.width,
       i.height,
       i.hash,
@@ -1553,7 +1557,8 @@ type GetImageConnectionRaw = {
   id: number;
   name: string;
   url: string;
-  nsfw: NsfwLevel;
+  nsfw: NsfwLevelOld;
+  nsfwLevel: NsfwLevel;
   width: number;
   height: number;
   hash: string;
@@ -1633,6 +1638,7 @@ export const getImagesByEntity = async ({
       i.name,
       i.url,
       i.nsfw,
+      i."nsfwLevel",
       i.width,
       i.height,
       i.hash,
@@ -1803,7 +1809,8 @@ type GetEntityImageRaw = {
   id: number;
   name: string;
   url: string;
-  nsfw: NsfwLevel;
+  nsfw: NsfwLevelOld;
+  nsfwLevel: NsfwLevel;
   width: number;
   height: number;
   hash: string;
@@ -1897,6 +1904,7 @@ export const getEntityCoverImage = async ({
       i.name,
       i.url,
       i.nsfw,
+      i."nsfwLevel",
       i.width,
       i.height,
       i.hash,
@@ -2032,7 +2040,8 @@ type GetImageModerationReviewQueueRaw = {
   id: number;
   name: string;
   url: string;
-  nsfw: NsfwLevel;
+  nsfw: NsfwLevelOld;
+  nsfwLevel: NsfwLevel;
   width: number;
   height: number;
   hash: string;
@@ -2140,6 +2149,7 @@ export const getImageModerationReviewQueue = async ({
       i.name,
       i.url,
       i.nsfw,
+      i."nsfwLevel",
       i.width,
       i.height,
       i.hash,

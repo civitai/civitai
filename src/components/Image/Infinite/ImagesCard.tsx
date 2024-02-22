@@ -34,6 +34,7 @@ import { HolidayFrame } from '~/components/Decorations/HolidayFrame';
 import { truncate } from 'lodash-es';
 import { constants } from '~/server/common/constants';
 import { useImageStore } from '~/store/image.store';
+import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 
 export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height: number }) {
   const { ref, inView } = useInView({ rootMargin: '200% 0px' });
@@ -79,7 +80,175 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
             {inView && (
               <>
                 {onSite && <OnsiteIndicator />}
-                <ImageGuard
+                <ImageGuard2 image={image}>
+                  {(safe) => (
+                    <>
+                      <Group
+                        position="apart"
+                        align="start"
+                        spacing={4}
+                        style={{
+                          position: 'absolute',
+                          top: 0,
+                          left: 0,
+                          width: '100%',
+                          zIndex: 10,
+                          padding: 8,
+                        }}
+                      >
+                        <ImageGuard2.BlurToggle />
+                        {safe && (
+                          <Stack spacing="xs" ml="auto">
+                            {!isBlocked && (
+                              // <ImageGuard.Report
+                              //   context="image"
+                              //   position="static"
+                              //   withinPortal
+                              // />
+                              <></>
+                            )}
+                            {features.imageGeneration && image.meta && (
+                              <HoverActionButton
+                                label="Remix"
+                                size={30}
+                                color="white"
+                                variant="filled"
+                                data-activity="remix:image-card"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  generationPanel.open({
+                                    type: 'image',
+                                    id: image.id,
+                                  });
+                                }}
+                              >
+                                <IconBrush stroke={2.5} size={16} />
+                              </HoverActionButton>
+                            )}
+                            {scheduled && (
+                              <Tooltip label="Scheduled">
+                                <ThemeIcon size={30} radius="xl" variant="filled" color="blue">
+                                  <IconClock2 size={16} strokeWidth={2.5} />
+                                </ThemeIcon>
+                              </Tooltip>
+                            )}
+                            {notPublished && (
+                              <Tooltip label="Not published">
+                                <ThemeIcon size={30} radius="xl" variant="filled" color="yellow">
+                                  <IconAlertTriangle size={16} strokeWidth={2.5} />
+                                </ThemeIcon>
+                              </Tooltip>
+                            )}
+                          </Stack>
+                        )}
+                      </Group>
+                      {safe && (
+                        <EdgeMedia
+                          src={image.url}
+                          className={cx({ [classes.blocked]: isBlocked })}
+                          name={image.name ?? image.id.toString()}
+                          alt={
+                            image.meta
+                              ? truncate(image.meta.prompt, {
+                                  length: constants.altTruncateLength,
+                                })
+                              : image.name ?? undefined
+                          }
+                          type={image.type}
+                          width={450}
+                          placeholder="empty"
+                          style={{ width: '100%' }}
+                          fadeIn
+                        />
+                      )}
+
+                      <div className="footer-abs">
+                        {showVotes ? (
+                          <div className={classes.footer}>
+                            <VotableTags entityType="image" entityId={image.id} tags={tags} />
+                          </div>
+                        ) : !isBlocked ? (
+                          isPending ? (
+                            <Box className={classes.footer} p="xs" sx={{ width: '100%' }}>
+                              <Stack spacing={4}>
+                                <Group spacing={8} noWrap>
+                                  <Loader size={20} />
+                                  <Badge size="xs" color="yellow">
+                                    Analyzing
+                                  </Badge>
+                                </Group>
+                                <Text size="sm" inline>
+                                  This image will be available to the community once processing is
+                                  done.
+                                </Text>
+                              </Stack>
+                            </Box>
+                          ) : (
+                            // TODO.Briant - don't use group since group prevents clicking smaller images, or change pointer event?
+                            <Group className={classes.info} spacing={4} position="apart" noWrap>
+                              <Reactions
+                                entityId={image.id}
+                                entityType="image"
+                                reactions={image.reactions}
+                                metrics={{
+                                  likeCount: image.stats?.likeCountAllTime,
+                                  dislikeCount: image.stats?.dislikeCountAllTime,
+                                  heartCount: image.stats?.heartCountAllTime,
+                                  laughCount: image.stats?.laughCountAllTime,
+                                  cryCount: image.stats?.cryCountAllTime,
+                                  tippedAmountCount: image.stats?.tippedAmountCountAllTime,
+                                }}
+                                targetUserId={image.user.id}
+                                readonly={!safe}
+                                className={classes.reactions}
+                              />
+                              {!image.hideMeta && image.meta && (
+                                <ImageMetaPopover
+                                  meta={image.meta}
+                                  generationProcess={image.generationProcess ?? undefined}
+                                  imageId={image.id}
+                                  mainResourceId={image.modelVersionId ?? undefined}
+                                >
+                                  <ActionIcon variant="transparent" size="lg">
+                                    <IconInfoCircle
+                                      color="white"
+                                      filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                                      opacity={0.8}
+                                      strokeWidth={2.5}
+                                      size={26}
+                                    />
+                                  </ActionIcon>
+                                </ImageMetaPopover>
+                              )}
+                            </Group>
+                          )
+                        ) : (
+                          <Alert
+                            color="red"
+                            variant="filled"
+                            radius={0}
+                            className={classes.info}
+                            title={
+                              <Group spacing={4}>
+                                <IconInfoCircle />
+                                <Text inline>TOS Violation</Text>
+                              </Group>
+                            }
+                          >
+                            <Stack align="flex-end" spacing={0}>
+                              <Text size="sm" inline>
+                                The image you uploaded was determined to violate our TOS and will be
+                                completely removed from our service.
+                              </Text>
+                            </Stack>
+                          </Alert>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </ImageGuard2>
+                {/* <ImageGuard
                   images={[image]}
                   render={(image) => (
                     <ImageGuard.Content>
@@ -255,7 +424,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                       )}
                     </ImageGuard.Content>
                   )}
-                />
+                /> */}
               </>
             )}
           </div>

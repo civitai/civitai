@@ -16,7 +16,7 @@ import {
   ImageGenerationProcess,
   ImageIngestionStatus,
   MediaType,
-  NsfwLevel,
+  NsfwLevel as NsfwLevelOld,
   Prisma,
   PrismaClient,
   SearchIndexUpdateQueueAction,
@@ -32,6 +32,7 @@ import {
   profileImageSelect,
 } from '../selectors/image.selector';
 import { isDefined } from '~/utils/type-guards';
+import { NsfwLevel } from '~/server/common/enums';
 
 const READ_BATCH_SIZE = 10000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 10000;
@@ -126,7 +127,8 @@ type ImageForSearchIndex = {
   height: number | null;
   width: number | null;
   metadata: Prisma.JsonValue;
-  nsfw: NsfwLevel;
+  nsfw: NsfwLevelOld;
+  nsfwLevel: NsfwLevel;
   postId: number | null;
   needsReview: string | null;
   hideMeta: boolean;
@@ -217,6 +219,7 @@ const onFetchItemsToIndex = async ({
     i."name",
     i."url",
     i."nsfw",
+    i."nsfwLevel",
     i."width",
     i."height",
     i."hash",
@@ -257,7 +260,7 @@ const onFetchItemsToIndex = async ({
           'tippedAmountCountAllTime', SUM("tippedAmountCount")
         ) stats
       FROM "ImageMetric" im
-      WHERE im."imageId" IN (SELECT id FROM target)          
+      WHERE im."imageId" IN (SELECT id FROM target)
         AND im."timeframe" = 'AllTime'::"MetricTimeframe"
       GROUP BY im."imageId"
   ), users AS MATERIALIZED (

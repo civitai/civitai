@@ -1,4 +1,4 @@
-import { NsfwLevel } from '~/shared/enums';
+import { NsfwLevel } from '~/server/common/enums';
 import { Flags } from '~/shared/utils';
 
 export function parseBitwiseBrowsingLevel(level: number): BrowsingLevel[] {
@@ -35,8 +35,15 @@ export const browsingLevelDescriptions = {
   [NsfwLevel.XXX]: 'Some explanation',
 } as const;
 
+// public browsing levels
 export const publicBrowsingLevelsArray: BrowsingLevel[] = [NsfwLevel.PG, NsfwLevel.PG13];
 export const publicBrowsingLevelsFlag = flagifyBrowsingLevel(publicBrowsingLevelsArray);
+
+// nsfw browsing levels
+export const nsfwBrowsingLevelsArray: BrowsingLevel[] = [NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX];
+export const nsfwBrowsingLevelsFlag = flagifyBrowsingLevel(nsfwBrowsingLevelsArray);
+
+// all browsing levels
 export const allBrowsingLevelsFlag = flagifyBrowsingLevel([...browsingLevels]);
 
 export function getIsPublicBrowsingLevel(level: number) {

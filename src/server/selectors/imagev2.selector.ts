@@ -34,6 +34,7 @@ export const getImageV2Select = ({ userId }: GetSelectArgs) =>
     name: true,
     url: true,
     nsfw: true,
+    nsfwLevel: true,
     width: true,
     height: true,
     hash: true,
