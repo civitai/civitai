@@ -450,7 +450,7 @@ export function ModelVersionDetails({
       : `Removal reason: ${version.meta?.customMessage}.` ?? '';
   const license = baseModelLicenses[version.baseModel];
   const onSite = !!version.trainingStatus;
-  const showCustomLicense = ['SD 1.5', 'SDXL 1.0'].includes(version.baseModel);
+  const showAddendumLicense = ['SD 1.5', 'SDXL 1.0'].includes(version.baseModel);
 
   return (
     <ContainerGrid gutter="xl">
@@ -889,7 +889,7 @@ export function ModelVersionDetails({
                   {license && (
                     <Text
                       component="a"
-                      href={showCustomLicense ? `/models/license/${version.id}` : license.url}
+                      href={license.url}
                       rel="nofollow noreferrer"
                       td="underline"
                       target="_blank"
@@ -899,6 +899,19 @@ export function ModelVersionDetails({
                     >
                       {license.name}
                     </Text>
+                  )}
+                  {showAddendumLicense && (
+                    <Link href={`/models/license/${version.id}`} passHref>
+                      <Anchor
+                        variant="text"
+                        td="underline"
+                        size="xs"
+                        color="dimmed"
+                        sx={{ lineHeight: 1.1 }}
+                      >
+                        Addendum
+                      </Anchor>
+                    </Link>
                   )}
                   {model.licenses.map(({ url, name }) => (
                     <Text

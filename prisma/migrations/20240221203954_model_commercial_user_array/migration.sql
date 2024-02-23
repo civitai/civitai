@@ -1,4 +1,4 @@
-ALTER TABLE "Model" ADD COLUMN "allowCommercialUse_temp" "CommercialUse"[] NOT NULL DEFAULT ARRAY['Sell']::"CommercialUse"[];
+ALTER TABLE "Model" ADD COLUMN "allowCommercialUse_temp" "CommercialUse"[] NOT NULL DEFAULT ARRAY['Image', 'RentCivit', 'Rent', 'Sell']::"CommercialUse"[];
 
 UPDATE "Model" SET "allowCommercialUse_temp" = CASE
   WHEN "allowCommercialUse" = 'Image' THEN ARRAY['Image']::"CommercialUse"[]

@@ -508,24 +508,16 @@ export async function getVersionLicenseHandler({ input }: { input: GetByIdInput 
     const licenseSlug = baseModelLicenses[version.baseModel as BaseModel]?.name ?? '';
     const license = await getStaticContent({ slug: ['licenses', licenseSlug] });
 
-    const hasAdditionalPermissions =
-      version.model.allowCommercialUse.length > 0 ||
-      version.model.allowNoCredit ||
-      version.model.allowDerivatives ||
-      version.model.allowDifferentLicense;
-
-    if (hasAdditionalPermissions) {
-      license.content = addAdditionalLicensePermissions(license.content, {
-        modelId: version.model.id,
-        modelName: version.model.name,
-        versionId: version.id,
-        username: version.model.user.username,
-        allowCommercialUse: version.model.allowCommercialUse,
-        allowNoCredit: version.model.allowNoCredit,
-        allowDerivatives: version.model.allowDerivatives,
-        allowDifferentLicense: version.model.allowDifferentLicense,
-      });
-    }
+    license.content = addAdditionalLicensePermissions(license.content, {
+      modelId: version.model.id,
+      modelName: version.model.name,
+      versionId: version.id,
+      username: version.model.user.username,
+      allowCommercialUse: version.model.allowCommercialUse,
+      allowNoCredit: version.model.allowNoCredit,
+      allowDerivatives: version.model.allowDerivatives,
+      allowDifferentLicense: version.model.allowDifferentLicense,
+    });
 
     return { ...version, license };
   } catch (error) {
