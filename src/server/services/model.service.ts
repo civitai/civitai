@@ -380,9 +380,9 @@ export const getModelsRaw = async ({
   // Filter by model permissions
   if (allowCommercialUse && allowCommercialUse.length > 0) {
     AND.push(
-      Prisma.sql`m."allowCommercialUse" = ANY(ARRAY[${Prisma.join(
+      Prisma.sql`m."allowCommercialUse" && ARRAY[${Prisma.join(
         allowCommercialUse
-      )}]::"CommercialUse"[])`
+      )}]::"CommercialUse"[]`
     );
   }
 
