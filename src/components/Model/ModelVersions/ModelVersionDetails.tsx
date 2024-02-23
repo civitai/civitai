@@ -453,7 +453,9 @@ export function ModelVersionDetails({
   const showAddendumLicense =
     ['SD 1.5', 'SDXL 1.0'].includes(version.baseModel) &&
     (!model.allowCommercialUse.length ||
-      model.allowCommercialUse.includes('None') ||
+      model.allowCommercialUse.some((permission) =>
+        ['None', 'Image', 'RentCivit', 'Rent', 'Sell'].includes(permission)
+      ) ||
       !model.allowNoCredit ||
       !model.allowDerivatives ||
       model.allowDifferentLicense);

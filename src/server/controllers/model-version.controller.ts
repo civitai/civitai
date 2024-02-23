@@ -507,7 +507,9 @@ export async function getVersionLicenseHandler({ input }: { input: GetByIdInput 
 
     const hasAdditionalPermissions =
       !version.model.allowCommercialUse.length ||
-      version.model.allowCommercialUse.includes('None') ||
+      version.model.allowCommercialUse.some((permission) =>
+        ['None', 'Image', 'RentCivit', 'Rent', 'Sell'].includes(permission)
+      ) ||
       !version.model.allowNoCredit ||
       !version.model.allowDerivatives ||
       version.model.allowDifferentLicense;
