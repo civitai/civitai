@@ -505,6 +505,15 @@ export async function getVersionLicenseHandler({ input }: { input: GetByIdInput 
     if (!['SD 1.5', 'SDXL 1.0'].includes(version.baseModel))
       return throwBadRequestError('License not available for this model');
 
+    const hasAdditionalPermissions =
+      !version.model.allowCommercialUse.length ||
+      version.model.allowCommercialUse.includes('None') ||
+      !version.model.allowNoCredit ||
+      !version.model.allowDerivatives ||
+      version.model.allowDifferentLicense;
+
+    if (!hasAdditionalPermissions) throw throwBadRequestError('No additional permissions');
+
     const licenseSlug = baseModelLicenses[version.baseModel as BaseModel]?.name ?? '';
     const license = await getStaticContent({ slug: ['licenses', licenseSlug] });
 

@@ -450,7 +450,13 @@ export function ModelVersionDetails({
       : `Removal reason: ${version.meta?.customMessage}.` ?? '';
   const license = baseModelLicenses[version.baseModel];
   const onSite = !!version.trainingStatus;
-  const showAddendumLicense = ['SD 1.5', 'SDXL 1.0'].includes(version.baseModel);
+  const showAddendumLicense =
+    ['SD 1.5', 'SDXL 1.0'].includes(version.baseModel) &&
+    (!model.allowCommercialUse.length ||
+      model.allowCommercialUse.includes('None') ||
+      !model.allowNoCredit ||
+      !model.allowDerivatives ||
+      model.allowDifferentLicense);
 
   return (
     <ContainerGrid gutter="xl">
