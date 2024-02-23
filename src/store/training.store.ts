@@ -16,6 +16,9 @@ type UpdateImageDataType = Partial<ImageDataType> & {
 export type AutoCaptionType = Nullable<AutoTagSchemaType> & {
   url: string | null;
   isRunning: boolean;
+  total: number;
+  successes: number;
+  fails: string[];
 };
 
 type TrainingDataState = {
@@ -56,6 +59,9 @@ export const defaultTrainingState: TrainingDataState = {
     appendTags: null,
     url: null,
     isRunning: false,
+    total: 0,
+    successes: 0,
+    fails: [],
   },
 };
 

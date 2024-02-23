@@ -31,5 +31,5 @@ export const trainingRouter = router({
   autoTag: guardedProcedure
     .input(autoTagInput)
     .use(isFlagProtected('imageTraining'))
-    .mutation(({ input }) => autoTagHandler({ ...input })),
+    .mutation(({ input, ctx }) => autoTagHandler({ ...input, userId: ctx.user.id })),
 });

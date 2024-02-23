@@ -110,6 +110,9 @@ export const AutoTagModal = ({
               appendTags,
               url,
               isRunning: false,
+              total: filteredImages.length,
+              successes: 0,
+              fails: [],
             });
             handleClose();
             setLoading(false);

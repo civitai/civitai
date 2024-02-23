@@ -2,6 +2,7 @@ import { TrainingStatus } from '@prisma/client';
 import { trainingSettings } from '~/components/Resource/Forms/Training/TrainingSubmit';
 import { env } from '~/env/server.mjs';
 import { constants } from '~/server/common/constants';
+import { SignalMessages } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { TrainingDetailsBaseModel, TrainingDetailsObj } from '~/server/schema/model-version.schema';
@@ -284,7 +285,7 @@ export const createTrainingRequest = async ({
   return data;
 };
 
-type tagDataResponse = {
+type TagDataResponse = {
   [key: string]: {
     wdTagger: {
       tags: {
@@ -293,34 +294,78 @@ type tagDataResponse = {
     };
   };
 };
-type autoTagResponse = {
+export type AutoTagResponse = {
   [key: string]: {
     [key: string]: number;
   };
 };
 
-export const autoTagHandler = async ({ url }: AutoTagInput) => {
+const sendTagSignal = async (userId: number, modelId: number, dataToSend: AutoTagResponse) => {
+  await fetch(`${env.SIGNALS_ENDPOINT}/users/${userId}/signals/${SignalMessages.TrainingAutoTag}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ modelId, data: dataToSend }),
+  })
+    .catch
+    // should we have a warning if this fails?
+    ();
+};
+
+export const autoTagHandler = async ({
+  url,
+  modelId,
+  userId,
+}: AutoTagInput & {
+  userId: number;
+}) => {
   const { url: getUrl } = await getGetUrl(url);
 
   const response = await fetch(`${env.MEDIA_TAGGER_ENDPOINT}/tagzip/`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ zip_path: getUrl }),
+    body: JSON.stringify({ media: getUrl }),
   });
 
-  const { key, bucket } = parseKey(url);
-  deleteObject(bucket, key).catch();
-
-  if (!response.ok) {
-    throwBadRequestError('Could not complete auto-tagging - please try again.');
+  if (!response.ok || !response.body) {
+    throw throwBadRequestError('Could not complete auto-tagging - please try again.');
   }
 
-  const tagData: tagDataResponse = await response.json();
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder('utf-8');
 
-  const tagList = Object.entries(tagData).map(([f, t]) => ({
-    [f]: t.wdTagger.tags,
-  }));
-  const returnData: autoTagResponse = Object.assign({}, ...tagList);
+  const maxData = 5;
+  let dataToSend: AutoTagResponse = {};
 
-  return returnData;
+  const { key, bucket } = parseKey(url);
+
+  while (true) {
+    try {
+      const { value, done } = await reader.read();
+      if (done) {
+        if (Object.keys(dataToSend).length > 0) {
+          await sendTagSignal(userId, modelId, dataToSend);
+          dataToSend = {};
+        }
+        break;
+      }
+
+      const str = decoder.decode(value);
+      const tagData: TagDataResponse = JSON.parse(str);
+      const tagList = Object.entries(tagData).map(([f, t]) => ({
+        [f]: t.wdTagger.tags,
+      }));
+      const returnData: AutoTagResponse = Object.assign({}, ...tagList);
+
+      dataToSend = { ...dataToSend, ...returnData };
+      if (Object.keys(dataToSend).length >= maxData) {
+        await sendTagSignal(userId, modelId, dataToSend);
+        dataToSend = {};
+      }
+    } catch (e) {
+      deleteObject(bucket, key).catch();
+      throw throwBadRequestError('Could not complete auto-tagging - please try again.');
+    }
+  }
+
+  deleteObject(bucket, key).catch();
 };

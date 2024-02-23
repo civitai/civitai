@@ -13,6 +13,7 @@ import {
   Menu,
   Pagination,
   Paper,
+  Progress,
   SimpleGrid,
   Stack,
   Text,
@@ -42,11 +43,7 @@ import { isEqual } from 'lodash-es';
 import React, { useEffect, useState } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
-import {
-  AutoTagModal,
-  MAX_TAGS,
-  MIN_THRESHOLD,
-} from '~/components/Resource/Forms/Training/TrainingAutoTagModal';
+import { AutoTagModal } from '~/components/Resource/Forms/Training/TrainingAutoTagModal';
 import { goBack, goNext } from '~/components/Resource/Forms/Training/TrainingCommon';
 import { TrainingEditTagsModal } from '~/components/Resource/Forms/Training/TrainingEditTagsModal';
 import { UploadType } from '~/server/common/enums';
@@ -409,35 +406,14 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
   });
 
   const submitTagMutation = trpc.training.autoTag.useMutation({
-    async onSuccess(response) {
-      const blacklist = getCaptionAsList(autoCaptioning.blacklist ?? '');
-      const prependList = getCaptionAsList(autoCaptioning.prependTags ?? '');
-      const appendList = getCaptionAsList(autoCaptioning.appendTags ?? '');
-
-      Object.entries(response).forEach(([k, v]) => {
-        let tags = Object.entries(v)
-          .sort(([, a], [, b]) => b - a)
-          .filter(
-            (t) => t[1] >= (autoCaptioning.threshold ?? MIN_THRESHOLD) && !blacklist.includes(t[0])
-          )
-          .slice(0, autoCaptioning.maxTags ?? MAX_TAGS)
-          .map((t) => t[0]);
-
-        tags = [...prependList, ...tags, ...appendList];
-
-        updateImage(model.id, {
-          matcher: k,
-          caption: tags.join(', '),
-          appendCaption: autoCaptioning.overwrite === 'append',
-        });
-      });
-
-      const imageLen = Object.keys(response).length;
+    // TODO allow people to rerun failed images
+    async onSuccess() {
       showSuccessNotification({
         title: 'Images auto-tagged successfully!',
-        message: `Tagged ${imageLen} image${imageLen === 1 ? '' : 's'}.`,
+        message: `Tagged ${autoCaptioning.successes} image${
+          autoCaptioning.successes === 1 ? '' : 's'
+        }. Failures: ${autoCaptioning.fails.length}`,
       });
-      setAutoCaptioning(model.id, { ...defaultTrainingState.autoCaptioning });
     },
     onError(error) {
       showErrorNotification({
@@ -445,6 +421,8 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         title: 'Failed to auto-tag',
         autoClose: false,
       });
+    },
+    onSettled() {
       setAutoCaptioning(model.id, { ...defaultTrainingState.autoCaptioning });
     },
   });
@@ -452,7 +430,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
   useEffect(() => {
     if (autoCaptioning.isRunning || !autoCaptioning.url) return;
     setAutoCaptioning(model.id, { ...autoCaptioning, isRunning: true });
-    submitTagMutation.mutate({ url: autoCaptioning.url });
+    submitTagMutation.mutate({ url: autoCaptioning.url, modelId: model.id });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoCaptioning.url]);
 
@@ -725,7 +703,12 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                 </Text>
               </Button>
               {/*perhaps open a modal here to confirm*/}
-              <Button compact color="red" onClick={() => setImageList(model.id, [])}>
+              <Button
+                compact
+                color="red"
+                disabled={autoCaptioning.isRunning}
+                onClick={() => setImageList(model.id, [])}
+              >
                 <IconTrash size={16} />
                 <Text inline ml={4}>
                   Reset
@@ -753,10 +736,23 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                 theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
             }}
           >
-            <Group>
+            <Stack>
               <Text>Running auto-tagging...</Text>
-              <Loader size="sm" variant="bars" />
-            </Group>
+              <Progress
+                value={
+                  ((autoCaptioning.successes + autoCaptioning.fails.length) /
+                    autoCaptioning.total) *
+                  100
+                }
+                label={`${autoCaptioning.successes + autoCaptioning.fails.length} / ${
+                  autoCaptioning.total
+                }`}
+                size="xl"
+                radius="xl"
+                striped
+                animate
+              />
+            </Stack>
           </Paper>
         )}
 
