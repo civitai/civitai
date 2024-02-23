@@ -33,6 +33,7 @@ const modelMap: { [key in TrainingDetailsBaseModel]: string } = {
   anime: 'civitai:9409@33672',
   realistic: 'civitai:81458@132760',
   semi: 'civitai:4384@128713',
+  pony: 'civitai:257749@290640',
 };
 
 type TrainingRequest = {

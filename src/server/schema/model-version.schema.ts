@@ -31,7 +31,14 @@ export const recipeSchema = z.object({
   multiplier: z.number(),
 });
 
-export const trainingDetailsBaseModels = ['sd_1_5', 'sdxl', 'anime', 'semi', 'realistic'] as const;
+export const trainingDetailsBaseModels = [
+  'sd_1_5',
+  'sdxl',
+  'anime',
+  'semi',
+  'realistic',
+  'pony',
+] as const;
 export type TrainingDetailsBaseModel = (typeof trainingDetailsBaseModels)[number];
 
 export type TrainingDetailsParams = z.infer<typeof trainingDetailsParams>;

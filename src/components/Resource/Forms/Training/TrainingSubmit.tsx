@@ -50,6 +50,10 @@ const baseModelDescriptions: {
   },
   realistic: { label: 'Realistic (SD 1.5)', description: 'Results will be extremely realistic.' },
   sdxl: { label: 'Standard (SDXL)', description: 'Useful for all purposes, and uses SDXL.' },
+  pony: {
+    label: 'Pony (SDXL)',
+    description: 'Results tailored to visuals of various anthro, feral, or humanoids species.',
+  },
 };
 
 type BaseTrainingSettingsType = {
@@ -132,7 +136,7 @@ export const trainingSettings: TrainingSettingsType[] = [
     min: 3,
     max: 500,
     step: 1,
-    overrides: { sdxl: { min: 1, default: 10 } },
+    overrides: { sdxl: { min: 1, default: 10 }, pony: { min: 1, default: 10 } },
   },
   {
     name: 'numRepeats',
@@ -154,7 +158,11 @@ export const trainingSettings: TrainingSettingsType[] = [
     min: 1,
     max: 9,
     step: 1,
-    overrides: { realistic: { default: 2, min: 1, max: 2 }, sdxl: { max: 4, min: 1, default: 4 } },
+    overrides: {
+      realistic: { default: 2, min: 1, max: 2 },
+      sdxl: { max: 4, min: 1, default: 4 },
+      pony: { max: 4, min: 1, default: 4 },
+    },
   },
   {
     name: 'targetSteps',
@@ -183,7 +191,10 @@ export const trainingSettings: TrainingSettingsType[] = [
     min: 512,
     max: 1024,
     step: 64,
-    overrides: { sdxl: { min: 1024, max: 2048, default: 1024 } },
+    overrides: {
+      sdxl: { min: 1024, max: 2048, default: 1024 },
+      pony: { min: 1024, max: 2048, default: 1024 },
+    },
   },
   {
     name: 'loraType',
@@ -312,7 +323,7 @@ export const trainingSettings: TrainingSettingsType[] = [
     min: 1,
     max: 128,
     step: 1,
-    overrides: { sdxl: { max: 256 } },
+    overrides: { sdxl: { max: 256 }, pony: { max: 256 } },
   },
   {
     name: 'networkAlpha',
@@ -332,7 +343,7 @@ export const trainingSettings: TrainingSettingsType[] = [
     min: 1,
     max: 128,
     step: 1,
-    overrides: { sdxl: { max: 256 } },
+    overrides: { sdxl: { max: 256 }, pony: { max: 256 } },
   },
   {
     name: 'noiseOffset',
@@ -359,7 +370,7 @@ export const trainingSettings: TrainingSettingsType[] = [
     type: 'select',
     default: 'AdamW8Bit',
     options: ['AdamW8Bit', 'Adafactor', 'Prodigy'], // TODO enum
-    overrides: { sdxl: { default: 'Adafactor' } },
+    overrides: { sdxl: { default: 'Adafactor' }, pony: { default: 'Adafactor' } },
   },
 ];
 
@@ -847,7 +858,10 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                       );
                     } else if (ts.type === 'select') {
                       let options = ts.options;
-                      if (ts.name === 'optimizerType' && formBaseModel === 'sdxl') {
+                      if (
+                        ts.name === 'optimizerType' &&
+                        (formBaseModel === 'sdxl' || formBaseModel === 'pony')
+                      ) {
                         options = options.filter((o) => o !== 'AdamW8Bit');
                       }
 
