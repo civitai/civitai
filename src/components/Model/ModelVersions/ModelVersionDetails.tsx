@@ -744,36 +744,33 @@ export function ModelVersionDetails({
                 <Accordion.Panel>
                   <Stack spacing={2}>
                     {version.recommendedResources.map((resource) => (
-                      <Link
+                      <Card
                         key={resource.id}
+                        component={NextLink}
                         href={`/models/${resource.modelId}?modelVersionId=${resource.id}`}
-                        passHref
+                        radius={0}
+                        py="xs"
+                        sx={(theme) => ({
+                          cursor: 'pointer',
+                          backgroundColor:
+                            theme.colorScheme === 'dark'
+                              ? theme.colors.dark[6]
+                              : theme.colors.gray[0],
+                        })}
+                        data-activity="follow-recommendation:details"
                       >
-                        <Card
-                          component="a"
-                          radius={0}
-                          py="xs"
-                          sx={(theme) => ({
-                            cursor: 'pointer',
-                            backgroundColor:
-                              theme.colorScheme === 'dark'
-                                ? theme.colors.dark[6]
-                                : theme.colors.gray[0],
-                          })}
-                        >
-                          <Stack spacing={4}>
-                            <Group position="apart" spacing={8} noWrap>
-                              <Text size="xs" weight={500} lineClamp={2}>
-                                {resource.modelName}
-                              </Text>
-                              <Badge size="xs">{getDisplayName(resource.modelType)}</Badge>
-                            </Group>
-                            <Text color="dimmed" size="xs">
-                              {resource.name}
+                        <Stack spacing={4}>
+                          <Group position="apart" spacing={8} noWrap>
+                            <Text size="xs" weight={500} lineClamp={2}>
+                              {resource.modelName}
                             </Text>
-                          </Stack>
-                        </Card>
-                      </Link>
+                            <Badge size="xs">{getDisplayName(resource.modelType)}</Badge>
+                          </Group>
+                          <Text color="dimmed" size="xs">
+                            {resource.name}
+                          </Text>
+                        </Stack>
+                      </Card>
                     ))}
                   </Stack>
                 </Accordion.Panel>
