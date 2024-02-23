@@ -1,7 +1,7 @@
 import { ModelStatus } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 
-import { BaseModel, BaseModelType, constants } from '~/server/common/constants';
+import { BaseModel, BaseModelType, baseModelLicenses, constants } from '~/server/common/constants';
 import { Context } from '~/server/createContext';
 import { eventEngine } from '~/server/events';
 import { GetByIdInput } from '~/server/schema/base.schema';
@@ -17,6 +17,7 @@ import {
 import { DeclineReviewSchema, UnpublishModelSchema } from '~/server/schema/model.schema';
 import { ModelFileModel } from '~/server/selectors/modelFile.selector';
 import {
+  addAdditionalLicensePermissions,
   deleteVersionById,
   earlyAccessModelVersionsOnTimeframe,
   getModelVersionRunStrategies,
@@ -40,6 +41,7 @@ import { modelFileSelect } from '../selectors/modelFile.selector';
 import { dbRead } from '../db/client';
 import { getFilesByEntity } from '../services/file.service';
 import { createFile } from '../services/model-file.service';
+import { getStaticContent } from '~/server/services/content.service';
 
 export const getModelVersionRunStrategiesHandler = ({ input: { id } }: { input: GetByIdInput }) => {
   try {
@@ -472,3 +474,58 @@ export const modelVersionGeneratedImagesOnTimeframeHandler = async ({
     else throw throwDbError(error);
   }
 };
+
+export async function getVersionLicenseHandler({ input }: { input: GetByIdInput }) {
+  try {
+    const version = await getVersionById({
+      id: input.id,
+      select: {
+        id: true,
+        name: true,
+        baseModel: true,
+        status: true,
+        model: {
+          select: {
+            id: true,
+            name: true,
+            status: true,
+            allowCommercialUse: true,
+            allowDerivatives: true,
+            allowDifferentLicense: true,
+            allowNoCredit: true,
+            user: { select: { username: true } },
+          },
+        },
+      },
+    });
+    if (!version || version.status !== 'Published' || version.model.status !== 'Published')
+      throw throwNotFoundError(`No version with id ${input.id}`);
+
+    const licenseSlug = baseModelLicenses[version.baseModel as BaseModel]?.name ?? '';
+    const license = await getStaticContent({ slug: ['licenses', licenseSlug] });
+
+    const hasAdditionalPermissions =
+      version.model.allowCommercialUse.length > 0 ||
+      version.model.allowNoCredit ||
+      version.model.allowDerivatives ||
+      version.model.allowDifferentLicense;
+
+    if (hasAdditionalPermissions) {
+      license.content = addAdditionalLicensePermissions(license.content, {
+        modelId: version.model.id,
+        modelName: version.model.name,
+        versionId: version.id,
+        username: version.model.user.username,
+        allowCommercialUse: version.model.allowCommercialUse,
+        allowNoCredit: version.model.allowNoCredit,
+        allowDerivatives: version.model.allowDerivatives,
+        allowDifferentLicense: version.model.allowDifferentLicense,
+      });
+    }
+
+    return { ...version, license };
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+}

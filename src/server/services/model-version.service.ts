@@ -3,6 +3,7 @@ import {
   ModelVersionEngagementType,
   Prisma,
   SearchIndexUpdateQueueAction,
+  CommercialUse,
 } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { SessionUser } from 'next-auth';
@@ -34,6 +35,9 @@ import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
 import dayjs from 'dayjs';
 import { clickhouse } from '~/server/clickhouse/client';
 import { maxDate } from '~/utils/date-helpers';
+import { Anchor, Stack, Text } from '@mantine/core';
+import Link from 'next/link';
+import { env } from '~/env/server.mjs';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
@@ -627,3 +631,94 @@ export const modelVersionGeneratedImagesOnTimeframe = async ({
 
   return versions;
 };
+
+const commercialUsePermissionContent = {
+  [CommercialUse.None]: '',
+  [CommercialUse.Image]: `
+"Sell Generated Images"
+- The following are a few examples of what is prohibited: selling or licensing a product such as a game, book, or other work that incorporates or is based on those generated images.
+`,
+  [CommercialUse.Rent]: `
+"Use on Other Generation Services"
+
+Generation Services: use the Model on any service that monetizes image generation. The following are a few examples of what is prohibited:
+<ol type="a">
+<li>providing the Model on an as-a-service basis for a fee, whether as a subscription fee, per image generation fee, or otherwise; and</li>
+<li>providing the Model as-a-service on a platform that is ad-supported or presents advertising.</li>
+</ol>
+`,
+  [CommercialUse.RentCivit]: `
+"Use on Civitai Generation Service"
+- Civitai Generation Services: run the Model on the Civitai platform (available at [${env.NEXTAUTH_URL}/generate](/generate)).
+`,
+  [CommercialUse.Sell]: `
+"Sell this Model or merges"
+- Sale of the Model: sell or license the Model in exchange for a fee or something else of value.
+`,
+};
+
+export function addAdditionalLicensePermissions(
+  license: string,
+  options: {
+    modelId: number;
+    modelName: string;
+    versionId: number;
+    username: string | null;
+    allowNoCredit: boolean;
+    allowDerivatives: boolean;
+    allowDifferentLicense: boolean;
+    allowCommercialUse: CommercialUse[];
+  }
+) {
+  license += `
+Attachment B
+
+Additional Restrictions
+
+This Attachment B supplements the license to which it is attached (“License”). In addition to any restrictions set forth in the License, the following additional terms apply.  The below restrictions apply to the Model and Derivatives of the Model, even though only the Model is referenced.  “Merge” means, with respect to the Model, combining the Model or a Derivative of the Model with one or more other models to produce a single model. A Derivative of the Model will be understood to include Merges.
+
+You agree not to do the following with respect to the Model (each a “Permission”):
+`;
+
+  if (options.allowNoCredit) {
+    const modelUrl = `${env.NEXTAUTH_URL}/models/${options.modelId}?modelVersionId=${options.versionId}`;
+    const creatorUrl = `${env.NEXTAUTH_URL}/user/${options.username}`;
+    const licenseUrl = `${env.NEXTAUTH_URL}/models/license/${options.versionId}`;
+
+    license += `
+"Use without crediting me:"
+
+Creator Credit: to use or distribute the Model you must credit the creator as follows:
+- Model: ${options.modelName} [${modelUrl}](${modelUrl})
+- Creator: ${options.username} [${creatorUrl}](${creatorUrl})
+- License: [${licenseUrl}](${licenseUrl})
+`;
+  }
+
+  if (options.allowDerivatives) {
+    license += `
+"Share merges of this model"
+
+Share or make available a Merge. The following are a few examples of what is prohibited:
+<ol type="a">
+<li>running an image generation service that uses a Merge; and</li>
+<li>making a Merge available for deployment by another person on an as-a-service basis, download, or otherwise.</li>
+</ol>
+`;
+  }
+
+  if (options.allowDifferentLicense) {
+    license += `
+"Use different permissions for merges"
+- Changing Permissions: modify or eliminate any of the applicable Permissions when sharing or making available a Derivative of the Model.
+`;
+  }
+
+  if (options.allowCommercialUse.length > 0) {
+    options.allowCommercialUse.forEach((permission) => {
+      license += commercialUsePermissionContent[permission] ?? null;
+    });
+  }
+
+  return license;
+}

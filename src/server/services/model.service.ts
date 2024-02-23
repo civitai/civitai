@@ -378,23 +378,12 @@ export const getModelsRaw = async ({
   }
 
   // Filter by model permissions
-  if (allowCommercialUse !== undefined) {
-    const commercialUseOr: CommercialUse[] = [];
-    switch (allowCommercialUse) {
-      case CommercialUse.None:
-        commercialUseOr.push(CommercialUse.None);
-        break;
-      case CommercialUse.Image:
-        commercialUseOr.push(CommercialUse.Image);
-      case CommercialUse.RentCivit:
-        commercialUseOr.push(CommercialUse.RentCivit);
-      case CommercialUse.Rent:
-        commercialUseOr.push(CommercialUse.Rent);
-      case CommercialUse.Sell:
-        commercialUseOr.push(CommercialUse.Sell);
-    }
-
-    AND.push(Prisma.sql`m."allowCommercialUse" IN (${Prisma.join(commercialUseOr, ',')})`);
+  if (allowCommercialUse && allowCommercialUse.length > 0) {
+    AND.push(
+      Prisma.sql`m."allowCommercialUse" = ANY(ARRAY[${Prisma.join(
+        allowCommercialUse
+      )}]::"CommercialUse"[])`
+    );
   }
 
   if (allowDerivatives !== undefined)
@@ -759,22 +748,8 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   }
 
   // Filter by model permissions
-  if (allowCommercialUse !== undefined) {
-    const commercialUseOr: CommercialUse[] = [];
-    switch (allowCommercialUse) {
-      case CommercialUse.None:
-        commercialUseOr.push(CommercialUse.None);
-        break;
-      case CommercialUse.Image:
-        commercialUseOr.push(CommercialUse.Image);
-      case CommercialUse.RentCivit:
-        commercialUseOr.push(CommercialUse.RentCivit);
-      case CommercialUse.Rent:
-        commercialUseOr.push(CommercialUse.Rent);
-      case CommercialUse.Sell:
-        commercialUseOr.push(CommercialUse.Sell);
-    }
-    AND.push({ allowCommercialUse: { in: commercialUseOr } });
+  if (allowCommercialUse && allowCommercialUse.length > 0) {
+    AND.push({ allowCommercialUse: { hasSome: allowCommercialUse } });
   }
   if (allowDerivatives !== undefined) AND.push({ allowDerivatives });
   if (allowDifferentLicense !== undefined) AND.push({ allowDifferentLicense });

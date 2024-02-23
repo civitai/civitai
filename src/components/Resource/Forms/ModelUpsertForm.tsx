@@ -1,4 +1,14 @@
-import { Alert, Anchor, Group, Input, Paper, Stack, Text, ThemeIcon } from '@mantine/core';
+import {
+  Alert,
+  Anchor,
+  Checkbox,
+  Group,
+  Input,
+  Paper,
+  Stack,
+  Text,
+  ThemeIcon,
+} from '@mantine/core';
 import {
   CheckpointType,
   CommercialUse,
@@ -21,6 +31,7 @@ import { z } from 'zod';
 import {
   Form,
   InputCheckbox,
+  InputCheckboxGroup,
   InputRTE,
   InputSegmentedControl,
   InputSelect,
@@ -56,6 +67,13 @@ const querySchema = z.object({
   bountyId: z.coerce.number().optional(),
 });
 
+const commercialUseOptions: Array<{ value: CommercialUse; label: string }> = [
+  { value: CommercialUse.Image, label: 'Sell generated images' },
+  { value: CommercialUse.RentCivit, label: 'Use on Civitai generation service' },
+  { value: CommercialUse.Rent, label: 'Use on other generation services' },
+  { value: CommercialUse.Sell, label: 'Sell this model or merges' },
+];
+
 export function ModelUpsertForm({ model, children, onSubmit }: Props) {
   const router = useRouter();
   const result = querySchema.safeParse(router.query);
@@ -72,7 +90,7 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
     uploadType: model?.uploadType ?? 'Created',
     poi: model?.poi ?? false,
     nsfw: model?.nsfw ?? false,
-    allowCommercialUse: model?.allowCommercialUse ?? CommercialUse.Sell,
+    allowCommercialUse: model?.allowCommercialUse ?? [CommercialUse.Sell],
     allowDerivatives: model?.allowDerivatives ?? true,
     allowNoCredit: model?.allowNoCredit ?? true,
     allowDifferentLicense: model?.allowDifferentLicense ?? true,
@@ -300,7 +318,12 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                       </Text>
                     </Stack>
                     {/* TODO.howto: transform this into input checkboxes */}
-                    <InputSegmentedControl
+                    <InputCheckboxGroup spacing="xs" name="allowCommercialUse">
+                      {commercialUseOptions.map(({ value, label }) => (
+                        <Checkbox key={value} value={value} label={label} />
+                      ))}
+                    </InputCheckboxGroup>
+                    {/* <InputSegmentedControl
                       name="allowCommercialUse"
                       orientation="vertical"
                       fullWidth
@@ -357,7 +380,7 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                           ),
                         },
                       ]}
-                    />
+                    /> */}
                   </Stack>
                 </ContainerGrid.Col>
               </ContainerGrid>

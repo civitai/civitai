@@ -888,7 +888,7 @@ export function ModelVersionDetails({
                   {license && (
                     <Text
                       component="a"
-                      href={license.url}
+                      href={`/models/license/${version.id}`}
                       rel="nofollow noreferrer"
                       td="underline"
                       target="_blank"
