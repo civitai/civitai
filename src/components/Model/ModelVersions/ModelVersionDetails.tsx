@@ -450,6 +450,7 @@ export function ModelVersionDetails({
       : `Removal reason: ${version.meta?.customMessage}.` ?? '';
   const license = baseModelLicenses[version.baseModel];
   const onSite = !!version.trainingStatus;
+  const showCustomLicense = ['SD 1.5', 'SDXL 1.0'].includes(version.baseModel);
 
   return (
     <ContainerGrid gutter="xl">
@@ -888,7 +889,7 @@ export function ModelVersionDetails({
                   {license && (
                     <Text
                       component="a"
-                      href={`/models/license/${version.id}`}
+                      href={showCustomLicense ? `/models/license/${version.id}` : license.url}
                       rel="nofollow noreferrer"
                       td="underline"
                       target="_blank"

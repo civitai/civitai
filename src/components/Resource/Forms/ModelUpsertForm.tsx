@@ -16,14 +16,7 @@ import {
   ModelUploadType,
   TagTarget,
 } from '@prisma/client';
-import {
-  IconBrush,
-  IconCurrencyDollarOff,
-  IconExclamationMark,
-  IconPhoto,
-  IconShoppingCart,
-  IconWorldUpload,
-} from '@tabler/icons-react';
+import { IconExclamationMark } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useEffect } from 'react';
 import { z } from 'zod';
@@ -291,7 +284,6 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                         target="_blank"
                         rel="nofollow noreferrer"
                       >
-                        {/* TODO.howto: get the right link */}
                         Licensing Guide
                       </Anchor>
                       .
@@ -317,70 +309,11 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                         listed from least to most permissive.
                       </Text>
                     </Stack>
-                    {/* TODO.howto: transform this into input checkboxes */}
                     <InputCheckboxGroup spacing="xs" name="allowCommercialUse">
                       {commercialUseOptions.map(({ value, label }) => (
                         <Checkbox key={value} value={value} label={label} />
                       ))}
                     </InputCheckboxGroup>
-                    {/* <InputSegmentedControl
-                      name="allowCommercialUse"
-                      orientation="vertical"
-                      fullWidth
-                      color="blue"
-                      styles={(theme) => ({
-                        root: {
-                          border: `1px solid ${
-                            theme.colorScheme === 'dark'
-                              ? theme.colors.dark[4]
-                              : theme.colors.gray[4]
-                          }`,
-                          background: 'none',
-                        },
-                      })}
-                      data={[
-                        {
-                          value: CommercialUse.None,
-                          label: (
-                            <Group>
-                              <IconCurrencyDollarOff size={16} /> None
-                            </Group>
-                          ),
-                        },
-                        {
-                          value: CommercialUse.Image,
-                          label: (
-                            <Group>
-                              <IconPhoto size={16} /> Sell generated images
-                            </Group>
-                          ),
-                        },
-                        {
-                          value: CommercialUse.RentCivit,
-                          label: (
-                            <Group>
-                              <IconBrush size={16} /> Use on Civitai generation service
-                            </Group>
-                          ),
-                        },
-                        {
-                          value: CommercialUse.Rent,
-                          label: (
-                            <Group>
-                              <IconWorldUpload size={16} /> Use on other generation services
-                            </Group>
-                          ),
-                        },
-                        {
-                          value: CommercialUse.Sell,
-                          label: (
-                            <Group>
-                              <IconShoppingCart size={16} /> Sell this model or merges
-                            </Group>
-                          ),
-                        },
-                      ]}
-                    /> */}
                   </Stack>
                 </ContainerGrid.Col>
               </ContainerGrid>

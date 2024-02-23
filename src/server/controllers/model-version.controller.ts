@@ -475,6 +475,7 @@ export const modelVersionGeneratedImagesOnTimeframeHandler = async ({
   }
 };
 
+// Only available for SD 1.5 and SDXL 1.0 models for now
 export async function getVersionLicenseHandler({ input }: { input: GetByIdInput }) {
   try {
     const version = await getVersionById({
@@ -500,6 +501,9 @@ export async function getVersionLicenseHandler({ input }: { input: GetByIdInput 
     });
     if (!version || version.status !== 'Published' || version.model.status !== 'Published')
       throw throwNotFoundError(`No version with id ${input.id}`);
+
+    if (!['SD 1.5', 'SDXL 1.0'].includes(version.baseModel))
+      return throwBadRequestError('License not available for this model');
 
     const licenseSlug = baseModelLicenses[version.baseModel as BaseModel]?.name ?? '';
     const license = await getStaticContent({ slug: ['licenses', licenseSlug] });
