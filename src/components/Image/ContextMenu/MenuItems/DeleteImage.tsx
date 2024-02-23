@@ -19,9 +19,7 @@ export function DeleteImage({
   const { mutateAsync, isLoading } = trpc.image.delete.useMutation({
     onMutate,
     onSuccess,
-    onError(error: any) {
-      showErrorNotification({ error: new Error(error.message) });
-    },
+    onError: (error: any) => showErrorNotification({ error: new Error(error.message) }),
   });
 
   const handleClick = () => {

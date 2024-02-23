@@ -4,9 +4,7 @@ import Router from 'next/router';
 
 export function EditPost({ postId }: { postId?: number }) {
   if (!postId) return null;
-  const handleClick = (e: React.SyntheticEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
+  const handleClick = () => {
     Router.push(`/posts/${postId}/edit`);
   };
 

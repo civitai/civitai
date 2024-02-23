@@ -35,10 +35,10 @@ export function ConfirmDialog({
       <Stack>
         {message}
         <Group position="right">
-          <Button variant="outline" compact onClick={handleCancel} {...cancelProps}>
+          <Button variant="default" onClick={handleCancel} {...cancelProps}>
             {labels?.cancel ?? 'No'}
           </Button>
-          <Button compact onClick={handleConfirm} {...confirmProps}>
+          <Button onClick={handleConfirm} {...confirmProps}>
             {labels?.confirm ?? 'Yes'}
           </Button>
         </Group>
