@@ -1,4 +1,4 @@
-import { Button, Group, Modal, Stack } from '@mantine/core';
+import { Button, Group, Modal, Stack, ButtonProps } from '@mantine/core';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 
 export function ConfirmDialog({
@@ -6,22 +6,28 @@ export function ConfirmDialog({
   message,
   onConfirm,
   onCancel,
+  labels,
+  confirmProps,
+  cancelProps,
 }: {
   title?: string;
   message: React.ReactNode;
-  onConfirm?: () => void;
+  onConfirm?: () => Promise<unknown> | unknown;
   onCancel?: () => void;
+  labels?: { cancel?: string; confirm?: string };
+  confirmProps?: ButtonProps;
+  cancelProps?: ButtonProps;
 }) {
   const dialog = useDialogContext();
 
   const handleCancel = () => {
-    dialog.onClose();
     onCancel?.();
+    dialog.onClose();
   };
 
-  const handleConfirm = () => {
+  const handleConfirm = async () => {
+    await onConfirm?.();
     dialog.onClose();
-    onConfirm?.();
   };
 
   return (
@@ -29,11 +35,11 @@ export function ConfirmDialog({
       <Stack>
         {message}
         <Group position="right">
-          <Button variant="outline" compact onClick={handleCancel}>
-            No
+          <Button variant="outline" compact onClick={handleCancel} {...cancelProps}>
+            {labels?.cancel ?? 'No'}
           </Button>
-          <Button compact onClick={handleConfirm}>
-            Yes
+          <Button compact onClick={handleConfirm} {...confirmProps}>
+            {labels?.confirm ?? 'Yes'}
           </Button>
         </Group>
       </Stack>

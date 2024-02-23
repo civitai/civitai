@@ -35,6 +35,7 @@ import { truncate } from 'lodash-es';
 import { constants } from '~/server/common/constants';
 import { useImageStore } from '~/store/image.store';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
+import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 
 export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height: number }) {
   const { ref, inView } = useInView({ rootMargin: '200% 0px' });
@@ -80,7 +81,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
             {inView && (
               <>
                 {onSite && <OnsiteIndicator />}
-                <ImageGuard2 image={image} connectId={2}>
+                <ImageGuard2 image={image}>
                   {(safe) => (
                     <>
                       <Group
@@ -99,14 +100,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                         <ImageGuard2.BlurToggle />
                         {safe && (
                           <Stack spacing="xs" ml="auto">
-                            {!isBlocked && (
-                              // <ImageGuard.Report
-                              //   context="image"
-                              //   position="static"
-                              //   withinPortal
-                              // />
-                              <></>
-                            )}
+                            {!isBlocked && <ImageContextMenu {...image} />}
                             {features.imageGeneration && image.meta && (
                               <HoverActionButton
                                 label="Remix"
