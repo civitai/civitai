@@ -66,9 +66,17 @@ export function AssociatedModels({
                 data={data}
                 render={({ data, ...props }) =>
                   data.resourceType === 'model' ? (
-                    <ModelCategoryCard data={data} {...props} />
+                    <ModelCategoryCard
+                      data={data}
+                      {...props}
+                      data-activity="follow-suggestion:model"
+                    />
                   ) : (
-                    <ArticleAltCard data={data} {...props} />
+                    <ArticleAltCard
+                      data={data}
+                      {...props}
+                      data-activity="follow-suggestion:article"
+                    />
                   )
                 }
                 height={columnWidth}
