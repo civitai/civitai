@@ -13,7 +13,7 @@ export const userJourneyNotifications = createNotificationProcessor({
     prepareQuery: ({ lastSent, category }) => `
       INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
-        REPLACE(gen_random_uuid()::text, '-', ''),
+        CONCAT('join-community:',"id"),
         id "userId",
         'join-community' "type",
         jsonb_build_object(),
