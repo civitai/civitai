@@ -1,219 +1,29 @@
-import { createMetricProcessor } from '~/server/metrics/base.metrics';
+import { Prisma } from '@prisma/client';
+import { chunk } from 'lodash-es';
+import { createMetricProcessor, MetricProcessorRunContext } from '~/server/metrics/base.metrics';
+import { limitConcurrency, Task } from '~/server/utils/concurrency-helpers';
+import { createLogger } from '~/utils/logging';
+
+const log = createLogger('metrics:post');
 
 export const postMetrics = createMetricProcessor({
   name: 'Post',
-  async update({ db, lastUpdate }) {
-    await db.$executeRaw`
-    -- Get all post engagements that have happened since then that affect metrics
-    WITH recent_engagements AS
-    (
-      SELECT
-        "postId" AS id
-      FROM "PostReaction"
-      WHERE "createdAt" > ${lastUpdate}
-
-      UNION
-
-      SELECT t."postId" as id
-      FROM "Thread" t
-      JOIN "CommentV2" c ON c."threadId" = t.id
-      WHERE t."postId" IS NOT NULL AND c."createdAt" > ${lastUpdate}
-
-      UNION
-
-      SELECT
-        i."postId" AS id
-      FROM "ImageReaction" ir
-      JOIN "Image" i ON ir."imageId" = i.id
-      WHERE ir."createdAt" > ${lastUpdate}
-
-      UNION
-
-      SELECT ci."postId" as id
-      FROM "CollectionItem" ci
-      WHERE ci."postId" IS NOT NULL AND ci."createdAt" > ${lastUpdate}
-
-      UNION
-
-      SELECT
-        "id"
-      FROM "MetricUpdateQueue"
-      WHERE type = 'Post'
-    ),
-    -- Get all affected users
-    affected AS
-    (
-        SELECT DISTINCT
-            r.id
-        FROM recent_engagements r
-        JOIN "Post" p ON p.id = r.id
-        WHERE r.id IS NOT NULL
-    )
-
-    -- upsert metrics for all affected users
-    -- perform a one-pass table scan producing all metrics for all affected users
-    INSERT INTO "PostMetric" ("postId", timeframe, "likeCount", "dislikeCount", "heartCount", "laughCount", "cryCount", "commentCount", "collectedCount")
-    SELECT
-      m.id,
-      tf.timeframe,
-      CASE
-        WHEN tf.timeframe = 'AllTime' THEN like_count
-        WHEN tf.timeframe = 'Year' THEN year_like_count
-        WHEN tf.timeframe = 'Month' THEN month_like_count
-        WHEN tf.timeframe = 'Week' THEN week_like_count
-        WHEN tf.timeframe = 'Day' THEN day_like_count
-      END AS like_count,
-      CASE
-        WHEN tf.timeframe = 'AllTime' THEN dislike_count
-        WHEN tf.timeframe = 'Year' THEN year_dislike_count
-        WHEN tf.timeframe = 'Month' THEN month_dislike_count
-        WHEN tf.timeframe = 'Week' THEN week_dislike_count
-        WHEN tf.timeframe = 'Day' THEN day_dislike_count
-      END AS dislike_count,
-      CASE
-        WHEN tf.timeframe = 'AllTime' THEN heart_count
-        WHEN tf.timeframe = 'Year' THEN year_heart_count
-        WHEN tf.timeframe = 'Month' THEN month_heart_count
-        WHEN tf.timeframe = 'Week' THEN week_heart_count
-        WHEN tf.timeframe = 'Day' THEN day_heart_count
-      END AS heart_count,
-      CASE
-        WHEN tf.timeframe = 'AllTime' THEN laugh_count
-        WHEN tf.timeframe = 'Year' THEN year_laugh_count
-        WHEN tf.timeframe = 'Month' THEN month_laugh_count
-        WHEN tf.timeframe = 'Week' THEN week_laugh_count
-        WHEN tf.timeframe = 'Day' THEN day_laugh_count
-      END AS laugh_count,
-      CASE
-        WHEN tf.timeframe = 'AllTime' THEN cry_count
-        WHEN tf.timeframe = 'Year' THEN year_cry_count
-        WHEN tf.timeframe = 'Month' THEN month_cry_count
-        WHEN tf.timeframe = 'Week' THEN week_cry_count
-        WHEN tf.timeframe = 'Day' THEN day_cry_count
-      END AS cry_count,
-      CASE
-        WHEN tf.timeframe = 'AllTime' THEN comment_count
-        WHEN tf.timeframe = 'Year' THEN year_comment_count
-        WHEN tf.timeframe = 'Month' THEN month_comment_count
-        WHEN tf.timeframe = 'Week' THEN week_comment_count
-        WHEN tf.timeframe = 'Day' THEN day_comment_count
-      END AS comment_count,
-      CASE
-        WHEN tf.timeframe = 'AllTime' THEN collected_count
-        WHEN tf.timeframe = 'Year' THEN year_collected_count
-        WHEN tf.timeframe = 'Month' THEN month_collected_count
-        WHEN tf.timeframe = 'Week' THEN week_collected_count
-        WHEN tf.timeframe = 'Day' THEN day_collected_count
-      END AS collected_count
-    FROM
-    (
-      SELECT
-        q.id,
-        COALESCE(ir.heart_count,0) AS heart_count,
-        COALESCE(ir.year_heart_count,0) AS year_heart_count,
-        COALESCE(ir.month_heart_count,0) AS month_heart_count,
-        COALESCE(ir.week_heart_count,0) AS week_heart_count,
-        COALESCE(ir.day_heart_count,0) AS day_heart_count,
-        COALESCE(ir.laugh_count,0) AS laugh_count,
-        COALESCE(ir.year_laugh_count,0) AS year_laugh_count,
-        COALESCE(ir.month_laugh_count,0) AS month_laugh_count,
-        COALESCE(ir.week_laugh_count,0) AS week_laugh_count,
-        COALESCE(ir.day_laugh_count,0) AS day_laugh_count,
-        COALESCE(ir.cry_count,0) AS cry_count,
-        COALESCE(ir.year_cry_count,0) AS year_cry_count,
-        COALESCE(ir.month_cry_count,0) AS month_cry_count,
-        COALESCE(ir.week_cry_count,0) AS week_cry_count,
-        COALESCE(ir.day_cry_count,0) AS day_cry_count,
-        COALESCE(ir.dislike_count,0) AS dislike_count,
-        COALESCE(ir.year_dislike_count,0) AS year_dislike_count,
-        COALESCE(ir.month_dislike_count,0) AS month_dislike_count,
-        COALESCE(ir.week_dislike_count,0) AS week_dislike_count,
-        COALESCE(ir.day_dislike_count,0) AS day_dislike_count,
-        COALESCE(ir.like_count,0) AS like_count,
-        COALESCE(ir.year_like_count,0) AS year_like_count,
-        COALESCE(ir.month_like_count,0) AS month_like_count,
-        COALESCE(ir.week_like_count,0) AS week_like_count,
-        COALESCE(ir.day_like_count,0) AS day_like_count,
-        COALESCE(c.comment_count, 0) AS comment_count,
-        COALESCE(c.year_comment_count, 0) AS year_comment_count,
-        COALESCE(c.month_comment_count, 0) AS month_comment_count,
-        COALESCE(c.week_comment_count, 0) AS week_comment_count,
-        COALESCE(c.day_comment_count, 0) AS day_comment_count,
-        COALESCE(ci.collected_count, 0) AS collected_count,
-        COALESCE(ci.year_collected_count, 0) AS year_collected_count,
-        COALESCE(ci.month_collected_count, 0) AS month_collected_count,
-        COALESCE(ci.week_collected_count, 0) AS week_collected_count,
-        COALESCE(ci.day_collected_count, 0) AS day_collected_count
-      FROM affected q
-      LEFT JOIN (
-        SELECT
-          ic."postId" AS id,
-          COUNT(*) AS comment_count,
-          SUM(IIF(v."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_comment_count,
-          SUM(IIF(v."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_comment_count,
-          SUM(IIF(v."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_comment_count,
-          SUM(IIF(v."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_comment_count
-        FROM "Thread" ic
-        JOIN "CommentV2" v ON ic."id" = v."threadId"
-        WHERE ic."postId" IS NOT NULL
-        GROUP BY ic."postId"
-      ) c ON q.id = c.id
-      LEFT JOIN (
-        SELECT
-          i."postId" AS id,
-          SUM(IIF(ir.reaction = 'Heart', 1, 0)) AS heart_count,
-          SUM(IIF(ir.reaction = 'Heart' AND ir."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_heart_count,
-          SUM(IIF(ir.reaction = 'Heart' AND ir."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_heart_count,
-          SUM(IIF(ir.reaction = 'Heart' AND ir."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_heart_count,
-          SUM(IIF(ir.reaction = 'Heart' AND ir."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_heart_count,
-          SUM(IIF(ir.reaction = 'Like', 1, 0)) AS like_count,
-          SUM(IIF(ir.reaction = 'Like' AND ir."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_like_count,
-          SUM(IIF(ir.reaction = 'Like' AND ir."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_like_count,
-          SUM(IIF(ir.reaction = 'Like' AND ir."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_like_count,
-          SUM(IIF(ir.reaction = 'Like' AND ir."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_like_count,
-          SUM(IIF(ir.reaction = 'Dislike', 1, 0)) AS dislike_count,
-          SUM(IIF(ir.reaction = 'Dislike' AND ir."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_dislike_count,
-          SUM(IIF(ir.reaction = 'Dislike' AND ir."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_dislike_count,
-          SUM(IIF(ir.reaction = 'Dislike' AND ir."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_dislike_count,
-          SUM(IIF(ir.reaction = 'Dislike' AND ir."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_dislike_count,
-          SUM(IIF(ir.reaction = 'Cry', 1, 0)) AS cry_count,
-          SUM(IIF(ir.reaction = 'Cry' AND ir."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_cry_count,
-          SUM(IIF(ir.reaction = 'Cry' AND ir."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_cry_count,
-          SUM(IIF(ir.reaction = 'Cry' AND ir."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_cry_count,
-          SUM(IIF(ir.reaction = 'Cry' AND ir."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_cry_count,
-          SUM(IIF(ir.reaction = 'Laugh', 1, 0)) AS laugh_count,
-          SUM(IIF(ir.reaction = 'Laugh' AND ir."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_laugh_count,
-          SUM(IIF(ir.reaction = 'Laugh' AND ir."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_laugh_count,
-          SUM(IIF(ir.reaction = 'Laugh' AND ir."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_laugh_count,
-          SUM(IIF(ir.reaction = 'Laugh' AND ir."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_laugh_count
-        FROM "ImageReaction" ir
-        JOIN "Image" i ON i.id = ir."imageId"
-        GROUP BY i."postId"
-      ) ir ON q.id = ir.id
-      LEFT JOIN (
-        SELECT
-          pci."postId" AS id,
-          COUNT(*) AS collected_count,
-          SUM(IIF(pci."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_collected_count,
-          SUM(IIF(pci."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_collected_count,
-          SUM(IIF(pci."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_collected_count,
-          SUM(IIF(pci."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_collected_count
-        FROM "CollectionItem" pci
-        WHERE pci."postId" IS NOT NULL
-        GROUP BY pci."postId"
-      ) ci ON q.id = ci.id
-    ) m
-    CROSS JOIN (
-      SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
-    ) tf
-    ON CONFLICT ("postId", timeframe) DO UPDATE
-      SET "commentCount" = EXCLUDED."commentCount", "heartCount" = EXCLUDED."heartCount", "likeCount" = EXCLUDED."likeCount", "dislikeCount" = EXCLUDED."dislikeCount", "laughCount" = EXCLUDED."laughCount", "cryCount" = EXCLUDED."cryCount", "collectedCount" = EXCLUDED."collectedCount";
-  `;
+  async update(ctx) {
+    const tasks = (await Promise.all([
+      getReactionTasks(ctx),
+      getCommentTasks(ctx),
+      getCollectionTasks(ctx),
+    ]).then((x) => x.flat())) as Task[];
+    log('postMetrics update', tasks.length, 'tasks');
+    await limitConcurrency(tasks, 5);
   },
-  async clearDay({ db }) {
-    await db.$executeRaw`
-      UPDATE "PostMetric" SET "heartCount" = 0, "likeCount" = 0, "dislikeCount" = 0, "laughCount" = 0, "cryCount" = 0, "commentCount" = 0, "collectedCount" = 0 WHERE timeframe = 'Day';
-    `;
+  async clearDay({ pg, jobContext }) {
+    log('clearDay');
+    const query = await pg.cancellableQuery(Prisma.sql`
+      UPDATE "PostMetric" SET "heartCount" = 0, "likeCount" = 0, "dislikeCount" = 0, "laughCount" = 0, "cryCount" = 0, "commentCount" = 0, "collectedCount" = 0 WHERE timeframe = 'Day' AND "createdAt" > date_trunc('day', now() - interval '1 day');
+    `);
+    jobContext.on('cancel', query.cancel);
+    await query.result();
   },
   rank: {
     table: 'PostRank',
@@ -237,3 +47,159 @@ export const postMetrics = createMetricProcessor({
     ],
   },
 });
+
+async function getReactionTasks({ pg, lastUpdate, jobContext }: MetricProcessorRunContext) {
+  log('getReactionTasks', lastUpdate);
+  const affectedQuery = await pg.cancellableQuery(Prisma.sql`
+    -- Get all post engagements that have happened since then that affect metrics
+    SELECT DISTINCT
+      i."postId" AS id
+    FROM "ImageReaction" ir
+    JOIN "Image" i ON i.id = ir."imageId"
+    WHERE ir."createdAt" > ${lastUpdate}
+  `);
+  jobContext.on('cancel', affectedQuery.cancel);
+  const affected = await affectedQuery.result();
+  const affectedIds = affected.map((x) => x.id);
+  log('getReactionTasks', affectedIds.length, 'affectedIds');
+
+  const tasks = chunk(affectedIds, 100).map((ids, i) => async () => {
+    jobContext.checkIfCanceled();
+    log('getReactionTasks', i + 1, 'of', tasks.length);
+    const query = await pg.cancellableQuery(Prisma.sql`
+      -- perform a one-pass table scan producing all metrics for all affected users
+      INSERT INTO "PostMetric" ("postId", timeframe, "likeCount", "dislikeCount", "heartCount", "laughCount", "cryCount")
+      SELECT
+        i."postId",
+        tf.timeframe,
+        SUM(CASE
+          WHEN ir.reaction = 'Like' AND tf.timeframe = 'AllTime' THEN 1
+          WHEN ir.reaction = 'Like' AND tf.timeframe = 'Year' AND ir."createdAt" > (NOW() - interval '365 days') THEN 1
+          WHEN ir.reaction = 'Like' AND tf.timeframe = 'Month' AND ir."createdAt" > (NOW() - interval '30 days') THEN 1
+          WHEN ir.reaction = 'Like' AND tf.timeframe = 'Week' AND ir."createdAt" > (NOW() - interval '7 days') THEN 1
+          WHEN ir.reaction = 'Like' AND tf.timeframe = 'Day' AND ir."createdAt" > (NOW() - interval '1 days') THEN 1
+          ELSE 0
+        END) "likeCount",
+        SUM(CASE
+          WHEN ir.reaction = 'Dislike' AND tf.timeframe = 'AllTime' THEN 1
+          WHEN ir.reaction = 'Dislike' AND tf.timeframe = 'Year' AND ir."createdAt" > (NOW() - interval '365 days') THEN 1
+          WHEN ir.reaction = 'Dislike' AND tf.timeframe = 'Month' AND ir."createdAt" > (NOW() - interval '30 days') THEN 1
+          WHEN ir.reaction = 'Dislike' AND tf.timeframe = 'Week' AND ir."createdAt" > (NOW() - interval '7 days') THEN 1
+          WHEN ir.reaction = 'Dislike' AND tf.timeframe = 'Day' AND ir."createdAt" > (NOW() - interval '1 days') THEN 1
+          ELSE 0
+        END) "dislikeCount",
+        SUM(CASE
+          WHEN ir.reaction = 'Heart' AND tf.timeframe = 'AllTime' THEN 1
+          WHEN ir.reaction = 'Heart' AND tf.timeframe = 'Year' AND ir."createdAt" > (NOW() - interval '365 days') THEN 1
+          WHEN ir.reaction = 'Heart' AND tf.timeframe = 'Month' AND ir."createdAt" > (NOW() - interval '30 days') THEN 1
+          WHEN ir.reaction = 'Heart' AND tf.timeframe = 'Week' AND ir."createdAt" > (NOW() - interval '7 days') THEN 1
+          WHEN ir.reaction = 'Heart' AND tf.timeframe = 'Day' AND ir."createdAt" > (NOW() - interval '1 days') THEN 1
+          ELSE 0
+        END) "heartCount",
+        SUM(CASE
+          WHEN ir.reaction = 'Laugh' AND tf.timeframe = 'AllTime' THEN 1
+          WHEN ir.reaction = 'Laugh' AND tf.timeframe = 'Year' AND ir."createdAt" > (NOW() - interval '365 days') THEN 1
+          WHEN ir.reaction = 'Laugh' AND tf.timeframe = 'Month' AND ir."createdAt" > (NOW() - interval '30 days') THEN 1
+          WHEN ir.reaction = 'Laugh' AND tf.timeframe = 'Week' AND ir."createdAt" > (NOW() - interval '7 days') THEN 1
+          WHEN ir.reaction = 'Laugh' AND tf.timeframe = 'Day' AND ir."createdAt" > (NOW() - interval '1 days') THEN 1
+          ELSE 0
+        END) "laughCount",
+        SUM(CASE
+          WHEN ir.reaction = 'Cry' AND tf.timeframe = 'AllTime' THEN 1
+          WHEN ir.reaction = 'Cry' AND tf.timeframe = 'Year' AND ir."createdAt" > (NOW() - interval '365 days') THEN 1
+          WHEN ir.reaction = 'Cry' AND tf.timeframe = 'Month' AND ir."createdAt" > (NOW() - interval '30 days') THEN 1
+          WHEN ir.reaction = 'Cry' AND tf.timeframe = 'Week' AND ir."createdAt" > (NOW() - interval '7 days') THEN 1
+          WHEN ir.reaction = 'Cry' AND tf.timeframe = 'Day' AND ir."createdAt" > (NOW() - interval '1 days') THEN 1
+          ELSE 0
+        END) "cryCount"
+      FROM "ImageReaction" ir
+      JOIN "Image" i ON i.id = ir."imageId"
+      CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
+      WHERE i."postId" IN (${Prisma.join(ids)})
+      GROUP BY i."postId", tf.timeframe
+      ON CONFLICT ("postId", timeframe) DO UPDATE
+        SET "heartCount" = EXCLUDED."heartCount", "likeCount" = EXCLUDED."likeCount", "dislikeCount" = EXCLUDED."dislikeCount", "laughCount" = EXCLUDED."laughCount", "cryCount" = EXCLUDED."cryCount", "createdAt" = NOW()
+    `);
+    jobContext.on('cancel', query.cancel);
+    await query.result();
+    log('getReactionTasks', i + 1, 'of', tasks.length, 'done');
+  });
+
+  return tasks;
+}
+
+async function getCommentTasks({ pg, lastUpdate, jobContext }: MetricProcessorRunContext) {
+  const affectedQuery = await pg.cancellableQuery(Prisma.sql`
+    -- Get all post engagements that have happened since then that affect metrics
+    SELECT DISTINCT
+      t."postId" AS id
+    FROM "Thread" t
+    JOIN "CommentV2" c ON c."threadId" = t.id
+    WHERE t."postId" IS NOT NULL AND c."createdAt" > ${lastUpdate}
+  `);
+  jobContext.on('cancel', affectedQuery.cancel);
+  const affected = await affectedQuery.result();
+  const affectedIds = affected.map((x) => x.id);
+
+  const tasks = chunk(affectedIds, 100).map((ids, i) => async () => {
+    jobContext.checkIfCanceled();
+    log('getCommentTasks', i + 1, 'of', tasks.length);
+    const query = await pg.cancellableQuery(Prisma.sql`
+      -- update post comment counts
+      INSERT INTO "PostMetric" ("postId", timeframe, "commentCount")
+      SELECT
+        ic."postId",
+        tf.timeframe,
+        COUNT(*)
+      FROM "Thread" ic
+      JOIN "CommentV2" v ON ic."id" = v."threadId"
+      CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
+      WHERE ic."postId" IS NOT NULL AND ic."postId" IN (${Prisma.join(ids)})
+      GROUP BY ic."postId", tf.timeframe
+      ON CONFLICT ("postId", timeframe) DO UPDATE
+        SET "commentCount" = EXCLUDED."commentCount", "createdAt" = NOW()
+    `);
+    jobContext.on('cancel', query.cancel);
+    await query.result();
+    log('getCommentTasks', i + 1, 'of', tasks.length, 'done');
+  });
+
+  return tasks;
+}
+
+async function getCollectionTasks({ pg, lastUpdate, jobContext }: MetricProcessorRunContext) {
+  const affectedQuery = await pg.cancellableQuery(Prisma.sql`
+    -- Get all post engagements that have happened since then that affect metrics
+    SELECT DISTINCT
+      "postId" AS id
+    FROM "CollectionItem"
+    WHERE "createdAt" > ${lastUpdate}
+  `);
+  jobContext.on('cancel', affectedQuery.cancel);
+  const affected = await affectedQuery.result();
+  const affectedIds = affected.map((x) => x.id);
+
+  const tasks = chunk(affectedIds, 100).map((ids, i) => async () => {
+    jobContext.checkIfCanceled();
+    log('getCollectionTasks', i + 1, 'of', tasks.length);
+    const query = await pg.cancellableQuery(Prisma.sql`
+      -- update post collection counts
+      INSERT INTO "PostMetric" ("postId", timeframe, "collectedCount")
+      SELECT
+        pci."postId",
+        tf.timeframe,
+        COUNT(*)
+      FROM "CollectionItem" pci
+      CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
+      WHERE pci."postId" IS NOT NULL AND pci."postId" IN (${Prisma.join(ids)})
+      GROUP BY pci."postId", tf.timeframe
+      ON CONFLICT ("postId", timeframe) DO UPDATE
+        SET "collectedCount" = EXCLUDED."collectedCount", "createdAt" = NOW()
+    `);
+    jobContext.on('cancel', query.cancel);
+    await query.result();
+    log('getCollectionTasks', i + 1, 'of', tasks.length, 'done');
+  });
+
+  return tasks;
+}

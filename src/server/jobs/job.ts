@@ -1,3 +1,4 @@
+import { NextApiResponse } from 'next';
 import { dbWrite } from '~/server/db/client';
 
 export type Job = {
@@ -18,9 +19,34 @@ export type JobOptions = {
   dedicated?: boolean;
 };
 
+export type JobStatus = 'running' | 'canceled' | 'finished';
 export type JobContext = {
+  status: JobStatus;
   on: (event: 'cancel', listener: () => Promise<void>) => void;
+  checkIfCanceled: () => void;
 };
+
+export function inJobContext(res: NextApiResponse, fn: (jobContext: JobContext) => Promise<void>) {
+  const onCancel: (() => Promise<void>)[] = [];
+  const jobContext = {
+    status: 'running' as JobStatus,
+    on: (event: 'cancel', listener: () => Promise<void>) => {
+      if (event === 'cancel') onCancel.push(listener);
+    },
+    checkIfCanceled: () => {
+      if (jobContext.status === 'canceled') throw new Error('Job was canceled');
+    },
+  };
+  res.on('close', async () => {
+    if (jobContext.status !== 'running') return;
+    jobContext.status = 'canceled';
+    await Promise.all(onCancel.map((x) => x()));
+  });
+  fn(jobContext).finally(() => {
+    if (jobContext.status !== 'running') return;
+    jobContext.status = 'finished';
+  });
+}
 
 export function createJob(
   name: string,
@@ -34,19 +60,23 @@ export function createJob(
     run: () => {
       const onCancel: (() => Promise<void>)[] = [];
       const jobContext = {
+        status: 'running' as JobStatus,
         on: (event: 'cancel', listener: () => Promise<void>) => {
           if (event === 'cancel') onCancel.push(listener);
         },
+        checkIfCanceled: () => {
+          if (jobContext.status === 'canceled') throw new Error('Job was canceled');
+        },
       };
-      let running = true;
       const cancel = () => {
-        if (!running) return;
-        console.log('canceling job');
+        if (jobContext.status !== 'running') return;
+        jobContext.status = 'canceled';
         Promise.all(onCancel.map((x) => x()));
       };
       const result = fn(jobContext);
       result.finally(() => {
-        running = false;
+        if (jobContext.status === 'canceled') return;
+        jobContext.status = 'finished';
       });
       return { result, cancel };
     },

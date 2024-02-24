@@ -10,7 +10,7 @@ type CancellableResult<R extends QueryResultRow = any> = {
 };
 export type AugmentedPool = Pool & {
   cancellableQuery: <R extends QueryResultRow = any>(
-    sql: Prisma.Sql
+    sql: Prisma.Sql | string
   ) => Promise<CancellableResult<R>>;
 };
 
@@ -34,15 +34,20 @@ function getClient({ readonly }: { readonly: boolean } = { readonly: false }) {
     idleTimeoutMillis: env.DATABASE_POOL_IDLE_TIMEOUT,
   }) as AugmentedPool;
 
-  pool.cancellableQuery = async function <R extends QueryResultRow = any>(sql: Prisma.Sql) {
+  pool.cancellableQuery = async function <R extends QueryResultRow = any>(
+    sql: Prisma.Sql | string
+  ) {
     const connection = await pool.connect();
     const pidQuery = await connection.query('SELECT pg_backend_pid()');
     const pid = pidQuery.rows[0].pg_backend_pid;
 
-    const query = connection.query<R>(sql);
-    query.finally(() => connection.release());
-
     let done = false;
+    const query = connection.query<R>(sql);
+    query.finally(() => {
+      done = true;
+      connection.release();
+    });
+
     const cancel = async () => {
       if (done) return;
       const cancelConnection = await pool.connect();
@@ -52,7 +57,6 @@ function getClient({ readonly }: { readonly: boolean } = { readonly: false }) {
     };
     const result = async () => {
       const { rows } = await query;
-      done = true;
       return rows;
     };
 
