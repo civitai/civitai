@@ -16,28 +16,22 @@ import {
 import { Availability, CollectionType, NsfwLevel } from '@prisma/client';
 import {
   IconAlertTriangle,
-  IconBrush,
-  IconDotsVertical,
-  IconFlag,
-  IconEye,
-  IconInfoCircle,
   IconBookmark,
-  IconShare3,
-  IconLayoutSidebar,
-  IconLayoutSidebarRightCollapse,
+  IconDotsVertical,
+  IconEye,
+  IconFlag,
+  IconX,
 } from '@tabler/icons-react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { Adunit } from '~/components/Ads/AdUnit';
 import { adsRegistry } from '~/components/Ads/adsRegistry';
+import { Adunit } from '~/components/Ads/AdUnit';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
 import { TipBuzzButton } from '~/components/Buzz/TipBuzzButton';
 import { ChatUserButton } from '~/components/Chat/ChatUserButton';
-import { ContentPolicyLink } from '~/components/ContentPolicyLink/ContentPolicyLink';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
-import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
 import { ImageDetailCarousel } from '~/components/Image/Detail/ImageDetailCarousel';
 import { ImageDetailComments } from '~/components/Image/Detail/ImageDetailComments';
@@ -45,10 +39,11 @@ import { ImageDetailContextMenu } from '~/components/Image/Detail/ImageDetailCon
 import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProvider';
 import { ImageResources } from '~/components/Image/Detail/ImageResources';
 import { ImageMeta } from '~/components/ImageMeta/ImageMeta';
+import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Meta } from '~/components/Meta/Meta';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { Reactions } from '~/components/Reaction/Reactions';
-import { ShareButton } from '~/components/ShareButton/ShareButton';
+import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
@@ -56,11 +51,8 @@ import { env } from '~/env/client.mjs';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { BrowsingMode } from '~/server/common/enums';
-import { generationPanel } from '~/store/generation.store';
-import { containerQuery } from '~/utils/mantine-css-helpers';
-import { abbreviateNumber } from '~/utils/number-helpers';
-import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { ReportEntity } from '~/server/schema/report.schema';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 const UNFURLABLE: NsfwLevel[] = [NsfwLevel.None, NsfwLevel.Soft];
 export function ImageDetail() {
@@ -100,7 +92,28 @@ export function ImageDetail() {
           })}
         >
           <div className={classes.carouselWrapper}>
-            <ImageDetailCarousel className={classes.carousel} />
+            <ReactionSettingsProvider
+              settings={{
+                hideReactionCount: false,
+                buttonStyling: (reaction, hasReacted) => ({
+                  radius: 'xl',
+                  variant: 'light',
+                  px: undefined,
+                  pl: 4,
+                  pr: 8,
+                  h: 30,
+                  style: {
+                    color: 'white',
+                    background: hasReacted
+                      ? theme.fn.rgba(theme.colors.blue[4], 0.4)
+                      : theme.fn.rgba(theme.colors.gray[8], 0.4),
+                    backdropFilter: 'blur(7px)',
+                  },
+                }),
+              }}
+            >
+              <ImageDetailCarousel className={classes.carousel} />
+            </ReactionSettingsProvider>
           </div>
           <Card className={cx(classes.sidebar)}>
             <Card.Section py="xs" withBorder inheritPadding>
@@ -118,11 +131,7 @@ export function ImageDetail() {
                   withUsername
                   linkToProfile
                 />
-                <Group
-                  spacing={8}
-                  sx={{ [containerQuery.smallerThan('sm')]: { flexGrow: 1 } }}
-                  noWrap
-                >
+                <Group spacing={8} noWrap>
                   <TipBuzzButton
                     toUserId={image.user.id}
                     entityId={image.id}
@@ -132,9 +141,26 @@ export function ImageDetail() {
                   />
                   <ChatUserButton user={image.user} size="md" compact />
                   <FollowUserButton userId={image.user.id} size="md" compact />
-                  <ActionIcon onClick={toggleInfo} size="md" radius="xl" ml="auto">
-                    <IconLayoutSidebarRightCollapse size={20} />
+                  <ActionIcon
+                    onClick={toggleInfo}
+                    size="md"
+                    radius="xl"
+                    className={classes.mobileOnly}
+                  >
+                    <IconX size={20} />
                   </ActionIcon>
+                  <CloseButton
+                    size="md"
+                    radius="xl"
+                    variant="transparent"
+                    ml="auto"
+                    iconSize={20}
+                    className={classes.desktopOnly}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      close();
+                    }}
+                  />
                 </Group>
               </Group>
             </Card.Section>
@@ -260,6 +286,20 @@ export function ImageDetail() {
                   />
                   <Paper p="sm" radius={0}>
                     <Stack spacing={8}>
+                      <Reactions
+                        entityId={image.id}
+                        entityType="image"
+                        reactions={image.reactions}
+                        metrics={{
+                          likeCount: image.stats?.likeCountAllTime,
+                          dislikeCount: image.stats?.dislikeCountAllTime,
+                          heartCount: image.stats?.heartCountAllTime,
+                          laughCount: image.stats?.laughCountAllTime,
+                          cryCount: image.stats?.cryCountAllTime,
+                          tippedAmountCount: image.stats?.tippedAmountCountAllTime,
+                        }}
+                        targetUserId={image.user.id}
+                      />
                       <ImageDetailComments imageId={image.id} userId={image.user.id} />
                     </Stack>
                   </Paper>
@@ -294,8 +334,8 @@ export function ImageDetail() {
 }
 
 const useStyles = createStyles((theme, _props, getRef) => {
-  const isMobile = containerQuery.smallerThan('md');
-  const isDesktop = containerQuery.largerThan('md');
+  const isMobile = containerQuery.smallerThan('sm');
+  const isDesktop = containerQuery.largerThan('sm');
   const sidebarWidth = 457;
   return {
     root: {
