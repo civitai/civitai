@@ -61,7 +61,6 @@ async function getReactionTasks({ pg, lastUpdate, jobContext }: MetricProcessorR
   jobContext.on('cancel', affectedQuery.cancel);
   const affected = await affectedQuery.result();
   const affectedIds = affected.map((x) => x.id);
-  log('getReactionTasks', affectedIds.length, 'affectedIds');
 
   const tasks = chunk(affectedIds, 100).map((ids, i) => async () => {
     jobContext.checkIfCanceled();

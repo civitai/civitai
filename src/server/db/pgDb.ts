@@ -41,6 +41,13 @@ function getClient({ readonly }: { readonly: boolean } = { readonly: false }) {
     const pidQuery = await connection.query('SELECT pg_backend_pid()');
     const pid = pidQuery.rows[0].pg_backend_pid;
 
+    // Fix dates
+    if (typeof sql === 'object') {
+      for (const i in sql.values) {
+        if (sql.values[i] instanceof Date) sql.values[i] = (sql.values[i] as Date).toISOString();
+      }
+    }
+
     let done = false;
     const query = connection.query<R>(sql);
     query.finally(() => {
@@ -66,6 +73,7 @@ function getClient({ readonly }: { readonly: boolean } = { readonly: false }) {
   return pool;
 }
 
+// Fix Dates
 types.setTypeParser(types.builtins.TIMESTAMP, function (stringValue) {
   return new Date(stringValue.replace(' ', 'T') + 'Z');
 });
