@@ -65,7 +65,7 @@ export function createJob(
           if (event === 'cancel') onCancel.push(listener);
         },
         checkIfCanceled: () => {
-          if (jobContext.status === 'canceled') throw new Error('Job was canceled');
+          if (jobContext.status !== 'running') throw new Error('Job has ended');
         },
       };
       const cancel = () => {

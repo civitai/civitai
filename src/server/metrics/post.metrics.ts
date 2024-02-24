@@ -50,13 +50,20 @@ export const postMetrics = createMetricProcessor({
 
 async function getReactionTasks({ pg, lastUpdate, jobContext }: MetricProcessorRunContext) {
   log('getReactionTasks', lastUpdate);
-  const affectedQuery = await pg.cancellableQuery(Prisma.sql`
-    -- Get all post engagements that have happened since then that affect metrics
+  const affectedQuery = await pg.cancellableQuery<{ id: number }>(Prisma.sql`
+    -- get recent post image reactions
     SELECT DISTINCT
       i."postId" AS id
     FROM "ImageReaction" ir
     JOIN "Image" i ON i.id = ir."imageId"
     WHERE ir."createdAt" > ${lastUpdate}
+
+    UNION
+
+    SELECT
+      "id"
+    FROM "MetricUpdateQueue"
+    WHERE type = 'Post'
   `);
   jobContext.on('cancel', affectedQuery.cancel);
   const affected = await affectedQuery.result();
@@ -66,7 +73,7 @@ async function getReactionTasks({ pg, lastUpdate, jobContext }: MetricProcessorR
     jobContext.checkIfCanceled();
     log('getReactionTasks', i + 1, 'of', tasks.length);
     const query = await pg.cancellableQuery(Prisma.sql`
-      -- perform a one-pass table scan producing all metrics for all affected users
+      -- update post reaction metrics
       INSERT INTO "PostMetric" ("postId", timeframe, "likeCount", "dislikeCount", "heartCount", "laughCount", "cryCount")
       SELECT
         i."postId",
@@ -129,12 +136,19 @@ async function getReactionTasks({ pg, lastUpdate, jobContext }: MetricProcessorR
 
 async function getCommentTasks({ pg, lastUpdate, jobContext }: MetricProcessorRunContext) {
   const affectedQuery = await pg.cancellableQuery(Prisma.sql`
-    -- Get all post engagements that have happened since then that affect metrics
+    -- get recent post comments
     SELECT DISTINCT
       t."postId" AS id
     FROM "Thread" t
     JOIN "CommentV2" c ON c."threadId" = t.id
     WHERE t."postId" IS NOT NULL AND c."createdAt" > ${lastUpdate}
+
+    UNION
+
+    SELECT
+      "id"
+    FROM "MetricUpdateQueue"
+    WHERE type = 'Post'
   `);
   jobContext.on('cancel', affectedQuery.cancel);
   const affected = await affectedQuery.result();
@@ -149,7 +163,14 @@ async function getCommentTasks({ pg, lastUpdate, jobContext }: MetricProcessorRu
       SELECT
         ic."postId",
         tf.timeframe,
-        COUNT(*)
+        SUM(CASE
+          WHEN tf.timeframe = 'AllTime' THEN 1
+          WHEN tf.timeframe = 'Year' AND v."createdAt" > (NOW() - interval '365 days') THEN 1
+          WHEN tf.timeframe = 'Month' AND v."createdAt" > (NOW() - interval '30 days') THEN 1
+          WHEN tf.timeframe = 'Week' AND v."createdAt" > (NOW() - interval '7 days') THEN 1
+          WHEN tf.timeframe = 'Day' AND v."createdAt" > (NOW() - interval '1 days') THEN 1
+          ELSE 0
+        END)
       FROM "Thread" ic
       JOIN "CommentV2" v ON ic."id" = v."threadId"
       CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
@@ -168,11 +189,18 @@ async function getCommentTasks({ pg, lastUpdate, jobContext }: MetricProcessorRu
 
 async function getCollectionTasks({ pg, lastUpdate, jobContext }: MetricProcessorRunContext) {
   const affectedQuery = await pg.cancellableQuery(Prisma.sql`
-    -- Get all post engagements that have happened since then that affect metrics
+    -- get recent post collections
     SELECT DISTINCT
       "postId" AS id
     FROM "CollectionItem"
     WHERE "createdAt" > ${lastUpdate}
+
+    UNION
+
+    SELECT
+      "id"
+    FROM "MetricUpdateQueue"
+    WHERE type = 'Post'
   `);
   jobContext.on('cancel', affectedQuery.cancel);
   const affected = await affectedQuery.result();
@@ -187,7 +215,14 @@ async function getCollectionTasks({ pg, lastUpdate, jobContext }: MetricProcesso
       SELECT
         pci."postId",
         tf.timeframe,
-        COUNT(*)
+        SUM(CASE
+          WHEN tf.timeframe = 'AllTime' THEN 1
+          WHEN tf.timeframe = 'Year' AND pci."createdAt" > (NOW() - interval '365 days') THEN 1
+          WHEN tf.timeframe = 'Month' AND pci."createdAt" > (NOW() - interval '30 days') THEN 1
+          WHEN tf.timeframe = 'Week' AND pci."createdAt" > (NOW() - interval '7 days') THEN 1
+          WHEN tf.timeframe = 'Day' AND pci."createdAt" > (NOW() - interval '1 days') THEN 1
+          ELSE 0
+        END)
       FROM "CollectionItem" pci
       CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
       WHERE pci."postId" IS NOT NULL AND pci."postId" IN (${Prisma.join(ids)})
