@@ -1,6 +1,5 @@
 import { constants, ModelFileType } from '~/server/common/constants';
 import { ModelUpsertInput } from '~/server/schema/model.schema';
-import { ModelVersionById } from '~/types/router';
 import { useState, createContext, useContext } from 'react';
 import { useS3UploadStore } from '~/store/s3-upload.store';
 import { isDefined } from '~/utils/type-guards';
@@ -16,6 +15,7 @@ import { UploadType } from '~/server/common/enums';
 import { modelFileMetadataSchema } from '~/server/schema/model-file.schema';
 import { z } from 'zod';
 import { getModelFileFormat } from '~/utils/file-helpers';
+import type { ModelVersionById } from '~/server/controllers/model-version.controller';
 
 type ZodErrorSchema = { _errors: string[] };
 type SchemaError = {

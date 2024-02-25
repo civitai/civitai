@@ -2,7 +2,7 @@
   "compilerOptions": {
     "target": "ES6",
     "lib": ["dom", "dom.iterable", "esnext"],
-    "types": ["offscreencanvas"],
+    // "types": ["offscreencanvas"],
     "allowJs": true,
     "skipLibCheck": true,
     "strict": true,

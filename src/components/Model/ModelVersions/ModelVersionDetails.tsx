@@ -83,8 +83,6 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
-import { ClubRequirementButton } from '../../Club/ClubRequirementNotice';
-import { ResourceAccessWrap } from '~/components/Access/ResourceAccessWrap';
 import { ContentPolicyLink } from '~/components/ContentPolicyLink/ContentPolicyLink';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { Adunit } from '~/components/Ads/AdUnit';
@@ -539,56 +537,42 @@ export function ModelVersionDetails({
                     {/* {primaryFileDetails} */}
                   </Stack>
                 )}
-                {hasAccess ? (
-                  <>
-                    {canGenerate && (
-                      <GenerateButton
-                        iconOnly={displayCivitaiLink}
-                        modelVersionId={version.id}
-                        data-activity="create:model"
-                      />
-                    )}
-                    {displayCivitaiLink || canGenerate ? (
-                      <Menu position="bottom-end">
-                        <Menu.Target>
-                          <DownloadButton
-                            canDownload={version.canDownload}
-                            disabled={!primaryFile || archived}
-                            iconOnly
-                          />
-                        </Menu.Target>
-                        <Menu.Dropdown>{downloadMenuItems}</Menu.Dropdown>
-                      </Menu>
-                    ) : (
-                      <DownloadButton
-                        component="a"
-                        href={createModelFileDownloadUrl({
-                          versionId: version.id,
-                          primary: true,
-                        })}
-                        canDownload={version.canDownload}
-                        disabled={!primaryFile || archived}
-                        sx={{ flex: 1 }}
-                      >
-                        <Text align="center">
-                          {primaryFile
-                            ? `Download (${formatKBytes(primaryFile?.sizeKB)})`
-                            : 'No file'}
-                        </Text>
-                      </DownloadButton>
-                    )}
-                    {!displayCivitaiLink && (
-                      <RunButton variant="light" modelVersionId={version.id} />
-                    )}
-                  </>
-                ) : (
-                  <ClubRequirementButton
-                    entityId={version.id}
-                    entityType="ModelVersion"
-                    label="Join club"
-                    sx={{ flex: 1 }}
+
+                {canGenerate && (
+                  <GenerateButton
+                    iconOnly={displayCivitaiLink}
+                    modelVersionId={version.id}
+                    data-activity="create:model"
                   />
                 )}
+                {displayCivitaiLink || canGenerate ? (
+                  <Menu position="bottom-end">
+                    <Menu.Target>
+                      <DownloadButton
+                        canDownload={version.canDownload}
+                        disabled={!primaryFile || archived}
+                        iconOnly
+                      />
+                    </Menu.Target>
+                    <Menu.Dropdown>{downloadMenuItems}</Menu.Dropdown>
+                  </Menu>
+                ) : (
+                  <DownloadButton
+                    component="a"
+                    href={createModelFileDownloadUrl({
+                      versionId: version.id,
+                      primary: true,
+                    })}
+                    canDownload={version.canDownload}
+                    disabled={!primaryFile || archived}
+                    sx={{ flex: 1 }}
+                  >
+                    <Text align="center">
+                      {primaryFile ? `Download (${formatKBytes(primaryFile?.sizeKB)})` : 'No file'}
+                    </Text>
+                  </DownloadButton>
+                )}
+                {!displayCivitaiLink && <RunButton variant="light" modelVersionId={version.id} />}
                 <Tooltip label="Share" position="top" withArrow>
                   <div>
                     <ShareButton
@@ -760,36 +744,33 @@ export function ModelVersionDetails({
                 <Accordion.Panel>
                   <Stack spacing={2}>
                     {version.recommendedResources.map((resource) => (
-                      <Link
+                      <Card
                         key={resource.id}
+                        component={NextLink}
                         href={`/models/${resource.modelId}?modelVersionId=${resource.id}`}
-                        passHref
+                        radius={0}
+                        py="xs"
+                        sx={(theme) => ({
+                          cursor: 'pointer',
+                          backgroundColor:
+                            theme.colorScheme === 'dark'
+                              ? theme.colors.dark[6]
+                              : theme.colors.gray[0],
+                        })}
+                        data-activity="follow-recommendation:details"
                       >
-                        <Card
-                          component="a"
-                          radius={0}
-                          py="xs"
-                          sx={(theme) => ({
-                            cursor: 'pointer',
-                            backgroundColor:
-                              theme.colorScheme === 'dark'
-                                ? theme.colors.dark[6]
-                                : theme.colors.gray[0],
-                          })}
-                        >
-                          <Stack spacing={4}>
-                            <Group position="apart" spacing={8} noWrap>
-                              <Text size="xs" weight={500} lineClamp={2}>
-                                {resource.modelName}
-                              </Text>
-                              <Badge size="xs">{getDisplayName(resource.modelType)}</Badge>
-                            </Group>
-                            <Text color="dimmed" size="xs">
-                              {resource.name}
+                        <Stack spacing={4}>
+                          <Group position="apart" spacing={8} noWrap>
+                            <Text size="xs" weight={500} lineClamp={2}>
+                              {resource.modelName}
                             </Text>
-                          </Stack>
-                        </Card>
-                      </Link>
+                            <Badge size="xs">{getDisplayName(resource.modelType)}</Badge>
+                          </Group>
+                          <Text color="dimmed" size="xs">
+                            {resource.name}
+                          </Text>
+                        </Stack>
+                      </Card>
                     ))}
                   </Stack>
                 </Accordion.Panel>
@@ -805,18 +786,16 @@ export function ModelVersionDetails({
                         count={version.rank?.ratingCountAllTime}
                       />
                       <Stack spacing={4} ml="auto">
-                        <ResourceAccessWrap entityId={version.id} entityType="ModelVersion">
-                          <Button
-                            component={NextLink}
-                            href={`/posts/create?modelId=${model.id}&modelVersionId=${version.id}&reviewing=true&returnUrl=${router.asPath}`}
-                            variant="outline"
-                            size="xs"
-                            onClick={(e) => e.stopPropagation()}
-                            compact
-                          >
-                            Add Review
-                          </Button>
-                        </ResourceAccessWrap>
+                        <Button
+                          component={NextLink}
+                          href={`/posts/create?modelId=${model.id}&modelVersionId=${version.id}&reviewing=true&returnUrl=${router.asPath}`}
+                          variant="outline"
+                          size="xs"
+                          onClick={(e) => e.stopPropagation()}
+                          compact
+                        >
+                          Add Review
+                        </Button>
                         <Text
                           component={NextLink}
                           href={`/models/${model.id}/reviews?modelVersionId=${version.id}`}

@@ -8,7 +8,7 @@ import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
-import { ArticleGetAll } from '~/types/router';
+import type { ArticleGetAll } from '~/server/services/article.service';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionMenuItem';
@@ -50,7 +50,6 @@ export function ArticleContextMenu({ article, ...props }: Props) {
 
               if (atDetailsPage) await router.push('/articles');
               await queryUtils.article.getInfinite.invalidate();
-              await queryUtils.article.getByCategory.invalidate();
             },
             onError(error) {
               showErrorNotification({
@@ -76,7 +75,6 @@ export function ArticleContextMenu({ article, ...props }: Props) {
 
           await queryUtils.article.getById.invalidate({ id: result.id });
           await queryUtils.article.getInfinite.invalidate();
-          await queryUtils.article.getByCategory.invalidate();
           await queryUtils.article.getMyDraftArticles.invalidate();
         },
         onError(error) {
@@ -194,5 +192,5 @@ export function ArticleContextMenu({ article, ...props }: Props) {
 }
 
 type Props = Omit<ActionIconProps, 'variant' | 'onClick'> & {
-  article: Omit<ArticleGetAll['items'][number], 'stats'>;
+  article: Omit<ArticleGetAll[number], 'stats'>;
 };

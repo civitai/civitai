@@ -16,14 +16,12 @@ import {
   IconChevronLeft,
   IconChevronRight,
   IconClock,
-  IconClubs,
   IconDotsVertical,
   IconEdit,
   IconFileSettings,
   IconPhotoEdit,
   IconTrash,
 } from '@tabler/icons-react';
-import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useEffect, useRef, useState } from 'react';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
@@ -33,7 +31,6 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 
 import { ModelById } from '~/types/router';
-import { useEntityAccessRequirement } from '../../Club/club.utils';
 
 const useStyles = createStyles((theme) => ({
   scrollContainer: { position: 'relative' },
@@ -117,11 +114,6 @@ export function ModelVersionList({
     largerThanViewport: false,
   });
 
-  const { entities } = useEntityAccessRequirement({
-    entityType: 'ModelVersion',
-    entityIds: versions.map((v) => v.id),
-  });
-
   const scrollLeft = () => viewportRef.current?.scrollBy({ left: -200, behavior: 'smooth' });
   const scrollRight = () => viewportRef.current?.scrollBy({ left: 200, behavior: 'smooth' });
 
@@ -173,7 +165,6 @@ export function ModelVersionList({
           const published = version.status === 'Published';
           const scheduled = version.status === 'Scheduled';
           const hasProblem = missingFiles || missingPosts || (!published && !scheduled);
-          const access = (entities ?? []).find((e) => e.entityId === version.id);
 
           const versionButton = (
             <Button

@@ -8,7 +8,6 @@ import {
 import { IconAlertCircle, IconMessageCancel } from '@tabler/icons-react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useState } from 'react';
-import { useEntityAccessRequirement } from '../../Club/club.utils';
 import { SortFilter } from '../../Filters';
 import { ThreadSort } from '../../../server/common/enums';
 import { ReturnToRootThread } from '../../CommentsV2/ReturnToRootThread';
@@ -20,13 +19,7 @@ type ArticleDetailCommentsProps = {
 
 export function ArticleDetailComments({ articleId, userId }: ArticleDetailCommentsProps) {
   const [opened, setOpened] = useState(false);
-  const { entities } = useEntityAccessRequirement({
-    entityType: 'Article',
-    entityIds: [articleId],
-  });
   const { classes } = useCommentStyles();
-  const [access] = entities;
-  const hasAccess = access?.hasAccess ?? false;
 
   return (
     <>

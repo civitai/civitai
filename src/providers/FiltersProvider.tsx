@@ -35,9 +35,6 @@ import { getInfiniteClubSchema } from '~/server/schema/club.schema';
 type BrowsingModeSchema = z.infer<typeof browsingModeSchema>;
 const browsingModeSchema = z.nativeEnum(BrowsingMode).default(BrowsingMode.NSFW);
 
-export type ViewMode = z.infer<typeof viewModeSchema>;
-const viewModeSchema = z.enum(['categories', 'feed']);
-
 export type ModelFilterSchema = z.infer<typeof modelFilterSchema>;
 const modelFilterSchema = z.object({
   period: z.nativeEnum(MetricTimeframe).default(MetricTimeframe.Month),
@@ -49,7 +46,6 @@ const modelFilterSchema = z.object({
   browsingMode: z.nativeEnum(BrowsingMode).optional(),
   status: z.nativeEnum(ModelStatus).array().optional(),
   earlyAccess: z.boolean().optional(),
-  view: viewModeSchema.default('feed'),
   supportsGeneration: z.boolean().optional(),
   fromPlatform: z.boolean().optional(),
   followed: z.boolean().optional(),
@@ -70,7 +66,6 @@ const imageFilterSchema = z.object({
   periodMode: periodModeSchema.optional(),
   sort: z.nativeEnum(ImageSort).default(ImageSort.MostReactions),
   generation: z.nativeEnum(ImageGenerationProcess).array().optional(),
-  view: viewModeSchema.default('feed'),
   excludeCrossPosts: z.boolean().optional(),
   types: z.array(z.nativeEnum(MediaType)).default([MediaType.image]),
   withMeta: z.boolean().optional(),
@@ -89,7 +84,6 @@ const postFilterSchema = z.object({
   period: z.nativeEnum(MetricTimeframe).default(MetricTimeframe.Week),
   periodMode: periodModeSchema,
   sort: z.nativeEnum(PostSort).default(PostSort.MostReactions),
-  view: viewModeSchema.default('feed'),
   followed: z.boolean().optional(),
 });
 
@@ -98,7 +92,6 @@ const articleFilterSchema = z.object({
   period: z.nativeEnum(MetricTimeframe).default(MetricTimeframe.Month),
   periodMode: periodModeSchema,
   sort: z.nativeEnum(ArticleSort).default(ArticleSort.MostBookmarks),
-  view: viewModeSchema.default('feed'),
   followed: z.boolean().optional(),
 });
 
@@ -147,7 +140,6 @@ const clubFilterSchema = z
 type VideoFilterSchema = z.infer<typeof videoFilterSchema>;
 const videoFilterSchema = imageFilterSchema.omit({
   types: true,
-  view: true,
   excludeCrossPosts: true,
 });
 
@@ -174,7 +166,6 @@ type StorageState = {
   threads: ThreadFilterSchema;
 };
 export type FilterSubTypes = keyof StorageState;
-export type ViewAdjustableTypes = 'models' | 'images' | 'posts' | 'articles';
 
 const periodModeTypes = ['models', 'images', 'posts', 'articles', 'bounties'] as const;
 export type PeriodModeType = (typeof periodModeTypes)[number];

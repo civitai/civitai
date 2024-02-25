@@ -54,9 +54,9 @@ export enum ImageSort {
   Random = 'Random',
 }
 
-export enum ImageSortHidden {
-  Random = ImageSort.Random,
-}
+export const ImageSortHidden = {
+  Random: ImageSort.Random,
+};
 
 export enum PostSort {
   MostReactions = 'Most Reactions',

@@ -1,8 +1,12 @@
+import { NextApiResponse } from 'next';
 import { dbWrite } from '~/server/db/client';
 
 export type Job = {
   name: string;
-  run: () => Promise<MixedObject | void>;
+  run: () => {
+    result: Promise<MixedObject | void>;
+    cancel: () => Promise<void>;
+  };
   cron: string;
   options: JobOptions;
 };
@@ -15,16 +19,67 @@ export type JobOptions = {
   dedicated?: boolean;
 };
 
+export type JobStatus = 'running' | 'canceled' | 'finished';
+export type JobContext = {
+  status: JobStatus;
+  on: (event: 'cancel', listener: () => Promise<void>) => void;
+  checkIfCanceled: () => void;
+};
+
+export function inJobContext(res: NextApiResponse, fn: (jobContext: JobContext) => Promise<void>) {
+  const onCancel: (() => Promise<void>)[] = [];
+  const jobContext = {
+    status: 'running' as JobStatus,
+    on: (event: 'cancel', listener: () => Promise<void>) => {
+      if (event === 'cancel') onCancel.push(listener);
+    },
+    checkIfCanceled: () => {
+      if (jobContext.status === 'canceled') throw new Error('Job was canceled');
+    },
+  };
+  res.on('close', async () => {
+    if (jobContext.status !== 'running') return;
+    jobContext.status = 'canceled';
+    await Promise.all(onCancel.map((x) => x()));
+  });
+  fn(jobContext).finally(() => {
+    if (jobContext.status !== 'running') return;
+    jobContext.status = 'finished';
+  });
+}
+
 export function createJob(
   name: string,
   cron: string,
-  fn: () => Promise<MixedObject | void>,
+  fn: (e: JobContext) => Promise<MixedObject | void>,
   options: Partial<JobOptions> = {}
 ) {
   return {
     name,
     cron,
-    run: fn,
+    run: () => {
+      const onCancel: (() => Promise<void>)[] = [];
+      const jobContext = {
+        status: 'running' as JobStatus,
+        on: (event: 'cancel', listener: () => Promise<void>) => {
+          if (event === 'cancel') onCancel.push(listener);
+        },
+        checkIfCanceled: () => {
+          if (jobContext.status !== 'running') throw new Error('Job has ended');
+        },
+      };
+      const cancel = () => {
+        if (jobContext.status !== 'running') return;
+        jobContext.status = 'canceled';
+        Promise.all(onCancel.map((x) => x()));
+      };
+      const result = fn(jobContext);
+      result.finally(() => {
+        if (jobContext.status === 'canceled') return;
+        jobContext.status = 'finished';
+      });
+      return { result, cancel };
+    },
     options: {
       shouldWait: false,
       lockExpiration: 5 * 60,

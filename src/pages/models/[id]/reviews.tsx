@@ -158,7 +158,6 @@ export default function ModelReviews() {
         modelName={model?.name}
         modelVersionId={modelVersionId}
         resourceReview={currentUserReview}
-        showNoAccessAlert
       />
     </Stack>
   );

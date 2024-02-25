@@ -40,13 +40,6 @@ export const articleNotifications = createNotificationProcessor({
             am."articleId" = ANY (SELECT json_array_elements('${affectedJson}'::json)::text::integer)
             AND "viewCount" > ${articleViewMilestones[0]}
             AND timeframe = 'AllTime'
-        ), prior_milestones AS (
-          SELECT DISTINCT
-            article_id,
-            cast(details->'viewCount' as int) as view_count
-          FROM "Notification"
-          JOIN val ON article_id = cast(details->'articleId' as int)
-          WHERE type = 'article-view-milestone'
         ), milestone AS (
           SELECT
             a."userId" "ownerId",
@@ -58,18 +51,17 @@ export const articleNotifications = createNotificationProcessor({
           FROM val
           JOIN "Article" a on a.id = val.article_id
           JOIN milestones ms ON ms.value <= val.view_count
-          LEFT JOIN prior_milestones pm ON pm.view_count >= ms.value AND pm.article_id = val.article_id
-          WHERE pm.article_id IS NULL
         )
         INSERT INTO "Notification"("id", "userId", "type", "details", "category")
         SELECT
-          REPLACE(gen_random_uuid()::text, '-', ''),
+          CONCAT('milestone:article-view:', details->>'articleId', ':', details->>'viewCount'),
           "ownerId"    "userId",
           'article-view-milestone' "type",
           details,
           '${category}'::"NotificationCategory" "category"
         FROM milestone
-        WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'article-view-milestone');
+        WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'article-view-milestone')
+        ON CONFLICT (id) DO NOTHING;
       `;
     },
   },
@@ -102,13 +94,6 @@ export const articleNotifications = createNotificationProcessor({
         WHERE
           timeframe = 'AllTime'
           AND "favoriteCount" > ${articleLikeMilestones[0]}
-      ), prior_milestones AS (
-        SELECT DISTINCT
-          article_id,
-          cast(details->'favoriteCount' as int) favorite_count
-        FROM "Notification"
-        JOIN affected ON article_id = cast(details->'articleId' as int)
-        WHERE type = 'article-like-milestone'
       ), milestone AS (
         SELECT
           a."userId" "ownerId",
@@ -120,18 +105,17 @@ export const articleNotifications = createNotificationProcessor({
         FROM val
         JOIN "Article" a on a.id = val.article_id
         JOIN milestones ms ON ms.value <= val.favorite_count
-        LEFT JOIN prior_milestones pm ON pm.favorite_count >= ms.value AND pm.article_id = val.article_id
-        WHERE pm.article_id IS NULL
       )
       INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
-        REPLACE(gen_random_uuid()::text, '-', ''),
+        CONCAT('milestone:article-like:', details->>'articleId', ':', details->>'favoriteCount'),
         "ownerId"    "userId",
         'article-like-milestone' "type",
         details,
         '${category}'::"NotificationCategory" "category"
       FROM milestone
-      WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'article-like-milestone');
+      WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'article-like-milestone')
+      ON CONFLICT (id) DO NOTHING;
     `,
   },
   'new-article-from-following': {

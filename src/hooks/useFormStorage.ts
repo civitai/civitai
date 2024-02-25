@@ -27,25 +27,21 @@ export function useFormStorage<TSchema extends z.AnyZodObject | z.Schema, TConte
 }) {
   const debouncer = useDebouncer(timeout);
 
-  const subscriptionRef = useRef<Subscription>();
-  const createSubscription = () => {
-    subscriptionRef.current = form.watch((value, info) => {
+  useEffect(() => {
+    const subscription = form.watch((value, info) => {
       const watchedValue = watch(value as any, info);
       if (!watchedValue) return;
       debouncer(() => {
         localStorage.setItem(key, JSON.stringify(watchedValue));
       });
     });
-  };
 
-  useEffect(() => {
     /**
      * assign a value to subscription immediately if there is no localstorage value
      * or assign a value to subscription after the user has closed the `restore-confirm` modal
      */
     const storedValue = localStorage.getItem(key);
-    if (!storedValue) createSubscription();
-    else {
+    if (storedValue) {
       const initialValue = JSON.parse(storedValue);
       openConfirmModal({
         modalId: 'restore-confirm',
@@ -54,7 +50,7 @@ export function useFormStorage<TSchema extends z.AnyZodObject | z.Schema, TConte
         children: 'Would you like to restore the unsaved changes from your previous session',
         labels: { cancel: `No`, confirm: `Yes` },
         closeOnConfirm: true,
-        onClose: createSubscription,
+        onClose: () => localStorage.removeItem(key),
         onConfirm: () => {
           const result = schema.safeParse({ ...form.getValues(), ...initialValue });
           if (!result.success)
@@ -64,7 +60,7 @@ export function useFormStorage<TSchema extends z.AnyZodObject | z.Schema, TConte
       });
     }
 
-    return () => subscriptionRef.current?.unsubscribe();
+    return () => subscription.unsubscribe();
   }, [key]);
 
   return useCallback(() => localStorage.removeItem(key), [key]);

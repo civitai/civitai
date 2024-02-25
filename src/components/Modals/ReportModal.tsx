@@ -193,7 +193,6 @@ const { openModal, Modal } = createContextModal<{ entityType: ReportEntity; enti
                 );
               }
               await queryUtils.article.getInfinite.invalidate();
-              await queryUtils.article.getByCategory.invalidate();
               break;
             case ReportEntity.Bounty:
               if (variables.reason === ReportReason.NSFW) {

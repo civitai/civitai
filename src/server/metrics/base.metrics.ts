@@ -3,7 +3,8 @@ import { PrismaClient } from '@prisma/client';
 import dayjs from 'dayjs';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbWrite } from '~/server/db/client';
-import { getJobDate } from '~/server/jobs/job';
+import { AugmentedPool, pgDbWrite } from '~/server/db/pgDb';
+import { getJobDate, JobContext } from '~/server/jobs/job';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 
 const DEFAULT_UPDATE_INTERVAL = 60 * 1000;
@@ -24,10 +25,10 @@ export function createMetricProcessor({
 }) {
   return {
     name,
-    async update() {
+    async update(jobContext: JobContext) {
       if (!clickhouse) return;
       const [lastUpdate, setLastUpdate] = await getJobDate(`metric:${name.toLowerCase()}`);
-      const ctx = { db: dbWrite, ch: clickhouse, lastUpdate };
+      const ctx = { db: dbWrite, ch: clickhouse, pg: pgDbWrite, lastUpdate, jobContext };
 
       // Clear if first run of the day
       const isFirstOfDay = lastUpdate.getDate() !== new Date().getDate();
@@ -50,7 +51,7 @@ export function createMetricProcessor({
         where: { type: name, createdAt: { lt: new Date() } },
       });
     },
-    async refreshRank() {
+    async refreshRank(jobContext: JobContext) {
       if (!rank || !clickhouse) return;
 
       // Check if rank refresh is needed
@@ -63,7 +64,7 @@ export function createMetricProcessor({
       if (!shouldUpdateRank || !rankUpdateAllowed) return;
 
       // Run rank refresh
-      const ctx = { db: dbWrite, ch: clickhouse, lastUpdate };
+      const ctx = { db: dbWrite, pg: pgDbWrite, ch: clickhouse, lastUpdate, jobContext };
       if ('refresh' in rank) await rank.refresh(ctx);
       else await recreateRankTable(rank.table, rank.primaryKey, rank.indexes);
 
@@ -115,8 +116,10 @@ async function recreateRankTable(rankTable: string, primaryKey: string, indexes:
 
 export type MetricProcessorRunContext = {
   db: PrismaClient;
+  pg: AugmentedPool;
   ch: ClickHouseClient;
   lastUpdate: Date;
+  jobContext: JobContext;
 };
 
 type MetricRankOptions =

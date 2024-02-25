@@ -7,7 +7,7 @@ import { TableOfContent } from '~/components/Article/Detail/TableOfContent';
 import { CreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { useHeadingsData } from '~/hooks/useHeadingsData';
 import { hideMobile } from '~/libs/sx-helpers';
-import { ArticleGetById } from '~/types/router';
+import type { ArticleGetById } from '~/server/services/article.service';
 
 const useStyles = createStyles((theme) => ({
   sidebar: {

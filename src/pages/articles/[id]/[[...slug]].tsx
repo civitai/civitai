@@ -11,7 +11,7 @@ import {
   Text,
   Title,
 } from '@mantine/core';
-import { ArticleEngagementType, Availability } from '@prisma/client';
+import { ArticleEngagementType, Availability, NsfwLevel } from '@prisma/client';
 import { IconBolt, IconBookmark, IconShare3 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
 import { InferGetServerSidePropsType } from 'next';
@@ -51,6 +51,8 @@ import { removeTags, slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
+import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
+import { MediaHash } from '~/components/ImageHash/ImageHash';
 
 const querySchema = z.object({
   id: z.preprocess(parseNumericString, z.number()),
@@ -176,6 +178,9 @@ export default function ArticleDetailsPage({
     </Group>
   );
 
+  const coverImage = article.coverImage;
+  const maxWidth = 1320;
+
   return (
     <>
       {meta}
@@ -241,11 +246,57 @@ export default function ArticleDetailsPage({
             <Stack spacing="xs">
               <Box
                 sx={(theme) => ({
+                  position: 'relative',
                   height: 'calc(100vh / 3)',
-                  '& > img': { height: '100%', objectFit: 'cover', borderRadius: theme.radius.md },
+                  '& > img, & > .hashWrapper': {
+                    height: '100%',
+                    objectFit: 'cover',
+                    borderRadius: theme.radius.md,
+                  },
                 })}
               >
-                <EdgeMedia src={article.cover} width={1320} />
+                {/* TODO.Briant - ImageGuard */}
+                {coverImage && (
+                  <ImageGuard
+                    connect={{ entityId: article.id, entityType: 'article' }}
+                    images={[coverImage]}
+                    render={(image) => {
+                      const width = image.width ?? maxWidth;
+                      return (
+                        <>
+                          <ImageGuard.ToggleConnect position="top-left" />
+                          <ImageGuard.Report />
+                          <ImageGuard.Content>
+                            {({ safe }) =>
+                              !safe ? (
+                                <div
+                                  className="hashWrapper"
+                                  style={{
+                                    position: 'relative',
+                                    // aspectRatio: (image.width ?? 0) / (image.height ?? 0),
+                                    // maxWidth: image.width ?? undefined,
+                                    // maxHeight: image.height ?? undefined,
+                                  }}
+                                >
+                                  <MediaHash {...image} />
+                                </div>
+                              ) : (
+                                <EdgeMedia
+                                  src={image.url}
+                                  name={image.name}
+                                  alt={article.title}
+                                  type={image.type}
+                                  width={maxWidth}
+                                  anim={safe}
+                                />
+                              )
+                            }
+                          </ImageGuard.Content>
+                        </>
+                      );
+                    }}
+                  />
+                )}
               </Box>
               {article.content && (
                 <article>

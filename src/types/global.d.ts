@@ -97,6 +97,10 @@ declare global {
 
   type ImageUploadResponse = { id: string; uploadURL: string } | { error: string };
 
+  type ElementDataAttributes = {
+    [key: `data-${string}`]: string;
+  };
+
   interface Window {
     logSignal: (target: string) => void;
     Twitch: any;
