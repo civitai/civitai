@@ -65,7 +65,7 @@ export function ModelCategoryCard({
   data: AssociatedResourceModelCardData;
   height: number;
 }) {
-  const { classes, theme, cx } = useStyles();
+  const { classes, cx } = useStyles();
   const router = useRouter();
   const modelId = router.query.model ? Number(router.query.model) : undefined;
   const currentUser = useCurrentUser();
@@ -73,7 +73,7 @@ export function ModelCategoryCard({
 
   const [loading, setLoading] = useState(false);
 
-  const { id, images, name, rank, user, locked, earlyAccessDeadline } = data;
+  const { id, images, name, rank, user, earlyAccessDeadline } = data;
   const image = images[0];
   const inEarlyAccess = earlyAccessDeadline && isFutureDate(earlyAccessDeadline);
   const isNew = data.publishedAt && data.publishedAt > aDayAgo;

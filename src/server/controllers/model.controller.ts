@@ -1178,8 +1178,8 @@ export const getAssociatedResourcesCardDataHandler = async ({
           hashes: hashes.map((hash) => hash.hash.toLowerCase()),
           rank: {
             downloadCount: rank?.downloadCountAllTime ?? 0,
-           favoriteCount: rank?.[`favoriteCount${period}`] ?? 0,
-           thumbsUpCount: rank?.[`thumbsUpCount${period}`] ?? 0,
+            favoriteCount: rank?.[`favoriteCount${period}`] ?? 0,
+            thumbsUpCount: rank?.[`thumbsUpCount${period}`] ?? 0,
             commentCount: rank?.[`commentCount${period}`] ?? 0,
             ratingCount: rank?.[`ratingCount${period}`] ?? 0,
             rating: rank?.[`rating${period}`] ?? 0,

@@ -691,11 +691,11 @@ async function updateTippedBuzzMetrics({ db, lastUpdate, jobContext }: MetricPro
 
   return modelIds;
 }
-            
+
 // TODO.justin: confirm changes here
 async function updateModelMetrics({ pg, lastUpdate, jobContext }: MetricProcessorRunContext) {
   const rowsQuery = await pg.cancellableQuery(Prisma.sql`
-    INSERT INTO "ModelMetric" ("modelId", timeframe, "downloadCount", rating, "ratingCount", "favoriteCount", "commentCount", "imageCount", "collectedCount", "tippedCount", "tippedAmountCount", "generationCount")
+    INSERT INTO "ModelMetric" ("modelId", timeframe, "downloadCount", rating, "ratingCount", "favoriteCount", "thumbsUpCount", "thumbsDownCount", "commentCount", "imageCount", "collectedCount", "tippedCount", "tippedAmountCount", "generationCount")
     WITH affected AS (
       SELECT DISTINCT mv."modelId"
       FROM "ModelVersionMetric" mvm

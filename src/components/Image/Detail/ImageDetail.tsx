@@ -3,6 +3,7 @@ import {
   Box,
   Button,
   Card,
+  CloseButton,
   createStyles,
   Divider,
   Group,

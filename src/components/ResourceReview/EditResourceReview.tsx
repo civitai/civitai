@@ -1,4 +1,4 @@
-import { Alert, Button, Card, Divider, Group, Stack, Text } from '@mantine/core';
+import { Button, Card, Divider, Group, Stack, Text } from '@mantine/core';
 import { IconChevronDown } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
@@ -9,7 +9,6 @@ import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon
 import { Form, InputRTE, useForm } from '~/libs/form';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
-import { ResourceAccessWrap } from '../Access/ResourceAccessWrap';
 
 type EditResourceReviewProps = {
   id?: number | null;
@@ -104,128 +103,108 @@ export function EditResourceReview({
   const isThumbsDown = recommended === false;
 
   return (
-    <ResourceAccessWrap
-      entityType="ModelVersion"
-      entityId={modelVersionId}
-      fallback={
-        modelName ? (
-          <Alert>
-            <Text>
-              You cannot review the model{' '}
-              <Text weight="bold" component="span">
-                {modelName} {modelVersionName ? `(${modelVersionName})` : ''}
-              </Text>{' '}
-              as you have no access to it
-            </Text>
-          </Alert>
-        ) : (
-          <Alert>You cannot review a resource you have no access to</Alert>
-        )
-      }
-    >
-      <Card p={8} withBorder>
-        <Stack spacing="xs">
-          {modelId && modelVersionId ? (
-            <Stack spacing={4}>
-              <Group align="center" position="apart">
-                <Link href={`/models/${modelId}?modelVersionId=${modelVersionId}`} target="_blank">
-                  <Stack spacing={0}>
-                    {modelName && <Text lineClamp={1}>{modelName}</Text>}
-                    {modelVersionName && (
-                      <Text lineClamp={1} size="xs" color="dimmed">
-                        {modelVersionName}
-                      </Text>
-                    )}
-                  </Stack>
-                </Link>
-              </Group>
-              {createdAt && (
-                <Text size="xs" color="dimmed">
-                  Reviewed <DaysFromNow date={createdAt} />
-                </Text>
-              )}
+    <Card p={8} withBorder>
+      <Stack spacing="xs">
+        {modelId && modelVersionId ? (
+          <Stack spacing={4}>
+            <Group align="center" position="apart">
+              <Link href={`/models/${modelId}?modelVersionId=${modelVersionId}`} target="_blank">
+                <Stack spacing={0}>
+                  {modelName && <Text lineClamp={1}>{modelName}</Text>}
+                  {modelVersionName && (
+                    <Text lineClamp={1} size="xs" color="dimmed">
+                      {modelVersionName}
+                    </Text>
+                  )}
+                </Stack>
+              </Link>
+            </Group>
+            {createdAt && (
+              <Text size="xs" color="dimmed">
+                Reviewed <DaysFromNow date={createdAt} />
+              </Text>
+            )}
 
-              <Button.Group style={{ gap: 4 }}>
-                <Button
-                  variant={isThumbsUp ? 'light' : 'filled'}
-                  color={isThumbsUp ? 'success' : 'dark.4'}
-                  radius="md"
-                  loading={isLoading}
-                  onClick={() => (!isThumbsUp ? handleRatingChange(true) : undefined)}
-                  fullWidth
-                >
-                  <Text color="success.5" size="xs" inline>
-                    <Group spacing={4} noWrap>
-                      <ThumbsUpIcon size={20} filled={isThumbsUp} />{' '}
-                      {abbreviateNumber(thumbsUpCount ?? 0)}
+            <Button.Group style={{ gap: 4 }}>
+              <Button
+                variant={isThumbsUp ? 'light' : 'filled'}
+                color={isThumbsUp ? 'success' : 'dark.4'}
+                radius="md"
+                loading={isLoading}
+                onClick={() => (!isThumbsUp ? handleRatingChange(true) : undefined)}
+                fullWidth
+              >
+                <Text color="success.5" size="xs" inline>
+                  <Group spacing={4} noWrap>
+                    <ThumbsUpIcon size={20} filled={isThumbsUp} />{' '}
+                    {abbreviateNumber(thumbsUpCount ?? 0)}
+                  </Group>
+                </Text>
+              </Button>
+              <Button
+                variant={isThumbsDown ? 'light' : 'filled'}
+                color={isThumbsDown ? 'red' : 'dark.4'}
+                radius="md"
+                loading={isLoading}
+                onClick={() => (!isThumbsDown ? handleRatingChange(false) : undefined)}
+                fullWidth
+              >
+                <Text color="red" inline>
+                  <ThumbsDownIcon size={20} filled={isThumbsDown} />
+                </Text>
+              </Button>
+            </Button.Group>
+          </Stack>
+        ) : (
+          <Text>{name}</Text>
+        )}
+        {id && (
+          <>
+            <Card.Section>
+              <Divider />
+            </Card.Section>
+            <Stack>
+              {!editDetail ? (
+                <Text variant="link" onClick={toggleEditDetail} size="sm">
+                  <Group spacing={4} sx={{ cursor: 'pointer' }}>
+                    <IconChevronDown size={16} />{' '}
+                    <span>{!details ? 'Add' : 'Edit'} Review Comments</span>
+                  </Group>
+                </Text>
+              ) : (
+                <Form form={form} onSubmit={handleSubmit}>
+                  <Stack spacing="xs">
+                    <InputRTE
+                      name="details"
+                      includeControls={['formatting', 'link']}
+                      editorSize="sm"
+                      placeholder={`What did you think of ${modelName ?? 'this resource'}?`}
+                      styles={{ content: { maxHeight: 500, overflowY: 'auto' } }}
+                      hideToolbar
+                      autoFocus
+                    />
+                    <Group grow spacing="xs">
+                      <Button
+                        size="xs"
+                        variant="default"
+                        onClick={() => {
+                          toggleEditDetail();
+                          onCancel?.();
+                        }}
+                      >
+                        Cancel
+                      </Button>
+                      <Button size="xs" type="submit" loading={isLoading} disabled={!isDirty}>
+                        Save
+                      </Button>
                     </Group>
-                  </Text>
-                </Button>
-                <Button
-                  variant={isThumbsDown ? 'light' : 'filled'}
-                  color={isThumbsDown ? 'red' : 'dark.4'}
-                  radius="md"
-                  loading={isLoading}
-                  onClick={() => (!isThumbsDown ? handleRatingChange(false) : undefined)}
-                  fullWidth
-                >
-                  <Text color="red" inline>
-                    <ThumbsDownIcon size={20} filled={isThumbsDown} />
-                  </Text>
-                </Button>
-              </Button.Group>
+                  </Stack>
+                </Form>
+              )}
             </Stack>
-          ) : (
-            <Text>{name}</Text>
-          )}
-          {id && (
-            <>
-              <Card.Section>
-                <Divider />
-              </Card.Section>
-              <Stack>
-                {!editDetail ? (
-                  <Text variant="link" onClick={toggleEditDetail} size="sm">
-                    <Group spacing={4} sx={{ cursor: 'pointer' }}>
-                      <IconChevronDown size={16} />{' '}
-                      <span>{!details ? 'Add' : 'Edit'} Review Comments</span>
-                    </Group>
-                  </Text>
-                ) : (
-                  <Form form={form} onSubmit={handleSubmit}>
-                    <Stack spacing="xs">
-                      <InputRTE
-                        name="details"
-                        includeControls={['formatting', 'link']}
-                        editorSize="sm"
-                        placeholder={`What did you think of ${modelName ?? 'this resource'}?`}
-                        styles={{ content: { maxHeight: 500, overflowY: 'auto' } }}
-                        hideToolbar
-                        autoFocus
-                      />
-                      <Group grow spacing="xs">
-                        <Button
-                          size="xs"
-                          variant="default"
-                          onClick={() => {
-                            toggleEditDetail();
-                            onCancel?.();
-                          }}
-                        >
-                          Cancel
-                        </Button>
-                        <Button size="xs" type="submit" loading={isLoading} disabled={!isDirty}>
-                          Save
-                        </Button>
-                      </Group>
-                    </Stack>
-                  </Form>
-                )}
-              </Stack>
-            </>
-          )}
-        </Stack>
-      </Card>
-    </ResourceAccessWrap>
+          </>
+        )}
+      </Stack>
+    </Card>
   );
 }
