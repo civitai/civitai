@@ -687,7 +687,7 @@ export function AppHeader({
   );
 
   const createMenu = !isMuted && (
-    <Menu position="bottom" offset={5} withArrow trigger="hover">
+    <Menu position="bottom" offset={5} withArrow trigger="hover" openDelay={200}>
       <Menu.Target>
         {features.imageGeneration ? (
           <Group spacing={0} noWrap className="hide-mobile">

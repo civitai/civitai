@@ -90,6 +90,7 @@ import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { Adunit } from '~/components/Ads/AdUnit';
 import { adsRegistry } from '~/components/Ads/adsRegistry';
+import { useLocalStorage } from '@mantine/hooks';
 
 export function ModelVersionDetails({
   model,
@@ -107,6 +108,10 @@ export function ModelVersionDetails({
   // TODO.manuel: use control ref to display the show more button
   const controlRef = useRef<HTMLButtonElement | null>(null);
   const [scheduleModalOpened, setScheduleModalOpened] = useState(false);
+  const [detailAccordions, setDetailAccordions] = useLocalStorage({
+    key: 'model-version-details-accordions',
+    defaultValue: ['version-details'],
+  });
 
   const primaryFile = getPrimaryFile(version.files, {
     metadata: user?.filePreferences,
@@ -658,7 +663,8 @@ export function ModelVersionDetails({
           <Accordion
             variant="separated"
             multiple
-            defaultValue={['version-details']}
+            onChange={setDetailAccordions}
+            value={detailAccordions}
             styles={(theme) => ({
               content: { padding: 0 },
               item: {
