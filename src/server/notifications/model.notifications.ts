@@ -200,7 +200,7 @@ export const modelNotifications = createNotificationProcessor({
     category: 'Update',
     prepareMessage: ({ details }) => ({
       message: `${details.modelName}: ${details.versionName} has left Early Access!`,
-      url: `/models/${details.modelId}`,
+      url: `/models/${details.modelId}?modelVersionId=${details.versionId}`,
     }),
     prepareQuery: ({ lastSent, category }) => `
       -- early access complete
