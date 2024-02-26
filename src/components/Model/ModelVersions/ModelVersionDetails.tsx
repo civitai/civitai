@@ -64,7 +64,12 @@ import { TrackView } from '~/components/TrackView/TrackView';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { baseModelLicenses, CAROUSEL_LIMIT, ModelFileType } from '~/server/common/constants';
+import {
+  baseModelLicenses,
+  CAROUSEL_LIMIT,
+  constants,
+  ModelFileType,
+} from '~/server/common/constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { unpublishReasons } from '~/server/common/moderation-helpers';
 import { getFileDisplayName, getPrimaryFile } from '~/server/utils/model-helpers';
@@ -83,8 +88,6 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
-import { ContentPolicyLink } from '~/components/ContentPolicyLink/ContentPolicyLink';
-import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { Adunit } from '~/components/Ads/AdUnit';
 import { adsRegistry } from '~/components/Ads/adsRegistry';
 
@@ -450,6 +453,15 @@ export function ModelVersionDetails({
       : `Removal reason: ${version.meta?.customMessage}.` ?? '';
   const license = baseModelLicenses[version.baseModel];
   const onSite = !!version.trainingStatus;
+  const showAddendumLicense =
+    constants.supportedBaseModelAddendums.includes(version.baseModel as 'SD 1.5' | 'SDXL 1.0') &&
+    (!model.allowCommercialUse.length ||
+      model.allowCommercialUse.some((permission) =>
+        ['None', 'Image', 'RentCivit', 'Rent', 'Sell'].includes(permission)
+      ) ||
+      !model.allowNoCredit ||
+      !model.allowDerivatives ||
+      model.allowDifferentLicense);
 
   return (
     <ContainerGrid gutter="xl">
@@ -898,6 +910,19 @@ export function ModelVersionDetails({
                     >
                       {license.name}
                     </Text>
+                  )}
+                  {showAddendumLicense && (
+                    <Link href={`/models/license/${version.id}`} passHref>
+                      <Anchor
+                        variant="text"
+                        td="underline"
+                        size="xs"
+                        color="dimmed"
+                        sx={{ lineHeight: 1.1 }}
+                      >
+                        Addendum
+                      </Anchor>
+                    </Link>
                   )}
                   {model.licenses.map(({ url, name }) => (
                     <Text

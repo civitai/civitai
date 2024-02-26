@@ -10,6 +10,7 @@ import {
   toggleNotifyEarlyAccessHandler,
   unpublishModelVersionHandler,
   upsertModelVersionHandler,
+  getVersionLicenseHandler,
 } from '~/server/controllers/model-version.controller';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
@@ -107,4 +108,5 @@ export const modelVersionRouter = router({
   modelVersionsGeneratedImagesOnTimeframe: protectedProcedure
     .input(modelVersionsGeneratedImagesOnTimeframeSchema)
     .query(modelVersionGeneratedImagesOnTimeframeHandler),
+  getLicense: publicProcedure.input(getByIdSchema).query(getVersionLicenseHandler),
 });
