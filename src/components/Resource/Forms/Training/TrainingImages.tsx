@@ -34,7 +34,6 @@ import {
   IconChevronDown,
   IconReplace,
   IconSearch,
-  IconTags,
   IconTrash,
   IconX,
 } from '@tabler/icons-react';
@@ -43,7 +42,6 @@ import { isEqual } from 'lodash-es';
 import React, { useEffect, useState } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
-import { AutoTagModal } from '~/components/Resource/Forms/Training/TrainingAutoTagModal';
 import { goBack, goNext } from '~/components/Resource/Forms/Training/TrainingCommon';
 import { TrainingEditTagsModal } from '~/components/Resource/Forms/Training/TrainingEditTagsModal';
 import { UploadType } from '~/server/common/enums';
@@ -407,22 +405,12 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
 
   const submitTagMutation = trpc.training.autoTag.useMutation({
     // TODO allow people to rerun failed images
-    async onSuccess() {
-      showSuccessNotification({
-        title: 'Images auto-tagged successfully!',
-        message: `Tagged ${autoCaptioning.successes} image${
-          autoCaptioning.successes === 1 ? '' : 's'
-        }. Failures: ${autoCaptioning.fails.length}`,
-      });
-    },
     onError(error) {
       showErrorNotification({
         error: new Error(error.message),
         title: 'Failed to auto-tag',
         autoClose: false,
       });
-    },
-    onSettled() {
       setAutoCaptioning(model.id, { ...defaultTrainingState.autoCaptioning });
     },
   });
@@ -683,25 +671,25 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                   {`${totalCaptioned} / ${imageList.length} captioned`}
                 </Text>
               </Paper>
-              <Button
-                compact
-                disabled={autoCaptioning.isRunning}
-                onClick={() =>
-                  dialogStore.trigger({
-                    component: AutoTagModal,
-                    props: {
-                      imageList,
-                      modelId: model.id,
-                      setAutoCaptioning,
-                    },
-                  })
-                }
-              >
-                <IconTags size={16} />
-                <Text inline ml={4}>
-                  Auto Tag
-                </Text>
-              </Button>
+              {/*<Button*/}
+              {/*  compact*/}
+              {/*  disabled={autoCaptioning.isRunning}*/}
+              {/*  onClick={() =>*/}
+              {/*    dialogStore.trigger({*/}
+              {/*      component: AutoTagModal,*/}
+              {/*      props: {*/}
+              {/*        imageList,*/}
+              {/*        modelId: model.id,*/}
+              {/*        setAutoCaptioning,*/}
+              {/*      },*/}
+              {/*    })*/}
+              {/*  }*/}
+              {/*>*/}
+              {/*  <IconTags size={16} />*/}
+              {/*  <Text inline ml={4}>*/}
+              {/*    Auto Tag*/}
+              {/*  </Text>*/}
+              {/*</Button>*/}
               {/*perhaps open a modal here to confirm*/}
               <Button
                 compact
@@ -738,20 +726,31 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
           >
             <Stack>
               <Text>Running auto-tagging...</Text>
-              <Progress
-                value={
-                  ((autoCaptioning.successes + autoCaptioning.fails.length) /
-                    autoCaptioning.total) *
-                  100
-                }
-                label={`${autoCaptioning.successes + autoCaptioning.fails.length} / ${
-                  autoCaptioning.total
-                }`}
-                size="xl"
-                radius="xl"
-                striped
-                animate
-              />
+              {autoCaptioning.successes + autoCaptioning.fails.length > 0 ? (
+                <Progress
+                  value={
+                    ((autoCaptioning.successes + autoCaptioning.fails.length) /
+                      autoCaptioning.total) *
+                    100
+                  }
+                  label={`${autoCaptioning.successes + autoCaptioning.fails.length} / ${
+                    autoCaptioning.total
+                  }`}
+                  size="xl"
+                  radius="xl"
+                  striped
+                  animate
+                />
+              ) : (
+                <Progress
+                  value={100}
+                  label="Waiting for data..."
+                  size="xl"
+                  radius="xl"
+                  striped
+                  animate
+                />
+              )}
             </Stack>
           </Paper>
         )}

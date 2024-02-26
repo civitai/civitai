@@ -301,11 +301,16 @@ export type AutoTagResponse = {
   };
 };
 
-const sendTagSignal = async (userId: number, modelId: number, dataToSend: AutoTagResponse) => {
+const sendTagSignal = async (
+  userId: number,
+  modelId: number,
+  dataToSend: AutoTagResponse,
+  isDone?: boolean
+) => {
   await fetch(`${env.SIGNALS_ENDPOINT}/users/${userId}/signals/${SignalMessages.TrainingAutoTag}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ modelId, data: dataToSend }),
+    body: JSON.stringify({ modelId, data: dataToSend, isDone }),
   })
     .catch
     // should we have a warning if this fails?
@@ -320,6 +325,12 @@ export const autoTagHandler = async ({
   userId: number;
 }) => {
   const { url: getUrl } = await getGetUrl(url);
+  const { key, bucket } = parseKey(url);
+
+  if (!env.MEDIA_TAGGER_ENDPOINT) {
+    deleteObject(bucket, key).catch();
+    throw throwBadRequestError('Could not complete auto-tagging - please try again.');
+  }
 
   const response = await fetch(`${env.MEDIA_TAGGER_ENDPOINT}/tagzip/`, {
     method: 'POST',
@@ -328,6 +339,7 @@ export const autoTagHandler = async ({
   });
 
   if (!response.ok || !response.body) {
+    deleteObject(bucket, key).catch();
     throw throwBadRequestError('Could not complete auto-tagging - please try again.');
   }
 
@@ -335,32 +347,34 @@ export const autoTagHandler = async ({
   const decoder = new TextDecoder('utf-8');
 
   const maxData = 5;
-  let dataToSend: AutoTagResponse = {};
 
-  const { key, bucket } = parseKey(url);
+  let dataToSend: AutoTagResponse = {};
+  let tmpBuffer = '';
 
   while (true) {
     try {
       const { value, done } = await reader.read();
       if (done) {
-        if (Object.keys(dataToSend).length > 0) {
-          await sendTagSignal(userId, modelId, dataToSend);
-          dataToSend = {};
-        }
+        await sendTagSignal(userId, modelId, dataToSend, true);
+        dataToSend = {};
         break;
       }
 
-      const str = decoder.decode(value);
-      const tagData: TagDataResponse = JSON.parse(str);
-      const tagList = Object.entries(tagData).map(([f, t]) => ({
-        [f]: t.wdTagger.tags,
-      }));
-      const returnData: AutoTagResponse = Object.assign({}, ...tagList);
+      // const lines = (tmpBuffer + decoder.decode(value, { stream: true })).split(/[\r\n](?=.)/);
+      const lines = (tmpBuffer + decoder.decode(value)).split(/[\r\n]/);
 
-      dataToSend = { ...dataToSend, ...returnData };
-      if (Object.keys(dataToSend).length >= maxData) {
-        await sendTagSignal(userId, modelId, dataToSend);
-        dataToSend = {};
+      tmpBuffer = lines.pop() ?? '';
+      for (const l of lines) {
+        const tagData: TagDataResponse = JSON.parse(l);
+        const tagList = Object.entries(tagData).map(([f, t]) => ({
+          [f]: t.wdTagger.tags,
+        }));
+        const returnData: AutoTagResponse = Object.assign({}, ...tagList);
+        dataToSend = { ...dataToSend, ...returnData };
+        if (Object.keys(dataToSend).length >= maxData) {
+          await sendTagSignal(userId, modelId, dataToSend);
+          dataToSend = {};
+        }
       }
     } catch (e) {
       deleteObject(bucket, key).catch();

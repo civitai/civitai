@@ -11,6 +11,7 @@ import { TrainingUpdateSignalSchema } from '~/server/schema/signals.schema';
 import { AutoTagResponse } from '~/server/services/training.service';
 import { defaultTrainingState, trainingStore, useTrainingImageStore } from '~/store/training.store';
 import { MyTrainingModelGetAll } from '~/types/router';
+import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 export const basePath = '/models/train';
@@ -81,7 +82,15 @@ export const useTrainingSignals = () => {
 };
 
 export const useTrainingAutoTagSignals = () => {
-  const onUpdate = ({ modelId, data }: { modelId: number; data: AutoTagResponse }) => {
+  const onUpdate = ({
+    modelId,
+    data,
+    isDone,
+  }: {
+    modelId: number;
+    data: AutoTagResponse;
+    isDone?: boolean;
+  }) => {
     const { updateImage, setAutoCaptioning } = trainingStore;
 
     Object.entries(data).forEach(([k, v]) => {
@@ -114,6 +123,18 @@ export const useTrainingAutoTagSignals = () => {
         setAutoCaptioning(modelId, { ...autoCaptioning, successes: autoCaptioning.successes + 1 });
       }
     });
+
+    if (isDone) {
+      const storeState = useTrainingImageStore.getState();
+      const { autoCaptioning } = storeState[modelId] ?? { ...defaultTrainingState };
+      showSuccessNotification({
+        title: 'Images auto-tagged successfully!',
+        message: `Tagged ${autoCaptioning.successes} image${
+          autoCaptioning.successes === 1 ? '' : 's'
+        }. Failures: ${autoCaptioning.fails.length}`,
+      });
+      setAutoCaptioning(modelId, { ...defaultTrainingState.autoCaptioning });
+    }
   };
 
   useSignalConnection(SignalMessages.TrainingAutoTag, onUpdate);
