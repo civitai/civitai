@@ -26,19 +26,15 @@ export const imageMetrics = createMetricProcessor({
 
     // Get the metric tasks
     //---------------------------------------
-    // Get the tasks for reactions, comments, collections, and buzz
-    const tasks = (await Promise.all([
+    const taskBatches = await Promise.all([
       getReactionTasks(imageCtx),
       getCommentTasks(imageCtx),
       getCollectionTasks(imageCtx),
       getBuzzTasks(imageCtx),
-    ]).then((x) => x.flat())) as Task[];
-    log('imageMetrics update', tasks.length, 'tasks');
-    await limitConcurrency(tasks, 5);
-
-    // Get the tasks for views
-    const viewTasks = await getViewTasks(imageCtx);
-    await limitConcurrency(viewTasks, 5);
+      getViewTasks(imageCtx),
+    ]);
+    log('imageMetrics update', taskBatches.flat().length, 'tasks');
+    for (const tasks of taskBatches) await limitConcurrency(tasks, 5);
 
     // Update the search index
     //---------------------------------------
