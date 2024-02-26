@@ -29,9 +29,17 @@ export const getPaginatedPurchasableRewards = async (
   if (input.mode === PurchasableRewardViewMode.Active) {
     // Only show active rewards:
     where.archived = false;
-    where.availableFrom = { lte: new Date() };
-    where.availableTo = { gte: new Date() };
-    where.codes = { some: {} };
+    where.OR = [
+      {
+        availableFrom: null,
+        availableTo: null,
+      },
+      {
+        availableFrom: { lte: new Date() },
+        availableTo: { gte: new Date() },
+      },
+    ];
+    where.codes = { isEmpty: false };
   }
 
   if (input.mode === PurchasableRewardViewMode.History) {
@@ -43,7 +51,9 @@ export const getPaginatedPurchasableRewards = async (
         availableTo: { lt: new Date() },
       },
       {
-        codes: { none: {} },
+        codes: {
+          isEmpty: true,
+        },
       },
     ];
   }
@@ -88,6 +98,46 @@ export const getPaginatedPurchasableRewardsModerator = async (
   const { take, skip } = getPagination(limit, page);
 
   const where: Prisma.PurchasableRewardFindManyArgs['where'] = {};
+
+  if (input.mode === PurchasableRewardViewMode.Active) {
+    // Only show active rewards:
+    where.archived = false;
+    where.OR = [
+      {
+        availableFrom: null,
+        availableTo: null,
+      },
+      {
+        // For moderators, something in the future is still active to be clear.
+        availableTo: { gte: new Date() },
+      },
+    ];
+    where.codes = { isEmpty: false };
+  }
+
+  if (input.mode === PurchasableRewardViewMode.History) {
+    where.OR = [
+      {
+        archived: true,
+      },
+      {
+        availableTo: { lt: new Date() },
+      },
+      {
+        codes: {
+          isEmpty: true,
+        },
+      },
+    ];
+  }
+
+  if (input.mode === PurchasableRewardViewMode.Purchased) {
+    where.purchases = {
+      some: {},
+    };
+  }
+
+  if (input.archived !== undefined) where.archived = input.archived;
 
   const items = await dbRead.purchasableReward.findMany({
     where,

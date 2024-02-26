@@ -25,6 +25,7 @@ import {
 } from '@mantine/core';
 import { IconCheck, IconCircleCheckFilled, IconCloudOff, IconGift } from '@tabler/icons-react';
 import {
+  isPurchasableRewardActive,
   useMutatePurchasableReward,
   useQueryPurchasableRewards,
   useUserPurchasedRewards,
@@ -76,6 +77,8 @@ const RewardDetailsModal = ({
   );
   const { classes } = useStyles();
   const { purchasePurchasableReward, purchasingPurchasableReward } = useMutatePurchasableReward();
+  const isAvailable = isPurchasableRewardActive(purchasableReward);
+
   const handlePurchase = async () => {
     try {
       await purchasePurchasableReward({
@@ -86,10 +89,10 @@ const RewardDetailsModal = ({
         title: 'Reward purchased',
         message: `You have successfully purchased the reward: ${purchasableReward.title}`,
       });
-    } catch (error) {
+    } catch (error: { message: string } | undefined) {
       showErrorNotification({
         title: 'Failed to purchase reward',
-        error,
+        error: new Error(error?.message ?? 'An error occurred while purchasing the reward'),
       });
     }
   };
@@ -155,7 +158,7 @@ const RewardDetailsModal = ({
                     Purchased
                   </Text>
                 </Group>
-              ) : (
+              ) : isAvailable ? (
                 <BuzzTransactionButton
                   loading={purchasingPurchasableReward}
                   buzzAmount={purchasableReward.unitPrice}
@@ -164,6 +167,15 @@ const RewardDetailsModal = ({
                   label="Unlock now"
                   color="yellow.7"
                 />
+              ) : (
+                <Group spacing={8}>
+                  <ThemeIcon color="red" radius="xl" size="sm">
+                    <IconCircleCheckFilled size={14} />
+                  </ThemeIcon>
+                  <Text color="red" size="sm" weight="bold">
+                    Not available
+                  </Text>
+                </Group>
               )}
             </div>
           </Stack>

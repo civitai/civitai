@@ -7,6 +7,7 @@ import {
 } from '~/server/schema/purchasable-reward.schema';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';
+import { PurchasableRewardGetPaged } from '~/types/router';
 
 export const useMutatePurchasableReward = () => {
   const queryUtils = trpc.useContext();
@@ -31,6 +32,7 @@ export const useMutatePurchasableReward = () => {
   const upsertPurchasableReward = trpc.purchasableReward.upsert.useMutation({
     async onSuccess() {
       await queryUtils.purchasableReward.getPaged.invalidate();
+      await queryUtils.purchasableReward.getModeratorPaged.invalidate();
     },
     onError(error) {
       onError(error, 'Failed to create a reward');
@@ -40,6 +42,7 @@ export const useMutatePurchasableReward = () => {
   const purchasePurchasableReward = trpc.purchasableReward.purchase.useMutation({
     async onSuccess() {
       await queryUtils.user.getUserPurchasedRewards.invalidate();
+      await queryUtils.purchasableReward.getPaged.invalidate();
     },
     onError(error) {
       onError(error, 'Failed to purchase reward');
@@ -118,4 +121,28 @@ export const useUserPurchasedRewards = () => {
     purchasedRewards: data,
     ...rest,
   };
+};
+
+export const isPurchasableRewardActive = (purchasableReward: PurchasableRewardGetPaged) => {
+  if (purchasableReward.archived) {
+    return false;
+  }
+
+  const now = new Date();
+  if (purchasableReward.availableFrom && purchasableReward.availableFrom > now) {
+    return false;
+  }
+
+  if (purchasableReward.availableTo && purchasableReward.availableTo < now) {
+    return false;
+  }
+
+  if (
+    purchasableReward.availableCount !== null &&
+    purchasableReward.availableCount - purchasableReward._count.purchases <= 0
+  ) {
+    return false;
+  }
+
+  return true;
 };

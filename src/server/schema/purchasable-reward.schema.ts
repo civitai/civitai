@@ -34,7 +34,6 @@ export type GetPaginatedPurchasableRewardsSchema = z.infer<
 export const getPaginatedPurchasableRewardsSchema = paginationSchema.merge(
   z.object({
     limit: z.coerce.number().min(1).max(200).default(60),
-    maxPrice: z.number().optional(),
     mode: z.nativeEnum(PurchasableRewardViewMode).default(PurchasableRewardViewMode.Active),
   })
 );
@@ -47,5 +46,6 @@ export const getPaginatedPurchasableRewardsModeratorSchema = paginationSchema.me
     limit: z.coerce.number().min(1).max(200).default(60),
     archived: z.boolean().optional(),
     usage: z.array(z.nativeEnum(PurchasableRewardUsage)).optional(),
+    mode: z.nativeEnum(PurchasableRewardViewMode).default(PurchasableRewardViewMode.Active),
   })
 );

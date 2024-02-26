@@ -18,6 +18,7 @@ import { useCallback, useState } from 'react';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { GetPaginatedPurchasableRewardsModeratorSchema } from '~/server/schema/purchasable-reward.schema';
+import { PurchasableRewardViewMode } from '~/server/common/enums';
 
 type Filters = Omit<GetPaginatedPurchasableRewardsModeratorSchema, 'limit'>;
 
@@ -37,6 +38,7 @@ export function PurchasableRewardsFiltersModeratorDropdown({
       setFilters({
         archived: undefined,
         usage: undefined,
+        mode: filters.mode,
       }),
     [setFilters]
   );
@@ -80,6 +82,41 @@ export function PurchasableRewardsFiltersModeratorDropdown({
   const dropdown = (
     <Stack spacing="lg">
       <Stack spacing="md">
+        <Divider label="Mode" labelProps={{ weight: 'bold', size: 'sm' }} />
+        <Chip.Group
+          spacing={8}
+          value={filters.mode ?? PurchasableRewardViewMode.Active}
+          onChange={(mode: PurchasableRewardViewMode) => {
+            setFilters({
+              mode,
+            });
+          }}
+        >
+          {Object.values(PurchasableRewardViewMode).map((type, index) => (
+            <Chip key={index} value={type} {...chipProps}>
+              {getDisplayName(type)}
+            </Chip>
+          ))}
+        </Chip.Group>
+        <Divider label="Archived" labelProps={{ weight: 'bold', size: 'sm' }} />
+        <Chip.Group
+          spacing={8}
+          value={
+            filters.archived === true ? 'true' : filters.archived === false ? 'false' : undefined
+          }
+          onChange={(v: string) => {
+            setFilters({
+              archived: v === 'true' ? true : v === 'false' ? false : undefined,
+            });
+          }}
+        >
+          <Chip value="true" {...chipProps}>
+            Yes
+          </Chip>
+          <Chip value="false" {...chipProps}>
+            No
+          </Chip>
+        </Chip.Group>
         <Divider label="Usage" labelProps={{ weight: 'bold', size: 'sm' }} />
         <Chip.Group
           spacing={8}

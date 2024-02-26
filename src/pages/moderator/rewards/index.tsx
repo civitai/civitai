@@ -11,16 +11,17 @@ import {
   Stack,
   Title,
   Button,
+  ActionIcon,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
 import { BuzzWithdrawalRequestStatus } from '@prisma/client';
-import { IconCloudOff, IconPlus } from '@tabler/icons-react';
+import { IconCloudOff, IconEdit, IconPlus } from '@tabler/icons-react';
 import { useState } from 'react';
-import { PurchasableRewardsFiltersDropdown } from '~/components/PurchasableRewards/PurchasableRewardsFiltersDropdown';
 import { PurchasableRewardsFiltersModeratorDropdown } from '~/components/PurchasableRewards/PurchasableRewardsModeratorFiltersDropdown';
 import { useQueryPurchasableRewardsModerator } from '~/components/PurchasableRewards/purchasableRewards.util';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { PurchasableRewardViewMode } from '~/server/common/enums';
 import { GetPaginatedPurchasableRewardsModeratorSchema } from '~/server/schema/purchasable-reward.schema';
 import { formatDate } from '~/utils/date-helpers';
 
@@ -32,6 +33,7 @@ export default function Rewards() {
     Omit<GetPaginatedPurchasableRewardsModeratorSchema, 'limit'>
   >({
     page: 1,
+    mode: PurchasableRewardViewMode.Active,
   });
   const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
   const { purchasableRewards, pagination, isLoading, isRefetching } =
@@ -85,6 +87,7 @@ export default function Rewards() {
                 <th>Available From</th>
                 <th>Available To</th>
                 <th>Archived</th>
+                <th>Remaining Codes</th>
                 <th>Available slots</th>
                 <th>&nbsp;</th>
               </tr>
@@ -102,18 +105,29 @@ export default function Rewards() {
                     <td>
                       {purchasableReward.availableFrom
                         ? formatDate(purchasableReward.availableFrom)
-                        : 'N/A'}
+                        : '-'}
                     </td>
                     <td>
                       {purchasableReward.availableTo
                         ? formatDate(purchasableReward.availableTo)
-                        : 'N/A'}
+                        : '-'}
                     </td>
                     <td>{purchasableReward.archived ? 'Y' : 'N'}</td>
+                    <td>{purchasableReward.codes.length}</td>
                     <td>
                       {purchasableReward.availableCount
-                        ? `${purchasableReward._count.purchases}/${purchasableReward.availableCount}`
-                        : 'N/A'}
+                        ? `${
+                            purchasableReward.availableCount - purchasableReward._count.purchases
+                          }/${purchasableReward.availableCount}`
+                        : '-'}
+                    </td>
+                    <td>
+                      <ActionIcon
+                        component={NextLink}
+                        href={`/moderator/rewards/update/${purchasableReward.id}`}
+                      >
+                        <IconEdit />
+                      </ActionIcon>
                     </td>
                   </tr>
                 );
