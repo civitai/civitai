@@ -89,10 +89,10 @@ const RewardDetailsModal = ({
         title: 'Reward purchased',
         message: `You have successfully purchased the reward: ${purchasableReward.title}`,
       });
-    } catch (error: { message: string } | undefined) {
+    } catch (err) {
       showErrorNotification({
         title: 'Failed to purchase reward',
-        error: new Error(error?.message ?? 'An error occurred while purchasing the reward'),
+        error: new Error('An error occurred while purchasing the reward'),
       });
     }
   };
