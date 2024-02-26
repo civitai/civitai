@@ -15,6 +15,7 @@ export function ModerationNav() {
         { label: 'Tags', href: '/moderator/tags' },
         { label: 'Generation', href: '/moderator/generation' },
         { label: 'Withdrawal Requests', href: '/moderator/buzz-withdrawal-requests' },
+        { label: 'Rewards', href: '/moderator/rewards' },
         { label: 'Auditor', href: '/testing/auditor' },
         { label: 'Metadata Tester', href: '/testing/metadata-test' },
       ].map((link) => (

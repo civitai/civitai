@@ -14,6 +14,8 @@ import {
   IconBarbell,
   IconCoin,
   IconCoins,
+  IconGif,
+  IconGift,
   IconHighlight,
   IconMoneybag,
   IconShoppingBag,
@@ -168,6 +170,16 @@ const getSpendings = ({
       )}&Buzz%20Available=${balance ?? 0}`,
       children: 'Contact us',
       rightIcon: <IconArrowRight size={14} />,
+    },
+  },
+  {
+    key: 'rewards',
+    icon: <IconGift size={32} />,
+    title: 'Rewards',
+    description: "We've partnered with some great companies to get you some amazing rewards!",
+    btnProps: {
+      href: `/purchase/rewards`,
+      children: 'Get them now!',
     },
   },
   {

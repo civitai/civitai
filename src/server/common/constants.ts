@@ -276,6 +276,10 @@ export const constants = {
       generatedImageWithResource: 10 / 1000, // 10 buzz for every 1000 images.
     },
   },
+  purchasableRewards: {
+    coverImageAspectRatio: 1 / 2,
+    coverImageWidth: 180,
+  },
 } as const;
 
 export const zipModelFileTypes: ModelFileFormat[] = ['Core ML', 'Diffusers', 'ONNX'];

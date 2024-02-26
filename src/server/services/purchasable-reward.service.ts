@@ -1,12 +1,18 @@
 import { Prisma, PurchasableRewardUsage } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { GetByIdInput } from '~/server/schema/base.schema';
 import { TransactionType } from '~/server/schema/buzz.schema';
+import { ImageMetaProps } from '~/server/schema/image.schema';
 import {
+  GetPaginatedPurchasableRewardsModeratorSchema,
   GetPaginatedPurchasableRewardsSchema,
   PurchasableRewardPurchase,
   PurchasableRewardUpsert,
 } from '~/server/schema/purchasable-reward.schema';
-import { imageSelect } from '~/server/selectors/image.selector';
+import {
+  purchasableRewardDetails,
+  purchasableRewardDetailsModerator,
+} from '~/server/selectors/purchasableReward.selector';
 import { createBuzzTransaction } from '~/server/services/buzz.service';
 import { createEntityImages } from '~/server/services/image.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
@@ -24,26 +30,38 @@ export const getPaginatedPurchasableRewards = async (
     where,
     take,
     skip,
-    select: {
-      id: true,
-      title: true,
-      unitPrice: true,
-      about: true,
-      redeemDetails: true,
-      termsOfUse: true,
-      usage: true,
-      availableFrom: true,
-      availableTo: true,
-      availableCount: true,
-      coverImage: {
-        select: imageSelect,
-      },
-      _count: {
-        select: {
-          purchases: true,
-        },
-      },
-    },
+    select: purchasableRewardDetails,
+    orderBy: { createdAt: 'desc' },
+  });
+
+  const count = await dbRead.purchasableReward.count({ where });
+  const itemsWithImageMeta = items.map((item) => ({
+    ...item,
+    coverImage: item.coverImage
+      ? {
+          ...item.coverImage,
+          meta: item.coverImage.meta as ImageMetaProps,
+          metadata: item.coverImage.metadata as MixedObject,
+        }
+      : item.coverImage,
+  }));
+
+  return getPagingData({ items: itemsWithImageMeta, count: (count as number) ?? 0 }, limit, page);
+};
+
+export const getPaginatedPurchasableRewardsModerator = async (
+  input: GetPaginatedPurchasableRewardsModeratorSchema
+) => {
+  const { limit = DEFAULT_PAGE_SIZE, page } = input || {};
+  const { take, skip } = getPagination(limit, page);
+
+  const where: Prisma.PurchasableRewardFindManyArgs['where'] = {};
+
+  const items = await dbRead.purchasableReward.findMany({
+    where,
+    take,
+    skip,
+    select: purchasableRewardDetailsModerator,
     orderBy: { createdAt: 'desc' },
   });
 
@@ -74,7 +92,7 @@ export const purchasableRewardUpsert = async ({
       throw throwBadRequestError('No codes/links provided. Please provide at least one code/link.');
 
     // Check that it has available count:
-    if (input.availableCount !== undefined && input.availableCount <= 0)
+    if (input.availableCount !== undefined && (input.availableCount ?? 0) <= 0)
       throw throwBadRequestError('Please provide a positive available count or leave it blank.');
 
     // Create item:
@@ -112,7 +130,8 @@ export const purchasableRewardUpsert = async ({
 
     if (
       input.availableCount !== undefined &&
-      input.availableCount < purchasableReward._count.purchases
+      input.availableCount !== null &&
+      (input.availableCount ?? 0) < purchasableReward._count.purchases
     ) {
       throw throwBadRequestError(
         'Cannot reduce the available count below the number of purchases.'
@@ -156,24 +175,9 @@ export const purchasableRewardPurchase = async ({
   const reward = await dbWrite.purchasableReward.findUniqueOrThrow({
     where: { id: purchasableRewardId },
     select: {
-      id: true,
-      title: true,
-      termsOfUse: true,
-      about: true,
-      redeemDetails: true,
-      unitPrice: true,
-      availableCount: true,
-      availableFrom: true,
-      availableTo: true,
-      archived: true,
+      ...purchasableRewardDetails,
       codes: true,
-      usage: true,
       coverImageId: true,
-      _count: {
-        select: {
-          purchases: true,
-        },
-      },
     },
   });
 
@@ -243,4 +247,25 @@ export const purchasableRewardPurchase = async ({
   }
 
   return record;
+};
+
+export const getPurchasableReward = async ({ id }: GetByIdInput) => {
+  const data = await dbRead.purchasableReward.findUniqueOrThrow({
+    where: { id },
+    select: {
+      ...purchasableRewardDetails,
+      codes: true,
+    },
+  });
+
+  return {
+    ...data,
+    coverImage: data.coverImage
+      ? {
+          ...data.coverImage,
+          meta: data.coverImage.meta as ImageMetaProps,
+          metadata: data.coverImage.metadata as MixedObject,
+        }
+      : data.coverImage,
+  };
 };
