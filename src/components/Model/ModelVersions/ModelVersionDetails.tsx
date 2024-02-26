@@ -133,7 +133,8 @@ export function ModelVersionDetails({
     { id: version.id },
     { enabled: features.imageGeneration && !!version, trpc: { context: { skipBatch: true } } }
   );
-  const canGenerate = features.imageGeneration && !!resourceCovered && hasAccess;
+  const canGenerate =
+    features.imageGeneration && ((!!resourceCovered && hasAccess) || version.canGenerate);
   const publishVersionMutation = trpc.modelVersion.publish.useMutation();
   const publishModelMutation = trpc.model.publish.useMutation();
   const requestReviewMutation = trpc.model.requestReview.useMutation();
