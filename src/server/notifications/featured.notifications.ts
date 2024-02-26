@@ -23,7 +23,7 @@ export const featuredNotifications = createNotificationProcessor({
         JOIN "Model" m ON m.id = ci."modelId"
         WHERE c."userId" = -1 AND c.name = 'Featured Models'
           AND ci.status = 'ACCEPTED'
-          AND (ci."createdAt" > ${lastSent} OR ci."updatedAt" > ${lastSent})
+          AND (ci."createdAt" > '${lastSent}' OR ci."updatedAt" > '${lastSent}')
       )
       INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
@@ -57,7 +57,7 @@ export const featuredNotifications = createNotificationProcessor({
         JOIN "Image" i ON i.id = ci."imageId"
         WHERE c."userId" = -1 AND c.name = 'Featured Images'
           AND ci.status = 'ACCEPTED'
-          AND (ci."createdAt" > ${lastSent} OR ci."updatedAt" > ${lastSent})
+          AND (ci."createdAt" > '${lastSent}' OR ci."updatedAt" > '${lastSent}')
       )
       INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
@@ -92,7 +92,7 @@ export const featuredNotifications = createNotificationProcessor({
         JOIN "Post" p ON p.id = ci."postId"
         WHERE c."userId" = -1 AND c.name = 'Featured Posts'
           AND ci.status = 'ACCEPTED'
-          AND (ci."createdAt" > ${lastSent} OR ci."updatedAt" > ${lastSent})
+          AND (ci."createdAt" > '${lastSent}' OR ci."updatedAt" > '${lastSent}')
       )
       INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
@@ -127,7 +127,7 @@ export const featuredNotifications = createNotificationProcessor({
         JOIN "Article" a ON a.id = ci."articleId"
         WHERE c."userId" = -1 AND c.name = 'Featured Articles'
           AND ci.status = 'ACCEPTED'
-          AND (ci."createdAt" > ${lastSent} OR ci."updatedAt" > ${lastSent})
+          AND (ci."createdAt" > '${lastSent}' OR ci."updatedAt" > '${lastSent}')
       )
       INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT

@@ -538,7 +538,7 @@ export const commentNotifications = createNotificationProcessor({
           JSONB_BUILD_OBJECT(
             'version', 2,
             'bountyId', b.id,
-            'bountyTitle', b.title,
+            'bountyTitle', b.name,
             'commentId', c.id,
             'username', u.username
           ) "details"
@@ -548,6 +548,7 @@ export const commentNotifications = createNotificationProcessor({
         JOIN "Bounty" b ON b.id = t."bountyId"
         WHERE b."userId" > 0
           AND c."createdAt" > '${lastSent}'
+          AND c."createdAt" > '2024-02-24'
           AND c."userId" != b."userId"
       )
       INSERT INTO "Notification"("id", "userId", "type", "details", "category")
