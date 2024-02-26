@@ -1,67 +1,61 @@
-import { ActionIcon, Menu } from '@mantine/core';
-import { IconDotsVertical, IconFlag, IconPencil, IconTrash } from '@tabler/icons-react';
+import { ActionIcon, Box, Group, HoverCard, Menu, Stack, Text, ThemeIcon } from '@mantine/core';
+import {
+  IconCheck,
+  IconDotsVertical,
+  IconEye,
+  IconFlag,
+  IconPencil,
+  IconRadar2,
+  IconRecycle,
+  IconRestore,
+  IconTrash,
+  IconUser,
+  IconUserMinus,
+  IconUserOff,
+} from '@tabler/icons-react';
 import Router from 'next/router';
-import { ConfirmDialog } from '~/components/Dialog/Common/ConfirmDialog';
-import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { showErrorNotification } from '~/utils/notifications';
-import { trpc } from '~/utils/trpc';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { IconBookmark } from '@tabler/icons-react';
-import { CollectionType } from '@prisma/client';
+import { CollectionType, ImageIngestionStatus } from '@prisma/client';
+import { IconBan } from '@tabler/icons-react';
+import { useRescanImage } from '~/components/Image/hooks/useRescanImage';
+import { useReportTosViolation } from '~/components/Image/hooks/useReportTosViolation';
+import { IconAlertTriangle } from '@tabler/icons-react';
+import { useReportCsamImages } from '~/components/Image/image.utils';
+import { useDeleteImage } from '~/components/Image/hooks/useDeleteImage';
+import { ToggleSearchableMenuItem } from '~/components/MenuItems/ToggleSearchableMenuItem';
+import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
+import { HideImageButton } from '~/components/HideImageButton/HideImageButton';
+import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
+import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
+import React from 'react';
+import { trpc } from '~/utils/trpc';
+import { imageStore, useImageStore } from '~/store/image.store';
 
 type ImageContextMenuProps = {
   id: number;
-  postId?: number;
+  postId?: number | null;
   userId?: number;
   user?: { id: number };
   collectionId?: number;
-  needsReview?: string;
+  needsReview?: string | null;
   context?: 'image' | 'post';
-};
-
-// type CustomMenuItem<TProps extends Record<string, unknown> = any> = {
-//   Component: React.ComponentType<TProps>;
-//   props?: TProps;
-//   group?: 'default' | 'owner' | 'moderator';
-//   hide?: boolean;
-// };
-
-// function createMenuItem<TProps extends Record<string, unknown>>(props: CustomMenuItem<TProps>) {
-//   return { group: 'default', ...props };
-// }
-const menuItems = {
-  addToCollection: { Component: AddToCollection },
-  reportImage: { Component: ReportImage },
+  additionalMenuItems?: React.ReactNode;
+  ingestion?: ImageIngestionStatus;
 };
 
 export function ImageContextMenu(props: ImageContextMenuProps) {
-  // const currentUser = useCurrentUser();
-  // const features = useFeatureFlags();
-  // const isOwner = !!currentUser && (currentUser.id === user?.id || currentUser.id === userId);
-  // const isModerator = !!currentUser?.isModerator;
+  const currentUser = useCurrentUser();
+  const { user, userId } = props;
+  const isOwner = !!currentUser && (currentUser.id === user?.id || currentUser.id === userId);
+  const isModerator = !!currentUser?.isModerator;
 
-  // const menuItemsRef = useRef([
-  //   createMenuItem({
-  //     Component: SaveToCollection,
-  //     props: { imageId, postId, context },
-  //     hide: !features.collections,
-  //   }),
-  //   createMenuItem({ Component: ReportImage, props: { imageId }, hide: isOwner }),
-  //   createMenuItem({ Component: EditPost, props: { postId }, group: 'owner' }),
-  //   createMenuItem({
-  //     Component: DeleteImage,
-  //     props: { imageId },
-  //     hide: context !== 'image',
-  //     group: 'owner',
-  //   }),
-  // ]);
-
-  return (
-    <Menu>
+  const ContextMenu = (
+    <Menu withinPortal withArrow>
       <Menu.Target>
         <ActionIcon
           variant="transparent"
@@ -83,122 +77,273 @@ export function ImageContextMenu(props: ImageContextMenuProps) {
           e.stopPropagation();
         }}
       >
-        {/* <ImageMenuItems {...props} /> */}
-        {/* {menuItemsRef.current.map(({ Component, props }, index) => (
-          <Component key={index} {...(props as any)} />
-        ))} */}
+        <ImageMenuItems {...props} isModerator={isModerator} isOwner={isOwner} />
       </Menu.Dropdown>
     </Menu>
   );
+
+  if (props.needsReview)
+    return (
+      <Group spacing={4}>
+        <NeedsReviewBadge {...props} isModerator={isModerator} isOwner={isOwner} />
+        {ContextMenu}
+      </Group>
+    );
+
+  return ContextMenu;
 }
 
-function AddToCollection({ imageId, postId, context }: ImageContextMenuProps) {
-  if (context === 'post' && !postId) return null;
+function ImageMenuItems({
+  id: imageId,
+  postId,
+  user,
+  userId,
+  collectionId,
+  context = 'image',
+  additionalMenuItems,
+  isOwner,
+  isModerator,
+}: ImageContextMenuProps & { isOwner: boolean; isModerator: boolean }) {
+  const features = useFeatureFlags();
+  const _userId = user?.id ?? userId;
 
-  const handleClick = () => {
-    if (context === 'post') openContext('addToCollection', { postId, type: CollectionType.Post });
+  const handleSaveClick = () => {
+    if (context === 'post' && postId)
+      openContext('addToCollection', { postId, type: CollectionType.Post });
     if (context === 'image')
       openContext('addToCollection', { imageId, type: CollectionType.Image });
   };
 
-  return (
-    <LoginRedirect reason="add-to-collection">
-      <Menu.Item icon={<IconBookmark size={14} stroke={1.5} />} onClick={handleClick}>
-        Add to collection
-      </Menu.Item>
-    </LoginRedirect>
-  );
-}
-
-function ReportImage({ imageId }: ImageContextMenuProps) {
-  const handleClick = () =>
+  const handleReportClick = () =>
     openContext('report', { entityType: ReportEntity.Image, entityId: imageId }, { zIndex: 1000 });
 
+  const deleteImage = useDeleteImage();
+  const rescanImage = useRescanImage();
+  const reportTos = useReportTosViolation();
+  const reportCsamMutation = useReportCsamImages();
+  const handleReportCsam = () => {
+    if (!_userId) return;
+    if (features.csamReports)
+      window.open(`/moderator/csam/${_userId}?imageId=${imageId}`, '_blank');
+    else reportCsamMutation.mutate([imageId]);
+  };
+
   return (
-    <LoginRedirect reason="report-content">
-      <Menu.Item icon={<IconFlag size={14} stroke={1.5} />} onClick={handleClick}>
-        Report image
-      </Menu.Item>
-    </LoginRedirect>
+    <>
+      {/* GENERAL */}
+      {isOwner && <AddToShowcaseMenuItem entityType="Image" entityId={imageId} />}
+      <LoginRedirect reason="add-to-collection">
+        <Menu.Item icon={<IconBookmark size={14} stroke={1.5} />} onClick={handleSaveClick}>
+          Save {context} to collection
+        </Menu.Item>
+      </LoginRedirect>
+      {postId && !Router.query.postId && (
+        <Menu.Item
+          icon={<IconEye size={14} stroke={1.5} />}
+          onClick={() => triggerRoutedDialog({ name: 'postDetail', state: { postId: postId } })}
+        >
+          View Post
+        </Menu.Item>
+      )}
+      {!isOwner && (
+        <>
+          <LoginRedirect reason="report-content">
+            <Menu.Item icon={<IconFlag size={14} stroke={1.5} />} onClick={handleReportClick}>
+              Report image
+            </Menu.Item>
+          </LoginRedirect>
+          <HideImageButton as="menu-item" imageId={imageId} />
+          {_userId && <HideUserButton as="menu-item" userId={_userId} />}
+        </>
+      )}
+      {/* OWNER */}
+      {(isOwner || isModerator) && (
+        <>
+          {postId && (
+            <Menu.Item
+              icon={<IconPencil size={14} stroke={1.5} />}
+              onClick={() => Router.push(`/posts/${postId}/edit`)}
+            >
+              Edit Post
+            </Menu.Item>
+          )}
+          <Menu.Item
+            color="red"
+            icon={<IconTrash size={14} stroke={1.5} />}
+            onClick={() => deleteImage({ imageId })}
+          >
+            Delete
+          </Menu.Item>
+        </>
+      )}
+      {additionalMenuItems}
+      {/* MODERATOR */}
+      {isModerator && (
+        <>
+          <Menu.Label>Moderator</Menu.Label>
+          <Menu.Item
+            icon={<IconBan size={14} stroke={1.5} />}
+            onClick={() => reportTos({ imageId })}
+          >
+            Remove as TOS Violation
+          </Menu.Item>
+          <Menu.Item
+            icon={<IconRadar2 size={14} stroke={1.5} />}
+            onClick={() => rescanImage({ imageId })}
+          >
+            Rescan Image
+          </Menu.Item>
+          <Menu.Item icon={<IconAlertTriangle size={14} stroke={1.5} />} onClick={handleReportCsam}>
+            Report CSAM
+          </Menu.Item>
+          {postId && <ToggleSearchableMenuItem entityType="Post" entityId={postId} />}
+          {!postId && (
+            <Menu.Item
+              key="view-image-detail"
+              icon={<IconEye size={14} stroke={1.5} />}
+              onClick={() =>
+                triggerRoutedDialog({
+                  name: 'imageDetail',
+                  state: { imageId },
+                })
+              }
+            >
+              View image detail
+            </Menu.Item>
+          )}
+        </>
+      )}
+    </>
   );
 }
 
-// function ImageMenuItems({
-//   id: imageId,
-//   postId,
-//   user,
-//   userId,
-//   collectionId,
-//   needsReview,
-//   context = 'image',
-// }: ImageContextMenuProps) {
-//   const currentUser = useCurrentUser();
-//   const features = useFeatureFlags();
-//   const isOwner = !!currentUser && (currentUser.id === user?.id || currentUser.id === userId);
-//   const isModerator = !!currentUser?.isModerator;
+function NeedsReviewBadge({
+  needsReview: initialNeedsReview,
+  ingestion: initialIngestion,
+  id: imageId,
+  isOwner,
+  isModerator,
+}: ImageContextMenuProps & { isOwner: boolean; isModerator: boolean }) {
+  const { needsReview, ingestion } = useImageStore({
+    id: imageId,
+    needsReview: initialNeedsReview,
+    ingestion: initialIngestion,
+  });
+  const moderateImagesMutation = trpc.image.moderate.useMutation();
 
-//   const deleteImageMutation = trpc.image.delete.useMutation({
-//     onError: (error: any) => showErrorNotification({ error: new Error(error.message) }),
-//   });
+  const handleModerate = (action: 'accept' | 'delete' | 'removeName' | 'mistake') => {
+    if (!isModerator) return;
+    moderateImagesMutation.mutate({
+      ids: [imageId],
+      needsReview: action === 'accept' ? null : undefined,
+      reviewAction: action !== 'accept' ? action : undefined,
+      reviewType: 'minor',
+    });
+    imageStore.setImage(imageId, { needsReview: null });
+  };
 
-//   const handleDeleteClick = () =>
-//     dialogStore.trigger({
-//       component: ConfirmDialog,
-//       props: {
-//         title: 'Delete image',
-//         message: 'Are you sure you want to delete this image?',
-//         labels: { cancel: `Cancel`, confirm: `Yes, I am sure` },
-//         confirmProps: { color: 'red', loading: deleteImageMutation.isLoading },
-//         onConfirm: async () => await deleteImageMutation.mutateAsync({ id: imageId }),
-//       },
-//     });
+  const Badge = (
+    <ThemeIcon size="lg" color={needsReview === 'csam' && isModerator ? 'red' : 'yellow'}>
+      {needsReview === 'poi' ? (
+        <IconUser strokeWidth={2.5} size={26} />
+      ) : (
+        <IconAlertTriangle strokeWidth={2.5} size={26} />
+      )}
+    </ThemeIcon>
+  );
 
-//   const handleSaveClick = () => {
-//     if (context === 'post' && postId)
-//       openContext('addToCollection', { postId, type: CollectionType.Post });
-//     if (context === 'image')
-//       openContext('addToCollection', { imageId, type: CollectionType.Image });
-//   };
-
-//   const handleReportClick = () =>
-//     openContext('report', { entityType: ReportEntity.Image, entityId: imageId }, { zIndex: 1000 });
-
-//   return (
-//     <>
-//       {/* GENERAL */}
-//       <LoginRedirect reason="add-to-collection">
-//         <Menu.Item icon={<IconBookmark size={14} stroke={1.5} />} onClick={handleSaveClick}>
-//           Save {context} to collection
-//         </Menu.Item>
-//       </LoginRedirect>
-//       <LoginRedirect reason="report-content">
-//         <Menu.Item icon={<IconFlag size={14} stroke={1.5} />} onClick={handleReportClick}>
-//           Report image
-//         </Menu.Item>
-//       </LoginRedirect>
-//       {/* OWNER */}
-//       {(isOwner || isModerator) && (
-//         <>
-//           <Menu.Label>Owner</Menu.Label>
-//           {postId && (
-//             <Menu.Item
-//               icon={<IconPencil size={14} stroke={1.5} />}
-//               onClick={() => Router.push(`/posts/${postId}/edit`)}
-//             >
-//               Edit Post
-//             </Menu.Item>
-//           )}
-//           <Menu.Item
-//             color="red"
-//             icon={<IconTrash size={14} stroke={1.5} />}
-//             onClick={handleDeleteClick}
-//           >
-//             Delete
-//           </Menu.Item>
-//         </>
-//       )}
-//       {/* MODERATOR */}
-//       {isModerator && <></>}
-//     </>
-//   );
-// }
+  if (needsReview && needsReview !== 'csam' && isModerator) {
+    return (
+      <Menu position="bottom">
+        <Menu.Target>
+          <Box
+            style={{ cursor: 'pointer' }}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+            }}
+          >
+            {Badge}
+          </Box>
+        </Menu.Target>
+        <Menu.Dropdown
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
+        >
+          <Menu.Item
+            onClick={(e) => handleModerate('accept')}
+            icon={<IconCheck size={14} stroke={1.5} />}
+          >
+            Approve
+          </Menu.Item>
+          {needsReview === 'poi' && (
+            <Menu.Item
+              onClick={(e) => handleModerate('mistake')}
+              icon={<IconUserOff size={14} stroke={1.5} />}
+            >
+              Not POI
+            </Menu.Item>
+          )}
+          {needsReview === 'poi' && (
+            <Menu.Item
+              onClick={(e) => handleModerate('removeName')}
+              icon={<IconUserMinus size={14} stroke={1.5} />}
+            >
+              Remove Name
+            </Menu.Item>
+          )}
+          <Menu.Item
+            onClick={(e) => handleModerate('delete')}
+            icon={<IconTrash size={14} stroke={1.5} />}
+          >
+            Reject
+          </Menu.Item>
+        </Menu.Dropdown>
+      </Menu>
+    );
+  } else if (isModerator && ingestion === 'Blocked') {
+    return (
+      <Menu position="bottom">
+        <Menu.Target>
+          <Box
+            style={{ cursor: 'pointer' }}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+            }}
+          >
+            <ThemeIcon size="lg" color="yellow">
+              <IconRecycle strokeWidth={2.5} size={20} />
+            </ThemeIcon>
+          </Box>
+        </Menu.Target>
+        <Menu.Dropdown>
+          <Menu.Item
+            onClick={() => handleModerate('accept')}
+            icon={<IconRestore size={14} stroke={1.5} />}
+          >
+            Restore
+          </Menu.Item>
+        </Menu.Dropdown>
+      </Menu>
+    );
+  } else {
+    return (
+      <HoverCard width={200} withArrow>
+        <HoverCard.Target>{Badge}</HoverCard.Target>
+        <HoverCard.Dropdown p={8}>
+          <Stack spacing={0}>
+            <Text weight="bold" size="xs">
+              Flagged for review
+            </Text>
+            <Text size="xs">
+              {`This image won't be visible to other users until it's reviewed by our moderators.`}
+            </Text>
+          </Stack>
+        </HoverCard.Dropdown>
+      </HoverCard>
+    );
+  }
+}

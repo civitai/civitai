@@ -1,4 +1,4 @@
-import { Badge, BadgeProps, Group, Text, createStyles } from '@mantine/core';
+import { Badge, BadgeProps, Group, Text, createStyles, Center, Alert } from '@mantine/core';
 import { IconEye, IconEyeOff } from '@tabler/icons-react';
 import Router from 'next/router';
 import React, { createContext, useCallback, useContext } from 'react';
@@ -13,6 +13,7 @@ import {
   nsfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils';
+import { useImageStore } from '~/store/image.store';
 
 type ImageProps = {
   id: number;
@@ -82,6 +83,8 @@ export function ImageGuard2<T extends ImageProps>({
   const showImage = useShowImagesStore(useCallback((state) => state[image.id], [image.id]));
   const key = getConnectionKey({ connectType, connectId });
 
+  const { tosViolation } = useImageStore(image);
+
   const showConnect = useShowConnectionStore(
     useCallback((state) => (key ? state[key] : undefined), [key])
   );
@@ -95,7 +98,13 @@ export function ImageGuard2<T extends ImageProps>({
     <ImageGuardCtx.Provider
       value={{ safe, show, browsingLevel: image.nsfwLevel, imageId: image.id, key }}
     >
-      {children(show)}
+      {tosViolation ? (
+        <Center w="100%" h="100%">
+          <Alert color="red">TOS Violation</Alert>
+        </Center>
+      ) : (
+        children(show)
+      )}
     </ImageGuardCtx.Provider>
   );
 }
@@ -142,10 +151,10 @@ function toggleShow({
   event.preventDefault();
   event.stopPropagation();
   const limitedToggleCount = useLimitedToggleCountStore.getState();
+  const hasHitLimit = limitedToggleCount >= constants.imageGuard.noAccountLimit;
 
   // handle limited toggles for unauthenticated users
-  if (!isAuthed && limitedToggleCount >= constants.imageGuard.noAccountLimit) {
-    // TODO.Briant - test
+  if (!isAuthed && hasHitLimit) {
     dialogStore.trigger({
       id: 'limited-toggle-modal',
       component: ConfirmDialog,
@@ -156,12 +165,15 @@ function toggleShow({
           </Text>
         ),
         onConfirm: () => Router.push(`/login?returnUrl=${Router.asPath}&reason=blur-toggle`),
+        labels: { cancel: 'Cancel', confirm: 'Continue' },
       },
     });
   }
 
-  if (key) useShowConnectionStore.setState((state) => ({ [key]: !state[key] }));
-  else useShowImagesStore.setState((state) => ({ [imageId]: !state[imageId] }));
+  if (!hasHitLimit) {
+    if (key) useShowConnectionStore.setState((state) => ({ [key]: !state[key] }));
+    else useShowImagesStore.setState((state) => ({ [imageId]: !state[imageId] }));
+  }
 
   // increment unauthed user toggle count
   if (!isAuthed) {

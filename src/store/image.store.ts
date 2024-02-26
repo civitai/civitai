@@ -8,6 +8,7 @@ type ImageProps = {
   tosViolation?: boolean;
   ingestion?: ImageIngestionStatus;
   blockedFor?: string | null;
+  needsReview?: string | null;
 };
 
 type ImageStore = {

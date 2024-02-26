@@ -334,7 +334,7 @@ ImageGuard.Report = function ReportImage({
   const router = useRouter();
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
-  const { image, showReportNsfw, isOwner, isModerator } = useImageGuardContentContext();
+  const { image, isOwner, isModerator } = useImageGuardContentContext();
   const [needsReview, setNeedsReview] = useState(image.needsReview);
   const [ingestion, setIngestion] = useState(image.ingestion);
 
