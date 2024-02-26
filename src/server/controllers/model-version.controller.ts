@@ -502,7 +502,7 @@ export async function getVersionLicenseHandler({ input }: { input: GetByIdInput 
     if (!version || version.status !== 'Published' || version.model.status !== 'Published')
       throw throwNotFoundError(`No version with id ${input.id}`);
 
-    if (!['SD 1.5', 'SDXL 1.0'].includes(version.baseModel))
+    if (!constants.supportedBaseModelAddendums.includes(version.baseModel as 'SD 1.5' | 'SDXL 1.0'))
       return throwBadRequestError('License not available for this model');
 
     const hasAdditionalPermissions =

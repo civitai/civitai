@@ -704,14 +704,13 @@ You agree to the following with respect to the Model (each a “Permission”):
 `;
   }
 
-  if (!options.allowCommercialUse.includes(CommercialUse.Image))
-    license += commercialUsePermissionContent[CommercialUse.Image];
-  if (!options.allowCommercialUse.includes(CommercialUse.Rent))
-    license += commercialUsePermissionContent[CommercialUse.Rent];
-  if (!options.allowCommercialUse.includes(CommercialUse.RentCivit))
-    license += commercialUsePermissionContent[CommercialUse.RentCivit];
-  if (!options.allowCommercialUse.includes(CommercialUse.Sell))
-    license += commercialUsePermissionContent[CommercialUse.Sell];
+  const additionalCommercialRestrictions = Object.entries(commercialUsePermissionContent)
+    .map(([key, value]) => {
+      if (options.allowCommercialUse.includes(key as CommercialUse)) return '';
+      return value;
+    })
+    .join('');
+  license += additionalCommercialRestrictions;
 
   return license;
 }
