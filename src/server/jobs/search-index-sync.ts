@@ -1,4 +1,4 @@
-import { createJob, UNRUNNABLE_JOB_CRON } from './job';
+import { createJob, JobContext, UNRUNNABLE_JOB_CRON } from './job';
 import * as searchIndex from '~/server/search-index';
 
 const searchIndexSets = {
@@ -26,8 +26,8 @@ export const searchIndexJobs = Object.entries(searchIndexSets)
     createJob(
       `search-index-sync-${name}`,
       cronTimeMap[name as SearchIndexSetKey],
-      async () => {
-        const searchIndexSyncTime = await timedExecution(searchIndexProcessor.update);
+      async (e) => {
+        const searchIndexSyncTime = await timedExecution(searchIndexProcessor.update, e);
 
         return {
           [name]: searchIndexSyncTime,
@@ -40,8 +40,8 @@ export const searchIndexJobs = Object.entries(searchIndexSets)
     createJob(
       `search-index-sync-${name}-reset`,
       UNRUNNABLE_JOB_CRON,
-      async () => {
-        const searchIndexSyncTime = await timedExecution(searchIndexProcessor.reset);
+      async (e) => {
+        const searchIndexSyncTime = await timedExecution(searchIndexProcessor.reset, e);
         return {
           [`${name}-reset`]: searchIndexSyncTime,
         };
@@ -54,8 +54,8 @@ export const searchIndexJobs = Object.entries(searchIndexSets)
   ])
   .flat();
 
-async function timedExecution<T>(fn: () => Promise<T>) {
+async function timedExecution<T>(fn: (jobContext: JobContext) => Promise<T>, e: JobContext) {
   const start = Date.now();
-  await fn();
+  await fn(e);
   return Date.now() - start;
 }

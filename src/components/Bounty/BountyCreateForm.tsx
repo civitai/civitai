@@ -260,9 +260,7 @@ export function BountyCreateForm() {
   const { createBounty, creating: creatingBounty } = useMutateBounty();
 
   const handleSubmit = async (data: z.infer<typeof formSchema>) => {
-    const filteredImages = imageFiles
-      .filter((file) => file.status === 'success')
-      .map(({ id, url, ...file }) => ({ ...file, url: id }));
+    const filteredImages = imageFiles.filter((file) => file.status === 'success');
 
     const performTransaction = async () => {
       try {
@@ -380,7 +378,7 @@ export function BountyCreateForm() {
                       .reverse()
                       .map((file) => (
                         <Paper
-                          key={file.id}
+                          key={file.url}
                           radius="sm"
                           p={0}
                           sx={{ position: 'relative', overflow: 'hidden', height: 332 }}
@@ -390,7 +388,7 @@ export function BountyCreateForm() {
                             <>
                               <EdgeMedia
                                 placeholder="empty"
-                                src={file.id}
+                                src={file.url}
                                 alt={file.name ?? undefined}
                                 style={{ objectFit: 'cover', height: '100%' }}
                               />
@@ -399,7 +397,7 @@ export function BountyCreateForm() {
                                   variant="filled"
                                   size="lg"
                                   color="red"
-                                  onClick={() => removeImage(file.id)}
+                                  onClick={() => removeImage(file.url)}
                                 >
                                   <IconTrash size={26} strokeWidth={2.5} />
                                 </ActionIcon>

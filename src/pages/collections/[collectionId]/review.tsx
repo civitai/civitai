@@ -333,31 +333,6 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
             )}
           />
         )}
-        {reviewData.cover && (
-          <>
-            <Group
-              spacing={4}
-              position="apart"
-              className={cx(sharedClasses.contentOverlay, sharedClasses.top)}
-              noWrap
-            >
-              <Group spacing={4}>
-                {collectionItem.status && (
-                  <Badge variant="filled" color={badgeColor[collectionItem.status]}>
-                    {collectionItem.status}
-                  </Badge>
-                )}
-              </Group>
-            </Group>
-            <EdgeMedia
-              placeholder="empty"
-              className={sharedClasses.image}
-              loading="lazy"
-              width={DEFAULT_EDGE_IMAGE_WIDTH}
-              src={reviewData.cover}
-            />
-          </>
-        )}
         <Stack
           className={cx(
             sharedClasses.contentOverlay,

@@ -1,8 +1,9 @@
-import { getJobDate } from '~/server/jobs/job';
+import { getJobDate, JobContext } from '~/server/jobs/job';
 import { dbWrite, dbRead } from '~/server/db/client';
-import { Prisma, PrismaClient, SearchIndexUpdateQueueAction } from '@prisma/client';
+import { PrismaClient, SearchIndexUpdateQueueAction } from '@prisma/client';
 import { getOrCreateIndex, swapIndex } from '~/server/meilisearch/util';
 import { chunk } from 'lodash-es';
+import { SearchIndexUpdate } from '~/server/search-index/SearchIndexUpdate';
 
 const DEFAULT_UPDATE_INTERVAL = 60 * 1000;
 
@@ -23,11 +24,11 @@ export function createSearchIndexUpdateProcessor({
 }) {
   return {
     indexName,
-    async update() {
+    async update(jobContext: JobContext) {
       const [lastUpdatedAt, setLastUpdate] = await getJobDate(
         `searchIndex:${indexName.toLowerCase()}`
       );
-      const ctx = { db: dbRead, lastUpdatedAt, indexName };
+      const ctx = { db: dbRead, lastUpdatedAt, indexName, jobContext };
       // Check if update is needed
       const shouldUpdate = lastUpdatedAt.getTime() + updateInterval < Date.now();
 
@@ -56,14 +57,14 @@ export function createSearchIndexUpdateProcessor({
      * The goal here is to ensure we keep the  existing search index during the
      * reset process.
      */
-    async reset() {
+    async reset(jobContext: JobContext) {
       // First, setup and init both indexes - Swap requires both indexes to be created:
       // In order to swap, the base index must exist. because of this, we need to create or get it.
       await getOrCreateIndex(indexName, { primaryKey });
       await onIndexSetup({ indexName: swapIndexName });
 
       // Now, fill in the "swap" with new content:
-      await onIndexUpdate({ db: dbWrite, indexName: swapIndexName });
+      await onIndexUpdate({ db: dbWrite, indexName: swapIndexName, jobContext });
 
       // Finally, perform the swap:
       await swapIndex({ indexName, swapIndexName });
@@ -73,7 +74,10 @@ export function createSearchIndexUpdateProcessor({
         where: { type: indexName, createdAt: { lt: new Date() } },
       });
     },
-    async updateSync(items: Array<{ id: number; action?: SearchIndexUpdateQueueAction }>) {
+    async updateSync(
+      items: Array<{ id: number; action?: SearchIndexUpdateQueueAction }>,
+      jobContext: JobContext
+    ) {
       if (!items.length) {
         return;
       }
@@ -92,37 +96,18 @@ export function createSearchIndexUpdateProcessor({
           .filter((i) => i.action === SearchIndexUpdateQueueAction.Delete)
           .map(({ id }) => id);
 
-        await onIndexUpdate({ db: dbWrite, indexName, updateIds, deleteIds });
+        await onIndexUpdate({ db: dbWrite, indexName, updateIds, deleteIds, jobContext });
       }
     },
     async queueUpdate(items: Array<{ id: number; action?: SearchIndexUpdateQueueAction }>) {
-      if (!items.length) {
-        return;
-      }
-
-      console.log(
-        `createSearchIndexUpdateProcessor :: ${indexName} :: queueUpdate :: Called with ${items.length} items`
-      );
-
-      const batches = chunk(items, 500);
-      for (const batch of batches) {
-        await dbWrite.$executeRawUnsafe(`
-          INSERT INTO "SearchIndexUpdateQueue" ("type", "id", "action")
-          VALUES ${batch
-            .map(
-              ({ id, action }) =>
-                `('${indexName}', ${id}, '${action ?? SearchIndexUpdateQueueAction.Update}')`
-            )
-            .join(', ')}
-          ON CONFLICT ("type", "id", "action") DO NOTHING;
-      `);
-      }
+      await SearchIndexUpdate.queueUpdate({ indexName, items });
     },
   };
 }
 export type SearchIndexRunContext = {
   db: PrismaClient;
   indexName: string;
+  jobContext: JobContext;
   lastUpdatedAt?: Date;
   updateIds?: number[];
   deleteIds?: number[];

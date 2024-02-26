@@ -53,6 +53,7 @@ export const parsePromptMetadata = (generationDetails: string) => {
   return automaticMetadataProcessor.parse({ generationDetails });
 };
 
+export type DataFromFile = AsyncReturnType<typeof getDataFromFile>;
 export const getDataFromFile = async (file: File) => {
   const processed = await preprocessFile(file);
   const { blockedFor } = await auditImageMeta(
@@ -93,6 +94,8 @@ export const getDataFromFile = async (file: File) => {
     }
   }
 
+  const { height, width, hash } = processed.metadata;
+
   return {
     file,
     uuid: uuidv4(),
@@ -100,8 +103,10 @@ export const getDataFromFile = async (file: File) => {
       ? ('blocked' as TrackedFile['status'])
       : ('uploading' as TrackedFile['status']),
     message: blockedFor?.filter(isDefined).join(', '),
+    height,
+    width,
+    hash,
     ...processed,
-    ...processed.metadata,
     url: processed.objectUrl,
   };
 };

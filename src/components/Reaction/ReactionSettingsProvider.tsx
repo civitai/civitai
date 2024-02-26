@@ -1,9 +1,13 @@
 import { BadgeProps, ButtonProps } from '@mantine/core';
 import { useContext, createContext, ReactNode } from 'react';
+import { ReviewReactions } from '@prisma/client';
 
 type ReactionSettingsState = {
   hideReactionCount?: boolean;
-  buttonStyling?: Omit<ButtonProps, 'onClick'> & BadgeProps;
+  buttonStyling?: (
+    reaction: ReviewReactions | 'AddReaction' | 'BuzzTip',
+    hasReacted?: boolean
+  ) => Omit<ButtonProps, 'onClick'> & BadgeProps;
 };
 
 const ReactionSettingsContext = createContext<ReactionSettingsState | null>(null);

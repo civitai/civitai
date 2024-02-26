@@ -2,7 +2,6 @@ import { Stack, Title } from '@mantine/core';
 import { Announcements } from '~/components/Announcements/Announcements';
 import { setPageOptions } from '~/components/AppLayout/AppLayout';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
-import { ImageCategoriesInfinite } from '~/components/Image/Categories/ImageCategoriesInfinite';
 import { ImageCategories } from '~/components/Image/Filters/ImageCategories';
 import { useImageFilters } from '~/components/Image/image.utils';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
@@ -12,9 +11,7 @@ import { env } from '~/env/client.mjs';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 
 export default function ImagesPage() {
-  const { view: queryView, hidden } = useImageFilters('images');
-  const canToggleView = env.NEXT_PUBLIC_UI_CATEGORY_VIEWS && !hidden;
-  const view = env.NEXT_PUBLIC_UI_CATEGORY_VIEWS && canToggleView ? queryView : 'feed';
+  const { hidden } = useImageFilters('images');
 
   return (
     <>
@@ -35,14 +32,8 @@ export default function ImagesPage() {
           })}
         />
         <IsClient>
-          {view === 'categories' ? (
-            <ImageCategoriesInfinite />
-          ) : (
-            <>
-              <ImageCategories />
-              <ImagesInfinite showEof showAds />
-            </>
-          )}
+          <ImageCategories />
+          <ImagesInfinite showEof showAds />
         </IsClient>
       </Stack>
     </>

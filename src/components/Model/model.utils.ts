@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
 import { ModelSort } from '~/server/common/enums';
 import { periodModeSchema } from '~/server/schema/base.schema';
-import { GetAllModelsInput, GetModelsByCategoryInput } from '~/server/schema/model.schema';
+import { GetAllModelsInput } from '~/server/schema/model.schema';
 import { usernameSchema } from '~/server/schema/user.schema';
 import { showErrorNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -117,25 +117,4 @@ export const useQueryModels = (
   });
 
   return { data, models: items, isLoading: isLoading || loadingPreferences, ...rest };
-};
-
-export const useQueryModelCategories = (
-  filters?: Partial<GetModelsByCategoryInput>,
-  options?: { keepPreviousData?: boolean; enabled?: boolean }
-) => {
-  filters ??= {};
-  const browsingMode = useFiltersContext((state) => state.browsingMode);
-  const { data, ...rest } = trpc.model.getByCategory.useInfiniteQuery(
-    { ...filters, browsingMode },
-    {
-      getNextPageParam: (lastPage) => lastPage.nextCursor,
-      trpc: { context: { skipBatch: true } },
-      keepPreviousData: true,
-      ...options,
-    }
-  );
-
-  const categories = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data]);
-
-  return { data, categories, ...rest };
 };

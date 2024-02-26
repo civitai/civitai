@@ -106,7 +106,15 @@ export default WebhookEndpoint(async (req, res) => {
     log(`${name} starting`);
     axiom.info(`starting`);
     await lock(name, options.lockExpiration);
-    result = await run();
+
+    const jobRunner = run();
+    async function cancelHandler() {
+      await jobRunner.cancel();
+      await unlock(name);
+    }
+    res.on('close', cancelHandler);
+    result = await jobRunner.result;
+    res.off('close', cancelHandler);
     log(`${name} successful: ${((Date.now() - jobStart) / 1000).toFixed(2)}s`);
     axiom.info('success', { duration: Date.now() - jobStart });
     res.status(200).json({ ok: true, pod, result: result ?? null });

@@ -1,8 +1,7 @@
-import { inferRouterInputs, inferRouterOutputs } from '@trpc/server';
+import { inferRouterOutputs } from '@trpc/server';
 import type { AppRouter } from '~/server/routers';
 
 export type RouterOutput = inferRouterOutputs<AppRouter>;
-export type RouterInput = inferRouterInputs<AppRouter>;
 
 type ModelRouter = RouterOutput['model'];
 export type ModelById = ModelRouter['getById'];
@@ -11,12 +10,7 @@ export type ModelGetVersions = ModelRouter['getVersions'];
 export type MyDraftModelGetAll = ModelRouter['getMyDraftModels'];
 export type MyTrainingModelGetAll = ModelRouter['getMyTrainingModels'];
 export type ModelGetAllPagedSimple = ModelRouter['getAllPagedSimple'];
-export type ModelGetByCategory = ModelRouter['getByCategory']['items'][number];
-export type ModelGetByCategoryModel = ModelGetByCategory['items'][number];
 export type ModelGetAssociatedResourcesSimple = ModelRouter['getAssociatedResourcesSimple'];
-
-type ModelVersionRouter = RouterOutput['modelVersion'];
-export type ModelVersionById = ModelVersionRouter['getById'];
 
 type CommentRouter = RouterOutput['comment'];
 export type CommentGetReactions = CommentRouter['getReactions'];
@@ -42,8 +36,6 @@ export type UsersGetCosmetics = UserRouter['getCosmetics'];
 type ImageRouter = RouterOutput['image'];
 export type ImageGetInfinite = ImageRouter['getInfinite']['items'];
 export type ImageGetById = ImageRouter['get'];
-export type ImageGetByCategoryModel = ImageRouter['getImagesByCategory']['items'][number];
-export type ImageGetByCategoryImageModel = ImageGetByCategoryModel['items'][number];
 
 type TagRouter = RouterOutput['tag'];
 export type TagGetAll = TagRouter['getAll']['items'];
@@ -55,15 +47,8 @@ export type ResourceReviewRatingTotals = ResourceReviewRouter['getRatingTotals']
 export type ResourceReviewPaged = ResourceReviewRouter['getPaged'];
 export type ResourceReviewPagedModel = ResourceReviewRouter['getPaged']['items'][number];
 
-type PostRouter = RouterOutput['post'];
-export type PostGetByCategoryModel = PostRouter['getPostsByCategory']['items'][number];
-export type PostGetByCategoryPostModel = PostGetByCategoryModel['items'][number];
-
 type ArticleRouter = RouterOutput['article'];
-export type ArticleGetAll = ArticleRouter['getInfinite'];
 export type ArticleGetById = ArticleRouter['getById'];
-export type ArticleGetByCategoryModel = ArticleRouter['getByCategory']['items'][number];
-export type ArticleGetByCategoryArticleModel = ArticleGetByCategoryModel['items'][number];
 
 type LeaderboardRouter = RouterOutput['leaderboard'];
 export type LeaderboardGetModel = LeaderboardRouter['getLeaderboard'][number];
@@ -120,7 +105,3 @@ type ChatRouter = RouterOutput['chat'];
 export type ChatListMessage = ChatRouter['getAllByUser'][number];
 export type ChatAllMessages = ChatRouter['getInfiniteMessages']['items'];
 export type ChatCreateChat = ChatRouter['createChat'];
-
-type BuzzWithdrawalRequestRouter = RouterOutput['buzzWithdrawalRequest'];
-export type BuzzWithdrawalRequestForModerator =
-  BuzzWithdrawalRequestRouter['getPaginated']['items'][number];

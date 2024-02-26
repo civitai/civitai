@@ -27,7 +27,6 @@ import { requestScannerTasks } from '~/server/jobs/scan-files';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import {
   GetAllModelsOutput,
-  GetModelsByCategoryInput,
   GetModelVersionsSchema,
   ModelGallerySettingsSchema,
   ModelInput,
@@ -200,6 +199,7 @@ export const getModelsRaw = async ({
     ids,
     earlyAccess,
     supportsGeneration,
+    fromPlatform,
     needsReview,
     collectionId,
     fileFormats,
@@ -274,6 +274,13 @@ export const getModelsRaw = async ({
           WHERE tom."modelId" = m."id" AND t."name" = ${tagname ?? tag}
         )`
     );
+  }
+
+  if (fromPlatform) {
+    AND.push(Prisma.sql`EXISTS (
+      SELECT 1 FROM "ModelVersion" mv
+      WHERE mv."trainingStatus" IS NOT NULL AND mv."modelId" = m."id"
+    )`);
   }
 
   if (username || user) {
@@ -467,6 +474,7 @@ export const getModelsRaw = async ({
   else if (sort === ModelSort.MostCollected) orderBy = `mr."collectedCount${period}Rank" ASC`;
   else if (sort === ModelSort.MostTipped) orderBy = `mr."tippedAmountCount${period}Rank" ASC`;
   else if (sort === ModelSort.ImageCount) orderBy = `mr."imageCount${period}Rank" ASC`;
+  else if (sort === ModelSort.Oldest) orderBy = `m."lastVersionAt" ASC`;
 
   // eslint-disable-next-line prefer-const
   let [cursorProp, cursorDirection] = orderBy?.split(' ');
@@ -1600,139 +1608,6 @@ export async function updateModelLastVersionAt({
     data: { lastVersionAt: modelVersion.publishedAt },
   });
 }
-
-export const getModelsByCategory = async ({
-  user,
-  tag,
-  tagname,
-  cursor,
-  ...input
-}: GetModelsByCategoryInput & {
-  user?: SessionUser;
-}) => {
-  input.limit ??= 10;
-  let categories = await getTypeCategories({
-    type: 'model',
-    excludeIds: input.excludedTagIds,
-    limit: input.limit + 1,
-    cursor,
-  });
-
-  let nextCursor: number | null = null;
-  if (categories.length > input.limit) nextCursor = categories.pop()?.id ?? null;
-  categories = categories.sort((a, b) => {
-    if (a.priority !== b.priority) return a.priority - b.priority;
-    return Math.random() - 0.5;
-  });
-
-  const items = await Promise.all(
-    categories.map((c) =>
-      getModels({
-        input: { ...input, tagname: c.name, take: input.modelLimit ?? 21 },
-        user,
-        // Can we make this into a select schema? (low pri)
-        select: {
-          id: true,
-          name: true,
-          type: true,
-          nsfw: true,
-          status: true,
-          createdAt: true,
-          lastVersionAt: true,
-          publishedAt: true,
-          locked: true,
-          earlyAccessDeadline: true,
-          mode: true,
-          rank: {
-            select: {
-              [`downloadCount${input.period}`]: true,
-              [`favoriteCount${input.period}`]: true,
-              [`thumbsUpCount${input.period}`]: true,
-              [`commentCount${input.period}`]: true,
-              [`ratingCount${input.period}`]: true,
-              [`rating${input.period}`]: true,
-            },
-          },
-          modelVersions: {
-            orderBy: { index: 'asc' },
-            take: 1,
-            select: {
-              id: true,
-              earlyAccessTimeFrame: true,
-              createdAt: true,
-              generationCoverage: { select: { covered: true } },
-            },
-          },
-          user: { select: simpleUserSelect },
-          hashes: {
-            select: modelHashSelect,
-            where: {
-              hashType: ModelHashType.SHA256,
-              fileType: { in: ['Model', 'Pruned Model'] as ModelFileType[] },
-            },
-          },
-        },
-      }).then(({ items }) => ({
-        ...c,
-        items,
-      }))
-    )
-  );
-
-  const modelVersionIds = items
-    .flatMap((m) => m.items)
-    .flatMap((m) => m.modelVersions)
-    .map((m) => m.id);
-  const images = !!modelVersionIds.length
-    ? await getImagesForModelVersion({
-        modelVersionIds,
-        excludedTagIds: input.excludedImageTagIds,
-        excludedIds: await getHiddenImagesForUser({ userId: user?.id }),
-        excludedUserIds: input.excludedUserIds,
-        currentUserId: user?.id,
-      })
-    : [];
-
-  const unavailableGenResources = await getUnavailableResources();
-  const result = {
-    nextCursor,
-    items: items.map(({ items, ...c }) => ({
-      ...c,
-      items: items
-        .map(({ hashes, modelVersions, rank, ...model }) => {
-          const [version] = modelVersions;
-          if (!version) return null;
-          const [image] = images.filter((i) => i.modelVersionId === version.id);
-          if (!image) return null;
-
-          const canGenerate =
-            !!version.generationCoverage?.covered &&
-            unavailableGenResources.indexOf(version.id) === -1;
-
-          return {
-            ...model,
-            hashes: hashes.map((hash) => hash.hash.toLowerCase()),
-            rank: {
-              downloadCount: rank?.[`downloadCount${input.period}`] ?? 0,
-              favoriteCount: rank?.[`favoriteCount${input.period}`] ?? 0,
-              thumbsUpCount: rank?.[`thumbsUpCount${input.period}`] ?? 0,
-              commentCount: rank?.[`commentCount${input.period}`] ?? 0,
-              ratingCount: rank?.[`ratingCount${input.period}`] ?? 0,
-              rating: rank?.[`rating${input.period}`] ?? 0,
-            },
-            image:
-              model.mode !== ModelModifier.TakenDown
-                ? (image as (typeof images)[0] | undefined)
-                : undefined,
-            canGenerate,
-          };
-        })
-        .filter(isDefined),
-    })),
-  };
-
-  return result;
-};
 
 export const getAllModelsWithCategories = async ({
   userId,

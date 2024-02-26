@@ -90,6 +90,7 @@ export const getAllModelsSchema = licensingSchema.merge(userPreferencesForModels
     message: 'modelVersionIds should be a number array',
   }).optional(),
   supportsGeneration: z.coerce.boolean().optional(),
+  fromPlatform: z.coerce.boolean().optional(),
   followed: z.coerce.boolean().optional(),
   archived: z.coerce.boolean().optional(),
   collectionId: z.number().optional(),

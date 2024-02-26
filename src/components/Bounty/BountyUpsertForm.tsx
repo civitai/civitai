@@ -295,9 +295,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
       return;
     }
 
-    const completedUploads = imageFiles
-      .filter((file) => file.status === 'success')
-      .map(({ id, url, ...file }) => ({ ...file, url: id }));
+    const completedUploads = imageFiles.filter((file) => file.status === 'success');
 
     const filteredImages = bounty ? [...bountyImages, ...completedUploads] : completedUploads;
 
@@ -495,7 +493,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                       .reverse()
                       .map((file) => (
                         <Paper
-                          key={file.id}
+                          key={file.url}
                           radius="sm"
                           p={0}
                           sx={{ position: 'relative', overflow: 'hidden', height: 332 }}
@@ -505,7 +503,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                             <>
                               <EdgeMedia
                                 placeholder="empty"
-                                src={file.id}
+                                src={file.url}
                                 alt={file.name ?? undefined}
                                 style={{ objectFit: 'cover', height: '100%' }}
                               />
@@ -514,7 +512,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                                   variant="filled"
                                   size="lg"
                                   color="red"
-                                  onClick={() => removeImage(file.id)}
+                                  onClick={() => removeImage(file.url)}
                                 >
                                   <IconTrash size={26} strokeWidth={2.5} />
                                 </ActionIcon>
@@ -714,9 +712,9 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                   }}
                   renderItem={(file, onRemove) => (
                     <>
-                      {file.id ? (
+                      {file.url ? (
                         <Anchor
-                          href={`/api/download/attachments/${file.id}`}
+                          href={`/api/download/attachments/${file.url}`}
                           size="sm"
                           weight={500}
                           lineClamp={1}

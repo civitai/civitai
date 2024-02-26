@@ -124,8 +124,8 @@ export function ImageDetailCarousel({ className }: GalleryCarouselProps) {
                     variant="light"
                     className={classes.actionIcon}
                   >
-                    <Group spacing={2}>
-                      <IconEye size={16} stroke={1.5} color="white" />
+                    <Group spacing={4}>
+                      <IconEye size={18} stroke={2} color="white" />
                       <Text color="white" size="xs" align="center" weight={500}>
                         {abbreviateNumber(image.stats?.viewCountAllTime ?? 0)}
                       </Text>
@@ -224,7 +224,7 @@ export function ImageDetailCarousel({ className }: GalleryCarouselProps) {
                     variant="light"
                     className={classes.actionIcon}
                   >
-                    <IconInfoCircle size={16} color="white" />
+                    <IconInfoCircle size={20} color="white" />
                   </ActionIcon>
                 </Group>
               </Stack>
@@ -278,8 +278,8 @@ export function ImageDetailCarousel({ className }: GalleryCarouselProps) {
 }
 
 const useStyles = createStyles((theme, _props, getRef) => {
-  const isMobile = containerQuery.smallerThan('md');
-  const isDesktop = containerQuery.largerThan('md');
+  const isMobile = containerQuery.smallerThan('sm');
+  const isDesktop = containerQuery.largerThan('sm');
 
   return {
     mobileOnly: { [isDesktop]: { display: 'none' } },
@@ -354,12 +354,30 @@ const useStyles = createStyles((theme, _props, getRef) => {
 
     generateButton: {
       position: 'relative',
+      background: theme.fn.rgba(theme.colors.blue[9], 0.6),
+      border: '1px solid rgba(255,255,255,0.5)',
+
+      '&:hover': {
+        background: theme.fn.rgba(theme.colors.blue[6], 0.8),
+        transform: 'none',
+
+        '&::before': {
+          transform: 'scale(1.1, 1.15)',
+        },
+      },
+
+      '&:active': {
+        background: theme.fn.rgba(theme.colors.blue[6], 0.8),
+        transform: 'none',
+      },
 
       '&::before': {
         content: '""',
         position: 'absolute',
-        left: '-3px',
-        top: '-3px',
+        left: '0',
+        top: '0',
+        width: '100%',
+        height: '100%',
         background: theme.fn.linearGradient(
           10,
           theme.colors.blue[9],
@@ -369,14 +387,13 @@ const useStyles = createStyles((theme, _props, getRef) => {
           theme.colors.cyan[7],
           theme.colors.cyan[5]
         ),
-        backgroundSize: '200%',
+        backgroundSize: '300%',
         borderRadius: theme.radius.xl,
-        width: 'calc(100% + 6px)',
-        height: 'calc(100% + 6px)',
         filter: 'blur(4px)',
         zIndex: -1,
-        animation: 'glowing 20s linear infinite',
-        transition: 'opacity .3s ease-in-out',
+        animation: 'glowing 3.5s linear infinite',
+        transform: 'scale(1.05, 1.1)',
+        transition: 'transform 300ms linear',
       },
     },
     actionIcon: {

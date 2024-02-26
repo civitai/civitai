@@ -5,7 +5,6 @@ import {
   Comment,
   useCommentStyles,
 } from '~/components/CommentsV2';
-import { useEntityAccessRequirement } from '../../Club/club.utils';
 import { ReturnToRootThread } from '../../CommentsV2/ReturnToRootThread';
 
 type PostCommentsProps = {
@@ -14,13 +13,6 @@ type PostCommentsProps = {
 };
 
 export function PostComments({ postId, userId }: PostCommentsProps) {
-  const { entities, isLoadingAccess } = useEntityAccessRequirement({
-    entityType: 'Post',
-    entityIds: [postId],
-  });
-
-  const [access] = entities;
-  const hasAccess = access?.hasAccess;
   const { classes } = useCommentStyles();
 
   return (

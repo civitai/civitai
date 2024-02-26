@@ -21,9 +21,15 @@ export const FeaturedArticle = ({
   const { classes, cx } = useStyles({ color: 'blue' });
   return (
     <Box className={cx(classes.card, className)} {...props}>
-      <Box className={classes.imageContainer}>
-        <EdgeMedia src={article.cover} width={512} alt={`Cover image for ${article.title}`} />
-      </Box>
+      {article.coverImage && (
+        <Box className={classes.imageContainer}>
+          <EdgeMedia
+            src={article.coverImage.url}
+            width={512}
+            alt={`Cover image for ${article.title}`}
+          />
+        </Box>
+      )}
       <Stack className={classes.stack}>
         <Title className={classes.title} order={2}>
           {article.title}

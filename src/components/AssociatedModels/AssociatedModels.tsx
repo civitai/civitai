@@ -1,5 +1,5 @@
 import { Button, Group, LoadingOverlay, Stack, Text, ThemeIcon, Title } from '@mantine/core';
-import { AssociationType } from '@prisma/client';
+import type { AssociationType } from '@prisma/client';
 import { IconRocketOff } from '@tabler/icons-react';
 import React from 'react';
 
@@ -65,10 +65,18 @@ export function AssociatedModels({
               <MasonryCarousel
                 data={data}
                 render={({ data, ...props }) =>
-                  'hashes' in data ? (
-                    <ModelCategoryCard data={data} {...props} />
+                  data.resourceType === 'model' ? (
+                    <ModelCategoryCard
+                      data={data}
+                      {...props}
+                      data-activity="follow-suggestion:model"
+                    />
                   ) : (
-                    <ArticleAltCard data={data} {...props} />
+                    <ArticleAltCard
+                      data={data}
+                      {...props}
+                      data-activity="follow-suggestion:article"
+                    />
                   )
                 }
                 height={columnWidth}

@@ -1,21 +1,18 @@
 import { ActionIcon, Button, Group, GroupProps, Popover } from '@mantine/core';
 import { IconExclamationMark } from '@tabler/icons-react';
 
-import { SortFilter, ViewToggle } from '~/components/Filters';
+import { SortFilter } from '~/components/Filters';
 import { useFeedFiltersStyles } from '~/components/Filters/FeedFilters/FeedFilters.styles';
 import { ModelFiltersDropdown } from '~/components/Model/Infinite/ModelFiltersDropdown';
 import { useModelQueryParams } from '~/components/Model/model.utils';
-import { env } from '~/env/client.mjs';
 import { PeriodMode } from '~/server/schema/base.schema';
 
 export function ModelFeedFilters({ ...groupProps }: GroupProps) {
-  const { classes, theme } = useFeedFiltersStyles();
+  const { classes } = useFeedFiltersStyles();
   const { set, ...queryFilters } = useModelQueryParams();
-  const { username, favorites, hidden, query, collectionId } = queryFilters;
+  const { favorites, query } = queryFilters;
   const periodMode = query || favorites ? ('stats' as PeriodMode) : undefined;
   if (periodMode) queryFilters.periodMode = periodMode;
-  const canToggleView =
-    env.NEXT_PUBLIC_UI_CATEGORY_VIEWS && !username && !favorites && !hidden && !collectionId;
 
   return (
     <Group className={classes.filtersWrapper} spacing={4} noWrap {...groupProps}>
@@ -42,16 +39,6 @@ export function ModelFeedFilters({ ...groupProps }: GroupProps) {
         }}
       />
       <ModelFiltersDropdown size="sm" w="100%" compact className={classes.subnavDropdown} isFeed />
-      {canToggleView && (
-        <ViewToggle
-          type="models"
-          color="gray"
-          radius="xl"
-          size={26}
-          iconSize={14}
-          variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-        />
-      )}
     </Group>
   );
 }

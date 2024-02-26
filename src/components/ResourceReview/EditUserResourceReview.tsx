@@ -41,7 +41,6 @@ export function EditUserResourceReview({
   modelVersionName,
   modelVersionId,
   openedCommentBox = false,
-  showNoAccessAlert,
   innerRef,
 }: Props) {
   const [editDetail, setEditDetail] = useState(openedCommentBox);

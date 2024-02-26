@@ -198,6 +198,15 @@ export function ImageFiltersDropdown({ query, onChange, isFeed, ...buttonProps }
               </Chip>
             </>
           )}
+          <Chip
+            {...chipProps}
+            checked={mergedFilters.fromPlatform}
+            onChange={(checked) =>
+              onChange ? onChange({ fromPlatform: checked }) : setFilters({ fromPlatform: checked })
+            }
+          >
+            Made On-site
+          </Chip>
         </Group>
       </Stack>
       {filterLength > 0 && (

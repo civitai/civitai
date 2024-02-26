@@ -2,6 +2,7 @@ import { EnqueuedTask, MeiliSearch } from 'meilisearch';
 import { env } from '~/env/server.mjs';
 import { createLogger } from '~/utils/logging';
 import { sleep } from '~/server/utils/errorHandling';
+import { JobContext } from '~/server/jobs/job';
 
 const log = createLogger('search', 'green');
 
@@ -18,10 +19,12 @@ export async function updateDocs({
   indexName,
   documents,
   batchSize = 1000,
+  jobContext,
 }: {
   indexName: string;
   documents: any[];
   batchSize?: number;
+  jobContext?: JobContext;
 }): Promise<EnqueuedTask[]> {
   if (!client) return [];
 
@@ -30,6 +33,7 @@ export async function updateDocs({
     try {
       const updates = [];
       for (let i = 0; i < documents.length; i += batchSize) {
+        jobContext?.checkIfCanceled();
         const batch = documents.slice(i, i + batchSize);
         try {
           updates.push(await client.index(indexName).updateDocuments(batch));
