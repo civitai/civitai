@@ -79,9 +79,11 @@ async function updateLegendsBoardResults() {
             'silver', SUM(IIF(position BETWEEN 4 AND 10, 1, 0)),
             'bronze', SUM(IIF(position BETWEEN 11 AND 100, 1, 0))
           ) metrics
-        FROM "LeaderboardResult"
+        FROM "LeaderboardResult" lr
+        JOIN "User" u ON u.id = lr."userId"
         WHERE date <= now()
           AND position < 100
+          AND u."deletedAt" IS NULL
         GROUP BY "userId", "leaderboardId"
       )
       SELECT
