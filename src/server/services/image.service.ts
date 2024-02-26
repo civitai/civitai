@@ -921,13 +921,14 @@ export const getAllImages = async ({
 
   const now = new Date();
   const images: Array<
-    ImageV2Model & {
+    Omit<ImageV2Model, 'nsfwLevel'> & {
       tags?: VotableTagModel[] | undefined;
       tagIds?: number[];
       publishedAt?: Date | null;
       modelVersionId?: number | null;
       baseModel?: string | null;
       availability?: Availability;
+      nsfwLevel: NsfwLevel;
     }
   > = rawImages
     .filter((x) => {

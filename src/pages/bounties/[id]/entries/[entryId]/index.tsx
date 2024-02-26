@@ -583,9 +583,8 @@ export default function BountyEntryDetailsPage({
               <div style={{ padding: '0 10px' }}>
                 <ImageCarousel
                   images={bountyEntry.images}
-                  nsfw={bounty.nsfw}
-                  entityId={bountyEntry.id}
-                  entityType="bountyEntry"
+                  connectId={bountyEntry.id}
+                  connectType="bountyEntry"
                   mobile
                   onImageChange={(images) => {
                     const [image] = images;

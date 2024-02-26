@@ -48,7 +48,10 @@ type ImageContextMenuProps = {
   ingestion?: ImageIngestionStatus;
 };
 
-export function ImageContextMenu(props: ImageContextMenuProps) {
+export function ImageContextMenu({
+  className,
+  ...props
+}: ImageContextMenuProps & { className?: string }) {
   const currentUser = useCurrentUser();
   const { user, userId } = props;
   const isOwner = !!currentUser && (currentUser.id === user?.id || currentUser.id === userId);
@@ -58,6 +61,7 @@ export function ImageContextMenu(props: ImageContextMenuProps) {
     <Menu withinPortal withArrow>
       <Menu.Target>
         <ActionIcon
+          className={!props.needsReview ? className : undefined}
           variant="transparent"
           onClick={(e: React.MouseEvent) => {
             e.preventDefault();
@@ -84,7 +88,7 @@ export function ImageContextMenu(props: ImageContextMenuProps) {
 
   if (props.needsReview)
     return (
-      <Group spacing={4}>
+      <Group spacing={4} className={className}>
         <NeedsReviewBadge {...props} isModerator={isModerator} isOwner={isOwner} />
         {ContextMenu}
       </Group>

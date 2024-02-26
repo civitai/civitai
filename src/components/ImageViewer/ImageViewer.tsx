@@ -11,15 +11,16 @@ import { z } from 'zod';
 import { useRouter } from 'next/router';
 import { useHotkeys } from '@mantine/hooks';
 import { ImageDetailByProps } from '~/components/Image/Detail/ImageDetailByProps';
-import { ImageGenerationProcess, MediaType, NsfwLevel } from '@prisma/client';
+import { ImageGenerationProcess, MediaType, NsfwLevel as NsfwLevelOld } from '@prisma/client';
 import { SimpleUser } from '~/server/selectors/user.selector';
 import { ImageGuardConnect } from '~/components/ImageGuard/ImageGuard';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { Modal } from '@mantine/core';
+import { NsfwLevel } from '~/server/common/enums';
 
 export interface ImageProps {
   id: number;
-  nsfw: NsfwLevel;
+  nsfw: NsfwLevelOld;
   url: string;
   name: string | null;
   meta: ImageMetaProps | null;
@@ -30,6 +31,7 @@ export interface ImageProps {
   createdAt: Date | null;
   type: MediaType;
   imageNsfw?: boolean;
+  nsfwLevel: NsfwLevel;
   postId?: number | null;
   needsReview?: string | null;
   userId?: number;

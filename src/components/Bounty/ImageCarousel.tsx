@@ -16,7 +16,6 @@ import {
 import { IconInfoCircle, IconPhotoOff } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 
-import { ImageGuard, ImageGuardConnect } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -26,6 +25,8 @@ import { useEffect, useMemo } from 'react';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
+import { ImageGuard2, ImageGuardConnect } from '~/components/ImageGuard/ImageGuard2';
+import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 
 const useStyles = createStyles((theme) => ({
   control: {
@@ -113,9 +114,8 @@ const useStyles = createStyles((theme) => ({
 
 export function ImageCarousel({
   images,
-  entityId,
-  entityType,
-  nsfw,
+  connectType,
+  connectId,
   mobile = false,
   onClick,
   isLoading: loading,
@@ -195,7 +195,7 @@ export function ImageCarousel({
   return (
     <Box pos="relative">
       <Carousel
-        key={entityId}
+        key={connectId}
         className={cx(
           !mobile && classes.carousel,
           mobile && classes.mobileBlock,
@@ -218,12 +218,9 @@ export function ImageCarousel({
           }
         }}
       >
-        <ImageGuard
-          images={filteredImages}
-          nsfw={nsfw}
-          connect={{ entityId, entityType }}
-          render={(image) => {
-            return (
+        {filteredImages.map((image) => (
+          <ImageGuard2 key={image.id} image={image} connectType={connectType} connectId={connectId}>
+            {(safe) => (
               <Carousel.Slide>
                 <Box
                   sx={{ cursor: 'pointer' }}
@@ -248,55 +245,51 @@ export function ImageCarousel({
                       : undefined
                   }
                 >
-                  <ImageGuard.Content>
-                    {({ safe }) => (
-                      <Center style={{ height: '100%', width: '100%' }}>
-                        <div style={{ width: '100%', position: 'relative' }}>
-                          <ImageGuard.ToggleConnect position="top-left" />
-                          <ImageGuard.Report context="image" />
-                          {!safe ? (
-                            <AspectRatio
-                              ratio={1}
-                              sx={(theme) => ({
-                                width: '100%',
-                                borderRadius: theme.radius.md,
-                                overflow: 'hidden',
-                              })}
-                            >
-                              <MediaHash {...image} />
-                            </AspectRatio>
-                          ) : (
-                            <ImagePreview
-                              image={image}
-                              edgeImageProps={{
-                                width: 450,
-                                style: { objectPosition: mobile ? 'top' : 'center' },
-                              }}
-                              radius="md"
-                              style={{ width: '100%' }}
-                              aspectRatio={1}
-                            />
-                          )}
-                          {image.meta && (
-                            <ImageMetaPopover
-                              meta={image.meta}
-                              generationProcess={image.generationProcess ?? undefined}
-                              imageId={image.id}
-                            >
-                              <ActionIcon variant="light" className={classes.meta}>
-                                <IconInfoCircle color="white" strokeWidth={2.5} size={18} />
-                              </ActionIcon>
-                            </ImageMetaPopover>
-                          )}
-                        </div>
-                      </Center>
-                    )}
-                  </ImageGuard.Content>
+                  <Center className="h-full w-full">
+                    <div className="relative w-full">
+                      <ImageGuard2.BlurToggle className="absolute top-2 left-2 z-10" />
+                      <ImageContextMenu {...image} className="absolute top-2 right-2 z-10" />
+                      {!safe ? (
+                        <AspectRatio
+                          ratio={1}
+                          sx={(theme) => ({
+                            width: '100%',
+                            borderRadius: theme.radius.md,
+                            overflow: 'hidden',
+                          })}
+                        >
+                          <MediaHash {...image} />
+                        </AspectRatio>
+                      ) : (
+                        <ImagePreview
+                          image={image}
+                          edgeImageProps={{
+                            width: 450,
+                            style: { objectPosition: mobile ? 'top' : 'center' },
+                          }}
+                          radius="md"
+                          style={{ width: '100%' }}
+                          aspectRatio={1}
+                        />
+                      )}
+                      {image.meta && (
+                        <ImageMetaPopover
+                          meta={image.meta}
+                          generationProcess={image.generationProcess ?? undefined}
+                          imageId={image.id}
+                        >
+                          <ActionIcon variant="light" className={classes.meta}>
+                            <IconInfoCircle color="white" strokeWidth={2.5} size={18} />
+                          </ActionIcon>
+                        </ImageMetaPopover>
+                      )}
+                    </div>
+                  </Center>
                 </Box>
               </Carousel.Slide>
-            );
-          }}
-        />
+            )}
+          </ImageGuard2>
+        ))}
       </Carousel>
     </Box>
   );
@@ -304,7 +297,6 @@ export function ImageCarousel({
 
 type Props = {
   images: ImageProps[];
-  nsfw?: boolean;
   mobile?: boolean;
   onClick?: (image: ImageProps) => void;
   isLoading?: boolean;

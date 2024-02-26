@@ -384,9 +384,8 @@ export default function BountyDetailsPage({
               >
                 <ImageCarousel
                   images={bounty.images}
-                  nsfw={bounty.nsfw}
-                  entityId={bounty.id}
-                  entityType="bounty"
+                  connectId={bounty.id}
+                  connectType="bounty"
                   mobile={mobile}
                   onClick={(image) => {
                     onSetImage(image.id);

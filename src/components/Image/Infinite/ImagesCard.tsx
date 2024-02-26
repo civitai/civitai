@@ -17,7 +17,6 @@ import { IconInfoCircle, IconBrush, IconAlertTriangle, IconClock2 } from '@table
 import { useMemo } from 'react';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { useImagesContext } from '~/components/Image/Providers/ImagesProvider';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
@@ -88,14 +87,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                         position="apart"
                         align="start"
                         spacing={4}
-                        style={{
-                          position: 'absolute',
-                          top: 0,
-                          left: 0,
-                          width: '100%',
-                          zIndex: 10,
-                          padding: 8,
-                        }}
+                        className="absolute top-2 left-2 right-2 z-10"
                       >
                         <ImageGuard2.BlurToggle />
                         {safe && (

@@ -18,8 +18,8 @@ import {
 } from '~/components/Buzz/InteractiveTipBuzzButton';
 import { HolidayFrame } from '../Decorations/HolidayFrame';
 import { CosmeticType } from '@prisma/client';
-import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 
 const IMAGE_CARD_WIDTH = 450;
 
@@ -53,48 +53,38 @@ export function ArticleCard({ data, aspectRatio }: Props) {
       >
         <div className={classes.root}>
           {coverImage && (
-            <ImageGuard
-              connect={{ entityId: id, entityType: 'article' }}
-              images={[coverImage]}
-              render={(image) => (
-                <>
+            <ImageGuard2 image={coverImage}>
+              {(safe) => (
+                <div className="relative flex-1 overflow-hidden h-full">
                   <Group
                     spacing={4}
                     position="apart"
                     align="top"
-                    className={cx(classes.contentOverlay, classes.top)}
-                    noWrap
+                    className="absolute top-2 left-2 right-2 z-10"
                   >
-                    <ImageGuard.ToggleConnect position="static" />
-                    {category && (
-                      <Badge color="dark" size="sm" variant="light" radius="xl">
-                        <Text color="white">{category.name}</Text>
-                      </Badge>
-                    )}
-
-                    <Stack ml="auto">
-                      <ArticleContextMenu article={data} />
-                    </Stack>
+                    <Group spacing={4}>
+                      <ImageGuard2.BlurToggle />
+                      {category && (
+                        <Badge size="sm" variant="gradient" gradient={{ from: 'cyan', to: 'blue' }}>
+                          {category.name}
+                        </Badge>
+                      )}
+                    </Group>
+                    <ArticleContextMenu article={data} />
                   </Group>
-                  <ImageGuard.Content>
-                    {({ safe }) =>
-                      !safe ? (
-                        <MediaHash {...image} />
-                      ) : (
-                        <EdgeMedia
-                          src={image.url}
-                          // TODO: hardcoding upscaling because cover images look awful with the new card since we don't store width/height
-                          width={IMAGE_CARD_WIDTH * 2.5}
-                          placeholder="empty"
-                          className={classes.image}
-                          loading="lazy"
-                        />
-                      )
-                    }
-                  </ImageGuard.Content>
-                </>
+                  {!safe ? (
+                    <MediaHash {...coverImage} />
+                  ) : (
+                    <EdgeMedia
+                      className={classes.image}
+                      src={coverImage.url}
+                      width={IMAGE_CARD_WIDTH * 2.5}
+                      loading="lazy"
+                    />
+                  )}
+                </div>
               )}
-            />
+            </ImageGuard2>
           )}
 
           <Stack

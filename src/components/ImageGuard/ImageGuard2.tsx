@@ -7,6 +7,7 @@ import { ConfirmDialog } from '~/components/Dialog/Common/ConfirmDialog';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';
+import { NsfwLevel } from '~/server/common/enums';
 import {
   BrowsingLevel,
   browsingLevelLabels,
@@ -17,7 +18,7 @@ import { useImageStore } from '~/store/image.store';
 
 type ImageProps = {
   id: number;
-  nsfwLevel: BrowsingLevel;
+  nsfwLevel: NsfwLevel;
   userId?: number;
   user?: { id: number };
   url?: string | null;
@@ -36,6 +37,8 @@ type ConnectType =
   | 'bountyEntry'
   | 'club'
   | 'article';
+
+export type ImageGuardConnect = { connectType: ConnectType; connectId: ConnectId };
 
 type ConnectProps =
   | { connectType?: never; connectId?: never }
@@ -96,7 +99,7 @@ export function ImageGuard2<T extends ImageProps>({
 
   return (
     <ImageGuardCtx.Provider
-      value={{ safe, show, browsingLevel: image.nsfwLevel, imageId: image.id, key }}
+      value={{ safe, show, browsingLevel: image.nsfwLevel as number, imageId: image.id, key }}
     >
       {tosViolation ? (
         <Center w="100%" h="100%">

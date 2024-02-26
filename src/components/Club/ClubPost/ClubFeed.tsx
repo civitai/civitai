@@ -343,8 +343,8 @@ export const ClubPostResourceCard = ({ resourceData }: { resourceData: ClubPostR
       <ImageCarousel
         mobile={isMobile}
         images={resourceData.data.images}
-        entityId={resourceData.entityId}
-        entityType="post"
+        connectId={resourceData.entityId}
+        connectType="post"
         onClick={(image) => {
           triggerRoutedDialog({
             name: 'imageDetail',

@@ -48,6 +48,7 @@ type ArticleRaw = {
   title: string;
   publishedAt: Date | null;
   nsfw: boolean;
+  nsfwLevel: number;
   availability: Availability;
   userId: number | null;
   stats:
@@ -159,9 +160,9 @@ export const getArticles = async ({
     if (!!ids?.length) {
       AND.push(Prisma.sql`a.id IN (${Prisma.join(ids, ',')})`);
     }
-    if (browsingMode === BrowsingMode.SFW) {
-      AND.push(Prisma.sql`a."nsfw" = false`);
-    }
+    // if (browsingMode === BrowsingMode.SFW) {
+    //   AND.push(Prisma.sql`a."nsfw" = false`);
+    // }
     if (username) {
       const targetUser = await dbRead.user.findUnique({
         where: { username: username ?? '' },
@@ -327,6 +328,7 @@ export const getArticles = async ({
         a.title,
         a."publishedAt",
         a.nsfw,
+        a."nsfwLevel",
         a."userId",
         a."createdAt",
         a."updatedAt",
