@@ -1,4 +1,5 @@
 import { Prisma, PurchasableRewardUsage } from '@prisma/client';
+import { PurchasableRewardViewMode } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { TransactionType } from '~/server/schema/buzz.schema';
@@ -19,12 +20,43 @@ import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 
 export const getPaginatedPurchasableRewards = async (
-  input: GetPaginatedPurchasableRewardsSchema
+  input: GetPaginatedPurchasableRewardsSchema & { userId?: number }
 ) => {
   const { limit = DEFAULT_PAGE_SIZE, page } = input || {};
   const { take, skip } = getPagination(limit, page);
 
   const where: Prisma.PurchasableRewardFindManyArgs['where'] = {};
+  if (input.mode === PurchasableRewardViewMode.Active) {
+    // Only show active rewards:
+    where.archived = false;
+    where.availableFrom = { lte: new Date() };
+    where.availableTo = { gte: new Date() };
+    where.codes = { some: {} };
+  }
+
+  if (input.mode === PurchasableRewardViewMode.History) {
+    where.OR = [
+      {
+        archived: true,
+      },
+      {
+        availableTo: { lt: new Date() },
+      },
+      {
+        codes: { none: {} },
+      },
+    ];
+  }
+
+  if (input.mode === PurchasableRewardViewMode.Purchased) {
+    if (!input.userId) throw throwBadRequestError('You must be logged in to view this mode.');
+
+    where.purchases = {
+      some: {
+        userId: input.userId,
+      },
+    };
+  }
 
   const items = await dbRead.purchasableReward.findMany({
     where,

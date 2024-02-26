@@ -15,8 +15,8 @@ import {
 import { moderatorProcedure, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 
 export const purchasableRewardRouter = router({
-  getPaged: publicProcedure.input(getPaginatedPurchasableRewardsSchema).query(({ input }) => {
-    return getPaginatedPurchasableRewards(input);
+  getPaged: publicProcedure.input(getPaginatedPurchasableRewardsSchema).query(({ input, ctx }) => {
+    return getPaginatedPurchasableRewards({ ...input, userId: ctx?.user?.id });
   }),
   getModeratorPaged: publicProcedure
     .input(getPaginatedPurchasableRewardsModeratorSchema)
