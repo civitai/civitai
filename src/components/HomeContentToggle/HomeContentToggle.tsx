@@ -76,7 +76,6 @@ const homeOptions: Record<string, HomeOption> = {
   builds: {
     url: '/builds',
     icon: (props: TablerIconsProps) => <IconCpu {...props} />,
-    highlight: true,
   },
 };
 type HomeOptions = keyof typeof homeOptions;
