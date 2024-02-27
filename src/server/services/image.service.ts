@@ -1313,12 +1313,10 @@ export const getImagesForModelVersion = async ({
   const images = await dbRead.$queryRaw<ImagesForModelVersions[]>(query);
 
   if (include.includes('tags')) {
-    const tags = await dbRead.tagsOnImage.findMany({
-      where: { imageId: { in: images.map((i) => i.id) }, disabled: false },
-      select: { imageId: true, tagId: true },
-    });
+    const imageIds = images.map((i) => i.id);
+    const tagIdsVar = await getTagIdsForImages(imageIds);
     for (const image of images) {
-      image.tags = tags.filter((t) => t.imageId === image.id).map((t) => t.tagId);
+      image.tags = tagIdsVar?.[image.id]?.tags;
     }
   }
 

@@ -20,7 +20,9 @@ import { BaseModel, BaseModelType, CacheTTL } from '~/server/common/constants';
 import { BrowsingMode, ModelSort } from '~/server/common/enums';
 import { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
 import { requestScannerTasks } from '~/server/jobs/scan-files';
+import { redis } from '~/server/redis/client';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import {
   GetAllModelsOutput,
@@ -42,8 +44,13 @@ import {
   getAvailableCollectionItemsFilterForUser,
   getUserCollectionPermissionsById,
 } from '~/server/services/collection.service';
+import {
+  getUnavailableResources,
+  prepareModelInOrchestrator,
+} from '~/server/services/generation/generation.service';
 import { getImagesForModelVersion } from '~/server/services/image.service';
 import { getCategoryTags } from '~/server/services/system-cache';
+import { getProfilePicturesForUsers } from '~/server/services/user.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { getEarlyAccessDeadline, isEarlyAccess } from '~/server/utils/early-access-helpers';
 import {
@@ -59,6 +66,7 @@ import {
 } from '~/server/utils/pagination-helpers';
 import { decreaseDate } from '~/utils/date-helpers';
 import { prepareFile } from '~/utils/file-helpers';
+import { fromJson, toJson } from '~/utils/json-helpers';
 import { getS3Client } from '~/utils/s3-utils';
 import { isDefined } from '~/utils/type-guards';
 import {
@@ -67,14 +75,6 @@ import {
   SetAssociatedResourcesInput,
   SetModelsCategoryInput,
 } from './../schema/model.schema';
-import {
-  getUnavailableResources,
-  prepareModelInOrchestrator,
-} from '~/server/services/generation/generation.service';
-import { profileImageSelect } from '~/server/selectors/image.selector';
-import { preventReplicationLag, getDbWithoutLag } from '~/server/db/db-helpers';
-import { fromJson, toJson } from '~/utils/json-helpers';
-import { redis } from '~/server/redis/client';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
@@ -468,12 +468,9 @@ export const getModelsRaw = async ({
 
   // eslint-disable-next-line prefer-const
   let { where: cursorClause, prop: cursorProp } = getCursor(orderBy, cursor);
-
-  if (cursorProp === 'm."lastVersionAt"') {
-    // treats a date as a number of seconds since epoch
-    cursorProp = `extract(epoch from ${cursorProp})`;
-  }
   if (cursorClause) AND.push(cursorClause);
+  if (orderBy === `m."lastVersionAt" DESC NULLS LAST`)
+    orderBy = 'COALESCE(m."lastVersionAt", \'infinity\') DESC';
 
   if (!!fileFormats?.length) {
     AND.push(Prisma.sql`EXISTS (
@@ -646,10 +643,8 @@ export const getModelsRaw = async ({
   //   modelQuery
   // );
 
-  const profilePictures = await dbRead.image.findMany({
-    where: { id: { in: models.map((m) => m.user.profilePictureId).filter(isDefined) } },
-    select: { ...profileImageSelect, ingestion: true },
-  });
+  const userIds = models.map((m) => m.user.id);
+  const profilePictures = await getProfilePicturesForUsers(userIds);
 
   let nextCursor: string | bigint | undefined;
   if (take && models.length > take) {
@@ -673,7 +668,7 @@ export const getModelsRaw = async ({
       modelVersions: [modelVersion].filter(isDefined),
       user: {
         ...model.user,
-        profilePicture: profilePictures.find((p) => p.id === model.user.profilePictureId),
+        profilePicture: profilePictures?.[model.user.id] ?? null,
         cosmetics: userCosmetics,
       },
     })),

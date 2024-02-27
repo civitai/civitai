@@ -45,7 +45,7 @@ export const userPreferencesForModelsSchema = z.object({
 export const getAllModelsSchema = licensingSchema.merge(userPreferencesForModelsSchema).extend({
   limit: z.preprocess((val) => Number(val), z.number().min(0).max(100)).optional(),
   page: z.preprocess((val) => Number(val), z.number().min(1)).optional(),
-  cursor: z.preprocess((val) => Number(val), z.number()).optional(),
+  cursor: z.union([z.bigint(), z.number(), z.string(), z.date()]).optional(),
   query: z.string().optional(),
   tag: z.string().optional(),
   tagname: z.string().optional(),
