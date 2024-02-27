@@ -44,17 +44,15 @@ const notifications = Object.entries(notificationProcessors)
     key,
   }))
   .sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0));
-const notificationBatches: (typeof notifications)[] = [[]];
-let currentBatch = notificationBatches[0];
+const notificationPriorities: Record<number, typeof notifications> = {};
 for (const notification of notifications) {
   const priority = notification.priority ?? 0;
-  if (priority !== currentBatch[0]?.priority) {
-    currentBatch = [];
-    notificationBatches.push(currentBatch);
-  }
-  currentBatch.push(notification);
+  notificationPriorities[priority] ??= [];
+  notificationPriorities[priority].push(notification);
 }
-export { notificationBatches };
+export const notificationBatches = Object.keys(notificationPriorities)
+  .sort()
+  .map((key) => notificationPriorities[key as unknown as number]);
 
 export function getNotificationMessage(notification: Omit<BareNotification, 'id'>) {
   const { prepareMessage } = notificationProcessors[notification.type] ?? {};

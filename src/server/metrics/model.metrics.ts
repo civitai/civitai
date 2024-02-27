@@ -15,6 +15,7 @@ export const modelMetrics = createMetricProcessor({
     const updatedModelIds = new Set<number>();
 
     for (const processor of modelMetricProcessors) {
+      ctx.jobContext.checkIfCanceled();
       const processorUpdatedModelIds = await processor(ctx);
       processorUpdatedModelIds.forEach((id) => updatedModelIds.add(id));
     }
@@ -68,7 +69,12 @@ async function getModelIdFromVersions({
   return [...affectedModelIds];
 }
 
-async function updateVersionDownloadMetrics({ ch, db, lastUpdate }: MetricProcessorRunContext) {
+async function updateVersionDownloadMetrics({
+  ch,
+  db,
+  jobContext,
+  lastUpdate,
+}: MetricProcessorRunContext) {
   const clickhouseSince = dayjs(lastUpdate).toISOString();
   const affectedVersionIdsResponse = await ch.query({
     query: `
@@ -121,6 +127,7 @@ async function updateVersionDownloadMetrics({ ch, db, lastUpdate }: MetricProces
       // We batch the affected model versions up when sending it to the db
       const batches = chunk(affectedModelVersions, 1000);
       for (const batch of batches) {
+        jobContext.checkIfCanceled();
         const batchJson = JSON.stringify(batch);
 
         rows += await db.$executeRaw`
@@ -167,7 +174,12 @@ async function updateVersionDownloadMetrics({ ch, db, lastUpdate }: MetricProces
   return [];
 }
 
-async function updateVersionGenerationMetrics({ ch, db, lastUpdate }: MetricProcessorRunContext) {
+async function updateVersionGenerationMetrics({
+  ch,
+  db,
+  lastUpdate,
+  jobContext,
+}: MetricProcessorRunContext) {
   const clickhouseSince = dayjs(lastUpdate).toISOString();
   const affectedVersionIdsResponse = await ch.query({
     query: `
@@ -192,6 +204,7 @@ async function updateVersionGenerationMetrics({ ch, db, lastUpdate }: MetricProc
   const batches = chunk(versionIds, 5000);
   let rows = 0;
   for (const batch of batches) {
+    jobContext.checkIfCanceled();
     try {
       const affectedModelVersionsResponse = await ch.query({
         query: `
@@ -269,7 +282,12 @@ async function updateVersionGenerationMetrics({ ch, db, lastUpdate }: MetricProc
   return [];
 }
 
-async function updateVersionRatingMetrics({ ch, db, lastUpdate }: MetricProcessorRunContext) {
+async function updateVersionRatingMetrics({
+  ch,
+  db,
+  lastUpdate,
+  jobContext,
+}: MetricProcessorRunContext) {
   // Disabled clickhouse as it seems to be missing resource reviews somehow...
   const clickhouseSince = dayjs(lastUpdate).toISOString();
   const affectedModelVersionsResponse = await ch.query({
@@ -298,6 +316,7 @@ async function updateVersionRatingMetrics({ ch, db, lastUpdate }: MetricProcesso
   const batches = chunk([...modelVersionIds], 500);
   let rows = 0;
   for (const batch of batches) {
+    jobContext.checkIfCanceled();
     const batchJson = JSON.stringify(batch);
     rows += await db.$executeRaw`
       -- update version rating metrics
@@ -357,7 +376,12 @@ async function updateVersionRatingMetrics({ ch, db, lastUpdate }: MetricProcesso
   return [];
 }
 
-async function updateVersionFavoriteMetrics({ ch, db, lastUpdate }: MetricProcessorRunContext) {
+async function updateVersionFavoriteMetrics({
+  ch,
+  pg,
+  lastUpdate,
+  jobContext,
+}: MetricProcessorRunContext) {
   const clickhouseSince = dayjs(lastUpdate).toISOString();
   const affectedModelsResponse = await ch.query({
     query: `
@@ -384,7 +408,7 @@ async function updateVersionFavoriteMetrics({ ch, db, lastUpdate }: MetricProces
       Prisma.sql`f."modelId" = ANY (SELECT json_array_elements(${affectedModelsJson}::json)::text::integer)`
     );
 
-  const rows = await db.$executeRaw`
+  const rowsQuery = await pg.cancellableQuery(Prisma.sql`
     -- update version favorite metrics
     INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "favoriteCount")
     SELECT
@@ -412,13 +436,20 @@ async function updateVersionFavoriteMetrics({ ch, db, lastUpdate }: MetricProces
     ) tf
     GROUP BY mv.id, tf.timeframe
     ON CONFLICT ("modelVersionId", timeframe) DO UPDATE SET "favoriteCount" = EXCLUDED."favoriteCount", "updatedAt" = now();
-  `;
-  console.log('favorites', rows);
+  `);
+  jobContext.on('cancel', rowsQuery.cancel);
+  const affectedModelsRows = await rowsQuery.result();
+  console.log('favorites', affectedModelsRows[0]);
 
   return affectedModels.map(({ modelId }) => modelId);
 }
 
-async function updateVersionCommentMetrics({ ch, db, lastUpdate }: MetricProcessorRunContext) {
+async function updateVersionCommentMetrics({
+  ch,
+  db,
+  lastUpdate,
+  jobContext,
+}: MetricProcessorRunContext) {
   const clickhouseSince = dayjs(lastUpdate).toISOString();
   const affectedModelsResponse = await ch.query({
     query: `
@@ -440,6 +471,7 @@ async function updateVersionCommentMetrics({ ch, db, lastUpdate }: MetricProcess
   const batches = chunk(modelIds, 500);
   let rows = 0;
   for (const batch of batches) {
+    jobContext.checkIfCanceled();
     const batchJson = JSON.stringify(batch);
 
     rows += await db.$executeRaw`
@@ -478,7 +510,11 @@ async function updateVersionCommentMetrics({ ch, db, lastUpdate }: MetricProcess
   return modelIds;
 }
 
-async function updateVersionImageMetrics({ db, lastUpdate }: MetricProcessorRunContext) {
+async function updateVersionImageMetrics({
+  db,
+  lastUpdate,
+  jobContext,
+}: MetricProcessorRunContext) {
   const affected = await db.$queryRaw<{ modelVersionId: number }[]>`
     SELECT DISTINCT
       ir."modelVersionId"
@@ -493,6 +529,7 @@ async function updateVersionImageMetrics({ db, lastUpdate }: MetricProcessorRunC
   const batches = chunk(versionIds, 500);
   let rows = 0;
   for (const batch of batches) {
+    jobContext.checkIfCanceled();
     rows += await db.$executeRaw`
       -- update version image metrics
       INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "imageCount")
@@ -532,7 +569,7 @@ async function updateVersionImageMetrics({ db, lastUpdate }: MetricProcessorRunC
   return getModelIdFromVersions({ versionIds, db });
 }
 
-async function updateCollectMetrics({ db, lastUpdate }: MetricProcessorRunContext) {
+async function updateCollectMetrics({ db, lastUpdate, jobContext }: MetricProcessorRunContext) {
   const affected = await db.$queryRaw<{ modelId: number }[]>`
     SELECT DISTINCT
       "modelId"
@@ -546,6 +583,7 @@ async function updateCollectMetrics({ db, lastUpdate }: MetricProcessorRunContex
   const batches = chunk(modelIds, 1000);
   let rows = 0;
   for (const batch of batches) {
+    jobContext.checkIfCanceled();
     const batchJson = JSON.stringify(batch);
 
     rows += await db.$executeRaw`
@@ -588,7 +626,7 @@ async function updateCollectMetrics({ db, lastUpdate }: MetricProcessorRunContex
   return modelIds;
 }
 
-async function updateTippedBuzzMetrics({ db, lastUpdate }: MetricProcessorRunContext) {
+async function updateTippedBuzzMetrics({ db, lastUpdate, jobContext }: MetricProcessorRunContext) {
   const affected = await db.$queryRaw<{ modelId: number }[]>`
     SELECT bt."entityId" as "modelId"
     FROM "BuzzTip" bt
@@ -602,6 +640,7 @@ async function updateTippedBuzzMetrics({ db, lastUpdate }: MetricProcessorRunCon
   const batches = chunk(modelIds, 1000);
   let rows = 0;
   for (const batch of batches) {
+    jobContext.checkIfCanceled();
     const batchJson = JSON.stringify(batch);
 
     rows += await db.$executeRaw`
@@ -651,8 +690,8 @@ async function updateTippedBuzzMetrics({ db, lastUpdate }: MetricProcessorRunCon
   return modelIds;
 }
 
-async function updateModelMetrics({ db, lastUpdate }: MetricProcessorRunContext) {
-  const rows = await db.$executeRaw`
+async function updateModelMetrics({ pg, lastUpdate, jobContext }: MetricProcessorRunContext) {
+  const rowsQuery = await pg.cancellableQuery(Prisma.sql`
     INSERT INTO "ModelMetric" ("modelId", timeframe, "downloadCount", rating, "ratingCount", "favoriteCount", "commentCount", "imageCount", "collectedCount", "tippedCount", "tippedAmountCount", "generationCount")
     WITH affected AS (
       SELECT DISTINCT mv."modelId"
@@ -688,8 +727,10 @@ async function updateModelMetrics({ db, lastUpdate }: MetricProcessorRunContext)
       "tippedCount" = EXCLUDED."tippedCount",
       "tippedAmountCount" = EXCLUDED."tippedAmountCount",
       "generationCount" = EXCLUDED."generationCount"
-  `;
-  console.log('models', rows);
+  `);
+  jobContext.on('cancel', rowsQuery.cancel);
+  const affectedModelsRows = await rowsQuery.result();
+  console.log('models', affectedModelsRows[0]);
 
   return [];
 }

@@ -1,9 +1,7 @@
 import {
-  CommercialUse,
   CosmeticSource,
   CosmeticType,
   MetricTimeframe,
-  ModelHashType,
   ModelModifier,
   ModelStatus,
   ModelType,
@@ -18,7 +16,7 @@ import { isEmpty } from 'lodash-es';
 import { SessionUser } from 'next-auth';
 
 import { env } from '~/env/server.mjs';
-import { BaseModel, BaseModelType, ModelFileType, CacheTTL } from '~/server/common/constants';
+import { BaseModel, BaseModelType, CacheTTL } from '~/server/common/constants';
 import { ModelSort } from '~/server/common/enums';
 import { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -39,7 +37,6 @@ import { isNotTag, isTag } from '~/server/schema/tag.schema';
 import { modelsSearchIndex } from '~/server/search-index';
 import { associatedResourceSelect } from '~/server/selectors/model.selector';
 import { modelFileSelect } from '~/server/selectors/modelFile.selector';
-import { modelHashSelect } from '~/server/selectors/modelHash.selector';
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import {
   getAvailableCollectionItemsFilterForUser,
@@ -74,7 +71,6 @@ import { profileImageSelect } from '~/server/selectors/image.selector';
 import { preventReplicationLag, getDbWithoutLag } from '~/server/db/db-helpers';
 import { fromJson, toJson } from '~/utils/json-helpers';
 import { redis } from '~/server/redis/client';
-import { pgDbRead } from '~/server/db/pgDb';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
@@ -376,23 +372,13 @@ export const getModelsRaw = async ({
   }
 
   // Filter by model permissions
-  if (allowCommercialUse !== undefined) {
-    const commercialUseOr: CommercialUse[] = [];
-    switch (allowCommercialUse) {
-      case CommercialUse.None:
-        commercialUseOr.push(CommercialUse.None);
-        break;
-      case CommercialUse.Image:
-        commercialUseOr.push(CommercialUse.Image);
-      case CommercialUse.RentCivit:
-        commercialUseOr.push(CommercialUse.RentCivit);
-      case CommercialUse.Rent:
-        commercialUseOr.push(CommercialUse.Rent);
-      case CommercialUse.Sell:
-        commercialUseOr.push(CommercialUse.Sell);
-    }
-
-    AND.push(Prisma.sql`m."allowCommercialUse" IN (${Prisma.join(commercialUseOr, ',')})`);
+  if (allowCommercialUse && allowCommercialUse.length > 0) {
+    AND.push(
+      Prisma.sql`m."allowCommercialUse" && ARRAY[${Prisma.join(
+        allowCommercialUse,
+        ','
+      )}]::"CommercialUse"[]`
+    );
   }
 
   if (allowDerivatives !== undefined)
@@ -757,22 +743,8 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   }
 
   // Filter by model permissions
-  if (allowCommercialUse !== undefined) {
-    const commercialUseOr: CommercialUse[] = [];
-    switch (allowCommercialUse) {
-      case CommercialUse.None:
-        commercialUseOr.push(CommercialUse.None);
-        break;
-      case CommercialUse.Image:
-        commercialUseOr.push(CommercialUse.Image);
-      case CommercialUse.RentCivit:
-        commercialUseOr.push(CommercialUse.RentCivit);
-      case CommercialUse.Rent:
-        commercialUseOr.push(CommercialUse.Rent);
-      case CommercialUse.Sell:
-        commercialUseOr.push(CommercialUse.Sell);
-    }
-    AND.push({ allowCommercialUse: { in: commercialUseOr } });
+  if (allowCommercialUse && allowCommercialUse.length > 0) {
+    AND.push({ allowCommercialUse: { hasSome: allowCommercialUse } });
   }
   if (allowDerivatives !== undefined) AND.push({ allowDerivatives });
   if (allowDifferentLicense !== undefined) AND.push({ allowDifferentLicense });

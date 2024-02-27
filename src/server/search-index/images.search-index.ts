@@ -430,7 +430,12 @@ const onUpdateQueueProcess = async ({ db, indexName }: { db: PrismaClient; index
   return itemsToIndex;
 };
 
-const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunContext) => {
+const onIndexUpdate = async ({
+  db,
+  lastUpdatedAt,
+  indexName,
+  jobContext,
+}: SearchIndexRunContext) => {
   // Confirm index setup & working:
   await onIndexSetup({ indexName });
   // Cleanup documents that require deletion:
@@ -460,6 +465,7 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
         indexName,
         documents: updateTasks,
         batchSize: MEILISEARCH_DOCUMENT_BATCH_SIZE,
+        jobContext,
       });
 
       console.log('onIndexUpdate :: base tasks for updated items have been added');
@@ -468,6 +474,7 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
   }
 
   while (true) {
+    jobContext.checkIfCanceled();
     const indexReadyRecords = await onFetchItemsToIndex({
       db,
       indexName,
@@ -483,6 +490,7 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
       indexName,
       documents: indexReadyRecords,
       batchSize: MEILISEARCH_DOCUMENT_BATCH_SIZE,
+      jobContext,
     });
 
     imageTasks.push(...tasks);

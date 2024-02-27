@@ -1,9 +1,10 @@
-import { z } from 'zod';
-import { ModEndpoint } from '~/server/utils/endpoint-helpers';
 import { SearchIndexUpdateQueueAction } from '@prisma/client';
-import { MODELS_SEARCH_INDEX, USERS_SEARCH_INDEX } from '~/server/common/constants';
-import { modelsSearchIndex, usersSearchIndex } from '~/server/search-index';
 import { NextApiRequest, NextApiResponse } from 'next';
+import { z } from 'zod';
+import { MODELS_SEARCH_INDEX, USERS_SEARCH_INDEX } from '~/server/common/constants';
+import { inJobContext } from '~/server/jobs/job';
+import { modelsSearchIndex, usersSearchIndex } from '~/server/search-index';
+import { ModEndpoint } from '~/server/utils/endpoint-helpers';
 import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
 
 export const schema = z.object({
@@ -27,16 +28,18 @@ export default ModEndpoint(async function updateIndexSync(
       throw new Error('No ids provided');
     }
 
-    switch (input.index) {
-      case USERS_SEARCH_INDEX:
-        await usersSearchIndex.updateSync(data);
-        break;
-      case MODELS_SEARCH_INDEX:
-        await modelsSearchIndex.updateSync(data);
-        break;
-      default:
-        break;
-    }
+    inJobContext(res, async (jobContext) => {
+      switch (input.index) {
+        case USERS_SEARCH_INDEX:
+          await usersSearchIndex.updateSync(data, jobContext);
+          break;
+        case MODELS_SEARCH_INDEX:
+          await modelsSearchIndex.updateSync(data, jobContext);
+          break;
+        default:
+          break;
+      }
+    });
 
     res.status(200).send({ status: 'ok' });
   } catch (error: unknown) {

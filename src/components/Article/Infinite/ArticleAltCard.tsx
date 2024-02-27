@@ -14,7 +14,7 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { AssociatedResourceArticleCardData } from '~/server/controllers/model.controller';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 
-export function ArticleAltCard({ data }: Props) {
+export function ArticleAltCard({ data, height, ...props }: Props) {
   const { classes } = useStyles();
   const router = useRouter();
 
@@ -36,6 +36,7 @@ export function ArticleAltCard({ data }: Props) {
         shadow="sm"
         withBorder
         sx={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
+        {...props}
       >
         <ArticleContextMenu
           article={data}
@@ -144,7 +145,7 @@ export function ArticleAltCard({ data }: Props) {
 type Props = {
   data: AssociatedResourceArticleCardData;
   height?: number;
-};
+} & ElementDataAttributes;
 
 const useStyles = createStyles((theme) => ({
   image: {

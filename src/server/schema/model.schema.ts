@@ -29,7 +29,7 @@ import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
 
 const licensingSchema = z.object({
   allowNoCredit: z.boolean().optional(),
-  allowCommercialUse: z.nativeEnum(CommercialUse).optional(),
+  allowCommercialUse: z.nativeEnum(CommercialUse).array().optional(),
   allowDerivatives: z.boolean().optional(),
   allowDifferentLicense: z.boolean().optional(),
 });

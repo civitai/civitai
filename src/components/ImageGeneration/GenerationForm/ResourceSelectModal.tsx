@@ -33,7 +33,7 @@ import { CustomSearchBox } from '~/components/Search/CustomSearchComponents';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useInView } from '~/hooks/useInView';
-import { IconCloudOff, IconDotsVertical } from '@tabler/icons-react';
+import { IconCloudOff, IconDotsVertical, IconHorse } from '@tabler/icons-react';
 import { useSearchLayoutStyles } from '~/components/Search/SearchLayout';
 import trieMemoize from 'trie-memoize';
 import OneKeyMap from '@essentials/one-key-map';
@@ -306,6 +306,7 @@ function ResourceSelectCard({
   };
 
   const isSDXL = baseModelSets.SDXL.includes(data.version?.baseModel as BaseModel);
+  const isPony = data.version?.baseModel === 'Pony';
   const isNew = data.publishedAt && data.publishedAt > aDayAgo;
   const isUpdated =
     data.lastVersionAt &&
@@ -416,9 +417,13 @@ function ResourceSelectCard({
                           {isSDXL && (
                             <>
                               <Divider orientation="vertical" />
-                              <Text color="white" size="xs">
-                                XL
-                              </Text>
+                              {isPony ? (
+                                <IconHorse size={16} strokeWidth={2.5} />
+                              ) : (
+                                <Text color="white" size="xs">
+                                  XL
+                                </Text>
+                              )}
                             </>
                           )}
                         </Badge>

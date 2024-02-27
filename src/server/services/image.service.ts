@@ -140,7 +140,7 @@ export const moderateImages = async ({
 }: ImageModerationSchema) => {
   if (reviewAction === 'delete') {
     await dbWrite.image.updateMany({
-      where: { id: { in: ids }, needsReview: { not: null } },
+      where: { id: { in: ids } },
       data: {
         nsfw,
         needsReview: null,

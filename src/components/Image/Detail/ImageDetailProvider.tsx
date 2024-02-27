@@ -1,20 +1,21 @@
-import { useMemo, useEffect, useContext, createContext, useState } from 'react';
-import { trpc } from '~/utils/trpc';
-import { useRouter } from 'next/router';
-import { QS } from '~/utils/qs';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useHasClientHistory } from '~/store/ClientHistoryStore';
+import { useMantineTheme } from '@mantine/core';
 import { useHotkeys, useLocalStorage } from '@mantine/hooks';
 import { ImageGuardConnect } from '~/components/ImageGuard/ImageGuard2';
 import { useQueryImages } from '~/components/Image/image.utils';
 import { ReviewReactions } from '@prisma/client';
-import { ImageGetById, ImageGetInfinite } from '~/types/router';
-import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
+import { useRouter } from 'next/router';
+import { createContext, useContext, useEffect, useMemo } from 'react';
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
-import { ImagesInfiniteModel } from '~/server/services/image.service';
-import { removeEmpty } from '../../../utils/object-helpers';
-import { useMantineTheme } from '@mantine/core';
+import { useQueryImages } from '~/components/Image/image.utils';
+import { ImageGuardConnect } from '~/components/ImageGuard/ImageGuard';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import { ImagesInfiniteModel } from '~/server/services/image.service';
+import { useHasClientHistory } from '~/store/ClientHistoryStore';
+import { ImageGetById, ImageGetInfinite } from '~/types/router';
+import { QS } from '~/utils/qs';
+import { trpc } from '~/utils/trpc';
+import { removeEmpty } from '../../../utils/object-helpers';
 
 type ImageDetailState = {
   images: ImageGetInfinite;
@@ -213,28 +214,7 @@ export function ImageDetailProvider({
         navigate,
       }}
     >
-      <ReactionSettingsProvider
-        settings={{
-          hideReactionCount,
-          buttonStyling: (reaction, hasReacted) => ({
-            radius: 'xl',
-            variant: 'light',
-            pl: undefined,
-            pr: undefined,
-            px: 4,
-            h: 30,
-            style: {
-              color: 'white',
-              background: hasReacted
-                ? theme.fn.rgba(theme.colors.blue[4], 0.4)
-                : theme.fn.rgba(theme.colors.gray[8], 0.4),
-              backdropFilter: 'blur(7px)',
-            },
-          }),
-        }}
-      >
-        {children}
-      </ReactionSettingsProvider>
+      {children}
     </ImageDetailContext.Provider>
   );
 }

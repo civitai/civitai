@@ -40,13 +40,6 @@ export const modelNotifications = createNotificationProcessor({
             "modelId" = ANY (SELECT json_array_elements('${affectedJson}'::json)::text::integer)
             AND "downloadCount" > ${modelDownloadMilestones[0]}
             AND timeframe = 'AllTime'
-        ), prior_milestones AS (
-          SELECT DISTINCT
-            model_id,
-            cast(details->'downloadCount' as int) download_count
-          FROM "Notification"
-          JOIN model_value ON model_id = cast(details->'modelId' as int)
-          WHERE type = 'model-download-milestone'
         ), model_milestone AS (
           SELECT
             m."userId" "ownerId",
@@ -58,18 +51,17 @@ export const modelNotifications = createNotificationProcessor({
           FROM model_value mval
           JOIN "Model" m on m.id = mval.model_id
           JOIN milestones ms ON ms.value <= mval.download_count
-          LEFT JOIN prior_milestones pm ON pm.download_count >= ms.value AND pm.model_id = mval.model_id
-          WHERE pm.model_id IS NULL
         )
         INSERT INTO "Notification"("id", "userId", "type", "details", "category")
         SELECT
-          REPLACE(gen_random_uuid()::text, '-', ''),
+          CONCAT('milestone:model-download:', details->>'modelId', ':', details->>'downloadCount') as "id",
           "ownerId"    "userId",
           'model-download-milestone' "type",
           details,
           '${category}'::"NotificationCategory" "category"
         FROM model_milestone
-        WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'model-download-milestone');
+        WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'model-download-milestone')
+        ON CONFLICT (id) DO NOTHING;
       `;
     },
   },
@@ -99,13 +91,6 @@ export const modelNotifications = createNotificationProcessor({
         FROM "ModelRank" mr
         JOIN affected_models am ON am.model_id = mr."modelId"
         WHERE "favoriteCountAllTime" > ${modelLikeMilestones[0]}
-      ), prior_milestones AS (
-        SELECT DISTINCT
-          model_id,
-          cast(details->'favoriteCount' as int) favorite_count
-        FROM "Notification"
-        JOIN affected_models ON model_id = cast(details->'modelId' as int)
-        WHERE type = 'model-like-milestone'
       ), model_milestone AS (
         SELECT
           m."userId" "ownerId",
@@ -117,18 +102,17 @@ export const modelNotifications = createNotificationProcessor({
         FROM model_value mval
         JOIN "Model" m on m.id = mval.model_id
         JOIN milestones ms ON ms.value <= mval.favorite_count
-        LEFT JOIN prior_milestones pm ON pm.favorite_count >= ms.value AND pm.model_id = mval.model_id
-        WHERE pm.model_id IS NULL
       )
       INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
-        REPLACE(gen_random_uuid()::text, '-', ''),
+        CONCAT('milestone:model-like:', details->>'modelId', ':', details->>'favoriteCount'),
         "ownerId"    "userId",
         'model-like-milestone' "type",
         details,
         '${category}'::"NotificationCategory" "category"
       FROM model_milestone
-      WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'model-like-milestone');
+      WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'model-like-milestone')
+      ON CONFLICT (id) DO NOTHING;
     `,
   },
   'new-model-version': {
@@ -195,7 +179,7 @@ export const modelNotifications = createNotificationProcessor({
         JOIN "UserEngagement" ue ON ue."targetUserId" = m."userId" AND m."publishedAt" >= ue."createdAt" AND ue.type = 'Follow'
         WHERE
           m."userId" != -1 AND (
-            (m."publishedAt" >= '${lastSent}' AND m."publishedAt" < now() AND m.status = 'Published')
+            (m."publishedAt" BETWEEN '${lastSent}' AND now() AND m.status = 'Published')
             OR (m."publishedAt" <= '${lastSent}' AND m.status = 'Scheduled')
           )
       )
@@ -216,7 +200,7 @@ export const modelNotifications = createNotificationProcessor({
     category: 'Update',
     prepareMessage: ({ details }) => ({
       message: `${details.modelName}: ${details.versionName} has left Early Access!`,
-      url: `/models/${details.modelId}`,
+      url: `/models/${details.modelId}?modelVersionId=${details.versionId}`,
     }),
     prepareQuery: ({ lastSent, category }) => `
       -- early access complete

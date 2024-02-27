@@ -537,6 +537,10 @@ export const createGenerationRequest = async ({
     };
   }
 
+  // handle Pony ClipSkip
+  const isPony = isSDXL && resourceData.some((x) => x.baseModel === 'Pony');
+  if (isPony) params.clipSkip = 2;
+
   const generationRequest = {
     userId,
     nsfw,

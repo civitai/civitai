@@ -7,14 +7,11 @@ const metricSets = {
   images: [metrics.imageMetrics],
   bounties: [metrics.bountyEntryMetrics, metrics.bountyMetrics],
   clubs: [metrics.clubPostMetrics, metrics.clubMetrics],
-  other: [
-    metrics.answerMetrics,
-    metrics.articleMetrics,
-    metrics.postMetrics,
-    metrics.questionMetrics,
-    metrics.tagMetrics,
-    metrics.collectionMetrics,
-  ],
+  posts: [metrics.postMetrics],
+  tags: [metrics.tagMetrics],
+  collections: [metrics.collectionMetrics],
+  articles: [metrics.articleMetrics],
+  other: [metrics.answerMetrics, metrics.questionMetrics],
 };
 
 export const metricJobs = Object.entries(metricSets).map(([name, metrics]) =>
@@ -27,11 +24,15 @@ export const metricJobs = Object.entries(metricSets).map(([name, metrics]) =>
         ranks: {} as Record<string, number>,
       };
 
-      for (const metric of metrics)
+      for (const metric of metrics) {
+        e.checkIfCanceled();
         stats.metrics[metric.name] = await timedExecution(metric.update, e);
+      }
 
-      for (const metric of metrics)
+      for (const metric of metrics) {
+        e.checkIfCanceled();
         stats.ranks[metric.name] = await timedExecution(metric.refreshRank, e);
+      }
 
       return stats;
     },

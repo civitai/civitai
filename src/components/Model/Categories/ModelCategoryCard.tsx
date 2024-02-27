@@ -61,7 +61,8 @@ const aDayAgo = dayjs().subtract(1, 'day').toDate();
 
 export function ModelCategoryCard({
   data,
-}: {
+  ...props
+}: ElementDataAttributes & {
   data: AssociatedResourceModelCardData;
   height: number;
 }) {
@@ -246,7 +247,7 @@ export function ModelCategoryCard({
   }, [modelId, data.id]);
 
   return (
-    <MasonryCard shadow="sm" p={0} className={classes.card}>
+    <MasonryCard shadow="sm" p={0} {...props} className={classes.card}>
       <Indicator
         disabled={!isNew && !isUpdated}
         withBorder
