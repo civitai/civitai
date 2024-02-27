@@ -173,16 +173,6 @@ const getSpendings = ({
     },
   },
   {
-    key: 'rewards',
-    icon: <IconGift size={32} />,
-    title: 'Rewards',
-    description: "We've partnered with some great companies to get you some amazing rewards!",
-    btnProps: {
-      href: `/purchase/rewards`,
-      children: 'Get them now!',
-    },
-  },
-  {
     key: 'merch',
     icon: <IconShoppingCart size={32} />,
     title: 'Shop merch',
