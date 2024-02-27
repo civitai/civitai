@@ -61,7 +61,6 @@ type ImageViewerState = {
   nextImageId: number | null;
   prevImageId: number | null;
   onClose: () => void;
-  setOnDeleteImage: Dispatch<SetStateAction<((imageId: number) => void) | undefined>>;
   onSetImage: (imageId: number) => void;
   setEntityId: (entityId: number | null) => void;
   setEntityType: (entityType: ImageGuardConnect['entityType']) => void;
@@ -82,9 +81,6 @@ const imageViewerQueryParams = z
 export const ImageViewer = ({ children }: { children: React.ReactNode }) => {
   const router = useRouter();
 
-  const [onDeleteImage, setOnDeleteImage] = useState<((imageId: number) => void) | undefined>(
-    undefined
-  );
   const [activeImageId, setActiveImageId] = useState<number | null>(null);
   const [images, setImages] = useState<ImageProps[]>([]);
   const [entityId, setEntityId] = useState<number | null>(null);
@@ -179,7 +175,6 @@ export const ImageViewer = ({ children }: { children: React.ReactNode }) => {
         onClose,
         setEntityType,
         setEntityId,
-        setOnDeleteImage,
       }}
     >
       {activeImageId && (
@@ -200,7 +195,6 @@ export const ImageViewer = ({ children }: { children: React.ReactNode }) => {
             // Attempts to have a few fallbacks to go to. Nothing major.
             connectId={entityId || activeImageRecord?.postId || activeImageId}
             connectType={entityType || 'post'}
-            onDeleteImage={onDeleteImage}
           />
         </Modal>
       )}

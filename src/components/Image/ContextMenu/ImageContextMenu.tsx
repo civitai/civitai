@@ -42,20 +42,22 @@ import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
 import { HideImageButton } from '~/components/HideImageButton/HideImageButton';
 import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
-import React from 'react';
+import React, { createContext, useContext } from 'react';
 import { trpc } from '~/utils/trpc';
 import { imageStore, useImageStore } from '~/store/image.store';
 
-type ImageContextMenuProps = {
+type ImageProps = {
   id: number;
   postId?: number | null;
   userId?: number;
   user?: { id: number };
-  collectionId?: number;
   needsReview?: string | null;
+  ingestion?: ImageIngestionStatus;
+};
+
+type ImageContextMenuProps = ImageProps & {
   context?: 'image' | 'post';
   additionalMenuItems?: React.ReactNode;
-  ingestion?: ImageIngestionStatus;
 };
 
 export function ImageContextMenu({
@@ -64,7 +66,6 @@ export function ImageContextMenu({
   postId,
   userId,
   user,
-  collectionId,
   needsReview,
   context,
   additionalMenuItems,
@@ -78,7 +79,6 @@ export function ImageContextMenu({
     postId,
     userId,
     user,
-    collectionId,
     needsReview,
     context,
     additionalMenuItems,
@@ -128,17 +128,17 @@ export function ImageContextMenu({
   return ContextMenu;
 }
 
-function ImageMenuItems({
-  id: imageId,
-  postId,
-  user,
-  userId,
-  collectionId,
-  context = 'image',
-  additionalMenuItems,
-  isOwner,
-  isModerator,
-}: ImageContextMenuProps & { isOwner: boolean; isModerator: boolean }) {
+function ImageMenuItems(props: ImageContextMenuProps & { isOwner: boolean; isModerator: boolean }) {
+  const {
+    id: imageId,
+    postId,
+    user,
+    userId,
+    context = 'image',
+    additionalMenuItems,
+    isOwner,
+    isModerator,
+  } = props;
   const features = useFeatureFlags();
   const _userId = user?.id ?? userId;
 
@@ -163,8 +163,11 @@ function ImageMenuItems({
     else reportCsamMutation.mutate([imageId]);
   };
 
+  const { additionalMenuItemsAfter, additionalMenuItemsBefore } = useImageContextMenuContext();
+
   return (
     <>
+      {additionalMenuItemsBefore?.(props)}
       {/* GENERAL */}
       {isOwner && <AddToShowcaseMenuItem entityType="Image" entityId={imageId} />}
       <LoginRedirect reason="add-to-collection">
@@ -211,6 +214,7 @@ function ImageMenuItems({
           </Menu.Item>
         </>
       )}
+      {additionalMenuItemsAfter?.(props)}
       {additionalMenuItems}
       {/* MODERATOR */}
       {isModerator && (
@@ -381,4 +385,21 @@ function NeedsReviewBadge({
       </HoverCard>
     );
   }
+}
+
+type ImageContextMenuCtx = {
+  additionalMenuItemsBefore?: (data: ImageProps) => React.ReactNode;
+  additionalMenuItemsAfter?: (data: ImageProps) => React.ReactNode;
+};
+
+const ImageContextMenuContext = createContext<ImageContextMenuCtx>({});
+const useImageContextMenuContext = () => useContext(ImageContextMenuContext);
+
+export function ImageContextMenuProvider({
+  children,
+  ...props
+}: ImageContextMenuCtx & { children: React.ReactNode }) {
+  return (
+    <ImageContextMenuContext.Provider value={props}>{children}</ImageContextMenuContext.Provider>
+  );
 }

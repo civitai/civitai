@@ -741,7 +741,7 @@ export function BountyEntryCarousel({
   const { classes, cx } = useCarrouselStyles();
   const queryUtils = trpc.useContext();
 
-  const isDeletingImage = useIsMutating(getQueryKey(trpc.image.delete));
+  const isDeletingImage = !!useIsMutating(getQueryKey(trpc.image.delete));
   useDidUpdate(() => {
     if (!isDeletingImage) queryUtils.bountyEntry.getById.invalidate({ id: bountyEntry?.id });
   }, [isDeletingImage]);

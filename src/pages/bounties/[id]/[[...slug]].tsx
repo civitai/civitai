@@ -19,7 +19,6 @@ import {
   ScrollArea,
   Modal,
   NumberInput,
-  Menu,
 } from '@mantine/core';
 import { InferGetServerSidePropsType } from 'next';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
@@ -53,7 +52,6 @@ import {
   IconStar,
   IconSwords,
   IconTournament,
-  IconTrash,
   IconTrophy,
   IconViewfinder,
 } from '@tabler/icons-react';
@@ -94,13 +92,14 @@ import { useTrackEvent } from '~/components/TrackView/track.utils';
 import { env } from '~/env/client.mjs';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { PoiAlert } from '~/components/PoiAlert/PoiAlert';
-import { DeleteImage } from '~/components/Image/DeleteImage/DeleteImage';
-import { ImageGuardReportContext } from '~/components/ImageGuard/ImageGuard';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { ScrollAreaMain } from '~/components/ScrollArea/ScrollAreaMain';
+import { useIsMutating } from '@tanstack/react-query';
+import { getQueryKey } from '@trpc/react-query';
+import { useDidUpdate } from '@mantine/hooks';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -131,9 +130,13 @@ export default function BountyDetailsPage({
   const { bounty, loading } = useQueryBounty({ id });
   const [mainImage] = bounty?.images ?? [];
   // Set no images initially, as this might be used by the entries and bounty page too.
-  const { setImages, onSetImage, setOnDeleteImage } = useImageViewerCtx();
+  const { setImages, onSetImage } = useImageViewerCtx();
   const { toggle, engagements, toggling } = useBountyEngagement();
-  const [deletingImage, setDeletingImage] = useState<boolean>(false);
+  const isDeletingImage = !!useIsMutating(getQueryKey(trpc.image.delete));
+
+  useDidUpdate(() => {
+    if (bounty?.id && !isDeletingImage) queryUtils.bounty.getById.invalidate({ id: bounty.id });
+  }, [isDeletingImage]);
 
   const discussionSectionRef = useRef<HTMLDivElement>(null);
   const isModerator = currentUser?.isModerator;
@@ -142,10 +145,6 @@ export default function BountyDetailsPage({
   const isFavorite = !bounty ? false : !!engagements?.Favorite?.find((id) => id === bounty.id);
   const isTracked = !bounty ? false : !!engagements?.Track?.find((id) => id === bounty.id);
 
-  const handleImageDelete = async () => {
-    await queryUtils.bounty.getById.invalidate({ id: bounty?.id });
-    setDeletingImage(false);
-  };
   const handleEngagementClick = async (type: BountyEngagementType) => {
     if (toggling || !bounty) return;
     await toggle({ type, bountyId: bounty.id });
@@ -188,9 +187,6 @@ export default function BountyDetailsPage({
   useEffect(() => {
     if (bounty?.id) {
       setImages(bounty.images);
-      setOnDeleteImage(() => () => {
-        handleImageDelete();
-      });
     }
   }, [bounty?.id, bounty?.images, setImages]);
 
@@ -337,62 +333,16 @@ export default function BountyDetailsPage({
           </ContainerGrid.Col>
           <ContainerGrid.Col xs={12} md={8} orderMd={1}>
             <Stack spacing="xs">
-              <ImageGuardReportContext.Provider
-                value={{
-                  getMenuItems: ({ menuItems, ...image }) => {
-                    const items = menuItems.map((item) => item.component);
-
-                    if (!isOwner && !isModerator) {
-                      return items;
-                    }
-
-                    const deleteImage = (
-                      <DeleteImage
-                        closeOnConfirm
-                        imageId={image.id}
-                        onSuccess={handleImageDelete}
-                        onDelete={() => {
-                          setDeletingImage(true);
-                        }}
-                      >
-                        {({ onClick, isLoading }) => (
-                          <Menu.Item
-                            color="red"
-                            icon={
-                              isLoading ? (
-                                <Loader size={14} />
-                              ) : (
-                                <IconTrash size={14} stroke={1.5} />
-                              )
-                            }
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              e.preventDefault();
-                              onClick();
-                            }}
-                            disabled={isLoading}
-                          >
-                            Delete
-                          </Menu.Item>
-                        )}
-                      </DeleteImage>
-                    );
-
-                    return [deleteImage, ...items];
-                  },
+              <ImageCarousel
+                images={bounty.images}
+                connectId={bounty.id}
+                connectType="bounty"
+                mobile={mobile}
+                onClick={(image) => {
+                  onSetImage(image.id);
                 }}
-              >
-                <ImageCarousel
-                  images={bounty.images}
-                  connectId={bounty.id}
-                  connectType="bounty"
-                  mobile={mobile}
-                  onClick={(image) => {
-                    onSetImage(image.id);
-                  }}
-                  isLoading={deletingImage}
-                />
-              </ImageGuardReportContext.Provider>
+                isLoading={isDeletingImage}
+              />
               <Title order={2} mt="sm">
                 About this bounty
               </Title>

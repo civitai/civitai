@@ -50,7 +50,6 @@ import { ArticleSort, ImageSort, ModelSort, PostSort } from '~/server/common/enu
 import { ImageCategories } from '~/components/Image/Filters/ImageCategories';
 import { PostCategories } from '~/components/Post/Infinite/PostCategories';
 import { ArticleCategories } from '~/components/Article/Infinite/ArticleCategories';
-import { ImageGuardReportContext } from '~/components/ImageGuard/ImageGuard';
 import { CollectionContributorPermissionFlags } from '~/server/services/collection.service';
 import { showSuccessNotification } from '~/utils/notifications';
 import { Meta } from '../Meta/Meta';
@@ -66,6 +65,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { truncate } from 'lodash-es';
+import { ImageContextMenuProvider } from '~/components/Image/ContextMenu/ImageContextMenu';
 
 const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
   const { set, ...query } = useModelQueryParams();
@@ -140,7 +140,6 @@ const ImageCollection = ({
   const sort = isContestCollection ? ImageSort.Random : query.sort ?? ImageSort.Newest;
   const period = query.period ?? MetricTimeframe.AllTime;
   const updateCollectionCoverImageMutation = trpc.collection.updateCoverImage.useMutation();
-  const currentUser = useCurrentUser();
   const utils = trpc.useContext();
 
   // For contest collections, we need to keep the filters clean from outside intervention.
@@ -165,49 +164,40 @@ const ImageCollection = ({
       };
 
   return (
-    <ImageGuardReportContext.Provider
-      value={{
-        getMenuItems: ({ menuItems, ...image }) => {
-          const items = menuItems.map((item) => item.component);
-          if (!permissions || !permissions.manage || !image.id) {
-            return items;
-          }
-
-          const useAsCover = (
-            <Menu.Item
-              key="make-cover-photo"
-              icon={
-                // @ts-ignore: transparent variant actually works here.
-                <ThemeIcon color="pink.7" variant="transparent" size="sm">
-                  <IconPhoto size={16} stroke={1.5} />
-                </ThemeIcon>
-              }
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                updateCollectionCoverImageMutation.mutate(
-                  {
-                    id: collection.id,
-                    imageId: image.id,
+    <ImageContextMenuProvider
+      additionalMenuItemsBefore={(image) => {
+        if (!permissions || !permissions.manage || !image.id) return null;
+        return (
+          <Menu.Item
+            icon={
+              // @ts-ignore: transparent variant actually works here.
+              <ThemeIcon color="pink.7" variant="transparent" size="sm">
+                <IconPhoto size={16} stroke={1.5} />
+              </ThemeIcon>
+            }
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              updateCollectionCoverImageMutation.mutate(
+                {
+                  id: collection.id,
+                  imageId: image.id,
+                },
+                {
+                  onSuccess: async () => {
+                    showSuccessNotification({
+                      title: 'Cover image updated',
+                      message: 'Collection cover image has been updated',
+                    });
+                    await utils.collection.getById.invalidate({ id: collection.id });
                   },
-                  {
-                    onSuccess: async () => {
-                      showSuccessNotification({
-                        title: 'Cover image updated',
-                        message: 'Collection cover image has been updated',
-                      });
-                      await utils.collection.getById.invalidate({ id: collection.id });
-                    },
-                  }
-                );
-              }}
-            >
-              Use as cover image
-            </Menu.Item>
-          );
-
-          return [useAsCover, ...items];
-        },
+                }
+              );
+            }}
+          >
+            Use as cover image
+          </Menu.Item>
+        );
       }}
     >
       <Stack spacing="xs">
@@ -244,7 +234,7 @@ const ImageCollection = ({
           </ReactionSettingsProvider>
         </IsClient>
       </Stack>
-    </ImageGuardReportContext.Provider>
+    </ImageContextMenuProvider>
   );
 };
 const PostCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {

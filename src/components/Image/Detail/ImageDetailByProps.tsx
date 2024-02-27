@@ -42,7 +42,6 @@ import { ImageGuardConnect } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageProps } from '~/components/ImageViewer/ImageViewer';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import React from 'react';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { containerQuery } from '~/utils/mantine-css-helpers';
@@ -62,7 +61,6 @@ export function ImageDetailByProps({
   image: defaultImageItem,
   connectId,
   connectType,
-  onDeleteImage,
 }: {
   imageId: number;
   onClose: () => void;
@@ -70,9 +68,7 @@ export function ImageDetailByProps({
   prevImageId: number | null;
   onSetImage: (id: number | null) => void;
   image?: ImageProps | null;
-  onDeleteImage?: (id: number) => void;
 } & Partial<ImageGuardConnect>) {
-  const currentUser = useCurrentUser();
   const { data = null, isLoading } = trpc.image.get.useQuery(
     {
       id: imageId,
@@ -121,7 +117,6 @@ export function ImageDetailByProps({
             isLoading={isLoading}
             connectId={connectId}
             connectType={connectType}
-            onDeleteImage={onDeleteImage}
             onClose={onClose}
           />
           <Card className={cx(classes.sidebar)}>
@@ -353,7 +348,6 @@ type GalleryCarouselProps = {
   nextImageId: number | null;
   prevImageId: number | null;
   onSetImage: (id: number | null) => void;
-  onDeleteImage?: (id: number) => void;
   onClose: () => void;
 };
 
@@ -366,7 +360,6 @@ export function ImageDetailCarousel({
   isLoading,
   connectId,
   connectType = 'post',
-  onDeleteImage,
   onClose,
 }: GalleryCarouselProps & Partial<ImageGuardConnect>) {
   const { classes, cx } = useCarrouselStyles();
@@ -375,12 +368,11 @@ export function ImageDetailCarousel({
     height: image?.height ?? 1200,
     width: image?.width ?? 1200,
   });
-  const isDeletingImage = useIsMutating(getQueryKey(trpc.image.delete));
+  const isDeletingImage = !!useIsMutating(getQueryKey(trpc.image.delete));
 
   useDidUpdate(() => {
     if (!isDeletingImage) {
       onClose();
-      onDeleteImage?.(image?.id ?? -1);
     }
   }, [isDeletingImage]);
 
