@@ -501,7 +501,7 @@ export const createGenerationRequest = async ({
   if (hasPoi || includesMinor(params.prompt)) nsfw = false;
 
   const negativePrompts = [negativePrompt ?? ''];
-  if (!nsfw && !isSDXL) {
+  if (!nsfw && status.sfwEmbed) {
     for (const { id, triggerWord } of safeNegatives) {
       additionalNetworks[`@civitai/${id}`] = {
         triggerWord,
@@ -513,7 +513,7 @@ export const createGenerationRequest = async ({
 
   // Inject fallback minor safety nets
   const positivePrompts = [params.prompt];
-  if (isPromptNsfw && env.MINOR_FALLBACK_SYSTEM) {
+  if (isPromptNsfw && status.minorFallback) {
     for (const { id, triggerWord } of minorPositives) {
       additionalNetworks[`@civitai/${id}`] = {
         triggerWord,
@@ -683,10 +683,12 @@ export async function checkResourcesCoverage({ id }: CheckResourcesCoverageSchem
 export async function getGenerationStatus() {
   const status = JSON.parse(
     (await redis.hGet(REDIS_KEYS.SYSTEM.FEATURES, 'generation:status')) ?? '{}'
-  ) as Generation.Status;
+  ) as any;
   status.available ??= true;
+  status.sfwEmbed ??= true;
+  status.minorFallback ??= true;
 
-  return status;
+  return status as Generation.Status;
 }
 
 export const getGenerationData = async (
@@ -891,7 +893,7 @@ export async function toggleUnavailableResource({
   else unavailableResources.push(id);
 
   await redis.hSet(
-    'system:features',
+    REDIS_KEYS.SYSTEM.FEATURES,
     'generation:unavailable-resources',
     toJson(unavailableResources)
   );
