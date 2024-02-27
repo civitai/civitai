@@ -276,6 +276,7 @@ export const constants = {
       generatedImageWithResource: 10 / 1000, // 10 buzz for every 1000 images.
     },
   },
+  supportedBaseModelAddendums: ['SD 1.5', 'SDXL 1.0'],
 } as const;
 
 export const zipModelFileTypes: ModelFileFormat[] = ['Core ML', 'Diffusers', 'ONNX'];
