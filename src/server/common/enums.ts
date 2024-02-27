@@ -200,7 +200,6 @@ export enum ThreadSort {
 }
 
 export enum PurchasableRewardViewMode {
-  Active = 'Active',
-  History = 'History',
+  Available = 'Available',
   Purchased = 'Purchased',
 }

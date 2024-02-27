@@ -217,7 +217,7 @@ const RewardDetailsModal = ({
 export default function PurchaseRewards() {
   const [filters, setFilters] = useState<Omit<GetPaginatedPurchasableRewardsSchema, 'limit'>>({
     page: 1,
-    mode: PurchasableRewardViewMode.Active,
+    mode: PurchasableRewardViewMode.Available,
   });
   const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
   const { purchasableRewards, pagination, isLoading, isRefetching } =

@@ -33,7 +33,7 @@ export default function Rewards() {
     Omit<GetPaginatedPurchasableRewardsModeratorSchema, 'limit'>
   >({
     page: 1,
-    mode: PurchasableRewardViewMode.Active,
+    mode: PurchasableRewardViewMode.Available,
   });
   const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
   const { purchasableRewards, pagination, isLoading, isRefetching } =

@@ -85,7 +85,7 @@ export function PurchasableRewardsFiltersModeratorDropdown({
         <Divider label="Mode" labelProps={{ weight: 'bold', size: 'sm' }} />
         <Chip.Group
           spacing={8}
-          value={filters.mode ?? PurchasableRewardViewMode.Active}
+          value={filters.mode ?? PurchasableRewardViewMode.Available}
           onChange={(mode: PurchasableRewardViewMode) => {
             setFilters({
               mode,
