@@ -1,6 +1,9 @@
 import { PurchasableRewardUsage } from '@prisma/client';
 import { z } from 'zod';
-import { PurchasableRewardViewMode } from '~/server/common/enums';
+import {
+  PurchasableRewardModeratorViewMode,
+  PurchasableRewardViewMode,
+} from '~/server/common/enums';
 import { paginationSchema } from '~/server/schema/base.schema';
 import { comfylessImageSchema } from '~/server/schema/image.schema';
 
@@ -46,6 +49,8 @@ export const getPaginatedPurchasableRewardsModeratorSchema = paginationSchema.me
     limit: z.coerce.number().min(1).max(200).default(60),
     archived: z.boolean().optional(),
     usage: z.array(z.nativeEnum(PurchasableRewardUsage)).optional(),
-    mode: z.nativeEnum(PurchasableRewardViewMode).default(PurchasableRewardViewMode.Available),
+    mode: z
+      .nativeEnum(PurchasableRewardModeratorViewMode)
+      .default(PurchasableRewardModeratorViewMode.Available),
   })
 );

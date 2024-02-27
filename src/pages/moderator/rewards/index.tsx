@@ -21,7 +21,7 @@ import { useState } from 'react';
 import { PurchasableRewardsFiltersModeratorDropdown } from '~/components/PurchasableRewards/PurchasableRewardsModeratorFiltersDropdown';
 import { useQueryPurchasableRewardsModerator } from '~/components/PurchasableRewards/purchasableRewards.util';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { PurchasableRewardViewMode } from '~/server/common/enums';
+import { PurchasableRewardModeratorViewMode } from '~/server/common/enums';
 import { GetPaginatedPurchasableRewardsModeratorSchema } from '~/server/schema/purchasable-reward.schema';
 import { formatDate } from '~/utils/date-helpers';
 
@@ -33,7 +33,7 @@ export default function Rewards() {
     Omit<GetPaginatedPurchasableRewardsModeratorSchema, 'limit'>
   >({
     page: 1,
-    mode: PurchasableRewardViewMode.Available,
+    mode: PurchasableRewardModeratorViewMode.Available,
   });
   const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
   const { purchasableRewards, pagination, isLoading, isRefetching } =

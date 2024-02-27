@@ -1,5 +1,8 @@
 import { Prisma, PurchasableRewardUsage } from '@prisma/client';
-import { PurchasableRewardViewMode } from '~/server/common/enums';
+import {
+  PurchasableRewardModeratorViewMode,
+  PurchasableRewardViewMode,
+} from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { TransactionType } from '~/server/schema/buzz.schema';
@@ -83,7 +86,7 @@ export const getPaginatedPurchasableRewardsModerator = async (
 
   const where: Prisma.PurchasableRewardFindManyArgs['where'] = {};
 
-  if (input.mode === PurchasableRewardViewMode.Available) {
+  if (input.mode === PurchasableRewardModeratorViewMode.Available) {
     // Only show active rewards:
     where.archived = false;
     where.OR = [
@@ -99,7 +102,23 @@ export const getPaginatedPurchasableRewardsModerator = async (
     where.codes = { isEmpty: false };
   }
 
-  if (input.mode === PurchasableRewardViewMode.Purchased) {
+  if (input.mode === PurchasableRewardModeratorViewMode.History) {
+    where.OR = [
+      {
+        archived: true,
+      },
+      {
+        availableTo: { lt: new Date() },
+      },
+      {
+        codes: {
+          isEmpty: true,
+        },
+      },
+    ];
+  }
+
+  if (input.mode === PurchasableRewardModeratorViewMode.Purchased) {
     where.purchases = {
       some: {},
     };

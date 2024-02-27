@@ -203,3 +203,8 @@ export enum PurchasableRewardViewMode {
   Available = 'Available',
   Purchased = 'Purchased',
 }
+export enum PurchasableRewardModeratorViewMode {
+  Available = 'Available',
+  History = 'History',
+  Purchased = 'Purchased',
+}

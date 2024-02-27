@@ -18,7 +18,7 @@ import { useCallback, useState } from 'react';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { GetPaginatedPurchasableRewardsModeratorSchema } from '~/server/schema/purchasable-reward.schema';
-import { PurchasableRewardViewMode } from '~/server/common/enums';
+import { PurchasableRewardModeratorViewMode } from '~/server/common/enums';
 
 type Filters = Omit<GetPaginatedPurchasableRewardsModeratorSchema, 'limit'>;
 
@@ -31,7 +31,8 @@ export function PurchasableRewardsFiltersModeratorDropdown({
   const mobile = useIsMobile();
 
   const [opened, setOpened] = useState(false);
-  const filterLength = (!!filters.archived ? 1 : 0) + (!!filters.usage ? filters.usage.length : 0);
+  const filterLength =
+    (filters.archived !== undefined ? 1 : 0) + (!!filters.usage ? filters.usage.length : 0);
 
   const clearFilters = useCallback(
     () =>
@@ -85,14 +86,14 @@ export function PurchasableRewardsFiltersModeratorDropdown({
         <Divider label="Mode" labelProps={{ weight: 'bold', size: 'sm' }} />
         <Chip.Group
           spacing={8}
-          value={filters.mode ?? PurchasableRewardViewMode.Available}
-          onChange={(mode: PurchasableRewardViewMode) => {
+          value={filters.mode ?? PurchasableRewardModeratorViewMode.Available}
+          onChange={(mode: PurchasableRewardModeratorViewMode) => {
             setFilters({
               mode,
             });
           }}
         >
-          {Object.values(PurchasableRewardViewMode).map((type, index) => (
+          {Object.values(PurchasableRewardModeratorViewMode).map((type, index) => (
             <Chip key={index} value={type} {...chipProps}>
               {getDisplayName(type)}
             </Chip>
