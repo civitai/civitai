@@ -1234,7 +1234,11 @@ export const getUserPurchasedRewardsHandler = async ({
 }: {
   ctx: DeepNonNullable<Context>;
 }) => {
-  return getUserPurchasedRewards({
-    userId: ctx.user.id,
-  });
+  try {
+    return getUserPurchasedRewards({
+      userId: ctx.user.id,
+    });
+  } catch (error) {
+    throw throwDbError(error);
+  }
 };

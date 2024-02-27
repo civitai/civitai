@@ -18,7 +18,7 @@ export const purchasableRewardRouter = router({
   getPaged: publicProcedure.input(getPaginatedPurchasableRewardsSchema).query(({ input, ctx }) => {
     return getPaginatedPurchasableRewards({ ...input, userId: ctx?.user?.id });
   }),
-  getModeratorPaged: publicProcedure
+  getModeratorPaged: moderatorProcedure
     .input(getPaginatedPurchasableRewardsModeratorSchema)
     .query(({ input }) => {
       return getPaginatedPurchasableRewardsModerator(input);

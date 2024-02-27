@@ -11,11 +11,11 @@ export type PurchasableRewardUpsert = z.infer<typeof purchasableRewardUpsertSche
 
 export const purchasableRewardUpsertSchema = z.object({
   id: z.number().optional(),
-  title: z.string(),
+  title: z.string().trim().min(1),
   unitPrice: z.number().min(100),
-  about: z.string(),
-  redeemDetails: z.string(),
-  termsOfUse: z.string(),
+  about: z.string().trim().min(1),
+  redeemDetails: z.string().trim().min(1),
+  termsOfUse: z.string().trim().min(1),
   usage: z.nativeEnum(PurchasableRewardUsage),
   codes: z.array(z.string()).optional(),
   archived: z.boolean().optional(),

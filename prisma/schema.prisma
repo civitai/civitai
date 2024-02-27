@@ -246,8 +246,8 @@ model User {
   chatMessages               ChatMessage[]
   chatOwners                 Chat[]
   builds                     BuildGuide[]
-  PurchasableReward          PurchasableReward[]
-  UserPurchasedRewards       UserPurchasedRewards[]
+  createdRewards             PurchasableReward[]
+  purchasedRewards           UserPurchasedRewards[]
 }
 
 enum OnboardingStep {
