@@ -111,6 +111,7 @@ function mapGenerationResource(
 }
 
 const baseModelSetsArray = Object.values(baseModelSets);
+/** @deprecated using search index instead... */
 export const getGenerationResources = async (
   input: GetGenerationResourcesInput & { user?: SessionUser }
 ) => {
@@ -179,7 +180,7 @@ export const getGenerationResources = async (
       }
 
       let orderBy = 'mv.index';
-      if (!query) orderBy = `mr."ratingAllTimeRank", ${orderBy}`;
+      if (!query) orderBy = `mm."thumbsUpCount", ${orderBy}`;
 
       const results = await dbRead.$queryRaw<Array<Generation.Resource & { index: number }>>`
         SELECT
@@ -199,7 +200,7 @@ export const getGenerationResources = async (
             : ''
         )}
         ${Prisma.raw(
-          orderBy.startsWith('mr') ? `LEFT JOIN "ModelRank" mr ON mr."modelId" = m.id` : ''
+          orderBy.startsWith('mm') ? `JOIN "ModelMetric" mm ON mm."modelId" = m.id` : ''
         )}
         WHERE ${Prisma.join(sqlAnd, ' AND ')}
         ORDER BY ${Prisma.raw(orderBy)}

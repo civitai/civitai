@@ -105,8 +105,7 @@ export function EditPostReviews() {
                 modelVersionId={resource.modelVersionId}
                 modelVersionName={resource.modelVersionName}
                 name={resource.name}
-                // TODO.review: use correct value
-                thumbsUpCount={resource.modelRatingCount ?? 0}
+                thumbsUpCount={resource.modelThumbsUpCount ?? 0}
               />
             ))}
             {reviews.previous.length > 0 && (
@@ -124,8 +123,7 @@ export function EditPostReviews() {
                     modelVersionId={resource.modelVersionId}
                     modelVersionName={resource.modelVersionName}
                     name={resource.name}
-                    // TODO.review: use correct value
-                    thumbsUpCount={resource.modelRatingCount ?? 0}
+                    thumbsUpCount={resource.modelThumbsUpCount ?? 0}
                   />
                 ))}
               </>

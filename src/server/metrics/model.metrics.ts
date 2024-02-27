@@ -28,8 +28,7 @@ export const modelMetrics = createMetricProcessor({
   },
   rank: {
     async refresh(ctx) {
-      await refreshModelVersionRank(ctx);
-      await refreshModelRank(ctx);
+      // Do nothing. Rank views are now not used.
     },
     refreshInterval: 60 * 1000,
   },
@@ -40,7 +39,6 @@ const modelMetricProcessors = [
   updateVersionDownloadMetrics,
   updateVersionGenerationMetrics,
   updateVersionRatingMetrics,
-  updateVersionFavoriteMetrics,
   updateVersionCommentMetrics,
   updateCollectMetrics,
   updateTippedBuzzMetrics,
@@ -282,7 +280,6 @@ async function updateVersionGenerationMetrics({
   return [];
 }
 
-// TODO.justin: confirm changes here
 async function updateVersionRatingMetrics({
   ch,
   db,
@@ -290,22 +287,21 @@ async function updateVersionRatingMetrics({
   jobContext,
 }: MetricProcessorRunContext) {
   // Disabled clickhouse as it seems to be missing resource reviews somehow...
-  const clickhouseSince = dayjs(lastUpdate).toISOString();
-  const affectedModelVersionsResponse = await ch.query({
-    query: `
-      SELECT DISTINCT modelVersionId
-      FROM resourceReviews
-      WHERE time >= parseDateTimeBestEffortOrNull('${clickhouseSince}')
-    `,
-    format: 'JSONEachRow',
-  });
-
-  const affectedModelVersionsClickhouse = (await affectedModelVersionsResponse?.json()) as [
-    {
-      modelVersionId: number;
-    }
-  ];
-  const modelVersionIds = new Set(affectedModelVersionsClickhouse.map((x) => x.modelVersionId));
+  // const clickhouseSince = dayjs(lastUpdate).toISOString();
+  // const affectedModelVersionsResponse = await ch.query({
+  //   query: `
+  //     SELECT DISTINCT modelVersionId
+  //     FROM resourceReviews
+  //     WHERE time >= parseDateTimeBestEffortOrNull('${clickhouseSince}')
+  //   `,
+  //   format: 'JSONEachRow',
+  // });
+  // const affectedModelVersionsClickhouse = (await affectedModelVersionsResponse?.json()) as [
+  //   {
+  //     modelVersionId: number;
+  //   }
+  // ];
+  const modelVersionIds = new Set<number>();
 
   const affectedModelVersionsDb = await db.$queryRaw<{ modelVersionId: number }[]>`
     SELECT DISTINCT "modelVersionId"
@@ -345,8 +341,7 @@ async function updateVersionRatingMetrics({
               WHEN tf.timeframe = 'Day' THEN IIF(rr.created_at >= NOW() - interval '1 day', 1, NULL)
           END
         ), 0)
-      FROM "ModelVersion" mv
-      LEFT JOIN (
+      FROM (
           SELECT
               r."userId",
               r."modelVersionId",
@@ -358,11 +353,9 @@ async function updateVersionRatingMetrics({
           AND r."tosViolation" = FALSE
           AND r."modelVersionId" = ANY (SELECT json_array_elements(${batchJson}::json)::text::integer)
           GROUP BY r."userId", r."modelVersionId"
-      ) rr ON rr."modelVersionId" = mv.id
-      CROSS JOIN (
-        SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
-      ) tf
-      WHERE mv.id = ANY (SELECT json_array_elements(${batchJson}::json)::text::integer)
+      ) rr
+      JOIN "ModelVersion" mv ON rr."modelVersionId" = mv."id" -- confirm that model version exists
+      CROSS JOIN ( SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe ) tf
       GROUP BY mv.id, tf.timeframe
       ON CONFLICT ("modelVersionId", timeframe) DO UPDATE SET "thumbsUpCount" = EXCLUDED."thumbsUpCount", "thumbsDownCount" = EXCLUDED."thumbsDownCount", "updatedAt" = now();
     `;
@@ -375,75 +368,6 @@ async function updateVersionRatingMetrics({
   }
 
   return [];
-}
-
-// TODO.justin: confirm if this is still needed since we are dropping favorite metrics
-async function updateVersionFavoriteMetrics({
-  ch,
-  pg,
-  lastUpdate,
-  jobContext,
-}: MetricProcessorRunContext) {
-  const clickhouseSince = dayjs(lastUpdate).toISOString();
-  const affectedModelsResponse = await ch.query({
-    query: `
-      SELECT DISTINCT modelId
-      FROM modelEngagements
-      WHERE time >= parseDateTimeBestEffortOrNull('${clickhouseSince}')
-      AND (type = 'Favorite' OR type = 'Delete')
-    `,
-    format: 'JSONEachRow',
-  });
-
-  const affectedModels = (await affectedModelsResponse?.json()) as [
-    {
-      modelId: number;
-    }
-  ];
-
-  const affectedModelsJson = JSON.stringify(affectedModels.map((x) => x.modelId));
-
-  const sqlAnd = [Prisma.sql`f.type = 'Favorite'`];
-  // Conditionally pass the affected models to the query if there are less than 1000 of them
-  if (affectedModels.length < 1000)
-    sqlAnd.push(
-      Prisma.sql`f."modelId" = ANY (SELECT json_array_elements(${affectedModelsJson}::json)::text::integer)`
-    );
-
-  const rowsQuery = await pg.cancellableQuery(Prisma.sql`
-    -- update version favorite metrics
-    INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "favoriteCount")
-    SELECT
-        mv."id",
-        tf.timeframe,
-        COALESCE(SUM(
-            CASE
-                WHEN tf.timeframe = 'AllTime' THEN 1
-                WHEN tf.timeframe = 'Year' THEN IIF(f."createdAt" >= NOW() - interval '1 year', 1, 0)
-                WHEN tf.timeframe = 'Month' THEN IIF(f."createdAt" >= NOW() - interval '1 month', 1, 0)
-                WHEN tf.timeframe = 'Week' THEN IIF(f."createdAt" >= NOW() - interval '1 week', 1, 0)
-                WHEN tf.timeframe = 'Day' THEN IIF(f."createdAt" >= NOW() - interval '1 day', 1, 0)
-            END
-        ), 0)
-    FROM (
-        SELECT
-            f."modelId",
-            f."createdAt"
-        FROM "ModelEngagement" f
-        WHERE ${Prisma.join(sqlAnd, ` AND `)}
-    ) f
-    JOIN "ModelVersion" mv ON f."modelId" = mv."modelId"
-    CROSS JOIN (
-      SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
-    ) tf
-    GROUP BY mv.id, tf.timeframe
-    ON CONFLICT ("modelVersionId", timeframe) DO UPDATE SET "favoriteCount" = EXCLUDED."favoriteCount", "updatedAt" = now();
-  `);
-  jobContext.on('cancel', rowsQuery.cancel);
-  const affectedModelsRows = await rowsQuery.result();
-  console.log('favorites', affectedModelsRows[0]);
-
-  return affectedModels.map(({ modelId }) => modelId);
 }
 
 async function updateVersionCommentMetrics({
@@ -692,10 +616,9 @@ async function updateTippedBuzzMetrics({ db, lastUpdate, jobContext }: MetricPro
   return modelIds;
 }
 
-// TODO.justin: confirm changes here
 async function updateModelMetrics({ pg, lastUpdate, jobContext }: MetricProcessorRunContext) {
   const rowsQuery = await pg.cancellableQuery(Prisma.sql`
-    INSERT INTO "ModelMetric" ("modelId", timeframe, "downloadCount", rating, "ratingCount", "favoriteCount", "thumbsUpCount", "thumbsDownCount", "commentCount", "imageCount", "collectedCount", "tippedCount", "tippedAmountCount", "generationCount")
+    INSERT INTO "ModelMetric" ("modelId", timeframe, "downloadCount", "thumbsUpCount", "thumbsDownCount", "commentCount", "imageCount", "collectedCount", "tippedCount", "tippedAmountCount", "generationCount", "updatedAt")
     WITH affected AS (
       SELECT DISTINCT mv."modelId"
       FROM "ModelVersionMetric" mvm
@@ -706,26 +629,21 @@ async function updateModelMetrics({ pg, lastUpdate, jobContext }: MetricProcesso
       mv."modelId",
       mvm.timeframe,
       SUM(mvm."downloadCount") "downloadCount",
-      COALESCE(SUM(mvm.rating * mvm."ratingCount") / NULLIF(SUM(mvm."ratingCount"), 0), 0) "rating",
-      SUM(mvm."ratingCount") "ratingCount",
-      MAX(mvm."favoriteCount") "favoriteCount",
-      MAX(mvm."thumbsUpCount") "thumbsUpCount",
-      MAX(mvm."thumbsDownCount") "thumbsDownCount",
+      SUM(mvm."thumbsUpCount") "thumbsUpCount",
+      SUM(mvm."thumbsDownCount") "thumbsDownCount",
       MAX(mvm."commentCount") "commentCount",
       SUM(mvm."imageCount") "imageCount",
       MAX(mvm."collectedCount") "collectedCount",
       MAX(mvm."tippedCount") "tippedCount",
       MAX(mvm."tippedAmountCount") "tippedAmountCount",
-      SUM(mvm."generationCount") "generationCount"
+      SUM(mvm."generationCount") "generationCount",
+      NOW() "updatedAt"
     FROM "ModelVersionMetric" mvm
     JOIN "ModelVersion" mv ON mvm."modelVersionId" = mv.id
     WHERE mv."modelId" IN (SELECT "modelId" FROM affected)
     GROUP BY mv."modelId", mvm.timeframe
     ON CONFLICT ("modelId", timeframe) DO UPDATE SET
       "downloadCount" = EXCLUDED."downloadCount",
-      rating = EXCLUDED.rating,
-      "ratingCount" = EXCLUDED."ratingCount",
-      "favoriteCount" = EXCLUDED."favoriteCount",
       "thumbsUpCount" = EXCLUDED."thumbsUpCount",
       "thumbsDownCount" = EXCLUDED."thumbsDownCount",
       "commentCount" = EXCLUDED."commentCount",
@@ -733,34 +651,13 @@ async function updateModelMetrics({ pg, lastUpdate, jobContext }: MetricProcesso
       "collectedCount" = EXCLUDED."collectedCount",
       "tippedCount" = EXCLUDED."tippedCount",
       "tippedAmountCount" = EXCLUDED."tippedAmountCount",
-      "generationCount" = EXCLUDED."generationCount"
+      "generationCount" = EXCLUDED."generationCount",
+      "updatedAt" = EXCLUDED."updatedAt";
   `);
   jobContext.on('cancel', rowsQuery.cancel);
   const affectedModelsRows = await rowsQuery.result();
   console.log('models', affectedModelsRows[0]);
 
   return [];
-}
-// #endregion
-
-// #region [ranks]
-async function refreshModelRank({ db }: MetricProcessorRunContext) {
-  // Disabling this for now since Prisma doesn't run it correctly.
-  // Instead this runs in a cron job every hour.
-  // await db.$executeRawUnsafe(`CALL update_model_rank(10000);`);
-}
-
-async function refreshModelVersionRank({ db }: MetricProcessorRunContext) {
-  await db.$executeRaw`DROP TABLE IF EXISTS "ModelVersionRank_New"`;
-  await db.$executeRaw`CREATE TABLE "ModelVersionRank_New" AS SELECT * FROM "ModelVersionRank_Live"`;
-  await db.$executeRaw`ALTER TABLE "ModelVersionRank_New" ADD CONSTRAINT "pk_ModelVersionRank_New" PRIMARY KEY ("modelVersionId")`;
-  await db.$executeRaw`CREATE INDEX "ModelVersionRank_New_idx" ON "ModelVersionRank_New"("modelVersionId")`;
-
-  await db.$transaction([
-    db.$executeRaw`DROP TABLE IF EXISTS "ModelVersionRank"`,
-    db.$executeRaw`ALTER TABLE "ModelVersionRank_New" RENAME TO "ModelVersionRank"`,
-    db.$executeRaw`ALTER TABLE "ModelVersionRank" RENAME CONSTRAINT "pk_ModelVersionRank_New" TO "pk_ModelVersionRank";`,
-    db.$executeRaw`ALTER INDEX "ModelVersionRank_New_idx" RENAME TO "ModelVersionRank_idx"`,
-  ]);
 }
 // #endregion

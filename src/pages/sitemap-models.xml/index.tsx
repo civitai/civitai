@@ -1,33 +1,24 @@
-import { MetricTimeframe, ModelStatus } from '@prisma/client';
 import { GetServerSideProps } from 'next';
-import { ISitemapField, getServerSideSitemapLegacy } from 'next-sitemap';
-import { BrowsingMode, ModelSort } from '~/server/common/enums';
-import { getModels } from '~/server/services/model.service';
+import { getServerSideSitemapLegacy, ISitemapField } from 'next-sitemap';
+import { pgDbRead } from '~/server/db/pgDb';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { slugit } from '~/utils/string-helpers';
 
 export const getServerSideProps: GetServerSideProps = async (ctx) => {
-  const data = await getModels({
-    input: {
-      browsingMode: BrowsingMode.SFW,
-      take: 1000,
-      period: MetricTimeframe.AllTime,
-      sort: ModelSort.HighestRated,
-      status: [ModelStatus.Published],
-      periodMode: 'published',
-      favorites: false,
-      hidden: false,
-    },
-    select: {
-      id: true,
-      name: true,
-      publishedAt: true,
-    },
-  }).catch(() => ({ items: [] }));
+  const query = await pgDbRead.cancellableQuery<{ id: number; name: string; updatedAt: Date }>(`
+    SELECT id, name, COALESCE("lastVersionAt", "publishedAt") as "updatedAt"
+    FROM "Model" m
+    JOIN "ModelMetric" mm ON mm."modelId" = m.id AND mm.timeframe = 'AllTime'
+    WHERE "status" = 'Published' AND nsfw = false
+    ORDER BY mm."thumbsUpCount" DESC, mm."downloadCount" DESC, mm."modelId"
+    LIMIT 1000;
+  `);
+  ctx.res.on('close', query.cancel);
+  const data = await query.result();
 
-  const fields: ISitemapField[] = data.items.map((model) => ({
+  const fields: ISitemapField[] = data.map((model) => ({
     loc: `${getBaseUrl()}/models/${model.id}/${slugit(model.name)}`,
-    lastmod: model.publishedAt?.toISOString() ?? new Date().toISOString(),
+    lastmod: model.updatedAt?.toISOString() ?? new Date().toISOString(),
   }));
 
   return getServerSideSitemapLegacy(ctx, fields);

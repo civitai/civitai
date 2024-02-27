@@ -59,6 +59,8 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
 
   const commentCount = data.thread?._count.comments ?? 0;
 
+  const isThumbsUp = data.recommended === true;
+  const isThumbsDown = data.recommended === false;
   const metaSchema = {
     '@context': 'https://schema.org',
     '@type': 'Review',
@@ -66,12 +68,11 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
     reviewBody: data.details ? ':' + truncate(removeTags(data.details), { length: 120 }) : '',
     author: data.user.username,
     datePublished: data.createdAt,
-    // TODO.justin: is this even necessary anymore?
     reviewRating: {
       '@type': 'Rating',
       bestRating: 5,
       worstRating: 1,
-      ratingValue: data.rating,
+      ratingValue: isThumbsUp ? 5 : 1,
     },
     itemReviewed: {
       '@type': 'SoftwareApplication',
@@ -82,15 +83,13 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
     },
   };
 
-  const isThumbsUp = data.recommended === true;
-  const isThumbsDown = data.recommended === false;
-
   return (
     <>
       <Meta
         title={`${data.model.name} - ${data.modelVersion.name} - Reviewed by ${data.user.username}`}
-        // TODO.justin: is this even necessary anymore?
-        description={`${data.rating} star review${
+        description={`${data.user.username} ${
+          data.recommended ? 'recommends' : "doesn't recommend"
+        } this resource. ${
           data.details ? ':' + truncate(removeTags(data.details), { length: 120 }) : ''
         }`}
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/reviews/${reviewId}`, rel: 'canonical' }]}

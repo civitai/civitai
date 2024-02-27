@@ -19,11 +19,13 @@ export const getModelVersionDetailsSelect = Prisma.validator<Prisma.ModelVersion
   earlyAccessTimeFrame: true,
   description: true,
   vaeId: true,
-  rank: {
+  metrics: {
+    where: { timeframe: 'AllTime' },
     select: {
-      downloadCountAllTime: true,
-      ratingCountAllTime: true,
-      ratingAllTime: true,
+      downloadCount: true,
+      ratingCount: true,
+      rating: true,
+      thumbsUpCount: true,
     },
   },
   files: {

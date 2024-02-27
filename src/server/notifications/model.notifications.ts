@@ -65,7 +65,6 @@ export const modelNotifications = createNotificationProcessor({
       `;
     },
   },
-  // TODO.justin: confirm changes here
   'model-like-milestone': {
     displayName: 'Model like milestones',
     category: 'Milestone',
@@ -78,20 +77,17 @@ export const modelNotifications = createNotificationProcessor({
     prepareQuery: ({ lastSent, category }) => `
       WITH milestones AS (
         SELECT * FROM (VALUES ${modelLikeMilestones.map((x) => `(${x})`).join(', ')}) m(value)
-      ), affected_models AS (
-        SELECT DISTINCT
-          "modelId" model_id
-        FROM "ResourceReview" rr
-        JOIN "Model" m ON rr."modelId" = m.id
-        WHERE rr."createdAt" > '${lastSent}' AND rr.recommended = true
-        AND m."userId" > 0
       ), model_value AS (
-        SELECT
-          "modelId" model_id,
-          "thumbsUpCountAllTime" thumbs_up_count
-        FROM "ModelRank" mr
-        JOIN affected_models am ON am.model_id = mr."modelId"
-        WHERE "thumbsUpCountAllTime" > ${modelLikeMilestones[0]}
+        SELECT DISTINCT
+          mm."modelId" model_id,
+          mm."thumbsUpCountAllTime" thumbs_up_count
+        FROM "ModelMetric" mm
+        JOIN "Model" m ON m.id = mm."modelId"
+        WHERE
+          mm."updatedAt" > '${lastSent}'
+          AND mm."timeframe" = 'AllTime'
+          AND "thumbsUpCountAllTime" > ${modelLikeMilestones[0]}
+          AND m."userId" > 0
       ), model_milestone AS (
         SELECT
           m."userId" "ownerId",
@@ -116,20 +112,20 @@ export const modelNotifications = createNotificationProcessor({
       ON CONFLICT (id) DO NOTHING;
     `,
   },
-  // TODO.justin: confirm changes here
   'new-model-version': {
-    displayName: 'New versions of liked models',
+    displayName: 'New versions of models you follow',
     category: 'Update',
     prepareMessage: ({ details }) => ({
-      message: `The ${details.modelName} model you liked has a new version: ${details.versionName}`,
+      message: `The ${details.modelName} model has a new version: ${details.versionName}`,
       url: `/models/${details.modelId}${
         details.modelVersionId ? `?modelVersionId=${details.modelVersionId}` : ''
       }`,
     }),
     prepareQuery: ({ lastSent, category }) => `
       WITH new_model_version AS (
-        SELECT DISTINCT
-          fm."userId" "ownerId",
+        SELECT
+          m."userId",
+          mv."modelId",
           JSONB_BUILD_OBJECT(
             'modelId', mv."modelId",
             'modelName', m.name,
@@ -138,23 +134,44 @@ export const modelNotifications = createNotificationProcessor({
           ) "details"
         FROM "ModelVersion" mv
         JOIN "Model" m ON m.id = mv."modelId"
-        JOIN "ModelEngagement" fm ON m.id = fm."modelId" AND mv."publishedAt" >= fm."createdAt" AND fm.type = 'Notify'
-        WHERE
-            mv."availability" = 'Public'::"Availability"
-            AND (
-              (mv."publishedAt" >= '${lastSent}' AND m."publishedAt" < now() AND mv.status = 'Published')
-              OR (mv."publishedAt" <= '${lastSent}' AND mv.status = 'Scheduled')
-            )
+        WHERE m."userId" > 0
+          AND mv."publishedAt" - m."publishedAt" > INTERVAL '12 hour'
+          AND (
+            (mv."publishedAt" BETWEEN '${lastSent}' AND now() AND mv.status = 'Published')
+            OR (mv."publishedAt" <= '${lastSent}' AND mv.status = 'Scheduled')
+          )
+      ), followers AS (
+        SELECT DISTINCT ON ("userId")
+          *
+        FROM (
+          SELECT
+            ue."userId",
+            nmv.details
+          FROM "UserEngagement" ue
+          JOIN new_model_version nmv ON nmv."userId" = ue."targetUserId"
+          WHERE ue.type = 'Follow'
+            AND NOT EXISTS (SELECT 1 FROM "ModelEngagement" me WHERE me.type = 'Mute' AND me."userId" = ue."userId")
+
+          UNION
+
+          SELECT
+            me."userId",
+            nmv.details
+          FROM "ModelEngagement" me
+          JOIN new_model_version nmv ON nmv."modelId" = me."modelId"
+          WHERE type = 'Notify'
+        ) t
       )
       INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
-        REPLACE(gen_random_uuid()::text, '-', ''),
-        "ownerId"    "userId",
+        CONCAT('new-model-version:', details->>'modelVersionId', ':', "userId"),
+        "userId",
         'new-model-version' "type",
         details,
         '${category}'::"NotificationCategory" "category"
-      FROM new_model_version
-      WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-model-version');
+      FROM followers n
+      WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" uns WHERE uns."userId" = n."userId" AND type = 'new-model-version')
+      ON CONFLICT (id) DO NOTHING;
     `,
   },
   'new-model-from-following': {
@@ -187,13 +204,14 @@ export const modelNotifications = createNotificationProcessor({
       )
       INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
-        REPLACE(gen_random_uuid()::text, '-', ''),
+        CONCAT('new-model-from-following:', details->>'modelId', ':', "userId"),
         "ownerId"    "userId",
         'new-model-from-following' "type",
         details,
         '${category}'::"NotificationCategory" "category"
       FROM new_model_from_following
-      WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-model-from-following');
+      WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-model-from-following')
+      ON CONFLICT (id) DO NOTHING;
     `,
   },
   'early-access-complete': {

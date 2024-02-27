@@ -726,18 +726,17 @@ export const toggleNotifyModelHandler = async ({
       ? toggleModelEngagement({ modelId: input.modelId, type: input.type, userId })
       : await toggleModelNotify({ ...input, userId });
 
-    // TODO.justin: confirm we are no longer tracking through clickhouse
-    // if (result) {
-    //   await ctx.track.modelEngagement({
-    //     type: 'Favorite',
-    //     modelId: input.modelId,
-    //   });
-    // } else {
-    //   await ctx.track.modelEngagement({
-    //     type: 'Delete',
-    //     modelId: input.modelId,
-    //   });
-    // }
+    if (result) {
+      await ctx.track.modelEngagement({
+        type: 'Notify',
+        modelId: input.modelId,
+      });
+    } else {
+      await ctx.track.modelEngagement({
+        type: 'Delete',
+        modelId: input.modelId,
+      });
+    }
     await redis.del(`user:${userId}:model-engagements`);
 
     return result;

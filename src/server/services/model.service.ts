@@ -51,7 +51,12 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
+import {
+  DEFAULT_PAGE_SIZE,
+  getCursor,
+  getPagination,
+  getPagingData,
+} from '~/server/utils/pagination-helpers';
 import { decreaseDate } from '~/utils/date-helpers';
 import { prepareFile } from '~/utils/file-helpers';
 import { getS3Client } from '~/utils/s3-utils';
@@ -180,7 +185,6 @@ export const getModelsRaw = async ({
     sort,
     period,
     periodMode,
-    rating,
     favorites,
     hidden,
     checkpointType,
@@ -291,10 +295,6 @@ export const getModelsRaw = async ({
     AND.push(
       Prisma.sql`m.type IN (${Prisma.raw(types.map((t) => `'${t}'::"ModelType"`).join(','))})`
     );
-  }
-
-  if (rating) {
-    AND.push(Prisma.sql`(mr."ratingAllTime" >= ${rating} AND mr."ratingAllTime" < ${rating + 1})`);
   }
 
   if (favorites && sessionUser?.id) {
@@ -450,27 +450,30 @@ export const getModelsRaw = async ({
 
   let orderBy = `m."lastVersionAt" DESC NULLS LAST`;
 
-  if (sort === ModelSort.HighestRated) orderBy = `mr."rating${period}Rank" ASC`;
-  else if (sort === ModelSort.MostLiked) orderBy = `mr."thumbsUpCount${period}Rank" ASC`;
-  else if (sort === ModelSort.MostDownloaded) orderBy = `mr."downloadCount${period}Rank" ASC`;
-  else if (sort === ModelSort.MostDiscussed) orderBy = `mr."commentCount${period}Rank" ASC`;
-  else if (sort === ModelSort.MostCollected) orderBy = `mr."collectedCount${period}Rank" ASC`;
-  else if (sort === ModelSort.MostTipped) orderBy = `mr."tippedAmountCount${period}Rank" ASC`;
-  else if (sort === ModelSort.ImageCount) orderBy = `mr."imageCount${period}Rank" ASC`;
+  if (sort === ModelSort.HighestRated)
+    orderBy = `mm."thumbsUpCount" DESC, mm."downloadCount" DESC, mm."modelId"`;
+  else if (sort === ModelSort.MostLiked)
+    orderBy = `mm."thumbsUpCount" DESC, mm."downloadCount" DESC, mm."modelId"`;
+  else if (sort === ModelSort.MostDownloaded)
+    orderBy = `mm."downloadCount" DESC, mm."thumbsUpCount" DESC, mm."modelId"`;
+  else if (sort === ModelSort.MostDiscussed)
+    orderBy = `mm."commentCount" DESC, mm."thumbsUpCount" DESC, mm."modelId"`;
+  else if (sort === ModelSort.MostCollected)
+    orderBy = `mm."collectedCount" DESC, mm."thumbsUpCount" DESC, mm."modelId"`;
+  else if (sort === ModelSort.MostTipped)
+    orderBy = `mm."tippedAmountCount" DESC, mm."thumbsUpCount" DESC, mm."modelId"`;
+  else if (sort === ModelSort.ImageCount)
+    orderBy = `mm."imageCount" DESC, mm."thumbsUpCount" DESC, mm."modelId"`;
   else if (sort === ModelSort.Oldest) orderBy = `m."lastVersionAt" ASC`;
 
   // eslint-disable-next-line prefer-const
-  let [cursorProp, cursorDirection] = orderBy?.split(' ');
+  let { where: cursorClause, prop: cursorProp } = getCursor(orderBy, cursor);
 
   if (cursorProp === 'm."lastVersionAt"') {
     // treats a date as a number of seconds since epoch
     cursorProp = `extract(epoch from ${cursorProp})`;
   }
-
-  if (cursor) {
-    const cursorOperator = cursorDirection === 'DESC' ? '<' : '>';
-    AND.push(Prisma.sql`${Prisma.raw(cursorProp)} ${Prisma.raw(cursorOperator)} ${cursor}`);
-  }
+  if (cursorClause) AND.push(cursorClause);
 
   if (!!fileFormats?.length) {
     AND.push(Prisma.sql`EXISTS (
@@ -511,7 +514,7 @@ export const getModelsRaw = async ({
   const queryWith = WITH.length > 0 ? Prisma.sql`WITH ${Prisma.join(WITH, ', ')}` : Prisma.sql``;
   const queryFrom = Prisma.sql`
     FROM "Model" m
-    LEFT JOIN "ModelRank" mr ON mr."modelId" = m."id"
+    JOIN "ModelMetric" mm ON mm."modelId" = m."id" AND mm."timeframe" = ${period}::"MetricTimeframe"
     LEFT JOIN "User" u ON m."userId" = u.id
     ${clubId ? Prisma.sql`JOIN "clubModels" cm ON cm."modelId" = m."id"` : Prisma.sql``}
     WHERE ${Prisma.join(AND, ' AND ')}
@@ -555,14 +558,14 @@ export const getModelsRaw = async ({
       m."mode",
       ${Prisma.raw(`
         jsonb_build_object(
-          'downloadCount', mr."downloadCount${input.period}",
-          'favoriteCount', mr."favoriteCount${input.period}",
-          'thumbsUpCount', mr."thumbsUpCount${input.period}",
-          'commentCount', mr."commentCount${input.period}",
-          'ratingCount', mr."ratingCount${input.period}",
-          'rating', mr."rating${input.period}",
-          'collectedCount', mr."collectedCount${input.period}",
-          'tippedAmountCount', mr."tippedAmountCount${input.period}"
+          'downloadCount', mm."downloadCount",
+          'favoriteCount', mm."favoriteCount",
+          'thumbsUpCount', mm."thumbsUpCount",
+          'commentCount', mm."commentCount",
+          'ratingCount', mm."ratingCount",
+          'rating', mm."rating",
+          'collectedCount', mm."collectedCount",
+          'tippedAmountCount', mm."tippedAmountCount"
         ) as "rank",
       `)}
       (
@@ -679,6 +682,7 @@ export const getModelsRaw = async ({
   };
 };
 
+/** @deprecated use getModelsRaw */
 export const getModels = async <TSelect extends Prisma.ModelSelect>({
   input,
   select,
@@ -707,7 +711,6 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     sort,
     period,
     periodMode,
-    rating,
     favorites,
     hidden,
     excludedTagIds,
@@ -882,11 +885,6 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     user: username || user ? { username: username ?? user } : undefined,
     type: types?.length ? { in: types } : undefined,
     nsfw: hideNSFWModels ? false : undefined,
-    rank: rating
-      ? {
-          AND: [{ ratingAllTime: { gte: rating } }, { ratingAllTime: { lt: rating + 1 } }],
-        }
-      : undefined,
     engagements: favorites
       ? { some: { userId: sessionUser?.id, type: 'Notify' } }
       : hidden
@@ -901,23 +899,24 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   };
   if (favorites || hidden) isPrivate = true;
 
-  let orderBy: Prisma.ModelOrderByWithRelationInput = {
+  const orderBy: Prisma.ModelOrderByWithRelationInput = {
     lastVersionAt: { sort: 'desc', nulls: 'last' },
   };
 
-  if (sort === ModelSort.HighestRated) orderBy = { rank: { [`rating${period}Rank`]: 'asc' } };
-  else if (sort === ModelSort.MostLiked)
-    orderBy = { rank: { [`thumbsUpCount${period}Rank`]: 'asc' } };
-  else if (sort === ModelSort.MostDownloaded)
-    orderBy = { rank: { [`downloadCount${period}Rank`]: 'asc' } };
-  else if (sort === ModelSort.MostDiscussed)
-    orderBy = { rank: { [`commentCount${period}Rank`]: 'asc' } };
-  else if (sort === ModelSort.MostCollected)
-    orderBy = { rank: { [`collectedCount${period}Rank`]: 'asc' } };
-  else if (sort === ModelSort.MostTipped)
-    orderBy = { rank: { [`tippedAmountCount${period}Rank`]: 'asc' } };
-  else if (sort === ModelSort.ImageCount)
-    orderBy = { rank: { [`imageCount${period}Rank`]: 'asc' } };
+  // No more rank view...
+  // if (sort === ModelSort.HighestRated) orderBy = { rank: { [`rating${period}Rank`]: 'asc' } };
+  // else if (sort === ModelSort.MostLiked)
+  //   orderBy = { rank: { [`thumbsUpCount${period}Rank`]: 'asc' } };
+  // else if (sort === ModelSort.MostDownloaded)
+  //   orderBy = { rank: { [`downloadCount${period}Rank`]: 'asc' } };
+  // else if (sort === ModelSort.MostDiscussed)
+  //   orderBy = { rank: { [`commentCount${period}Rank`]: 'asc' } };
+  // else if (sort === ModelSort.MostCollected)
+  //   orderBy = { rank: { [`collectedCount${period}Rank`]: 'asc' } };
+  // else if (sort === ModelSort.MostTipped)
+  //   orderBy = { rank: { [`tippedAmountCount${period}Rank`]: 'asc' } };
+  // else if (sort === ModelSort.ImageCount)
+  //   orderBy = { rank: { [`imageCount${period}Rank`]: 'asc' } };
 
   const items = await dbRead.model.findMany({
     take,

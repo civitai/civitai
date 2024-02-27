@@ -204,7 +204,7 @@ export function ImageResources({ imageId }: { imageId: number }) {
                             color={hasReview ? 'success.5' : 'gray'}
                           >
                             <Text size="xs">
-                              {abbreviateNumber(resource.modelFavoriteCount ?? 0)}
+                              {abbreviateNumber(resource.modelThumbsUpCount ?? 0)}
                             </Text>
                           </IconBadge>
                           <IconBadge

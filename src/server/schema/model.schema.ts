@@ -77,10 +77,6 @@ export const getAllModelsSchema = licensingSchema.merge(userPreferencesForModels
   sort: z.nativeEnum(ModelSort).default(constants.modelFilterDefaults.sort),
   period: z.nativeEnum(MetricTimeframe).default(constants.modelFilterDefaults.period),
   periodMode: periodModeSchema,
-  rating: z
-    .preprocess((val) => Number(val), z.number())
-    .transform((val) => Math.floor(val))
-    .optional(),
   favorites: z.coerce.boolean().optional().default(false),
   hidden: z.coerce.boolean().optional().default(false),
   needsReview: z.coerce.boolean().optional(),
