@@ -70,6 +70,7 @@ import {
   setUserSetting,
   unequipCosmeticByType,
   getUserBookmarkCollections,
+  getUserPurchasedRewards,
 } from '~/server/services/user.service';
 import {
   handleLogError,
@@ -1226,4 +1227,18 @@ export const getUserBookmarkCollectionsHandler = async ({
   return getUserBookmarkCollections({
     userId: ctx.user.id,
   });
+};
+
+export const getUserPurchasedRewardsHandler = async ({
+  ctx,
+}: {
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    return getUserPurchasedRewards({
+      userId: ctx.user.id,
+    });
+  } catch (error) {
+    throw throwDbError(error);
+  }
 };
