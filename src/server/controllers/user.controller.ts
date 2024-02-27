@@ -70,6 +70,7 @@ import {
   setUserSetting,
   unequipCosmeticByType,
   getUserBookmarkCollections,
+  getUserPurchasedRewards,
   toggleModelEngagement,
 } from '~/server/services/user.service';
 import {
@@ -1243,4 +1244,18 @@ export const getUserBookmarkCollectionsHandler = async ({
   return getUserBookmarkCollections({
     userId: ctx.user.id,
   });
+};
+
+export const getUserPurchasedRewardsHandler = async ({
+  ctx,
+}: {
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    return getUserPurchasedRewards({
+      userId: ctx.user.id,
+    });
+  } catch (error) {
+    throw throwDbError(error);
+  }
 };

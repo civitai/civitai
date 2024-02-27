@@ -64,6 +64,7 @@ import { REDIS_KEYS } from '~/server/redis/client';
 import { baseS3Client } from '~/utils/s3-client';
 import { isDefined } from '~/utils/type-guards';
 import { removeEmpty } from '~/utils/object-helpers';
+import { purchasableRewardDetails } from '~/server/selectors/purchasableReward.selector';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
 export const getUserCreator = async ({
@@ -1226,5 +1227,18 @@ export async function unequipCosmeticByType({
 export const getUserBookmarkCollections = async ({ userId }: { userId: number }) => {
   return dbRead.collection.findMany({
     where: { userId, mode: CollectionMode.Bookmark },
+  });
+};
+
+export const getUserPurchasedRewards = async ({ userId }: { userId: number }) => {
+  return dbRead.userPurchasedRewards.findMany({
+    where: { userId },
+    select: {
+      code: true,
+      meta: true,
+      purchasableReward: {
+        select: purchasableRewardDetails,
+      },
+    },
   });
 };

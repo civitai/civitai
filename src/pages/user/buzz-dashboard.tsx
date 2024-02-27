@@ -28,6 +28,7 @@ import { StripeConnectCard } from '../../components/Account/StripeConnectCard';
 import { OwnedBuzzWithdrawalRequestsPaged } from '../../components/Buzz/WithdrawalRequest/OwnedBuzzWithdrawalRequestsPaged';
 import { EarlyAccessRewards } from '~/components/Buzz/Rewards/EarlyAccessRewards';
 import { GeneratedImagesReward } from '~/components/Buzz/Rewards/GeneratedImagesRewards';
+import { PurchasableRewards } from '~/components/PurchasableRewards/PurchasableRewards';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -135,6 +136,7 @@ export default function UserBuzzDashboard() {
           </Paper>
           <EarlyAccessRewards />
           <GeneratedImagesReward />
+          <PurchasableRewards />
           <SpendingBuzz withCTA />
         </Stack>
       </Container>
