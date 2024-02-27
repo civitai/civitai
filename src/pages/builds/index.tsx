@@ -31,6 +31,7 @@ import { BuildBudget, BuildFeatures } from '~/server/schema/build-guide.schema';
 import { trpc } from '~/utils/trpc';
 import { env } from '~/env/client.mjs';
 import dayjs from 'dayjs';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
 const buildBudgets = Object.keys(BuildBudget) as BuildBudget[];
 const processors = ['AMD', 'Intel'] as const;
@@ -91,6 +92,13 @@ const useStyles = createStyles((theme) => ({
     },
   },
 }));
+
+export const getServerSideProps = createServerSideProps({
+  useSSG: true,
+  resolver: async ({ ssg }) => {
+    await ssg?.buildGuide.getAll.prefetch();
+  },
+});
 
 const aDayAgo = dayjs().subtract(1, 'day').toDate();
 export default function BuildPage() {
