@@ -56,6 +56,8 @@ const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async 
         *,
         row_number() OVER (ORDER BY score DESC) as position
       FROM scores
+      ORDER BY score DESC
+      LIMIT 1000
     `);
     jobContext.on('cancel', leaderboardUpdateQuery.cancel);
     await leaderboardUpdateQuery.result();
