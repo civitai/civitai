@@ -318,7 +318,7 @@ const PurchasableRewardCard = ({
   );
 
   return (
-    <Grid.Col xs={12} md={3}>
+    <Grid.Col xs={12} sm={6} md={3}>
       <UnstyledButton
         className={classes.rewardCard}
         onClick={() => {
@@ -389,7 +389,12 @@ const PurchasableRewardCard = ({
                 Purchased
               </Badge>
             ) : (
-              <CurrencyBadge currency={Currency.BUZZ} unitAmount={purchasableReward.unitPrice} />
+              <CurrencyBadge
+                currency={Currency.BUZZ}
+                unitAmount={purchasableReward.unitPrice}
+                color="yellow.7"
+                variant="light"
+              />
             )}
           </Box>
         </Stack>
@@ -449,11 +454,11 @@ export function PurchasableRewards() {
           <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
           {filters.mode === PurchasableRewardViewMode.Available && (
             <Grid>
-              {purchasedRewards.map((purchasedReward) => {
+              {purchasableRewards.map((purchasableReward) => {
                 return (
                   <PurchasableRewardCard
-                    purchasableReward={purchasedReward.purchasableReward}
-                    key={purchasedReward.id}
+                    purchasableReward={purchasableReward}
+                    key={purchasableReward.id}
                   />
                 );
               })}
@@ -462,11 +467,11 @@ export function PurchasableRewards() {
 
           {filters.mode === PurchasableRewardViewMode.Purchased && (
             <Stack>
-              {purchasedRewards.map((purchasedReward) => {
+              {purchasableRewards.map((purchasableReward) => {
                 return (
                   <PurchasableRewardListItem
-                    purchasableReward={purchasedReward.purchasableReward}
-                    key={purchasedReward.id}
+                    purchasableReward={purchasableReward}
+                    key={purchasableReward.id}
                   />
                 );
               })}
