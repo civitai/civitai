@@ -280,7 +280,7 @@ export const purchasableRewardPurchase = async ({
     toAccountId: 0,
     amount: reward.unitPrice,
     type: TransactionType.Purchase,
-    description: 'Refund due to rejection or cancellation of withdrawal request',
+    description: 'Purchase of reward',
     // Safeguard in case the above check fails :shrug:
     externalTransactionId: `purchasable-reward-purchase-${userId}-${purchasableRewardId}`,
   });
