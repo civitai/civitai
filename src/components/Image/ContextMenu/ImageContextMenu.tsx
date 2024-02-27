@@ -1,4 +1,14 @@
-import { ActionIcon, Box, Group, HoverCard, Menu, Stack, Text, ThemeIcon } from '@mantine/core';
+import {
+  ActionIcon,
+  ActionIconProps,
+  Box,
+  Group,
+  HoverCard,
+  Menu,
+  Stack,
+  Text,
+  ThemeIcon,
+} from '@mantine/core';
 import {
   IconCheck,
   IconDotsVertical,
@@ -49,11 +59,31 @@ type ImageContextMenuProps = {
 };
 
 export function ImageContextMenu({
+  iconSize = 26,
+  id,
+  postId,
+  userId,
+  user,
+  collectionId,
+  needsReview,
+  context,
+  additionalMenuItems,
+  ingestion,
   className,
-  ...props
-}: ImageContextMenuProps & { className?: string }) {
+  ...actionIconProps
+}: ImageContextMenuProps & ActionIconProps & { iconSize?: number }) {
   const currentUser = useCurrentUser();
-  const { user, userId } = props;
+  const props = {
+    id,
+    postId,
+    userId,
+    user,
+    collectionId,
+    needsReview,
+    context,
+    additionalMenuItems,
+    ingestion,
+  };
   const isOwner = !!currentUser && (currentUser.id === user?.id || currentUser.id === userId);
   const isModerator = !!currentUser?.isModerator;
 
@@ -67,9 +97,10 @@ export function ImageContextMenu({
             e.preventDefault();
             e.stopPropagation();
           }}
+          {...actionIconProps}
         >
           <IconDotsVertical
-            size={26}
+            size={iconSize}
             color="#fff"
             filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
           />

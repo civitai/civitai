@@ -11,12 +11,12 @@ import { isDefined } from '~/utils/type-guards';
 const batchSize = 1000;
 export default WebhookEndpoint(async (req, res) => {
   const onCancel: (() => Promise<void>)[] = [];
-  let shouldStop = false;
-  res.on('close', async () => {
-    console.log('Cancelling');
-    shouldStop = true;
-    await Promise.all(onCancel.map((cancel) => cancel()));
-  });
+  const shouldStop = false;
+  // res.on('close', async () => {
+  //   console.log('Cancelling');
+  //   shouldStop = true;
+  //   await Promise.all(onCancel.map((cancel) => cancel()));
+  // });
   console.log('start');
   // const cursorQuery = await pgDbWrite.cancellableQuery<{ end: number }>(Prisma.sql`
   //   SELECT MAX(id) "end" FROM "Image";
@@ -28,8 +28,9 @@ export default WebhookEndpoint(async (req, res) => {
   //   SELECT id "max" FROM "Image" where "nsfwLevel" > 0 ORDER BY id DESC LIMIT 1
   // `;
   // let cursor = cursorResult.length ? cursorResult[0].max : 0;
-  const maxImageId = 2540000;
-  let cursor = 0;
+  const maxImageId = 5855596;
+  let cursor = 5853231;
+  console.log(cursor > maxImageId);
   await limitConcurrency(() => {
     if (cursor > maxImageId || shouldStop) return null; // We've reached the end of the images
 

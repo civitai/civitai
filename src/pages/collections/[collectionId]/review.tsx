@@ -32,7 +32,6 @@ import { immer } from 'zustand/middleware/immer';
 
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { MasonryGrid2 } from '~/components/MasonryGrid/MasonryGrid2';
 import { NoContent } from '~/components/NoContent/NoContent';
@@ -55,6 +54,7 @@ import { formatDate } from '~/utils/date-helpers';
 import { CollectionReviewSort } from '~/server/common/enums';
 import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
 import { truncate } from 'lodash-es';
+import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 
 type StoreState = {
   selected: Record<number, boolean>;
@@ -213,6 +213,8 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
     [CollectionItemStatus.REVIEW]: 'yellow',
   };
 
+  const image = reviewData.image;
+
   return (
     <FeedCard>
       <Box className={sharedClasses.root} onClick={() => toggleSelected(collectionItem.id)}>
@@ -250,89 +252,83 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
           </Group>
           {reviewData.baseModel && <Badge variant="filled">{reviewData.baseModel}</Badge>}
         </Stack>
-        {reviewData.image && (
-          <ImageGuard
-            images={[reviewData.image]}
-            connect={{ entityId: collectionItem.id, entityType: 'collectionItem' }}
-            render={(image) => (
-              <ImageGuard.Content>
-                {({ safe }) => {
-                  // Small hack to prevent blurry landscape images
-                  const originalAspectRatio =
-                    image.width && image.height ? image.width / image.height : 1;
-                  return (
-                    <>
-                      <Group
-                        spacing={4}
-                        position="apart"
-                        className={cx(sharedClasses.contentOverlay, sharedClasses.top)}
-                        noWrap
+        {image && (
+          <ImageGuard2 image={image} connectType="collectionItem" connectId={collectionItem.id}>
+            {(safe) => {
+              const originalAspectRatio =
+                image.width && image.height ? image.width / image.height : 1;
+              return (
+                <>
+                  <Group
+                    spacing={4}
+                    position="apart"
+                    className={cx(sharedClasses.contentOverlay, sharedClasses.top)}
+                    noWrap
+                  >
+                    <Group spacing={4}>
+                      <ImageGuard2.BlurToggle />
+                      {collectionItem.status && (
+                        <Badge variant="filled" color={badgeColor[collectionItem.status]}>
+                          {collectionItem.status}
+                        </Badge>
+                      )}
+                    </Group>
+                  </Group>
+                  {safe ? (
+                    <EdgeMedia
+                      src={image.url ?? ''}
+                      name={image.name ?? image.id.toString()}
+                      alt={
+                        image.meta
+                          ? truncate((image.meta as ImageMetaProps).prompt, {
+                              length: constants.altTruncateLength,
+                            })
+                          : image.name ?? undefined
+                      }
+                      type={image.type}
+                      width={
+                        originalAspectRatio > 1
+                          ? DEFAULT_EDGE_IMAGE_WIDTH * originalAspectRatio
+                          : DEFAULT_EDGE_IMAGE_WIDTH
+                      }
+                      placeholder="empty"
+                      className={sharedClasses.image}
+                      loading="lazy"
+                    />
+                  ) : (
+                    <MediaHash {...image} />
+                  )}
+                  {reviewData.meta && (
+                    <ImageMetaPopover
+                      meta={reviewData.meta as ImageMetaProps}
+                      generationProcess={reviewData.meta.generationProcess ?? 'txt2img'}
+                    >
+                      <ActionIcon
+                        variant="transparent"
+                        style={{
+                          position: 'absolute',
+                          bottom: '5px',
+                          right: '5px',
+                          zIndex: 999,
+                        }}
+                        size="lg"
                       >
-                        <Group spacing={4}>
-                          <ImageGuard.ToggleConnect position="static" />
-                          {collectionItem.status && (
-                            <Badge variant="filled" color={badgeColor[collectionItem.status]}>
-                              {collectionItem.status}
-                            </Badge>
-                          )}
-                        </Group>
-                      </Group>
-                      {safe ? (
-                        <EdgeMedia
-                          src={image.url ?? ''}
-                          name={image.name ?? image.id.toString()}
-                          alt={
-                            image.meta
-                              ? truncate((image.meta as ImageMetaProps).prompt, {
-                                  length: constants.altTruncateLength,
-                                })
-                              : image.name ?? undefined
-                          }
-                          type={image.type}
-                          width={
-                            originalAspectRatio > 1
-                              ? DEFAULT_EDGE_IMAGE_WIDTH * originalAspectRatio
-                              : DEFAULT_EDGE_IMAGE_WIDTH
-                          }
-                          placeholder="empty"
-                          className={sharedClasses.image}
-                          loading="lazy"
+                        <IconInfoCircle
+                          color="white"
+                          filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                          opacity={0.8}
+                          strokeWidth={2.5}
+                          size={26}
                         />
-                      ) : (
-                        <MediaHash {...image} />
-                      )}
-                      {reviewData.meta && (
-                        <ImageMetaPopover
-                          meta={reviewData.meta as ImageMetaProps}
-                          generationProcess={reviewData.meta.generationProcess ?? 'txt2img'}
-                        >
-                          <ActionIcon
-                            variant="transparent"
-                            style={{
-                              position: 'absolute',
-                              bottom: '5px',
-                              right: '5px',
-                              zIndex: 999,
-                            }}
-                            size="lg"
-                          >
-                            <IconInfoCircle
-                              color="white"
-                              filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                              opacity={0.8}
-                              strokeWidth={2.5}
-                              size={26}
-                            />
-                          </ActionIcon>
-                        </ImageMetaPopover>
-                      )}
-                    </>
-                  );
-                }}
-              </ImageGuard.Content>
-            )}
-          />
+                      </ActionIcon>
+                    </ImageMetaPopover>
+                  )}
+                </>
+              );
+            }}
+          </ImageGuard2>
         )}
+
         <Stack
           className={cx(
             sharedClasses.contentOverlay,

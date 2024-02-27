@@ -48,14 +48,13 @@ export function ArticleCard({ data, aspectRatio }: Props) {
       <FeedCard
         href={`/articles/${id}/${slugit(title)}`}
         aspectRatio={aspectRatio}
-        // useCSSAspectRatio={useCSSAspectRatio}
         className={classes.link}
       >
         <div className={classes.root}>
           {coverImage && (
             <ImageGuard2 image={coverImage}>
               {(safe) => (
-                <div className="relative flex-1 overflow-hidden h-full">
+                <div className="relative flex-1 h-full">
                   <Group
                     spacing={4}
                     position="apart"

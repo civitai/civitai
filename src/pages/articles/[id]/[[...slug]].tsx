@@ -51,8 +51,9 @@ import { removeTags, slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
-import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
+import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 
 const querySchema = z.object({
   id: z.preprocess(parseNumericString, z.number()),
@@ -178,7 +179,7 @@ export default function ArticleDetailsPage({
     </Group>
   );
 
-  const coverImage = article.coverImage;
+  const image = article.coverImage;
   const maxWidth = 1320;
 
   return (
@@ -255,47 +256,34 @@ export default function ArticleDetailsPage({
                   },
                 })}
               >
-                {/* TODO.Briant - ImageGuard */}
-                {coverImage && (
-                  <ImageGuard
-                    connect={{ entityId: article.id, entityType: 'article' }}
-                    images={[coverImage]}
-                    render={(image) => {
-                      const width = image.width ?? maxWidth;
-                      return (
-                        <>
-                          <ImageGuard.ToggleConnect position="top-left" />
-                          <ImageGuard.Report />
-                          <ImageGuard.Content>
-                            {({ safe }) =>
-                              !safe ? (
-                                <div
-                                  className="hashWrapper"
-                                  style={{
-                                    position: 'relative',
-                                    // aspectRatio: (image.width ?? 0) / (image.height ?? 0),
-                                    // maxWidth: image.width ?? undefined,
-                                    // maxHeight: image.height ?? undefined,
-                                  }}
-                                >
-                                  <MediaHash {...image} />
-                                </div>
-                              ) : (
-                                <EdgeMedia
-                                  src={image.url}
-                                  name={image.name}
-                                  alt={article.title}
-                                  type={image.type}
-                                  width={maxWidth}
-                                  anim={safe}
-                                />
-                              )
-                            }
-                          </ImageGuard.Content>
-                        </>
-                      );
-                    }}
-                  />
+                {image && (
+                  <ImageGuard2 image={image} connectType="article" connectId={article.id}>
+                    {(safe) => (
+                      <>
+                        <ImageGuard2.BlurToggle className="absolute top-2 left-2 z-10" />
+                        <ImageContextMenu {...image} className="absolute top-2 right-2 z-10" />
+                        {!safe ? (
+                          <div
+                            className="hashWrapper"
+                            style={{
+                              position: 'relative',
+                            }}
+                          >
+                            <MediaHash {...image} />
+                          </div>
+                        ) : (
+                          <EdgeMedia
+                            src={image.url}
+                            name={image.name}
+                            alt={article.title}
+                            type={image.type}
+                            width={maxWidth}
+                            anim={safe}
+                          />
+                        )}
+                      </>
+                    )}
+                  </ImageGuard2>
                 )}
               </Box>
               {article.content && (

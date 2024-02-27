@@ -5,20 +5,22 @@ import { FeedCard } from '~/components/Cards/FeedCard';
 import { CollectionContextMenu } from '~/components/Collections/components/CollectionContextMenu';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
-import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { DEFAULT_EDGE_IMAGE_WIDTH, constants } from '~/server/common/constants';
 import { CollectionGetInfinite } from '~/types/router';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import { MediaType, NsfwLevel } from '@prisma/client';
+import { MediaType, NsfwLevel as NsfwLevelOld } from '@prisma/client';
 import { SimpleUser } from '~/server/selectors/user.selector';
 import React from 'react';
 import { truncate } from 'lodash-es';
 import { ImageMetaProps } from '~/server/schema/image.schema';
+import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
+import { NsfwLevel } from '~/server/common/enums';
 
 type ImageProps = {
   id: number;
-  nsfw: NsfwLevel;
+  nsfw: NsfwLevelOld;
+  nsfwLevel: NsfwLevel;
   imageNsfw?: boolean;
   postId?: number | null;
   width?: number | null;
@@ -126,12 +128,7 @@ function CollectionCardHeader({
   return (
     <Group spacing={4} position="apart" className={cx(classes.contentOverlay, classes.top)} noWrap>
       <Group spacing="xs">
-        {withinImageGuard && (
-          <ImageGuard.GroupToggleConnect
-            className={classes.chip}
-            sx={(theme) => ({ position: 'inherit', borderRadius: theme.radius.xl })}
-          />
-        )}
+        {withinImageGuard && <ImageGuard2.BlurToggle className={classes.chip} radius="xl" />}
         <Badge className={cx(classes.infoChip, classes.chip)} variant="light" radius="xl">
           <Text color="white" size="xs" transform="capitalize">
             {data.type ? data.type + 's' : 'Mixed'}
@@ -163,57 +160,57 @@ function ImageCover({ data, coverImages }: Props & { coverImages: ImageProps[] }
   const { classes } = useCardStyles({ aspectRatio: 1 });
   const isMultiImage = coverImages.length > 1;
   const coverImagesCount = coverImages.length;
+  console.log({ coverImages });
 
   return (
-    <ImageGuard
-      nsfw
-      images={coverImages}
-      connect={{ entityId: data.id, entityType: 'collection' }}
-      render={(image) => (
-        <ImageGuard.Content>
-          {({ safe }) => {
-            return safe ? (
-              <EdgeMedia
-                src={image.url}
-                type={image.type}
-                className={classes.image}
-                name={image.name ?? image.id.toString()}
-                alt={
-                  image.meta
-                    ? truncate(image.meta.prompt, { length: constants.altTruncateLength })
-                    : image.name ?? undefined
-                }
-                placeholder="empty"
-                loading="lazy"
-                width={DEFAULT_EDGE_IMAGE_WIDTH}
-                anim={false}
-              />
-            ) : (
-              <MediaHash
-                {...image}
-                style={
-                  isMultiImage
-                    ? {
-                        position: 'relative',
-                        width: '50%',
-                        height: coverImagesCount > 2 ? '50%' : 'auto',
-                      }
-                    : {}
-                }
-              />
-            );
-          }}
-        </ImageGuard.Content>
-      )}
-    >
-      <CollectionCardHeader data={data} withinImageGuard />
+    <>
+      {coverImages.map((image, i) => (
+        <ImageGuard2 key={image.id} image={image} connectType="collection" connectId={data.id}>
+          {(safe) => (
+            <>
+              {/* TODO - update  ImageGuard2 to allow blurToggle to be given an image from outside of context */}
+              {i === 0 && <CollectionCardHeader data={data} withinImageGuard />}
+              {safe ? (
+                <EdgeMedia
+                  src={image.url}
+                  type={image.type}
+                  className={classes.image}
+                  name={image.name ?? image.id.toString()}
+                  alt={
+                    image.meta
+                      ? truncate(image.meta.prompt, { length: constants.altTruncateLength })
+                      : image.name ?? undefined
+                  }
+                  placeholder="empty"
+                  loading="lazy"
+                  width={DEFAULT_EDGE_IMAGE_WIDTH}
+                  anim={false}
+                />
+              ) : (
+                <MediaHash
+                  {...image}
+                  style={
+                    isMultiImage
+                      ? {
+                          position: 'relative',
+                          width: '50%',
+                          height: coverImagesCount > 2 ? '50%' : 'auto',
+                        }
+                      : {}
+                  }
+                />
+              )}
+            </>
+          )}
+        </ImageGuard2>
+      ))}
 
       {coverImages.length === 0 && (
         <Text color="dimmed" sx={{ width: '100%', height: '100%' }}>
           This collection has no images
         </Text>
       )}
-    </ImageGuard>
+    </>
   );
 }
 

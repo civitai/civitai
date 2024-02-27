@@ -3,46 +3,46 @@ import Link from 'next/link';
 import React, { forwardRef } from 'react';
 
 type AspectRatio = 'portrait' | 'landscape' | 'square' | 'flat';
-const aspectRatioValues: Record<AspectRatio, { ratio: number; height: number; cssRatio: number }> =
-  {
-    portrait: {
-      ratio: 7 / 9,
-      height: 430,
-      // CSS Ratio should be opposite to ratio as it will rely on width.
-      cssRatio: 9 / 7,
-    },
-    landscape: {
-      ratio: 9 / 7,
-      height: 300,
-      cssRatio: 7 / 9,
-    },
-    flat: {
-      ratio: 15 / 7,
-      height: 300,
-      cssRatio: 7 / 15,
-    },
-    square: {
-      ratio: 1,
-      height: 332,
-      cssRatio: 1,
-    },
-  };
+const aspectRatioValues: Record<
+  AspectRatio,
+  { ratio: number; height: number; cssRatio: number; stringRatio: string }
+> = {
+  portrait: {
+    ratio: 7 / 9,
+    height: 430,
+    // CSS Ratio should be opposite to ratio as it will rely on width.
+    cssRatio: 9 / 7,
+    stringRatio: '7/9',
+  },
+  landscape: {
+    ratio: 9 / 7,
+    height: 300,
+    cssRatio: 7 / 9,
+    stringRatio: '9/7',
+  },
+  flat: {
+    ratio: 15 / 7,
+    height: 300,
+    cssRatio: 7 / 15,
+    stringRatio: '15/7',
+  },
+  square: {
+    ratio: 1,
+    height: 332,
+    cssRatio: 1,
+    stringRatio: '1',
+  },
+};
 
-const useStyles = createStyles<string, { aspectRatio?: number }>((theme, { aspectRatio }) => {
+const useStyles = createStyles((theme) => {
   return {
     root: {
       padding: '0 !important',
       color: 'white',
       borderRadius: theme.radius.md,
       cursor: 'pointer',
-      ...(aspectRatio
-        ? {
-            position: 'relative',
-            height: 0,
-            paddingBottom: `${(aspectRatio * 100).toFixed(3)}% !important`,
-            overflow: 'hidden',
-          }
-        : {}),
+      position: 'relative',
+      overflow: 'hidden',
     },
   };
 });
@@ -61,8 +61,8 @@ export const FeedCard = forwardRef<HTMLAnchorElement, Props>(
     },
     ref
   ) => {
-    const { ratio, cssRatio } = aspectRatioValues[aspectRatio];
-    const { classes, cx } = useStyles({ aspectRatio: useCSSAspectRatio ? cssRatio : undefined });
+    const { stringRatio } = aspectRatioValues[aspectRatio];
+    const { classes, cx } = useStyles();
 
     // const {ref, inView} = useInView(inViewOptions)
 
@@ -72,10 +72,9 @@ export const FeedCard = forwardRef<HTMLAnchorElement, Props>(
         {...props}
         component={href ? 'a' : undefined}
         ref={ref}
+        style={{ aspectRatio: stringRatio }}
       >
-        <AspectRatio ratio={ratio} w="100%">
-          {children}
-        </AspectRatio>
+        {children}
       </Card>
     );
 

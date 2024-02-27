@@ -5,7 +5,7 @@ import { QS } from '~/utils/qs';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useHasClientHistory } from '~/store/ClientHistoryStore';
 import { useHotkeys, useLocalStorage } from '@mantine/hooks';
-import { ImageGuardConnect } from '~/components/ImageGuard/ImageGuard';
+import { ImageGuardConnect } from '~/components/ImageGuard/ImageGuard2';
 import { useQueryImages } from '~/components/Image/image.utils';
 import { ReviewReactions } from '@prisma/client';
 import { ImageGetById, ImageGetInfinite } from '~/types/router';
@@ -21,7 +21,7 @@ type ImageDetailState = {
   image?: ImageGetInfinite[number] | ImageGetById;
   isLoading: boolean;
   active: boolean;
-  connect?: ImageGuardConnect;
+  connect: ImageGuardConnect;
   isMod?: boolean;
   isOwner?: boolean;
   shareUrl: string;
@@ -185,13 +185,14 @@ export function ImageDetailProvider({
 
   const isMod = currentUser?.isModerator ?? false;
   const isOwner = currentUser?.id === image?.user.id;
-  const connect: ImageGuardConnect | undefined = username
-    ? { entityType: 'user', entityId: username }
+
+  const connect: ImageGuardConnect = modelId
+    ? { connectType: 'model', connectId: modelId }
     : postId
-    ? { entityType: 'post', entityId: postId }
-    : modelId
-    ? { entityType: 'model', entityId: modelId }
-    : undefined;
+    ? { connectType: 'post', connectId: postId }
+    : username
+    ? { connectType: 'user', connectId: username }
+    : ({} as any);
 
   return (
     <ImageDetailContext.Provider

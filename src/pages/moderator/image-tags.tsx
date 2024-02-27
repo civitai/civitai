@@ -29,7 +29,6 @@ import Link from 'next/link';
 import { useEffect, useMemo } from 'react';
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { InViewLoader } from '~/components/InView/InViewLoader';
@@ -38,10 +37,11 @@ import { NoContent } from '~/components/NoContent/NoContent';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { ImageMetaProps } from '~/server/schema/image.schema';
-import { ImageGetInfinite, ImageModerationReviewQueueImage } from '~/types/router';
+import { ImageModerationReviewQueueImage } from '~/types/router';
 import { trpc } from '~/utils/trpc';
 import { getImageEntityUrl } from '~/utils/moderators/moderator.util';
 import { createSelectStore } from '~/store/select.store';
+import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 
 const imageSelectStore = createSelectStore<number>();
 
@@ -270,79 +270,71 @@ function ImageGridItem({ data: image, width: itemWidth }: ImageGridItemProps) {
             zIndex: 9,
           }}
         />
-        <ImageGuard
-          images={[image]}
-          render={(image) => (
+        <ImageGuard2 image={image}>
+          {(safe) => (
             <Box sx={{ position: 'relative', height: '100%', overflow: 'hidden' }}>
-              <ImageGuard.ToggleImage
-                sx={(theme) => ({
-                  position: 'absolute',
-                  top: theme.spacing.xs,
-                  left: theme.spacing.xs,
-                  zIndex: 10,
-                })}
-                position="static"
-              />
-              <ImageGuard.Unsafe>
+              <ImageGuard2.BlurToggle className="absolute top-2 left-2 z-10" />
+              {!safe ? (
                 <AspectRatio ratio={(image.width ?? 1) / (image.height ?? 1)}>
                   <MediaHash {...image} />
                 </AspectRatio>
-              </ImageGuard.Unsafe>
-              <ImageGuard.Safe>
-                <EdgeMedia
-                  src={image.url}
-                  name={image.name ?? image.id.toString()}
-                  alt={image.name ?? undefined}
-                  type={image.type}
-                  width={450}
-                  placeholder="empty"
-                />
-                {entityUrl && (
-                  <Link href={entityUrl} passHref>
-                    <ActionIcon
-                      component="a"
-                      variant="transparent"
-                      style={{ position: 'absolute', bottom: '5px', left: '5px' }}
-                      size="lg"
-                      target="_blank"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                      }}
+              ) : (
+                <>
+                  <EdgeMedia
+                    src={image.url}
+                    name={image.name ?? image.id.toString()}
+                    alt={image.name ?? undefined}
+                    type={image.type}
+                    width={450}
+                    placeholder="empty"
+                  />
+                  {entityUrl && (
+                    <Link href={entityUrl} passHref>
+                      <ActionIcon
+                        component="a"
+                        variant="transparent"
+                        style={{ position: 'absolute', bottom: '5px', left: '5px' }}
+                        size="lg"
+                        target="_blank"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                        }}
+                      >
+                        <IconExternalLink
+                          color="white"
+                          filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                          opacity={0.8}
+                          strokeWidth={2.5}
+                          size={26}
+                        />
+                      </ActionIcon>
+                    </Link>
+                  )}
+                  {image.meta && (
+                    <ImageMetaPopover
+                      meta={image.meta as ImageMetaProps}
+                      generationProcess={image.generationProcess ?? 'txt2img'}
                     >
-                      <IconExternalLink
-                        color="white"
-                        filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                        opacity={0.8}
-                        strokeWidth={2.5}
-                        size={26}
-                      />
-                    </ActionIcon>
-                  </Link>
-                )}
-                {image.meta && (
-                  <ImageMetaPopover
-                    meta={image.meta as ImageMetaProps}
-                    generationProcess={image.generationProcess ?? 'txt2img'}
-                  >
-                    <ActionIcon
-                      variant="transparent"
-                      style={{ position: 'absolute', bottom: '5px', right: '5px' }}
-                      size="lg"
-                    >
-                      <IconInfoCircle
-                        color="white"
-                        filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                        opacity={0.8}
-                        strokeWidth={2.5}
-                        size={26}
-                      />
-                    </ActionIcon>
-                  </ImageMetaPopover>
-                )}
-              </ImageGuard.Safe>
+                      <ActionIcon
+                        variant="transparent"
+                        style={{ position: 'absolute', bottom: '5px', right: '5px' }}
+                        size="lg"
+                      >
+                        <IconInfoCircle
+                          color="white"
+                          filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                          opacity={0.8}
+                          strokeWidth={2.5}
+                          size={26}
+                        />
+                      </ActionIcon>
+                    </ImageMetaPopover>
+                  )}
+                </>
+              )}
             </Box>
           )}
-        />
+        </ImageGuard2>
       </Card.Section>
       {needsReview && (
         <VotableTags mt="xs" tags={tags.moderation} entityType="image" entityId={image.id} />

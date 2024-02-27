@@ -5,7 +5,6 @@ import { trpc } from '~/utils/trpc';
 import React, { useMemo } from 'react';
 
 import { constants } from '~/server/common/constants';
-import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { ProfileSidebar } from '~/components/Profile/ProfileSidebar';
@@ -17,6 +16,8 @@ import remarkGfm from 'remark-gfm';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
+import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
+import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 
 const useStyles = createStyles((theme) => ({
   message: {
@@ -113,7 +114,7 @@ export function ProfileHeader({ username }: { username: string }) {
     type: 'images',
     data: images,
   });
-  const coverImage = items[0];
+  const image = items[0];
 
   if (!user) {
     return null;
@@ -122,41 +123,33 @@ export function ProfileHeader({ username }: { username: string }) {
   const { profile, stats } = user;
 
   const renderCoverImage = () => {
-    if (!coverImage) {
+    if (!image) {
       return null;
     }
 
     return (
       <div className={classes.coverImageWrapper}>
         <div className={classes.coverImage}>
-          <ImageGuard
-            images={[coverImage]}
-            connect={{ entityId: coverImage.id, entityType: 'user' }}
-            render={(image) => {
-              return (
-                <ImageGuard.Content>
-                  {({ safe }) => (
-                    <>
-                      {!safe ? (
-                        <MediaHash {...image} style={{ width: '100%', height: '100%' }} />
-                      ) : (
-                        <ImagePreview
-                          image={image}
-                          edgeImageProps={{ width: 1920 }}
-                          radius="md"
-                          style={{ width: '100%' }}
-                        />
-                      )}
-                      <div className={classes.coverImageNSFWActions}>
-                        <ImageGuard.ToggleConnect position="top-left" />
-                        <ImageGuard.Report />
-                      </div>
-                    </>
-                  )}
-                </ImageGuard.Content>
-              );
-            }}
-          />
+          <ImageGuard2 image={image}>
+            {(safe) => (
+              <>
+                {!safe ? (
+                  <MediaHash {...image} style={{ width: '100%', height: '100%' }} />
+                ) : (
+                  <ImagePreview
+                    image={image}
+                    edgeImageProps={{ width: 1920 }}
+                    radius="md"
+                    style={{ width: '100%' }}
+                  />
+                )}
+                <div className={classes.coverImageNSFWActions}>
+                  <ImageGuard2.BlurToggle className="absolute top-2 left-2 z-10" />
+                  <ImageContextMenu {...image} className="absolute top-2 right-2 z-10" />
+                </div>
+              </>
+            )}
+          </ImageGuard2>
         </div>
       </div>
     );
@@ -208,7 +201,7 @@ export function ProfileHeader({ username }: { username: string }) {
         {renderCoverImage()}
         <div
           className={cx(classes.profileSection, {
-            [classes.profileSectionWithCoverImage]: !!coverImage,
+            [classes.profileSectionWithCoverImage]: !!image,
           })}
         >
           <ProfileSidebar username={username} />

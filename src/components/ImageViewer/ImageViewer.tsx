@@ -13,10 +13,25 @@ import { useHotkeys } from '@mantine/hooks';
 import { ImageDetailByProps } from '~/components/Image/Detail/ImageDetailByProps';
 import { ImageGenerationProcess, MediaType, NsfwLevel as NsfwLevelOld } from '@prisma/client';
 import { SimpleUser } from '~/server/selectors/user.selector';
-import { ImageGuardConnect } from '~/components/ImageGuard/ImageGuard';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { Modal } from '@mantine/core';
 import { NsfwLevel } from '~/server/common/enums';
+
+type ImageGuardConnect = {
+  entityType:
+    | 'model'
+    | 'modelVersion'
+    | 'review'
+    | 'user'
+    | 'post'
+    | 'collectionItem'
+    | 'collection'
+    | 'bounty'
+    | 'bountyEntry'
+    | 'club'
+    | 'article';
+  entityId: string | number;
+};
 
 export interface ImageProps {
   id: number;
@@ -183,8 +198,8 @@ export const ImageViewer = ({ children }: { children: React.ReactNode }) => {
             onSetImage={onSetImage}
             image={activeImageRecord}
             // Attempts to have a few fallbacks to go to. Nothing major.
-            entityId={entityId || activeImageRecord?.postId || activeImageId}
-            entityType={entityType || 'post'}
+            connectId={entityId || activeImageRecord?.postId || activeImageId}
+            connectType={entityType || 'post'}
             onDeleteImage={onDeleteImage}
           />
         </Modal>

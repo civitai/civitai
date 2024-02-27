@@ -34,7 +34,6 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
-import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
@@ -56,6 +55,7 @@ import { truncate } from 'lodash-es';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { ToggleSearchableMenuItem } from '../../MenuItems/ToggleSearchableMenuItem';
 import type { AssociatedResourceModelCardData } from '~/server/controllers/model.controller';
+import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 
 const aDayAgo = dayjs().subtract(1, 'day').toDate();
 
@@ -266,76 +266,73 @@ export function ModelCategoryCard({
           // style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
         >
           <LoadingOverlay visible={loading} zIndex={9} loaderProps={{ variant: 'dots' }} />
-          <ImageGuard
-            images={image ? [image] : []}
-            connect={{ entityId: id, entityType: 'model' }}
-            render={(image) => (
-              <ImageGuard.Content>
-                {({ safe }) => (
-                  <>
-                    {contextMenuItems.length > 0 && (
-                      <Menu position="left-start" withArrow offset={-5}>
-                        <Menu.Target>
-                          <ActionIcon
-                            variant="transparent"
-                            p={0}
-                            onClick={(e: React.MouseEvent) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                            }}
-                            sx={{
-                              width: 30,
-                              position: 'absolute',
-                              top: 10,
-                              right: 4,
-                              zIndex: 8,
-                            }}
-                          >
-                            <IconDotsVertical
-                              size={24}
-                              color="#fff"
-                              style={{ filter: `drop-shadow(0 0 2px #000)` }}
-                            />
-                          </ActionIcon>
-                        </Menu.Target>
-                        <Menu.Dropdown>
-                          {contextMenuItems.map((el, index) => (
-                            <React.Fragment key={index}>{el}</React.Fragment>
-                          ))}
-                        </Menu.Dropdown>
-                      </Menu>
+          {image && (
+            <ImageGuard2 image={image} connectType="model" connectId={id}>
+              {(safe) => (
+                <>
+                  {contextMenuItems.length > 0 && (
+                    <Menu position="left-start" withArrow offset={-5}>
+                      <Menu.Target>
+                        <ActionIcon
+                          variant="transparent"
+                          p={0}
+                          onClick={(e: React.MouseEvent) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                          }}
+                          sx={{
+                            width: 30,
+                            position: 'absolute',
+                            top: 10,
+                            right: 4,
+                            zIndex: 8,
+                          }}
+                        >
+                          <IconDotsVertical
+                            size={24}
+                            color="#fff"
+                            style={{ filter: `drop-shadow(0 0 2px #000)` }}
+                          />
+                        </ActionIcon>
+                      </Menu.Target>
+                      <Menu.Dropdown>
+                        {contextMenuItems.map((el, index) => (
+                          <React.Fragment key={index}>{el}</React.Fragment>
+                        ))}
+                      </Menu.Dropdown>
+                    </Menu>
+                  )}
+                  <Group spacing={4} className={classes.cardBadges}>
+                    <ImageGuard2.BlurToggle />
+                    {modelBadges}
+                  </Group>
+                  <AspectRatio ratio={1} sx={{ width: '100%', overflow: 'hidden' }}>
+                    <div className={classes.blur}>
+                      <MediaHash {...image} />
+                    </div>
+                    {safe && (
+                      <EdgeMedia
+                        className={classes.image}
+                        src={image.url}
+                        name={image.name ?? image.id.toString()}
+                        alt={
+                          image.meta
+                            ? truncate((image.meta as ImageMetaProps).prompt, {
+                                length: constants.altTruncateLength,
+                              })
+                            : image.name ?? undefined
+                        }
+                        type={image.type}
+                        width={450}
+                        placeholder="empty"
+                      />
                     )}
-                    <Group spacing={4} className={classes.cardBadges}>
-                      <ImageGuard.ToggleConnect position="static" />
-                      {modelBadges}
-                    </Group>
-                    <AspectRatio ratio={1} sx={{ width: '100%', overflow: 'hidden' }}>
-                      <div className={classes.blur}>
-                        <MediaHash {...image} />
-                      </div>
-                      {safe && (
-                        <EdgeMedia
-                          className={classes.image}
-                          src={image.url}
-                          name={image.name ?? image.id.toString()}
-                          alt={
-                            image.meta
-                              ? truncate((image.meta as ImageMetaProps).prompt, {
-                                  length: constants.altTruncateLength,
-                                })
-                              : image.name ?? undefined
-                          }
-                          type={image.type}
-                          width={450}
-                          placeholder="empty"
-                        />
-                      )}
-                    </AspectRatio>
-                  </>
-                )}
-              </ImageGuard.Content>
-            )}
-          />
+                  </AspectRatio>
+                </>
+              )}
+            </ImageGuard2>
+          )}
+
           <Stack className={classes.info} spacing={8}>
             <Group
               mx="xs"

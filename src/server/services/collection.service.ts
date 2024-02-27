@@ -25,7 +25,7 @@ import {
   ImageIngestionStatus,
   MediaType,
   MetricTimeframe,
-  NsfwLevel,
+  NsfwLevel as NsfwLevelOld,
   Prisma,
   SearchIndexUpdateQueueAction,
 } from '@prisma/client';
@@ -48,6 +48,7 @@ import {
   CollectionSort,
   ImageSort,
   ModelSort,
+  NsfwLevel,
   PostSort,
 } from '~/server/common/enums';
 import {
@@ -319,6 +320,7 @@ export const getCollectionById = async ({ input }: { input: GetByIdInput }) => {
       type: true,
       user: { select: userWithCosmeticsSelect },
       nsfw: true,
+      nsfwLevel: true,
       image: { select: imageSelect },
       mode: true,
       metadata: true,
@@ -330,8 +332,13 @@ export const getCollectionById = async ({ input }: { input: GetByIdInput }) => {
   return {
     ...collection,
     nsfw: collection.nsfw ?? false,
+    nsfwLevel: collection.nsfwLevel as NsfwLevel,
     image: collection.image
-      ? { ...collection.image, meta: collection.image.meta as ImageMetaProps | null }
+      ? {
+          ...collection.image,
+          nsfwLevel: collection.image.nsfwLevel as NsfwLevel,
+          meta: collection.image.meta as ImageMetaProps | null,
+        }
       : null,
     metadata: (collection.metadata ?? {}) as CollectionMetadataSchema,
   };
@@ -1414,7 +1421,8 @@ type ImageProps = {
   hash: string | null;
   height: number | null;
   width: number | null;
-  nsfw: NsfwLevel;
+  nsfw: NsfwLevelOld;
+  nsfwLevel: NsfwLevel;
   postId: number | null;
   index: number | null;
   scannedAt: Date | null;
@@ -1443,6 +1451,7 @@ export const getCollectionCoverImages = async ({
         'name', i."name",
         'url', i."url",
         'nsfw', i."nsfw",
+        'nsfwLevel', i."nsfwLevel",
         'width', i."width",
         'height', i."height",
         'hash', i."hash",

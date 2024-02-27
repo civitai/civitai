@@ -37,7 +37,6 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
-import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
@@ -66,6 +65,7 @@ import { HolidayFrame } from '~/components/Decorations/HolidayFrame';
 import { truncate } from 'lodash-es';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { ToggleSearchableMenuItem } from '../../MenuItems/ToggleSearchableMenuItem';
+import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 
 const mantineColors: DefaultMantineColor[] = [
   'blue',
@@ -432,72 +432,71 @@ export function AmbientModelCard({ data, height }: Props) {
               {inView && (
                 <>
                   <LoadingOverlay visible={loading} zIndex={9} loaderProps={{ variant: 'dots' }} />
-                  <ImageGuard
-                    images={image ? [image] : []}
-                    connect={{ entityId: id, entityType: 'model' }}
-                    render={(image) => (
-                      <Box sx={{ position: 'relative' }}>
-                        {contextMenuItems.length > 0 && (
-                          <Menu position="left-start" withArrow offset={-5}>
-                            <Menu.Target>
-                              <ActionIcon
-                                variant="transparent"
-                                p={0}
-                                onClick={(e: React.MouseEvent) => {
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                }}
-                                sx={{
-                                  width: 30,
-                                  position: 'absolute',
-                                  top: 10,
-                                  right: 4,
-                                  zIndex: 8,
-                                }}
-                              >
-                                <IconDotsVertical
-                                  size={24}
-                                  color="#fff"
-                                  style={{ filter: `drop-shadow(0 0 2px #000)` }}
-                                />
-                              </ActionIcon>
-                            </Menu.Target>
-                            <Menu.Dropdown>
-                              {contextMenuItems.map((el, index) => (
-                                <React.Fragment key={index}>{el}</React.Fragment>
-                              ))}
-                            </Menu.Dropdown>
-                          </Menu>
-                        )}
-                        <Group spacing={4} className={classes.cardBadges}>
-                          <ImageGuard.ToggleConnect position="static" />
-                          {modelBadges}
-                        </Group>
-                        <ImageGuard.Unsafe>
-                          <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>
-                            <MediaHash {...image} />
-                          </AspectRatio>
-                        </ImageGuard.Unsafe>
-                        <ImageGuard.Safe>
-                          <EdgeMedia
-                            src={image.url}
-                            name={image.name ?? image.id.toString()}
-                            alt={
-                              image.meta
-                                ? truncate((image.meta as ImageMetaProps).prompt, {
-                                    length: constants.altTruncateLength,
-                                  })
-                                : image.name ?? undefined
-                            }
-                            type={image.type}
-                            width={450}
-                            placeholder="empty"
-                            style={{ width: '100%', zIndex: 2, position: 'relative' }}
-                          />
-                        </ImageGuard.Safe>
-                      </Box>
-                    )}
-                  />
+                  {image && (
+                    <ImageGuard2 image={image} connectType="model" connectId={id}>
+                      {(safe) => (
+                        <Box sx={{ position: 'relative' }}>
+                          {contextMenuItems.length > 0 && (
+                            <Menu position="left-start" withArrow offset={-5}>
+                              <Menu.Target>
+                                <ActionIcon
+                                  variant="transparent"
+                                  p={0}
+                                  onClick={(e: React.MouseEvent) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                  }}
+                                  sx={{
+                                    width: 30,
+                                    position: 'absolute',
+                                    top: 10,
+                                    right: 4,
+                                    zIndex: 8,
+                                  }}
+                                >
+                                  <IconDotsVertical
+                                    size={24}
+                                    color="#fff"
+                                    style={{ filter: `drop-shadow(0 0 2px #000)` }}
+                                  />
+                                </ActionIcon>
+                              </Menu.Target>
+                              <Menu.Dropdown>
+                                {contextMenuItems.map((el, index) => (
+                                  <React.Fragment key={index}>{el}</React.Fragment>
+                                ))}
+                              </Menu.Dropdown>
+                            </Menu>
+                          )}
+                          <Group spacing={4} className={classes.cardBadges}>
+                            <ImageGuard2.BlurToggle />
+                            {modelBadges}
+                          </Group>
+                          {!safe ? (
+                            <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>
+                              <MediaHash {...image} />
+                            </AspectRatio>
+                          ) : (
+                            <EdgeMedia
+                              src={image.url}
+                              name={image.name ?? image.id.toString()}
+                              alt={
+                                image.meta
+                                  ? truncate((image.meta as ImageMetaProps).prompt, {
+                                      length: constants.altTruncateLength,
+                                    })
+                                  : image.name ?? undefined
+                              }
+                              type={image.type}
+                              width={450}
+                              placeholder="empty"
+                              style={{ width: '100%', zIndex: 2, position: 'relative' }}
+                            />
+                          )}
+                        </Box>
+                      )}
+                    </ImageGuard2>
+                  )}
                   <Stack className={classes.info} spacing={8}>
                     <Group
                       mx="xs"

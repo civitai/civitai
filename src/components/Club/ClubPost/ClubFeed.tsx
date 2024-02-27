@@ -18,7 +18,6 @@ import React, { useMemo } from 'react';
 import { ClubPostGetAll, ClubPostResource } from '~/types/router';
 import { ImageCSSAspectRatioWrap } from '~/components/Profile/ImageCSSAspectRatioWrap';
 import { constants } from '~/server/common/constants';
-import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { formatDate } from '~/utils/date-helpers';
@@ -223,7 +222,7 @@ export const ClubPostItem = ({ clubPost }: { clubPost: ClubPostGetAll[number] })
         [classes.feedContainerWithCover]: !!clubPost.coverImage,
       })}
     >
-      {clubPost.coverImage && (
+      {/* {clubPost.coverImage && (
         <ImageGuard
           images={[clubPost.coverImage]}
           connect={{ entityId: clubPost.coverImage.id, entityType: 'club' }}
@@ -251,7 +250,7 @@ export const ClubPostItem = ({ clubPost }: { clubPost: ClubPostGetAll[number] })
             );
           }}
         />
-      )}
+      )} */}
       <Stack p="md">
         <Title order={3} className={classes.title} ref={ref}>
           {title}

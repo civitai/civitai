@@ -10,7 +10,6 @@ import { useClubFeedStyles } from '~/components/Club/ClubPost/ClubFeed';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
@@ -124,7 +123,7 @@ export const TierCoverImage = ({
 }) =>
   clubTier.coverImage ? (
     <Center>
-      <ImageCSSAspectRatioWrap
+      {/* <ImageCSSAspectRatioWrap
         aspectRatio={1}
         style={{ width: constants.clubs.tierImageSidebarDisplayWidth }}
       >
@@ -156,7 +155,7 @@ export const TierCoverImage = ({
             );
           }}
         />
-      </ImageCSSAspectRatioWrap>
+      </ImageCSSAspectRatioWrap> */}
     </Center>
   ) : null;
 

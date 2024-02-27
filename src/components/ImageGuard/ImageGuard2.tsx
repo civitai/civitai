@@ -73,13 +73,13 @@ function useImageGuardContext() {
   return context;
 }
 
-export function ImageGuard2<T extends ImageProps>({
+export function ImageGuard2({
   image,
   children,
   connectId,
   connectType,
 }: {
-  image: T;
+  image: ImageProps;
   children: (show: boolean) => React.ReactNode;
 } & ConnectProps) {
   const currentUser = useCurrentUser();
@@ -112,19 +112,32 @@ export function ImageGuard2<T extends ImageProps>({
   );
 }
 
-function BlurToggle({ className, ...badgeProps }: BadgeProps) {
+function BlurToggle({
+  className,
+  children,
+  ...badgeProps
+}: Omit<BadgeProps, 'children'> & {
+  children?: (toggle: (e: React.MouseEvent<HTMLElement, MouseEvent>) => void) => React.ReactElement;
+}) {
   const currentUser = useCurrentUser();
   const { safe, show, browsingLevel, imageId, key } = useImageGuardContext();
   const { classes, cx } = useStyles();
 
   if (safe) return null;
 
+  const toggle = (event: React.MouseEvent<HTMLElement, MouseEvent>) =>
+    toggleShow({ event, isAuthed: !!currentUser, key, imageId });
+
+  if (children) {
+    return children(toggle);
+  }
+
   return (
     <Badge
       component="button"
       className={cx(classes.badge, className)}
       {...badgeProps}
-      onClick={(event) => toggleShow({ event, isAuthed: !!currentUser, key, imageId })}
+      onClick={toggle}
     >
       <Group spacing={5} noWrap>
         <Text className={classes.text} component="span" weight="bold">
@@ -146,7 +159,7 @@ function toggleShow({
   key,
   imageId,
 }: {
-  event: React.MouseEvent<HTMLButtonElement, MouseEvent>;
+  event: React.MouseEvent<HTMLElement, MouseEvent>;
   isAuthed: boolean;
   key: string | null;
   imageId: number;

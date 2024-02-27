@@ -13,7 +13,7 @@ import { ManipulateType } from 'dayjs';
 import { truncate } from 'lodash-es';
 import { SessionUser } from 'next-auth';
 
-import { ArticleSort, BrowsingMode } from '~/server/common/enums';
+import { ArticleSort, BrowsingMode, NsfwLevel } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
 import {
@@ -563,6 +563,7 @@ export const getArticleById = async ({ id, user }: GetByIdInput & { user?: Sessi
 
     return {
       ...article,
+      nsfwLevel: article.nsfwLevel as NsfwLevel,
       attachments,
       tags: article.tags.map(({ tag }) => ({
         ...tag,
@@ -571,6 +572,7 @@ export const getArticleById = async ({ id, user }: GetByIdInput & { user?: Sessi
       coverImage: article.coverImage
         ? {
             ...article.coverImage,
+            nsfwLevel: article.coverImage.nsfwLevel as NsfwLevel,
             meta: article.coverImage.meta as ImageMetaProps,
             metadata: article.coverImage.metadata as any,
             tags: article.coverImage?.tags.flatMap((x) => x.tag.id),

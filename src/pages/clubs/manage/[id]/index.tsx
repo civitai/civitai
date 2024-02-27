@@ -33,7 +33,6 @@ import {
   useQueryClub,
 } from '~/components/Club/club.utils';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
-import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import React from 'react';
@@ -225,7 +224,7 @@ export const ClubManagementLayout = ({ children }: { children: React.ReactNode }
                 </Group>
               </Anchor>
             </Link>
-            {club.avatar && (
+            {/* {club.avatar && (
               <ImageCSSAspectRatioWrap
                 aspectRatio={1}
                 style={{ width: constants.clubs.avatarDisplayWidth }}
@@ -260,7 +259,7 @@ export const ClubManagementLayout = ({ children }: { children: React.ReactNode }
                   }}
                 />
               </ImageCSSAspectRatioWrap>
-            )}
+            )} */}
             <Title order={1}>{club.name}</Title>
             {setupIncomplete && (
               <AlertWithIcon color="yellow" iconColor="yellow" icon={<IconAlertCircle />}>

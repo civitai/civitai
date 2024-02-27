@@ -24,7 +24,6 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
-import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
@@ -43,6 +42,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
 import { truncate } from 'lodash-es';
+import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 
 export function AddUserContentModal({ collectionId, opened, onClose, ...props }: Props) {
   const currentUser = useCurrentUser();
@@ -282,50 +282,46 @@ export function AddUserContentModal({ collectionId, opened, onClose, ...props }:
 
 type Props = ModalProps & { collectionId: number };
 
-function SelectableImageCard({ data }: { data: ImageGetInfinite[number] }) {
+function SelectableImageCard({ data: image }: { data: ImageGetInfinite[number] }) {
   const toggleSelected = useStore((state) => state.toggleSelected);
-  const selected = useStore(useCallback((state) => !!state.selected[data.id], [data.id]));
+  const selected = useStore(useCallback((state) => !!state.selected[image.id], [image.id]));
 
   return (
     <MasonryCard
       shadow="sm"
       p={0}
-      onClick={() => toggleSelected(data.id)}
+      onClick={() => toggleSelected(image.id)}
       sx={{ opacity: selected ? 0.6 : 1, cursor: 'pointer' }}
       withBorder
     >
       <div style={{ position: 'relative' }}>
-        <ImageGuard
-          images={[data]}
-          render={(image) => (
-            <ImageGuard.Content>
-              {({ safe }) => (
-                <>
-                  <ImageGuard.ToggleImage position="top-left" />
-                  {!safe ? (
-                    <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>
-                      <MediaHash {...image} />
-                    </AspectRatio>
-                  ) : (
-                    <EdgeMedia
-                      src={image.url}
-                      name={image.name ?? image.id.toString()}
-                      alt={
-                        image.meta
-                          ? truncate(image.meta.prompt, { length: constants.altTruncateLength })
-                          : image.name ?? undefined
-                      }
-                      type={image.type}
-                      width={450}
-                      placeholder="empty"
-                      style={{ width: '100%' }}
-                    />
-                  )}
-                </>
+        <ImageGuard2 image={image}>
+          {(safe) => (
+            <>
+              <ImageGuard2.BlurToggle className="absolute top-2 left-2 z-10" />
+              {!safe ? (
+                <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>
+                  <MediaHash {...image} />
+                </AspectRatio>
+              ) : (
+                <EdgeMedia
+                  src={image.url}
+                  name={image.name ?? image.id.toString()}
+                  alt={
+                    image.meta
+                      ? truncate(image.meta.prompt, { length: constants.altTruncateLength })
+                      : image.name ?? undefined
+                  }
+                  type={image.type}
+                  width={450}
+                  placeholder="empty"
+                  style={{ width: '100%' }}
+                />
               )}
-            </ImageGuard.Content>
+            </>
           )}
-        />
+        </ImageGuard2>
+
         <Checkbox
           size="lg"
           checked={selected}

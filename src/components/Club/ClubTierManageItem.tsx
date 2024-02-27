@@ -5,7 +5,6 @@ import { ClubTier } from '~/types/router';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { constants } from '~/server/common/constants';
-import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { ImageCSSAspectRatioWrap } from '~/components/Profile/ImageCSSAspectRatioWrap';
@@ -64,7 +63,7 @@ export const ClubTierManageItem = ({ clubTier }: { clubTier: ClubTier }) => {
   return (
     <Paper className={classes.feedContainer}>
       <Group align="flex-start">
-        {clubTier.coverImage && (
+        {/* {clubTier.coverImage && (
           <ImageCSSAspectRatioWrap
             aspectRatio={1}
             style={{ width: constants.clubs.tierImageDisplayWidth }}
@@ -99,7 +98,7 @@ export const ClubTierManageItem = ({ clubTier }: { clubTier: ClubTier }) => {
               }}
             />
           </ImageCSSAspectRatioWrap>
-        )}
+        )} */}
         <Stack style={{ flex: 1 }}>
           <Group position="apart">
             <Stack>

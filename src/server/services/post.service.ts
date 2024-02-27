@@ -152,9 +152,9 @@ export const getPostsInfinite = async ({
     AND.push(Prisma.sql`p."publishedAt" < now()`);
 
     // We could techically do this on the FE.
-    if (browsingMode === BrowsingMode.SFW) {
-      AND.push(Prisma.sql`p."nsfw" = false`);
-    }
+    // if (browsingMode === BrowsingMode.SFW) {
+    //   AND.push(Prisma.sql`p."nsfw" = false`);
+    // }
 
     if (period !== 'AllTime' && periodMode !== 'stats') {
       AND.push(Prisma.raw(`p."publishedAt" > now() - INTERVAL '1 ${period.toLowerCase()}'`));

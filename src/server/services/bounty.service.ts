@@ -579,6 +579,7 @@ export const getImagesForBounties = async ({
   const groupedImages = groupBy(
     connections.map(({ entityId, image }) => ({
       ...image,
+      nsfwLefel: image.nsfwLevel as NsfwLevel,
       tags: image.tags.map((t) => ({ id: t.tag.id, name: t.tag.name })),
       entityId,
     })),

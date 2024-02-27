@@ -6,7 +6,6 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useRouter } from 'next/router';
 import { ClubGetAll } from '~/types/router';
-import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { IconAlertCircle, IconArticle, IconFiles, IconUsers } from '@tabler/icons-react';
 import { abbreviateNumber } from '../../utils/number-helpers';
@@ -24,7 +23,7 @@ export function ClubCard({ data }: Props) {
   return (
     <FeedCard href={`/clubs/${id}`} aspectRatio="square">
       <div className={classes.root}>
-        <ImageGuard
+        {/* <ImageGuard
           images={coverImage ? [coverImage] : []}
           connect={{ entityId: id, entityType: 'club' }}
           render={(image) => (
@@ -70,7 +69,7 @@ export function ClubCard({ data }: Props) {
               )}
             </ImageGuard.Content>
           )}
-        />
+        /> */}
         <Stack
           className={cx(classes.contentOverlay, classes.bottom, classes.fullOverlay)}
           spacing="sm"
