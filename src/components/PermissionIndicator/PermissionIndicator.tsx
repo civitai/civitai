@@ -1,4 +1,4 @@
-import { Box, Group, GroupProps, List, Popover, Text, Tooltip, TooltipProps } from '@mantine/core';
+import { Box, Group, GroupProps, List, Popover, Text, Tooltip } from '@mantine/core';
 import { CommercialUse } from '@prisma/client';
 import {
   IconBrushOff,
@@ -13,20 +13,22 @@ import {
 } from '@tabler/icons-react';
 import React from 'react';
 
+const canSellImagesPermissions = ['Image', 'Rent', 'RentCivit', 'Sell'] as const;
+const canRentCivitPermissions = ['RentCivit', 'Rent', 'Sell'] as const;
+const canRentPermissions = ['Rent', 'Sell'] as const;
+const canSellPermissions = ['Sell'] as const;
+
 export const PermissionIndicator = ({ permissions, size = 20, spacing = 2, ...props }: Props) => {
   const { allowNoCredit, allowCommercialUse, allowDerivatives, allowDifferentLicense } =
     permissions;
-  const canSellImages =
-    allowCommercialUse === 'Image' ||
-    allowCommercialUse === 'Rent' ||
-    allowCommercialUse === 'RentCivit' ||
-    allowCommercialUse === 'Sell';
-  const canRentCivit =
-    allowCommercialUse === 'RentCivit' ||
-    allowCommercialUse === 'Rent' ||
-    allowCommercialUse === 'Sell';
-  const canRent = allowCommercialUse === 'Rent' || allowCommercialUse === 'Sell';
-  const canSell = allowCommercialUse === 'Sell';
+  const canSellImages = canSellImagesPermissions.some((permission) =>
+    allowCommercialUse.includes(permission)
+  );
+  const canRentCivit = canRentCivitPermissions.some((permission) =>
+    allowCommercialUse.includes(permission)
+  );
+  const canRent = canRentPermissions.some((permission) => allowCommercialUse.includes(permission));
+  const canSell = canSellPermissions.some((permission) => allowCommercialUse.includes(permission));
 
   const explanation = {
     'Use the model without crediting the creator': allowNoCredit,
@@ -99,7 +101,7 @@ type Props = {
 
 type Permissions = {
   allowNoCredit: boolean;
-  allowCommercialUse: CommercialUse;
+  allowCommercialUse: CommercialUse[];
   allowDerivatives: boolean;
   allowDifferentLicense: boolean;
 };

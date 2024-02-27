@@ -32,7 +32,7 @@ export const bountyNotifications = createNotificationProcessor({
       )
       INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
-        CONCAT("userId",':','benefactor-joined',':',"bountyId",':',"benefactorUserId"),
+        CONCAT('benefactor-joined:',"ownerId",':',"bountyId",':',"benefactorUserId"),
         "ownerId" "userId",
         'benefactor-joined' "type",
         details,
@@ -92,7 +92,7 @@ export const bountyNotifications = createNotificationProcessor({
       )
       INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
-        CONCAT("userId",':','bounty-ending',':',"bountyId"),
+        CONCAT('bounty-ending:',"ownerId",':',"bountyId"),
         "ownerId" "userId",
         'bounty-ending' "type",
         details,
@@ -131,7 +131,7 @@ export const bountyNotifications = createNotificationProcessor({
       )
       INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
-        CONCAT("userId",':','bounty-awarded',':',"bountyId",':',"benefactorUserId"),
+        CONCAT('bounty-awarded:', "ownerId",':',"bountyId",':',"benefactorUserId"),
         "ownerId" "userId",
         'bounty-awarded' "type",
         details,
@@ -183,11 +183,11 @@ export const bountyNotifications = createNotificationProcessor({
       )
       INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
-        CONCAT("userId",':','bounty-reaction-milestone',':',"bountyEntryId",':',milestone),
+        CONCAT('bounty-reaction-milestone:',"ownerId",':',"bountyEntryId",':',milestone),
         "ownerId" "userId",
         'bounty-reaction-milestone' "type",
         details,
-        '${category}'::NotificationCategory "category"
+        '${category}'::"NotificationCategory" "category"
       FROM data
       WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'bounty-reaction-milestone')
       ON CONFLICT("id") DO NOTHING;
@@ -241,7 +241,7 @@ export const bountyNotifications = createNotificationProcessor({
       )
       INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
-        CONCAT("userId",':','bounty-entry',':',"bountyEntryId"),
+        CONCAT('bounty-entry:',"ownerId",':',"bountyEntryId"),
         "ownerId" "userId",
         'bounty-entry' "type",
         details,

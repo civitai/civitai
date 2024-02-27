@@ -481,7 +481,7 @@ export const getModelsWithVersionsHandler = async ({
     const images = await getImagesForModelVersion({
       modelVersionIds,
       imagesPerVersion: 10,
-      include: ['meta'],
+      include: [],
       excludedTagIds: input.excludedImageTagIds,
       excludedIds: await getHiddenImagesForUser({ userId: ctx.user?.id }),
       excludedUserIds: input.excludedUserIds,

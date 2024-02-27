@@ -494,10 +494,10 @@ model Model {
   availability        Availability    @default(Public)
 
   // Licensing
-  allowNoCredit         Boolean       @default(true)
-  allowCommercialUse    CommercialUse @default(Sell)
-  allowDerivatives      Boolean       @default(true)
-  allowDifferentLicense Boolean       @default(true)
+  allowNoCredit         Boolean         @default(true)
+  allowCommercialUse    CommercialUse[] @default([Sell])
+  allowDerivatives      Boolean         @default(true)
+  allowDifferentLicense Boolean         @default(true)
 
   modelVersions      ModelVersion[]
   tagsOnModels       TagsOnModels[]

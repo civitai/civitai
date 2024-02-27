@@ -280,6 +280,7 @@ export const constants = {
     coverImageAspectRatio: 1 / 2,
     coverImageWidth: 180,
   },
+  supportedBaseModelAddendums: ['SD 1.5', 'SDXL 1.0'],
 } as const;
 
 export const zipModelFileTypes: ModelFileFormat[] = ['Core ML', 'Diffusers', 'ONNX'];

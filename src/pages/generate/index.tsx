@@ -44,7 +44,10 @@ export default function GeneratePage() {
           <ThemeIcon size="xl" radius="xl" color="yellow">
             <IconLock />
           </ThemeIcon>
-          <Text align="center">You cannot create new generations because you have been muted</Text>
+          <Text align="center">
+            You have been muted, your account will be reviewed by a Community Manager within 48
+            hours. You will be notified if your account is unmuted. You do not need to contact us.
+          </Text>
         </Stack>
       </Center>
     );

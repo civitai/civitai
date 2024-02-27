@@ -5,41 +5,37 @@ import { collectionsSearchIndex } from '~/server/search-index';
 
 export const collectionMetrics = createMetricProcessor({
   name: 'Collection',
-  async update({ db, lastUpdate }) {
-    const recentEngagementSubquery = Prisma.sql`
-    -- Get all engagements that have happened since then that affect metrics
-    WITH recent_engagements AS
-    (
-      SELECT
-        "collectionId" AS id
-      FROM "CollectionItem"
-      WHERE ("createdAt" > ${lastUpdate})
+  async update({ pg, lastUpdate, jobContext }) {
+    const query = await pg.cancellableQuery<{ id: number }>(Prisma.sql`
+      -- Get all engagements that have happened since then that affect metrics
+      WITH recent_engagements AS
+      (
+        SELECT
+          "collectionId" AS id
+        FROM "CollectionItem"
+        WHERE ("createdAt" > ${lastUpdate})
 
-      UNION
+        UNION
 
-      SELECT
-        "collectionId" AS id
-      FROM "CollectionContributor"
-      WHERE ("createdAt" > ${lastUpdate})
+        SELECT
+          "collectionId" AS id
+        FROM "CollectionContributor"
+        WHERE ("createdAt" > ${lastUpdate})
 
-      UNION
+        UNION
 
-      SELECT
-        "id"
-      FROM "Collection"
-      WHERE ("createdAt" > ${lastUpdate})
+        SELECT
+          "id"
+        FROM "Collection"
+        WHERE ("createdAt" > ${lastUpdate})
 
-      UNION
+        UNION
 
-      SELECT
-        "id"
-      FROM "MetricUpdateQueue"
-      WHERE type = 'Collection'
-    )
-    `;
-
-    await db.$executeRaw`
-      ${recentEngagementSubquery},
+        SELECT
+          "id"
+        FROM "MetricUpdateQueue"
+        WHERE type = 'Collection'
+      ),
       -- Get all affected
       affected AS
       (
@@ -129,26 +125,22 @@ export const collectionMetrics = createMetricProcessor({
         SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
       ) tf
       ON CONFLICT ("collectionId", timeframe) DO UPDATE
-        SET "followerCount" = EXCLUDED."followerCount", "itemCount" = EXCLUDED."itemCount", "contributorCount" = EXCLUDED."contributorCount";
-    `;
-
-    const affected = await db.$queryRaw<{ id: number }[]>`
-      ${recentEngagementSubquery}
-      SELECT DISTINCT
-          r.id
-      FROM recent_engagements r
-      JOIN "Collection" c ON c.id = r.id
-      WHERE r.id IS NOT NULL
-    `;
+        SET "followerCount" = EXCLUDED."followerCount", "itemCount" = EXCLUDED."itemCount", "contributorCount" = EXCLUDED."contributorCount", "createdAt" = now()
+      RETURNING "collectionId" as id;
+    `);
+    jobContext.on('cancel', query.cancel);
+    const affected = await query.result();
 
     await collectionsSearchIndex.queueUpdate(
       affected.map(({ id }) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
     );
   },
-  async clearDay({ db }) {
-    await db.$executeRaw`
-      UPDATE "CollectionMetric" SET "followerCount" = 0, "itemCount" = 0, "contributorCount" = 0 WHERE timeframe = 'Day';
-    `;
+  async clearDay({ pg, jobContext }) {
+    const query = await pg.cancellableQuery(Prisma.sql`
+      UPDATE "CollectionMetric" SET "followerCount" = 0, "itemCount" = 0, "contributorCount" = 0 WHERE timeframe = 'Day' AND "createdAt" > date_trunc('day', now() - interval '1 day');
+    `);
+    jobContext.on('cancel', query.cancel);
+    await query.result();
   },
   rank: {
     table: 'CollectionRank',
