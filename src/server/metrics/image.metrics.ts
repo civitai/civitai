@@ -149,6 +149,7 @@ async function getReactionTasks({ pg, lastUpdate, jobContext, ...ctx }: ImageMet
           ELSE 0
         END) "cryCount"
       FROM "ImageReaction" ir
+      JOIN "Image" i ON i.id = ir."imageId" -- ensure the image exists
       CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
       WHERE ir."imageId" IN (${Prisma.join(ids)})
       GROUP BY ir."imageId", tf.timeframe
@@ -201,6 +202,7 @@ async function getCommentTasks({ pg, lastUpdate, jobContext, ...ctx }: ImageMetr
           ELSE 0
         END)
       FROM "Thread" t
+      JOIN "Image" i ON i.id = t."imageId" -- ensure the image exists
       JOIN "CommentV2" c ON c."threadId" = t.id
       CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
       WHERE t."imageId" IN (${Prisma.join(ids)})
@@ -246,16 +248,17 @@ async function getCollectionTasks({ pg, lastUpdate, jobContext, ...ctx }: ImageM
         tf.timeframe,
         SUM(CASE
           WHEN tf.timeframe = 'AllTime' THEN 1
-          WHEN tf.timeframe = 'Year' AND "createdAt" > (NOW() - interval '365 days') THEN 1
-          WHEN tf.timeframe = 'Month' AND "createdAt" > (NOW() - interval '30 days') THEN 1
-          WHEN tf.timeframe = 'Week' AND "createdAt" > (NOW() - interval '7 days') THEN 1
-          WHEN tf.timeframe = 'Day' AND "createdAt" > (NOW() - interval '1 days') THEN 1
+          WHEN tf.timeframe = 'Year' AND ci."createdAt" > (NOW() - interval '365 days') THEN 1
+          WHEN tf.timeframe = 'Month' AND ci."createdAt" > (NOW() - interval '30 days') THEN 1
+          WHEN tf.timeframe = 'Week' AND ci."createdAt" > (NOW() - interval '7 days') THEN 1
+          WHEN tf.timeframe = 'Day' AND ci."createdAt" > (NOW() - interval '1 days') THEN 1
           ELSE 0
         END)
-      FROM "CollectionItem"
+      FROM "CollectionItem" ci
+      JOIN "Image" i ON i.id = ci."imageId" -- ensure the image exists
       CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-      WHERE "imageId" IN (${Prisma.join(ids)})
-      GROUP BY "imageId", tf.timeframe
+      WHERE ci."imageId" IN (${Prisma.join(ids)})
+      GROUP BY ci."imageId", tf.timeframe
       ON CONFLICT ("imageId", timeframe) DO UPDATE
         SET "collectedCount" = EXCLUDED."collectedCount", "createdAt" = NOW()
     `);
@@ -297,21 +300,22 @@ async function getBuzzTasks({ pg, lastUpdate, jobContext, ...ctx }: ImageMetricC
         tf.timeframe,
         SUM(CASE
           WHEN tf.timeframe = 'AllTime' THEN 1
-          WHEN tf.timeframe = 'Year' AND "updatedAt" > (NOW() - interval '365 days') THEN 1
-          WHEN tf.timeframe = 'Month' AND "updatedAt" > (NOW() - interval '30 days') THEN 1
-          WHEN tf.timeframe = 'Week' AND "updatedAt" > (NOW() - interval '7 days') THEN 1
-          WHEN tf.timeframe = 'Day' AND "updatedAt" > (NOW() - interval '1 days') THEN 1
+          WHEN tf.timeframe = 'Year' AND bt."updatedAt" > (NOW() - interval '365 days') THEN 1
+          WHEN tf.timeframe = 'Month' AND bt."updatedAt" > (NOW() - interval '30 days') THEN 1
+          WHEN tf.timeframe = 'Week' AND bt."updatedAt" > (NOW() - interval '7 days') THEN 1
+          WHEN tf.timeframe = 'Day' AND bt."updatedAt" > (NOW() - interval '1 days') THEN 1
           ELSE 0
         END) "tippedCount",
         SUM(CASE
           WHEN tf.timeframe = 'AllTime' THEN "amount"
-          WHEN tf.timeframe = 'Year' AND "updatedAt" > (NOW() - interval '365 days') THEN "amount"
-          WHEN tf.timeframe = 'Month' AND "updatedAt" > (NOW() - interval '30 days') THEN "amount"
-          WHEN tf.timeframe = 'Week' AND "updatedAt" > (NOW() - interval '7 days') THEN "amount"
-          WHEN tf.timeframe = 'Day' AND "updatedAt" > (NOW() - interval '1 days') THEN "amount"
+          WHEN tf.timeframe = 'Year' AND bt."updatedAt" > (NOW() - interval '365 days') THEN "amount"
+          WHEN tf.timeframe = 'Month' AND bt."updatedAt" > (NOW() - interval '30 days') THEN "amount"
+          WHEN tf.timeframe = 'Week' AND bt."updatedAt" > (NOW() - interval '7 days') THEN "amount"
+          WHEN tf.timeframe = 'Day' AND bt."updatedAt" > (NOW() - interval '1 days') THEN "amount"
           ELSE 0
         END) "tippedAmountCount"
-      FROM "BuzzTip"
+      FROM "BuzzTip" bt
+      JOIN "Image" i ON i.id = bt."entityId" -- ensure the image exists
       CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
       WHERE "entityId" IN (${Prisma.join(ids)}) AND "entityType" = 'Image'
       GROUP BY "entityId", tf.timeframe
@@ -394,6 +398,7 @@ async function getViewTasks({ ch, pg, lastUpdate, jobContext, ...ctx }: ImageMet
                 SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
             ) tf
         ) im
+        JOIN "Image" i ON i.id = im.imageId -- ensure the image exists
         WHERE im.views IS NOT NULL
         AND im.imageId IN (SELECT id FROM "Image")
         ON CONFLICT ("imageId", timeframe) DO UPDATE
