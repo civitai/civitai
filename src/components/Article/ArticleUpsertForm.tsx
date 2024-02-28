@@ -18,7 +18,7 @@ import {
 import { TagTarget } from '@prisma/client';
 import { IconQuestionMark, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { z } from 'zod';
 
 import { BackButton } from '~/components/BackButton/BackButton';
@@ -44,8 +44,7 @@ import { parseNumericString } from '~/utils/query-string-helpers';
 import { titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
-import { FeatureIntroduction } from '../FeatureIntroduction/FeatureIntroduction';
-import { HelpButton } from '../HelpButton/HelpButton';
+import { FeatureIntroductionHelpButton } from '../FeatureIntroduction/FeatureIntroduction';
 import { ContentPolicyLink } from '../ContentPolicyLink/ContentPolicyLink';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { constants } from '~/server/common/constants';
@@ -178,10 +177,9 @@ export function ArticleUpsertForm({ article }: Props) {
             <Group spacing={8} noWrap>
               <BackButton url="/articles" />
               <Title>{article?.id ? 'Editing article' : 'Create an Article'}</Title>
-              <FeatureIntroduction
+              <FeatureIntroductionHelpButton
                 feature="article-create"
                 contentSlug={['feature-introduction', 'article-create']}
-                actionButton={<HelpButton size="md" radius="xl" />}
               />
             </Group>
             <InputText

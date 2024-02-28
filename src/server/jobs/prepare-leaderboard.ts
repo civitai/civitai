@@ -1,16 +1,18 @@
-import { createJob, getJobDate } from './job';
-import { dbWrite } from '~/server/db/client';
 import dayjs from 'dayjs';
-import { createLogger } from '~/utils/logging';
 import { purgeCache } from '~/server/cloudflare/client';
-import { applyDiscordLeaderboardRoles } from '~/server/jobs/apply-discord-roles';
-import { updateLeaderboardRank } from '~/server/services/user.service';
-import { isLeaderboardPopulated } from '~/server/services/leaderboard.service';
 import { constants } from '~/server/common/constants';
+import { dbWrite } from '~/server/db/client';
+import { pgDbWrite } from '~/server/db/pgDb';
+import { applyDiscordLeaderboardRoles } from '~/server/jobs/apply-discord-roles';
+import { isLeaderboardPopulated } from '~/server/services/leaderboard.service';
+import { updateLeaderboardRank } from '~/server/services/user.service';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { createLogger } from '~/utils/logging';
+import { createJob, getJobDate } from './job';
 
 const log = createLogger('leaderboard', 'blue');
 
-const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async () => {
+const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async (jobContext) => {
   const [lastRun, setLastRun] = await getJobDate('prepare-leaderboard');
 
   await setCoverImageNsfwLevel();
@@ -28,19 +30,24 @@ const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async 
 
   // Get latest results for date
   const addDays = dayjs().utc().hour() >= 23 ? 1 : 0;
-  for (const { id, query } of leaderboards) {
-    log(`Started leaderboard ${id}`);
+  console.log(addDays);
+  const tasks = leaderboards.map(({ id, query }) => async () => {
+    jobContext.checkIfCanceled();
+    log(`Leaderboard ${id} - Starting`);
     const start = Date.now();
-    await dbWrite.$executeRawUnsafe(`
-      DELETE FROM "LeaderboardResult"
+    const hasDataQuery = await pgDbWrite.query<{ count: number }>(`
+      SELECT COUNT(*) as count FROM "LeaderboardResult"
       WHERE "leaderboardId" = '${id}' AND date = current_date + interval '${addDays} days'
     `);
-    log(`Cleared leaderboard ${id} - ${(Date.now() - start) / 1000}s`);
+    const hasData = hasDataQuery.rows[0].count > 0;
+    if (hasData) {
+      log(`Leaderboard ${id} - Previously completed`);
+      return;
+    }
 
     const includesCTE = query.includes('WITH ');
     if (includesCTE && !query.includes('scores')) throw new Error('Query must include scores CTE');
-
-    await dbWrite.$executeRawUnsafe(`
+    const leaderboardUpdateQuery = await pgDbWrite.cancellableQuery(`
       ${includesCTE ? query : `WITH scores AS (${query})`}
       INSERT INTO "LeaderboardResult"("leaderboardId", "date", "userId", "score", "metrics", "position")
       SELECT
@@ -49,9 +56,15 @@ const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async 
         *,
         row_number() OVER (ORDER BY score DESC) as position
       FROM scores
+      ORDER BY score DESC
+      LIMIT 1000
     `);
-    log(`Finished leaderboard ${id} - ${(Date.now() - start) / 1000}s`);
-  }
+    jobContext.on('cancel', leaderboardUpdateQuery.cancel);
+    await leaderboardUpdateQuery.result();
+
+    log(`Leaderboard ${id} - Done - ${(Date.now() - start) / 1000}s`);
+  });
+  await limitConcurrency(tasks, 3);
 
   await updateLegendsBoardResults();
 
@@ -59,6 +72,7 @@ const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async 
 });
 
 async function updateLegendsBoardResults() {
+  log('Legends Board - Starting');
   await dbWrite.$transaction([
     dbWrite.$executeRaw`DROP TABLE IF EXISTS "LegendsBoardResult";`,
     dbWrite.$executeRaw`
@@ -92,6 +106,7 @@ async function updateLegendsBoardResults() {
       FROM scores;
     `,
   ]);
+  log('Legends Board - Done');
 }
 
 const updateUserLeaderboardRank = createJob(

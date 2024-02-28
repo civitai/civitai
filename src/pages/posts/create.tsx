@@ -20,8 +20,7 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { setPageOptions } from '~/components/AppLayout/AppLayout';
 import { BackButton } from '~/components/BackButton/BackButton';
 import { ContentPolicyLink } from '~/components/ContentPolicyLink/ContentPolicyLink';
-import { FeatureIntroduction } from '~/components/FeatureIntroduction/FeatureIntroduction';
-import { HelpButton } from '~/components/HelpButton/HelpButton';
+import { FeatureIntroductionHelpButton } from '~/components/FeatureIntroduction/FeatureIntroduction';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import { useEditPostContext } from '~/components/Post/Edit/EditPostProvider';
 import { PostEditLayout } from '~/components/Post/Edit/PostEditLayout';
@@ -128,10 +127,9 @@ export default function PostCreate() {
         <Title>
           {displayReview ? 'Create a Review' : `Create ${postingVideo ? 'Video' : 'Image'} Post`}
         </Title>
-        <FeatureIntroduction
+        <FeatureIntroductionHelpButton
           feature="post-create"
           contentSlug={['feature-introduction', 'post-images']}
-          actionButton={<HelpButton size="md" radius="xl" />}
         />
       </Group>
       {currentUser?.muted ? (

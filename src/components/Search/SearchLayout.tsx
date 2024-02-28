@@ -36,6 +36,8 @@ import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { constants } from '~/server/common/constants';
+import { useIsMobile } from '~/hooks/useIsMobile';
+import { useLocalStorage } from '@mantine/hooks';
 
 const SIDEBAR_SIZE = 377;
 
@@ -55,7 +57,7 @@ const searchClient: InstantSearchProps['searchClient'] = {
 // #region [ImageGuardContext]
 type SearchLayoutState = {
   sidebarOpen: boolean;
-  setSidebarOpen: Dispatch<SetStateAction<boolean>>;
+  setSidebarOpen: (value: boolean) => void;
 };
 
 const SearchLayoutCtx = createContext<SearchLayoutState>({} as any);
@@ -122,7 +124,18 @@ export function SearchLayout({
   children: React.ReactNode;
   indexName: SearchIndex;
 }) {
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const isMobile = useIsMobile();
+  const [sidebarOpenLocalStorage, setSidebarOpenLocalStorage] = useLocalStorage({
+    key: `search-sidebar`,
+    defaultValue: true,
+  });
+  const [sidebarOpenState, setSidebarOpenState] = useState(false);
+  const sidebarOpen = isMobile ? sidebarOpenState : sidebarOpenLocalStorage;
+  const setSidebarOpen = (value: boolean) => {
+    setSidebarOpenState(value);
+    setSidebarOpenLocalStorage(value);
+  };
+
   const ctx = useMemo(() => ({ sidebarOpen, setSidebarOpen }), [sidebarOpen]);
 
   const router = useRouter();

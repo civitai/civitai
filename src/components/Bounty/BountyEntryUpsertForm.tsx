@@ -46,8 +46,7 @@ import { trpc } from '~/utils/trpc';
 import { PoiAlert } from '~/components/PoiAlert/PoiAlert';
 import { getFilesHash } from '~/client-utils/file-hashing';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { FeatureIntroduction } from '../FeatureIntroduction/FeatureIntroduction';
-import { HelpButton } from '../HelpButton/HelpButton';
+import { FeatureIntroductionHelpButton } from '../FeatureIntroduction/FeatureIntroduction';
 // import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 
 const dropzoneOptionsByModelType: Record<BountyType, string[] | Record<string, string[]>> = {
@@ -186,10 +185,9 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
         <Group spacing="md">
           <BackButton url={`/bounties/${bounty.id}`} />
           <Title inline>{bountyEntry ? 'Update' : 'Submit new'} entry</Title>
-          <FeatureIntroduction
+          <FeatureIntroductionHelpButton
             feature="bounty-submit-entry"
             contentSlug={['feature-introduction', 'bounty-submit-entry']}
-            actionButton={<HelpButton size="md" radius="xl" />}
           />
         </Group>
         {bounty.poi && <PoiAlert size="sm" />}

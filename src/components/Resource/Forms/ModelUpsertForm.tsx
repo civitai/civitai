@@ -1,4 +1,14 @@
-import { Alert, Anchor, Group, Input, Paper, Stack, Text, ThemeIcon } from '@mantine/core';
+import {
+  Alert,
+  Anchor,
+  Checkbox,
+  Group,
+  Input,
+  Paper,
+  Stack,
+  Text,
+  ThemeIcon,
+} from '@mantine/core';
 import {
   CheckpointType,
   CommercialUse,
@@ -6,14 +16,7 @@ import {
   ModelUploadType,
   TagTarget,
 } from '@prisma/client';
-import {
-  IconBrush,
-  IconCurrencyDollarOff,
-  IconExclamationMark,
-  IconPhoto,
-  IconShoppingCart,
-  IconWorldUpload,
-} from '@tabler/icons-react';
+import { IconExclamationMark } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useEffect } from 'react';
 import { z } from 'zod';
@@ -21,6 +24,7 @@ import { z } from 'zod';
 import {
   Form,
   InputCheckbox,
+  InputCheckboxGroup,
   InputRTE,
   InputSegmentedControl,
   InputSelect,
@@ -56,6 +60,13 @@ const querySchema = z.object({
   bountyId: z.coerce.number().optional(),
 });
 
+const commercialUseOptions: Array<{ value: CommercialUse; label: string }> = [
+  { value: CommercialUse.Image, label: 'Sell generated images' },
+  { value: CommercialUse.RentCivit, label: 'Use on Civitai generation service' },
+  { value: CommercialUse.Rent, label: 'Use on other generation services' },
+  { value: CommercialUse.Sell, label: 'Sell this model or merges' },
+];
+
 export function ModelUpsertForm({ model, children, onSubmit }: Props) {
   const router = useRouter();
   const result = querySchema.safeParse(router.query);
@@ -72,7 +83,7 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
     uploadType: model?.uploadType ?? 'Created',
     poi: model?.poi ?? false,
     nsfw: model?.nsfw ?? false,
-    allowCommercialUse: model?.allowCommercialUse ?? CommercialUse.Sell,
+    allowCommercialUse: model?.allowCommercialUse ?? [CommercialUse.Sell],
     allowDerivatives: model?.allowDerivatives ?? true,
     allowNoCredit: model?.allowNoCredit ?? true,
     allowDifferentLicense: model?.allowDifferentLicense ?? true,
@@ -273,7 +284,6 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                         target="_blank"
                         rel="nofollow noreferrer"
                       >
-                        {/* TODO.howto: get the right link */}
                         Licensing Guide
                       </Anchor>
                       .
@@ -299,65 +309,11 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                         listed from least to most permissive.
                       </Text>
                     </Stack>
-                    {/* TODO.howto: transform this into input checkboxes */}
-                    <InputSegmentedControl
-                      name="allowCommercialUse"
-                      orientation="vertical"
-                      fullWidth
-                      color="blue"
-                      styles={(theme) => ({
-                        root: {
-                          border: `1px solid ${
-                            theme.colorScheme === 'dark'
-                              ? theme.colors.dark[4]
-                              : theme.colors.gray[4]
-                          }`,
-                          background: 'none',
-                        },
-                      })}
-                      data={[
-                        {
-                          value: CommercialUse.None,
-                          label: (
-                            <Group>
-                              <IconCurrencyDollarOff size={16} /> None
-                            </Group>
-                          ),
-                        },
-                        {
-                          value: CommercialUse.Image,
-                          label: (
-                            <Group>
-                              <IconPhoto size={16} /> Sell generated images
-                            </Group>
-                          ),
-                        },
-                        {
-                          value: CommercialUse.RentCivit,
-                          label: (
-                            <Group>
-                              <IconBrush size={16} /> Use on Civitai generation service
-                            </Group>
-                          ),
-                        },
-                        {
-                          value: CommercialUse.Rent,
-                          label: (
-                            <Group>
-                              <IconWorldUpload size={16} /> Use on other generation services
-                            </Group>
-                          ),
-                        },
-                        {
-                          value: CommercialUse.Sell,
-                          label: (
-                            <Group>
-                              <IconShoppingCart size={16} /> Sell this model or merges
-                            </Group>
-                          ),
-                        },
-                      ]}
-                    />
+                    <InputCheckboxGroup spacing="xs" name="allowCommercialUse">
+                      {commercialUseOptions.map(({ value, label }) => (
+                        <Checkbox key={value} value={value} label={label} />
+                      ))}
+                    </InputCheckboxGroup>
                   </Stack>
                 </ContainerGrid.Col>
               </ContainerGrid>

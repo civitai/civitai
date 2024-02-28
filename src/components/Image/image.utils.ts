@@ -41,8 +41,8 @@ export const imagesQueryParamSchema = z
       .optional(),
     withMeta: booleanString(),
     section: z.enum(['images', 'reactions']),
-    hidden: z.coerce.boolean(),
-    followed: z.coerce.boolean(),
+    hidden: booleanString(),
+    followed: booleanString(),
   })
   .partial();
 

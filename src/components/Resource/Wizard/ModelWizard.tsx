@@ -13,8 +13,7 @@ import { NextRouter, useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
 import { z } from 'zod';
 import { NotFound } from '~/components/AppLayout/NotFound';
-import { FeatureIntroduction } from '~/components/FeatureIntroduction/FeatureIntroduction';
-import { HelpButton } from '~/components/HelpButton/HelpButton';
+import { FeatureIntroductionHelpButton } from '~/components/FeatureIntroduction/FeatureIntroduction';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { PostEditWrapper } from '~/components/Post/Edit/PostEditLayout';
 import { Files, UploadStepActions } from '~/components/Resource/Files';
@@ -401,10 +400,9 @@ export function ModelWizard() {
             <Group position="apart" noWrap>
               <Group spacing={8} noWrap>
                 <Title order={2}>Publish a Model</Title>
-                <FeatureIntroduction
+                <FeatureIntroductionHelpButton
                   feature="model-upload"
                   contentSlug={['feature-introduction', 'model-upload']}
-                  actionButton={<HelpButton size="md" radius="xl" />}
                 />
               </Group>
               {isNew && !showTraining && currentUser && (

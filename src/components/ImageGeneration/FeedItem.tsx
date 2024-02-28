@@ -117,7 +117,7 @@ export function FeedItem({
         <Card
           p={0}
           sx={{
-            backdropFilter: 'blur(3px)',
+            // backdropFilter: 'blur(3px)',
             backgroundColor: 'rgba(0,0,0,0.6)',
             boxShadow:
               'inset 0px 0px 1px 1px rgba(255,255,255,0.1), 0 2px 3px rgba(0, 0, 0, .5), 0px 20px 25px -5px rgba(0, 0, 0, 0.2), 0px 10px 10px -5px rgba(0, 0, 0, 0.04)',

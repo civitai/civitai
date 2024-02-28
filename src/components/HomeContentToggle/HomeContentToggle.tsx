@@ -76,7 +76,6 @@ const homeOptions: Record<string, HomeOption> = {
   builds: {
     url: '/builds',
     icon: (props: TablerIconsProps) => <IconCpu {...props} />,
-    highlight: true,
   },
 };
 type HomeOptions = keyof typeof homeOptions;
@@ -251,7 +250,7 @@ export function HomeTabs({ sx, ...tabProps }: HomeTabProps) {
             icon={value.icon({ size: 16 })}
             pr={value.highlight ? 10 : undefined}
           >
-            <Group spacing={4}>
+            <Group spacing={4} noWrap>
               <Text className={classes.tabLabel} inline>
                 {getDisplayName(key)}
               </Text>

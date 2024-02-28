@@ -1,12 +1,11 @@
-import { Group, ActionIcon, CloseButton, Button, Tooltip } from '@mantine/core';
+import { Group, ActionIcon, CloseButton, Tooltip } from '@mantine/core';
 import { useWindowEvent } from '@mantine/hooks';
-import { IconArrowsDiagonal, IconArrowsMaximize } from '@tabler/icons-react';
+import { IconArrowsDiagonal } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useCallback, useEffect, useState } from 'react';
 import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import { FeatureIntroduction } from '~/components/FeatureIntroduction/FeatureIntroduction';
-import { HelpButton } from '~/components/HelpButton/HelpButton';
+import { FeatureIntroductionHelpButton } from '~/components/FeatureIntroduction/FeatureIntroduction';
 import { GeneratedImageActions } from '~/components/ImageGeneration/GeneratedImageActions';
 import { GenerationDrawer } from '~/components/ImageGeneration/GenerationDrawer';
 import GenerationTabs from '~/components/ImageGeneration/GenerationTabs';
@@ -70,10 +69,9 @@ export function GenerationSidebar() {
             }`,
           })}
         >
-          <FeatureIntroduction
+          <FeatureIntroductionHelpButton
             feature="image-generator"
             contentSlug={['feature-introduction', 'image-generator']}
-            actionButton={<HelpButton size="md" radius="xl" mr="auto" />}
           />
           {!isGeneratePage && (
             <>
