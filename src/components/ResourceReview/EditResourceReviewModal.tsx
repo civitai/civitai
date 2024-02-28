@@ -3,7 +3,10 @@ import { EditResourceReview } from '~/components/ResourceReview/EditResourceRevi
 import { ResourceReviewPagedModel } from '~/types/router';
 
 const { openModal, Modal } = createContextModal<
-  ResourceReviewPagedModel & { details?: string; modelVersionId: number }
+  Pick<
+    ResourceReviewPagedModel,
+    'id' | 'rating' | 'modelId' | 'modelVersionId' | 'recommended' | 'details'
+  >
 >({
   name: 'resourceReviewEdit',
   title: 'Edit Review',

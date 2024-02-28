@@ -75,6 +75,7 @@ import {
   SetAssociatedResourcesInput,
   SetModelsCategoryInput,
 } from './../schema/model.schema';
+import { ModelVersionMeta } from '~/server/schema/model-version.schema';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
@@ -684,9 +685,10 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   user: sessionUser,
   count = false,
 }: {
-  input: Omit<GetAllModelsOutput, 'limit' | 'page'> & {
+  input: Omit<GetAllModelsOutput, 'limit' | 'page' | 'cursor'> & {
     take?: number;
     skip?: number;
+    cursor?: number;
   };
   select: TSelect;
   user?: SessionUser;

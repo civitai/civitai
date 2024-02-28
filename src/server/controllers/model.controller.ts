@@ -277,10 +277,10 @@ export const getModelsPagedSimpleHandler = async ({
   input: GetAllModelsOutput;
   ctx: Context;
 }) => {
-  const { limit = DEFAULT_PAGE_SIZE, page } = input || {};
+  const { limit = DEFAULT_PAGE_SIZE, page, cursor, ...restInput } = input || {};
   const { take, skip } = getPagination(limit, page);
   const results = await getModels({
-    input: { ...input, take, skip },
+    input: { ...restInput, take, skip },
     user: ctx.user,
     select: {
       id: true,
@@ -490,7 +490,7 @@ export const getModelsWithVersionsHandler = async ({
   input: GetAllModelsOutput & { ids?: number[] };
   ctx: Context;
 }) => {
-  const { limit = DEFAULT_PAGE_SIZE, page, ...queryInput } = input;
+  const { limit = DEFAULT_PAGE_SIZE, page, cursor, ...queryInput } = input;
   const { take, skip } = getPagination(limit, page);
   try {
     // TODO.manuel: Make this use the getModelsRaw instead...
@@ -1059,7 +1059,7 @@ export const findResourcesToAssociateHandler = async ({
   ctx: Context;
 }) => {
   try {
-    const modelInput = getAllModelsSchema.parse(input);
+    const { cursor, ...modelInput } = getAllModelsSchema.parse(input);
     const articleInput = getInfiniteArticlesSchema.parse(input);
 
     const [{ items: models }, { items: articles }] = await Promise.all([
@@ -1120,7 +1120,7 @@ export const getAssociatedResourcesCardDataHandler = async ({
       .map(({ id }) => id);
 
     const period = MetricTimeframe.AllTime;
-    const modelInput = getAllModelsSchema.parse({
+    const { cursor, ...modelInput } = getAllModelsSchema.parse({
       ...userPreferences,
       ids: modelResources,
       period,

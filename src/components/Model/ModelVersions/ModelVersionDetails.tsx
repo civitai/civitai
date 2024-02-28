@@ -673,13 +673,15 @@ export function ModelVersionDetails({
                       userReview={userReview}
                     />
                   </Stack>
-                  <Card.Section py="sm" mt="sm" inheritPadding withBorder>
-                    <EditUserResourceReviewV2
-                      modelVersionId={modelVersionId}
-                      modelName={modelName}
-                      userReview={userReview}
-                    />
-                  </Card.Section>
+                  {userReview && (
+                    <Card.Section py="sm" mt="sm" inheritPadding withBorder>
+                      <EditUserResourceReviewV2
+                        modelVersionId={modelVersionId}
+                        modelName={modelName}
+                        userReview={userReview}
+                      />
+                    </Card.Section>
+                  )}
                 </Card>
               )}
             </UserResourceReviewComposite>

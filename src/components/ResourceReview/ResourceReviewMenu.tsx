@@ -30,7 +30,17 @@ export function ResourceReviewMenu({
   reviewId: number;
   userId: number;
   size?: MantineNumberSize;
-  review: ResourceReviewPagedModel & { details?: string; modelVersionId: number; metadata?: any };
+  review: Pick<
+    ResourceReviewPagedModel,
+    | 'id'
+    | 'rating'
+    | 'modelId'
+    | 'modelVersionId'
+    | 'recommended'
+    | 'details'
+    | 'exclude'
+    | 'metadata'
+  >;
 } & MenuProps) {
   const currentUser = useCurrentUser();
   const dialog = useDialogContext();

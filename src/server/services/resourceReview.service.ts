@@ -13,7 +13,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { GetResourceReviewsInput } from '~/server/schema/resourceReview.schema';
 import { Prisma } from '@prisma/client';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
-import { getPagedData } from '~/server/utils/pagination-helpers';
+import { getPagedData, getPagingData } from '~/server/utils/pagination-helpers';
 import { resourceReviewSelect } from '~/server/selectors/resourceReview.selector';
 import { ReviewSort } from '~/server/common/enums';
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
@@ -242,9 +242,10 @@ export const updateResourceReview = ({ id, ...data }: UpdateResourceReviewInput)
 type ResourceReviewRow = {
   id: number;
   modelVersionId: number;
+  modelId?: number | null;
   rating: number;
   recommended: boolean;
-  details: string;
+  details: string | null;
   createdAt: Date;
   nsfw: boolean;
   exclude: boolean;
@@ -275,6 +276,7 @@ export const getPagedResourceReviews = async (input: GetResourceReviewPagedInput
     SELECT
       rr.id,
       rr."modelVersionId",
+      rr."modelId",
       rr.rating,
       rr.recommended,
       rr.details,
@@ -311,7 +313,7 @@ export const getPagedResourceReviews = async (input: GetResourceReviewPagedInput
   const items = itemsRaw
     .map(({ userId, username, userImage, deletedAt, ...item }) => {
       let quality = 0;
-      if (item.details?.length > 0) quality++;
+      if (item.details && item.details.length > 0) quality++;
       if (item.imageCount > 0) quality++;
       return {
         ...item,
@@ -328,7 +330,7 @@ export const getPagedResourceReviews = async (input: GetResourceReviewPagedInput
     })
     .sort((a, b) => b.quality - a.quality);
 
-  return { items, count };
+  return getPagingData({ items, count });
 };
 
 export const toggleExcludeResourceReview = async ({ id }: GetByIdInput) => {
