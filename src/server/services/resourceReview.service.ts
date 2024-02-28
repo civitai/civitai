@@ -289,12 +289,12 @@ export const getPagedResourceReviews = async (input: GetResourceReviewPagedInput
       u."deletedAt",
       u.image as "userImage",
       (
-        SELECT "imageCount"
+        SELECT "imageCount"::int
         FROM "ResourceReviewHelper" rrh
         WHERE rrh."resourceReviewId" = rr.id
       ) "imageCount",
       (
-        SELECT COUNT(*)
+        SELECT COUNT(*)::int
         FROM "Thread" t
         JOIN "CommentV2" c ON c."threadId" = t.id
         WHERE t."reviewId" = rr.id
@@ -330,7 +330,7 @@ export const getPagedResourceReviews = async (input: GetResourceReviewPagedInput
     })
     .sort((a, b) => b.quality - a.quality);
 
-  return getPagingData({ items, count });
+  return getPagingData({ items, count }, limit, page);
 };
 
 export const toggleExcludeResourceReview = async ({ id }: GetByIdInput) => {

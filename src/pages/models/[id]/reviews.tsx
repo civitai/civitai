@@ -277,7 +277,7 @@ function ReviewCard({ creatorId, ...review }: ResourceReviewPagedModel & { creat
           <UserAvatar
             user={review.user}
             subText={
-              <Group spacing={8} noWrap>
+              <Group mt={4} spacing={8} noWrap>
                 <Text size="sm" lineClamp={1}>
                   <DaysFromNow date={review.createdAt} />
                 </Text>
@@ -325,15 +325,21 @@ function ReviewCard({ creatorId, ...review }: ResourceReviewPagedModel & { creat
             linkToProfile
           />
           <Group className={classes.actionsWrapper} noWrap>
-            {isThumbsUp ? (
-              <ThemeIcon color="success.5" size="lg" radius="md" variant="light">
-                <ThumbsUpIcon filled />
-              </ThemeIcon>
-            ) : (
-              <ThemeIcon color="red" size="lg" radius="md" variant="light">
-                <ThumbsDownIcon filled />
-              </ThemeIcon>
-            )}
+            <RoutedDialogLink
+              name="resourceReview"
+              state={{ reviewId: review.id }}
+              style={{ display: 'flex' }}
+            >
+              {isThumbsUp ? (
+                <ThemeIcon color="success.5" size="lg" radius="md" variant="light">
+                  <ThumbsUpIcon filled />
+                </ThemeIcon>
+              ) : (
+                <ThemeIcon color="red" size="lg" radius="md" variant="light">
+                  <ThumbsDownIcon filled />
+                </ThemeIcon>
+              )}
+            </RoutedDialogLink>
             <ResourceReviewMenu
               reviewId={review.id}
               userId={review.user.id}

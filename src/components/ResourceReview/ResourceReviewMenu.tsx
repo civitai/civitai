@@ -93,8 +93,8 @@ export function ResourceReviewMenu({
       title: 'Exclude Review',
       children: (
         <Text size="sm">
-          Are you sure you want to exclude this review from the average score of this model? You
-          will not be able to revert this.
+          Are you sure you want to exclude this review from the count of this model? You will not be
+          able to revert this.
         </Text>
       ),
       centered: true,
@@ -142,14 +142,14 @@ export function ResourceReviewMenu({
                 icon={<IconCalculatorOff size={14} stroke={1.5} />}
                 onClick={handleExcludeReview}
               >
-                Exclude from average
+                Exclude from count
               </Menu.Item>
             ) : review.metadata?.excludeReason !== 'reviewManipulation' ? (
               <Menu.Item
                 icon={<IconCalculator size={14} stroke={1.5} />}
                 onClick={handleUnexcludeReview}
               >
-                Unexclude from average
+                Include into count
               </Menu.Item>
             ) : null}
             <ToggleLockComments entityId={reviewId} entityType="review">
