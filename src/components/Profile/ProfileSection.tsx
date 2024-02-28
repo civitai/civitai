@@ -91,7 +91,7 @@ export const useProfileSectionStyles = createStyles<
           content: '""',
           background: 'rgba(0,0,0, 0.3)',
           zIndex: 100,
-          backdropFilter: 'blur(8px)',
+          // backdropFilter: 'blur(8px)',
         },
       },
       grid: {
