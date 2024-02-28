@@ -28,8 +28,7 @@ import { isNumber } from '~/utils/type-guards';
 import { TemplateSelect } from './TemplateSelect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { QS } from '../../../utils/qs';
-import { HelpButton } from '~/components/HelpButton/HelpButton';
-import { FeatureIntroduction } from '~/components/FeatureIntroduction/FeatureIntroduction';
+import { FeatureIntroductionHelpButton } from '~/components/FeatureIntroduction/FeatureIntroduction';
 
 export type ModelWithTags = Omit<ModelById, 'tagsOnModels'> & {
   tagsOnModels: Array<{ isCategory: boolean; id: number; name: string }>;
@@ -395,10 +394,9 @@ export function ModelWizard() {
             <Group position="apart" noWrap>
               <Group spacing={8} noWrap>
                 <Title order={2}>Publish a Model</Title>
-                <FeatureIntroduction
+                <FeatureIntroductionHelpButton
                   feature="model-upload"
                   contentSlug={['feature-introduction', 'model-upload']}
-                  actionButton={<HelpButton size="md" radius="xl" />}
                 />
               </Group>
               {isNew && !showTraining && currentUser && (
