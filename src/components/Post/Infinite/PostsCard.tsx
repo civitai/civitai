@@ -35,7 +35,7 @@ export function PostsCard({
                 <ImageGuard2.BlurToggle className="absolute top-2 left-2 z-10" />
                 {safe && (
                   <ImageContextMenu
-                    {...image}
+                    image={image}
                     context="post"
                     className="absolute top-2 right-2 z-10"
                   />

@@ -6,8 +6,6 @@ import { ReviewReactions } from '@prisma/client';
 import { useRouter } from 'next/router';
 import { createContext, useContext, useEffect, useMemo } from 'react';
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
-import { useQueryImages } from '~/components/Image/image.utils';
-import { ImageGuardConnect } from '~/components/ImageGuard/ImageGuard';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { ImagesInfiniteModel } from '~/server/services/image.service';

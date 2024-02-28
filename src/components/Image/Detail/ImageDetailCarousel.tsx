@@ -151,7 +151,7 @@ export function ImageDetailCarousel({ className }: GalleryCarouselProps) {
                   </ActionIcon>
                 </ShareButton>
                 <ImageContextMenu
-                  {...image}
+                  image={image}
                   radius="xl"
                   color="gray"
                   variant="light"

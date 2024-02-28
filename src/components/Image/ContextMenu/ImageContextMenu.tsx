@@ -55,43 +55,35 @@ type ImageProps = {
   ingestion?: ImageIngestionStatus;
 };
 
-type ImageContextMenuProps = ImageProps & {
+type ImageContextMenuProps = {
+  image: ImageProps;
   context?: 'image' | 'post';
   additionalMenuItems?: React.ReactNode;
 };
 
 export function ImageContextMenu({
   iconSize = 26,
-  id,
-  postId,
-  userId,
-  user,
-  needsReview,
   context,
   additionalMenuItems,
-  ingestion,
+  image,
   className,
   ...actionIconProps
 }: ImageContextMenuProps & ActionIconProps & { iconSize?: number }) {
   const currentUser = useCurrentUser();
   const props = {
-    id,
-    postId,
-    userId,
-    user,
-    needsReview,
+    image,
     context,
     additionalMenuItems,
-    ingestion,
   };
-  const isOwner = !!currentUser && (currentUser.id === user?.id || currentUser.id === userId);
+  const isOwner =
+    !!currentUser && (currentUser.id === image.user?.id || currentUser.id === image.userId);
   const isModerator = !!currentUser?.isModerator;
 
   const ContextMenu = (
     <Menu withinPortal withArrow>
       <Menu.Target>
         <ActionIcon
-          className={!props.needsReview ? className : undefined}
+          className={!image.needsReview ? className : undefined}
           variant="transparent"
           onClick={(e: React.MouseEvent) => {
             e.preventDefault();
@@ -117,7 +109,7 @@ export function ImageContextMenu({
     </Menu>
   );
 
-  if (props.needsReview)
+  if (image.needsReview)
     return (
       <Group spacing={4} className={className}>
         <NeedsReviewBadge {...props} isModerator={isModerator} isOwner={isOwner} />
@@ -129,17 +121,9 @@ export function ImageContextMenu({
 }
 
 function ImageMenuItems(props: ImageContextMenuProps & { isOwner: boolean; isModerator: boolean }) {
-  const {
-    id: imageId,
-    postId,
-    user,
-    userId,
-    context = 'image',
-    additionalMenuItems,
-    isOwner,
-    isModerator,
-  } = props;
+  const { image, context = 'image', additionalMenuItems, isOwner, isModerator } = props;
   const features = useFeatureFlags();
+  const { id: imageId, postId, user, userId } = image;
   const _userId = user?.id ?? userId;
 
   const handleSaveClick = () => {
@@ -167,7 +151,7 @@ function ImageMenuItems(props: ImageContextMenuProps & { isOwner: boolean; isMod
 
   return (
     <>
-      {additionalMenuItemsBefore?.(props)}
+      {additionalMenuItemsBefore?.(image)}
       {/* GENERAL */}
       {isOwner && <AddToShowcaseMenuItem entityType="Image" entityId={imageId} />}
       <LoginRedirect reason="add-to-collection">
@@ -214,7 +198,7 @@ function ImageMenuItems(props: ImageContextMenuProps & { isOwner: boolean; isMod
           </Menu.Item>
         </>
       )}
-      {additionalMenuItemsAfter?.(props)}
+      {additionalMenuItemsAfter?.(image)}
       {additionalMenuItems}
       {/* MODERATOR */}
       {isModerator && (
@@ -257,12 +241,11 @@ function ImageMenuItems(props: ImageContextMenuProps & { isOwner: boolean; isMod
 }
 
 function NeedsReviewBadge({
-  needsReview: initialNeedsReview,
-  ingestion: initialIngestion,
-  id: imageId,
+  image,
   isOwner,
   isModerator,
 }: ImageContextMenuProps & { isOwner: boolean; isModerator: boolean }) {
+  const { needsReview: initialNeedsReview, ingestion: initialIngestion, id: imageId } = image;
   const { needsReview, ingestion } = useImageStore({
     id: imageId,
     needsReview: initialNeedsReview,

@@ -123,10 +123,10 @@ export const nsfwLevelOrder = [
   NsfwLevel.X,
   NsfwLevel.Blocked,
 ];
-export const nsfwLevelUI = {
-  [NsfwLevel.None]: { label: '', color: 'gray', shade: 5 },
-  [NsfwLevel.Soft]: { label: '13', color: 'yellow', shade: 5 },
-  [NsfwLevel.Mature]: { label: '17', color: 'orange', shade: 7 },
-  [NsfwLevel.X]: { label: '18', color: 'red', shade: 9 },
-  [NsfwLevel.Blocked]: { label: '18', color: 'red', shade: 9 },
-};
+// export const nsfwLevelUI = {
+//   [NsfwLevel.None]: { label: '', color: 'gray', shade: 5 },
+//   [NsfwLevel.Soft]: { label: '13', color: 'yellow', shade: 5 },
+//   [NsfwLevel.Mature]: { label: '17', color: 'orange', shade: 7 },
+//   [NsfwLevel.X]: { label: '18', color: 'red', shade: 9 },
+//   [NsfwLevel.Blocked]: { label: '18', color: 'red', shade: 9 },
+// };

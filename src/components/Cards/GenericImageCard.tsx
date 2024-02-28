@@ -79,7 +79,7 @@ export function GenericImageCard({
                   {!disabled && (
                     <>
                       <ImageGuard2.BlurToggle className="absolute top-2 left-2 z-10" />
-                      <ImageContextMenu {...image} className="absolute top-2 right-2 z-10" />
+                      <ImageContextMenu image={image} className="absolute top-2 right-2 z-10" />
                     </>
                   )}
                   {safe ? (

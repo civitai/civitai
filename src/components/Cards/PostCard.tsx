@@ -36,7 +36,7 @@ export function PostCard({ data }: Props) {
                 className={cx(classes.contentOverlay, classes.top)}
               >
                 <ImageGuard2.BlurToggle />
-                <ImageContextMenu {...image} context="post" />
+                <ImageContextMenu image={image} context="post" />
               </Group>
               {!safe ? (
                 <MediaHash {...data.image} />

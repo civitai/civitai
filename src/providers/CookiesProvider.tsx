@@ -1,7 +1,7 @@
 import { getCookies } from 'cookies-next';
+import { useSession } from 'next-auth/react';
 
 import React, { createContext, useContext, useMemo } from 'react';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsClient } from '~/providers/IsClientProvider';
 import { ParsedCookies, parseCookies } from '~/shared/utils';
 
@@ -18,12 +18,12 @@ export const CookiesProvider = ({
   children: React.ReactNode;
   value: ParsedCookies;
 }) => {
-  const currentUser = useCurrentUser();
+  const { data } = useSession();
   const isClient = useIsClient();
   const cookies = useMemo(() => {
     if (!isClient) return initialValue;
     else return parseCookies(getCookies());
-  }, [isClient, currentUser]);
+  }, [isClient, data]);
 
   return <CookiesCtx.Provider value={cookies}>{children}</CookiesCtx.Provider>;
 };

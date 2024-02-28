@@ -9,6 +9,7 @@ import { useCFUploadStore } from '~/store/cf-upload.store';
 import { PostImage } from '~/server/selectors/post.selector';
 import { getDataFromFile } from '~/utils/metadata';
 import { MediaType } from '@prisma/client';
+import { NsfwLevel } from '~/server/common/enums';
 
 //https://github.com/pmndrs/zustand/blob/main/docs/guides/initialize-state-with-props.md
 export type ImageUpload = {
@@ -30,7 +31,7 @@ export type ImageUpload = {
 export type ImageBlocked = {
   uuid: string;
   blockedFor?: string[];
-  tags?: { type: string; name: string }[];
+  tags?: { type: string; name: string; nsfwLevel: NsfwLevel }[];
 };
 type ImageProps =
   | { discriminator: 'image'; data: PostEditImage }

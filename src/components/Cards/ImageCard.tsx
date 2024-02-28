@@ -60,7 +60,7 @@ function UnroutedImageCard({ data }: Props) {
                   <ImageGuard2.BlurToggle radius="xl" h={26} />
                   {safe && (
                     <Stack spacing="xs" ml="auto">
-                      <ImageContextMenu {...data} />
+                      <ImageContextMenu image={data} />
                       {features.imageGeneration && data.meta && (
                         <HoverActionButton
                           label="Remix"

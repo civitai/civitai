@@ -1,30 +1,18 @@
-import {
-  Autocomplete,
-  Badge,
-  createStyles,
-  Divider,
-  Chip,
-  Group,
-  Text,
-  Box,
-  Popover,
-  Stack,
-} from '@mantine/core';
-import { useDebouncedValue, useDisclosure } from '@mantine/hooks';
-import { TagTarget, TagType } from '@prisma/client';
-import { IconPlus, IconRating18Plus } from '@tabler/icons-react';
+import { Badge, createStyles, Divider, Chip, Group, Text, Popover, Stack } from '@mantine/core';
+import { TagType } from '@prisma/client';
+import { IconPlus } from '@tabler/icons-react';
 import React, { useMemo } from 'react';
-import { useState } from 'react';
 import { moderationCategories } from '~/libs/moderation';
+import { NsfwLevel } from '~/server/common/enums';
+import { getIsPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { getDisplayName } from '~/utils/string-helpers';
-import { trpc } from '~/utils/trpc';
 
 export function VotableTagMature({ tags, addTag }: VotableTagMatureProps) {
   // State
   const matureTags = useMemo(() => {
     const matureTags: Record<string, { has: boolean; locked: boolean }> = {};
-    for (const { name, type, id } of tags)
-      if (type === 'Moderation') matureTags[name] = { has: true, locked: id !== 0 };
+    for (const { name, id, nsfwLevel } of tags)
+      if (!getIsPublicBrowsingLevel(nsfwLevel)) matureTags[name] = { has: true, locked: id !== 0 };
     return matureTags;
   }, [tags]);
 
@@ -81,7 +69,7 @@ export function VotableTagMature({ tags, addTag }: VotableTagMatureProps) {
 
 type VotableTagMatureProps = {
   addTag: (tag: string) => void;
-  tags: { id: number; name: string; type: TagType }[];
+  tags: { id: number; name: string; type: TagType; nsfwLevel: NsfwLevel }[];
 };
 
 const useStyles = createStyles((theme, { hasMature }: { hasMature: boolean }) => {

@@ -1,25 +1,15 @@
 import { ActionIcon, Center, Group, GroupProps, Loader, MantineProvider } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
-import { TagType } from '@prisma/client';
 import { IconChevronDown, IconChevronUp } from '@tabler/icons-react';
-import produce from 'immer';
 import { useMemo } from 'react';
-import { useVotableTagStore, VotableTag } from '~/components/VotableTags/VotableTag';
+import { VotableTag } from '~/components/VotableTags/VotableTag';
 import { VotableTagAdd } from '~/components/VotableTags/VotableTagAdd';
 import { VotableTagMature } from '~/components/VotableTags/VotableTagMature';
 import { useVoteForTags } from '~/components/VotableTags/votableTag.utils';
-import { useUpdateHiddenPreferences } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { TagVotableEntityType, VotableTagModel } from '~/libs/tags';
+import { getIsPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { trpc } from '~/utils/trpc';
-
-const defaultVotable: Partial<VotableTagModel> = {
-  id: 0,
-  vote: 1,
-  score: 1,
-  upVotes: 1,
-  downVotes: 0,
-};
 
 export function VotableTags({
   entityId: id,
@@ -44,8 +34,8 @@ export function VotableTags({
   const displayedTags = useMemo(() => {
     if (!tags) return [];
     const displayTags = [...tags].sort((a, b) => {
-      const aMod = a.type === 'Moderation';
-      const bMod = b.type === 'Moderation';
+      const aMod = !getIsPublicBrowsingLevel(a.nsfwLevel);
+      const bMod = !getIsPublicBrowsingLevel(b.nsfwLevel);
       const aNew = a.id === 0;
       const bNew = b.id === 0;
       if (aNew && !bNew) return -1;
@@ -89,7 +79,7 @@ export function VotableTags({
             concrete={tag.concrete}
             lastUpvote={tag.lastUpvote}
             type={tag.type}
-            nsfw={tag.nsfw}
+            nsfwLevel={tag.nsfwLevel}
             score={tag.score}
             onChange={({ name, vote }) => {
               handleVote({ tags: [name], vote });

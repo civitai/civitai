@@ -188,7 +188,7 @@ export function ImagesAsPostsCard({
                       {safe && (
                         <Stack spacing="xs" className="absolute top-2 right-2 z-10">
                           <ImageContextMenu
-                            {...image}
+                            image={image}
                             additionalMenuItems={moderationOptions(image.id)}
                           />
                           {features.imageGeneration && image.meta && (
@@ -318,7 +318,7 @@ export function ImagesAsPostsCard({
                               {safe && (
                                 <Stack spacing="xs" className="absolute top-2 right-2 z-10">
                                   <ImageContextMenu
-                                    {...image}
+                                    image={image}
                                     additionalMenuItems={moderationOptions(image.id)}
                                   />
                                   {features.imageGeneration && image.meta && (

@@ -3539,22 +3539,23 @@ model CollectionRank {
 
 /// @view
 model ImageTag {
-  imageId     Int
-  image       Image     @relation(fields: [imageId], references: [id], onDelete: Cascade)
-  tagId       Int
-  tag         Tag       @relation(fields: [tagId], references: [id], onDelete: Cascade)
-  tagName     String
-  tagType     TagType
-  tagNsfw     NsfwLevel
-  automated   Boolean
-  confidence  Int?
-  score       Int
-  upVotes     Int
-  downVotes   Int
-  needsReview Boolean
-  concrete    Boolean
-  lastUpvote  DateTime?
-  source      TagSource
+  imageId      Int
+  image        Image     @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  tagId        Int
+  tag          Tag       @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  tagName      String
+  tagType      TagType
+  tagNsfw      NsfwLevel
+  tagNsfwLevel Int
+  automated    Boolean
+  confidence   Int?
+  score        Int
+  upVotes      Int
+  downVotes    Int
+  needsReview  Boolean
+  concrete     Boolean
+  lastUpvote   DateTime?
+  source       TagSource
 
   @@id([imageId, tagId])
 }

@@ -223,12 +223,12 @@ function MyApp(props: CustomAppProps) {
                 refetchWhenOffline={false}
               >
                 <FeatureFlagsProvider flags={flags}>
-                  <CivitaiSessionProvider>
-                    <SignalProvider>
-                      <ActivityReportingProvider>
-                        <CivitaiPosthogProvider>
-                          <CookiesProvider value={cookies}>
-                            <BrowsingModeProvider>
+                  <CookiesProvider value={cookies}>
+                    <BrowsingModeProvider>
+                      <CivitaiSessionProvider>
+                        <SignalProvider>
+                          <ActivityReportingProvider>
+                            <CivitaiPosthogProvider>
                               <ReferralsProvider>
                                 <FiltersProvider>
                                   <AdsProvider>
@@ -257,12 +257,12 @@ function MyApp(props: CustomAppProps) {
                                   </AdsProvider>
                                 </FiltersProvider>
                               </ReferralsProvider>
-                            </BrowsingModeProvider>
-                          </CookiesProvider>
-                        </CivitaiPosthogProvider>
-                      </ActivityReportingProvider>
-                    </SignalProvider>
-                  </CivitaiSessionProvider>
+                            </CivitaiPosthogProvider>
+                          </ActivityReportingProvider>
+                        </SignalProvider>
+                      </CivitaiSessionProvider>
+                    </BrowsingModeProvider>
+                  </CookiesProvider>
                 </FeatureFlagsProvider>
               </SessionProvider>
             </IsClientProvider>

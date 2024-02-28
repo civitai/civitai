@@ -43,7 +43,6 @@ import {
   UpsertClubAdminInviteInput,
 } from '~/server/schema/clubAdmin.schema';
 import { isDefined, isNumber } from '../../utils/type-guards';
-import { useBrowsingLevel, useShowNsfw } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 
 export const useQueryClub = ({ id }: { id: number }) => {
   const { data: club, isLoading: loading } = trpc.club.getById.useQuery({ id });
@@ -762,7 +761,7 @@ export const useQueryClubs = (
     ...options,
   });
   const currentUser = useCurrentUser();
-  const showNsfw = useShowNsfw();
+  const showNsfw = currentUser?.showNsfw;
 
   const {
     hiddenImages: hiddenImages,

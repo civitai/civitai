@@ -433,7 +433,6 @@ type GetAllImagesRaw = {
   id: number;
   name: string;
   url: string;
-  nsfw: NsfwLevelOld;
   nsfwLevel: NsfwLevel;
   width: number;
   height: number;
@@ -785,7 +784,6 @@ export const getAllImages = async ({
       i.id,
       i.name,
       i.url,
-      i.nsfw,
       i."nsfwLevel",
       i.width,
       i.height,
@@ -878,7 +876,7 @@ export const getAllImages = async ({
         tagId: true,
         tagName: true,
         tagType: true,
-        tagNsfw: true,
+        tagNsfwLevel: true,
         score: true,
         automated: true,
         upVotes: true,
@@ -887,11 +885,11 @@ export const getAllImages = async ({
       },
     });
 
-    tagsVar = rawTags.map(({ tagId, tagName, tagType, tagNsfw, ...tag }) => ({
+    tagsVar = rawTags.map(({ tagId, tagName, tagType, tagNsfwLevel, ...tag }) => ({
       ...tag,
       id: tagId,
       type: tagType,
-      nsfw: tagNsfw,
+      nsfwLevel: tagNsfwLevel as NsfwLevel,
       name: tagName,
     }));
 
@@ -1064,7 +1062,6 @@ export const getImage = async ({
       i.id,
       i.name,
       i.url,
-      i.nsfw,
       i.height,
       i.width,
       i.index,
@@ -1205,7 +1202,6 @@ type ImagesForModelVersions = {
   userId: number;
   name: string;
   url: string;
-  nsfw: NsfwLevelOld;
   nsfwLevel: NsfwLevel;
   width: number;
   height: number;
@@ -1297,7 +1293,6 @@ export const getImagesForModelVersion = async ({
       i."userId",
       i.name,
       i.url,
-      i.nsfw,
       i."nsfwLevel",
       i.width,
       i.height,
@@ -1363,7 +1358,6 @@ export const getImagesForPosts = async ({
       userId: number;
       name: string;
       url: string;
-      nsfw: NsfwLevelOld;
       nsfwLevel: NsfwLevel;
       width: number;
       height: number;
@@ -1399,7 +1393,6 @@ export const getImagesForPosts = async ({
       i."userId",
       i.name,
       i.url,
-      i.nsfw,
       i."nsfwLevel",
       i.width,
       i.height,
@@ -1517,11 +1510,11 @@ export const getIngestionResults = async ({ ids, userId }: { ids: number[]; user
   >((acc, value) => {
     const { id, ingestion, blockedFor, tagComposites } = value;
     const tags: VotableTagModel[] = tagComposites.map(
-      ({ tagId, tagName, tagType, tagNsfw, ...tag }) => ({
+      ({ tagId, tagName, tagType, tagNsfwLevel, ...tag }) => ({
         ...tag,
         id: tagId,
         type: tagType,
-        nsfw: tagNsfw,
+        nsfwLevel: tagNsfwLevel as NsfwLevel,
         name: tagName,
       })
     );
@@ -1558,7 +1551,6 @@ type GetImageConnectionRaw = {
   id: number;
   name: string;
   url: string;
-  nsfw: NsfwLevelOld;
   nsfwLevel: NsfwLevel;
   width: number;
   height: number;
@@ -1638,7 +1630,6 @@ export const getImagesByEntity = async ({
       i.id,
       i.name,
       i.url,
-      i.nsfw,
       i."nsfwLevel",
       i.width,
       i.height,
@@ -1669,7 +1660,7 @@ export const getImagesByEntity = async ({
         tagId: true,
         tagName: true,
         tagType: true,
-        tagNsfw: true,
+        tagNsfwLevel: true,
         score: true,
         automated: true,
         upVotes: true,
@@ -1678,11 +1669,11 @@ export const getImagesByEntity = async ({
       },
     });
 
-    tagsVar = rawTags.map(({ tagId, tagName, tagType, tagNsfw, ...tag }) => ({
+    tagsVar = rawTags.map(({ tagId, tagName, tagType, tagNsfwLevel, ...tag }) => ({
       ...tag,
       id: tagId,
       type: tagType,
-      nsfw: tagNsfw,
+      nsfwLevel: tagNsfwLevel as NsfwLevel,
       name: tagName,
     }));
   }
@@ -1810,7 +1801,6 @@ type GetEntityImageRaw = {
   id: number;
   name: string;
   url: string;
-  nsfw: NsfwLevelOld;
   nsfwLevel: NsfwLevel;
   width: number;
   height: number;
@@ -1904,7 +1894,6 @@ export const getEntityCoverImage = async ({
       i.id,
       i.name,
       i.url,
-      i.nsfw,
       i."nsfwLevel",
       i.width,
       i.height,
@@ -1935,7 +1924,7 @@ export const getEntityCoverImage = async ({
         tagId: true,
         tagName: true,
         tagType: true,
-        tagNsfw: true,
+        tagNsfwLevel: true,
         score: true,
         automated: true,
         upVotes: true,
@@ -1944,11 +1933,11 @@ export const getEntityCoverImage = async ({
       },
     });
 
-    tagsVar = rawTags.map(({ tagId, tagName, tagType, tagNsfw, ...tag }) => ({
+    tagsVar = rawTags.map(({ tagId, tagName, tagType, tagNsfwLevel, ...tag }) => ({
       ...tag,
       id: tagId,
       type: tagType,
-      nsfw: tagNsfw,
+      nsfwLevel: tagNsfwLevel as NsfwLevel,
       name: tagName,
     }));
   }
@@ -2041,7 +2030,6 @@ type GetImageModerationReviewQueueRaw = {
   id: number;
   name: string;
   url: string;
-  nsfw: NsfwLevelOld;
   nsfwLevel: NsfwLevel;
   width: number;
   height: number;
@@ -2149,7 +2137,6 @@ export const getImageModerationReviewQueue = async ({
       i.id,
       i.name,
       i.url,
-      i.nsfw,
       i."nsfwLevel",
       i.width,
       i.height,
@@ -2205,7 +2192,7 @@ export const getImageModerationReviewQueue = async ({
         tagId: true,
         tagName: true,
         tagType: true,
-        tagNsfw: true,
+        tagNsfwLevel: true,
         score: true,
         automated: true,
         upVotes: true,
@@ -2214,11 +2201,11 @@ export const getImageModerationReviewQueue = async ({
       },
     });
 
-    tagsVar = rawTags.map(({ tagId, tagName, tagType, tagNsfw, ...tag }) => ({
+    tagsVar = rawTags.map(({ tagId, tagName, tagType, tagNsfwLevel, ...tag }) => ({
       ...tag,
       id: tagId,
       type: tagType,
-      nsfw: tagNsfw,
+      nsfwLevel: tagNsfwLevel as NsfwLevel,
       name: tagName,
     }));
   }
@@ -2323,7 +2310,7 @@ export async function get404Images() {
       AND c.name = '404 Contest'
       AND i."ingestion" = 'Scanned'
       AND i."needsReview" IS NULL
-      AND i.nsfw = 'None'
+      AND i."nsfwLevel" = 0
       AND ci.status = 'ACCEPTED';
   `;
 

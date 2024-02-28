@@ -1,13 +1,8 @@
 import { Group, Text, Stack, Switch, Popover, ActionIcon, Checkbox } from '@mantine/core';
 import { IconEyeExclamation, TablerIconsProps } from '@tabler/icons-react';
-import {
-  useBlurNsfw,
-  useBrowsingModeContext,
-  useShowNsfw,
-} from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { useBrowsingModeContext } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { BrowsingLevelsGrouped } from '~/components/BrowsingLevel/BrowsingLevelsGrouped';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useIsMobile } from '~/hooks/useIsMobile';
 import { constants } from '~/server/common/constants';
 
 export function BrowsingModeIcon({ iconProps = {} }: BrowsingModeIconProps) {
@@ -32,15 +27,14 @@ type BrowsingModeIconProps = {
 
 export function BrowsingModeMenu() {
   const { toggleBlurNsfw, toggleShowNsfw } = useBrowsingModeContext();
-  const showNsfw = useShowNsfw();
-  const blurNsfw = useBlurNsfw();
+  const currentUser = useCurrentUser();
+  const showNsfw = currentUser?.showNsfw;
+  const blurNsfw = currentUser?.blurNsfw;
 
   // const [showDecorations, setShowDecorations] = useLocalStorage({
   //   key: 'showDecorations',
   //   defaultValue: true,
   // });
-
-  const isMobile = useIsMobile();
 
   return (
     <Stack spacing="md">

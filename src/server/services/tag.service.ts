@@ -1,5 +1,4 @@
 import {
-  NsfwLevel,
   Prisma,
   SearchIndexUpdateQueueAction,
   TagSource,
@@ -215,7 +214,7 @@ export const getVotableTags = async ({
         ...tag,
         id: tagId,
         type: tagType,
-        nsfw: NsfwLevel.None,
+        nsfwLevel: 0,
         name: tagName,
       }))
     );
@@ -249,11 +248,11 @@ export const getVotableTags = async ({
           }
           return true;
         })
-        .map(({ tagId, tagName, tagType, tagNsfw, source, ...tag }) => ({
+        .map(({ tagId, tagName, tagType, tagNsfwLevel, source, ...tag }) => ({
           ...tag,
           id: tagId,
           type: tagType,
-          nsfw: tagNsfw,
+          nsfwLevel: tagNsfwLevel,
           name: tagName,
         }))
     );

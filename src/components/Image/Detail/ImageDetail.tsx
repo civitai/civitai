@@ -13,7 +13,7 @@ import {
   Stack,
   Text,
 } from '@mantine/core';
-import { Availability, CollectionType, NsfwLevel } from '@prisma/client';
+import { Availability, CollectionType } from '@prisma/client';
 import {
   IconAlertTriangle,
   IconBookmark,
@@ -28,6 +28,7 @@ import { Adunit } from '~/components/Ads/AdUnit';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
+import { useIsPublicBrowsingLevel } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { TipBuzzButton } from '~/components/Buzz/TipBuzzButton';
 import { ChatUserButton } from '~/components/Chat/ChatUserButton';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
@@ -48,17 +49,15 @@ import { TrackView } from '~/components/TrackView/TrackView';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { env } from '~/env/client.mjs';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 
-const UNFURLABLE: NsfwLevel[] = [NsfwLevel.None, NsfwLevel.Soft];
 export function ImageDetail() {
   const { classes, cx, theme } = useStyles();
-  const { image, isLoading, active, close, toggleInfo, shareUrl } = useImageDetailContext();
+  const { image, isLoading, active, close, toggleInfo } = useImageDetailContext();
   const { query } = useBrowserRouter();
-  const currentUser = useCurrentUser();
+  const isPublic = useIsPublicBrowsingLevel();
 
   if (isLoading) return <PageLoader />;
   if (!image) return <NotFound />;
@@ -69,16 +68,10 @@ export function ImageDetail() {
     <>
       <Meta
         title={`Image posted by ${image.user.username}`}
-        image={
-          image.url == null || !UNFURLABLE.includes(image.nsfw)
-            ? undefined
-            : getEdgeUrl(image.url, { width: 1200 })
-        }
+        image={image.url && isPublic ? getEdgeUrl(image.url, { width: 1200 }) : undefined}
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/images/${image.id}`, rel: 'canonical' }]}
         deIndex={
-          image.nsfw !== NsfwLevel.None ||
-          !!image.needsReview ||
-          image.availability === Availability.Unsearchable
+          !isPublic || !!image.needsReview || image.availability === Availability.Unsearchable
             ? 'noindex, nofollow'
             : undefined
         }

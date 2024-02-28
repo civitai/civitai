@@ -4,7 +4,6 @@ import {
   getIsPublicBrowsingLevel,
   publicBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useCookies } from '~/providers/CookiesProvider';
 import { Flags } from '~/shared/utils';
 import { setCookie } from '~/utils/cookies-helpers';
@@ -64,7 +63,8 @@ function updateCookieValues({ browsingLevel, blurNsfw, showNsfw }: StoreState) {
 export function BrowsingModeProvider({ children }: { children: React.ReactNode }) {
   const queryUtils = trpc.useContext();
   const { status } = useSession();
-  const currentUser = useCurrentUser();
+  const { data } = useSession();
+  const currentUser = data?.user;
   const debouncer = useDebouncer(1000);
   const cookies = useCookies();
   const { mutate } = trpc.user.update.useMutation();
@@ -115,7 +115,8 @@ export function BrowsingModeProvider({ children }: { children: React.ReactNode }
 
 /** returns the user selected browsing level or the system default browsing level */
 export function useBrowsingLevel() {
-  const currentUser = useCurrentUser();
+  const { data } = useSession();
+  const currentUser = data?.user;
   const { useStore } = useBrowsingModeContext();
   const browsingLevel = useStore((x) => x.browsingLevel);
   if (!currentUser) return publicBrowsingLevelsFlag;
@@ -131,14 +132,4 @@ export function useIsBrowsingLevelSelected(level: BrowsingLevel) {
   const { useStore } = useBrowsingModeContext();
   const browsingLevel = useStore((x) => x.browsingLevel);
   return Flags.hasFlag(browsingLevel, level);
-}
-
-export function useBlurNsfw() {
-  const { useStore } = useBrowsingModeContext();
-  return useStore((x) => x.blurNsfw);
-}
-
-export function useShowNsfw() {
-  const { useStore } = useBrowsingModeContext();
-  return useStore((x) => x.showNsfw);
 }

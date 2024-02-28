@@ -11,7 +11,7 @@ import { z } from 'zod';
 import { useRouter } from 'next/router';
 import { useHotkeys } from '@mantine/hooks';
 import { ImageDetailByProps } from '~/components/Image/Detail/ImageDetailByProps';
-import { ImageGenerationProcess, MediaType, NsfwLevel as NsfwLevelOld } from '@prisma/client';
+import { ImageGenerationProcess, MediaType } from '@prisma/client';
 import { SimpleUser } from '~/server/selectors/user.selector';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { Modal } from '@mantine/core';
@@ -35,7 +35,6 @@ type ImageGuardConnect = {
 
 export interface ImageProps {
   id: number;
-  nsfw: NsfwLevelOld;
   url: string;
   name: string | null;
   meta: ImageMetaProps | null;

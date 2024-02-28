@@ -219,7 +219,7 @@ export function ModelCarousel({
                     <>
                       <ImageGuard2.BlurToggle className="absolute top-2 left-2 z-10" />
                       <Stack spacing="xs" align="flex-end" className="absolute top-2 right-2 z-10">
-                        <ImageContextMenu {...image} />
+                        <ImageContextMenu image={image} />
                         {features.imageGeneration && image.meta && (
                           <HoverActionButton
                             label="Remix"

@@ -35,6 +35,7 @@ import { constants } from '~/server/common/constants';
 import { useImageStore } from '~/store/image.store';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
+import { getIsPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 
 export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height: number }) {
   const { ref, inView } = useInView({ rootMargin: '200% 0px' });
@@ -50,7 +51,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
 
   const tags = useMemo(() => {
     if (!image.tags) return undefined;
-    return image.tags.filter((x) => x.type === 'Moderation');
+    return image.tags.filter((x) => !getIsPublicBrowsingLevel(x.nsfwLevel));
   }, [image.tags]);
 
   const showVotes = !!tags?.length && isScanned;
@@ -92,7 +93,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                         <ImageGuard2.BlurToggle />
                         {safe && (
                           <Stack spacing="xs" ml="auto">
-                            {!isBlocked && <ImageContextMenu {...image} />}
+                            {!isBlocked && <ImageContextMenu image={image} />}
                             {features.imageGeneration && image.meta && (
                               <HoverActionButton
                                 label="Remix"

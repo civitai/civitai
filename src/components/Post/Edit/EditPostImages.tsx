@@ -44,6 +44,7 @@ import { UnblockImage } from '~/components/Image/UnblockImage/UnblockImage';
 import { useImageStore } from '~/store/image.store';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { useRouter } from 'next/router';
+import { getIsPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 
 export function EditPostImages({ max = POST_IMAGE_LIMIT }: { max?: number }) {
   const currentUser = useCurrentUser();
@@ -360,7 +361,7 @@ function ImageBlocked({ blockedFor, tags, uuid }: ImageBlocked) {
                     <Code color="red">{blockedFor}</Code>
                     <Group spacing="xs">
                       {tags
-                        ?.filter((x) => x.type === 'Moderation')
+                        ?.filter((x) => !getIsPublicBrowsingLevel(x.nsfwLevel))
                         .map((x) => (
                           <Badge key={x.name} color="red">
                             {x.name}

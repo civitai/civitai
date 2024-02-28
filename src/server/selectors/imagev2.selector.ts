@@ -33,7 +33,6 @@ export const getImageV2Select = ({ userId }: GetSelectArgs) =>
     postId: true,
     name: true,
     url: true,
-    nsfw: true,
     nsfwLevel: true,
     width: true,
     height: true,

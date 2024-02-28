@@ -1,15 +1,13 @@
 import { Group, Switch, Text, Stack, Title } from '@mantine/core';
-import {
-  useBrowsingModeContext,
-  useShowNsfw,
-  useBlurNsfw,
-} from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { useBrowsingModeContext } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { BrowsingLevelsStacked } from '~/components/BrowsingLevel/BrowsingLevelsStacked';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export function MatureContentSettings() {
+  const currentUser = useCurrentUser();
   const { toggleBlurNsfw, toggleShowNsfw } = useBrowsingModeContext();
-  const showNsfw = useShowNsfw();
-  const blurNsfw = useBlurNsfw();
+  const showNsfw = currentUser?.showNsfw;
+  const blurNsfw = currentUser?.blurNsfw;
 
   return (
     <Stack>
