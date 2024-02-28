@@ -34,6 +34,7 @@ import {
   IconChevronDown,
   IconReplace,
   IconSearch,
+  IconTags,
   IconTrash,
   IconX,
 } from '@tabler/icons-react';
@@ -60,6 +61,7 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { bytesToKB } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
+import { AutoTagModal } from './TrainingAutoTagModal';
 
 const MAX_FILES_ALLOWED = 1000;
 
@@ -671,25 +673,25 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                   {`${totalCaptioned} / ${imageList.length} captioned`}
                 </Text>
               </Paper>
-              {/*<Button*/}
-              {/*  compact*/}
-              {/*  disabled={autoCaptioning.isRunning}*/}
-              {/*  onClick={() =>*/}
-              {/*    dialogStore.trigger({*/}
-              {/*      component: AutoTagModal,*/}
-              {/*      props: {*/}
-              {/*        imageList,*/}
-              {/*        modelId: model.id,*/}
-              {/*        setAutoCaptioning,*/}
-              {/*      },*/}
-              {/*    })*/}
-              {/*  }*/}
-              {/*>*/}
-              {/*  <IconTags size={16} />*/}
-              {/*  <Text inline ml={4}>*/}
-              {/*    Auto Tag*/}
-              {/*  </Text>*/}
-              {/*</Button>*/}
+              <Button
+                compact
+                disabled={autoCaptioning.isRunning}
+                onClick={() =>
+                  dialogStore.trigger({
+                    component: AutoTagModal,
+                    props: {
+                      imageList,
+                      modelId: model.id,
+                      setAutoCaptioning,
+                    },
+                  })
+                }
+              >
+                <IconTags size={16} />
+                <Text inline ml={4}>
+                  Auto Tag
+                </Text>
+              </Button>
               {/*perhaps open a modal here to confirm*/}
               <Button
                 compact

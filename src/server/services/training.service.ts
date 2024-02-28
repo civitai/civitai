@@ -327,60 +327,79 @@ export const autoTagHandler = async ({
   const { url: getUrl } = await getGetUrl(url);
   const { key, bucket } = parseKey(url);
 
-  if (!env.MEDIA_TAGGER_ENDPOINT) {
-    deleteObject(bucket, key).catch();
-    throw throwBadRequestError('Could not complete auto-tagging - please try again.');
-  }
+  const payload: Orchestrator.Training.ImageAutoTagJobPayload = {
+    properties: { userId, modelId, url: getUrl },
+    maxRetryAttempt: 0,
+  };
 
-  const response = await fetch(`${env.MEDIA_TAGGER_ENDPOINT}/tagzip/`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ media: getUrl }),
+  const response = await getOrchestratorCaller(new Date()).imageAutoTag({
+    payload,
   });
 
-  if (!response.ok || !response.body) {
+  if (response.status === 429) {
     deleteObject(bucket, key).catch();
-    throw throwBadRequestError('Could not complete auto-tagging - please try again.');
+    throw throwRateLimitError();
   }
 
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder('utf-8');
-
-  const maxData = 5;
-
-  let dataToSend: AutoTagResponse = {};
-  let tmpBuffer = '';
-
-  while (true) {
-    try {
-      const { value, done } = await reader.read();
-      if (done) {
-        await sendTagSignal(userId, modelId, dataToSend, true);
-        dataToSend = {};
-        break;
-      }
-
-      // const lines = (tmpBuffer + decoder.decode(value, { stream: true })).split(/[\r\n](?=.)/);
-      const lines = (tmpBuffer + decoder.decode(value)).split(/[\r\n]/);
-
-      tmpBuffer = lines.pop() ?? '';
-      for (const l of lines) {
-        const tagData: TagDataResponse = JSON.parse(l);
-        const tagList = Object.entries(tagData).map(([f, t]) => ({
-          [f]: t.wdTagger.tags,
-        }));
-        const returnData: AutoTagResponse = Object.assign({}, ...tagList);
-        dataToSend = { ...dataToSend, ...returnData };
-        if (Object.keys(dataToSend).length >= maxData) {
-          await sendTagSignal(userId, modelId, dataToSend);
-          dataToSend = {};
-        }
-      }
-    } catch (e) {
-      deleteObject(bucket, key).catch();
-      throw throwBadRequestError('Could not complete auto-tagging - please try again.');
-    }
+  if (!response.ok) {
+    deleteObject(bucket, key).catch();
+    throw throwBadRequestError(
+      'We are not able to process your request at this time. Please try again later'
+    );
   }
 
-  deleteObject(bucket, key).catch();
+  console.log(response.data);
+  return response.data;
+
+  // const response = await fetch(`${env.MEDIA_TAGGER_ENDPOINT}/tagzip/`, {
+  //   method: 'POST',
+  //   headers: { 'Content-Type': 'application/json' },
+  //   body: JSON.stringify({ media: getUrl }),
+  // });
+  //
+  // if (!response.ok || !response.body) {
+  //   deleteObject(bucket, key).catch();
+  //   throw throwBadRequestError('Could not complete auto-tagging - please try again.');
+  // }
+  //
+  // const reader = response.body.getReader();
+  // const decoder = new TextDecoder('utf-8');
+  //
+  // const maxData = 5;
+  //
+  // let dataToSend: AutoTagResponse = {};
+  // let tmpBuffer = '';
+  //
+  // while (true) {
+  //   try {
+  //     const { value, done } = await reader.read();
+  //     if (done) {
+  //       await sendTagSignal(userId, modelId, dataToSend, true);
+  //       dataToSend = {};
+  //       break;
+  //     }
+  //
+  //     // const lines = (tmpBuffer + decoder.decode(value, { stream: true })).split(/[\r\n](?=.)/);
+  //     const lines = (tmpBuffer + decoder.decode(value)).split(/[\r\n]/);
+  //
+  //     tmpBuffer = lines.pop() ?? '';
+  //     for (const l of lines) {
+  //       const tagData: TagDataResponse = JSON.parse(l);
+  //       const tagList = Object.entries(tagData).map(([f, t]) => ({
+  //         [f]: t.wdTagger.tags,
+  //       }));
+  //       const returnData: AutoTagResponse = Object.assign({}, ...tagList);
+  //       dataToSend = { ...dataToSend, ...returnData };
+  //       if (Object.keys(dataToSend).length >= maxData) {
+  //         await sendTagSignal(userId, modelId, dataToSend);
+  //         dataToSend = {};
+  //       }
+  //     }
+  //   } catch (e) {
+  //     deleteObject(bucket, key).catch();
+  //     throw throwBadRequestError('Could not complete auto-tagging - please try again.');
+  //   }
+  // }
+  //
+  // deleteObject(bucket, key).catch();
 };

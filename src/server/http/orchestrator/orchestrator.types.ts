@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { trainingDetailsParams } from '~/server/schema/model-version.schema';
+import { autoTagInput } from '~/server/schema/training.schema';
 
 export namespace Orchestrator {
   export type Job<TResult = unknown> = { jobId: string; result: TResult };
@@ -59,6 +60,15 @@ export namespace Orchestrator {
       typeof imageResourceTrainingJobInputSchema
     >;
     export type ImageResourceTrainingResponse = Orchestrator.JobResponse;
+
+    const imageAutoTagInputSchema = z.object({
+      maxRetryAttempt: z.number().positive(),
+      properties: autoTagInput.extend({
+        userId: z.number(),
+      }),
+    });
+    export type ImageAutoTagJobPayload = z.infer<typeof imageAutoTagInputSchema>;
+    export type ImageAutoTagJobResponse = Orchestrator.JobResponse; // TODO is this right?
   }
 
   export namespace Generation {
