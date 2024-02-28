@@ -12,12 +12,12 @@ import {
   Highlight,
   Image,
   Indicator,
-  Input,
   Loader,
   Menu,
   SegmentedControl,
   Stack,
   Text,
+  TextInput,
   Tooltip,
 } from '@mantine/core';
 import { ChatMemberStatus } from '@prisma/client';
@@ -274,7 +274,7 @@ export function ChatList() {
         </Group>
       </Group>
       <Box p="sm" pt={0}>
-        <Input
+        <TextInput
           icon={<IconSearch size={16} />}
           placeholder="Filter by user"
           value={searchInput}

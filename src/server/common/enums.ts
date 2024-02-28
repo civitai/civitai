@@ -140,11 +140,10 @@ export enum SignalMessages {
   BuzzUpdate = 'buzz:update',
   ImageGenStatusUpdate = 'image-gen:status-update',
   TrainingUpdate = 'training:update',
+  TrainingAutoTag = 'training:autotag',
   ImageIngestionStatus = 'image-ingestion:status',
   ChatNewMessage = 'chat:new-message',
-  // ChatUpdateMessage = 'chat:update-message',
   ChatNewRoom = 'chat:new-room',
-  // ChatMembershipChange = 'chat:membership-change',
   ChatTypingStatus = 'chat:typing-status',
 }
 
