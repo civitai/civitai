@@ -3,6 +3,7 @@ import { createMetricProcessor, MetricProcessorRunContext } from '~/server/metri
 import { modelsSearchIndex } from '~/server/search-index';
 import { Prisma, PrismaClient, SearchIndexUpdateQueueAction } from '@prisma/client';
 import { chunk } from 'lodash-es';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 
 export const modelMetrics = createMetricProcessor({
   name: 'Model',
@@ -39,6 +40,7 @@ const modelMetricProcessors = [
   updateVersionDownloadMetrics,
   updateVersionGenerationMetrics,
   updateVersionRatingMetrics,
+  updateModelRatingMetrics,
   updateVersionCommentMetrics,
   updateCollectMetrics,
   updateTippedBuzzMetrics,
@@ -370,6 +372,77 @@ async function updateVersionRatingMetrics({
   return [];
 }
 
+async function updateModelRatingMetrics({ db, lastUpdate, jobContext }: MetricProcessorRunContext) {
+  const modelIdSet = new Set<number>();
+
+  const affectedModelVersionsDb = await db.$queryRaw<{ modelId: number }[]>`
+    SELECT DISTINCT "modelId"
+    FROM "ResourceReview"
+    WHERE "createdAt" > ${lastUpdate} OR "updatedAt" > ${lastUpdate}
+  `;
+  affectedModelVersionsDb.forEach(({ modelId }) => modelIdSet.add(modelId));
+
+  let rows = 0;
+  const modelIds = [...modelIdSet];
+  const tasks = chunk(modelIds, 500).map((batch) => async () => {
+    jobContext.checkIfCanceled();
+
+    const batchJson = JSON.stringify(batch);
+    rows += await db.$executeRaw`
+      -- Migrate model thumbs up metrics
+      INSERT INTO "ModelMetric" ("modelId", timeframe, "thumbsUpCount", "thumbsDownCount")
+      SELECT
+        mv.id,
+        tf.timeframe,
+        COALESCE(SUM(
+          CASE
+              WHEN rr."userId" IS NULL OR rr.recommended = false THEN 0
+              WHEN tf.timeframe = 'AllTime' THEN 1
+              WHEN tf.timeframe = 'Year' THEN IIF(rr.created_at >= NOW() - interval '1 year', 1, 0)
+              WHEN tf.timeframe = 'Month' THEN IIF(rr.created_at >= NOW() - interval '1 month', 1, 0)
+              WHEN tf.timeframe = 'Week' THEN IIF(rr.created_at >= NOW() - interval '1 week', 1, 0)
+              WHEN tf.timeframe = 'Day' THEN IIF(rr.created_at >= NOW() - interval '1 day', 1, 0)
+          END
+        ), 0),
+        COALESCE(SUM(
+          CASE
+              WHEN rr."userId" IS NULL OR rr.recommended = true THEN 0
+              WHEN tf.timeframe = 'AllTime' THEN 1
+              WHEN tf.timeframe = 'Year' THEN IIF(rr.created_at >= NOW() - interval '1 year', 1, NULL)
+              WHEN tf.timeframe = 'Month' THEN IIF(rr.created_at >= NOW() - interval '1 month', 1, NULL)
+              WHEN tf.timeframe = 'Week' THEN IIF(rr.created_at >= NOW() - interval '1 week', 1, NULL)
+              WHEN tf.timeframe = 'Day' THEN IIF(rr.created_at >= NOW() - interval '1 day', 1, NULL)
+          END
+        ), 0)
+      FROM (
+          SELECT
+              r."userId",
+              r."modelId",
+              BOOL_OR(r.recommended) AS recommended,
+              MAX(r."createdAt") AS created_at
+          FROM "ResourceReview" r
+          JOIN "Model" m ON m.id = r."modelId" AND m."userId" != r."userId"
+          WHERE r.exclude = FALSE
+          AND r."tosViolation" = FALSE
+          AND r."modelId" = ANY (SELECT json_array_elements(${batchJson}::json)::text::integer)
+          GROUP BY r."userId", r."modelId"
+      ) rr
+      JOIN "Model" m ON rr."modelId" = m."id" -- confirm that model exists
+      CROSS JOIN ( SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe ) tf
+      GROUP BY m.id, tf.timeframe
+      ON CONFLICT ("modelId", timeframe) DO UPDATE SET
+        "thumbsUpCount" = EXCLUDED."thumbsUpCount",
+        "thumbsDownCount" = EXCLUDED."thumbsDownCount",
+        "updatedAt" = now();
+    `;
+  });
+
+  await limitConcurrency(tasks, 3);
+  console.log('model ratings', rows);
+
+  return modelIds;
+}
+
 async function updateVersionCommentMetrics({
   ch,
   db,
@@ -618,7 +691,7 @@ async function updateTippedBuzzMetrics({ db, lastUpdate, jobContext }: MetricPro
 
 async function updateModelMetrics({ pg, lastUpdate, jobContext }: MetricProcessorRunContext) {
   const rowsQuery = await pg.cancellableQuery(Prisma.sql`
-    INSERT INTO "ModelMetric" ("modelId", timeframe, "downloadCount", "thumbsUpCount", "thumbsDownCount", "commentCount", "imageCount", "collectedCount", "tippedCount", "tippedAmountCount", "generationCount", "updatedAt")
+    INSERT INTO "ModelMetric" ("modelId", timeframe, "downloadCount", "commentCount", "imageCount", "collectedCount", "tippedCount", "tippedAmountCount", "generationCount", "updatedAt")
     WITH affected AS (
       SELECT DISTINCT mv."modelId"
       FROM "ModelVersionMetric" mvm
@@ -629,8 +702,6 @@ async function updateModelMetrics({ pg, lastUpdate, jobContext }: MetricProcesso
       mv."modelId",
       mvm.timeframe,
       SUM(mvm."downloadCount") "downloadCount",
-      SUM(mvm."thumbsUpCount") "thumbsUpCount",
-      SUM(mvm."thumbsDownCount") "thumbsDownCount",
       MAX(mvm."commentCount") "commentCount",
       SUM(mvm."imageCount") "imageCount",
       MAX(mvm."collectedCount") "collectedCount",
@@ -644,8 +715,6 @@ async function updateModelMetrics({ pg, lastUpdate, jobContext }: MetricProcesso
     GROUP BY mv."modelId", mvm.timeframe
     ON CONFLICT ("modelId", timeframe) DO UPDATE SET
       "downloadCount" = EXCLUDED."downloadCount",
-      "thumbsUpCount" = EXCLUDED."thumbsUpCount",
-      "thumbsDownCount" = EXCLUDED."thumbsDownCount",
       "commentCount" = EXCLUDED."commentCount",
       "imageCount" = EXCLUDED."imageCount",
       "collectedCount" = EXCLUDED."collectedCount",

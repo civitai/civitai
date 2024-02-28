@@ -279,7 +279,7 @@ function ReviewCard({ creatorId, ...review }: ResourceReviewPagedModel & { creat
             subText={
               <Group spacing={8} noWrap>
                 <Text size="sm" lineClamp={1}>
-                  <DaysFromNow date={review.createdAt} /> - {review.modelVersion.name}
+                  <DaysFromNow date={review.createdAt} />
                 </Text>
 
                 <RoutedDialogLink
@@ -295,7 +295,7 @@ function ReviewCard({ creatorId, ...review }: ResourceReviewPagedModel & { creat
                       </Center>
                     }
                   >
-                    {review.helper?.imageCount ?? '0'}
+                    {review.imageCount ?? '0'}
                   </Badge>
                 </RoutedDialogLink>
 
@@ -312,7 +312,7 @@ function ReviewCard({ creatorId, ...review }: ResourceReviewPagedModel & { creat
                       </Center>
                     }
                   >
-                    {review.thread?._count.comments ?? '0'}
+                    {review.commentCount ?? '0'}
                   </Badge>
                 </RoutedDialogLink>
               </Group>
@@ -340,7 +340,7 @@ function ReviewCard({ creatorId, ...review }: ResourceReviewPagedModel & { creat
               review={{
                 ...review,
                 details: review.details ?? '',
-                modelVersionId: review.modelVersion.id,
+                modelVersionId: review.modelVersionId,
               }}
             />
           </Group>

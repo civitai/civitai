@@ -16,7 +16,11 @@ export const useCreateResourceReview = () => {
   return trpc.resourceReview.create.useMutation({
     onSuccess: async (response, { modelId, recommended, modelVersionId }) => {
       queryUtils.resourceReview.getUserResourceReview.setData({ modelVersionId }, () => response);
-      await queryUtils.resourceReview.getRatingTotals.invalidate({ modelId, modelVersionId });
+      queryUtils.resourceReview.getRatingTotals.setData({ modelId, modelVersionId }, (old) => {
+        if (!old) return old;
+        if (recommended) return { ...old, up: old.up + 1 };
+        return { ...old, down: old.down + 1 };
+      });
 
       const previousEngaged = queryUtils.user.getEngagedModels.getData() ?? {
         Recommended: [] as number[],

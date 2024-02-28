@@ -648,6 +648,42 @@ export function ModelVersionDetails({
             files={version.files}
             baseModel={version.baseModel}
           />
+          {!model.locked && (
+            <UserResourceReviewComposite
+              modelId={model.id}
+              modelVersionId={version.id}
+              modelName={model.name}
+            >
+              {({ modelId, modelVersionId, modelName, userReview }) => (
+                <Card p="sm" withBorder>
+                  <Stack spacing={8}>
+                    <Group spacing={8} position="apart">
+                      <Text size="md">Reviews</Text>
+                      <Anchor
+                        component={NextLink}
+                        href={`/models/${modelId}/reviews?modelVersionId=${modelVersionId}`}
+                        size="sm"
+                      >
+                        See All Reviews
+                      </Anchor>
+                    </Group>
+                    <ResourceReviewThumbActions
+                      modelId={modelId}
+                      modelVersionId={modelVersionId}
+                      userReview={userReview}
+                    />
+                  </Stack>
+                  <Card.Section py="sm" mt="sm" inheritPadding withBorder>
+                    <EditUserResourceReviewV2
+                      modelVersionId={modelVersionId}
+                      modelName={modelName}
+                      userReview={userReview}
+                    />
+                  </Card.Section>
+                </Card>
+              )}
+            </UserResourceReviewComposite>
+          )}
           <Accordion
             variant="separated"
             multiple
@@ -820,45 +856,6 @@ export function ModelVersionDetails({
             )}
           </Accordion>
 
-          {!model.locked && (
-            <UserResourceReviewComposite
-              modelId={model.id}
-              modelVersionId={version.id}
-              modelName={model.name}
-            >
-              {({ modelId, modelVersionId, modelName, userReview }) => (
-                <Card p="sm" withBorder>
-                  <Stack spacing={8}>
-                    <Group spacing={8} position="apart">
-                      <Text size="md" weight={600}>
-                        Reviews
-                      </Text>
-                      <Link
-                        href={`/models/${modelId}/reviews?modelVersionId=${modelVersionId}`}
-                        passHref
-                      >
-                        <Anchor size="sm">See All Reviews</Anchor>
-                      </Link>
-                    </Group>
-                    <ResourceReviewThumbActions
-                      modelId={modelId}
-                      modelVersionId={modelVersionId}
-                      userReview={userReview}
-                    />
-                  </Stack>
-                  {userReview && (
-                    <Card.Section py="sm" mt="sm" inheritPadding withBorder>
-                      <EditUserResourceReviewV2
-                        modelVersionId={modelVersionId}
-                        modelName={modelName}
-                        userReview={userReview}
-                      />
-                    </Card.Section>
-                  )}
-                </Card>
-              )}
-            </UserResourceReviewComposite>
-          )}
           <CreatorCard user={model.user} tipBuzzEntityType="Model" tipBuzzEntityId={model.id} />
           {onSite && (
             <Group

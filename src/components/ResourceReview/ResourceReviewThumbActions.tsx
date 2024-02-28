@@ -1,4 +1,4 @@
-import { Button, Group, Text } from '@mantine/core';
+import { Button, createStyles, Group, Text } from '@mantine/core';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import {
   useCreateResourceReview,
@@ -14,6 +14,26 @@ import { ResourceReviewModel } from '~/server/selectors/resourceReview.selector'
 import { trpc } from '~/utils/trpc';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 
+const useThumbActionStyles = createStyles((theme) => ({
+  button: {
+    overflow: 'hidden',
+    '.mantine-Button-leftIcon': {
+      position: 'absolute',
+      left: 12,
+      top: '50%',
+      transform: 'translateY(-50%)',
+    },
+    '&:last-of-type .mantine-Button-leftIcon': {
+      right: 12,
+      left: 'auto',
+      marginRight: 0,
+    },
+    '&[data-loading]::before': {
+      borderRadius: 0,
+    },
+  },
+}));
+
 export function ResourceReviewThumbActions({
   modelId,
   modelVersionId,
@@ -23,6 +43,7 @@ export function ResourceReviewThumbActions({
   modelVersionId: number;
   userReview?: ResourceReviewModel | null;
 }) {
+  const { classes } = useThumbActionStyles();
   const { totals, loading: loadingTotals } = useQueryResourceReviewTotals({
     modelId,
     modelVersionId,
@@ -32,12 +53,12 @@ export function ResourceReviewThumbActions({
   });
 
   const createMutation = useCreateResourceReview();
-  const upddateMutation = useUpdateResourceReview();
+  const updateMutation = useUpdateResourceReview();
   const deleteMutation = useDeleteResourceReview();
 
   const handleReviewRatingChange = ({ recommended }: { recommended: boolean }) => {
     if (userReview?.id) {
-      return upddateMutation.mutate({
+      return updateMutation.mutate({
         id: userReview.id,
         recommended,
         rating: recommended ? 5 : 1,
@@ -59,7 +80,7 @@ export function ResourceReviewThumbActions({
 
   const isThumbsUp = userReview?.recommended === true;
   const isThumbsDown = userReview?.recommended === false;
-  const saving = createMutation.isLoading || upddateMutation.isLoading || deleteMutation.isLoading;
+  const saving = createMutation.isLoading || updateMutation.isLoading || deleteMutation.isLoading;
 
   return (
     <Button.Group style={{ gap: 4 }}>
@@ -72,11 +93,13 @@ export function ResourceReviewThumbActions({
           onClick={() =>
             isThumbsUp ? handleDeleteReview() : handleReviewRatingChange({ recommended: true })
           }
+          className={classes.button}
           fullWidth
         >
           <Text color="success.5" size="xs" inline>
             <Group spacing={4} noWrap>
-              <ThumbsUpIcon size={20} filled={isThumbsUp} /> {abbreviateNumber(totals?.up ?? 0)}
+              <ThumbsUpIcon size={20} filled={isThumbsUp} />{' '}
+              {!loadingTotals && abbreviateNumber(totals?.up ?? 0)}
             </Group>
           </Text>
         </Button>
@@ -90,6 +113,7 @@ export function ResourceReviewThumbActions({
           onClick={() =>
             isThumbsDown ? handleDeleteReview() : handleReviewRatingChange({ recommended: false })
           }
+          className={classes.button}
           fullWidth
         >
           <Text color="red" inline>

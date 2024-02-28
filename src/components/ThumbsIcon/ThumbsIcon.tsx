@@ -1,14 +1,18 @@
 import { useMantineTheme } from '@mantine/core';
-import { IconThumbDown, IconThumbUp, TablerIconsProps } from '@tabler/icons-react';
+import {
+  IconThumbDown,
+  IconThumbDownFilled,
+  IconThumbUp,
+  IconThumbUpFilled,
+  TablerIconsProps,
+} from '@tabler/icons-react';
 
 export function ThumbsUpIcon({ filled, ...iconProps }: Props) {
   const theme = useMantineTheme();
 
   return filled ? (
-    <IconThumbUp
+    <IconThumbUpFilled
       {...iconProps}
-      stroke={1}
-      fill="currentColor"
       color={theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.white}
     />
   ) : (
@@ -20,10 +24,8 @@ export function ThumbsDownIcon({ filled, ...iconProps }: Props) {
   const theme = useMantineTheme();
 
   return filled ? (
-    <IconThumbDown
+    <IconThumbDownFilled
       {...iconProps}
-      stroke={1}
-      fill="currentColor"
       color={theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.white}
     />
   ) : (

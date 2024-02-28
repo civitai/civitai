@@ -188,6 +188,7 @@ type UserResourceReviewCompositeProps = {
   modelId: number;
   modelVersionId: number;
   modelName?: string;
+  loading: boolean;
 };
 
 export function UserResourceReviewComposite({
@@ -198,18 +199,13 @@ export function UserResourceReviewComposite({
 }: Props & { children: (props: UserResourceReviewCompositeProps) => JSX.Element | null }) {
   const { currentUserReview, loading } = useQueryUserResourceReview({ modelVersionId });
 
-  return loading ? (
-    <Center p="xs">
-      <Loader />
-    </Center>
-  ) : (
-    children({
-      userReview: currentUserReview,
-      modelId,
-      modelVersionId,
-      modelName,
-    })
-  );
+  return children({
+    userReview: currentUserReview,
+    modelId,
+    modelVersionId,
+    modelName,
+    loading,
+  });
 }
 
 export function EditUserResourceReviewV2({
@@ -266,21 +262,27 @@ export function EditUserResourceReviewV2({
     },
   }));
 
-  if (!userReview) return null;
-
   return (
     <Stack pos="relative">
       <Group spacing={8} position="apart">
-        <Text variant="link" size="sm" style={{ cursor: 'pointer' }} onClick={handleToggleOpen}>
-          <Group spacing={4}>
-            <IconChevronDown className={cx({ [classes.opened]: opened })} size={20} />
-            <span>{hasComment ? 'Edit' : 'Add'} Review Comments</span>
-          </Group>
-        </Text>
-        {userReview && showReviewedAt && (
-          <Text color="dimmed" size="xs">
-            Reviewed <DaysFromNow date={userReview.createdAt} />
+        {!userReview ? (
+          <Text size="sm" color="dimmed">
+            What did you think of this resource?
           </Text>
+        ) : (
+          <>
+            <Text variant="link" size="sm" style={{ cursor: 'pointer' }} onClick={handleToggleOpen}>
+              <Group spacing={4}>
+                <IconChevronDown className={cx({ [classes.opened]: opened })} size={20} />
+                <span>{hasComment ? 'Edit' : 'Add'} Review Comments</span>
+              </Group>
+            </Text>
+            {userReview && showReviewedAt && (
+              <Text color="dimmed" size="xs">
+                Reviewed <DaysFromNow date={userReview.createdAt} />
+              </Text>
+            )}
+          </>
         )}
       </Group>
       {opened && (

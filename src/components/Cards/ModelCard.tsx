@@ -420,8 +420,25 @@ export function ModelCard({ data, forceInView }: Props) {
                   </Text>
                   {data.rank && (
                     <>
-                      {(!!data.rank.thumbsUpCount ||
-                        !!data.rank.downloadCount ||
+                      {!data.locked && !!data.rank.thumbsUpCount && (
+                        <Badge
+                          className={cx(classes.statChip, classes.chip)}
+                          variant="light"
+                          radius="xl"
+                        >
+                          <Group spacing={4}>
+                            <Text
+                              color={hasReview ? 'success.5' : undefined}
+                              component="span"
+                              mt={2}
+                            >
+                              <ThumbsUpIcon size={16} filled={hasReview} />
+                            </Text>
+                            <Text size="xs">{abbreviateNumber(data.rank.thumbsUpCount)}</Text>
+                          </Group>
+                        </Badge>
+                      )}
+                      {(!!data.rank.downloadCount ||
                         !!data.rank.collectedCount ||
                         !!data.rank.tippedAmountCount) && (
                         <Badge
@@ -432,12 +449,6 @@ export function ModelCard({ data, forceInView }: Props) {
                           <Group spacing={2}>
                             <IconDownload size={14} strokeWidth={2.5} />
                             <Text size="xs">{abbreviateNumber(data.rank.downloadCount)}</Text>
-                          </Group>
-                          <Group spacing={2}>
-                            <Text color={hasReview ? 'success.5' : undefined} inline>
-                              <ThumbsUpIcon size={14} filled={hasReview} />
-                            </Text>
-                            <Text size="xs">{abbreviateNumber(data.rank.thumbsUpCount)}</Text>
                           </Group>
                           <Group spacing={2}>
                             <IconBookmark size={14} strokeWidth={2.5} />
