@@ -21,7 +21,7 @@ EXECUTE FUNCTION add_image_metrics();
 CREATE OR REPLACE FUNCTION add_model_metrics()
 RETURNS TRIGGER AS $$
 BEGIN
-    INSERT INTO "ModelMetric" ("modelId", timeframe, "createdAt")
+    INSERT INTO "ModelMetric" ("modelId", timeframe, "updatedAt")
     SELECT
       NEW.id,
       timeframe,
