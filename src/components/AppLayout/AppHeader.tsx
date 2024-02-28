@@ -92,9 +92,9 @@ import { AutocompleteSearch } from '../AutocompleteSearch/AutocompleteSearch';
 import { openBuyBuzzModal } from '../Modals/BuyBuzzModal';
 import { GenerateButton } from '../RunStrategy/GenerateButton';
 import { UserBuzz } from '../User/UserBuzz';
-import { FeatureIntroduction } from '~/components/FeatureIntroduction/FeatureIntroduction';
-import { trpc } from '~/utils/trpc';
+import { FeatureIntroductionModal } from '~/components/FeatureIntroduction/FeatureIntroduction';
 import { useSystemCollections } from '~/components/Collections/collection.utils';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 
 const HEADER_HEIGHT = 70;
 
@@ -525,16 +525,22 @@ export function AppHeader({
         href: '#!',
         visible: !!currentUser,
         label: (
-          <FeatureIntroduction
-            feature="getting-started"
-            contentSlug={['feature-introduction', 'welcome']}
-            actionButton={
-              <Group align="center" spacing="xs">
-                <IconPlayerPlayFilled stroke={1.5} />
-                Getting Started
-              </Group>
-            }
-          />
+          <UnstyledButton
+            onClick={() => {
+              dialogStore.trigger({
+                component: FeatureIntroductionModal,
+                props: {
+                  feature: 'getting-started',
+                  contentSlug: ['feature-introduction', 'welcome'],
+                },
+              });
+            }}
+          >
+            <Group align="center" spacing="xs">
+              <IconPlayerPlayFilled stroke={1.5} />
+              Getting Started
+            </Group>
+          </UnstyledButton>
         ),
       },
     ],
@@ -587,6 +593,7 @@ export function AppHeader({
           link.href ? (
             <Menu.Item
               key={link.href}
+              display="flex"
               component={NextLink}
               href={link.href}
               as={link.as}

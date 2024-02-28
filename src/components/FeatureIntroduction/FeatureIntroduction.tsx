@@ -18,7 +18,7 @@ import rehypeRaw from 'rehype-raw';
 import { trpc } from '../../utils/trpc';
 import { useDialogContext } from '../Dialog/DialogProvider';
 import { dialogStore } from '../Dialog/dialogStore';
-import { FloatingHelpButton } from '~/components/HelpButton/HelpButton';
+import { HelpButton } from '~/components/HelpButton/HelpButton';
 
 type Props = {
   feature: string;
@@ -134,7 +134,7 @@ export const FeatureIntroduction = ({
   );
 };
 
-export function FeatureIntroductionFloatingButton({
+export function FeatureIntroductionHelpButton({
   feature,
   contentSlug,
   modalProps,
@@ -146,5 +146,5 @@ export function FeatureIntroductionFloatingButton({
     });
   }, [contentSlug, feature, modalProps]);
 
-  return <FloatingHelpButton onClick={handleOpenDialog} />;
+  return <HelpButton onClick={handleOpenDialog} />;
 }
