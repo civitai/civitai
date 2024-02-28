@@ -683,7 +683,7 @@ const NsfwBadge = ({
           userSelect: 'none',
           backgroundColor: theme.fn.rgba(theme.colors[color][shade], 0.6),
           color: 'white',
-          backdropFilter: 'blur(7px)',
+          // backdropFilter: 'blur(7px)',
           boxShadow: '1px 2px 3px -1px rgba(37,38,43,0.2)',
           ...(position !== 'static'
             ? {
@@ -813,7 +813,7 @@ ImageGuard.ToggleImageButton = function ToggleImageButton(props: {
         sx={(theme) => ({
           backgroundColor: theme.fn.rgba(theme.colors[color][shade], 0.6),
           color: 'white',
-          backdropFilter: 'blur(7px)',
+          // backdropFilter: 'blur(7px)',
           boxShadow: '1px 2px 3px -1px rgba(37,38,43,0.2)',
           ...(position !== 'static'
             ? {
