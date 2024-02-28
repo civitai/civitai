@@ -197,3 +197,13 @@ export enum ThreadSort {
   Oldest = 'Oldest',
   MostReactions = 'Most Reactions',
 }
+
+export enum PurchasableRewardViewMode {
+  Available = 'Available',
+  Purchased = 'Purchased',
+}
+export enum PurchasableRewardModeratorViewMode {
+  Available = 'Available',
+  History = 'History',
+  Purchased = 'Purchased',
+}

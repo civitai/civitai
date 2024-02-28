@@ -49,6 +49,7 @@ export function EdgeMedia({
   let _type = type ?? _inferredType;
 
   // videos are always transcoded
+  if (!anim) console.log(_name, _inferredType);
   if (_inferredType === 'video' && _type === 'image') {
     transcode = true;
     anim = false;

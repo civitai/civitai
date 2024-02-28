@@ -73,8 +73,7 @@ import { stripTime } from '~/utils/date-helpers';
 import { BountyGetById } from '~/types/router';
 import { BaseFileSchema } from '~/server/schema/file.schema';
 import { containerQuery } from '~/utils/mantine-css-helpers';
-import { FeatureIntroduction } from '~/components/FeatureIntroduction/FeatureIntroduction';
-import { HelpButton } from '~/components/HelpButton/HelpButton';
+import { FeatureIntroductionHelpButton } from '~/components/FeatureIntroduction/FeatureIntroduction';
 import { ContentPolicyLink } from '../ContentPolicyLink/ContentPolicyLink';
 import { InfoPopover } from '../InfoPopover/InfoPopover';
 
@@ -330,10 +329,9 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
           <Title className={classes.title}>
             {bounty ? `Editing ${bounty.name} bounty` : 'Create a new bounty'}
           </Title>
-          <FeatureIntroduction
+          <FeatureIntroductionHelpButton
             feature="bounty-create"
             contentSlug={['feature-introduction', 'bounty-create']}
-            actionButton={<HelpButton size="md" radius="xl" />}
           />
         </Group>
         {alreadyStarted && (

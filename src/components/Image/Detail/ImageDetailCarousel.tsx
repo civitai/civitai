@@ -144,6 +144,7 @@ export function ImageDetailCarousel({ className }: GalleryCarouselProps) {
                       variant="default"
                       className={cx(classes.generateButton)}
                     >
+                      <div className="glow" />
                       <Group spacing={4} noWrap>
                         <IconBrush size={16} />
                         <Text size="xs">Remix</Text>
@@ -173,7 +174,7 @@ export function ImageDetailCarousel({ className }: GalleryCarouselProps) {
                       variant: 'light',
                       style: {
                         color: 'white',
-                        backdropFilter: 'blur(7px)',
+                        // backdropFilter: 'blur(7px)',
                         background: theme.fn.rgba(theme.colors.gray[8], 0.4),
                       },
                     }}
@@ -361,7 +362,7 @@ const useStyles = createStyles((theme, _props, getRef) => {
         background: theme.fn.rgba(theme.colors.blue[6], 0.8),
         transform: 'none',
 
-        '&::before': {
+        '.glow': {
           transform: 'scale(1.1, 1.15)',
         },
       },
@@ -371,8 +372,7 @@ const useStyles = createStyles((theme, _props, getRef) => {
         transform: 'none',
       },
 
-      '&::before': {
-        content: '""',
+      '.glow': {
         position: 'absolute',
         left: '0',
         top: '0',
@@ -398,7 +398,7 @@ const useStyles = createStyles((theme, _props, getRef) => {
     },
     actionIcon: {
       height: 30,
-      backdropFilter: 'blur(7px)',
+      // backdropFilter: 'blur(7px)',
       color: 'white',
       background: theme.fn.rgba(theme.colors.gray[8], 0.4),
     },

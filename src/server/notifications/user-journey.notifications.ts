@@ -19,6 +19,7 @@ export const userJourneyNotifications = createNotificationProcessor({
         jsonb_build_object(),
         '${category}'::"NotificationCategory" "category"
       FROM "User"
-      WHERE "createdAt" > '${lastSent}';`,
+      WHERE "createdAt" > '${lastSent}'
+      ON CONFLICT ("id") DO NOTHING;`,
   },
 });

@@ -10,8 +10,7 @@ import { TrainingFormSubmit } from '~/components/Resource/Forms/Training/Trainin
 import { usePostHog } from '~/hooks/usePostHog';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
-import { HelpButton } from '~/components/HelpButton/HelpButton';
-import { FeatureIntroduction } from '~/components/FeatureIntroduction/FeatureIntroduction';
+import { FeatureIntroductionHelpButton } from '~/components/FeatureIntroduction/FeatureIntroduction';
 
 type WizardState = {
   step: number;
@@ -69,10 +68,9 @@ export default function TrainWizard() {
         <Stack pb="xl">
           <Group spacing={8} noWrap>
             <Title order={2}>Train a LoRA</Title>
-            <FeatureIntroduction
+            <FeatureIntroductionHelpButton
               feature="model-training"
               contentSlug={['feature-introduction', 'model-training']}
-              actionButton={<HelpButton size="md" radius="xl" />}
             />
           </Group>
           <Stepper

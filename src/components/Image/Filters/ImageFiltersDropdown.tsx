@@ -8,16 +8,14 @@ import {
   Drawer,
   Group,
   Indicator,
-  MantineNumberSize,
   Popover,
   Stack,
 } from '@mantine/core';
 import { MediaType, MetricTimeframe } from '@prisma/client';
 import { IconChevronDown, IconFilter } from '@tabler/icons-react';
-import { useRouter } from 'next/router';
 import { useCallback, useState } from 'react';
 import { PeriodFilter } from '~/components/Filters';
-import { useCurrentUser, useIsSameUser } from '~/hooks/useCurrentUser';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import useIsClient from '~/hooks/useIsClient';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFiltersContext } from '~/providers/FiltersProvider';

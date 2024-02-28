@@ -54,6 +54,7 @@ import { buzzWithdrawalRequestRouter } from './buzz-withdrawal-request.router';
 import { integrationRouter } from './integration.router';
 import { paypalRouter } from './paypal.router';
 import { buildGuideRouter } from './build-guide.router';
+import { purchasableRewardRouter } from './purchasable-reward.router';
 
 export const appRouter = router({
   account: accountRouter,
@@ -110,6 +111,7 @@ export const appRouter = router({
   integration: integrationRouter,
   paypal: paypalRouter,
   buildGuide: buildGuideRouter,
+  purchasableReward: purchasableRewardRouter,
 });
 
 // export type definition of API
