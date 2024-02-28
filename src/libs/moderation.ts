@@ -1,4 +1,3 @@
-import { NsfwLevel } from '@prisma/client';
 import { TagVotableEntityType } from '~/libs/tags';
 
 export type ModerationCategory = {

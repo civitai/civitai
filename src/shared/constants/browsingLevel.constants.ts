@@ -62,3 +62,26 @@ export const browsingLevelOr = (array: (number | undefined)[]) => {
   }
   return publicBrowsingLevelsFlag;
 };
+
+export enum NsfwLevelDeprecated {
+  None = 'None',
+  Soft = 'Soft',
+  Mature = 'Mature',
+  X = 'X',
+  Blocked = 'Blocked',
+}
+export const nsfwLevelMapDeprecated = {
+  None: flagifyBrowsingLevel([NsfwLevel.PG, NsfwLevel.PG13]),
+  Soft: NsfwLevel.R,
+  Mature: NsfwLevel.X,
+  X: NsfwLevel.XXX,
+  Blocked: NsfwLevel.Blocked,
+};
+export const nsfwLevelReverseMapDeprecated = {
+  [NsfwLevel.PG]: NsfwLevelDeprecated.None,
+  [NsfwLevel.PG13]: NsfwLevelDeprecated.None,
+  [NsfwLevel.R]: NsfwLevelDeprecated.Soft,
+  [NsfwLevel.X]: NsfwLevelDeprecated.Mature,
+  [NsfwLevel.XXX]: NsfwLevelDeprecated.X,
+  [NsfwLevel.Blocked]: NsfwLevelDeprecated.Blocked,
+};

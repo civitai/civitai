@@ -26,11 +26,11 @@ type BrowsingModeIconProps = {
 };
 
 export function BrowsingModeMenu() {
-  const { toggleBlurNsfw, toggleShowNsfw, toggleApplyHidden } = useBrowsingModeContext();
+  const { toggleBlurNsfw, toggleShowNsfw, toggleDisableHidden } = useBrowsingModeContext();
   const currentUser = useCurrentUser();
   const showNsfw = currentUser?.showNsfw;
   const blurNsfw = currentUser?.blurNsfw;
-  const applyHidden = currentUser?.applyHidden;
+  const disableHidden = currentUser?.disableHidden;
 
   // const [showDecorations, setShowDecorations] = useLocalStorage({
   //   key: 'showDecorations',
@@ -59,8 +59,8 @@ export function BrowsingModeMenu() {
       )}
 
       <Checkbox
-        checked={applyHidden}
-        onChange={(e) => toggleApplyHidden(e.target.checked)}
+        checked={!disableHidden}
+        onChange={(e) => toggleDisableHidden(!e.target.checked)}
         label="Apply hidden tags filter"
       />
       {/* <Group spacing="xs">

@@ -10,7 +10,6 @@ import { baseQuerySchema, periodModeSchema } from '~/server/schema/base.schema';
 import { ImageSort } from './../common/enums';
 import { SearchIndexEntityTypes } from '~/components/Search/parsers/base';
 import { zc } from '~/utils/schema-helpers';
-import { browsingLevelSchema } from '~/shared/constants/browsingLevel.constants';
 
 const stringToNumber = z.coerce.number().optional();
 

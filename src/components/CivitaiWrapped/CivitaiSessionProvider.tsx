@@ -53,7 +53,7 @@ export type CivitaiSessionUser = SessionUser & {
   refresh: () => Promise<Session | null>;
   showNsfw: boolean;
   blurNsfw: boolean;
-  applyHidden: boolean;
+  disableHidden?: boolean;
   browsingLevel: number;
 };
 

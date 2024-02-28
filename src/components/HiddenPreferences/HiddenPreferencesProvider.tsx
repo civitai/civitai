@@ -38,14 +38,14 @@ export const HiddenPreferencesProvider = ({
     : browsingLevelGlobal;
   const { data, isLoading } = useQueryHiddenPreferences();
   const currentUser = useCurrentUser();
-  const applyHidden = currentUser?.applyHidden ?? true;
+  const disableHidden = currentUser?.disableHidden;
 
   const hidden = useMemo(() => {
     const tags = new Map(
       data.hiddenTags
         .filter(
           (x) =>
-            (applyHidden && x.hidden) ||
+            (!disableHidden && x.hidden) ||
             (!!x.nsfwLevel && !Flags.hasFlag(browsingLevel, x.nsfwLevel))
         )
         .map((x) => [x.id, true])
@@ -64,7 +64,7 @@ export const HiddenPreferencesProvider = ({
       browsingLevel,
       isSfw: getIsPublicBrowsingLevel(browsingLevel),
     };
-  }, [data, browsingLevel, isLoading, applyHidden]);
+  }, [data, browsingLevel, isLoading, disableHidden]);
 
   const hiddenDeferred = useDeferredValue(hidden);
 
