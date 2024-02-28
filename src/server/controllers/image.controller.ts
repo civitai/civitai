@@ -1,7 +1,7 @@
 import {
   GetEntitiesCoverImage,
   GetImageInput,
-  GetInfiniteImagesInput,
+  GetInfiniteImagesOutput,
   ImageModerationSchema,
   ImageReviewQueueInput,
 } from './../schema/image.schema';
@@ -215,7 +215,7 @@ export const getInfiniteImagesHandler = async ({
   input,
   ctx,
 }: {
-  input: GetInfiniteImagesInput;
+  input: GetInfiniteImagesOutput;
   ctx: Context;
 }) => {
   try {
@@ -250,7 +250,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
   input: { limit, cursor, hidden, ...input },
   ctx,
 }: {
-  input: GetInfiniteImagesInput;
+  input: GetInfiniteImagesOutput;
   ctx: Context;
 }) => {
   try {

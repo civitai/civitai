@@ -16,7 +16,6 @@ import { chunk, truncate } from 'lodash-es';
 import { SessionUser } from 'next-auth';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server.mjs';
-import { nsfwLevelOrder } from '~/libs/moderation';
 import { VotableTagModel } from '~/libs/tags';
 import { BlockedReason, ImageScanType, ImageSort, NsfwLevel } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -25,6 +24,7 @@ import { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema'
 import {
   CreateImageSchema,
   GetEntitiesCoverImage,
+  GetInfiniteImagesOutput,
   ImageEntityType,
   ImageReviewQueueInput,
   ImageUploadProps,
@@ -46,7 +46,6 @@ import { logToDb } from '~/utils/logging';
 import { isDefined } from '~/utils/type-guards';
 import {
   GetImageInput,
-  GetInfiniteImagesInput,
   ImageMetaProps,
   ImageModerationSchema,
   IngestImageInput,
@@ -133,7 +132,6 @@ export const updateImageById = async ({
 
 export const moderateImages = async ({
   ids,
-  nsfw,
   needsReview,
   reviewType,
   reviewAction,
@@ -142,7 +140,6 @@ export const moderateImages = async ({
     await dbWrite.image.updateMany({
       where: { id: { in: ids } },
       data: {
-        nsfw,
         needsReview: null,
         ingestion: 'Blocked',
         blockedFor: BlockedReason.Moderated,
@@ -164,7 +161,7 @@ export const moderateImages = async ({
     // Approve
     await dbWrite.image.updateMany({
       where: { id: { in: ids } },
-      data: { nsfw, needsReview, ingestion: 'Scanned' },
+      data: { needsReview, ingestion: 'Scanned' },
     });
 
     // Remove tags that triggered review
@@ -492,7 +489,6 @@ export const getAllImages = async ({
   reviewId,
   prioritizedUserIds,
   include,
-  nsfw,
   excludeCrossPosts,
   reactions,
   ids,
@@ -501,10 +497,13 @@ export const getAllImages = async ({
   hidden,
   followed,
   fromPlatform,
-}: GetInfiniteImagesInput & {
+  browsingLevel,
+}: GetInfiniteImagesOutput & {
   userId?: number;
   isModerator?: boolean;
-  nsfw?: NsfwLevelOld;
+  // TODO.nsfwLevel - require browsingLevel?
+  // browsingLevel: number[];
+  // nsfw?: NsfwLevelOld;
   headers?: Record<string, string>; // does this do anything?
 }) => {
   const AND: Prisma.Sql[] = [Prisma.sql`i."postId" IS NOT NULL`];
@@ -707,11 +706,12 @@ export const getAllImages = async ({
   //   AND.push(Prisma.sql`i."id" IN (${Prisma.join(excludedImageIds ?? [])})`);
   // }
 
-  if (nsfw === NsfwLevelOld.None) AND.push(Prisma.sql`i."nsfw" = 'None'`);
-  else if (nsfw !== undefined) {
-    const nsfwLevels = nsfwLevelOrder.slice(1, nsfwLevelOrder.indexOf(nsfw) + 1);
-    AND.push(Prisma.sql`i."nsfw" = ANY(ARRAY[${Prisma.join(nsfwLevels)}]::"NsfwLevel"[])`);
-  }
+  // TODO.nsfwLevel
+  // if (nsfw === NsfwLevelOld.None) AND.push(Prisma.sql`i."nsfw" = 'None'`);
+  // else if (nsfw !== undefined) {
+  //   const nsfwLevels = nsfwLevelOrder.slice(1, nsfwLevelOrder.indexOf(nsfw) + 1);
+  //   AND.push(Prisma.sql`i."nsfw" = ANY(ARRAY[${Prisma.join(nsfwLevels)}]::"NsfwLevel"[])`);
+  // }
 
   // Limit to images created since period start
   const sortingByMetrics = orderBy.includes('im.');
@@ -765,6 +765,11 @@ export const getAllImages = async ({
   if (!showClubPosts) {
     AND.push(Prisma.sql`p."availability" != 'Private'`);
   }
+
+  // TODO.nsfwLevel
+  if (browsingLevel?.length) {
+    AND.push(Prisma.sql`i."nsfwLevel" = ANY(ARRAY[${Prisma.join(browsingLevel)}]::Int[])`);
+  } else AND.push(Prisma.sql`i."nsfwLevel" > 0 AND i."nsfwLevel" <= 3`);
 
   // TODO: Adjust ImageMetric
   const queryFrom = Prisma.sql`

@@ -1,3 +1,4 @@
+import { BaseQuerySchema } from './schema/base.schema';
 import superjson from 'superjson';
 import { isProd } from '~/env/other';
 import { purgeCache } from '~/server/cloudflare/client';
@@ -7,19 +8,27 @@ import { redis } from '~/server/redis/client';
 import { UserPreferencesInput } from '~/server/schema/base.schema';
 import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
 import { middleware } from '~/server/trpc';
-import { Flags } from '~/shared/utils';
+import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { hashifyObject, slugit } from '~/utils/string-helpers';
+
+export const queryMiddleware = middleware(({ input, ctx, next }) => {
+  const _input = input as BaseQuerySchema;
+  _input.browsingLevel = _input.browsingLevel ?? parseBitwiseBrowsingLevel(ctx.browsingLevel);
+  return next({
+    ctx: { user: ctx.user },
+  });
+});
 
 export const applyUserPreferences = middleware(async ({ input, ctx, next }) => {
   const _input = input as UserPreferencesInput;
-  const browsingLevel = _input.browsingLevel ?? ctx.browsingLevel;
+  const browsingLevel = _input.browsingLevel ?? parseBitwiseBrowsingLevel(ctx.browsingLevel);
 
   const { hiddenImages, hiddenTags, hiddenModels, hiddenUsers } = await getAllHiddenForUser({
     userId: ctx.user?.id,
   });
 
   const tagsToHide = hiddenTags
-    .filter((x) => !x.nsfwLevel || !Flags.hasFlag(browsingLevel, x.nsfwLevel))
+    .filter((x) => !x.nsfwLevel || !browsingLevel.includes(x.nsfwLevel))
     .map((x) => x.id);
 
   const imagesToHide = hiddenImages

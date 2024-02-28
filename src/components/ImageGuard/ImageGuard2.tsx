@@ -203,7 +203,7 @@ const useStyles = createStyles((theme) => ({
     userSelect: 'none',
     backgroundColor: theme.fn.rgba(theme.colors.red[9], 0.6),
     color: 'white',
-    backdropFilter: 'blur(7px)',
+    // backdropFilter: 'blur(7px)',
     boxShadow: '1px 2px 3px -1px rgba(37,38,43,0.2)',
   },
   text: {

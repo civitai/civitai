@@ -116,13 +116,13 @@ export const entityModerationCategories: Record<TagVotableEntityType, Moderation
   model: modelModerationCategories,
 };
 
-export const nsfwLevelOrder = [
-  NsfwLevel.None,
-  NsfwLevel.Soft,
-  NsfwLevel.Mature,
-  NsfwLevel.X,
-  NsfwLevel.Blocked,
-];
+// export const nsfwLevelOrder = [
+//   NsfwLevel.None,
+//   NsfwLevel.Soft,
+//   NsfwLevel.Mature,
+//   NsfwLevel.X,
+//   NsfwLevel.Blocked,
+// ];
 // export const nsfwLevelUI = {
 //   [NsfwLevel.None]: { label: '', color: 'gray', shade: 5 },
 //   [NsfwLevel.Soft]: { label: '13', color: 'yellow', shade: 5 },

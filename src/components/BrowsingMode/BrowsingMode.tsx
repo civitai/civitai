@@ -26,10 +26,11 @@ type BrowsingModeIconProps = {
 };
 
 export function BrowsingModeMenu() {
-  const { toggleBlurNsfw, toggleShowNsfw } = useBrowsingModeContext();
+  const { toggleBlurNsfw, toggleShowNsfw, toggleApplyHidden } = useBrowsingModeContext();
   const currentUser = useCurrentUser();
   const showNsfw = currentUser?.showNsfw;
   const blurNsfw = currentUser?.blurNsfw;
+  const applyHidden = currentUser?.applyHidden;
 
   // const [showDecorations, setShowDecorations] = useLocalStorage({
   //   key: 'showDecorations',
@@ -57,6 +58,11 @@ export function BrowsingModeMenu() {
         </>
       )}
 
+      <Checkbox
+        checked={applyHidden}
+        onChange={(e) => toggleApplyHidden(e.target.checked)}
+        label="Apply hidden tags filter"
+      />
       {/* <Group spacing="xs">
         <Text size="xs" weight={500}>
           Event Cosmetics

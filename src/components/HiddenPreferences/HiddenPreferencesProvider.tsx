@@ -5,6 +5,7 @@ import { getIsPublicBrowsingLevel } from '~/shared/constants/browsingLevel.const
 import { useQueryHiddenPreferences } from '~/hooks/hidden-preferences';
 import { NsfwLevel } from '~/server/common/enums';
 import { Flags } from '~/shared/utils';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 type HiddenPreferencesState = {
   hiddenUsers: Map<number, boolean>;
@@ -36,11 +37,17 @@ export const HiddenPreferencesProvider = ({
     ? Flags.arrayToInstance(browsingLevelOverride)
     : browsingLevelGlobal;
   const { data, isLoading } = useQueryHiddenPreferences();
+  const currentUser = useCurrentUser();
+  const applyHidden = currentUser?.applyHidden ?? true;
 
   const hidden = useMemo(() => {
     const tags = new Map(
       data.hiddenTags
-        .filter((x) => !x.nsfwLevel || !Flags.hasFlag(browsingLevel, x.nsfwLevel))
+        .filter(
+          (x) =>
+            (applyHidden && x.hidden) ||
+            (!!x.nsfwLevel && !Flags.hasFlag(browsingLevel, x.nsfwLevel))
+        )
         .map((x) => [x.id, true])
     );
 
@@ -57,7 +64,7 @@ export const HiddenPreferencesProvider = ({
       browsingLevel,
       isSfw: getIsPublicBrowsingLevel(browsingLevel),
     };
-  }, [data, browsingLevel, isLoading]);
+  }, [data, browsingLevel, isLoading, applyHidden]);
 
   const hiddenDeferred = useDeferredValue(hidden);
 

@@ -1,5 +1,6 @@
 import { Availability } from '@prisma/client';
 import { z } from 'zod';
+import { browsingLevelSchema } from '~/shared/constants/browsingLevel.constants';
 import { parseNumericString } from '~/utils/query-string-helpers';
 
 export const getByIdSchema = z.object({ id: z.number() });
@@ -33,6 +34,8 @@ export type PeriodMode = z.infer<typeof periodModeSchema>;
 // export const isEntity = <T extends BaseInterface>(
 //   entity: T
 // ): entity is OmitId<T> & { id: number } => !!entity.id;
+export type BaseQuerySchema = z.infer<typeof baseQuerySchema>;
+export const baseQuerySchema = z.object({ browsingLevel: browsingLevelSchema.optional() });
 
 export type InfiniteQueryInput = z.infer<typeof infiniteQuerySchema>;
 export const infiniteQuerySchema = z.object({
@@ -41,8 +44,7 @@ export const infiniteQuerySchema = z.object({
 });
 
 export type UserPreferencesInput = z.infer<typeof userPreferencesSchema>;
-export const userPreferencesSchema = z.object({
-  browsingLevel: z.number().optional(),
+export const userPreferencesSchema = baseQuerySchema.extend({
   excludedModelIds: z.array(z.number()).optional(),
   excludedUserIds: z.array(z.number()).optional(),
   excludedTagIds: z.array(z.number()).optional(),

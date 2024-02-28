@@ -7,7 +7,10 @@ import { Tracker } from '~/server/clickhouse/client';
 import { appRouter } from '~/server/routers';
 import { FeatureAccess, getFeatureFlags } from '~/server/services/feature-flags.service';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
-import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import {
+  browsingLevelOr,
+  publicBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import { parseCookies } from '~/shared/utils';
 
 export function parseBrowsingMode(
@@ -23,8 +26,8 @@ export function parseBrowsingMode(
 
   const { browsingLevel, showNsfw } = parseCookies(cookies);
   return {
-    browsingLevel: browsingLevel ?? session.user.browsingLevel,
-    showNsfw: showNsfw ?? session.user.showNsfw,
+    showNsfw: showNsfw ?? session.user.showNsfw ?? false,
+    browsingLevel: browsingLevelOr([browsingLevel, session.user.browsingLevel]),
   };
 }
 

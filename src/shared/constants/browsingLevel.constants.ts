@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { NsfwLevel } from '~/server/common/enums';
 import { Flags } from '~/shared/utils';
 
@@ -50,3 +51,14 @@ export function getIsPublicBrowsingLevel(level: number) {
   const levels = parseBitwiseBrowsingLevel(level);
   return levels.every((level) => publicBrowsingLevelsArray.includes(level));
 }
+
+export const browsingLevelSchema = z
+  .number()
+  .transform((instance) => parseBitwiseBrowsingLevel(instance) as number[]);
+
+export const browsingLevelOr = (array: (number | undefined)[]) => {
+  for (const item of array) {
+    if (!!item) return item;
+  }
+  return publicBrowsingLevelsFlag;
+};

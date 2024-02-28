@@ -2,8 +2,6 @@ import { queryClient, trpc } from '~/utils/trpc';
 import produce from 'immer';
 import { getQueryKey } from '@trpc/react-query';
 import { ResourceReviewPaged } from '~/types/router';
-import { GetInfiniteImagesInput } from '~/server/schema/image.schema';
-import { useFiltersContext } from '~/providers/FiltersProvider';
 import { useMemo } from 'react';
 import { GetResourceReviewsInfiniteInput } from '~/server/schema/resourceReview.schema';
 

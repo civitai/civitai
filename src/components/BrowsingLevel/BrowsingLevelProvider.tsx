@@ -18,6 +18,7 @@ type StoreState = {
   showNsfw: boolean;
   blurNsfw: boolean;
   browsingLevel: number;
+  applyHidden: boolean;
 };
 type BrowsingModeStore = ReturnType<typeof createBrowsingModeStore>;
 const createBrowsingModeStore = (props: StoreState) =>
@@ -51,13 +52,16 @@ export function useBrowsingModeContext() {
         return { browsingLevel };
       });
     },
+    toggleApplyHidden: (hidden?: boolean) =>
+      store.setState((state) => ({ applyHidden: hidden ?? !state.applyHidden })),
   };
 }
 
-function updateCookieValues({ browsingLevel, blurNsfw, showNsfw }: StoreState) {
+function updateCookieValues({ browsingLevel, blurNsfw, showNsfw, applyHidden }: StoreState) {
   setCookie('level', browsingLevel);
   setCookie('blur', blurNsfw);
   setCookie('nsfw', showNsfw);
+  setCookie('applyHidden', applyHidden);
 }
 
 export function BrowsingModeProvider({ children }: { children: React.ReactNode }) {
@@ -72,11 +76,12 @@ export function BrowsingModeProvider({ children }: { children: React.ReactNode }
 
   function getStoreInitialValues() {
     return !currentUser
-      ? { showNsfw: false, blurNsfw: true, browsingLevel: 0 }
+      ? { showNsfw: false, blurNsfw: true, browsingLevel: 0, applyHidden: true }
       : {
           showNsfw: cookies.showNsfw ?? currentUser.showNsfw,
           blurNsfw: cookies.blurNsfw ?? currentUser.blurNsfw,
           browsingLevel: cookies.browsingLevel ?? currentUser.browsingLevel,
+          applyHidden: cookies.applyHidden ?? true,
         };
   }
 

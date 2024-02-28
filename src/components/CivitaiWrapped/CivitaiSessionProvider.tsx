@@ -13,10 +13,7 @@ export function CivitaiSessionProvider({ children }: { children: React.ReactNode
   const { data, update } = useSession();
 
   const { useStore } = useBrowsingModeContext();
-  const browsingModeState = useStore((state) => ({
-    showNsfw: state.showNsfw,
-    blurNsfw: state.blurNsfw,
-  }));
+  const browsingModeState = useStore((state) => state);
 
   const value = useMemo(() => {
     if (!data?.user) return null;
@@ -56,8 +53,11 @@ export type CivitaiSessionUser = SessionUser & {
   refresh: () => Promise<Session | null>;
   showNsfw: boolean;
   blurNsfw: boolean;
+  applyHidden: boolean;
+  browsingLevel: number;
 };
 
+// for reference: https://github.com/pacocoursey/state/blob/main/context.js
 const CivitaiSessionContext = createContext<{
   state: CivitaiSessionUser | null;
   subscribe: (listener: (key: keyof CivitaiSessionUser, value: any) => void) => () => boolean;
