@@ -13,7 +13,6 @@ import { imageSchema } from '~/server/schema/image.schema';
 import { modelFileSchema } from '~/server/schema/model-file.schema';
 import { ModelMeta } from '~/server/schema/model.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
-import { clubResourceSchema } from '~/server/schema/club.schema';
 
 export type RecipeModelInput = z.infer<typeof recipeModelSchema>;
 export const recipeModelSchema = z.object({
@@ -32,7 +31,14 @@ export const recipeSchema = z.object({
   multiplier: z.number(),
 });
 
-export const trainingDetailsBaseModels = ['sd_1_5', 'sdxl', 'anime', 'semi', 'realistic'] as const;
+export const trainingDetailsBaseModels = [
+  'sd_1_5',
+  'sdxl',
+  'anime',
+  'semi',
+  'realistic',
+  'pony',
+] as const;
 export type TrainingDetailsBaseModel = (typeof trainingDetailsBaseModels)[number];
 
 export type TrainingDetailsParams = z.infer<typeof trainingDetailsParams>;
@@ -49,13 +55,16 @@ export const trainingDetailsParams = z.object({
   loraType: z.string(), // TODO actually an enum
   enableBucket: z.boolean(),
   keepTokens: z.number(),
-  // nb: these bottom two are not actually optional, but because we added them later, old versions will not have them causing the schema check to fail
+
+  // nb: these 3 are not actually optional, but because we added them later, old versions will not have them causing the schema check to fail
   clipSkip: z.number().optional(),
   flipAugmentation: z.boolean().optional(),
+  noiseOffset: z.number().optional(),
+
   lrSchedulerNumCycles: z.number(),
   trainBatchSize: z.number(),
   minSnrGamma: z.number(),
-  optimizerArgs: z.string(),
+  optimizerArgs: z.string().optional(), // TODO remove
   shuffleCaption: z.boolean(),
   targetSteps: z.number(),
   // lrWarmupSteps: z.number(),
@@ -96,10 +105,10 @@ export const modelVersionUpsertSchema = z.object({
 });
 
 export type RecommendedSettingsSchema = z.infer<typeof recommendedSettingsSchema>;
-const recommendedSettingsSchema = z.object({
-  minStrength: z.number().optional(),
-  maxStrength: z.number().optional(),
-  strength: z.number().optional(),
+export const recommendedSettingsSchema = z.object({
+  minStrength: z.number().nullish(),
+  maxStrength: z.number().nullish(),
+  strength: z.number().nullish(),
 });
 
 export type RecommendedResourceSchema = z.infer<typeof recommendedResourceSchema>;

@@ -1,11 +1,16 @@
 import { Accordion, Button, Group, Input, Stack, Text, Title } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
+import { NextLink } from '@mantine/next';
 import { showNotification } from '@mantine/notifications';
 import { Currency, TrainingStatus } from '@prisma/client';
 import { useRouter } from 'next/router';
 import React, { useEffect, useState } from 'react';
 import { z } from 'zod';
+import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
+import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
+import { useBuzz } from '~/components/Buzz/useBuzz';
 import { CivitaiTooltip } from '~/components/CivitaiWrapped/CivitaiTooltip';
+import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { goBack } from '~/components/Resource/Forms/Training/TrainingCommon';
@@ -30,14 +35,9 @@ import {
 } from '~/server/schema/model-version.schema';
 import { TrainingModelData } from '~/types/router';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { numberWithCommas } from '~/utils/number-helpers';
 import { calcBuzzFromEta, calcEta } from '~/utils/training';
 import { trpc } from '~/utils/trpc';
-import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
-import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
-import { numberWithCommas } from '~/utils/number-helpers';
-import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { useBuzz } from '~/components/Buzz/useBuzz';
-import { NextLink } from '@mantine/next';
 
 const baseModelDescriptions: {
   [key in TrainingDetailsBaseModel]: { label: string; description: string };
@@ -50,28 +50,66 @@ const baseModelDescriptions: {
   },
   realistic: { label: 'Realistic (SD 1.5)', description: 'Results will be extremely realistic.' },
   sdxl: { label: 'Standard (SDXL)', description: 'Useful for all purposes, and uses SDXL.' },
+  pony: {
+    label: 'Pony (SDXL)',
+    description: 'Results tailored to visuals of various anthro, feral, or humanoids species.',
+  },
 };
 
-type TrainingSettingsType = {
+type BaseTrainingSettingsType = {
   name: keyof TrainingDetailsParams;
   label: string;
-  type: string;
-  // TODO [bw] review - this makes this completely unpredictable and kind of hard to work with, perhaps a discrimated type instead?
-  default: string | number | boolean | ((...args: never[]) => number);
-  hint?: React.ReactNode;
-  options?: string[];
-  min?: number;
-  max?: number;
-  step?: number;
+  hint: React.ReactNode;
   disabled?: boolean;
+};
+type SelectTrainingSettingsType = {
+  type: 'select';
+  options: string[];
+  default: string | ((...args: never[]) => string);
   overrides?: {
-    [override in TrainingDetailsBaseModel]?: {
-      default?: string | number | boolean | ((...args: never[]) => number);
-      min?: number;
-      max?: number;
-    };
+    [key in TrainingDetailsBaseModel]?: Partial<
+      Omit<SelectTrainingSettingsType, 'type' | 'overrides'>
+    >;
   };
 };
+type BoolTrainingSettingsType = {
+  type: 'bool';
+  default: boolean | ((...args: never[]) => boolean);
+  overrides?: {
+    [key in TrainingDetailsBaseModel]?: Partial<
+      Omit<BoolTrainingSettingsType, 'type' | 'overrides'>
+    >;
+  };
+};
+type NumberTrainingSettingsType = {
+  type: 'int' | 'number';
+  min: number;
+  max: number;
+  step: number;
+  default: number | ((...args: never[]) => number);
+  overrides?: {
+    [key in TrainingDetailsBaseModel]?: Partial<
+      Omit<NumberTrainingSettingsType, 'type' | 'overrides'>
+    >;
+  };
+};
+type StringTrainingSettingsType = {
+  type: 'string';
+  default: string | ((...args: never[]) => string);
+  overrides?: {
+    [key in TrainingDetailsBaseModel]?: Partial<
+      Omit<StringTrainingSettingsType, 'type' | 'overrides'>
+    >;
+  };
+};
+
+type TrainingSettingsType = BaseTrainingSettingsType &
+  (
+    | SelectTrainingSettingsType
+    | BoolTrainingSettingsType
+    | NumberTrainingSettingsType
+    | StringTrainingSettingsType
+  );
 
 /**
  * Computes the number of decimal points in a given input using magic math
@@ -92,21 +130,23 @@ export const trainingSettings: TrainingSettingsType[] = [
   {
     name: 'maxTrainEpochs',
     label: 'Epochs',
-    hint: 'An epoch is one set of learning. By default, we save every epoch, and they are all available for download.',
+    hint: 'An epoch is one set of learning. By default, we will save a maximum of 20 epochs (evenly distributed), and they are all available for download.',
     type: 'int',
     default: 10,
     min: 3,
-    max: 16,
-    overrides: { sdxl: { min: 1, default: 10 } },
+    max: 500,
+    step: 1,
+    overrides: { sdxl: { min: 1, default: 10 }, pony: { min: 1, default: 10 } },
   },
   {
     name: 'numRepeats',
     label: 'Num Repeats',
     hint: 'Num Repeats defines how many times each individual image gets put into VRAM. As opposed to batch size, which is how many images are placed into VRAM at once.',
     type: 'int',
-    default: (n: number) => Math.max(1, Math.min(1000, Math.ceil(200 / n))),
+    default: (n: number) => Math.max(1, Math.min(5000, Math.ceil(200 / n))),
     min: 1,
-    max: 1000,
+    max: 5000,
+    step: 1,
   },
   {
     name: 'trainBatchSize',
@@ -115,9 +155,14 @@ export const trainingSettings: TrainingSettingsType[] = [
     type: 'int',
     // TODO [bw] this should have a default/max driven by the resolution they've selected (e.g. 512 -> 9, 768 -> 6, 1024 -> 4 basically cap lower than 4700)
     default: 6,
-    min: 4,
+    min: 1,
     max: 9,
-    overrides: { realistic: { default: 2, min: 2, max: 2 }, sdxl: { max: 4, min: 2, default: 4 } },
+    step: 1,
+    overrides: {
+      realistic: { default: 2, min: 1, max: 2 },
+      sdxl: { max: 4, min: 1, default: 4 },
+      pony: { max: 4, min: 1, default: 4 },
+    },
   },
   {
     name: 'targetSteps',
@@ -133,7 +178,8 @@ export const trainingSettings: TrainingSettingsType[] = [
     type: 'int',
     default: (n: number, r: number, e: number, b: number) => Math.ceil((n * r * e) / b),
     min: 1,
-    // max: 10000,
+    max: 10000,
+    step: 1,
     disabled: true,
   },
   {
@@ -143,9 +189,12 @@ export const trainingSettings: TrainingSettingsType[] = [
     type: 'int',
     default: 512,
     min: 512,
-    step: 64,
     max: 1024,
-    overrides: { sdxl: { min: 1024, default: 1024 } },
+    step: 64,
+    overrides: {
+      sdxl: { min: 1024, max: 2048, default: 1024 },
+      pony: { min: 1024, max: 2048, default: 1024 },
+    },
   },
   {
     name: 'loraType',
@@ -154,7 +203,9 @@ export const trainingSettings: TrainingSettingsType[] = [
     type: 'select',
     default: 'lora',
     options: ['lora'],
+    disabled: true,
   }, // LoCon Lycoris", "LoHa Lycoris // TODO enum
+  // TODO are we using buckets?
   {
     name: 'enableBucket',
     label: 'Enable Bucket',
@@ -185,7 +236,8 @@ export const trainingSettings: TrainingSettingsType[] = [
     type: 'int',
     default: 0,
     min: 0,
-    max: 1,
+    max: 3,
+    step: 1,
   },
   {
     name: 'clipSkip',
@@ -195,6 +247,7 @@ export const trainingSettings: TrainingSettingsType[] = [
     default: 1,
     min: 1,
     max: 4,
+    step: 1,
     overrides: { anime: { default: 2 } },
   },
   {
@@ -210,9 +263,9 @@ export const trainingSettings: TrainingSettingsType[] = [
     hint: 'Sets the learning rate for U-Net. This is the learning rate when performing additional learning on each attention block (and other blocks depending on the setting) in U-Net.',
     type: 'number',
     default: 0.0005,
-    step: 0.0001,
     min: 0,
     max: 1,
+    step: 0.00001,
   },
   {
     name: 'textEncoderLR',
@@ -220,9 +273,9 @@ export const trainingSettings: TrainingSettingsType[] = [
     hint: 'Sets the learning rate for the text encoder. The effect of additional training on text encoders affects the entire U-Net.',
     type: 'number',
     default: 0.00005,
-    step: 0.00001,
     min: 0,
     max: 1,
+    step: 0.00001,
   },
   {
     name: 'lrScheduler',
@@ -249,6 +302,7 @@ export const trainingSettings: TrainingSettingsType[] = [
     default: 3,
     min: 1,
     max: 4,
+    step: 1,
   },
   {
     name: 'minSnrGamma',
@@ -258,6 +312,7 @@ export const trainingSettings: TrainingSettingsType[] = [
     default: 5, // TODO maybe float
     min: 0,
     max: 20,
+    step: 1,
   },
   {
     name: 'networkDim',
@@ -267,7 +322,8 @@ export const trainingSettings: TrainingSettingsType[] = [
     default: 32,
     min: 1,
     max: 128,
-    overrides: { sdxl: { max: 256 } },
+    step: 1,
+    overrides: { sdxl: { max: 256 }, pony: { max: 256 } },
   },
   {
     name: 'networkAlpha',
@@ -286,23 +342,35 @@ export const trainingSettings: TrainingSettingsType[] = [
     default: 16,
     min: 1,
     max: 128,
-    overrides: { sdxl: { max: 256 } },
+    step: 1,
+    overrides: { sdxl: { max: 256 }, pony: { max: 256 } },
+  },
+  {
+    name: 'noiseOffset',
+    label: 'Noise Offset',
+    hint: 'Adds noise to training images. 0 adds no noise at all. A value of 1 adds strong noise.',
+    type: 'number',
+    default: 0.1,
+    min: 0,
+    max: 1,
+    step: 0.1,
   },
   {
     name: 'optimizerType',
     label: 'Optimizer',
-    hint: 'The optimizer is a setting for "how to update the neural net weights during training". Various methods have been proposed for smart learning, but the most commonly used in LoRA learning is "AdamW (32-bit)" or "AdamW8bit".',
+    hint: (
+      <>
+        The optimizer determines how to update the neural net weights during training. Various
+        methods have been proposed for smart learning, but the most commonly used in LoRA learning
+        is &quot;AdamW8bit&quot;, or &quot;Adafactor&quot; for SDXL.
+        <br />
+        We will automatically generate the proper optimizer args depending on your choice.
+      </>
+    ),
     type: 'select',
     default: 'AdamW8Bit',
-    options: ['AdamW8Bit'], // TODO enum
-  },
-  {
-    name: 'optimizerArgs',
-    label: 'Optimizer Args',
-    hint: 'Additional arguments can be passed to control the behavior of the selected optimizer. Place them here as a string, comma separated.',
-    type: 'string',
-    default: 'weight_decay=0.1',
-    disabled: true,
+    options: ['AdamW8Bit', 'Adafactor', 'Prodigy'], // TODO enum
+    overrides: { sdxl: { default: 'Adafactor' }, pony: { default: 'Adafactor' } },
   },
 ];
 
@@ -768,16 +836,19 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                   labelWidth="200px"
                   items={trainingSettings.map((ts) => {
                     let inp: React.ReactNode;
-                    const override = ts.overrides?.[formBaseModel];
 
-                    if (['int', 'number'].includes(ts.type)) {
+                    if (ts.type === 'int' || ts.type === 'number') {
+                      const override = ts.overrides?.[formBaseModel];
+
                       inp = (
                         <InputNumber
                           name={ts.name}
                           min={override?.min ?? ts.min}
                           max={override?.max ?? ts.max}
                           precision={
-                            ts.type === 'number' ? getPrecision(ts.default) || 4 : undefined
+                            ts.type === 'number'
+                              ? getPrecision(ts.step ?? ts.default) || 4
+                              : undefined
                           }
                           step={ts.step}
                           sx={{ flexGrow: 1 }}
@@ -786,10 +857,18 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                         />
                       );
                     } else if (ts.type === 'select') {
+                      let options = ts.options;
+                      if (
+                        ts.name === 'optimizerType' &&
+                        (formBaseModel === 'sdxl' || formBaseModel === 'pony')
+                      ) {
+                        options = options.filter((o) => o !== 'AdamW8Bit');
+                      }
+
                       inp = (
                         <InputSelect
                           name={ts.name}
-                          data={ts.options as string[]}
+                          data={options}
                           disabled={ts.disabled === true}
                         />
                       );
@@ -825,6 +904,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           </Accordion>
         )}
       </Stack>
+      {/* TODO maybe show eta here */}
       <Group mt="xl" position="right">
         <Button variant="default" onClick={() => goBack(model.id, thisStep)}>
           Back
