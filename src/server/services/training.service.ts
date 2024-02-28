@@ -2,10 +2,15 @@ import { TrainingStatus } from '@prisma/client';
 import { trainingSettings } from '~/components/Resource/Forms/Training/TrainingSubmit';
 import { env } from '~/env/server.mjs';
 import { constants } from '~/server/common/constants';
+import { SignalMessages } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { TrainingDetailsBaseModel, TrainingDetailsObj } from '~/server/schema/model-version.schema';
-import { CreateTrainingRequestInput, MoveAssetInput } from '~/server/schema/training.schema';
+import {
+  AutoTagInput,
+  CreateTrainingRequestInput,
+  MoveAssetInput,
+} from '~/server/schema/training.schema';
 import {
   createBuzzTransaction,
   getUserBuzzAccount,
@@ -17,7 +22,7 @@ import {
   throwRateLimitError,
   withRetries,
 } from '~/server/utils/errorHandling';
-import { getGetUrl, getPutUrl } from '~/utils/s3-utils';
+import { deleteObject, getGetUrl, getPutUrl, parseKey } from '~/utils/s3-utils';
 import { calcBuzzFromEta, calcEta } from '~/utils/training';
 import { getOrchestratorCaller } from '../http/orchestrator/orchestrator.caller';
 import { Orchestrator } from '../http/orchestrator/orchestrator.types';
@@ -25,10 +30,10 @@ import { Orchestrator } from '../http/orchestrator/orchestrator.types';
 const modelMap: { [key in TrainingDetailsBaseModel]: string } = {
   sdxl: 'civitai:101055@128078',
   sd_1_5: 'SD_1_5',
-  // anime: 'civitai:9409@33672', // TODO [bw] adjust this with rick
-  anime: 'anime',
+  anime: 'civitai:9409@33672',
   realistic: 'civitai:81458@132760',
   semi: 'civitai:4384@128713',
+  pony: 'civitai:257749@290640',
 };
 
 type TrainingRequest = {
@@ -44,9 +49,10 @@ async function getSubmittedAt(modelVersionId: number, userId: number) {
   const [modelFile] = await dbWrite.$queryRaw<MoveAssetRow[]>`
     SELECT mf.metadata, mv."updatedAt"
     FROM "ModelVersion" mv
-    JOIN "ModelFile" mf ON mf."modelVersionId" = mv.id AND mf.type = 'Training Data'
-    JOIN "Model" m ON m.id = mv."modelId"
-    WHERE mv.id = ${modelVersionId} AND m."userId" = ${userId}
+           JOIN "ModelFile" mf ON mf."modelVersionId" = mv.id AND mf.type = 'Training Data'
+           JOIN "Model" m ON m.id = mv."modelId"
+    WHERE mv.id = ${modelVersionId}
+      AND m."userId" = ${userId}
   `;
 
   if (!modelFile) throw throwBadRequestError('Invalid model version');
@@ -135,7 +141,9 @@ export const deleteAssets = async (jobId: string, submittedAt?: Date) => {
 export const createTrainingRequest = async ({
   userId,
   modelVersionId,
-}: CreateTrainingRequestInput & { userId?: number }) => {
+}: CreateTrainingRequestInput & {
+  userId?: number;
+}) => {
   const modelVersions = await dbWrite.$queryRaw<TrainingRequest[]>`
     SELECT mv."trainingDetails",
            m.name      "modelName",
@@ -162,7 +170,7 @@ export const createTrainingRequest = async ({
     const setting = trainingSettings.find((ts) => ts.name === key);
     if (!setting) continue;
     // TODO [bw] we should be doing more checking here (like validating this through zod), but this will handle the bad cases for now
-    if (typeof value === 'number') {
+    if (setting.type === 'int' || setting.type === 'number') {
       const override = baseModel ? setting.overrides?.[baseModel] : undefined;
       const overrideSetting = override ?? setting;
       if (
@@ -276,4 +284,103 @@ export const createTrainingRequest = async ({
 
   // const [formatted] = await formatGenerationRequests([data]);
   return data;
+};
+
+type TagDataResponse = {
+  [key: string]: {
+    wdTagger: {
+      tags: {
+        [key: string]: number;
+      };
+    };
+  };
+};
+export type AutoTagResponse = {
+  [key: string]: {
+    [key: string]: number;
+  };
+};
+
+const sendTagSignal = async (
+  userId: number,
+  modelId: number,
+  dataToSend: AutoTagResponse,
+  isDone?: boolean
+) => {
+  await fetch(`${env.SIGNALS_ENDPOINT}/users/${userId}/signals/${SignalMessages.TrainingAutoTag}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ modelId, data: dataToSend, isDone }),
+  })
+    .catch
+    // should we have a warning if this fails?
+    ();
+};
+
+export const autoTagHandler = async ({
+  url,
+  modelId,
+  userId,
+}: AutoTagInput & {
+  userId: number;
+}) => {
+  const { url: getUrl } = await getGetUrl(url);
+  const { key, bucket } = parseKey(url);
+
+  if (!env.MEDIA_TAGGER_ENDPOINT) {
+    deleteObject(bucket, key).catch();
+    throw throwBadRequestError('Could not complete auto-tagging - please try again.');
+  }
+
+  const response = await fetch(`${env.MEDIA_TAGGER_ENDPOINT}/tagzip/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ media: getUrl }),
+  });
+
+  if (!response.ok || !response.body) {
+    deleteObject(bucket, key).catch();
+    throw throwBadRequestError('Could not complete auto-tagging - please try again.');
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder('utf-8');
+
+  const maxData = 5;
+
+  let dataToSend: AutoTagResponse = {};
+  let tmpBuffer = '';
+
+  while (true) {
+    try {
+      const { value, done } = await reader.read();
+      if (done) {
+        await sendTagSignal(userId, modelId, dataToSend, true);
+        dataToSend = {};
+        break;
+      }
+
+      // const lines = (tmpBuffer + decoder.decode(value, { stream: true })).split(/[\r\n](?=.)/);
+      const lines = (tmpBuffer + decoder.decode(value)).split(/[\r\n]/);
+
+      tmpBuffer = lines.pop() ?? '';
+      for (const l of lines) {
+        const tagData: TagDataResponse = JSON.parse(l);
+        const tagList = Object.entries(tagData).map(([f, t]) => ({
+          [f]: t.wdTagger.tags,
+        }));
+        const returnData: AutoTagResponse = Object.assign({}, ...tagList);
+        dataToSend = { ...dataToSend, ...returnData };
+        if (Object.keys(dataToSend).length >= maxData) {
+          await sendTagSignal(userId, modelId, dataToSend);
+          dataToSend = {};
+        }
+      }
+    } catch (e) {
+      deleteObject(bucket, key).catch();
+      throw throwBadRequestError('Could not complete auto-tagging - please try again.');
+    }
+  }
+
+  deleteObject(bucket, key).catch();
 };

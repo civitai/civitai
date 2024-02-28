@@ -14,6 +14,8 @@ import {
   IconBarbell,
   IconCoin,
   IconCoins,
+  IconGif,
+  IconGift,
   IconHighlight,
   IconMoneybag,
   IconShoppingBag,

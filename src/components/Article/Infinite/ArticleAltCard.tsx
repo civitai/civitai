@@ -59,7 +59,7 @@ export function ArticleAltCard({ data, height, ...props }: Props) {
                     sx={{
                       background: 'rgb(30 133 230 / 40%)',
                       color: 'white',
-                      backdropFilter: 'blur(7px)',
+                      // backdropFilter: 'blur(7px)',
                       boxShadow: '1px 2px 3px -1px rgba(37,38,43,0.2)',
                     }}
                   >
@@ -171,7 +171,7 @@ const useStyles = createStyles((theme) => ({
       to: 'rgba(37,38,43,0)',
       deg: 0,
     }),
-    backdropFilter: 'blur(13px) saturate(160%)',
+    // backdropFilter: 'blur(13px) saturate(160%)',
     boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
   },
 

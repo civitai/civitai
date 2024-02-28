@@ -1,7 +1,15 @@
 import { getModelData } from '~/server/controllers/training.controller';
 import { getByIdSchema } from '~/server/schema/base.schema';
-import { createTrainingRequestSchema, moveAssetInput } from '~/server/schema/training.schema';
-import { createTrainingRequest, moveAsset } from '~/server/services/training.service';
+import {
+  autoTagInput,
+  createTrainingRequestSchema,
+  moveAssetInput,
+} from '~/server/schema/training.schema';
+import {
+  autoTagHandler,
+  createTrainingRequest,
+  moveAsset,
+} from '~/server/services/training.service';
 import {
   guardedProcedure,
   isFlagProtected,
@@ -20,4 +28,8 @@ export const trainingRouter = router({
     .use(isFlagProtected('imageTraining'))
     .mutation(({ input, ctx }) => moveAsset({ ...input, userId: ctx.user.id })),
   getModelBasic: publicProcedure.input(getByIdSchema).query(getModelData),
+  autoTag: guardedProcedure
+    .input(autoTagInput)
+    .use(isFlagProtected('imageTraining'))
+    .mutation(({ input, ctx }) => autoTagHandler({ ...input, userId: ctx.user.id })),
 });

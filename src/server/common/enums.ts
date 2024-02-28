@@ -140,11 +140,10 @@ export enum SignalMessages {
   BuzzUpdate = 'buzz:update',
   ImageGenStatusUpdate = 'image-gen:status-update',
   TrainingUpdate = 'training:update',
+  TrainingAutoTag = 'training:autotag',
   ImageIngestionStatus = 'image-ingestion:status',
   ChatNewMessage = 'chat:new-message',
-  // ChatUpdateMessage = 'chat:update-message',
   ChatNewRoom = 'chat:new-room',
-  // ChatMembershipChange = 'chat:membership-change',
   ChatTypingStatus = 'chat:typing-status',
 }
 
@@ -213,4 +212,14 @@ export enum OnboardingSteps {
   Profile = 2,
   BrowsingLevels = 4,
   Buzz = 8,
+}
+
+export enum PurchasableRewardViewMode {
+  Available = 'Available',
+  Purchased = 'Purchased',
+}
+export enum PurchasableRewardModeratorViewMode {
+  Available = 'Available',
+  History = 'History',
+  Purchased = 'Purchased',
 }

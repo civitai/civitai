@@ -18,6 +18,7 @@ import rehypeRaw from 'rehype-raw';
 import { trpc } from '../../utils/trpc';
 import { useDialogContext } from '../Dialog/DialogProvider';
 import { dialogStore } from '../Dialog/dialogStore';
+import { HelpButton } from '~/components/HelpButton/HelpButton';
 
 type Props = {
   feature: string;
@@ -40,54 +41,53 @@ export const FeatureIntroductionModal = ({
   });
   const dialog = useDialogContext();
 
-  if (isLoading || !content)
-    return (
-      <Center>
-        <Loader />
-      </Center>
-    );
-
   return (
-    <Modal {...dialog} size="lg" title={content.title} {...modalProps} withCloseButton>
-      <ReactMarkdown
-        rehypePlugins={[rehypeRaw]}
-        className="markdown-content"
-        components={{
-          a: ({ node, ...props }) => {
-            if (['youtube', 'embed'].every((item) => props.href?.includes(item)))
-              return (
-                <AspectRatio ratio={16 / 9} maw={800} mx="auto">
-                  <Box
-                    component="iframe"
-                    sx={{
-                      border: 'none',
-                      position: 'absolute',
-                      top: 0,
-                      left: 0,
-                      width: '100%',
-                      height: '100%',
-                    }}
-                    src={props.href as string}
-                    allowFullScreen
-                  />
-                </AspectRatio>
-              );
+    <Modal {...dialog} size="lg" title={content?.title} {...modalProps} withCloseButton>
+      {isLoading || !content ? (
+        <Center p="xl">
+          <Loader />
+        </Center>
+      ) : (
+        <ReactMarkdown
+          rehypePlugins={[rehypeRaw]}
+          className="markdown-content"
+          components={{
+            a: ({ node, ...props }) => {
+              if (['youtube', 'embed'].every((item) => props.href?.includes(item)))
+                return (
+                  <AspectRatio ratio={16 / 9} maw={800} mx="auto">
+                    <Box
+                      component="iframe"
+                      sx={{
+                        border: 'none',
+                        position: 'absolute',
+                        top: 0,
+                        left: 0,
+                        width: '100%',
+                        height: '100%',
+                      }}
+                      src={props.href as string}
+                      allowFullScreen
+                    />
+                  </AspectRatio>
+                );
 
-            return (
-              <Link href={props.href as string} passHref>
-                <a
-                  target={props.href?.includes('http') ? '_blank' : '_self'}
-                  rel="nofollow noreferrer"
-                >
-                  {props.children?.[0]}
-                </a>
-              </Link>
-            );
-          },
-        }}
-      >
-        {content.content}
-      </ReactMarkdown>
+              return (
+                <Link href={props.href as string} passHref>
+                  <a
+                    target={props.href?.includes('http') ? '_blank' : '_self'}
+                    rel="nofollow noreferrer"
+                  >
+                    {props.children?.[0]}
+                  </a>
+                </Link>
+              );
+            },
+          }}
+        >
+          {content.content}
+        </ReactMarkdown>
+      )}
 
       <Center>
         <Button onClick={dialog.onClose}>Close</Button>
@@ -133,3 +133,18 @@ export const FeatureIntroduction = ({
     </Tooltip>
   );
 };
+
+export function FeatureIntroductionHelpButton({
+  feature,
+  contentSlug,
+  modalProps,
+}: Omit<Props, 'actionButton'>) {
+  const handleOpenDialog = useCallback(() => {
+    dialogStore.trigger({
+      component: FeatureIntroductionModal,
+      props: { feature, contentSlug, modalProps },
+    });
+  }, [contentSlug, feature, modalProps]);
+
+  return <HelpButton onClick={handleOpenDialog} />;
+}

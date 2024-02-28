@@ -11,3 +11,9 @@ export const moveAssetInput = z.object({
   modelVersionId: z.number().positive(),
   modelId: z.number().positive(),
 });
+
+export type AutoTagInput = z.infer<typeof autoTagInput>;
+export const autoTagInput = z.object({
+  url: z.string().url(),
+  modelId: z.number().positive(),
+});

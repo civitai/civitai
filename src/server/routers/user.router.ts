@@ -28,6 +28,7 @@ import {
   setUserSettingHandler,
   getUserSettingsHandler,
   getUserBookmarkCollectionsHandler,
+  getUserPurchasedRewardsHandler,
 } from '~/server/controllers/user.controller';
 import {
   deleteUserHandler,
@@ -161,4 +162,5 @@ export const userRouter = router({
   setSettings: protectedProcedure.input(setUserSettingsInput).mutation(setUserSettingHandler),
   dismissAlert: protectedProcedure.input(dismissAlertSchema).mutation(dismissAlertHandler),
   getBookmarkCollections: protectedProcedure.query(getUserBookmarkCollectionsHandler),
+  getUserPurchasedRewards: protectedProcedure.query(getUserPurchasedRewardsHandler),
 });
