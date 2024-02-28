@@ -56,6 +56,7 @@ export const useUpdateResourceReview = () => {
           if (!old) return;
           if (request.details) old.details = request.details as string;
           if (request.rating) old.rating = request.rating;
+          if (request.recommended != null) old.recommended = request.recommended;
         })
       );
 
