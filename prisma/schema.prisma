@@ -488,6 +488,7 @@ model Model {
   unlisted            Boolean         @default(false)
   gallerySettings     Json            @default("{\"users\": [], \"tags\": [], \"images\": []}")
   availability        Availability    @default(Public)
+  nsfwLevel           Int             @default(0)
 
   // Licensing
   allowNoCredit         Boolean         @default(true)

@@ -221,7 +221,7 @@ export const getInfiniteImagesHandler = async ({
   try {
     return await getAllImages({
       ...input,
-      userId: ctx.user?.id,
+      user: ctx.user,
       isModerator: ctx.user?.isModerator,
       headers: { src: 'getInfiniteImagesHandler' },
       include: [...input.include, 'tagIds'],
@@ -269,7 +269,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
         cursor,
         ids: fetchHidden ? hiddenImagesIds : undefined,
         limit: Math.ceil(limit * 3), // Overscan so that I can merge by postId
-        userId: ctx.user?.id,
+        user: ctx.user,
         headers: { src: 'getImagesAsPostsInfiniteHandler' },
         include: [...input.include, 'tagIds'],
       });

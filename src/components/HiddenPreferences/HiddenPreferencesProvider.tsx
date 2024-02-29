@@ -44,9 +44,8 @@ export const HiddenPreferencesProvider = ({
     const tags = new Map(
       data.hiddenTags
         .filter(
-          (x) =>
-            (!disableHidden && x.hidden) ||
-            (!!x.nsfwLevel && !Flags.hasFlag(browsingLevel, x.nsfwLevel))
+          (x) => !disableHidden && x.hidden
+          // ||(!!x.nsfwLevel && !Flags.hasFlag(browsingLevel, x.nsfwLevel)) // TODO.nsfwLevel - make sure I don't still need this
         )
         .map((x) => [x.id, true])
     );

@@ -821,7 +821,7 @@ export const getCollectionItemsByCollectionId = async ({
           periodMode: 'stats',
           sort: ImageSort.Newest,
           ...userPreferencesInput,
-          userId: user?.id,
+          user,
           isModerator: user?.isModerator,
           ids: imageIds,
           headers: { src: 'getCollectionItemsByCollectionId' },

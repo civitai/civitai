@@ -21,8 +21,8 @@ export const queryMiddleware = middleware(({ input, ctx, next }) => {
 
 export const applyUserPreferences = middleware(async ({ input, ctx, next }) => {
   const _input = input as UserPreferencesInput;
-  const browsingLevel = _input.browsingLevel ?? ctx.browsingLevel;
 
+  const browsingLevel = _input.browsingLevel ?? ctx.browsingLevel;
   const { hiddenImages, hiddenTags, hiddenModels, hiddenUsers } = await getAllHiddenForUser({
     userId: ctx.user?.id,
   });

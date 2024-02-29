@@ -53,7 +53,7 @@ export const useImageFilters = (type: FilterKeys<'images' | 'modelImages' | 'vid
   const storeFilters = useFiltersContext((state) => state[type]);
   const { query } = useImageQueryParams(); // router params are the overrides
   const browsingLevel = useBrowsingLevel();
-  return removeEmpty({ browsingLevel, ...storeFilters, ...query });
+  return removeEmpty({ ...storeFilters, ...query, browsingLevel });
 };
 
 export const useDumbImageFilters = (defaultFilters?: Partial<GetInfiniteImagesInput>) => {
@@ -74,8 +74,9 @@ export const useQueryImages = (
 ) => {
   const { applyHiddenPreferences = true, ...queryOptions } = options ?? {};
   filters ??= {};
+  const browsingLevel = useBrowsingLevel();
   const { data, isLoading, ...rest } = trpc.image.getInfinite.useInfiniteQuery(
-    { ...filters },
+    { ...filters, browsingLevel },
     {
       getNextPageParam: (lastPage) => lastPage.nextCursor,
       trpc: { context: { skipBatch: true } },

@@ -41,8 +41,9 @@ export const useQueryPosts = (
   options?: { keepPreviousData?: boolean; enabled?: boolean }
 ) => {
   filters ??= {};
+  const browsingLevel = useBrowsingLevel();
   const { data, isLoading, ...rest } = trpc.post.getInfinite.useInfiniteQuery(
-    { ...filters, include: [] },
+    { ...filters, include: [], browsingLevel },
     {
       getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
       getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),

@@ -64,7 +64,6 @@ import { bulkSetReportStatus } from '~/server/services/report.service';
 import { baseS3Client } from '~/utils/s3-client';
 import { pgDbRead, pgDbWrite } from '~/server/db/pgDb';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
-import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -483,7 +482,6 @@ export const getAllImages = async ({
   period,
   periodMode,
   sort,
-  userId,
   isModerator,
   tags,
   generation,
@@ -499,8 +497,9 @@ export const getAllImages = async ({
   followed,
   fromPlatform,
   browsingLevel,
+  user,
 }: GetInfiniteImagesOutput & {
-  userId?: number;
+  user?: SessionUser;
   isModerator?: boolean;
   headers?: Record<string, string>; // does this do anything?
 }) => {
@@ -510,7 +509,9 @@ export const getAllImages = async ({
   const cacheTags: string[] = [];
   let cacheTime = CacheTTL.xs;
 
-  const showClubPosts = !!postId || !!collectionId || !!modelId || !!modelVersionId || !!reviewId;
+  const userId = user?.id;
+  const isOwner = user ? user.username === username : false;
+  const isOwnerOrModeratorView = isOwner || (!!username && (user?.isModerator ?? false));
 
   if (hidden) {
     if (!userId) throw throwAuthorizationError();
@@ -751,20 +752,9 @@ export const getAllImages = async ({
     );
   }
 
-  // TODO: Availability query seems to be killing us. Need to figure out how to optimize this.
-  // At the moment, club-required images will show up in the feed.
-  if (!showClubPosts) {
-    AND.push(Prisma.sql`p."availability" != 'Private'`);
-  }
-
   // TODO.nsfwLevel - owner visibility
-  if (!!browsingLevel) {
-    AND.push(
-      Prisma.sql`i."nsfwLevel" = ANY(ARRAY[${Prisma.join(
-        parseBitwiseBrowsingLevel(browsingLevel)
-      )}]::Int[])`
-    );
-  } else AND.push(Prisma.sql`i."nsfwLevel" BETWEEN ${NsfwLevel.PG} AND ${NsfwLevel.PG13}`);
+  if (!!browsingLevel) AND.push(Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`);
+  else AND.push(Prisma.sql`i."nsfwLevel" = ${NsfwLevel.PG}`);
 
   // TODO: Adjust ImageMetric
   const queryFrom = Prisma.sql`
@@ -1356,13 +1346,8 @@ export const getImagesForPosts = async ({
   }
 
   console.log('service', { browsingLevel });
-  if (!!browsingLevel) {
-    imageWhere.push(
-      Prisma.sql`i."nsfwLevel" = ANY(ARRAY[${Prisma.join(
-        parseBitwiseBrowsingLevel(browsingLevel)
-      )}]::Int[])`
-    );
-  } else imageWhere.push(Prisma.sql`i."nsfwLevel" BETWEEN ${NsfwLevel.PG} AND ${NsfwLevel.PG13}`);
+  if (!!browsingLevel) imageWhere.push(Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`);
+  else imageWhere.push(Prisma.sql`i."nsfwLevel" = ${NsfwLevel.PG}`);
 
   const images = await dbRead.$queryRaw<
     {

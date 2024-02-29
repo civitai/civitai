@@ -21,40 +21,6 @@ export default WebhookEndpoint(async (req, res) => {
     Prisma.sql`SELECT MIN(id) "min" FROM "Post" WHERE "nsfwLevel" = 0;`
   );
 
-  // await dbWrite.$queryRaw`
-  //   UPDATE "Post" p
-  //   SET "nsfwLevel" = query."nsfwLevel"
-  //   FROM (
-  //     SELECT "nsfwLevel" from "Image" i where i."postId" = p.id
-  //   ) as query
-  //   WHERE p.id = 945638
-  // `;
-
-  // await dbWrite.$queryRaw`
-  //   WITH level AS (
-  //     SELECT DISTINCT ON (p.id) p.id, bit_or(i."nsfwLevel") "nsfwLevel"
-  //     FROM "Post" p
-  //     JOIN "Image" i ON i."postId" = p.id
-  //     WHERE p.id = 945638
-  //     GROUP BY p.id
-  //   )
-  //   UPDATE "Post" p
-  //   SET "nsfwLevel" = level."nsfwLevel"
-  //   FROM level
-  //   WHERE level.id = p.id;
-  // `;
-
-  // const { cancel, result } = await pgDbWrite.cancellableQuery(
-  //   Prisma.raw(`
-  //     UPDATE "Post" p
-  //     SET "nsfwLevel" = (
-  //         SELECT bit_or(i."nsfwLevel")
-  //         JOIN "Image" i WHERE i."postId" = p.id
-  //     )
-  //     WHERE p.id = 319719
-  //   `)
-  // );
-
   let cursor = min ?? 0;
   console.log(cursor > maxId);
   await limitConcurrency(() => {
@@ -64,18 +30,8 @@ export default WebhookEndpoint(async (req, res) => {
     cursor += batchSize;
     const end = cursor;
     console.log(`Updating posts ${start} - ${end}`);
-    // TODO - possibly add `nsfwLevel` to `TagsOnImage`
     return async () => {
-      /*
-      UPDATE "Post" p
-      SET "nsfwLevel" = (
-          SELECT bit_or(i."nsfwLevel")
-          JOIN "Image" i WHERE i."postId" = p.id
-      )
-      WHERE p.id BETWEEN ${start} AND ${end} AND p."nsfwLevel" = 0
-      */
       const { cancel, result } = await pgDbWrite.cancellableQuery(Prisma.sql`
-
         WITH level AS (
           SELECT DISTINCT ON (p.id) p.id, bit_or(i."nsfwLevel") "nsfwLevel"
           FROM "Post" p
@@ -92,6 +48,9 @@ export default WebhookEndpoint(async (req, res) => {
       await result();
     };
   }, 10);
+
+  // TODO.nsfwLevel - delete posts with no images not attached to a modelVersion?
+  // delete from "Post" where "nsfwLevel" = 0 AND "modelVersionId" is null
 
   console.log('end');
   res.status(200).json({ finished: true });
