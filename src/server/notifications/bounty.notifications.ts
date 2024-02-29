@@ -143,7 +143,7 @@ export const bountyNotifications = createNotificationProcessor({
   },
   'bounty-reaction-milestone': {
     displayName: 'Bounty entry reaction milestones',
-    category: 'Milestone',
+    category: 'Bounty',
     prepareMessage: ({ details }) => ({
       message: `Your bounty entry on "${
         details.bountyName
