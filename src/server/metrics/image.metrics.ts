@@ -70,7 +70,7 @@ export const imageMetrics = createMetricProcessor({
   async clearDay({ pg, jobContext }) {
     // Clear day of things updated in the last day
     const clearDayQuery = await pg.cancellableQuery(Prisma.sql`
-      UPDATE "ImageMetric" SET "heartCount" = 0, "likeCount" = 0, "dislikeCount" = 0, "laughCount" = 0, "cryCount" = 0, "commentCount" = 0, "collectedCount" = 0, "tippedCount" = 0, "tippedAmountCount" = 0 WHERE timeframe = 'Day' AND "updateAt" > date_trunc('day', now() - interval '1 day');
+      UPDATE "ImageMetric" SET "heartCount" = 0, "likeCount" = 0, "dislikeCount" = 0, "laughCount" = 0, "cryCount" = 0, "commentCount" = 0, "collectedCount" = 0, "tippedCount" = 0, "tippedAmountCount" = 0 WHERE timeframe = 'Day' AND "updatedAt" > date_trunc('day', now() - interval '1 day');
     `);
     jobContext.on('cancel', clearDayQuery.cancel);
     await clearDayQuery.result();
