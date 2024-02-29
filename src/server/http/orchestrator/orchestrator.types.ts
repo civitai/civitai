@@ -46,7 +46,7 @@ export namespace Orchestrator {
       callbackUrl: z.string().url().optional(),
       model: z.string(),
       trainingData: z.string().url(),
-      maxRetryAttempt: z.number(),
+      retries: z.number(),
       params: z
         .object({
           modelFileId: z.number(),
@@ -59,6 +59,17 @@ export namespace Orchestrator {
       typeof imageResourceTrainingJobInputSchema
     >;
     export type ImageResourceTrainingResponse = Orchestrator.JobResponse;
+
+    const imageAutoTagInputSchema = z.object({
+      retries: z.number().positive(),
+      mediaUrl: z.string().url(),
+      modelId: z.number().positive(),
+      properties: z.object({
+        userId: z.number(),
+      }),
+    });
+    export type ImageAutoTagJobPayload = z.infer<typeof imageAutoTagInputSchema>;
+    export type ImageAutoTagJobResponse = Orchestrator.JobResponse; // TODO is this right?
   }
 
   export namespace Generation {
