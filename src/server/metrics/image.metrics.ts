@@ -70,7 +70,7 @@ export const imageMetrics = createMetricProcessor({
   async clearDay({ pg, jobContext }) {
     // Clear day of things updated in the last day
     const clearDayQuery = await pg.cancellableQuery(Prisma.sql`
-      UPDATE "ImageMetric" SET "heartCount" = 0, "likeCount" = 0, "dislikeCount" = 0, "laughCount" = 0, "cryCount" = 0, "commentCount" = 0, "collectedCount" = 0, "tippedCount" = 0, "tippedAmountCount" = 0 WHERE timeframe = 'Day' AND "createdAt" > date_trunc('day', now() - interval '1 day');
+      UPDATE "ImageMetric" SET "heartCount" = 0, "likeCount" = 0, "dislikeCount" = 0, "laughCount" = 0, "cryCount" = 0, "commentCount" = 0, "collectedCount" = 0, "tippedCount" = 0, "tippedAmountCount" = 0 WHERE timeframe = 'Day' AND "updateAt" > date_trunc('day', now() - interval '1 day');
     `);
     jobContext.on('cancel', clearDayQuery.cancel);
     await clearDayQuery.result();
@@ -154,7 +154,7 @@ async function getReactionTasks({ pg, lastUpdate, jobContext, ...ctx }: ImageMet
       WHERE ir."imageId" IN (${Prisma.join(ids)})
       GROUP BY ir."imageId", tf.timeframe
       ON CONFLICT ("imageId", timeframe) DO UPDATE
-        SET "heartCount" = EXCLUDED."heartCount", "likeCount" = EXCLUDED."likeCount", "dislikeCount" = EXCLUDED."dislikeCount", "laughCount" = EXCLUDED."laughCount", "cryCount" = EXCLUDED."cryCount", "createdAt" = NOW()
+        SET "heartCount" = EXCLUDED."heartCount", "likeCount" = EXCLUDED."likeCount", "dislikeCount" = EXCLUDED."dislikeCount", "laughCount" = EXCLUDED."laughCount", "cryCount" = EXCLUDED."cryCount", "updatedAt" = NOW()
     `);
     jobContext.on('cancel', query.cancel);
     await query.result();
@@ -208,7 +208,7 @@ async function getCommentTasks({ pg, lastUpdate, jobContext, ...ctx }: ImageMetr
       WHERE t."imageId" IN (${Prisma.join(ids)})
       GROUP BY t."imageId", tf.timeframe
       ON CONFLICT ("imageId", timeframe) DO UPDATE
-        SET "commentCount" = EXCLUDED."commentCount", "createdAt" = NOW()
+        SET "commentCount" = EXCLUDED."commentCount", "updatedAt" = NOW()
     `);
     jobContext.on('cancel', query.cancel);
     await query.result();
@@ -260,7 +260,7 @@ async function getCollectionTasks({ pg, lastUpdate, jobContext, ...ctx }: ImageM
       WHERE ci."imageId" IN (${Prisma.join(ids)})
       GROUP BY ci."imageId", tf.timeframe
       ON CONFLICT ("imageId", timeframe) DO UPDATE
-        SET "collectedCount" = EXCLUDED."collectedCount", "createdAt" = NOW()
+        SET "collectedCount" = EXCLUDED."collectedCount", "updatedAt" = NOW()
     `);
     jobContext.on('cancel', query.cancel);
     await query.result();
@@ -320,7 +320,7 @@ async function getBuzzTasks({ pg, lastUpdate, jobContext, ...ctx }: ImageMetricC
       WHERE "entityId" IN (${Prisma.join(ids)}) AND "entityType" = 'Image'
       GROUP BY "entityId", tf.timeframe
       ON CONFLICT ("imageId", timeframe) DO UPDATE
-        SET "tippedCount" = EXCLUDED."tippedCount", "tippedAmountCount" = EXCLUDED."tippedAmountCount", "createdAt" = NOW()
+        SET "tippedCount" = EXCLUDED."tippedCount", "tippedAmountCount" = EXCLUDED."tippedAmountCount", "updatedAt" = NOW()
     `);
     jobContext.on('cancel', query.cancel);
     await query.result();
@@ -402,7 +402,8 @@ async function getViewTasks({ ch, pg, lastUpdate, jobContext, ...ctx }: ImageMet
         WHERE im.views IS NOT NULL
         AND im.imageId IN (SELECT id FROM "Image")
         ON CONFLICT ("imageId", timeframe) DO UPDATE
-          SET "viewCount" = EXCLUDED."viewCount";
+          SET "viewCount" = EXCLUDED."viewCount",
+              "updatedAt" = NOW();
       `);
       jobContext.on('cancel', updateChunkQuery.cancel);
       await updateChunkQuery.result();
