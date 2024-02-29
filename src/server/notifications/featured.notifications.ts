@@ -74,10 +74,13 @@ export const featuredNotifications = createNotificationProcessor({
     displayName: 'Post featured',
     category: 'System',
     toggleable: false,
-    prepareMessage: ({ details }) => ({
-      message: `Congrats! Your post "${details.postTitle}" has been featured on the homepage`,
-      url: `/posts/${details.postId}`,
-    }),
+    prepareMessage: ({ details }) => {
+      let message = `Congrats! Your post has been featured on the homepage`;
+      if (details.postTitle)
+        message = `Congrats! Your post "${details.postTitle}" has been featured on the homepage`;
+      const url = `/posts/${details.postId}`;
+      return { message, url };
+    },
     prepareQuery: async ({ lastSent, category }) => `
       WITH data AS (
         SELECT DISTINCT

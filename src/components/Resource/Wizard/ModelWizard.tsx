@@ -13,6 +13,7 @@ import { NextRouter, useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
 import { z } from 'zod';
 import { NotFound } from '~/components/AppLayout/NotFound';
+import { FeatureIntroductionHelpButton } from '~/components/FeatureIntroduction/FeatureIntroduction';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { PostEditWrapper } from '~/components/Post/Edit/PostEditLayout';
 import { Files, UploadStepActions } from '~/components/Resource/Files';
@@ -21,15 +22,13 @@ import { ModelUpsertForm } from '~/components/Resource/Forms/ModelUpsertForm';
 import { ModelVersionUpsertForm } from '~/components/Resource/Forms/ModelVersionUpsertForm';
 import { PostUpsertForm } from '~/components/Resource/Forms/PostUpsertForm';
 import TrainingSelectFile from '~/components/Resource/Forms/TrainingSelectFile';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useS3UploadStore } from '~/store/s3-upload.store';
 import { ModelById } from '~/types/router';
+import { QS } from '~/utils/qs';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
 import { TemplateSelect } from './TemplateSelect';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { QS } from '../../../utils/qs';
-import { HelpButton } from '~/components/HelpButton/HelpButton';
-import { FeatureIntroduction } from '~/components/FeatureIntroduction/FeatureIntroduction';
 
 export type ModelWithTags = Omit<ModelById, 'tagsOnModels'> & {
   tagsOnModels: Array<{ isCategory: boolean; id: number; name: string }>;
@@ -44,6 +43,7 @@ const querySchema = z.object({
   id: z.coerce.number().optional(),
   templateId: z.coerce.number().optional(),
   bountyId: z.coerce.number().optional(),
+  src: z.coerce.string().optional(),
 });
 
 const CreateSteps = ({
@@ -280,14 +280,16 @@ function getWizardUrl({
   step,
   templateId,
   bountyId,
+  src,
 }: {
   step: number;
   id?: number;
   templateId?: number;
   bountyId?: number;
+  src?: string;
 }) {
   if (!id) return '';
-  const query = QS.stringify({ templateId, bountyId, step });
+  const query = QS.stringify({ templateId, bountyId, step, src });
   return `/models/${id}/wizard?${query}`;
 }
 
@@ -299,6 +301,8 @@ export function ModelWizard() {
   const id = result.success ? result.data.id : undefined;
   const templateId = result.success ? result.data.templateId : undefined;
   const bountyId = result.success ? result.data.bountyId : undefined;
+  const src = result.success ? result.data.src : undefined;
+
   const isNew = router.pathname.includes('/create');
   const [state, setState] = useState<WizardState>({ step: 1 });
   const [opened, setOpened] = useState(false);
@@ -323,7 +327,8 @@ export function ModelWizard() {
 
   const goNext = () => {
     if (state.step < maxSteps) {
-      router.replace(getWizardUrl({ id, step: state.step + 1, templateId }), undefined, {
+      // TODO does bountyId need to be here?
+      router.replace(getWizardUrl({ id, step: state.step + 1, templateId, src }), undefined, {
         shallow: true,
         scroll: true,
       });
@@ -332,7 +337,7 @@ export function ModelWizard() {
 
   const goBack = () => {
     if (state.step > 1) {
-      router.replace(getWizardUrl({ id, step: state.step - 1, templateId }), undefined, {
+      router.replace(getWizardUrl({ id, step: state.step - 1, templateId, src }), undefined, {
         shallow: true,
         scroll: true,
       });
@@ -348,20 +353,20 @@ export function ModelWizard() {
       if (showTraining) return;
 
       if (!hasVersions)
-        router.replace(getWizardUrl({ id, step: 2, templateId, bountyId }), undefined, {
+        router.replace(getWizardUrl({ id, step: 2, templateId, bountyId, src }), undefined, {
           shallow: true,
         });
       else if (!hasFiles)
-        router.replace(getWizardUrl({ id, step: 3, templateId, bountyId }), undefined, {
+        router.replace(getWizardUrl({ id, step: 3, templateId, bountyId, src }), undefined, {
           shallow: true,
         });
       else
-        router.replace(getWizardUrl({ id, step: 4, templateId, bountyId }), undefined, {
+        router.replace(getWizardUrl({ id, step: 4, templateId, bountyId, src }), undefined, {
           shallow: true,
         });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasFiles, hasVersions, id, isNew, model, templateId, bountyId]);
+  }, [hasFiles, hasVersions, id, isNew, model, templateId, bountyId, src]);
 
   useEffect(() => {
     // set current step based on query param
@@ -395,10 +400,9 @@ export function ModelWizard() {
             <Group position="apart" noWrap>
               <Group spacing={8} noWrap>
                 <Title order={2}>Publish a Model</Title>
-                <FeatureIntroduction
+                <FeatureIntroductionHelpButton
                   feature="model-upload"
                   contentSlug={['feature-introduction', 'model-upload']}
-                  actionButton={<HelpButton size="md" radius="xl" />}
                 />
               </Group>
               {isNew && !showTraining && currentUser && (

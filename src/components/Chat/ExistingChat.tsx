@@ -98,7 +98,7 @@ const useStyles = createStyles((theme) => ({
   isTypingBox: {
     position: 'sticky',
     bottom: 0,
-    backdropFilter: 'blur(16px)',
+    // backdropFilter: 'blur(16px)',
     display: 'inline-flex',
     // backgroundColor:
     //   theme.colorScheme === 'dark'

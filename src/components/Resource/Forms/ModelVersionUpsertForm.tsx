@@ -2,14 +2,16 @@ import { Card, Divider, Group, Input, Stack, Text, ThemeIcon } from '@mantine/co
 import { NextLink } from '@mantine/next';
 import { Currency, ModelType, ModelVersionMonetizationType } from '@prisma/client';
 import { IconInfoCircle, IconQuestionMark } from '@tabler/icons-react';
+import { useRouter } from 'next/router';
 import React, { useEffect, useMemo } from 'react';
 import { z } from 'zod';
 
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
+import InputResourceSelectMultiple from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
 import {
   Form,
-  InputClubResourceManagementInput,
   InputMultiSelect,
   InputNumber,
   InputRTE,
@@ -25,22 +27,21 @@ import {
   modelVersionMonetizationTypeOptions,
   modelVersionSponsorshipSettingsTypeOptions,
 } from '~/server/common/constants';
+import { ClubResourceSchema } from '~/server/schema/club.schema';
+import {
+  GenerationResourceSchema,
+  generationResourceSchema,
+} from '~/server/schema/generation.schema';
 import {
   ModelVersionUpsertInput,
   modelVersionUpsertSchema2,
+  RecommendedSettingsSchema,
+  recommendedSettingsSchema,
 } from '~/server/schema/model-version.schema';
 import { ModelUpsertInput } from '~/server/schema/model.schema';
 import { isEarlyAccess } from '~/server/utils/early-access-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
-import InputResourceSelectMultiple from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
-import {
-  GenerationResourceSchema,
-  generationResourceSchema,
-} from '~/server/schema/generation.schema';
-import { ClubResourceSchema } from '~/server/schema/club.schema';
-import { useRouter } from 'next/router';
 
 const schema = modelVersionUpsertSchema2
   .extend({
@@ -49,7 +50,10 @@ const schema = modelVersionUpsertSchema2
       message: 'Invalid value',
     }),
     useMonetization: z.boolean().default(false),
-    recommendedResources: generationResourceSchema.array().optional(),
+    recommendedResources: generationResourceSchema
+      .merge(recommendedSettingsSchema)
+      .array()
+      .optional(),
   })
   .refine((data) => (!data.skipTrainedWords ? data.trainedWords.length > 0 : true), {
     message: 'You need to specify at least one trained word',
@@ -595,7 +599,11 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
 
 type VersionInput = Omit<ModelVersionUpsertInput, 'recommendedResources'> & {
   createdAt: Date | null;
-  recommendedResources?: GenerationResourceSchema[];
+  recommendedResources?: (Omit<
+    GenerationResourceSchema,
+    'strength' | 'minStrength' | 'maxStrength'
+  > &
+    RecommendedSettingsSchema)[];
   clubs?: ClubResourceSchema[];
 };
 type Props = {

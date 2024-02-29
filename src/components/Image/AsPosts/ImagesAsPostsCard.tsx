@@ -493,7 +493,7 @@ const useStyles = createStyles((theme) => ({
       theme.colorScheme === 'dark' ? theme.colors.dark[9] : theme.colors.gray[0],
       0.8
     ),
-    backdropFilter: 'blur(13px) saturate(160%)',
+    // backdropFilter: 'blur(13px) saturate(160%)',
     boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
     padding: 4,
     zIndex: 1,
@@ -524,7 +524,7 @@ const useStyles = createStyles((theme) => ({
   },
   statBadge: {
     background: 'rgba(212,212,212,0.2)',
-    backdropFilter: 'blur(7px)',
+    // backdropFilter: 'blur(7px)',
     cursor: 'pointer',
   },
   image: {

@@ -1,186 +1,67 @@
 import {
+  Accordion,
   ActionIcon,
+  Badge,
   Button,
   Center,
   Checkbox,
+  Chip,
   createStyles,
   Group,
   Image as MImage,
   Loader,
+  Menu,
   Pagination,
   Paper,
+  Progress,
   SimpleGrid,
   Stack,
   Text,
   Textarea,
+  TextInput,
   Title,
   useMantineTheme,
 } from '@mantine/core';
 import { FileWithPath } from '@mantine/dropzone';
+import { useDebouncedValue } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
 import { showNotification, updateNotification } from '@mantine/notifications';
 import { ModelFileVisibility } from '@prisma/client';
-import { IconAlertTriangle, IconCheck, IconTrash, IconX } from '@tabler/icons-react'; // import { saveAs } from 'file-saver';
+import {
+  IconAlertTriangle,
+  IconCheck,
+  IconChevronDown,
+  IconReplace,
+  IconSearch,
+  IconTrash,
+  IconX,
+} from '@tabler/icons-react';
 import JSZip from 'jszip';
 import { isEqual } from 'lodash-es';
-import { useEffect, useState } from 'react';
-import { create } from 'zustand';
-import { immer } from 'zustand/middleware/immer';
+import React, { useEffect, useState } from 'react';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import { goBack, goNext } from '~/components/Resource/Forms/Training/TrainingCommon';
+import { TrainingEditTagsModal } from '~/components/Resource/Forms/Training/TrainingEditTagsModal';
 import { UploadType } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE, ZIP_MIME_TYPE } from '~/server/common/mime-types';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { useS3UploadStore } from '~/store/s3-upload.store';
+import {
+  defaultTrainingState,
+  getShortNameFromUrl,
+  type ImageDataType,
+  trainingStore,
+  useTrainingImageStore,
+} from '~/store/training.store';
 import { TrainingModelData } from '~/types/router';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { bytesToKB } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 
-type ImageDataType = {
-  url: string;
-  name: string;
-  type: string;
-  caption: string;
-};
-
-type UpdateImageDataType = Partial<Omit<ImageDataType, 'url'>> & { url: string };
-
-type TrainingDataState = {
-  imageList: ImageDataType[];
-  initialImageList: ImageDataType[];
-  ownRights: boolean;
-  initialOwnRights: boolean;
-  shareDataset: boolean;
-  initialShareDataset: boolean;
-};
-
-type ImageStore = {
-  [id: number]: TrainingDataState | undefined;
-  updateImage: (modelId: number, data: UpdateImageDataType) => void;
-  setImageList: (modelId: number, data: ImageDataType[]) => void;
-  setInitialImageList: (modelId: number, data: ImageDataType[]) => void;
-  setOwnRights: (modelId: number, data: boolean) => void;
-  setShareDataset: (modelId: number, data: boolean) => void;
-  setInitialOwnRights: (modelId: number, data: boolean) => void;
-  setInitialShareDataset: (modelId: number, data: boolean) => void;
-};
-
-export const useImageStore = create<ImageStore>()(
-  immer((set) => ({
-    updateImage: (modelId, { url, name, type, caption }) => {
-      set((state) => {
-        if (!state[modelId])
-          state[modelId] = {
-            imageList: [],
-            initialImageList: [],
-            ownRights: false,
-            shareDataset: false,
-            initialOwnRights: false,
-            initialShareDataset: false,
-          };
-        // TODO [bw] why is this not understanding the override I just did above?
-        state[modelId]!.imageList = state[modelId]!.imageList.map((i) => {
-          if (i.url === url) {
-            return {
-              url,
-              name: name ?? i.name,
-              type: type ?? i.type,
-              caption: caption ?? i.caption,
-            };
-          }
-          return i;
-        });
-      });
-    },
-    setImageList: (modelId, imgData) => {
-      set((state) => {
-        if (!state[modelId])
-          state[modelId] = {
-            imageList: [],
-            initialImageList: [],
-            ownRights: false,
-            shareDataset: false,
-            initialOwnRights: false,
-            initialShareDataset: false,
-          };
-        state[modelId]!.imageList = imgData;
-      });
-    },
-    setInitialImageList: (modelId, imgData) => {
-      set((state) => {
-        if (!state[modelId])
-          state[modelId] = {
-            imageList: [],
-            initialImageList: [],
-            ownRights: false,
-            shareDataset: false,
-            initialOwnRights: false,
-            initialShareDataset: false,
-          };
-        state[modelId]!.initialImageList = imgData;
-      });
-    },
-    setOwnRights: (modelId, v) => {
-      set((state) => {
-        if (!state[modelId])
-          state[modelId] = {
-            imageList: [],
-            initialImageList: [],
-            ownRights: false,
-            shareDataset: false,
-            initialOwnRights: false,
-            initialShareDataset: false,
-          };
-        state[modelId]!.ownRights = v;
-      });
-    },
-    setShareDataset: (modelId, v) => {
-      set((state) => {
-        if (!state[modelId])
-          state[modelId] = {
-            imageList: [],
-            initialImageList: [],
-            ownRights: false,
-            shareDataset: false,
-            initialOwnRights: false,
-            initialShareDataset: false,
-          };
-        state[modelId]!.shareDataset = v;
-      });
-    },
-    setInitialOwnRights: (modelId, v) => {
-      set((state) => {
-        if (!state[modelId])
-          state[modelId] = {
-            imageList: [],
-            initialImageList: [],
-            ownRights: false,
-            shareDataset: false,
-            initialOwnRights: false,
-            initialShareDataset: false,
-          };
-        state[modelId]!.initialOwnRights = v;
-      });
-    },
-    setInitialShareDataset: (modelId, v) => {
-      set((state) => {
-        if (!state[modelId])
-          state[modelId] = {
-            imageList: [],
-            initialImageList: [],
-            ownRights: false,
-            shareDataset: false,
-            initialOwnRights: false,
-            initialShareDataset: false,
-          };
-        state[modelId]!.initialShareDataset = v;
-      });
-    },
-  }))
-);
+const MAX_FILES_ALLOWED = 1000;
 
 const useStyles = createStyles(() => ({
   imgOverlay: {
@@ -199,12 +80,12 @@ const useStyles = createStyles(() => ({
   },
 }));
 
-// TODO [bw] is this enough? do we want jfif and webp?
+// TODO [bw] is this enough? do we want jfif?
 const imageExts: { [key: string]: string } = {
   png: 'image/png',
   jpg: 'image/jpeg',
   jpeg: 'image/jpeg',
-  // webp: 'image/webp',
+  webp: 'image/webp',
 };
 
 const maxWidth = 1024;
@@ -218,6 +99,13 @@ const createImage = (url: string): Promise<HTMLImageElement> =>
     image.src = url;
   });
 
+export const getCaptionAsList = (capt: string) => {
+  return capt
+    .split(',')
+    .map((c) => c.trim().toLowerCase())
+    .filter((c) => c.length > 0);
+};
+
 export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModelData> }) => {
   const {
     updateImage,
@@ -227,7 +115,8 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     setShareDataset,
     setInitialOwnRights,
     setInitialShareDataset,
-  } = useImageStore();
+    setAutoCaptioning,
+  } = trainingStore;
 
   const {
     imageList,
@@ -236,25 +125,21 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     shareDataset,
     initialOwnRights,
     initialShareDataset,
-  } = useImageStore(
-    (state) =>
-      state[model.id] ?? {
-        imageList: [],
-        initialImageList: [],
-        ownRights: false,
-        shareDataset: false,
-        initialOwnRights: false,
-        initialShareDataset: false,
-      }
-  );
+    autoCaptioning,
+  } = useTrainingImageStore((state) => state[model.id] ?? { ...defaultTrainingState });
 
   const [page, setPage] = useState(1);
   const [zipping, setZipping] = useState<boolean>(false);
   const [loadingZip, setLoadingZip] = useState<boolean>(false);
   const [modelFileId, setModelFileId] = useState<number | undefined>(undefined);
+  const [tagSearchInput, setTagSearchInput] = useState<string>('');
+  const [tagList, setTagList] = useState<[string, number][]>([]);
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [debouncedImageList] = useDebouncedValue(imageList, 300);
+
   const theme = useMantineTheme();
   const { classes, cx } = useStyles();
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const { upload, getStatus: getUploadStatus } = useS3UploadStore();
 
   const thisModelVersion = model.modelVersions[0];
@@ -264,6 +149,9 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
   const notificationId = `${thisModelVersion.id}-uploading-data-notification`;
 
   const { uploading } = getUploadStatus((file) => file.meta?.versionId === thisModelVersion.id);
+
+  const thisStep = 2;
+  const maxImgPerPage = 9;
 
   useEffect(() => {
     // is there any way to generate a file download url given the one we already have?
@@ -318,9 +206,6 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const thisStep = 2;
-  const maxImgPerPage = 9;
-
   const getResizedImgUrl = async (data: FileWithPath | Blob, type: string): Promise<string> => {
     const imgUrl = URL.createObjectURL(data);
     const img = await createImage(imgUrl);
@@ -356,10 +241,9 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
   };
 
   const handleZip = async (f: FileWithPath, showNotif = true) => {
-    // could set loadingZip here too
+    if (showNotif) setLoadingZip(true);
     const parsedFiles: ImageDataType[] = [];
     const zipReader = new JSZip();
-    // zipReader.loadAsync(f).then((zData) => {
     const zData = await zipReader.loadAsync(f);
     await Promise.all(
       Object.entries(zData.files).map(async ([zname, zf]) => {
@@ -401,6 +285,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
           autoClose: false,
         });
       }
+      setLoadingZip(false);
     }
 
     return parsedFiles;
@@ -423,12 +308,21 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         }
       })
     );
+
     const filteredFiles = newFiles.flat().filter(isDefined);
+    if (filteredFiles.length > MAX_FILES_ALLOWED - imageList.length) {
+      showErrorNotification({
+        title: 'Too many images',
+        error: new Error(`Truncating to ${MAX_FILES_ALLOWED}.`),
+        autoClose: false,
+      });
+      filteredFiles.splice(MAX_FILES_ALLOWED - imageList.length);
+    }
     setImageList(model.id, imageList.concat(filteredFiles));
   };
 
   const updateFileMutation = trpc.modelFile.update.useMutation({
-    async onSuccess(response, request) {
+    async onSuccess(_response, request) {
       setInitialOwnRights(model.id, ownRights);
       setInitialShareDataset(model.id, shareDataset);
 
@@ -509,6 +403,60 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     },
   });
 
+  const submitTagMutation = trpc.training.autoTag.useMutation({
+    // TODO allow people to rerun failed images
+    onError(error) {
+      showErrorNotification({
+        error: new Error(error.message),
+        title: 'Failed to auto-tag',
+        autoClose: false,
+      });
+      setAutoCaptioning(model.id, { ...defaultTrainingState.autoCaptioning });
+    },
+  });
+
+  useEffect(() => {
+    if (autoCaptioning.isRunning || !autoCaptioning.url) return;
+    setAutoCaptioning(model.id, { ...autoCaptioning, isRunning: true });
+    submitTagMutation.mutate({ url: autoCaptioning.url, modelId: model.id });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoCaptioning.url]);
+
+  useEffect(() => {
+    const imageTags = debouncedImageList
+      .flatMap((i) => getCaptionAsList(i.caption))
+      .filter((v) => (tagSearchInput.length > 0 ? v.includes(tagSearchInput) : v));
+    const tagCounts = imageTags.reduce(
+      (a: { [key: string]: number }, c) => (a[c] ? ++a[c] : (a[c] = 1), a),
+      {}
+    );
+    // .reduce((a, c) => (a[c] = a[c] || 0, a[c]++, a), {})
+    const sortedTagCounts = Object.entries(tagCounts).sort(([, a], [, b]) => b - a);
+    setTagList(sortedTagCounts);
+    setSelectedTags((s) => s.filter((st) => imageTags.includes(st)));
+  }, [debouncedImageList, tagSearchInput]);
+
+  const filteredImages = imageList.filter((i) => {
+    if (!selectedTags.length) return true;
+    const capts = getCaptionAsList(i.caption).filter((c) => selectedTags.includes(c));
+    return capts.length > 0;
+  });
+
+  useEffect(() => {
+    if (page > 1 && filteredImages.length <= (page - 1) * maxImgPerPage) {
+      setPage(1);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedTags]);
+
+  const removeCaptions = (tags: string[]) => {
+    const newImageList = imageList.map((i) => {
+      const capts = getCaptionAsList(i.caption).filter((c) => !tags.includes(c));
+      return { ...i, caption: capts.join(', ') };
+    });
+    setImageList(model.id, newImageList);
+  };
+
   const handleNextAfterCheck = async () => {
     setZipping(true);
     const zip = new JSZip();
@@ -546,7 +494,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         await upload(
           {
             file: blobFile,
-            type: UploadType.TrainingImages, // TODO [bw] maybe use UploadType.TrainingImagesTemp
+            type: UploadType.TrainingImages,
             meta: {
               versionId: thisModelVersion.id,
               ownRights,
@@ -652,6 +600,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
       });
     }
   };
+
   const totalCaptioned = imageList.filter((i) => i.caption && i.caption.length > 0).length;
 
   return (
@@ -682,44 +631,273 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                 Changes made here are not permanently saved until you hit &quot;Next&quot;
               </Text>
             }
-            max={1000}
+            max={MAX_FILES_ALLOWED}
             // loading={isLoading}
-            count={100}
+            count={imageList.length}
             accept={[...IMAGE_MIME_TYPE, ...ZIP_MIME_TYPE]}
+            onExceedMax={() =>
+              showErrorNotification({
+                title: 'Too many images',
+                error: new Error(`Truncating to ${MAX_FILES_ALLOWED}.`),
+                autoClose: false,
+              })
+            }
           />
         </div>
 
         {imageList.length > 0 && (
           <Group mt="md" position="apart">
             <Group>
+              <Paper
+                shadow="xs"
+                radius="sm"
+                px={8}
+                py={2}
+                style={{
+                  backgroundColor:
+                    theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
+                }}
+              >
+                <Text
+                  style={{ lineHeight: '22px' }}
+                  color={
+                    totalCaptioned === 0
+                      ? theme.colors.red[5]
+                      : totalCaptioned < imageList.length
+                      ? theme.colors.orange[5]
+                      : theme.colors.green[5]
+                  }
+                >
+                  {`${totalCaptioned} / ${imageList.length} captioned`}
+                </Text>
+              </Paper>
+              {/*<Button*/}
+              {/*  compact*/}
+              {/*  disabled={autoCaptioning.isRunning}*/}
+              {/*  onClick={() =>*/}
+              {/*    dialogStore.trigger({*/}
+              {/*      component: AutoTagModal,*/}
+              {/*      props: {*/}
+              {/*        imageList,*/}
+              {/*        modelId: model.id,*/}
+              {/*        setAutoCaptioning,*/}
+              {/*      },*/}
+              {/*    })*/}
+              {/*  }*/}
+              {/*>*/}
+              {/*  <IconTags size={16} />*/}
+              {/*  <Text inline ml={4}>*/}
+              {/*    Auto Tag*/}
+              {/*  </Text>*/}
+              {/*</Button>*/}
               {/*perhaps open a modal here to confirm*/}
-              <Button compact color="red" onClick={() => setImageList(model.id, [])}>
+              <Button
+                compact
+                color="red"
+                disabled={autoCaptioning.isRunning}
+                onClick={() => setImageList(model.id, [])}
+              >
                 <IconTrash size={16} />
                 <Text inline ml={4}>
-                  Clear All
+                  Reset
                 </Text>
               </Button>
-              <Text
-                color={
-                  totalCaptioned === 0
-                    ? theme.colors.red[5]
-                    : totalCaptioned < imageList.length
-                    ? theme.colors.orange[5]
-                    : theme.colors.green[5]
-                }
-              >
-                {`${totalCaptioned} / ${imageList.length} captioned`}
-              </Text>
             </Group>
 
-            {imageList.length > maxImgPerPage && (
+            {filteredImages.length > maxImgPerPage && (
               <Pagination
                 page={page}
                 onChange={setPage}
-                total={Math.ceil(imageList.length / maxImgPerPage)}
+                total={Math.ceil(filteredImages.length / maxImgPerPage)}
               />
             )}
           </Group>
+        )}
+
+        {autoCaptioning.isRunning && (
+          <Paper
+            my="lg"
+            p="md"
+            withBorder
+            style={{
+              backgroundColor:
+                theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
+            }}
+          >
+            <Stack>
+              <Text>Running auto-tagging...</Text>
+              {autoCaptioning.successes + autoCaptioning.fails.length > 0 ? (
+                <Progress
+                  value={
+                    ((autoCaptioning.successes + autoCaptioning.fails.length) /
+                      autoCaptioning.total) *
+                    100
+                  }
+                  label={`${autoCaptioning.successes + autoCaptioning.fails.length} / ${
+                    autoCaptioning.total
+                  }`}
+                  size="xl"
+                  radius="xl"
+                  striped
+                  animate
+                />
+              ) : (
+                <Progress
+                  value={100}
+                  label="Waiting for data..."
+                  size="xl"
+                  radius="xl"
+                  striped
+                  animate
+                />
+              )}
+            </Stack>
+          </Paper>
+        )}
+
+        {imageList.length > 0 && (
+          <Accordion variant="contained" transitionDuration={0}>
+            <Accordion.Item value="caption-viewer">
+              <Accordion.Control>
+                <Group spacing="xs">
+                  <Text>Caption Viewer</Text>
+                  {selectedTags.length > 0 && <Badge color="red">{selectedTags.length}</Badge>}
+                </Group>
+              </Accordion.Control>
+              <Accordion.Panel>
+                <Stack>
+                  <Group>
+                    <TextInput
+                      icon={<IconSearch size={16} />}
+                      placeholder="Search tags"
+                      value={tagSearchInput}
+                      onChange={(event) =>
+                        setTagSearchInput(event.currentTarget.value.toLowerCase())
+                      }
+                      style={{ flexGrow: 1 }}
+                      rightSection={
+                        <ActionIcon
+                          onClick={() => {
+                            setTagSearchInput('');
+                          }}
+                          disabled={!tagSearchInput.length}
+                        >
+                          <IconX size={16} />
+                        </ActionIcon>
+                      }
+                    />
+                    <Button
+                      disabled={!selectedTags.length}
+                      size="sm"
+                      variant="light"
+                      color="red"
+                      onClick={() => setSelectedTags([])}
+                    >
+                      Deselect All
+                    </Button>
+                    <Menu withArrow>
+                      <Menu.Target>
+                        <Button disabled={!selectedTags.length} rightIcon={<IconChevronDown />}>
+                          Actions
+                        </Button>
+                      </Menu.Target>
+                      <Menu.Dropdown>
+                        <Menu.Item
+                          icon={<IconTrash size={14} />}
+                          onClick={() =>
+                            openConfirmModal({
+                              title: 'Remove these captions?',
+                              children: (
+                                <Stack>
+                                  <Text>
+                                    The following captions will be removed from all images:
+                                  </Text>
+                                  <Group>
+                                    {selectedTags.map((st) => (
+                                      <Badge key={st}>{st}</Badge>
+                                    ))}
+                                  </Group>
+                                </Stack>
+                              ),
+                              labels: { cancel: 'Cancel', confirm: 'Confirm' },
+                              centered: true,
+                              onConfirm: () => removeCaptions(selectedTags),
+                            })
+                          }
+                        >
+                          {`Remove tag${selectedTags.length === 1 ? '' : 's'} (${
+                            selectedTags.length
+                          })`}
+                        </Menu.Item>
+                        <Menu.Item
+                          icon={<IconReplace size={14} />}
+                          onClick={() =>
+                            dialogStore.trigger({
+                              component: TrainingEditTagsModal,
+                              props: {
+                                selectedTags,
+                                imageList,
+                                modelId: model.id,
+                                setImageList,
+                                setSelectedTags,
+                              },
+                            })
+                          }
+                        >
+                          {`Replace tag${selectedTags.length === 1 ? '' : 's'} (${
+                            selectedTags.length
+                          })`}
+                        </Menu.Item>
+                      </Menu.Dropdown>
+                    </Menu>
+                  </Group>
+                  {!tagList.length ? (
+                    <Text size="md" my="sm" align="center">
+                      No captions to display.
+                    </Text>
+                  ) : (
+                    <Chip.Group
+                      value={selectedTags}
+                      onChange={setSelectedTags}
+                      multiple
+                      mah={300}
+                      // mih={40}
+                      // resize: 'vertical'
+                      style={{ overflowY: 'auto', rowGap: '6px' }}
+                    >
+                      {tagList.map((t) => (
+                        <Chip
+                          key={t[0]}
+                          value={t[0]}
+                          styles={{
+                            root: { lineHeight: 0, overflow: 'hidden' },
+                            label: { display: 'flex' },
+                            iconWrapper: { overflow: 'initial', paddingRight: '10px' },
+                          }}
+                        >
+                          <Group h="100%" maw="100%">
+                            {/* TODO when switching to m7, change this to a class */}
+                            <Text
+                              style={{
+                                maxWidth: '90%',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                              }}
+                            >
+                              {t[0]}
+                            </Text>
+                            <Badge color="gray" variant="outline" radius="xl" size="sm">
+                              {t[1]}
+                            </Badge>
+                          </Group>
+                        </Chip>
+                      ))}
+                    </Chip.Group>
+                  )}
+                </Stack>
+              </Accordion.Panel>
+            </Accordion.Item>
+          </Accordion>
         )}
 
         {loadingZip ? (
@@ -730,7 +908,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         ) : (
           // nb: if we want to break out of container, add margin: 0 calc(50% - 45vw);
           <SimpleGrid cols={3} breakpoints={[{ maxWidth: 'sm', cols: 1 }]}>
-            {imageList
+            {filteredImages
               .slice((page - 1) * maxImgPerPage, (page - 1) * maxImgPerPage + maxImgPerPage)
               .map((imgData, index) => {
                 return (
@@ -755,7 +933,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                             page === Math.ceil(imageList.length / maxImgPerPage) &&
                             newLen % maxImgPerPage === 0
                           )
-                            setPage(page - 1);
+                            setPage(Math.max(page - 1, 1));
                         }}
                         className={cx(classes.trash, 'trashIcon')}
                       >
@@ -776,15 +954,18 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                         }}
                       />
                     </div>
+                    {/* would like to use highlight here for selected tags but only works with direct strings */}
+                    {/* TODO we could also eventually replace these with little chips */}
                     <Textarea
                       placeholder="Enter caption data..."
                       autosize
+                      disabled={autoCaptioning.isRunning}
                       minRows={1}
                       maxRows={4}
                       value={imgData.caption}
                       onChange={(event) => {
                         updateImage(model.id, {
-                          url: imgData.url,
+                          matcher: getShortNameFromUrl(imgData),
                           caption: event.currentTarget.value,
                         });
                       }}
@@ -834,7 +1015,11 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         <Button variant="default" onClick={() => goBack(model.id, thisStep)}>
           Back
         </Button>
-        <Button onClick={handleNext} loading={zipping || uploading > 0}>
+        <Button
+          onClick={handleNext}
+          disabled={autoCaptioning.isRunning}
+          loading={zipping || uploading > 0}
+        >
           Next
         </Button>
       </Group>
