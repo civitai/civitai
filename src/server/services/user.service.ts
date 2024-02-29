@@ -159,7 +159,7 @@ export const getUsers = ({ limit, query, email, ids, include }: GetAllUsersInput
   if (include?.includes('avatar'))
     select.push(
       'COALESCE(i.url, u.image) AS "avatarUrl"',
-      `COALESCE(i.nsfw, 'None') AS "avatarNsfw"`
+      `COALESCE(i.nsfw, 'None') AS "avatarNsfw"` // TODO.nsfwLevel - remove this?
     );
 
   return dbRead.$queryRaw<GetUsersRow[]>`

@@ -1,10 +1,9 @@
 import {
   nsfwLevelMapDeprecated,
-  browsingLevelSchema,
-  nsfwBrowsingLevelsArray,
   NsfwLevelDeprecated,
-  publicBrowsingLevelsArray,
   nsfwLevelReverseMapDeprecated,
+  nsfwBrowsingLevelsFlag,
+  publicBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { MetricTimeframe } from '@prisma/client';
 import { NextApiRequest, NextApiResponse } from 'next';
@@ -43,10 +42,10 @@ const imagesEndpointSchema = z.object({
     .transform((value) => {
       if (!value) return undefined;
       if (typeof value === 'boolean')
-        return (value ? nsfwBrowsingLevelsArray : publicBrowsingLevelsArray) as number[];
-      return browsingLevelSchema.parse(nsfwLevelMapDeprecated[value]);
+        return value ? nsfwBrowsingLevelsFlag : publicBrowsingLevelsFlag;
+      return nsfwLevelMapDeprecated[value] as number;
     }),
-  browsingLevel: browsingLevelSchema.optional(),
+  browsingLevel: z.number().optional(),
   tags: commaDelimitedNumberArray({ message: 'tags should be a number array' }).optional(),
   cursor: numericString().optional(),
 });

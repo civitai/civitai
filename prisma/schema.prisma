@@ -617,7 +617,7 @@ model ModelVersion {
   requireAuth          Boolean         @default(false)
   settings             Json?
   availability         Availability    @default(Public)
-  nsfwLevel            Int             @default(1)
+  nsfwLevel            Int             @default(0)
 
   monetization            ModelVersionMonetization?
   metrics                 ModelVersionMetric[]
@@ -1070,7 +1070,7 @@ model Post {
   collection     Collection?   @relation(fields: [collectionId], references: [id], onDelete: Cascade)
   unlisted       Boolean       @default(false)
   availability   Availability  @default(Public)
-  nsfwLevel      Int           @default(1)
+  nsfwLevel      Int           @default(0)
 
   images          Image[]
   tags            TagsOnPost[]
@@ -1150,7 +1150,7 @@ model Image {
   type              MediaType               @default(image)
   metadata          Json                    @default("{}") // file metadata
   nsfw              NsfwLevel               @default(None)
-  nsfwLevel         Int                     @default(1)
+  nsfwLevel         Int                     @default(0)
   tosViolation      Boolean                 @default(false)
   analysis          Json?
   generationProcess ImageGenerationProcess?
@@ -1300,7 +1300,7 @@ model Tag {
   target     TagTarget[]
   type       TagType     @default(UserGenerated)
   nsfw       NsfwLevel   @default(None)
-  nsfwLevel  Int         @default(1)
+  nsfwLevel  Int         @default(1) // TODO.nsfwLevel - default 0?
   unlisted   Boolean     @default(false)
   unfeatured Boolean     @default(false)
   isCategory Boolean     @default(false)
@@ -1981,7 +1981,7 @@ model Article {
   user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   availability Availability @default(Public)
   unlisted     Boolean      @default(false)
-  nsfwLevel    Int          @default(1)
+  nsfwLevel    Int          @default(0)
 
   thread          Thread?
   reactions       ArticleReaction[]
@@ -2163,7 +2163,7 @@ model Collection {
   mode         CollectionMode?
   metadata     Json                         @default("{}")
   availability Availability                 @default(Public)
-  nsfwLevel    Int                          @default(1)
+  nsfwLevel    Int                          @default(0)
 
   items        CollectionItem[]
   contributors CollectionContributor[]
@@ -2330,7 +2330,7 @@ model Bounty {
   complete                Boolean         @default(false)
   refunded                Boolean         @default(false)
   availability            Availability    @default(Public)
-  nsfwLevel               Int             @default(1)
+  nsfwLevel               Int             @default(0)
 
   tags        TagsOnBounty[]
   entries     BountyEntry[]
@@ -2357,7 +2357,7 @@ model BountyEntry {
   updatedAt   DateTime @updatedAt
   locked      Boolean  @default(false)
   description String?
-  nsfwLevel   Int      @default(1)
+  nsfwLevel   Int      @default(0)
 
   benefactors BountyBenefactor[]
   thread      Thread?

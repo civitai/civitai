@@ -5,13 +5,12 @@ import {
   ImageGenerationProcess,
   ImageIngestionStatus,
   MediaType,
-  NsfwLevel,
   Prisma,
   TagTarget,
   TagType,
 } from '@prisma/client';
 import { SessionUser } from 'next-auth';
-import { BrowsingMode, PostSort } from '~/server/common/enums';
+import { NsfwLevel, PostSort } from '~/server/common/enums';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
@@ -48,10 +47,11 @@ import { bustCacheTag, queryCache } from '~/server/utils/cache-helpers';
 import { hasEntityAccess } from './common.service';
 import { env } from 'process';
 import { CacheTTL } from '../common/constants';
+import { flagifyBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 
 type GetAllPostsRaw = {
   id: number;
-  nsfw: boolean;
+  nsfwLevel: number;
   title: string | null;
   userId: number;
   username: string | null;
@@ -92,6 +92,7 @@ export const getPostsInfinite = async ({
   draftOnly,
   followed,
   clubId,
+  browsingLevel,
 }: Omit<PostsQueryInput, 'include'> & {
   user?: SessionUser;
   include?: string[];
@@ -152,6 +153,7 @@ export const getPostsInfinite = async ({
     AND.push(Prisma.sql`p."publishedAt" < now()`);
 
     // We could techically do this on the FE.
+    // TODO.nsfwLevel
     // if (browsingMode === BrowsingMode.SFW) {
     //   AND.push(Prisma.sql`p."nsfw" = false`);
     // }
@@ -172,6 +174,15 @@ export const getPostsInfinite = async ({
   } else {
     if (draftOnly) AND.push(Prisma.sql`p."publishedAt" IS NULL`);
     else AND.push(Prisma.sql`p."publishedAt" IS NOT NULL`);
+  }
+
+  // TODO.nsfwLevel - owner visibility
+  if (!!browsingLevel) {
+    AND.push(Prisma.sql`(p."nsfwLevel" & ${browsingLevel}) != 0`);
+  } else {
+    AND.push(
+      Prisma.sql`(p."nsfwLevel" & ${flagifyBrowsingLevel([NsfwLevel.PG, NsfwLevel.PG13])}) != 0`
+    );
   }
 
   if (ids) AND.push(Prisma.sql`p.id IN (${Prisma.join(ids)})`);
@@ -250,7 +261,7 @@ export const getPostsInfinite = async ({
     ${queryWith}
     SELECT
       p.id,
-      p.nsfw,
+      p."nsfwLevel",
       p.title,
       p."userId",
       u.username,
@@ -311,6 +322,7 @@ export const getPostsInfinite = async ({
         excludedIds: excludedImageIds,
         userId: user?.id,
         isOwnerRequest,
+        browsingLevel,
       })
     : [];
 

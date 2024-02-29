@@ -2,7 +2,7 @@ import { ClickHouseClient, createClient } from '@clickhouse/client';
 import {
   ArticleEngagementType,
   BountyEngagementType,
-  NsfwLevel,
+  NsfwLevel as NsfwLevelOld,
   ReportReason,
   ReportStatus,
   ReviewReactions,
@@ -254,7 +254,7 @@ export class Tracker {
     type: ReactionType;
     entityId: number;
     reaction: ReviewReactions;
-    nsfw: NsfwLevel;
+    nsfw: NsfwLevelOld;
   }) {
     return this.track('reactions', values);
   }
@@ -286,7 +286,7 @@ export class Tracker {
   public image(values: {
     type: ImageActivityType;
     imageId: number;
-    nsfw: NsfwLevel;
+    nsfw: NsfwLevelOld;
     tags: string[];
     ownerId: number;
   }) {

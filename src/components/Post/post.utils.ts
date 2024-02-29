@@ -1,6 +1,7 @@
 import { MetricTimeframe } from '@prisma/client';
 import { useMemo } from 'react';
 import { z } from 'zod';
+import { useBrowsingLevel } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
 import { useFiltersContext } from '~/providers/FiltersProvider';
@@ -16,7 +17,8 @@ export const usePostQueryParams = () => useZodRouteParams(postQueryParamSchema);
 export const usePostFilters = () => {
   const storeFilters = useFiltersContext((state) => state.posts);
   const { query } = usePostQueryParams();
-  return removeEmpty({ ...storeFilters, ...query });
+  const browsingLevel = useBrowsingLevel();
+  return removeEmpty({ browsingLevel, ...storeFilters, ...query });
 };
 
 const postQueryParamSchema = z

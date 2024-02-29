@@ -1,10 +1,9 @@
-import { ImageIngestionStatus, NsfwLevel } from '@prisma/client';
+import { ImageIngestionStatus } from '@prisma/client';
 import { useCallback } from 'react';
 import { create } from 'zustand';
 import { removeEmpty } from '~/utils/object-helpers';
 
 type ImageProps = {
-  nsfw?: NsfwLevel;
   tosViolation?: boolean;
   ingestion?: ImageIngestionStatus;
   blockedFor?: string | null;

@@ -2,7 +2,6 @@ import {
   ArticleEngagementType,
   BountyEngagementType,
   MediaType,
-  NsfwLevel,
   TagEngagementType,
 } from '@prisma/client';
 import { z } from 'zod';
@@ -56,7 +55,6 @@ export const getAllUsersInput = getAllQuerySchema
   .partial();
 export type GetAllUsersInput = z.infer<typeof getAllUsersInput>;
 
-export type ProfilePictureSchema = z.infer<typeof profilePictureSchema>;
 export const profilePictureSchema = z.object({
   id: z.number().optional(),
   name: z.string().nullish(),
@@ -65,7 +63,6 @@ export const profilePictureSchema = z.object({
   height: z.number().nullish(),
   width: z.number().nullish(),
   sizeKB: z.number().optional(),
-  nsfw: z.nativeEnum(NsfwLevel).optional(),
   mimeType: z.string().optional(),
   metadata: z.object({}).passthrough().optional(),
   type: z.nativeEnum(MediaType).default(MediaType.image),

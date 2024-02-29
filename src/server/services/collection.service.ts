@@ -1421,7 +1421,7 @@ type ImageProps = {
   hash: string | null;
   height: number | null;
   width: number | null;
-  nsfw: NsfwLevelOld;
+  nsfw: NsfwLevelOld; // TODO.nsfwLevel
   nsfwLevel: NsfwLevel;
   postId: number | null;
   index: number | null;

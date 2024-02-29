@@ -36,15 +36,7 @@ import { dbRead, dbWrite } from '../db/client';
 import { firstDailyPostReward, imagePostedToModelReward } from '~/server/rewards';
 import { eventEngine } from '~/server/events';
 import dayjs from 'dayjs';
-import {
-  getClubDetailsForResource,
-  upsertClubResource,
-  userContributingClubs,
-} from '../services/club.service';
-import { ClubAdminPermission } from '@prisma/client';
 import { hasEntityAccess } from '../services/common.service';
-import { bustCacheTag } from '../utils/cache-helpers';
-import { NsfwLevel } from '@prisma/client';
 
 export const getPostsInfiniteHandler = async ({
   input,

@@ -64,6 +64,7 @@ import { bulkSetReportStatus } from '~/server/services/report.service';
 import { baseS3Client } from '~/utils/s3-client';
 import { pgDbRead, pgDbWrite } from '~/server/db/pgDb';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
+import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -501,9 +502,6 @@ export const getAllImages = async ({
 }: GetInfiniteImagesOutput & {
   userId?: number;
   isModerator?: boolean;
-  // TODO.nsfwLevel - require browsingLevel?
-  // browsingLevel: number[];
-  // nsfw?: NsfwLevelOld;
   headers?: Record<string, string>; // does this do anything?
 }) => {
   const AND: Prisma.Sql[] = [Prisma.sql`i."postId" IS NOT NULL`];
@@ -706,13 +704,6 @@ export const getAllImages = async ({
   //   AND.push(Prisma.sql`i."id" IN (${Prisma.join(excludedImageIds ?? [])})`);
   // }
 
-  // TODO.nsfwLevel
-  // if (nsfw === NsfwLevelOld.None) AND.push(Prisma.sql`i."nsfw" = 'None'`);
-  // else if (nsfw !== undefined) {
-  //   const nsfwLevels = nsfwLevelOrder.slice(1, nsfwLevelOrder.indexOf(nsfw) + 1);
-  //   AND.push(Prisma.sql`i."nsfw" = ANY(ARRAY[${Prisma.join(nsfwLevels)}]::"NsfwLevel"[])`);
-  // }
-
   // Limit to images created since period start
   const sortingByMetrics = orderBy.includes('im.');
   if (sortingByMetrics && period !== 'AllTime' && periodMode !== 'stats') {
@@ -766,10 +757,14 @@ export const getAllImages = async ({
     AND.push(Prisma.sql`p."availability" != 'Private'`);
   }
 
-  // TODO.nsfwLevel
-  if (browsingLevel?.length) {
-    AND.push(Prisma.sql`i."nsfwLevel" = ANY(ARRAY[${Prisma.join(browsingLevel)}]::Int[])`);
-  } else AND.push(Prisma.sql`i."nsfwLevel" > 0 AND i."nsfwLevel" <= 3`);
+  // TODO.nsfwLevel - owner visibility
+  if (!!browsingLevel) {
+    AND.push(
+      Prisma.sql`i."nsfwLevel" = ANY(ARRAY[${Prisma.join(
+        parseBitwiseBrowsingLevel(browsingLevel)
+      )}]::Int[])`
+    );
+  } else AND.push(Prisma.sql`i."nsfwLevel" BETWEEN ${NsfwLevel.PG} AND ${NsfwLevel.PG13}`);
 
   // TODO: Adjust ImageMetric
   const queryFrom = Prisma.sql`
@@ -1218,6 +1213,7 @@ type ImagesForModelVersions = {
   tags?: number[];
   availability: Availability;
 };
+// TODO.nsfwLevel
 export const getImagesForModelVersion = async ({
   modelVersionIds,
   excludedTagIds,
@@ -1334,12 +1330,14 @@ export const getImagesForPosts = async ({
   userId,
   isOwnerRequest,
   coverOnly = true,
+  browsingLevel,
 }: {
   postIds: number | number[];
   excludedIds?: number[];
   userId?: number;
   isOwnerRequest?: boolean;
   coverOnly?: boolean;
+  browsingLevel?: number;
 }) => {
   if (!Array.isArray(postIds)) postIds = [postIds];
   const imageWhere: Prisma.Sql[] = [
@@ -1356,6 +1354,15 @@ export const getImagesForPosts = async ({
     if (!!excludedIds?.length)
       imageWhere.push(Prisma.sql`i."id" NOT IN (${Prisma.join(excludedIds)})`);
   }
+
+  console.log('service', { browsingLevel });
+  if (!!browsingLevel) {
+    imageWhere.push(
+      Prisma.sql`i."nsfwLevel" = ANY(ARRAY[${Prisma.join(
+        parseBitwiseBrowsingLevel(browsingLevel)
+      )}]::Int[])`
+    );
+  } else imageWhere.push(Prisma.sql`i."nsfwLevel" BETWEEN ${NsfwLevel.PG} AND ${NsfwLevel.PG13}`);
 
   const images = await dbRead.$queryRaw<
     {
