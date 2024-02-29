@@ -1305,7 +1305,7 @@ export const getImagesForModelVersion = async ({
       i.metadata,
       t."modelVersionId",
       p."availability",
-      i."sizeKB",
+      i."sizeKB"
       ${Prisma.raw(include.includes('meta') ? ', i.meta' : '')}
     FROM targets t
     JOIN "Image" i ON i.id = t.id
