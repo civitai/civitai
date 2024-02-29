@@ -26,6 +26,9 @@ import {
   IconLicense,
   IconMessageCircle2,
   IconShare3,
+  IconCloudCheck,
+  IconCloudUp,
+  IconCloudLock,
 } from '@tabler/icons-react';
 import { TRPCClientErrorBase } from '@trpc/client';
 import { DefaultErrorShape } from '@trpc/server';
@@ -91,6 +94,7 @@ import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { Adunit } from '~/components/Ads/AdUnit';
 import { adsRegistry } from '~/components/Ads/adsRegistry';
 import { useLocalStorage } from '@mantine/hooks';
+import { ToggleVaultButton } from '~/components/Vault/ToggleVaultButton';
 
 export function ModelVersionDetails({
   model,
@@ -620,6 +624,27 @@ export function ModelVersionDetails({
                     </LoginRedirect>
                   </div>
                 </Tooltip>
+                <ToggleVaultButton modelVersionId={version.id}>
+                  {({ isLoading, isInVault, toggleVaultItem }) => (
+                    <Tooltip
+                      label={isInVault ? 'Remove from Vault' : 'Add To Vault'}
+                      position="top"
+                      withArrow
+                    >
+                      <div>
+                        <Button
+                          sx={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
+                          color={isInVault ? 'green' : 'gray'}
+                          onClick={toggleVaultItem}
+                          loading={isLoading}
+                          variant={isInVault ? 'light' : undefined}
+                        >
+                          {isInVault ? <IconCloudCheck /> : <IconCloudLock />}
+                        </Button>
+                      </div>
+                    </Tooltip>
+                  )}
+                </ToggleVaultButton>
               </Group>
               {primaryFileDetails}
             </Stack>

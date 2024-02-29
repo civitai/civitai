@@ -343,11 +343,13 @@ export const upsertProductRecord = async (product: Stripe.Product) => {
     metadata: product.metadata,
     defaultPriceId: product.default_price as string | null,
   };
+
   await dbWrite.product.upsert({
     where: { id: product.id },
     update: productData,
     create: productData,
   });
+
   return productData;
 };
 

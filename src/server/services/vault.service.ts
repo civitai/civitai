@@ -13,6 +13,7 @@ import { getCategoryTags } from '~/server/services/system-cache';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
+import { formatKBytes } from '~/utils/number-helpers';
 
 const getVaultUsedStorage = async ({ userId }: { userId: number }) => {
   const [row] = await dbRead.$queryRaw<{ totalKb: number }[]>`
@@ -49,10 +50,11 @@ export const getOrCreateVault = async ({ userId }: { userId: number }) => {
 
   const tier: string | undefined = (subscription.product.metadata as any)[env.STRIPE_METADATA_KEY];
   type SubscriptionMetadata = {
-    vaultSizeKb?: number;
+    vaultSizeKb?: string;
   };
-  const { vaultSizeKb }: SubscriptionMetadata =
+  const { vaultSizeKb: vaultSizeKbString }: SubscriptionMetadata =
     (subscription.product.metadata as SubscriptionMetadata) ?? {};
+  const vaultSizeKb = parseInt(vaultSizeKbString ?? '', 10);
 
   if (!tier) {
     throw throwBadRequestError('User does not have a membership.');
@@ -178,7 +180,9 @@ export const addModelVersionToVault = async ({
 
   if (vaultUsedStorage + totalKb > vault.storageKb) {
     throw throwBadRequestError(
-      'Vault storage limit exceeded. Please delete some models before adding this one in.'
+      `Vault storage limit exceeded. You are trying to store ${formatKBytes(
+        totalKb
+      )} but you have only ${formatKBytes(vault.storageKb - vaultUsedStorage)} available.`
     );
   }
 
@@ -274,4 +278,40 @@ export const getPaginatedVaultItems = async (
   const count = await dbRead.vaultItem.count({ where });
 
   return getPagingData({ items, count: (count as number) ?? 0 }, limit, page);
+};
+
+export const isModelVersionInVault = async ({
+  userId,
+  modelVersionId,
+}: VaultItemsAddModelVersionSchema & {
+  userId: number;
+}) => {
+  const exists = await dbRead.vaultItem.findFirst({
+    where: {
+      vaultId: userId,
+      modelVersionId: modelVersionId,
+    },
+  });
+
+  return !!exists;
+};
+
+export const toggleModelVersionOnVault = async ({
+  userId,
+  modelVersionId,
+}: VaultItemsAddModelVersionSchema & {
+  userId: number;
+}) => {
+  const existingVaultItem = await dbRead.vaultItem.findFirst({
+    where: {
+      vaultId: userId,
+      modelVersionId: modelVersionId,
+    },
+  });
+
+  if (existingVaultItem) {
+    return await removeModelVersionsFromVault({ userId, modelVersionIds: [modelVersionId] });
+  } else {
+    return await addModelVersionToVault({ userId, modelVersionId });
+  }
 };
