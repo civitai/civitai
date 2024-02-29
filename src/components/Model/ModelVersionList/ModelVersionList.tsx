@@ -20,6 +20,7 @@ import {
   IconEdit,
   IconFileSettings,
   IconPhotoEdit,
+  IconPhotoPlus,
   IconTrash,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
@@ -290,7 +291,7 @@ export function ModelVersionList({
                   >
                     Manage files
                   </Menu.Item>
-                  {version.posts.length > 0 && (
+                  {version.posts.length > 0 ? (
                     <Menu.Item
                       component={NextLink}
                       icon={<IconPhotoEdit size={14} stroke={1.5} />}
@@ -298,6 +299,15 @@ export function ModelVersionList({
                       href={`/posts/${version.posts[0].id}/edit`}
                     >
                       Manage images
+                    </Menu.Item>
+                  ) : (
+                    <Menu.Item
+                      component={NextLink}
+                      icon={<IconPhotoPlus size={14} stroke={1.5} />}
+                      onClick={(e) => e.stopPropagation()}
+                      href={`/models/${version.modelId}/model-versions/${version.id}/wizard?step=3`}
+                    >
+                      Add images
                     </Menu.Item>
                   )}
                 </Menu.Dropdown>

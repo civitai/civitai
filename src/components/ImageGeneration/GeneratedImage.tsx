@@ -318,24 +318,20 @@ export function GeneratedImage({
                 <Menu.Item disabled icon={<IconWindowMaximize size={14} stroke={1.5} />}>
                   Upscale
                 </Menu.Item>
-                {user?.isModerator && (
-                  <>
-                    <Menu.Divider />
-                    <Menu.Label>Moderator</Menu.Label>
-                    <Menu.Item
-                      icon={
-                        copied ? (
-                          <IconCheck size={14} stroke={1.5} />
-                        ) : (
-                          <IconInfoHexagon size={14} stroke={1.5} />
-                        )
-                      }
-                      onClick={() => copy(image.hash)}
-                    >
-                      Copy Job ID
-                    </Menu.Item>
-                  </>
-                )}
+                <Menu.Divider />
+                <Menu.Label>System</Menu.Label>
+                <Menu.Item
+                  icon={
+                    copied ? (
+                      <IconCheck size={14} stroke={1.5} />
+                    ) : (
+                      <IconInfoHexagon size={14} stroke={1.5} />
+                    )
+                  }
+                  onClick={() => copy(image.hash)}
+                >
+                  Copy Job ID
+                </Menu.Item>
               </Menu.Dropdown>
             </Menu>
             {image.available && (
