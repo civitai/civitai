@@ -8,11 +8,12 @@ import { getCaptionAsList } from '~/components/Resource/Forms/Training/TrainingI
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { SignalMessages } from '~/server/common/enums';
 import { TrainingUpdateSignalSchema } from '~/server/schema/signals.schema';
-import { AutoTagResponse } from '~/server/services/training.service';
+import { AutoTagResponse, TagDataResponse } from '~/server/services/training.service';
 import { defaultTrainingState, trainingStore, useTrainingImageStore } from '~/store/training.store';
 import { MyTrainingModelGetAll } from '~/types/router';
-import { showSuccessNotification } from '~/utils/notifications';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { isDefined } from '~/utils/type-guards';
 
 export const basePath = '/models/train';
 export const maxSteps = 3;
@@ -81,19 +82,42 @@ export const useTrainingSignals = () => {
   useSignalConnection(SignalMessages.TrainingUpdate, onUpdate);
 };
 
-export const useTrainingAutoTagSignals = () => {
+export const useOrchestratorUpdateSignal = () => {
   const onUpdate = ({
-    modelId,
-    data,
-    isDone,
+    context,
+    jobType,
+    type,
   }: {
-    modelId: number;
-    data: AutoTagResponse;
-    isDone?: boolean;
+    context?: { data: TagDataResponse; modelId: number; isDone: boolean };
+    jobType: string;
+    type: string; // TODO enum, and in other places too
   }) => {
+    if (jobType !== 'MediaTagging') return;
+
+    // TODO we could handle Initialized | Claimed | Succeeded
+    if (!['Updated', 'Failed'].includes(type)) return;
+
+    if (!isDefined(context)) return;
+    const { data, modelId, isDone } = context;
+
     const { updateImage, setAutoCaptioning } = trainingStore;
 
-    Object.entries(data).forEach(([k, v]) => {
+    if (type === 'Failed') {
+      showErrorNotification({
+        error: new Error('Could not complete. Please try again.'),
+        title: 'Failed to auto-tag',
+        autoClose: false,
+      });
+      setAutoCaptioning(modelId, { ...defaultTrainingState.autoCaptioning });
+      return;
+    }
+
+    const tagList = Object.entries(data).map(([f, t]) => ({
+      [f]: t.wdTagger.tags,
+    }));
+    const returnData: AutoTagResponse = Object.assign({}, ...tagList);
+
+    Object.entries(returnData).forEach(([k, v]) => {
       const returnData = Object.entries(v);
       const storeState = useTrainingImageStore.getState();
       const { autoCaptioning } = storeState[modelId] ?? { ...defaultTrainingState };
@@ -136,6 +160,5 @@ export const useTrainingAutoTagSignals = () => {
       setAutoCaptioning(modelId, { ...defaultTrainingState.autoCaptioning });
     }
   };
-
-  useSignalConnection(SignalMessages.TrainingAutoTag, onUpdate);
+  useSignalConnection(SignalMessages.OrchestratorUpdate, onUpdate);
 };

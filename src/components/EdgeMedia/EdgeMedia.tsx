@@ -1,9 +1,8 @@
 import { createStyles, Text } from '@mantine/core';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { EdgeUrlProps } from '~/client-utils/cf-images-utils';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { EdgeVideo } from '~/components/EdgeMedia/EdgeVideo';
 import { useRef } from 'react';
+import { EdgeUrlProps, getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { EdgeVideo } from '~/components/EdgeMedia/EdgeVideo';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export type EdgeMediaProps = EdgeUrlProps &
   Omit<JSX.IntrinsicElements['img'], 'src' | 'srcSet' | 'ref' | 'width' | 'height' | 'metadata'> & {
@@ -49,7 +48,7 @@ export function EdgeMedia({
   let _type = type ?? _inferredType;
 
   // videos are always transcoded
-  if (!anim) console.log(_name, _inferredType);
+  // if (!anim) console.log(_name, _inferredType);
   if (_inferredType === 'video' && _type === 'image') {
     transcode = true;
     anim = false;

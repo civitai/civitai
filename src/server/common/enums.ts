@@ -140,11 +140,11 @@ export enum SignalMessages {
   BuzzUpdate = 'buzz:update',
   ImageGenStatusUpdate = 'image-gen:status-update',
   TrainingUpdate = 'training:update',
-  TrainingAutoTag = 'training:autotag',
   ImageIngestionStatus = 'image-ingestion:status',
   ChatNewMessage = 'chat:new-message',
   ChatNewRoom = 'chat:new-room',
   ChatTypingStatus = 'chat:typing-status',
+  OrchestratorUpdate = 'orchestrator-job:status-update',
 }
 
 export enum BountySort {
@@ -202,6 +202,7 @@ export enum PurchasableRewardViewMode {
   Available = 'Available',
   Purchased = 'Purchased',
 }
+
 export enum PurchasableRewardModeratorViewMode {
   Available = 'Available',
   History = 'History',

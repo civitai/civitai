@@ -3,7 +3,7 @@ import { useBuzzSignalUpdate } from '~/components/Buzz/useBuzz';
 import { useChatNewMessageSignal, useChatNewRoomSignal } from '~/components/Chat/ChatSignals';
 import { useImageGenStatusUpdate } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import {
-  useTrainingAutoTagSignals,
+  useOrchestratorUpdateSignal,
   useTrainingSignals,
 } from '~/components/Resource/Forms/Training/TrainingCommon';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
@@ -16,7 +16,7 @@ export function SignalsRegistrar() {
   useBuzzSignalUpdate();
 
   useTrainingSignals();
-  useTrainingAutoTagSignals();
+  useOrchestratorUpdateSignal();
 
   useChatNewMessageSignal();
   useChatNewRoomSignal();
