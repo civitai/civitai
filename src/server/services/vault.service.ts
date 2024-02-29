@@ -1,4 +1,5 @@
 import { ModelHashType, ModelStatus, Prisma, VaultItemStatus } from '@prisma/client';
+import { env } from '~/env/server.mjs';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
   GetPaginatedVaultItemsSchema,
@@ -9,9 +10,69 @@ import {
 } from '~/server/schema/vault.schema';
 import { getImagesForModelVersion } from '~/server/services/image.service';
 import { getCategoryTags } from '~/server/services/system-cache';
-import { throwNotFoundError } from '~/server/utils/errorHandling';
+import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
+
+const getVaultUsedStorage = async ({ userId }: { userId: number }) => {
+  const [row] = await dbRead.$queryRaw<{ totalKb: number }[]>`
+    SELECT SUM("detailsSizeKb" + "imagesSizeKb" + "modelSizeKb") as "totalKb"
+    FROM "VaultItem"
+    WHERE "vaultId" = ${userId}
+  `;
+
+  return row?.totalKb ?? 0;
+};
+
+export const getOrCreateVault = async ({ userId }: { userId: number }) => {
+  const vault = await dbWrite.vault.findFirst({
+    where: { userId },
+  });
+
+  if (vault) {
+    return vault;
+  }
+
+  // Create vault if it doesn't exist. Requires membership:
+  const user = await dbWrite.user.findFirstOrThrow({
+    where: { id: userId },
+    select: {
+      subscription: { select: { status: true, product: { select: { metadata: true } } } },
+    },
+  });
+
+  const { subscription } = user;
+  const isActiveSubscription = ['active', 'trialing'].includes(subscription?.status ?? 'inactive');
+
+  if (!subscription || !isActiveSubscription)
+    throw throwBadRequestError('User does not have an active membership.');
+
+  const tier: string | undefined = (subscription.product.metadata as any)[env.STRIPE_METADATA_KEY];
+  type SubscriptionMetadata = {
+    vaultSizeKb?: number;
+  };
+  const { vaultSizeKb }: SubscriptionMetadata =
+    (subscription.product.metadata as SubscriptionMetadata) ?? {};
+
+  if (!tier) {
+    throw throwBadRequestError('User does not have a membership.');
+  }
+
+  if (!vaultSizeKb) {
+    throw throwBadRequestError(
+      'Vault size has not been configured correctly. Please contact administration.'
+    );
+  }
+
+  const newVault = await dbWrite.vault.create({
+    data: {
+      userId,
+      storageKb: vaultSizeKb,
+    },
+  });
+
+  return newVault;
+};
 
 export const getModelVersionDataForVault = async ({
   modelVersionId,
@@ -100,6 +161,8 @@ export const addModelVersionToVault = async ({
   if (existingVaultItem) {
     return existingVaultItem;
   }
+
+  const vault = await getOrCreateVault({ userId });
   const { modelVersion, mainFile, images, detail } = await getModelVersionDataForVault({
     modelVersionId,
   });
@@ -108,6 +171,16 @@ export const addModelVersionToVault = async ({
   const category = modelVersion.model.tagsOnModels.find((tagOnModel) =>
     modelCategoriesIds.includes(tagOnModel.tag.id)
   );
+
+  const totalKb =
+    mainFile.sizeKB + images.reduce((acc, img) => acc + (img.sizeKB ?? 0), 0) + detail.length;
+  const vaultUsedStorage = await getVaultUsedStorage({ userId });
+
+  if (vaultUsedStorage + totalKb > vault.storageKb) {
+    throw throwBadRequestError(
+      'Vault storage limit exceeded. Please delete some models before adding this one in.'
+    );
+  }
 
   const vaultItem = await dbWrite.vaultItem.create({
     data: {
@@ -119,9 +192,9 @@ export const addModelVersionToVault = async ({
       baseModel: modelVersion.baseModel,
       creatorName: modelVersion.model.user?.username ?? '',
       creatorId: modelVersion.model.userId,
-      detailsSizeKB: detail.length,
-      imagesSizeKB: images.reduce((acc, img) => acc + (img.sizeKB ?? 0), 0),
-      modelSizeKB: mainFile.sizeKB,
+      detailsSizeKb: detail.length,
+      imagesSizeKb: images.reduce((acc, img) => acc + (img.sizeKB ?? 0), 0),
+      modelSizeKb: mainFile.sizeKB,
       hash: mainFile.hashes.find((h) => h.type === ModelHashType.SHA256)?.hash ?? '',
       type: modelVersion.model.type,
       category: category?.tag.name ?? '',

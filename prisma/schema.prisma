@@ -2812,9 +2812,9 @@ model VaultItem {
   createdAt      DateTime        @default(now())
   addedAt        DateTime        @default(now())
   refreshedAt    DateTime?
-  modelSizeKB    Int
-  detailsSizeKB  Int
-  imagesSizeKB   Int
+  modelSizeKb    Int
+  detailsSizeKb  Int
+  imagesSizeKb   Int
   notes          String?
 }
 
