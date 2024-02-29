@@ -1,6 +1,5 @@
 import { z } from 'zod';
 import { trainingDetailsParams } from '~/server/schema/model-version.schema';
-import { autoTagInput } from '~/server/schema/training.schema';
 
 export namespace Orchestrator {
   export type Job<TResult = unknown> = { jobId: string; result: TResult };
@@ -47,7 +46,7 @@ export namespace Orchestrator {
       callbackUrl: z.string().url().optional(),
       model: z.string(),
       trainingData: z.string().url(),
-      maxRetryAttempt: z.number(),
+      retries: z.number(),
       params: z
         .object({
           modelFileId: z.number(),
@@ -62,8 +61,10 @@ export namespace Orchestrator {
     export type ImageResourceTrainingResponse = Orchestrator.JobResponse;
 
     const imageAutoTagInputSchema = z.object({
-      maxRetryAttempt: z.number().positive(),
-      properties: autoTagInput.extend({
+      retries: z.number().positive(),
+      mediaUrl: z.string().url(),
+      modelId: z.number().positive(),
+      properties: z.object({
         userId: z.number(),
       }),
     });

@@ -601,7 +601,13 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     const { baseModel, ...paramData } = data;
 
     const baseModelConvert: BaseModel =
-      baseModel === 'sd_1_5' ? 'SD 1.5' : baseModel === 'sdxl' ? 'SDXL 1.0' : 'Other';
+      baseModel === 'sd_1_5'
+        ? 'SD 1.5'
+        : baseModel === 'sdxl'
+        ? 'SDXL 1.0'
+        : baseModel === 'pony'
+        ? 'Pony'
+        : 'Other';
 
     // these top vars appear to be required for upsert, but aren't actually being updated.
     // only ID should technically be necessary
