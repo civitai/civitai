@@ -300,13 +300,12 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                         <InfoPopover size="xs" iconProps={{ size: 14 }}>
                           <Text>
                             These permissions determine what others can do with your resource.
-                            Select the option that make the most sense for your use case.
+                            Select the options that make the most sense for your use case.
                           </Text>
                         </InfoPopover>
                       </Group>
                       <Text size="xs" color="dimmed" sx={{ lineHeight: 1.2 }}>
-                        Select the most permissive option that applies to your model. Options are
-                        listed from least to most permissive.
+                        Select all permissions you would like to apply to your model.
                       </Text>
                     </Stack>
                     <InputCheckboxGroup spacing="xs" name="allowCommercialUse">
