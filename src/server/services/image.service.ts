@@ -501,6 +501,7 @@ export const getAllImages = async ({
 }: GetInfiniteImagesOutput & {
   user?: SessionUser;
   isModerator?: boolean;
+  isOwnerOrModerator?: boolean;
   headers?: Record<string, string>; // does this do anything?
 }) => {
   const AND: Prisma.Sql[] = [Prisma.sql`i."postId" IS NOT NULL`];
@@ -511,20 +512,23 @@ export const getAllImages = async ({
 
   const userId = user?.id;
   const isOwner = user ? user.username === username : false;
-  const isOwnerOrModeratorView = isOwner || (!!username && (user?.isModerator ?? false));
+  // uncacheable if isOwnerOrModeratorView === true
+  const isOwnerOrModeratorView =
+    user && (user.username === username || (!!username && (user.isModerator ?? false)));
 
-  if (hidden) {
-    if (!userId) throw throwAuthorizationError();
-    const hiddenImages = await dbRead.imageEngagement.findMany({
-      where: { userId, type: 'Hide' },
-      select: { imageId: true },
-    });
-    const imageIds = hiddenImages.map((x) => x.imageId);
-    if (imageIds.length) {
-      cacheTime = 0;
-      AND.push(Prisma.sql`i."id" IN (${Prisma.join(imageIds)})`);
-    } else {
-      return { items: [], nextCursor: undefined };
+  if (isOwnerOrModeratorView) {
+    if (hidden) {
+      const hiddenImages = await dbRead.imageEngagement.findMany({
+        where: { userId, type: 'Hide' },
+        select: { imageId: true },
+      });
+      const imageIds = hiddenImages.map((x) => x.imageId);
+      if (imageIds.length) {
+        cacheTime = 0;
+        AND.push(Prisma.sql`i."id" IN (${Prisma.join(imageIds)})`);
+      } else {
+        return { items: [], nextCursor: undefined };
+      }
     }
   }
 

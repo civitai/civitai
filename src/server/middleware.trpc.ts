@@ -13,7 +13,10 @@ import { hashifyObject, slugit } from '~/utils/string-helpers';
 
 export const queryMiddleware = middleware(({ input, ctx, next }) => {
   const _input = input as BaseQuerySchema;
+  const isOwner = ctx.user && ctx.user.username === _input.username;
+  const isModerator = ctx.user?.isModerator ?? false;
   _input.browsingLevel = _input.browsingLevel ?? ctx.browsingLevel;
+  _input.isOwnerOrModerator = isOwner || isModerator;
   return next({
     ctx: { user: ctx.user },
   });

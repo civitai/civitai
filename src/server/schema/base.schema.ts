@@ -37,6 +37,8 @@ export type PeriodMode = z.infer<typeof periodModeSchema>;
 export type BaseQuerySchema = z.infer<typeof baseQuerySchema>;
 export const baseQuerySchema = z.object({
   browsingLevel: z.number().min(1),
+  isOwnerOrModerator: z.boolean().optional(),
+  userName: z.string().optional(),
 });
 
 export type InfiniteQueryInput = z.infer<typeof infiniteQuerySchema>;
