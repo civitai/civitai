@@ -62,7 +62,7 @@ export const useStyles = createStyles((theme) => ({
   rewardCard: {
     backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[0],
     borderRadius: theme.radius.md,
-    padding: `${theme.spacing.md}px ${theme.spacing.sm}px`,
+    padding: `${theme.spacing.sm}px ${theme.spacing.sm}px`,
     height: '100%',
     width: '100%',
   },
@@ -82,6 +82,7 @@ const RewardDetailsModal = ({
   const { classes } = useStyles();
   const { purchasePurchasableReward, purchasingPurchasableReward } = useMutatePurchasableReward();
   const isAvailable = isPurchasableRewardActive(purchasableReward);
+  const terms = purchasableReward.termsOfUse == '<p>N/A</p>' ? null : purchasableReward.termsOfUse;
 
   const handlePurchase = async () => {
     try {
@@ -102,7 +103,7 @@ const RewardDetailsModal = ({
   };
 
   return (
-    <Modal {...dialog} size="lg" withCloseButton={false} radius="lg">
+    <Modal {...dialog} size="md" withCloseButton={false} radius="md">
       <Stack spacing="sm">
         <Group position="apart">
           <Text size="lg" weight="bold">
@@ -115,7 +116,7 @@ const RewardDetailsModal = ({
           </Group>
         </Group>
         <Divider mx="-lg" />
-        <Paper key={purchasableReward.id} className={classes.rewardCard}>
+        <Paper key={purchasableReward.id} className={classes.rewardCard} my="sm">
           <Stack spacing="sm">
             {purchasableReward.coverImage && (
               <ImageCSSAspectRatioWrap
@@ -184,26 +185,48 @@ const RewardDetailsModal = ({
             </div>
           </Stack>
         </Paper>
-        <Tabs variant="pills" radius="xl" defaultValue="about" color="gray">
+        <Tabs
+          variant="pills"
+          radius="xl"
+          defaultValue="about"
+          color="gray"
+          styles={(theme) => ({
+            tab: {
+              padding: '6px 12px',
+              fontWeight: 500,
+            },
+          })}
+        >
           <Tabs.List>
             <Tabs.Tab value="about">About</Tabs.Tab>
-            <Tabs.Tab value="redeemDetails">How to redeem</Tabs.Tab>
-            <Tabs.Tab value="termsOfUse">Terms of use</Tabs.Tab>
+            <Tabs.Tab value="redeemDetails">How to Redeem</Tabs.Tab>
+            {terms && <Tabs.Tab value="termsOfUse">Terms of Use</Tabs.Tab>}
             {isPurchased ? <Tabs.Tab value="redeem">Redeem</Tabs.Tab> : null}
           </Tabs.List>
-          <Tabs.Panel value="about" pt="md">
-            <RenderHtml html={purchasableReward.about} />
+          <Tabs.Panel value="about" pt="sm">
+            <RenderHtml
+              html={purchasableReward.about}
+              sx={(theme) => ({ fontSize: theme.fontSizes.sm })}
+            />
           </Tabs.Panel>
-          <Tabs.Panel value="redeemDetails" pt="md">
-            <RenderHtml html={purchasableReward.redeemDetails} />
+          <Tabs.Panel value="redeemDetails" pt="sm">
+            <RenderHtml
+              html={purchasableReward.redeemDetails}
+              sx={(theme) => ({ fontSize: theme.fontSizes.sm })}
+            />
           </Tabs.Panel>
-          <Tabs.Panel value="termsOfUse" pt="md">
-            <RenderHtml html={purchasableReward.termsOfUse} />
-          </Tabs.Panel>
+          {terms && (
+            <Tabs.Panel value="termsOfUse" pt="sm">
+              <RenderHtml
+                html={purchasableReward.termsOfUse}
+                sx={(theme) => ({ fontSize: theme.fontSizes.sm })}
+              />
+            </Tabs.Panel>
+          )}
           {isPurchased && (
-            <Tabs.Panel value="redeem" pt="md">
+            <Tabs.Panel value="redeem" pt="sm">
               <Stack>
-                <Text size="sm" color="dimmed">
+                <Text size="sm">
                   Use the code or link provided below to redeem your reward. If you need more
                   information on how to redeem your reward, check the &rsquo;How to redeem&rsquo;
                   section.
@@ -467,7 +490,7 @@ export function PurchasableRewards() {
           )}
 
           {filters.mode === PurchasableRewardViewMode.Purchased && (
-            <Stack>
+            <Stack sx={{ maxWidth: 800 }}>
               {purchasableRewards.map((purchasableReward) => {
                 return (
                   <PurchasableRewardListItem

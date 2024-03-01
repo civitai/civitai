@@ -99,7 +99,6 @@ export const serverSchema = z.object({
   FEATUREBASE_URL: z.string().url().optional(),
   NEWSLETTER_ID: z.string().optional(),
   NEWSLETTER_KEY: z.string().optional(),
-  NEWSLETTER_SERVER: z.string().optional(),
   BUZZ_ENDPOINT: z.string().url().optional(),
   SIGNALS_ENDPOINT: z.string().url().optional(),
   CACHE_DNS: zc.booleanString,
