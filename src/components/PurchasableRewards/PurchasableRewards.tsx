@@ -408,9 +408,8 @@ export function PurchasableRewards() {
     page: 1,
     mode: PurchasableRewardViewMode.Available,
   });
-  const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
   const { purchasableRewards, pagination, isLoading, isRefetching } =
-    useQueryPurchasableRewards(debouncedFilters);
+    useQueryPurchasableRewards(filters);
   const { purchasedRewards } = useUserPurchasedRewards();
 
   if (
