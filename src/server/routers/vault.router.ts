@@ -6,6 +6,7 @@ import {
   vaultItemsUpdateNotesSchema,
 } from '~/server/schema/vault.schema';
 import {
+  getOrCreateVault,
   getPaginatedVaultItems,
   isModelVersionInVault,
   refreshVaultItems,
@@ -14,8 +15,14 @@ import {
   updateVaultItemsNotes,
 } from '~/server/services/vault.service';
 import { protectedProcedure, router } from '~/server/trpc';
+import { getByIdSchema } from '../schema/base.schema';
 
 export const vaultRouter = router({
+  get: protectedProcedure.query(({ ctx }) => {
+    return getOrCreateVault({
+      userId: ctx.user.id,
+    });
+  }),
   getItemsPaged: protectedProcedure.input(getPaginatedVaultItemsSchema).query(({ input, ctx }) => {
     return getPaginatedVaultItems({ ...input, userId: ctx.user.id });
   }),

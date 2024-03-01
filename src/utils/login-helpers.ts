@@ -30,6 +30,7 @@ export const loginRedirectReasons = {
   'blur-toggle': 'Displaying NSFW content requires you to be logged in',
   'create-club': 'You need to be logged in to create a club',
   'join-club': 'You need to be logged in to join a club',
+  'civitai-vault': 'You need to be logged in to access your Civitai Vault',
 };
 
 export type LoginRedirectReason = keyof typeof loginRedirectReasons;

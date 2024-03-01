@@ -15,20 +15,36 @@ import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { formatKBytes } from '~/utils/number-helpers';
 
-const getVaultUsedStorage = async ({ userId }: { userId: number }) => {
-  const [row] = await dbRead.$queryRaw<{ totalKb: number }[]>`
-    SELECT SUM("detailsSizeKb" + "imagesSizeKb" + "modelSizeKb") as "totalKb"
-    FROM "VaultItem"
-    WHERE "vaultId" = ${userId}
+type VaultWithUsedStorage = {
+  userId: number;
+  storageKb: number;
+  meta: MixedObject;
+  usedStorageKb: number;
+};
+
+const getVaultWithStorage = async ({ userId }: { userId: number }) => {
+  const [row] = await dbWrite.$queryRaw<VaultWithUsedStorage[]>`
+    SELECT
+      v."userId",
+      v."storageKb",
+      v."meta",
+      COALESCE(SUM(vi."detailsSizeKb" + vi."imagesSizeKb" + vi."modelSizeKb")::int, 0) as "usedStorageKb"
+    FROM "Vault" v
+    LEFT JOIN "VaultItem" vi ON v."userId" = vi."vaultId"
+    WHERE v."userId" = ${userId}
+    GROUP BY 
+      v."userId",
+      v."storageKb",
+      v."meta"
   `;
 
-  return row?.totalKb ?? 0;
+  console.log(row, 'ma row');
+
+  return row;
 };
 
 export const getOrCreateVault = async ({ userId }: { userId: number }) => {
-  const vault = await dbWrite.vault.findFirst({
-    where: { userId },
-  });
+  const vault = await getVaultWithStorage({ userId });
 
   if (vault) {
     return vault;
@@ -66,14 +82,15 @@ export const getOrCreateVault = async ({ userId }: { userId: number }) => {
     );
   }
 
-  const newVault = await dbWrite.vault.create({
+  // We will need to fetch it after the fact to get with used storage.
+  await dbWrite.vault.create({
     data: {
       userId,
       storageKb: vaultSizeKb,
     },
   });
 
-  return newVault;
+  return getVaultWithStorage({ userId });
 };
 
 export const getModelVersionDataForVault = async ({
@@ -176,13 +193,12 @@ export const addModelVersionToVault = async ({
 
   const totalKb =
     mainFile.sizeKB + images.reduce((acc, img) => acc + (img.sizeKB ?? 0), 0) + detail.length;
-  const vaultUsedStorage = await getVaultUsedStorage({ userId });
 
-  if (vaultUsedStorage + totalKb > vault.storageKb) {
+  if (vault.usedStorageKb + totalKb > vault.storageKb) {
     throw throwBadRequestError(
       `Vault storage limit exceeded. You are trying to store ${formatKBytes(
         totalKb
-      )} but you have only ${formatKBytes(vault.storageKb - vaultUsedStorage)} available.`
+      )} but you have only ${formatKBytes(vault.storageKb - vault.usedStorageKb)} available.`
     );
   }
 

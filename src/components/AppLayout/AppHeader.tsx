@@ -53,6 +53,7 @@ import {
   IconVideoPlus,
   IconWriting,
   IconClubs,
+  IconCloudLock,
 } from '@tabler/icons-react';
 import { signOut } from 'next-auth/react';
 import Link from 'next/link';
@@ -451,6 +452,16 @@ export function AppHeader({
           <Group align="center" spacing="xs">
             <IconProgressBolt stroke={1.5} color={theme.colors.yellow[7]} />
             Buzz dashboard
+          </Group>
+        ),
+      },
+      {
+        href: '/user/vault',
+        visible: !!currentUser,
+        label: (
+          <Group align="center" spacing="xs">
+            <IconCloudLock stroke={1.5} color={theme.colors.yellow[7]} />
+            My vault
           </Group>
         ),
       },

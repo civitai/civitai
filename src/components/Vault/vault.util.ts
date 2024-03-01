@@ -47,6 +47,16 @@ export const useMutateVault = () => {
   };
 };
 
+export const useQueryVault = () => {
+  const currentUser = useCurrentUser();
+  const isMember = currentUser?.isMember;
+  const { data: vault, ...rest } = trpc.vault.get.useQuery(undefined, {
+    enabled: !!currentUser && isMember,
+  });
+
+  return { vault, ...rest };
+};
+
 export const useQueryVaultItems = (
   filters?: Partial<GetPaginatedVaultItemsSchema>,
   options?: { keepPreviousData?: boolean; enabled?: boolean }
