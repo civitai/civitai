@@ -105,6 +105,7 @@ async function handleJob({
 
       // Otherwise, resubmit it
       log(`Could not fetch position in queue.`);
+      getOrchestratorCaller(submittedAt).deleteJobById({ id: jobId }).catch();
       await requeueTraining();
       // Note: If for some reason we can't do the training run, this should be in the Failed status on the next pass.
     }

@@ -94,6 +94,10 @@ class OrchestratorCaller extends HttpCaller {
   public taintJobById({ id, payload }: { id: string; payload: Orchestrator.TaintJobByIdPayload }) {
     return this.put(`/v1/consumer/jobs/${id}`, { payload });
   }
+
+  public deleteJobById({ id }: { id: string }) {
+    return this.delete(`/v1/consumer/jobs/${id}`);
+  }
 }
 
 const orchestratorCaller = new OrchestratorCaller();
