@@ -1,11 +1,18 @@
-import { Group, Text, ButtonProps, Button, Tooltip } from '@mantine/core';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import React from 'react';
-import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
+import {
+  Button,
+  ButtonProps,
+  createStyles,
+  Group,
+  MantineSize,
+  Text,
+  Tooltip,
+} from '@mantine/core';
 import { Currency } from '@prisma/client';
 import { IconAlertTriangleFilled } from '@tabler/icons-react';
+import React from 'react';
+import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useBuzzTransaction } from './buzz.utils';
-import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
 
 type Props = ButtonProps & {
   buzzAmount: number;
@@ -13,8 +20,17 @@ type Props = ButtonProps & {
   label: string;
   onPerformTransaction?: () => void;
   purchaseSuccessMessage?: (purchasedBalance: number) => React.ReactNode;
+  size?: MantineSize;
   performTransactionOnPurchase?: boolean;
 };
+
+const useButtonStyle = createStyles((theme) => ({
+  button: {
+    paddingRight: 8,
+    color: theme.colors.dark[8],
+    fontWeight: 600,
+  },
+}));
 
 export function BuzzTransactionButton({
   buzzAmount,
@@ -23,9 +39,11 @@ export function BuzzTransactionButton({
   message = "You don't have enough funds. Buy or earn more buzz to perform this action",
   performTransactionOnPurchase = true,
   label,
+  size,
   ...buttonProps
 }: Props) {
   const features = useFeatureFlags();
+  const { classes, cx } = useButtonStyle();
   const { conditionalPerformTransaction, hasRequiredAmount } = useBuzzTransaction({
     message,
     purchaseSuccessMessage,
@@ -57,15 +75,20 @@ export function BuzzTransactionButton({
       color={hasCost ? 'yellow.7' : 'blue'}
       {...buttonProps}
       onClick={onPerformTransaction ? onClick : undefined}
+      className={cx(classes.button, buttonProps?.className)}
     >
-      <Group spacing="md" noWrap>
+      <Group spacing="md" noWrap position="apart">
+        <Text size={size ?? 14}>{label}</Text>
         {hasCost && (
           <CurrencyBadge
             currency={Currency.BUZZ}
             unitAmount={buzzAmount}
             displayCurrency={false}
             radius={buttonProps?.radius ?? 'sm'}
-            px="xs"
+            py={10}
+            pl={4}
+            pr={8}
+            color="dark.8"
           >
             {!hasRequiredAmount(buzzAmount) && (
               <Tooltip
@@ -85,7 +108,6 @@ export function BuzzTransactionButton({
             )}
           </CurrencyBadge>
         )}
-        <Text>{label}</Text>
       </Group>
     </Button>
   );

@@ -168,8 +168,8 @@ const RewardDetailsModal = ({
                   buzzAmount={purchasableReward.unitPrice}
                   radius="xl"
                   onPerformTransaction={handlePurchase}
-                  label="Unlock now"
-                  color="yellow.7"
+                  label="Unlock Now"
+                  size="md"
                 />
               ) : (
                 <Group spacing={8}>
@@ -425,9 +425,11 @@ export function PurchasableRewards() {
 
   return (
     <Stack>
-      <Group noWrap>
-        <Title>Rewards</Title>
-        <IconGift size={32} style={{ marginTop: '8px' }} />
+      <Group noWrap align="flex-end">
+        <Title order={2} lh={1}>
+          Rewards
+        </Title>
+        <IconGift size={24} style={{ marginTop: '8px' }} />
       </Group>
       <Chip.Group
         spacing={8}
