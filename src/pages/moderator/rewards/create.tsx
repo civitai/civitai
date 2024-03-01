@@ -14,7 +14,7 @@ export default function PurchasableRewardCreate() {
 
   return (
     <>
-      <Meta title="Create Rewards" deIndex="noindex, nofollow" />
+      <Meta title="Create Rewards" deIndex />
       <Container size="md">
         <Stack>
           <Group spacing="md" noWrap>

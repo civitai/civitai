@@ -430,10 +430,9 @@ export function Collection({
         <Meta
           title={`${collection.name} - collection posted by ${collection.user.username}`}
           description={collection.description ?? undefined}
+          images={collection.image}
           deIndex={
             collection.read !== 'Public' || collection.availability === Availability.Unsearchable
-              ? 'noindex, nofollow'
-              : undefined
           }
         />
       )}

@@ -737,7 +737,7 @@ export async function getProfilePicturesForUsers(userIds: number[]) {
           i.id,
           i.name,
           i.url,
-          i.nsfw,
+          i."nsfwLevel",
           i.hash,
           i."userId",
           i.ingestion,

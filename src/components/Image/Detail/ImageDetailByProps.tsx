@@ -31,7 +31,6 @@ import { ImageDetailComments } from '~/components/Image/Detail/ImageDetailCommen
 import { ImageResources } from '~/components/Image/Detail/ImageResources';
 import { Meta } from '~/components/Meta/Meta';
 import { TrackView } from '~/components/TrackView/TrackView';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { CollectionType } from '@prisma/client';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
 import { openContext } from '~/providers/CustomModalsProvider';
@@ -51,6 +50,7 @@ import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { useIsMutating } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
+import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 
 export function ImageDetailByProps({
   imageId,
@@ -92,11 +92,14 @@ export function ImageDetailByProps({
   const user = data?.user;
   const { classes, cx, theme } = useStyles();
 
+  const nsfw = image ? !getIsSafeBrowsingLevel(image.nsfwLevel) : false;
+
   return (
     <>
       <Meta
         title={image ? `Image posted by ${user?.username}` : 'Loading image...'}
-        image={!image || image.url == null ? undefined : getEdgeUrl(image.url, { width: 1200 })}
+        images={image}
+        deIndex={nsfw || (image ? !!image.needsReview : false)}
       />
       {image && <TrackView entityId={image.id} entityType="Image" type="ImageView" />}
       <MantineProvider theme={{ colorScheme: 'dark' }}>

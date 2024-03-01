@@ -9,20 +9,17 @@ import {
   getModeratorReviewQueueHandler,
 } from './../controllers/image.controller';
 import {
-  updateImageSchema,
   getInfiniteImagesSchema,
   imageModerationSchema,
   getImageSchema,
   getEntitiesCoverImage,
   imageReviewQueueInputSchema,
-  imageSchema,
   createImageSchema,
 } from './../schema/image.schema';
 import {
   deleteImageHandler,
   setTosViolationHandler,
   moderateImageHandler,
-  updateImageHandler,
 } from '~/server/controllers/image.controller';
 import { dbRead } from '~/server/db/client';
 import { getByIdSchema } from '~/server/schema/base.schema';
@@ -34,7 +31,6 @@ import {
   router,
 } from '~/server/trpc';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
-import { applyUserPreferences } from '~/server/middleware.trpc';
 import {
   ingestImageById,
   removeImageResource,

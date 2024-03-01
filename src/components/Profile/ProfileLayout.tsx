@@ -7,7 +7,6 @@ import React from 'react';
 
 import { Meta } from '~/components/Meta/Meta';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { env } from '~/env/client.mjs';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
@@ -48,7 +47,7 @@ export function ProfileLayout({
           )}, Total Likes Received: ${abbreviateNumber(
             stats.favoriteCountAllTime
           )}, Total Downloads Received: ${abbreviateNumber(stats.downloadCountAllTime)}. `}
-          image={!user.image ? undefined : getEdgeUrl(user.image, { width: 1200 })}
+          images={user.profilePicture}
           links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/user/${username}`, rel: 'canonical' }]}
         />
       ) : (

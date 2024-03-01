@@ -22,13 +22,11 @@ import {
   IconFlag,
   IconX,
 } from '@tabler/icons-react';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { adsRegistry } from '~/components/Ads/adsRegistry';
 import { Adunit } from '~/components/Ads/AdUnit';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
-import { useIsPublicBrowsingLevel } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { TipBuzzButton } from '~/components/Buzz/TipBuzzButton';
 import { ChatUserButton } from '~/components/Chat/ChatUserButton';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
@@ -51,30 +49,26 @@ import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { env } from '~/env/client.mjs';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
+import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 
 export function ImageDetail() {
   const { classes, cx, theme } = useStyles();
   const { image, isLoading, active, close, toggleInfo } = useImageDetailContext();
   const { query } = useBrowserRouter();
-  const isPublic = useIsPublicBrowsingLevel();
 
   if (isLoading) return <PageLoader />;
   if (!image) return <NotFound />;
 
-  const nsfw = image.nsfw !== 'None';
+  const nsfw = !getIsSafeBrowsingLevel(image.nsfwLevel);
 
   return (
     <>
       <Meta
         title={`Image posted by ${image.user.username}`}
-        image={image.url && isPublic ? getEdgeUrl(image.url, { width: 1200 }) : undefined}
+        images={image}
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/images/${image.id}`, rel: 'canonical' }]}
-        deIndex={
-          !isPublic || !!image.needsReview || image.availability === Availability.Unsearchable
-            ? 'noindex, nofollow'
-            : undefined
-        }
+        deIndex={nsfw || !!image.needsReview || image.availability === Availability.Unsearchable}
       />
       <TrackView entityId={image.id} entityType="Image" type="ImageView" nsfw={nsfw} />
       <MantineProvider theme={{ colorScheme: 'dark' }} inherit>

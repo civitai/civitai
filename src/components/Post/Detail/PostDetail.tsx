@@ -17,7 +17,6 @@ import { Availability, CollectionType } from '@prisma/client';
 import { IconDotsVertical, IconBookmark, IconShare3 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
 import Link from 'next/link';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { Adunit } from '~/components/Ads/AdUnit';
 import { adsRegistry } from '~/components/Ads/adsRegistry';
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -57,12 +56,7 @@ export function PostDetail({ postId }: { postId: number }) {
     flatData: unfilteredImages,
     images,
     isLoading: imagesLoading,
-  } = useQueryImages(
-    { postId, limit: post?.hasAccess ? undefined : 1 },
-    // Haivng this be enabled only when the post is available is a bit slower for the user
-    // but prevents users with no access from looking at all the images in the post
-    { enabled: !!post }
-  );
+  } = useQueryImages({ postId });
   const { data: postResources = [] } = trpc.post.getResources.useQuery({ id: postId });
 
   const meta = (
@@ -73,13 +67,9 @@ export function PostDetail({ postId }: { postId: number }) {
           post?.tags.map((x) => x.name) ?? []
         )}.` + (post?.detail ? ' ' + truncate(removeTags(post?.detail ?? ''), { length: 100 }) : '')
       }
-      image={
-        post?.nsfw || images[0]?.url == null
-          ? undefined
-          : getEdgeUrl(images[0].url, { width: 1200 })
-      }
+      images={images}
       links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/posts/${postId}`, rel: 'canonical' }]}
-      deIndex={post?.availability === Availability.Unsearchable ? 'noindex, nofollow' : undefined}
+      deIndex={post?.availability === Availability.Unsearchable}
     />
   );
 

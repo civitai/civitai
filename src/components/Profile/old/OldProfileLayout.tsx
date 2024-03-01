@@ -322,7 +322,7 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
           )}, Total Likes Received: ${abbreviateNumber(
             stats.favoriteCountAllTime
           )}, Total Downloads Received: ${abbreviateNumber(stats.downloadCountAllTime)}. `}
-          image={!user.image ? undefined : getEdgeUrl(user.image, { width: 1200 })}
+          image={user.profilePicture}
           links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/user/${username}`, rel: 'canonical' }]}
         />
       ) : (

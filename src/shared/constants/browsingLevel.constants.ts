@@ -51,6 +51,10 @@ export function getIsPublicBrowsingLevel(level: number) {
   return levels.every((level) => publicBrowsingLevelsArray.includes(level));
 }
 
+export function getIsSafeBrowsingLevel(level: number) {
+  return level !== 0 && !Flags.hasOverlap(level, nsfwBrowsingLevelsFlag);
+}
+
 export const browsingLevelOr = (array: (number | undefined)[]) => {
   for (const item of array) {
     if (!!item) return item;

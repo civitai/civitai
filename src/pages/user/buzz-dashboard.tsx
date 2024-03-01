@@ -61,7 +61,7 @@ export default function UserBuzzDashboard() {
       <Meta
         title="Civitai | My Buzz Dashboard"
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/user/buzz-dashboard`, rel: 'canonical' }]}
-        deIndex="noindex, nofollow"
+        deIndex
       />
       <Container size="lg">
         <Stack spacing="xl">

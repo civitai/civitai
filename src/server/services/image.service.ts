@@ -478,11 +478,9 @@ export const getAllImages = async ({
   modelVersionId,
   imageId,
   username,
-  // excludedImageIds,
   period,
   periodMode,
   sort,
-  isModerator,
   tags,
   generation,
   reviewId,
@@ -497,11 +495,11 @@ export const getAllImages = async ({
   followed,
   fromPlatform,
   browsingLevel,
-  user,
+  userId,
+  isOwner,
+  isModerator,
 }: GetInfiniteImagesOutput & {
-  user?: SessionUser;
-  isModerator?: boolean;
-  isOwnerOrModerator?: boolean;
+  userId?: number;
   headers?: Record<string, string>; // does this do anything?
 }) => {
   const AND: Prisma.Sql[] = [Prisma.sql`i."postId" IS NOT NULL`];
@@ -510,25 +508,26 @@ export const getAllImages = async ({
   const cacheTags: string[] = [];
   let cacheTime = CacheTTL.xs;
 
-  const userId = user?.id;
-  const isOwner = user ? user.username === username : false;
-  // uncacheable if isOwnerOrModeratorView === true
-  const isOwnerOrModeratorView =
-    user && (user.username === username || (!!username && (user.isModerator ?? false)));
+  // Filter to specific user content
+  let targetUserId: number | undefined;
+  if (username) {
+    const targetUser = await dbRead.user.findUnique({ where: { username }, select: { id: true } });
+    if (!targetUser) throw new Error('User not found');
+    targetUserId = targetUser.id;
+  }
 
-  if (isOwnerOrModeratorView) {
-    if (hidden) {
-      const hiddenImages = await dbRead.imageEngagement.findMany({
-        where: { userId, type: 'Hide' },
-        select: { imageId: true },
-      });
-      const imageIds = hiddenImages.map((x) => x.imageId);
-      if (imageIds.length) {
-        cacheTime = 0;
-        AND.push(Prisma.sql`i."id" IN (${Prisma.join(imageIds)})`);
-      } else {
-        return { items: [], nextCursor: undefined };
-      }
+  if (hidden) {
+    if (!userId) throw throwAuthorizationError();
+    const hiddenImages = await dbRead.imageEngagement.findMany({
+      where: { userId, type: 'Hide' },
+      select: { imageId: true },
+    });
+    const imageIds = hiddenImages.map((x) => x.imageId);
+    if (imageIds.length) {
+      cacheTime = 0;
+      AND.push(Prisma.sql`i."id" IN (${Prisma.join(imageIds)})`);
+    } else {
+      return { items: [], nextCursor: undefined };
     }
   }
 
@@ -577,15 +576,12 @@ export const getAllImages = async ({
     }
   }
 
-  // Filter to specific user content
-  if (username) {
-    const targetUser = await dbRead.user.findUnique({ where: { username }, select: { id: true } });
-    if (!targetUser) throw new Error('User not found');
-    AND.push(Prisma.sql`u."id" = ${targetUser.id}`);
+  if (targetUserId) {
+    AND.push(Prisma.sql`u."id" = ${targetUserId}`);
     // Don't cache self queries
-    if (targetUser.id !== userId) {
+    if (targetUserId !== userId) {
       cacheTime = CacheTTL.day;
-      cacheTags.push(`images-user:${targetUser.id}`);
+      cacheTags.push(`images-user:${targetUserId}`);
     } else cacheTime = 0;
   }
 
@@ -757,8 +753,15 @@ export const getAllImages = async ({
   }
 
   // TODO.nsfwLevel - owner visibility
-  if (!!browsingLevel) AND.push(Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`);
-  else AND.push(Prisma.sql`i."nsfwLevel" = ${NsfwLevel.PG}`);
+
+  if (isOwner || isModerator) {
+    AND.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`);
+  } else {
+    if (!!browsingLevel) AND.push(Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`);
+    else AND.push(Prisma.sql`i."nsfwLevel" = ${NsfwLevel.PG}`);
+    // AND.push(Prisma.sql`i."needsReview" IS false`);
+    // AND.push(Prisma.sql`(p.id IS NULL OR p."publishedAt" < NOW())`);
+  }
 
   // TODO: Adjust ImageMetric
   const queryFrom = Prisma.sql`
@@ -902,14 +905,11 @@ export const getAllImages = async ({
     }
   }
 
-  // Get user cosmetics
   const userIds = rawImages.map((i) => i.userId);
-  const userCosmetics = include?.includes('cosmetics')
-    ? await getCosmeticsForUsers(userIds)
-    : undefined;
-  const profilePictures = include?.includes('profilePictures')
-    ? await getProfilePicturesForUsers(userIds)
-    : undefined;
+  const [userCosmetics, profilePictures] = await Promise.all([
+    include?.includes('cosmetics') ? await getCosmeticsForUsers(userIds) : undefined,
+    include?.includes('profilePictures') ? await getProfilePicturesForUsers(userIds) : undefined,
+  ]);
 
   const now = new Date();
   const images: Array<
@@ -925,10 +925,10 @@ export const getAllImages = async ({
   > = rawImages
     .filter((x) => {
       // Filter out images that shouldn't be seen by user
-      if (isModerator) return true;
+      if (isModerator) return true; // TODO.nsfwLevels - see if we can remove this filter altogether
       if (x.needsReview && x.userId !== userId) return false;
       if ((!x.publishedAt || x.publishedAt > now) && x.userId !== userId) return false;
-      if (x.ingestion !== 'Scanned' && x.userId !== userId) return false;
+      // if (x.ingestion !== 'Scanned' && x.userId !== userId) return false;
       return true;
     })
     .map(

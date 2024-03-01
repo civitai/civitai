@@ -35,7 +35,7 @@ export const profileImageSelect = Prisma.validator<Prisma.ImageSelect>()({
   id: true,
   name: true,
   url: true,
-  nsfw: true,
+  nsfwLevel: true,
   hash: true,
   userId: true,
   ingestion: true,

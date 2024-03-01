@@ -52,7 +52,7 @@ export default function PurchasableRewardUpdate({ id }: { id: number }) {
 
   return (
     <>
-      <Meta title="Update Rewards" deIndex="noindex, nofollow" />
+      <Meta title="Update Rewards" deIndex />
       <Container size="md">
         <Stack>
           <Group spacing="md" noWrap>

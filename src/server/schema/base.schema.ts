@@ -1,6 +1,5 @@
 import { Availability } from '@prisma/client';
 import { z } from 'zod';
-import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { parseNumericString } from '~/utils/query-string-helpers';
 
 export const getByIdSchema = z.object({ id: z.number() });
@@ -26,20 +25,18 @@ export type GetAllSchema = z.infer<typeof getAllQuerySchema>;
 export const periodModeSchema = z.enum(['stats', 'published']).default('published');
 export type PeriodMode = z.infer<typeof periodModeSchema>;
 
-// type BaseInterface = {
-//   id?: number;
-// } & Record<string, unknown>;
-// type OmitId<T extends BaseInterface> = Omit<T, 'id'>;
-
-// export const isEntity = <T extends BaseInterface>(
-//   entity: T
-// ): entity is OmitId<T> & { id: number } => !!entity.id;
-export type BaseQuerySchema = z.infer<typeof baseQuerySchema>;
 export const baseQuerySchema = z.object({
   browsingLevel: z.number().min(1),
-  isOwnerOrModerator: z.boolean().optional(),
-  userName: z.string().optional(),
+  ownerId: z.number().optional(),
+  username: z.string().optional(),
 });
+
+export type BaseQuerySchema = z.infer<ReturnType<typeof extendBaseQuerySchema>>;
+export const extendBaseQuerySchema = <T extends z.ZodRawShape>(schema: z.ZodObject<T>) => {
+  return schema
+    .merge(baseQuerySchema)
+    .transform((args) => ({ ...args, isOwner: false, isModerator: false }));
+};
 
 export type InfiniteQueryInput = z.infer<typeof infiniteQuerySchema>;
 export const infiniteQuerySchema = z.object({

@@ -33,10 +33,10 @@ export function parseBrowsingMode(
 
 export const getServerProxySSGHelpers = async (
   ctx: GetServerSidePropsContext,
-  session: Session | null
+  session: Session | null,
+  browsingLevel: number,
+  showNsfw: boolean
 ) => {
-  const { browsingLevel, showNsfw } = parseBrowsingMode(ctx.req.cookies, session);
-
   const ssg = createServerSideHelpers({
     router: appRouter,
     ctx: {
@@ -66,17 +66,20 @@ export function createServerSideProps<P>({
     const session =
       (context.req as any)['session'] ?? (useSession ? await getServerAuthSession(context) : null);
     const flags = (context.req as any)['flags'] ?? getFeatureFlags({ user: session?.user });
+    const { browsingLevel, showNsfw } = parseBrowsingMode(context.req.cookies, session);
 
     const ssg =
       useSSG && (prefetch === 'always' || !isClient)
-        ? await getServerProxySSGHelpers(context, session)
+        ? await getServerProxySSGHelpers(context, session, browsingLevel, showNsfw)
         : undefined;
+
     const result = (await resolver({
       ctx: context,
       isClient,
       ssg,
       session,
       features: flags,
+      browsingLevel,
     })) as GetPropsFnResult<P> | undefined;
 
     let props: GetPropsFnResult<P>['props'] | undefined;
@@ -119,4 +122,5 @@ type CustomGetServerSidePropsContext = {
   ssg?: AsyncReturnType<typeof getServerProxySSGHelpers>;
   session?: Session | null;
   features?: FeatureAccess;
+  browsingLevel: number;
 };

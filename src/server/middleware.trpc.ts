@@ -2,7 +2,6 @@ import { BaseQuerySchema } from './schema/base.schema';
 import superjson from 'superjson';
 import { isProd } from '~/env/other';
 import { purgeCache } from '~/server/cloudflare/client';
-
 import { logToAxiom } from '~/server/logging/client';
 import { redis } from '~/server/redis/client';
 import { UserPreferencesInput } from '~/server/schema/base.schema';
@@ -13,10 +12,9 @@ import { hashifyObject, slugit } from '~/utils/string-helpers';
 
 export const queryMiddleware = middleware(({ input, ctx, next }) => {
   const _input = input as BaseQuerySchema;
-  const isOwner = ctx.user && ctx.user.username === _input.username;
-  const isModerator = ctx.user?.isModerator ?? false;
+  _input.isOwner = (ctx.user && ctx.user.username === _input.username) ?? false;
+  _input.isModerator = !!_input.username && !!ctx.user?.isModerator;
   _input.browsingLevel = _input.browsingLevel ?? ctx.browsingLevel;
-  _input.isOwnerOrModerator = isOwner || isModerator;
   return next({
     ctx: { user: ctx.user },
   });

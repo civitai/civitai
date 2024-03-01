@@ -85,34 +85,20 @@ export default function ArticleDetailsPage({
   const { data: article, isLoading } = trpc.article.getById.useQuery({ id });
   const tippedAmount = useBuzzTippingStore({ entityType: 'Article', entityId: id });
 
-  const meta = (
+  const meta = article ? (
     <Meta
-      title={`${article?.title} | Civitai`}
-      description={
-        article?.content ? truncate(removeTags(article.content), { length: 150 }) : undefined
-      }
-      image={
-        article?.nsfw || article?.cover == null
-          ? undefined
-          : getEdgeUrl(article.cover, { width: 1200 })
-      }
-      links={
-        article
-          ? [
-              {
-                href: `${env.NEXT_PUBLIC_BASE_URL}/articles/${article.id}/${slugit(article.title)}`,
-                rel: 'canonical',
-              },
-            ]
-          : undefined
-      }
-      deIndex={
-        !article?.publishedAt || article?.availability === Availability.Unsearchable
-          ? 'noindex'
-          : undefined
-      }
+      title={`${article.title} | Civitai`}
+      description={truncate(removeTags(article.content), { length: 150 })}
+      images={article?.coverImage}
+      links={[
+        {
+          href: `${env.NEXT_PUBLIC_BASE_URL}/articles/${article.id}/${slugit(article.title)}`,
+          rel: 'canonical',
+        },
+      ]}
+      deIndex={!article?.publishedAt || article?.availability === Availability.Unsearchable}
     />
-  );
+  ) : null;
 
   if (isLoading) return <PageLoader />;
   if (!article) return <NotFound />;

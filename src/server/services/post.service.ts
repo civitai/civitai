@@ -2,9 +2,6 @@ import {
   Availability,
   CollectionContributorPermission,
   CollectionReadConfiguration,
-  ImageGenerationProcess,
-  ImageIngestionStatus,
-  MediaType,
   Prisma,
   TagTarget,
   TagType,
@@ -14,15 +11,14 @@ import { NsfwLevel, PostSort } from '~/server/common/enums';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
-import { ImageMetaProps } from '~/server/schema/image.schema';
+import { ImageMetaProps, getInfiniteImagesSchema } from '~/server/schema/image.schema';
 import { editPostImageSelect } from '~/server/selectors/post.selector';
 import { simpleTagSelect } from '~/server/selectors/tag.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
 import {
-  applyModRulesSql,
-  applyUserPreferencesSql,
   deleteImageById,
+  getAllImages,
   getImagesForPosts,
   ingestImage,
 } from '~/server/services/image.service';
@@ -334,11 +330,6 @@ export const getPostsInfinite = async ({
 
   const profilePictures = await getProfilePicturesForUsers(userIds);
 
-  // const userEntityAccess = await getPrivateEntityAccessForUser({ userId: user?.id });
-  // const privatePostAccessIds = userEntityAccess
-  //   .filter((x) => x.entityType === 'Post')
-  //   .map((x) => x.entityId);
-
   // Filter to published model versions:
   const filterByPermissionContent = !isOwnerRequest && !user?.isModerator;
   const modelVersionIds = postsRaw.map((p) => p.modelVersionId).filter(isDefined);
@@ -454,18 +445,17 @@ export const getPostDetail = async ({ id, user }: GetByIdInput & { user?: Sessio
 
   if (!post) throw throwNotFoundError();
 
-  const [access] = await hasEntityAccess({
-    userId: user?.id,
-    isModerator: user?.isModerator,
-    entityIds: [id],
-    entityType: 'Post',
+  const filters = getInfiniteImagesSchema.parse({ postId: post.id, browsingLevel: 1 });
+  const images = await getAllImages({
+    ...filters,
+    isOwner: user?.id === post.user.id,
+    isModerator: !!user?.isModerator,
   });
 
   return {
     ...post,
-    detail: access?.hasAccess ?? true ? post.detail : null,
+    detail: post.detail,
     tags: post.tags.flatMap((x) => x.tag),
-    hasAccess: access.hasAccess,
   };
 };
 

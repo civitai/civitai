@@ -184,9 +184,8 @@ export default function BountyEntryDetailsPage({
     id: entryId,
   });
   const queryUtils = trpc.useContext();
-  const [mainImage] = bountyEntry?.images ?? [];
   const [activeImage, setActiveImage] = useState<BountyEntryGetById['images'][number] | null>(
-    mainImage || null
+    bountyEntry?.images[0] || null
   );
 
   const { mutate: deleteEntryMutation, isLoading: isLoadingDelete } =
@@ -220,11 +219,7 @@ export default function BountyEntryDetailsPage({
   const meta = (
     <Meta
       title={`Civitai | ${bounty?.name} | ${user?.username}`}
-      image={
-        !mainImage || isNsfwImage(mainImage) || bounty?.nsfw
-          ? undefined
-          : getEdgeUrl(mainImage.url, { width: 1200 })
-      }
+      images={bountyEntry?.images}
       description={bounty?.description}
       links={[
         {
@@ -232,7 +227,7 @@ export default function BountyEntryDetailsPage({
           rel: 'canonical',
         },
       ]}
-      deIndex={bounty?.availability === Availability.Unsearchable ? 'noindex, nofollow' : undefined}
+      deIndex={bounty?.availability === Availability.Unsearchable}
     />
   );
 

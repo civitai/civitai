@@ -12,6 +12,10 @@ export abstract class Flags {
     return (instance | flag) === instance;
   }
 
+  static hasOverlap(instance: number, flag: number) {
+    return (instance & flag) !== 0;
+  }
+
   static addFlag(instance: number, flag: number) {
     return instance | flag;
   }

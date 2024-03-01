@@ -2,7 +2,7 @@ import { MediaType, MetricTimeframe, NsfwLevel } from '@prisma/client';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
 import { PostSort } from '~/server/common/enums';
-import { baseQuerySchema, periodModeSchema } from '~/server/schema/base.schema';
+import { extendBaseQuerySchema, periodModeSchema } from '~/server/schema/base.schema';
 import { imageMetaSchema } from '~/server/schema/image.schema';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
@@ -18,25 +18,27 @@ export const postsFilterSchema = z.object({
 const postInclude = z.enum(['cosmetics']);
 export type ImageInclude = z.infer<typeof postInclude>;
 export type PostsQueryInput = z.infer<typeof postsQuerySchema>;
-export const postsQuerySchema = baseQuerySchema.merge(postsFilterSchema).extend({
-  limit: z.preprocess((val) => Number(val), z.number().min(0).max(200)).default(100),
-  cursor: z.preprocess((val) => Number(val), z.number()).optional(),
-  query: z.string().optional(),
-  excludedTagIds: z.array(z.number()).optional(),
-  excludedUserIds: z.array(z.number()).optional(),
-  excludedImageIds: z.array(z.number()).optional(),
-  tags: z.number().array().optional(),
-  username: z
-    .string()
-    .transform((data) => postgresSlugify(data))
-    .nullish(),
-  modelVersionId: z.number().optional(),
-  ids: z.array(z.number()).optional(),
-  collectionId: z.number().optional(),
-  include: z.array(postInclude).default(['cosmetics']).optional(),
-  followed: z.boolean().optional(),
-  clubId: z.number().optional(),
-});
+export const postsQuerySchema = extendBaseQuerySchema(
+  postsFilterSchema.extend({
+    limit: z.preprocess((val) => Number(val), z.number().min(0).max(200)).default(100),
+    cursor: z.preprocess((val) => Number(val), z.number()).optional(),
+    query: z.string().optional(),
+    excludedTagIds: z.array(z.number()).optional(),
+    excludedUserIds: z.array(z.number()).optional(),
+    excludedImageIds: z.array(z.number()).optional(),
+    tags: z.number().array().optional(),
+    username: z
+      .string()
+      .transform((data) => postgresSlugify(data))
+      .nullish(),
+    modelVersionId: z.number().optional(),
+    ids: z.array(z.number()).optional(),
+    collectionId: z.number().optional(),
+    include: z.array(postInclude).default(['cosmetics']).optional(),
+    followed: z.boolean().optional(),
+    clubId: z.number().optional(),
+  })
+);
 
 export type PostCreateInput = z.infer<typeof postCreateSchema>;
 export const postCreateSchema = z.object({

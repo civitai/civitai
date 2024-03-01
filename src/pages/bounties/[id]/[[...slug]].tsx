@@ -39,7 +39,7 @@ import { trpc } from '~/utils/trpc';
 import { isNsfwImage } from '~/server/common/model-helpers';
 import { ImageCarousel } from '~/components/Bounty/ImageCarousel';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { BountyEngagementType, BountyMode } from '@prisma/client';
+import { Availability, BountyEngagementType, BountyMode } from '@prisma/client';
 import { BountyGetById } from '~/types/router';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import {
@@ -162,27 +162,20 @@ export default function BountyDetailsPage({
 
   const currency = getBountyCurrency(bounty);
 
-  const meta = (
+  const meta = bounty ? (
     <Meta
       title={`Civitai | ${bounty?.name}`}
-      image={
-        !mainImage || isNsfwImage(mainImage) || bounty?.nsfw || !mainImage.scannedAt
-          ? undefined
-          : getEdgeUrl(mainImage.url, { width: 1200 })
-      }
+      image={bounty?.images} // TODO.nsfwLevel - make it so we can query images based off parent entity type
       description={bounty?.description}
-      links={
-        bounty
-          ? [
-              {
-                href: `${env.NEXT_PUBLIC_BASE_URL}/bounties/${bounty.id}/${slugit(bounty.name)}`,
-                rel: 'canonical',
-              },
-            ]
-          : undefined
-      }
+      links={[
+        {
+          href: `${env.NEXT_PUBLIC_BASE_URL}/bounties/${bounty.id}/${slugit(bounty.name)}`,
+          rel: 'canonical',
+        },
+      ]}
+      deIndex={bounty?.availability === Availability.Unsearchable}
     />
-  );
+  ) : undefined;
 
   useEffect(() => {
     if (bounty?.id) {
@@ -193,6 +186,7 @@ export default function BountyDetailsPage({
   if (loading) return <PageLoader />;
   if (!bounty) return <NotFound />;
 
+  // TODO.nsfwLevel
   if ((bounty.nsfw || isNsfwImage(mainImage)) && !currentUser) {
     return (
       <>
