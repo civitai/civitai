@@ -13,7 +13,7 @@ import { ManipulateType } from 'dayjs';
 import { truncate } from 'lodash-es';
 import { SessionUser } from 'next-auth';
 
-import { ArticleSort, BrowsingMode, NsfwLevel } from '~/server/common/enums';
+import { ArticleSort, NsfwLevel } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
 import {
@@ -47,7 +47,6 @@ type ArticleRaw = {
   coverId?: number | null;
   title: string;
   publishedAt: Date | null;
-  nsfw: boolean;
   nsfwLevel: number;
   availability: Availability;
   userId: number | null;
@@ -114,9 +113,13 @@ export const getArticles = async ({
   collectionId,
   followed,
   clubId,
+  pending,
+  browsingLevel,
 }: GetInfiniteArticlesSchema & {
   sessionUser?: { id: number; isModerator?: boolean; username?: string };
 }) => {
+  const userId = sessionUser?.id;
+  const isModerator = sessionUser?.isModerator ?? false;
   try {
     const take = limit + 1;
     const isMod = sessionUser?.isModerator ?? false;
@@ -163,6 +166,19 @@ export const getArticles = async ({
     // if (browsingMode === BrowsingMode.SFW) {
     //   AND.push(Prisma.sql`a."nsfw" = false`);
     // }
+
+    if (pending) {
+      if (isModerator) {
+        AND.push(Prisma.sql`((a."nsfwLevel" & ${browsingLevel}) != 0 OR a."nsfwLevel" === 0)`);
+      } else if (userId) {
+        AND.push(
+          Prisma.sql`((a."nsfwLevel" & ${browsingLevel}) != 0 OR (a."nsfwLevel" === 0 AND a."userId" = ${userId}))`
+        );
+      }
+    } else {
+      AND.push(Prisma.sql`(a."nsfwLevel" & ${browsingLevel}) != 0`);
+    }
+
     if (username) {
       const targetUser = await dbRead.user.findUnique({
         where: { username: username ?? '' },
@@ -327,7 +343,6 @@ export const getArticles = async ({
         a."coverId",
         a.title,
         a."publishedAt",
-        a.nsfw,
         a."nsfwLevel",
         a."userId",
         a."createdAt",

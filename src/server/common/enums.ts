@@ -65,12 +65,6 @@ export enum PostSort {
   Newest = 'Newest',
 }
 
-export enum BrowsingMode {
-  All = 'All',
-  SFW = 'SFW',
-  NSFW = 'NSFW',
-}
-
 export enum ImageType {
   txt2img = 'txt2img',
   img2img = 'img2img',

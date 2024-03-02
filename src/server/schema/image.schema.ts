@@ -6,7 +6,7 @@ import {
 } from '@prisma/client';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
-import { extendBaseQuerySchema, periodModeSchema } from '~/server/schema/base.schema';
+import { baseQuerySchema, periodModeSchema } from '~/server/schema/base.schema';
 import { ImageSort } from './../common/enums';
 import { SearchIndexEntityTypes } from '~/components/Search/parsers/base';
 import { zc } from '~/utils/schema-helpers';
@@ -213,8 +213,8 @@ export type ImageInclude = z.infer<typeof imageInclude>;
 export type GetInfiniteImagesInput = z.input<typeof getInfiniteImagesSchema>;
 export type GetInfiniteImagesOutput = z.output<typeof getInfiniteImagesSchema>;
 
-export const getInfiniteImagesSchema = extendBaseQuerySchema(
-  z.object({
+export const getInfiniteImagesSchema = baseQuerySchema
+  .extend({
     limit: z.number().min(0).max(200).default(100),
     cursor: z.union([z.bigint(), z.number(), z.string(), z.date()]).optional(),
     skip: z.number().optional(),
@@ -245,18 +245,19 @@ export const getInfiniteImagesSchema = extendBaseQuerySchema(
     hidden: z.boolean().optional(),
     followed: z.boolean().optional(),
     fromPlatform: z.coerce.boolean().optional(),
+    pending: z.boolean().optional(),
   })
-).transform((value) => {
-  if (value.withTags) {
-    if (!value.include) value.include = [];
-    value.include.push('tags');
-  }
-  if (value.withMeta) {
-    if (!value.include) value.include = [];
-    value.include.push('meta');
-  }
-  return value;
-});
+  .transform((value) => {
+    if (value.withTags) {
+      if (!value.include) value.include = [];
+      value.include.push('tags');
+    }
+    if (value.withMeta) {
+      if (!value.include) value.include = [];
+      value.include.push('meta');
+    }
+    return value;
+  });
 
 export type GetImageInput = z.infer<typeof getImageSchema>;
 export const getImageSchema = z.object({

@@ -445,13 +445,6 @@ export const getPostDetail = async ({ id, user }: GetByIdInput & { user?: Sessio
 
   if (!post) throw throwNotFoundError();
 
-  const filters = getInfiniteImagesSchema.parse({ postId: post.id, browsingLevel: 1 });
-  const images = await getAllImages({
-    ...filters,
-    isOwner: user?.id === post.user.id,
-    isModerator: !!user?.isModerator,
-  });
-
   return {
     ...post,
     detail: post.detail,

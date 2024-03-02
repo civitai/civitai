@@ -67,7 +67,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
         .json({ error: "You've requested too many pages, please use cursors instead" });
   }
 
-  const _browsingLevel = browsingLevel ?? nsfw;
+  const _browsingLevel = browsingLevel ?? nsfw ?? publicBrowsingLevelsFlag;
 
   const { items, nextCursor } = await getAllImages({
     ...data,

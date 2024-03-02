@@ -22,7 +22,7 @@ export const getServerSideProps = createServerSideProps({
     const postId = Number(params.postId);
     if (!isNumber(postId)) return { notFound: true };
 
-    await ssg?.post.get.prefetch({ id: postId });
+    await ssg?.post.get.prefetch({ id: postId, pending: true });
     await ssg?.image.getInfinite.prefetchInfinite({
       postId,
       browsingLevel,

@@ -189,6 +189,7 @@ export function UserImagesPage() {
                 reactions: viewingReactions ? reactions ?? availableReactions : undefined,
                 username: viewingReactions ? undefined : username,
                 followed,
+                pending: true,
               }}
               showEmptyCta={isSameUser}
             />

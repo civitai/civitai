@@ -15,6 +15,7 @@ import { constants } from '~/server/common/constants';
 import { ModelSort } from '~/server/common/enums';
 import { UnpublishReason, unpublishReasons } from '~/server/common/moderation-helpers';
 import {
+  baseQuerySchema,
   getByIdSchema,
   infiniteQuerySchema,
   paginationSchema,
@@ -34,61 +35,65 @@ const licensingSchema = z.object({
   allowDifferentLicense: z.boolean().optional(),
 });
 
-export const getAllModelsSchema = licensingSchema.merge(userPreferencesSchema).extend({
-  limit: z.preprocess((val) => Number(val), z.number().min(0).max(100)).optional(),
-  page: z.preprocess((val) => Number(val), z.number().min(1)).optional(),
-  cursor: z.preprocess((val) => Number(val), z.number()).optional(),
-  query: z.string().optional(),
-  tag: z.string().optional(),
-  tagname: z.string().optional(),
-  user: z.string().optional(),
-  username: z
-    .string()
-    .transform((data) => postgresSlugify(data))
-    .optional(),
-  types: z
-    .union([z.nativeEnum(ModelType), z.nativeEnum(ModelType).array()])
-    .optional()
-    .transform((rel) => (!rel ? undefined : Array.isArray(rel) ? rel : [rel]))
-    .optional(),
-  // TODO [bw]: do we need uploadType in here?
-  status: z
-    .union([z.nativeEnum(ModelStatus), z.nativeEnum(ModelStatus).array()])
-    .optional()
-    .transform((rel) => (!rel ? undefined : Array.isArray(rel) ? rel : [rel]))
-    .optional(),
-  checkpointType: z.nativeEnum(CheckpointType).optional(),
-  baseModels: z
-    .union([z.enum(constants.baseModels), z.enum(constants.baseModels).array()])
-    .optional()
-    .transform((rel) => {
-      if (!rel) return undefined;
-      return Array.isArray(rel) ? rel : [rel];
-    }),
-  sort: z.nativeEnum(ModelSort).default(constants.modelFilterDefaults.sort),
-  period: z.nativeEnum(MetricTimeframe).default(constants.modelFilterDefaults.period),
-  periodMode: periodModeSchema,
-  rating: z
-    .preprocess((val) => Number(val), z.number())
-    .transform((val) => Math.floor(val))
-    .optional(),
-  favorites: z.coerce.boolean().optional().default(false),
-  hidden: z.coerce.boolean().optional().default(false),
-  needsReview: z.coerce.boolean().optional(),
-  earlyAccess: z.coerce.boolean().optional(),
-  ids: commaDelimitedNumberArray({ message: 'ids should be a number array' }).optional(),
-  modelVersionIds: commaDelimitedNumberArray({
-    message: 'modelVersionIds should be a number array',
-  }).optional(),
-  supportsGeneration: z.coerce.boolean().optional(),
-  fromPlatform: z.coerce.boolean().optional(),
-  followed: z.coerce.boolean().optional(),
-  archived: z.coerce.boolean().optional(),
-  collectionId: z.number().optional(),
-  collectionItemStatus: z.array(z.nativeEnum(CollectionItemStatus)).optional(),
-  fileFormats: z.enum(constants.modelFileFormats).array().optional(),
-  clubId: z.number().optional(),
-});
+export const getAllModelsSchema = baseQuerySchema
+  .merge(licensingSchema)
+  .merge(userPreferencesSchema)
+  .extend({
+    limit: z.preprocess((val) => Number(val), z.number().min(0).max(100)).optional(),
+    page: z.preprocess((val) => Number(val), z.number().min(1)).optional(),
+    cursor: z.preprocess((val) => Number(val), z.number()).optional(),
+    query: z.string().optional(),
+    tag: z.string().optional(),
+    tagname: z.string().optional(),
+    user: z.string().optional(),
+    username: z
+      .string()
+      .transform((data) => postgresSlugify(data))
+      .optional(),
+    types: z
+      .union([z.nativeEnum(ModelType), z.nativeEnum(ModelType).array()])
+      .optional()
+      .transform((rel) => (!rel ? undefined : Array.isArray(rel) ? rel : [rel]))
+      .optional(),
+    // TODO [bw]: do we need uploadType in here?
+    status: z
+      .union([z.nativeEnum(ModelStatus), z.nativeEnum(ModelStatus).array()])
+      .optional()
+      .transform((rel) => (!rel ? undefined : Array.isArray(rel) ? rel : [rel]))
+      .optional(),
+    checkpointType: z.nativeEnum(CheckpointType).optional(),
+    baseModels: z
+      .union([z.enum(constants.baseModels), z.enum(constants.baseModels).array()])
+      .optional()
+      .transform((rel) => {
+        if (!rel) return undefined;
+        return Array.isArray(rel) ? rel : [rel];
+      }),
+    sort: z.nativeEnum(ModelSort).default(constants.modelFilterDefaults.sort),
+    period: z.nativeEnum(MetricTimeframe).default(constants.modelFilterDefaults.period),
+    periodMode: periodModeSchema,
+    rating: z
+      .preprocess((val) => Number(val), z.number())
+      .transform((val) => Math.floor(val))
+      .optional(),
+    favorites: z.coerce.boolean().optional().default(false),
+    hidden: z.coerce.boolean().optional().default(false),
+    needsReview: z.coerce.boolean().optional(),
+    earlyAccess: z.coerce.boolean().optional(),
+    ids: commaDelimitedNumberArray({ message: 'ids should be a number array' }).optional(),
+    modelVersionIds: commaDelimitedNumberArray({
+      message: 'modelVersionIds should be a number array',
+    }).optional(),
+    supportsGeneration: z.coerce.boolean().optional(),
+    fromPlatform: z.coerce.boolean().optional(),
+    followed: z.coerce.boolean().optional(),
+    archived: z.coerce.boolean().optional(),
+    collectionId: z.number().optional(),
+    collectionItemStatus: z.array(z.nativeEnum(CollectionItemStatus)).optional(),
+    fileFormats: z.enum(constants.modelFileFormats).array().optional(),
+    clubId: z.number().optional(),
+    pending: z.boolean().optional(),
+  });
 
 export type GetAllModelsInput = z.input<typeof getAllModelsSchema>;
 export type GetAllModelsOutput = z.infer<typeof getAllModelsSchema>;

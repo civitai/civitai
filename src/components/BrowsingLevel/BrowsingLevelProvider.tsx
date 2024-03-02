@@ -11,7 +11,7 @@ import { createStore, useStore } from 'zustand';
 import { trpc } from '~/utils/trpc';
 import { useDebouncer } from '~/utils/debouncer';
 import { useSession } from 'next-auth/react';
-import { useDidUpdate } from '@mantine/hooks';
+import { useDebouncedValue, useDidUpdate } from '@mantine/hooks';
 import { invalidateModeratedContent } from '~/utils/query-invalidation-utils';
 
 type StoreState = {
@@ -127,6 +127,12 @@ export function useBrowsingLevel() {
   if (!currentUser) return publicBrowsingLevelsFlag;
   return !browsingLevel ? publicBrowsingLevelsFlag : browsingLevel;
 }
+
+// export function useBrowsingLevelDebounced() {
+//   const browsingLevel = useBrowsingLevel();
+//   const [debounced] = useDebouncedValue(browsingLevel, 500);
+//   return debounced ?? browsingLevel;
+// }
 
 export function useIsPublicBrowsingLevel() {
   const level = useBrowsingLevel();

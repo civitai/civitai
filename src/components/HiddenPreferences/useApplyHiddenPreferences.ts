@@ -1,7 +1,9 @@
 import { ImageIngestionStatus } from '@prisma/client';
 import { useMemo } from 'react';
+import { useBrowsingLevel } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useHiddenPreferencesContext } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { Flags } from '~/shared/utils';
 import { isDefined, paired } from '~/utils/type-guards';
 
 export function useApplyHiddenPreferences<
@@ -19,7 +21,13 @@ export function useApplyHiddenPreferences<
   disabled?: boolean;
 }) {
   const currentUser = useCurrentUser();
+  const isModerator = !!currentUser?.isModerator;
+  const browsingLevel = useBrowsingLevel();
 
+  function nsfwLevelFilter<T extends { nsfwLevel: number }>(isOwner: boolean, item: T) {
+    if ((isOwner || isModerator) && item.nsfwLevel === 0) return true;
+    if (!Flags.hasOverlap(item.nsfwLevel, browsingLevel)) return false;
+  }
   const { hiddenModels, hiddenImages, hiddenTags, hiddenUsers, hiddenLoading, isSfw } =
     useHiddenPreferencesContext();
 
@@ -34,8 +42,11 @@ export function useApplyHiddenPreferences<
           case 'models':
             return value
               .filter((model) => {
-                if (model.user && model.user.id === currentUser?.id && !isSfw) return true;
-                if (model.user && hiddenUsers.get(model.user.id)) return false;
+                const userId = model.user.id;
+                const isOwner = userId === currentUser?.id;
+                if ((isOwner || isModerator) && model.nsfwLevel === 0) return true;
+                if (!Flags.hasOverlap(model.nsfwLevel, browsingLevel)) return false;
+                if (userId && hiddenUsers.get(userId)) return false;
                 if (hiddenModels.get(model.id) && !showHidden) return false;
                 for (const tag of model.tags ?? []) if (hiddenTags.get(tag)) return false;
                 return true;
@@ -58,15 +69,9 @@ export function useApplyHiddenPreferences<
           case 'images':
             return value.filter((image) => {
               const userId = image.userId ?? image.user?.id;
-              const isOwner = userId === currentUser?.id;
-              if (isOwner && !isSfw) return true;
-              if (
-                image.ingestion &&
-                image.ingestion !== ImageIngestionStatus.Scanned &&
-                !isOwner &&
-                !currentUser?.isModerator
-              )
-                return false;
+              const isOwner = userId && userId === currentUser?.id;
+              if ((isOwner || isModerator) && image.nsfwLevel === 0) return true;
+              if (!Flags.hasOverlap(image.nsfwLevel, browsingLevel)) return false;
               if (userId && hiddenUsers.get(userId)) return false;
               if (hiddenImages.get(image.id) && !showHidden) return false;
               for (const tag of image.tagIds ?? []) if (hiddenTags.get(tag)) return false;
@@ -203,24 +208,28 @@ type BaseImage = {
   user?: { id: number };
   tagIds?: number[];
   ingestion?: ImageIngestionStatus;
+  nsfwLevel: number; // TODO.nsfwLevel - apply to other entities
 };
 
 type BaseModel = {
   id: number;
   user: { id: number };
-  images: { id: number; tags?: number[] }[];
+  images: { id: number; tags?: number[]; nsfwLevel: number }[];
   tags?: number[];
+  nsfwLevel: number;
 };
 
 type BaseArticle = {
   id: number;
   user: { id: number };
+  nsfwLevel: number;
   tags?: {
     id: number;
   }[];
   coverImage?: {
     id: number;
     tags: number[];
+    nsfwLevel: number;
   };
 };
 
@@ -232,13 +241,16 @@ type BaseCollection = {
   id: number;
   userId?: number | null;
   user?: { id: number };
+  nsfwLevel: number;
   image: {
     id: number;
     tagIds?: number[];
+    nsfwLevel: number;
   } | null;
   images: {
     id: number;
     tagIds?: number[];
+    nsfwLevel: number;
   }[];
 };
 
@@ -246,23 +258,28 @@ type BaseBounty = {
   id: number;
   user: { id: number };
   tags?: number[];
+  nsfwLevel: number;
   images: {
     id: number;
     tagIds?: number[];
+    nsfwLevel: number;
   }[];
 };
 
 type BasePost = {
   // id: number;
   user: { id: number };
+  nsfwLevel: number;
   image?: {
     id: number;
     tagIds?: number[];
+    nsfwLevel: number;
   };
   images?: {
     id: number;
     tagIds?: number[];
     ingestion?: ImageIngestionStatus;
+    nsfwLevel: number;
   }[];
 };
 

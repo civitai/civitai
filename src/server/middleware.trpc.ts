@@ -1,4 +1,3 @@
-import { BaseQuerySchema } from './schema/base.schema';
 import superjson from 'superjson';
 import { isProd } from '~/env/other';
 import { purgeCache } from '~/server/cloudflare/client';
@@ -7,37 +6,23 @@ import { redis } from '~/server/redis/client';
 import { UserPreferencesInput } from '~/server/schema/base.schema';
 import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
 import { middleware } from '~/server/trpc';
-import { Flags } from '~/shared/utils';
 import { hashifyObject, slugit } from '~/utils/string-helpers';
-
-export const queryMiddleware = middleware(({ input, ctx, next }) => {
-  const _input = input as BaseQuerySchema;
-  _input.isOwner = (ctx.user && ctx.user.username === _input.username) ?? false;
-  _input.isModerator = !!_input.username && !!ctx.user?.isModerator;
-  _input.browsingLevel = _input.browsingLevel ?? ctx.browsingLevel;
-  return next({
-    ctx: { user: ctx.user },
-  });
-});
 
 export const applyUserPreferences = middleware(async ({ input, ctx, next }) => {
   const _input = input as UserPreferencesInput;
 
-  const browsingLevel = _input.browsingLevel ?? ctx.browsingLevel;
+  // const browsingLevel = _input.browsingLevel ?? ctx.browsingLevel;
   const { hiddenImages, hiddenTags, hiddenModels, hiddenUsers } = await getAllHiddenForUser({
     userId: ctx.user?.id,
   });
 
   // TODO.nsfwLevel - determine if we still need to filter by hidden tags. Now we have nsfwLevel
-  const tagsToHide = hiddenTags
-    .filter((x) => !x.nsfwLevel || !Flags.hasFlag(browsingLevel, x.nsfwLevel))
-    .map((x) => x.id);
+  const tagsToHide = hiddenTags.filter((x) => x.hidden).map((x) => x.id);
 
   const imagesToHide = hiddenImages
     .filter((x) => !x.tagId || tagsToHide.findIndex((tagId) => tagId === x.tagId) > -1)
     .map((x) => x.id);
 
-  _input.browsingLevel = browsingLevel;
   _input.excludedTagIds = [...(_input.excludedTagIds ?? []), ...tagsToHide];
   _input.excludedImageIds = [...(_input.excludedImageIds ?? []), ...imagesToHide];
   _input.excludedUserIds = [...(_input.excludedUserIds ?? []), ...hiddenUsers.map((x) => x.id)];

@@ -81,9 +81,7 @@ export const getInfiniteClubPostsHandler = async ({
 
     const entityData = await getClubPostResourceData({
       clubPosts: entities,
-      userId: user?.id,
-      isModerator: user?.isModerator,
-      username: user?.username,
+      user,
     });
 
     let nextCursor: number | undefined;
@@ -171,9 +169,7 @@ export const getClubPostByIdHandler = async ({
             clubPosts: [
               { entityId: post.entityId, entityType: post.entityType as SupportedClubPostEntities },
             ],
-            userId: user?.id,
-            isModerator: user?.isModerator,
-            username: user?.username,
+            user,
           })
         : [undefined];
 
@@ -245,9 +241,7 @@ export const getResourceDetailsForClubPostCreationHandler = async ({
   try {
     const [data] = await getResourceDetailsForClubPostCreation({
       entities: [input],
-      userId: user?.id,
-      isModerator: user?.isModerator,
-      username: user?.username,
+      user,
     });
 
     return data;

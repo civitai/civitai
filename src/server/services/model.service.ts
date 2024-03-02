@@ -44,7 +44,6 @@ import {
 } from '~/server/services/collection.service';
 import { getImagesForModelVersion } from '~/server/services/image.service';
 import { getCategoryTags } from '~/server/services/system-cache';
-import { getTypeCategories } from '~/server/services/tag.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { getEarlyAccessDeadline, isEarlyAccess } from '~/server/utils/early-access-helpers';
 import {
@@ -99,7 +98,7 @@ type ModelRaw = {
   id: number;
   name: string;
   type: ModelType;
-  nsfw: boolean;
+  nsfwLevel: number;
   status: string;
   createdAt: Date;
   lastVersionAt: Date;
@@ -198,11 +197,15 @@ export const getModelsRaw = async ({
     fileFormats,
     clubId,
     modelVersionIds,
+    browsingLevel,
+    pending,
   } = input;
 
   let isPrivate = false;
   const AND: Prisma.Sql[] = [];
   const WITH: Prisma.Sql[] = [];
+  const userId = sessionUser?.id;
+  const isModerator = sessionUser?.isModerator ?? false;
 
   // TODO.clubs: This is temporary until we are fine with displaying club stuff in public feeds.
   // At that point, we should be relying more on unlisted status which is set by the owner.
@@ -369,6 +372,18 @@ export const getModelsRaw = async ({
     );
 
     isPrivate = true;
+  }
+
+  if (pending) {
+    if (isModerator) {
+      AND.push(Prisma.sql`((m."nsfwLevel" & ${browsingLevel}) != 0 OR m"nsfwLevel" === 0)`);
+    } else if (userId) {
+      AND.push(
+        Prisma.sql`((m"nsfwLevel" & ${browsingLevel}) != 0 OR (m"nsfwLevel" === 0 AND m."userId" = ${userId}))`
+      );
+    }
+  } else {
+    AND.push(Prisma.sql`(m"nsfwLevel" & ${browsingLevel}) != 0`);
   }
 
   // Filter by model permissions
@@ -545,7 +560,7 @@ export const getModelsRaw = async ({
       m."id",
       m."name",
       m."type",
-      m."nsfw",
+      m."nsfwLevel",
       m."status",
       m."createdAt",
       m."lastVersionAt",

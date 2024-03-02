@@ -27,16 +27,7 @@ export type PeriodMode = z.infer<typeof periodModeSchema>;
 
 export const baseQuerySchema = z.object({
   browsingLevel: z.number().min(1),
-  ownerId: z.number().optional(),
-  username: z.string().optional(),
 });
-
-export type BaseQuerySchema = z.infer<ReturnType<typeof extendBaseQuerySchema>>;
-export const extendBaseQuerySchema = <T extends z.ZodRawShape>(schema: z.ZodObject<T>) => {
-  return schema
-    .merge(baseQuerySchema)
-    .transform((args) => ({ ...args, isOwner: false, isModerator: false }));
-};
 
 export type InfiniteQueryInput = z.infer<typeof infiniteQuerySchema>;
 export const infiniteQuerySchema = z.object({
@@ -45,7 +36,7 @@ export const infiniteQuerySchema = z.object({
 });
 
 export type UserPreferencesInput = z.infer<typeof userPreferencesSchema>;
-export const userPreferencesSchema = baseQuerySchema.extend({
+export const userPreferencesSchema = z.object({
   excludedModelIds: z.array(z.number()).optional(),
   excludedUserIds: z.array(z.number()).optional(),
   excludedTagIds: z.array(z.number()).optional(),

@@ -43,7 +43,6 @@ import {
 } from '~/server/services/model.service';
 import {
   ArticleSort,
-  BrowsingMode,
   CollectionReviewSort,
   CollectionSort,
   ImageSort,
@@ -790,6 +789,7 @@ export const getCollectionItemsByCollectionId = async ({
             favorites: false,
             ...userPreferencesInput,
             ids: modelIds,
+            browsingLevel: input.browsingLevel,
           },
         })
       : { items: [] };
@@ -804,7 +804,7 @@ export const getCollectionItemsByCollectionId = async ({
           periodMode: 'stats',
           sort: ArticleSort.Newest,
           ...userPreferencesInput,
-          browsingMode: userPreferencesInput.browsingMode || BrowsingMode.SFW,
+          browsingLevel: input.browsingLevel,
           sessionUser: user,
           ids: articleIds,
         })
@@ -821,8 +821,8 @@ export const getCollectionItemsByCollectionId = async ({
           periodMode: 'stats',
           sort: ImageSort.Newest,
           ...userPreferencesInput,
+          browsingLevel: input.browsingLevel,
           user,
-          isModerator: user?.isModerator,
           ids: imageIds,
           headers: { src: 'getCollectionItemsByCollectionId' },
           includeBaseModel: true,
@@ -840,7 +840,7 @@ export const getCollectionItemsByCollectionId = async ({
           sort: PostSort.Newest,
           ...userPreferencesInput,
           user,
-          browsingMode: userPreferencesInput.browsingMode || BrowsingMode.SFW,
+          browsingLevel: input.browsingLevel,
           ids: postIds,
           include: ['cosmetics'],
         })

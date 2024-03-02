@@ -130,6 +130,7 @@ export function ModelCarousel({
     period: 'AllTime',
     sort: ImageSort.MostReactions,
     limit,
+    pending: true,
   });
 
   if (isLoading)

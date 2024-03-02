@@ -92,6 +92,7 @@ import { redis } from '../redis/client';
 import { modelHashSelect } from './../selectors/modelHash.selector';
 import { getUnavailableResources } from '../services/generation/generation.service';
 import { BountyDetailsSchema } from '../schema/bounty.schema';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
@@ -545,6 +546,7 @@ export const getModelWithVersionsHandler = async ({
       hidden: false,
       period: 'AllTime',
       periodMode: 'published',
+      browsingLevel: allBrowsingLevelsFlag,
     },
     ctx,
   });
@@ -1100,7 +1102,6 @@ export const getAssociatedResourcesCardDataHandler = async ({
               id: true,
               name: true,
               type: true,
-              nsfw: true,
               status: true,
               createdAt: true,
               lastVersionAt: true,
@@ -1108,6 +1109,7 @@ export const getAssociatedResourcesCardDataHandler = async ({
               locked: true,
               earlyAccessDeadline: true,
               mode: true,
+              nsfwLevel: true,
               rank: {
                 select: {
                   [`downloadCount${period}`]: true,

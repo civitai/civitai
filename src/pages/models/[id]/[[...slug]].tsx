@@ -145,6 +145,7 @@ export const getServerSideProps = createServerSideProps({
           sort: ImageSort.MostReactions,
           limit: CAROUSEL_LIMIT,
           browsingLevel,
+          pending: true,
         });
 
       if (modelVersionIdParsed) {

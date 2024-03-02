@@ -33,6 +33,7 @@ type ImageFilters = {
   withMeta?: boolean;
   followed?: boolean;
   hidden?: boolean;
+  pending?: boolean;
 };
 
 type ImagesInfiniteProps = {

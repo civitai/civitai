@@ -495,11 +495,11 @@ export const getAllImages = async ({
   followed,
   fromPlatform,
   browsingLevel,
-  userId,
-  isOwner,
-  isModerator,
+  user,
+  pending,
 }: GetInfiniteImagesOutput & {
   userId?: number;
+  user?: SessionUser;
   headers?: Record<string, string>; // does this do anything?
 }) => {
   const AND: Prisma.Sql[] = [Prisma.sql`i."postId" IS NOT NULL`];
@@ -507,6 +507,8 @@ export const getAllImages = async ({
   let orderBy: string;
   const cacheTags: string[] = [];
   let cacheTime = CacheTTL.xs;
+  const userId = user?.id;
+  const isModerator = user?.isModerator ?? false;
 
   // Filter to specific user content
   let targetUserId: number | undefined;
@@ -752,15 +754,18 @@ export const getAllImages = async ({
     );
   }
 
-  // TODO.nsfwLevel - owner visibility
-
-  if (isOwner || isModerator) {
-    AND.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`);
+  if (pending) {
+    if (isModerator) {
+      AND.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" === 0)`);
+    } else if (userId) {
+      AND.push(Prisma.sql`(i."needsReview" IS NULL OR i."userId" = ${userId})`);
+      AND.push(
+        Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR (i."nsfwLevel" === 0 AND i."userId" = ${userId}))`
+      );
+    }
   } else {
-    if (!!browsingLevel) AND.push(Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`);
-    else AND.push(Prisma.sql`i."nsfwLevel" = ${NsfwLevel.PG}`);
-    // AND.push(Prisma.sql`i."needsReview" IS false`);
-    // AND.push(Prisma.sql`(p.id IS NULL OR p."publishedAt" < NOW())`);
+    AND.push(Prisma.sql`i."needsReview" IS NULL`);
+    AND.push(Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`);
   }
 
   // TODO: Adjust ImageMetric
@@ -926,7 +931,7 @@ export const getAllImages = async ({
     .filter((x) => {
       // Filter out images that shouldn't be seen by user
       if (isModerator) return true; // TODO.nsfwLevels - see if we can remove this filter altogether
-      if (x.needsReview && x.userId !== userId) return false;
+      // if (x.needsReview && x.userId !== userId) return false;
       if ((!x.publishedAt || x.publishedAt > now) && x.userId !== userId) return false;
       // if (x.ingestion !== 'Scanned' && x.userId !== userId) return false;
       return true;
