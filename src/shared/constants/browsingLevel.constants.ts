@@ -1,11 +1,11 @@
 import { NsfwLevel } from '~/server/common/enums';
 import { Flags } from '~/shared/utils';
 
-export function parseBitwiseBrowsingLevel(level: number): BrowsingLevel[] {
+export function parseBitwiseBrowsingLevel(level: number): number[] {
   return Flags.instanceToArray(level);
 }
 
-export function flagifyBrowsingLevel(levels: BrowsingLevel[]) {
+export function flagifyBrowsingLevel(levels: number[]) {
   return Flags.arrayToInstance(levels);
 }
 

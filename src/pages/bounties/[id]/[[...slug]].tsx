@@ -24,7 +24,6 @@ import { InferGetServerSidePropsType } from 'next';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { z } from 'zod';
 
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Meta } from '~/components/Meta/Meta';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
@@ -36,7 +35,6 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate, isFutureDate } from '~/utils/date-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
-import { isNsfwImage } from '~/server/common/model-helpers';
 import { ImageCarousel } from '~/components/Bounty/ImageCarousel';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Availability, BountyEngagementType, BountyMode } from '@prisma/client';
@@ -100,6 +98,7 @@ import { ScrollAreaMain } from '~/components/ScrollArea/ScrollAreaMain';
 import { useIsMutating } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import { useDidUpdate } from '@mantine/hooks';
+import { getIsPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -128,7 +127,6 @@ export default function BountyDetailsPage({
   const mobile = useContainerSmallerThan('sm');
   const queryUtils = trpc.useUtils();
   const { bounty, loading } = useQueryBounty({ id });
-  const [mainImage] = bounty?.images ?? [];
   // Set no images initially, as this might be used by the entries and bounty page too.
   const { setImages, onSetImage } = useImageViewerCtx();
   const { toggle, engagements, toggling } = useBountyEngagement();
@@ -139,8 +137,6 @@ export default function BountyDetailsPage({
   }, [isDeletingImage]);
 
   const discussionSectionRef = useRef<HTMLDivElement>(null);
-  const isModerator = currentUser?.isModerator;
-  const isOwner = bounty?.user && bounty?.user?.id === currentUser?.id;
 
   const isFavorite = !bounty ? false : !!engagements?.Favorite?.find((id) => id === bounty.id);
   const isTracked = !bounty ? false : !!engagements?.Track?.find((id) => id === bounty.id);
@@ -186,8 +182,7 @@ export default function BountyDetailsPage({
   if (loading) return <PageLoader />;
   if (!bounty) return <NotFound />;
 
-  // TODO.nsfwLevel
-  if ((bounty.nsfw || isNsfwImage(mainImage)) && !currentUser) {
+  if (!getIsPublicBrowsingLevel(bounty.nsfwLevel) && !currentUser) {
     return (
       <>
         {meta}

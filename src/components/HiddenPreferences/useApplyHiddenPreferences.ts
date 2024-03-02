@@ -1,6 +1,6 @@
 import { ImageIngestionStatus } from '@prisma/client';
 import { useMemo } from 'react';
-import { useBrowsingLevel } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useHiddenPreferencesContext } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Flags } from '~/shared/utils';
@@ -22,7 +22,7 @@ export function useApplyHiddenPreferences<
 }) {
   const currentUser = useCurrentUser();
   const isModerator = !!currentUser?.isModerator;
-  const browsingLevel = useBrowsingLevel();
+  const browsingLevel = useBrowsingLevelDebounced();
 
   function nsfwLevelFilter<T extends { nsfwLevel: number }>(isOwner: boolean, item: T) {
     if ((isOwner || isModerator) && item.nsfwLevel === 0) return true;

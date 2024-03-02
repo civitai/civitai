@@ -18,6 +18,7 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { hideNotification, showNotification } from '@mantine/notifications';
 import produce from 'immer';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 
 export const getBountyCurrency = (bounty?: {
   id: number;
@@ -81,11 +82,14 @@ export const useQueryBounties = (
   filters: Partial<GetInfiniteBountySchema>,
   options?: { keepPreviousData?: boolean; enabled?: boolean }
 ) => {
-  const { data, isLoading, ...rest } = trpc.bounty.getInfinite.useInfiniteQuery(filters, {
-    getNextPageParam: (lastPage) => lastPage.nextCursor,
-    ...options,
-    trpc: { context: { skipBatch: true } },
-  });
+  const { data, isLoading, ...rest } = trpc.bounty.getInfinite.useInfiniteQuery(
+    { ...filters },
+    {
+      getNextPageParam: (lastPage) => lastPage.nextCursor,
+      ...options,
+      trpc: { context: { skipBatch: true } },
+    }
+  );
 
   const flatData = useMemo(() => data?.pages.flatMap((x) => (!!x ? x.items : [])), [data]);
   const { items: bounties, loadingPreferences } = useApplyHiddenPreferences({

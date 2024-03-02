@@ -128,14 +128,14 @@ export function useBrowsingLevel() {
   return !browsingLevel ? publicBrowsingLevelsFlag : browsingLevel;
 }
 
-// export function useBrowsingLevelDebounced() {
-//   const browsingLevel = useBrowsingLevel();
-//   const [debounced] = useDebouncedValue(browsingLevel, 500);
-//   return debounced ?? browsingLevel;
-// }
+export function useBrowsingLevelDebounced() {
+  const browsingLevel = useBrowsingLevel();
+  const [debounced] = useDebouncedValue(browsingLevel, 500);
+  return debounced ?? browsingLevel;
+}
 
 export function useIsPublicBrowsingLevel() {
-  const level = useBrowsingLevel();
+  const level = useBrowsingLevelDebounced();
   return getIsPublicBrowsingLevel(level);
 }
 

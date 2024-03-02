@@ -25,7 +25,6 @@ import {
   ImageIngestionStatus,
   MediaType,
   MetricTimeframe,
-  NsfwLevel as NsfwLevelOld,
   Prisma,
   SearchIndexUpdateQueueAction,
 } from '@prisma/client';
@@ -318,7 +317,6 @@ export const getCollectionById = async ({ input }: { input: GetByIdInput }) => {
       write: true,
       type: true,
       user: { select: userWithCosmeticsSelect },
-      nsfw: true,
       nsfwLevel: true,
       image: { select: imageSelect },
       mode: true,
@@ -330,7 +328,6 @@ export const getCollectionById = async ({ input }: { input: GetByIdInput }) => {
 
   return {
     ...collection,
-    nsfw: collection.nsfw ?? false,
     nsfwLevel: collection.nsfwLevel as NsfwLevel,
     image: collection.image
       ? {
@@ -1421,7 +1418,6 @@ type ImageProps = {
   hash: string | null;
   height: number | null;
   width: number | null;
-  nsfw: NsfwLevelOld; // TODO.nsfwLevel
   nsfwLevel: NsfwLevel;
   postId: number | null;
   index: number | null;

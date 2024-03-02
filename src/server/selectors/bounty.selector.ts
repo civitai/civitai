@@ -14,7 +14,7 @@ export const getBountyDetailsSelect = Prisma.validator<Prisma.BountySelect>()({
   mode: true,
   entryMode: true,
   entryLimit: true,
-  nsfw: true,
+  nsfwLevel: true,
   poi: true,
   complete: true,
   availability: true,

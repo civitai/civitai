@@ -33,6 +33,7 @@ import {
 } from '../selectors/image.selector';
 import { isDefined } from '~/utils/type-guards';
 import { NsfwLevel } from '~/server/common/enums';
+import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 
 const READ_BATCH_SIZE = 10000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 10000;
@@ -75,6 +76,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'baseModel',
     'generationTool',
     'aspectRatio',
+    'nsfwLevel',
   ];
 
   if (JSON.stringify(searchableAttributes) !== JSON.stringify(settings.searchableAttributes)) {
@@ -127,7 +129,6 @@ type ImageForSearchIndex = {
   height: number | null;
   width: number | null;
   metadata: Prisma.JsonValue;
-  nsfw: NsfwLevelOld;
   nsfwLevel: NsfwLevel;
   postId: number | null;
   needsReview: string | null;
@@ -218,7 +219,6 @@ const onFetchItemsToIndex = async ({
     i."postId",
     i."name",
     i."url",
-    i."nsfw",
     i."nsfwLevel",
     i."width",
     i."height",
@@ -365,6 +365,7 @@ const onFetchItemsToIndex = async ({
 
         return {
           ...imageRecord,
+          nsfwLevel: parseBitwiseBrowsingLevel(imageRecord.nsfwLevel),
           createdAtUnix: imageRecord.createdAt.getTime(),
           aspectRatio:
             !imageRecord.width || !imageRecord.height

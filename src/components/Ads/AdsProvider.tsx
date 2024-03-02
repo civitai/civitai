@@ -7,7 +7,7 @@ import { env } from '~/env/client.mjs';
 import { isProd } from '~/env/other';
 import Script from 'next/script';
 import { useConsentManager } from '~/components/Ads/ads.utils';
-import { useBrowsingLevel } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 
 type AdProvider = 'ascendeum' | 'exoclick' | 'adsense';
 const adProviders: AdProvider[] = ['ascendeum'];
@@ -46,7 +46,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
   });
 
   // derived value from browsingMode and nsfwOverride
-  const browsingLevel = useBrowsingLevel();
+  const browsingLevel = useBrowsingLevelDebounced();
   const nsfw = browsingLevel > NsfwLevel.PG;
 
   // const readyRef = useRef(false);

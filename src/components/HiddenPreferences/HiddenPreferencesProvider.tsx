@@ -1,5 +1,5 @@
 import { useContext, createContext, ReactNode, useMemo, useDeferredValue } from 'react';
-import { useBrowsingLevel } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { getIsPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 
 import { useQueryHiddenPreferences } from '~/hooks/hidden-preferences';
@@ -32,7 +32,7 @@ export const HiddenPreferencesProvider = ({
   children: ReactNode;
   browsingLevel?: NsfwLevel[];
 }) => {
-  const browsingLevelGlobal = useBrowsingLevel();
+  const browsingLevelGlobal = useBrowsingLevelDebounced();
   const browsingLevel = browsingLevelOverride?.length
     ? Flags.arrayToInstance(browsingLevelOverride)
     : browsingLevelGlobal;

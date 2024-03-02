@@ -6,8 +6,6 @@ import { InferGetServerSidePropsType } from 'next';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 import { Meta } from '~/components/Meta/Meta';
-import { isNsfwImage } from '~/server/common/model-helpers';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import {
   Accordion,
   ActionIcon,

@@ -64,6 +64,7 @@ export const getInfiniteBountiesHandler = async ({
         type: true,
         complete: true,
         user: { select: userWithCosmeticsSelect },
+        nsfwLevel: true,
         tags: {
           select: {
             tagId: true,

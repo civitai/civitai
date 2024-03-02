@@ -4,7 +4,6 @@ import { modelHashSelect } from '~/server/selectors/modelHash.selector';
 import {
   Availability,
   MetricTimeframe,
-  ModelHashType,
   ModelStatus,
   Prisma,
   PrismaClient,
@@ -25,6 +24,7 @@ import { ModelFileMetadata } from '~/server/schema/model-file.schema';
 import { withRetries } from '~/server/utils/errorHandling';
 import { getModelVersionsForSearchIndex } from '../selectors/modelVersion.selector';
 import { getUnavailableResources } from '../services/generation/generation.service';
+import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 
 const RATING_BAYESIAN_M = 3.5;
 const RATING_BAYESIAN_C = 10;
@@ -98,7 +98,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
 
   const filterableAttributes = [
     'hashes',
-    'nsfw',
+    'nsfwLevel',
     'type',
     'checkpointType',
     'tags.name',
@@ -183,7 +183,7 @@ const onFetchItemsToIndex = async ({
           id: true,
           name: true,
           type: true,
-          nsfw: true,
+          nsfwLevel: true,
           status: true,
           createdAt: true,
           lastVersionAt: true,
@@ -334,6 +334,7 @@ const onFetchItemsToIndex = async ({
 
           return {
             ...model,
+            nsfwLevel: parseBitwiseBrowsingLevel(model.nsfwLevel),
             lastVersionAtUnix: model.lastVersionAt?.getTime() ?? model.createdAt.getTime(),
             user,
             category: category?.tag,

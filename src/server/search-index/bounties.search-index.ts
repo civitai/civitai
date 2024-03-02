@@ -11,7 +11,6 @@ import {
   CosmeticType,
   ImageGenerationProcess,
   MediaType,
-  NsfwLevel,
   Prisma,
   PrismaClient,
   SearchIndexUpdateQueueAction,
@@ -21,7 +20,7 @@ import { isDefined } from '~/utils/type-guards';
 import { dbRead } from '~/server/db/client';
 import { ImageMetadata } from '~/server/schema/media.schema';
 import { ImageModelWithIngestion, profileImageSelect } from '../selectors/image.selector';
-import { imageSelect } from '~/server/selectors/image.selector';
+import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 
 const READ_BATCH_SIZE = 250; // 10 items per bounty are fetched for images. Careful with this number
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 1000;
@@ -78,6 +77,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'details.baseModel',
     'tags.name',
     'complete',
+    'nsfwLevel',
   ];
 
   if (
@@ -108,7 +108,7 @@ type ImageProps = {
   hash: string | null;
   height: number | null;
   width: number | null;
-  nsfw: NsfwLevel;
+  nsfwLevel: number;
   userId: number;
   postId: number | null;
   index: number | null;
@@ -133,6 +133,7 @@ type BountyForSearchIndex = {
   type: BountyType;
   details: Prisma.JsonObject | null;
   complete: boolean;
+  nsfwLevel: number;
   stats: {
     favoriteCountAllTime: number;
     trackCountAllTime: number;
@@ -199,6 +200,7 @@ const onFetchItemsToIndex = async ({
     SELECT
     b.id,
     b.name,
+    b."nsfwLevel",
     b."description",
     b."createdAt",
     b."updatedAt",
@@ -257,7 +259,7 @@ const onFetchItemsToIndex = async ({
           'userId', i."userId",
           'name', i."name",
           'url', i."url",
-          'nsfw', i."nsfw",
+          'nsfwLevel', i."nsfwLevel",
           'width', i."width",
           'height', i."height",
           'hash', i."hash",
@@ -356,7 +358,7 @@ const onFetchItemsToIndex = async ({
   );
 
   const indexReadyRecords = bounties
-    .map(({ cosmetics, user, tags, images: bountyImages, ...bounty }) => {
+    .map(({ cosmetics, user, tags, images: bountyImages, nsfwLevel, ...bounty }) => {
       if (!bountyImages) {
         return null;
       }
@@ -373,6 +375,7 @@ const onFetchItemsToIndex = async ({
 
       return {
         ...bounty,
+        nsfwLevel: parseBitwiseBrowsingLevel(nsfwLevel),
         tags: tags || [],
         images,
         stats: bounty.stats || null,

@@ -15,7 +15,7 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { showNotification, hideNotification } from '@mantine/notifications';
 import { closeModal, openConfirmModal } from '@mantine/modals';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
-import { useBrowsingLevel } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 
 export const imagesQueryParamSchema = z
   .object({
@@ -52,14 +52,14 @@ export const useImageQueryParams = () => useZodRouteParams(imagesQueryParamSchem
 export const useImageFilters = (type: FilterKeys<'images' | 'modelImages' | 'videos'>) => {
   const storeFilters = useFiltersContext((state) => state[type]);
   const { query } = useImageQueryParams(); // router params are the overrides
-  const browsingLevel = useBrowsingLevel();
+  const browsingLevel = useBrowsingLevelDebounced();
   return removeEmpty({ ...storeFilters, ...query, browsingLevel });
 };
 
 export const useDumbImageFilters = (defaultFilters?: Partial<GetInfiniteImagesInput>) => {
   const [filters, setFilters] = useState<Partial<GetInfiniteImagesInput>>(defaultFilters ?? {});
   const filtersUpdated = !isEqual(filters, defaultFilters);
-  const browsingLevel = useBrowsingLevel();
+  const browsingLevel = useBrowsingLevelDebounced();
 
   return {
     filters: { ...filters, browsingLevel },
@@ -74,7 +74,7 @@ export const useQueryImages = (
 ) => {
   const { applyHiddenPreferences = true, ...queryOptions } = options ?? {};
   filters ??= {};
-  const browsingLevel = useBrowsingLevel();
+  const browsingLevel = useBrowsingLevelDebounced();
   const { data, isLoading, ...rest } = trpc.image.getInfinite.useInfiniteQuery(
     { ...filters, browsingLevel },
     {

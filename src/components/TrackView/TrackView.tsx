@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useAdsContext } from '~/components/Ads/AdsProvider';
-import { useBrowsingLevel } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { AddViewSchema } from '~/server/schema/track.schema';
 import { trpc } from '~/utils/trpc';
@@ -19,7 +19,7 @@ export function TrackView({
 
   const status = useAdViewSatus();
   const nsfw = currentUser?.showNsfw ?? false;
-  const browsingLevel = useBrowsingLevel();
+  const browsingLevel = useBrowsingLevelDebounced();
 
   useEffect(() => {
     const timeout = setTimeout(() => {

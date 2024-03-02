@@ -200,7 +200,6 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
       description: bounty?.description ?? '',
       tags: bounty?.tags ?? [],
       unitAmount: bounty?.benefactors[0].unitAmount ?? constants.bounties.minCreateAmount,
-      nsfw: bounty?.nsfw ?? false,
       currency: Currency.BUZZ,
       type: bounty?.type ?? BountyType.LoraCreation,
       mode: bounty?.mode ?? BountyMode.Individual,

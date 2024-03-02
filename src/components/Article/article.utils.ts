@@ -1,6 +1,7 @@
 import { MetricTimeframe } from '@prisma/client';
 import { useMemo } from 'react';
 import { z } from 'zod';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
 
 import { useFiltersContext } from '~/providers/FiltersProvider';
@@ -52,8 +53,9 @@ export const useQueryArticles = (
   options?: { keepPreviousData?: boolean; enabled?: boolean }
 ) => {
   filters ??= {};
+  const browsingLevel = useBrowsingLevelDebounced();
   const { data, ...rest } = trpc.article.getInfinite.useInfiniteQuery(
-    { ...filters },
+    { ...filters, browsingLevel },
     {
       getNextPageParam: (lastPage) => lastPage.nextCursor,
       trpc: { context: { skipBatch: true } },

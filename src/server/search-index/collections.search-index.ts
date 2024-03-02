@@ -27,6 +27,7 @@ import { isDefined } from '~/utils/type-guards';
 import { uniqBy } from 'lodash-es';
 import { dbRead } from '~/server/db/client';
 import { imageGenerationSchema, ImageMetaProps } from '~/server/schema/image.schema';
+import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 
 const READ_BATCH_SIZE = 250; // 10 items per collection are fetched for images. Careful with this number
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 1000;
@@ -77,7 +78,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     console.log('onIndexSetup :: updateRankingRulesTask created', updateRankingRulesTask);
   }
 
-  const filterableAttributes = ['user.username', 'type'];
+  const filterableAttributes = ['user.username', 'type', 'nsfwLevel'];
 
   if (
     // Meilisearch stores sorted.
@@ -107,7 +108,7 @@ type ImageProps = {
   hash: string | null;
   height: number | null;
   width: number | null;
-  nsfw: NsfwLevel;
+  nsfwLevel: number;
   postId: number | null;
   index: number | null;
   scannedAt: Date | null;
@@ -125,6 +126,7 @@ type CollectionForSearchIndex = {
   write: CollectionWriteConfiguration;
   userId: number;
   mode: CollectionMode | null;
+  nsfwLevel: number;
   metrics: {
     followerCount: number;
     itemCount: number;
@@ -199,7 +201,7 @@ const onFetchItemsToIndex = async ({
         'postId', i."postId",
         'name', i."name",
         'url', i."url",
-        'nsfw', i."nsfw",
+        'nsfwLevel', i."nsfwLevel",
         'width', i."width",
         'height', i."height",
         'hash', i."hash",
@@ -225,6 +227,7 @@ const onFetchItemsToIndex = async ({
     c."read",
     c."write",
     c."mode"
+    c."nsfwLevel",
     FROM "Collection" c
     WHERE ${Prisma.join(WHERE, ' AND ')}
     OFFSET ${offset} LIMIT ${READ_BATCH_SIZE}
@@ -244,7 +247,7 @@ const onFetchItemsToIndex = async ({
     SELECT
       uc."userId",
       jsonb_agg(
-        jsonb_build_object( 
+        jsonb_build_object(
           'data', uc.data,
           'cosmetic', jsonb_build_object(
             'id', c.id,
@@ -421,6 +424,7 @@ const onFetchItemsToIndex = async ({
 
     return {
       ...collection,
+      nsfwLevel: parseBitwiseBrowsingLevel(collection.nsfwLevel),
       image: collectionImage,
       metrics: collection.metrics || {},
       user: {

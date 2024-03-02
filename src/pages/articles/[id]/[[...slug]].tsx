@@ -11,7 +11,7 @@ import {
   Text,
   Title,
 } from '@mantine/core';
-import { ArticleEngagementType, Availability, NsfwLevel } from '@prisma/client';
+import { ArticleEngagementType, Availability } from '@prisma/client';
 import { IconBolt, IconBookmark, IconShare3 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
 import { InferGetServerSidePropsType } from 'next';
