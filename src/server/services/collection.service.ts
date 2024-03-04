@@ -387,12 +387,23 @@ export const saveItemInCollections = async ({
           id: collectionId,
         });
 
-        await validateContestCollectionEntry({
-          metadata,
-          collectionId,
-          userId,
-          [`${itemKey}s`]: [input[itemKey as keyof typeof input]],
-        });
+        if (collection.mode === CollectionMode.Contest) {
+          await validateContestCollectionEntry({
+            metadata,
+            collectionId,
+            userId,
+            [`${itemKey}s`]: [input[itemKey as keyof typeof input]],
+          });
+        }
+
+        // A shame to hard-code the `featured` name here. Might wanna look into adding a featured mode instead,
+        // For now tho, should work
+        if (collection.userId == -1 && !collection.mode && collection.name.includes('Featured')) {
+          // Assume it's a featured collection:
+          await validateFeaturedCollectionEntry({
+            [`${itemKey}s`]: [input[itemKey as keyof typeof input]],
+          });
+        }
 
         if (!permission.isContributor && !permission.isOwner) {
           // Person adding content to stuff they don't follow.
@@ -1286,6 +1297,84 @@ const validateContestCollectionEntry = async ({
       }
     }
   }
+
+  // Check the entry is not on a feature collection:
+  const featuredCollections = await dbRead.collection.findMany({
+    where: {
+      userId: -1, // Civit
+      mode: null, // Not contest or anything like that
+      name: {
+        contains: 'Featured',
+      },
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  if (featuredCollections.length > 0) {
+    // confirm no collection items exists on those for this contest collection:
+    const existingCollectionItemsOnFeaturedCollections = await dbRead.collectionItem.findFirst({
+      where: {
+        collectionId: {
+          in: featuredCollections.map((f) => f.id),
+        },
+        modelId: modelIds.length > 0 ? { in: modelIds } : undefined,
+        imageId: imageIds.length > 0 ? { in: imageIds } : undefined,
+        articleId: articleIds.length > 0 ? { in: articleIds } : undefined,
+        postId: postIds.length > 0 ? { in: postIds } : undefined,
+      },
+    });
+
+    if (existingCollectionItemsOnFeaturedCollections) {
+      throw throwBadRequestError(
+        'At least one of the items provided is already featured by civitai and cannot be added to the contest.'
+      );
+    }
+  }
+};
+
+const validateFeaturedCollectionEntry = async ({
+  articleIds = [],
+  modelIds = [],
+  imageIds = [],
+  postIds = [],
+}: {
+  articleIds?: number[];
+  modelIds?: number[];
+  imageIds?: number[];
+  postIds?: number[];
+}) => {
+  // Check the entry is not on a feature collection:
+  const contestCollectionIds = await dbRead.collection.findMany({
+    where: {
+      mode: CollectionMode.Contest,
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  if (contestCollectionIds.length > 0) {
+    // confirm no collection items exists on those for this contest collection:
+    const existingCollectionItemsOnContestCollection = await dbRead.collectionItem.findFirst({
+      where: {
+        collectionId: {
+          in: contestCollectionIds.map((f) => f.id),
+        },
+        modelId: modelIds.length > 0 ? { in: modelIds } : undefined,
+        imageId: imageIds.length > 0 ? { in: imageIds } : undefined,
+        articleId: articleIds.length > 0 ? { in: articleIds } : undefined,
+        postId: postIds.length > 0 ? { in: postIds } : undefined,
+      },
+    });
+
+    if (existingCollectionItemsOnContestCollection) {
+      throw throwBadRequestError(
+        'At least one of the items provided is already in a contest collection and cannot be added to the featured collections.'
+      );
+    }
+  }
 };
 
 export const bulkSaveItems = async ({
@@ -1297,22 +1386,34 @@ export const bulkSaveItems = async ({
 }) => {
   const collection = await dbRead.collection.findUnique({
     where: { id: collectionId },
-    select: { type: true, metadata: true, name: true },
+    select: { type: true, metadata: true, name: true, userId: true, mode: true },
   });
 
   if (!collection) throw throwNotFoundError('No collection with id ' + collectionId);
 
   const metadata = (collection.metadata ?? {}) as CollectionMetadataSchema;
 
-  await validateContestCollectionEntry({
-    metadata,
-    collectionId,
-    userId,
-    articleIds,
-    modelIds,
-    imageIds,
-    postIds,
-  });
+  if (collection.mode === CollectionMode.Contest) {
+    await validateContestCollectionEntry({
+      metadata,
+      collectionId,
+      userId,
+      articleIds,
+      modelIds,
+      imageIds,
+      postIds,
+    });
+  }
+
+  if (collection.userId == -1 && !collection.mode && collection.name.includes('Featured')) {
+    // Assume it's a featured collection:
+    await validateFeaturedCollectionEntry({
+      articleIds,
+      modelIds,
+      imageIds,
+      postIds,
+    });
+  }
 
   const baseData = {
     collectionId,
