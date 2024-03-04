@@ -1303,6 +1303,9 @@ const validateContestCollectionEntry = async ({
     where: {
       userId: -1, // Civit
       mode: null, // Not contest or anything like that
+      name: {
+        contains: 'Featured',
+      },
     },
     select: {
       id: true,
