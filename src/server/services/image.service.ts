@@ -551,7 +551,7 @@ export const getAllImages = async ({
     AND.push(Prisma.sql`NOT (i.meta IS NULL OR jsonb_typeof(i.meta) = 'null')`);
   }
 
-  if (fromPlatform) {
+  if (fromPlatform && types?.includes(MediaType.image)) {
     AND.push(Prisma.sql`(i.meta IS NOT NULL AND i.meta ? 'civitaiResources')`);
   }
 
