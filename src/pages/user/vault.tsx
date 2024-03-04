@@ -23,6 +23,8 @@ import { formatKBytes } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { useQueryVaultItems } from '../../components/Vault/vault.util';
 import { GetPaginatedVaultItemsSchema } from '~/server/schema/vault.schema';
+import { formatDate } from '~/utils/date-helpers';
+import { getDisplayName } from '~/utils/string-helpers';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -116,6 +118,26 @@ export default function CivitaiVault() {
                   </th>
                 </tr>
               )}
+              {items.map((item) => (
+                <tr key={item.id}>
+                  <th>
+                    <Stack spacing={0}>
+                      <Text>{item.modelName}</Text>
+                      <Text color="dimmde" size="sm">
+                        {item.versionName}
+                      </Text>
+                    </Stack>
+                  </th>
+                  <th>{item.creatorName}</th>
+                  <th>{getDisplayName(item.type)}</th>
+                  <th>{getDisplayName(item.category)}</th>
+                  <th>{formatDate(item.createdAt)}</th>
+                  <th>{formatDate(item.addedAt)}</th>
+                  <th>{item.refreshedAt ? formatDate(item.refreshedAt) : '-'}</th>
+                  <th>{item.notes ?? '-'}</th>
+                  <th>&nbsp;</th>
+                </tr>
+              ))}
             </tbody>
             {pagination && pagination.totalPages > 1 && (
               <Group position="apart">
