@@ -12,7 +12,7 @@ export abstract class Flags {
     return (instance | flag) === instance;
   }
 
-  static hasOverlap(instance: number, flag: number) {
+  static intersects(instance: number, flag: number) {
     return (instance & flag) !== 0;
   }
 

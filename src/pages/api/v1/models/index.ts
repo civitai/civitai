@@ -40,13 +40,15 @@ export default MixedAuthEndpoint(async function handler(
     ...publicApiContext(req, res),
     user: user,
     browsingLevel,
-    showNsfw,
   });
   try {
     if (Object.keys(req.query).some((key: any) => authedOnlyOptions.includes(key)) && !user)
       return res.status(401).json({ error: 'Unauthorized' });
 
-    const { items, ...metadata } = await apiCaller.model.getAllWithVersions(req.query);
+    const { items, ...metadata } = await apiCaller.model.getAllWithVersions({
+      ...req.query,
+      browsingLevel,
+    });
     const { nextPage, prevPage, baseUrl } = getPaginationLinks({ ...metadata, req });
 
     const preferredFormat = {

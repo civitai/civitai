@@ -1,11 +1,4 @@
-import {
-  AutocompleteItem,
-  AutocompleteProps,
-  createStyles,
-  Group,
-  Select,
-  Text,
-} from '@mantine/core';
+import { AutocompleteProps, createStyles, Group, Select, Text } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 import { IconChevronDown } from '@tabler/icons-react';
@@ -34,12 +27,6 @@ import { env } from '~/env/client.mjs';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { ShowcaseItemSchema } from '~/server/schema/user-profile.schema';
-import { ArticleSearchIndexRecord } from '~/server/search-index/articles.search-index';
-import { BountySearchIndexRecord } from '~/server/search-index/bounties.search-index';
-import { CollectionSearchIndexRecord } from '~/server/search-index/collections.search-index';
-import { ImageSearchIndexRecord } from '~/server/search-index/images.search-index';
-import { ModelSearchIndexRecord } from '~/server/search-index/models.search-index';
-import { UserSearchIndexRecord } from '~/server/search-index/users.search-index';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { paired } from '~/utils/type-guards';
 import { searchClient } from '~/components/Search/search.client';
@@ -126,12 +113,12 @@ export type QuickSearchDropdownProps = Omit<AutocompleteProps, 'data'> & {
   onItemSelected: (
     item: ShowcaseItemSchema,
     data:
-      | ModelSearchIndexRecord // TODO - update types
-      | ArticleSearchIndexRecord
-      | ImageSearchIndexRecord
-      | UserSearchIndexRecord
-      | CollectionSearchIndexRecord
-      | BountySearchIndexRecord
+      | SearchIndexDataMap['models'][number]
+      | SearchIndexDataMap['images'][number]
+      | SearchIndexDataMap['articles'][number]
+      | SearchIndexDataMap['users'][number]
+      | SearchIndexDataMap['collections'][number]
+      | SearchIndexDataMap['bounties'][number]
   ) => void;
   filters?: string;
   dropdownItemLimit?: number;

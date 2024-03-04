@@ -32,14 +32,21 @@ import { Meta } from '~/components/Meta/Meta';
 import { truncate } from 'lodash-es';
 import { StarRating } from '../StartRating/StarRating';
 import { env } from '~/env/client.mjs';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 
 export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
   const router = useRouter();
   const isModelPage = !!router.query.id && !router.pathname.includes('/reviews');
 
   const { data, isLoading } = trpc.resourceReview.get.useQuery({ id: reviewId });
+  const browsingLevel = useBrowsingLevelDebounced();
   const { data: relatedPosts, isLoading: loadingRelatedPosts } = trpc.post.getInfinite.useQuery(
-    { username: data?.user.username, modelVersionId: data?.modelVersion.id, sort: PostSort.Newest },
+    {
+      username: data?.user.username,
+      modelVersionId: data?.modelVersion.id,
+      sort: PostSort.Newest,
+      browsingLevel,
+    },
     { enabled: !!data }
   );
 

@@ -1,6 +1,5 @@
 import { useContext, createContext, ReactNode, useMemo, useDeferredValue } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
-import { getIsPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 
 import { useQueryHiddenPreferences } from '~/hooks/hidden-preferences';
 import { NsfwLevel } from '~/server/common/enums';
@@ -14,7 +13,6 @@ type HiddenPreferencesState = {
   hiddenImages: Map<number, boolean>;
   hiddenLoading: boolean;
   browsingLevel: number;
-  isSfw: boolean;
 };
 
 const HiddenPreferencesContext = createContext<HiddenPreferencesState | null>(null);
@@ -56,7 +54,6 @@ export const HiddenPreferencesProvider = ({
       hiddenImages: images,
       hiddenLoading: isLoading,
       browsingLevel,
-      isSfw: getIsPublicBrowsingLevel(browsingLevel),
     };
   }, [data, browsingLevel, isLoading, disableHidden]);
 

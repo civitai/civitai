@@ -49,6 +49,7 @@ import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApp
 import { isDefined } from '~/utils/type-guards';
 import { Adunit } from '~/components/Ads/AdUnit';
 import { adsRegistry } from '~/components/Ads/adsRegistry';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 
 type ModelVersionsProps = { id: number; name: string; modelId: number };
 type ImagesAsPostsInfiniteState = {
@@ -108,9 +109,10 @@ export default function ImagesAsPostsInfinite({
     types: undefined, // override global types image filter
   });
 
+  const browsingLevel = useBrowsingLevelDebounced();
   const { data, isLoading, fetchNextPage, hasNextPage, isRefetching } =
     trpc.image.getImagesAsPostsInfinite.useInfiniteQuery(
-      { ...filters, limit },
+      { ...filters, limit, browsingLevel },
       {
         getNextPageParam: (lastPage) => lastPage.nextCursor,
         trpc: { context: { skipBatch: true } },
@@ -123,15 +125,7 @@ export default function ImagesAsPostsInfinite({
   const { items: preferred } = useApplyHiddenPreferences({
     type: 'posts',
     data: flatData,
-    // showHidden,
   });
-
-  // const {
-  //   images: hiddenImages,
-  //   tags: hiddenTags,
-  //   users: hiddenUsers,
-  //   isLoading: isLoadingHidden,
-  // } = useHiddenPreferencesContext();
 
   const {
     hiddenImages: galleryHiddenImages,
@@ -144,7 +138,7 @@ export default function ImagesAsPostsInfinite({
     if (loadingGallerySettings) return [];
     return preferred
       .filter((post) => {
-        if (!showHidden && galleryHiddenUsers.get(post.user.id)) return false;
+        if (!showHidden && post.user && galleryHiddenUsers.get(post.user.id)) return false;
         return true;
       })
       .map(({ images, ...post }) => {
@@ -169,53 +163,6 @@ export default function ImagesAsPostsInfinite({
     galleryHiddenTags,
   ]);
 
-  // const items = useMemo(() => {
-  //   // TODO - fetch user reactions for images separately
-  //   if (isLoadingHidden || loadingGallerySettings) return [];
-  //   const arr = data?.pages.flatMap((x) => x.items) ?? [];
-  //   const filtered = arr
-  //     .filter((x) => {
-  //       if (x.user.id === currentUser?.id && browsingMode !== BrowsingMode.SFW) return true;
-  //       if (hiddenUsers.get(x.user.id) || (!showHidden && galleryHiddenUsers.get(x.user.id)))
-  //         return false;
-  //       return true;
-  //     })
-  //     .map(({ images, ...x }) => {
-  //       const filteredImages = images?.filter((i) => {
-  //         // show hidden images only
-  //         if (showHidden) return galleryHiddenImages.get(i.id);
-
-  //         if (i.ingestion !== ImageIngestionStatus.Scanned) return false;
-  //         if (hiddenImages.get(i.id) || galleryHiddenImages.get(i.id)) return false;
-  //         for (const tag of i.tagIds ?? []) {
-  //           if (hiddenTags.get(tag) || galleryHiddenTags.get(tag)) return false;
-  //         }
-  //         return true;
-  //       });
-
-  //       if (!filteredImages?.length) return null;
-
-  //       return {
-  //         ...x,
-  //         images: filteredImages,
-  //       };
-  //     })
-  //     .filter(isDefined);
-  //   return filtered;
-  // }, [
-  //   data,
-  //   currentUser,
-  //   hiddenImages,
-  //   hiddenTags,
-  //   hiddenUsers,
-  //   isLoadingHidden,
-  //   galleryHiddenImages,
-  //   galleryHiddenTags,
-  //   galleryHiddenUsers,
-  //   loadingGallerySettings,
-  //   showHidden,
-  // ]);
-
   useEffect(() => {
     if (galleryHiddenImages.size === 0) setShowHidden(false);
   }, [galleryHiddenImages.size]);
@@ -227,14 +174,6 @@ export default function ImagesAsPostsInfinite({
   const { excludeCrossPosts } = imageFilters;
   const hasModerationPreferences =
     galleryHiddenImages.size > 0 || galleryHiddenTags.size > 0 || galleryHiddenUsers.size > 0;
-
-  // const adStyle: React.CSSProperties = {
-  //   position: 'sticky',
-  //   top: 0,
-  //   height: '100%',
-  //   // top: '50%',
-  //   // transform: 'translateY(-50%)',
-  // };
 
   return (
     <ImagesAsPostsInfiniteContext.Provider
@@ -421,32 +360,7 @@ export default function ImagesAsPostsInfinite({
             </Stack>
           </MasonryContainer>
         </MasonryProvider>
-        {/* <AscendeumAd
-          adunit="StickySidebar_B"
-          sizes={{
-            [theme.breakpoints.md]: '120x600',
-            [2030]: '300x600',
-          }}
-          style={{ ...adStyle }}
-          showRemoveAds
-        /> */}
       </Box>
-
-      {/* {isLoading && (
-        <Paper style={{ minHeight: 200, position: 'relative' }}>
-          <LoadingOverlay visible zIndex={10} />
-        </Paper>
-      )}
-      {!isLoading && !items.length && (
-        <Paper p="xl" sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <Stack>
-            <Text size="xl">There are no images for this model yet.</Text>
-            <Text color="dimmed">
-              Add a post to showcase your images generated from this model.
-            </Text>
-          </Stack>
-        </Paper>
-      )} */}
 
       <GalleryModerationModal opened={opened} onClose={() => setOpened(false)} />
     </ImagesAsPostsInfiniteContext.Provider>

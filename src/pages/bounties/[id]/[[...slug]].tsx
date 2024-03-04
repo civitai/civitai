@@ -98,7 +98,7 @@ import { ScrollAreaMain } from '~/components/ScrollArea/ScrollAreaMain';
 import { useIsMutating } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import { useDidUpdate } from '@mantine/hooks';
-import { getIsPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -182,7 +182,7 @@ export default function BountyDetailsPage({
   if (loading) return <PageLoader />;
   if (!bounty) return <NotFound />;
 
-  if (!getIsPublicBrowsingLevel(bounty.nsfwLevel) && !currentUser) {
+  if (!getIsSafeBrowsingLevel(bounty.nsfwLevel) && !currentUser) {
     return (
       <>
         {meta}

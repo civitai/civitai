@@ -328,8 +328,8 @@ function SelectableImageCard({ data: image }: { data: ImageGetInfinite[number] }
           sx={{ position: 'absolute', top: 5, right: 5 }}
           readOnly
         />
-        {!data.hideMeta && data.meta && (
-          <ImageMetaPopover meta={data.meta} mainResourceId={data.modelVersionId ?? undefined}>
+        {!image.hideMeta && image.meta && (
+          <ImageMetaPopover meta={image.meta} mainResourceId={image.modelVersionId ?? undefined}>
             <ActionIcon
               variant="light"
               color="dark"

@@ -114,7 +114,6 @@ export function ModelCarousel({
   modelVersionId,
   modelUserId,
   // images,
-  nsfw,
   mobile = false,
   limit = 10,
   onBrowseClick,
@@ -320,7 +319,6 @@ type Props = {
   modelVersionId: number;
   modelId: number;
   modelUserId: number;
-  nsfw: boolean;
   mobile?: boolean;
   limit?: number;
   onBrowseClick?: VoidFunction;

@@ -35,7 +35,6 @@ import {
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React, { useEffect } from 'react';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { TipBuzzButton } from '~/components/Buzz/TipBuzzButton';
 import { ChatUserButton } from '~/components/Chat/ChatUserButton';
@@ -322,7 +321,7 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
           )}, Total Likes Received: ${abbreviateNumber(
             stats.favoriteCountAllTime
           )}, Total Downloads Received: ${abbreviateNumber(stats.downloadCountAllTime)}. `}
-          image={user.profilePicture}
+          images={user.profilePicture}
           links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/user/${username}`, rel: 'canonical' }]}
         />
       ) : (

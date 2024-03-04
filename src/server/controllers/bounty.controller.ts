@@ -185,6 +185,7 @@ export const getBountyEntriesHandler = async ({
         createdAt: true,
         bountyId: true,
         user: { select: userWithCosmeticsSelect },
+        nsfwLevel: true,
         reactions: {
           select: getReactionsSelectV2,
         },

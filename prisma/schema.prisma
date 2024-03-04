@@ -489,6 +489,7 @@ model Model {
   gallerySettings     Json            @default("{\"users\": [], \"tags\": [], \"images\": []}")
   availability        Availability    @default(Public)
   nsfwLevel           Int             @default(0)
+  userNsfwLevel       Int             @default(0)
 
   // Licensing
   allowNoCredit         Boolean         @default(true)
@@ -619,6 +620,7 @@ model ModelVersion {
   settings             Json?
   availability         Availability    @default(Public)
   nsfwLevel            Int             @default(0)
+  userNsfwLevel        Int             @default(0)
 
   monetization            ModelVersionMonetization?
   metrics                 ModelVersionMetric[]
@@ -1072,6 +1074,7 @@ model Post {
   unlisted       Boolean       @default(false)
   availability   Availability  @default(Public)
   nsfwLevel      Int           @default(0)
+  userNsfwLevel  Int           @default(0)
 
   images          Image[]
   tags            TagsOnPost[]
@@ -1966,23 +1969,24 @@ model BuzzClaim {
 }
 
 model Article {
-  id           Int          @id @default(autoincrement())
-  createdAt    DateTime?    @default(now())
-  updatedAt    DateTime?    @updatedAt
-  nsfw         Boolean      @default(false)
-  tosViolation Boolean      @default(false)
-  metadata     Json?
-  title        String
-  content      String
-  cover        String?
-  coverId      Int?         @unique
-  coverImage   Image?       @relation(fields: [coverId], references: [id], onDelete: NoAction)
-  publishedAt  DateTime?
-  userId       Int
-  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  availability Availability @default(Public)
-  unlisted     Boolean      @default(false)
-  nsfwLevel    Int          @default(0)
+  id            Int          @id @default(autoincrement())
+  createdAt     DateTime?    @default(now())
+  updatedAt     DateTime?    @updatedAt
+  nsfw          Boolean      @default(false)
+  tosViolation  Boolean      @default(false)
+  metadata      Json?
+  title         String
+  content       String
+  cover         String?
+  coverId       Int?         @unique
+  coverImage    Image?       @relation(fields: [coverId], references: [id], onDelete: NoAction)
+  publishedAt   DateTime?
+  userId        Int
+  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  availability  Availability @default(Public)
+  unlisted      Boolean      @default(false)
+  nsfwLevel     Int          @default(0)
+  userNsfwLevel Int          @default(0)
 
   thread          Thread?
   reactions       ArticleReaction[]
@@ -2332,6 +2336,7 @@ model Bounty {
   refunded                Boolean         @default(false)
   availability            Availability    @default(Public)
   nsfwLevel               Int             @default(0)
+  userNsfwLevel           Int             @default(0)
 
   tags        TagsOnBounty[]
   entries     BountyEntry[]

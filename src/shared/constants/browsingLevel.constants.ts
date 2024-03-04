@@ -25,6 +25,7 @@ export const browsingLevelLabels = {
   [NsfwLevel.R]: 'R',
   [NsfwLevel.X]: 'X',
   [NsfwLevel.XXX]: 'XXX',
+  [NsfwLevel.Blocked]: 'Blocked',
 } as const;
 
 export const browsingLevelDescriptions = {
@@ -33,11 +34,14 @@ export const browsingLevelDescriptions = {
   [NsfwLevel.R]: 'Some explanation',
   [NsfwLevel.X]: 'Some explanation',
   [NsfwLevel.XXX]: 'Some explanation',
+  [NsfwLevel.Blocked]: '',
 } as const;
 
 // public browsing levels
 export const publicBrowsingLevelsArray: BrowsingLevel[] = [NsfwLevel.PG];
 export const publicBrowsingLevelsFlag = flagifyBrowsingLevel(publicBrowsingLevelsArray);
+
+export const homePageBrowsingLevelsFlag = flagifyBrowsingLevel([NsfwLevel.PG, NsfwLevel.PG13]);
 
 // nsfw browsing levels
 export const nsfwBrowsingLevelsArray: BrowsingLevel[] = [NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX];
@@ -52,7 +56,7 @@ export function getIsPublicBrowsingLevel(level: number) {
 }
 
 export function getIsSafeBrowsingLevel(level: number) {
-  return level !== 0 && !Flags.hasOverlap(level, nsfwBrowsingLevelsFlag);
+  return level !== 0 && !Flags.intersects(level, nsfwBrowsingLevelsFlag);
 }
 
 export const browsingLevelOr = (array: (number | undefined)[]) => {

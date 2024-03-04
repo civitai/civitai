@@ -32,8 +32,8 @@ import { ModelGetAssociatedResourcesSimple } from '~/types/router';
 import { trpc } from '~/utils/trpc';
 import { QuickSearchDropdown, QuickSearchDropdownProps } from '../Search/QuickSearchDropdown';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { ModelSearchIndexRecord } from '~/server/search-index/models.search-index';
-import { ArticleSearchIndexRecord } from '~/server/search-index/articles.search-index';
+import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { SearchIndexDataMap } from '~/components/Search/search.utils2';
 
 type State = Array<Omit<ModelGetAssociatedResourcesSimple[number], 'id'> & { id?: number }>;
 
@@ -90,13 +90,13 @@ export function AssociateModels({
     setChanged(true);
     setAssociatedResources((resources) => {
       if (item.entityType === 'Model') {
-        const itemData = data as ModelSearchIndexRecord;
+        const itemData = data as SearchIndexDataMap['models'][number];
         return resources.some((r) => r.item.id === item.entityId) || item.entityId === fromId
           ? resources
           : [...resources, { resourceType: 'model' as const, item: itemData }];
       }
 
-      const itemData = data as ArticleSearchIndexRecord;
+      const itemData = data as SearchIndexDataMap['articles'][number];
       return resources.some((r) => r.item.id === item.entityId) || item.entityId === fromId
         ? resources
         : [...resources, { resourceType: 'article' as const, item: itemData }];
@@ -197,7 +197,7 @@ export function AssociateModels({
                                     {association.item.user.username}
                                   </Group>
                                 </Badge>
-                                {association.item.nsfw && (
+                                {!getIsSafeBrowsingLevel(association.item.nsfwLevel) && (
                                   <Badge color="red" size="xs">
                                     NSFW
                                   </Badge>

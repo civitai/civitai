@@ -14,7 +14,7 @@ import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 
 export function PostsCard({
-  data: { image, id, stats, imageCount, user, modelVersionId },
+  data: { images, id, stats, imageCount, user, modelVersionId },
   height,
 }: {
   data: PostsInfiniteModel;
@@ -22,6 +22,8 @@ export function PostsCard({
 }) {
   const { ref, inView } = useInView({ rootMargin: '600px' });
   const { classes, theme } = useStyles();
+
+  const image = images[0];
 
   return (
     <MasonryCard withBorder shadow="sm" p={0} height={height} ref={ref}>

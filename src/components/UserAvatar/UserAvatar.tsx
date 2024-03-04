@@ -155,7 +155,7 @@ export function UserAvatar({
                       <Center h="100%">
                         <ImageGuard2.BlurToggle>
                           {(toggle) =>
-                            !safe && (
+                            !safe ? (
                               <ActionIcon
                                 color="red"
                                 radius="xl"
@@ -173,6 +173,8 @@ export function UserAvatar({
                                   <IconEye size={14} strokeWidth={2.5} />
                                 )}
                               </ActionIcon>
+                            ) : (
+                              <></>
                             )
                           }
                         </ImageGuard2.BlurToggle>

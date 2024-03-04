@@ -36,6 +36,7 @@ import { trackModActivity } from '~/server/services/moderator.service';
 import { hasEntityAccess } from '../services/common.service';
 import { isDefined } from '../../utils/type-guards';
 import { getGallerySettingsByModelId } from '~/server/services/model.service';
+import { Flags } from '~/shared/utils';
 
 type SortableImage = {
   nsfw: NsfwLevel;
@@ -222,7 +223,6 @@ export const getInfiniteImagesHandler = async ({
     return await getAllImages({
       ...input,
       user: ctx.user,
-      isModerator: ctx.user?.isModerator,
       headers: { src: 'getInfiniteImagesHandler' },
       include: [...input.include, 'tagIds'],
     });
@@ -308,14 +308,6 @@ export const getImagesAsPostsInfiniteHandler = async ({
       orderBy: { rating: 'desc' },
     });
 
-    const postIds = Object.keys(posts).filter(isDefined).map(Number);
-    const entityAccess = await hasEntityAccess({
-      userId: ctx?.user?.id,
-      isModerator: ctx?.user?.isModerator,
-      entityIds: postIds,
-      entityType: 'Post',
-    });
-
     // Prepare the results
     const results = Object.values(posts).map((images) => {
       const [image] = images;
@@ -324,17 +316,21 @@ export const getImagesAsPostsInfiniteHandler = async ({
       const createdAt = images.map((image) => image.createdAt).sort()[0];
 
       if (input.sort === ImageSort.Newest) images.sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
-
-      const access = entityAccess.find((x) => x.entityId === image.postId);
+      const imageNsfwLevels = images.map((x) => x.nsfwLevel);
+      let nsfwLevel = 0;
+      for (const imageNsfwLevel of imageNsfwLevels) {
+        nsfwLevel = Flags.addFlag(nsfwLevel, imageNsfwLevel);
+      }
 
       return {
         postId: image.postId as number,
         postTitle: image.postTitle,
+        nsfwLevel,
         modelVersionId: image.modelVersionId,
         publishedAt: image.publishedAt,
         createdAt,
         user,
-        images: access?.hasAccess ?? true ? images : [images[0]],
+        images: images,
         review: review
           ? {
               rating: review.rating,

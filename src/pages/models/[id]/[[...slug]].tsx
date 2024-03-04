@@ -519,7 +519,7 @@ export default function ModelDetailsV2({
     />
   );
 
-  if (model.nsfw && !currentUser)
+  if (!getIsSafeBrowsingLevel(model.nsfwLevel) && !currentUser)
     return (
       <>
         {meta}

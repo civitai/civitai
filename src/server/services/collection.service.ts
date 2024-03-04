@@ -1424,6 +1424,7 @@ type ImageProps = {
   scannedAt: Date | null;
   mimeType: string | null;
   meta: Prisma.JsonObject | null;
+  userId: number;
 } | null;
 
 type CollectionImageRaw = {
@@ -1456,6 +1457,7 @@ export const getCollectionCoverImages = async ({
         'scannedAt', i."scannedAt",
         'type', i."type",
         'meta', i."meta"
+        'userId', i."userId"
       ) image
   `;
 

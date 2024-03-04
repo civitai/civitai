@@ -4,10 +4,9 @@ import { trpc } from '~/utils/trpc';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { SupportedClubEntities } from '~/server/schema/club.schema';
 import { openManageClubPostModal } from '~/components/Modals/ManageClubPostModal';
-import { ModelSearchIndexRecord } from '~/server/search-index/models.search-index';
-import { ArticleSearchIndexRecord } from '~/server/search-index/articles.search-index';
 import { AddResourceToClubModal } from './AddResourceToClubModal';
 import { dialogStore } from '../Dialog/dialogStore';
+import { SearchIndexDataMap } from '~/components/Search/search.utils2';
 
 export function AddToClubMenuItem({ entityType, entityId, resource }: Props) {
   const features = useFeatureFlags();
@@ -55,5 +54,6 @@ export function AddToClubMenuItem({ entityType, entityId, resource }: Props) {
 type Props = {
   entityType: SupportedClubEntities;
   entityId: number;
-  resource?: ModelSearchIndexRecord | ArticleSearchIndexRecord;
+  // resource?: SearchIndexDataMap['models'][number] | SearchIndexDataMap['articles'][number];
+  resource: any;
 };

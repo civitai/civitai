@@ -9,7 +9,6 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';
 import { NsfwLevel } from '~/server/common/enums';
 import {
-  BrowsingLevel,
   browsingLevelLabels,
   nsfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
@@ -62,7 +61,7 @@ function getConnectionKey({
 const ImageGuardCtx = createContext<{
   safe: boolean;
   show: boolean;
-  browsingLevel: BrowsingLevel;
+  browsingLevel: NsfwLevel;
   imageId: number;
   key: string | null;
 } | null>(null);
@@ -80,7 +79,7 @@ export function ImageGuard2({
   connectType,
 }: {
   image: ImageProps;
-  children: (show: boolean) => React.ReactNode;
+  children: (show: boolean) => React.ReactElement | null;
 } & ConnectProps) {
   const currentUser = useCurrentUser();
   const showImage = useShowImagesStore(useCallback((state) => state[image.id], [image.id]));
@@ -123,14 +122,14 @@ function BlurToggle({
   const { safe, show, browsingLevel, imageId, key } = useImageGuardContext();
   const { classes, cx } = useStyles();
 
-  if (safe) return null;
-
   const toggle = (event: React.MouseEvent<HTMLElement, MouseEvent>) =>
     toggleShow({ event, isAuthed: !!currentUser, key, imageId });
 
   if (children) {
     return children(toggle);
   }
+
+  if (safe) return null;
 
   return (
     <Badge

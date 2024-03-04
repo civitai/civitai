@@ -3,7 +3,6 @@ import {
   Center,
   Chip,
   ChipProps,
-  Container,
   Group,
   Loader,
   LoadingOverlay,
@@ -19,7 +18,6 @@ import {
   CloseButton,
   Divider,
   Tabs,
-  Button,
   Badge,
   Code,
   Grid,
@@ -39,7 +37,6 @@ import { getDisplayName } from '~/utils/string-helpers';
 import { useDebouncedValue } from '@mantine/hooks';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { ImageCSSAspectRatioWrap } from '~/components/Profile/ImageCSSAspectRatioWrap';
-import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { constants } from '~/server/common/constants';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
@@ -51,6 +48,7 @@ import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 
 const chipProps: Partial<ChipProps> = {
   size: 'sm',
@@ -101,6 +99,8 @@ const RewardDetailsModal = ({
     }
   };
 
+  const image = purchasableReward.coverImage;
+
   return (
     <Modal {...dialog} size="lg" withCloseButton={false} radius="lg">
       <Stack spacing="sm">
@@ -117,38 +117,29 @@ const RewardDetailsModal = ({
         <Divider mx="-lg" />
         <Paper key={purchasableReward.id} className={classes.rewardCard}>
           <Stack spacing="sm">
-            {purchasableReward.coverImage && (
+            {image && (
               <ImageCSSAspectRatioWrap
                 aspectRatio={constants.purchasableRewards.coverImageAspectRatio}
                 style={{ width: constants.purchasableRewards.coverImageWidth }}
               >
-                <ImageGuard
-                  images={[purchasableReward.coverImage]}
-                  render={(image) => {
-                    return (
-                      <ImageGuard.Content>
-                        {({ safe }) => (
-                          <>
-                            {!safe ? (
-                              <MediaHash {...image} style={{ width: '100%', height: '100%' }} />
-                            ) : (
-                              <ImagePreview
-                                image={image}
-                                edgeImageProps={{ width: 450 }}
-                                radius="md"
-                                style={{ width: '100%', height: '100%' }}
-                                aspectRatio={0}
-                              />
-                            )}
-                            <div style={{ width: '100%', height: '100%' }}>
-                              <ImageGuard.ToggleConnect position="top-left" />
-                            </div>
-                          </>
-                        )}
-                      </ImageGuard.Content>
-                    );
-                  }}
-                />
+                <ImageGuard2 image={image}>
+                  {(safe) => (
+                    <>
+                      <ImageGuard2.BlurToggle className="absolute top-2 left-2 z-10" />
+                      {!safe ? (
+                        <MediaHash {...image} style={{ width: '100%', height: '100%' }} />
+                      ) : (
+                        <ImagePreview
+                          image={image}
+                          edgeImageProps={{ width: 450 }}
+                          radius="md"
+                          style={{ width: '100%', height: '100%' }}
+                          aspectRatio={0}
+                        />
+                      )}
+                    </>
+                  )}
+                </ImageGuard2>
               </ImageCSSAspectRatioWrap>
             )}
             <Text size="lg">{purchasableReward.title}</Text>
@@ -229,6 +220,8 @@ const PurchasableRewardListItem = ({
     (pr) => pr.purchasableReward?.id === purchasableReward.id
   );
 
+  const image = purchasableReward.coverImage;
+
   return (
     <UnstyledButton
       className={classes.rewardCard}
@@ -240,38 +233,29 @@ const PurchasableRewardListItem = ({
       }}
     >
       <Group spacing="xl" align="start">
-        {purchasableReward.coverImage && (
+        {image && (
           <ImageCSSAspectRatioWrap
             aspectRatio={constants.purchasableRewards.coverImageAspectRatio}
             style={{ width: constants.purchasableRewards.coverImageWidth }}
           >
-            <ImageGuard
-              images={[purchasableReward.coverImage]}
-              render={(image) => {
-                return (
-                  <ImageGuard.Content>
-                    {({ safe }) => (
-                      <>
-                        {!safe ? (
-                          <MediaHash {...image} style={{ width: '100%', height: '100%' }} />
-                        ) : (
-                          <ImagePreview
-                            image={image}
-                            edgeImageProps={{ width: 450 }}
-                            radius="md"
-                            style={{ width: '100%', height: '100%' }}
-                            aspectRatio={0}
-                          />
-                        )}
-                        <div style={{ width: '100%', height: '100%' }}>
-                          <ImageGuard.ToggleConnect position="top-left" />
-                        </div>
-                      </>
-                    )}
-                  </ImageGuard.Content>
-                );
-              }}
-            />
+            <ImageGuard2 image={image}>
+              {(safe) => (
+                <>
+                  <ImageGuard2.BlurToggle className="absolute top-2 left-2 z-10" />
+                  {!safe ? (
+                    <MediaHash {...image} style={{ width: '100%', height: '100%' }} />
+                  ) : (
+                    <ImagePreview
+                      image={image}
+                      edgeImageProps={{ width: 450 }}
+                      radius="md"
+                      style={{ width: '100%', height: '100%' }}
+                      aspectRatio={0}
+                    />
+                  )}
+                </>
+              )}
+            </ImageGuard2>
           </ImageCSSAspectRatioWrap>
         )}
         <Stack style={{ flex: 1 }} spacing={0}>
@@ -317,6 +301,8 @@ const PurchasableRewardCard = ({
     (pr) => pr.purchasableReward?.id === purchasableReward.id
   );
 
+  const image = purchasableReward.coverImage;
+
   return (
     <Grid.Col xs={12} sm={6} md={3}>
       <UnstyledButton
@@ -329,38 +315,29 @@ const PurchasableRewardCard = ({
         }}
       >
         <Stack style={{ flex: 1, height: '100%' }}>
-          {purchasableReward.coverImage && (
+          {image && (
             <ImageCSSAspectRatioWrap
               aspectRatio={constants.purchasableRewards.coverImageAspectRatio}
               style={{ width: '100%' }}
             >
-              <ImageGuard
-                images={[purchasableReward.coverImage]}
-                render={(image) => {
-                  return (
-                    <ImageGuard.Content>
-                      {({ safe }) => (
-                        <>
-                          {!safe ? (
-                            <MediaHash {...image} style={{ width: '100%', height: '100%' }} />
-                          ) : (
-                            <ImagePreview
-                              image={image}
-                              edgeImageProps={{ width: 450 }}
-                              radius="md"
-                              style={{ width: '100%', height: '100%' }}
-                              aspectRatio={0}
-                            />
-                          )}
-                          <div style={{ width: '100%', height: '100%' }}>
-                            <ImageGuard.ToggleConnect position="top-left" />
-                          </div>
-                        </>
-                      )}
-                    </ImageGuard.Content>
-                  );
-                }}
-              />
+              <ImageGuard2 image={image}>
+                {(safe) => (
+                  <>
+                    <ImageGuard2.BlurToggle className="absolute top-2 left-2 z-10" />
+                    {!safe ? (
+                      <MediaHash {...image} style={{ width: '100%', height: '100%' }} />
+                    ) : (
+                      <ImagePreview
+                        image={image}
+                        edgeImageProps={{ width: 450 }}
+                        radius="md"
+                        style={{ width: '100%', height: '100%' }}
+                        aspectRatio={0}
+                      />
+                    )}
+                  </>
+                )}
+              </ImageGuard2>
             </ImageCSSAspectRatioWrap>
           )}
           <Stack spacing={0}>

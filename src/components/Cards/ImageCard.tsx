@@ -9,7 +9,6 @@ import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { DEFAULT_EDGE_IMAGE_WIDTH, constants } from '~/server/common/constants';
-import { ImageSearchIndexRecord } from '~/server/search-index/images.search-index';
 import HoverActionButton from './components/HoverActionButton';
 import { generationPanel } from '~/store/generation.store';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -178,4 +177,4 @@ export function ImageCard({ data }: Props) {
   );
 }
 
-type Props = { data: ImagesInfiniteModel | ImageSearchIndexRecord };
+type Props = { data: ImagesInfiniteModel };

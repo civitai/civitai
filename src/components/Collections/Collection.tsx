@@ -66,6 +66,7 @@ import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { truncate } from 'lodash-es';
 import { ImageContextMenuProvider } from '~/components/Image/ContextMenu/ImageContextMenu';
+import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 
 const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
   const { set, ...query } = useModelQueryParams();
@@ -424,6 +425,8 @@ export function Collection({
       </Popover>
     ) : null;
 
+  const nsfw = collection ? !getIsSafeBrowsingLevel(collection.nsfwLevel) : false;
+
   return (
     <>
       {collection && (
@@ -436,7 +439,7 @@ export function Collection({
           }
         />
       )}
-      <SensitiveShield enabled={(collection?.nsfw ?? false) && !currentUser}>
+      <SensitiveShield enabled={nsfw && !currentUser}>
         <MasonryProvider
           columnWidth={constants.cardSizes.model}
           maxColumnCount={7}

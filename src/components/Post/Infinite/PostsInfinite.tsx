@@ -64,8 +64,9 @@ export default function PostsInfinite({
           <MasonryColumns
             data={posts}
             imageDimensions={(data) => {
-              const width = data?.image.width ?? 450;
-              const height = data?.image.height ?? 450;
+              const image = data.images[0];
+              const width = image.width ?? 450;
+              const height = image.height ?? 450;
               return { width, height };
             }}
             maxItemHeight={600}

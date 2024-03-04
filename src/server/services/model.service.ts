@@ -1113,7 +1113,7 @@ export const deleteModelById = async ({
           },
         },
       },
-      select: { id: true, userId: true, nsfw: true, modelVersions: { select: { id: true } } },
+      select: { id: true, userId: true, nsfwLevel: true, modelVersions: { select: { id: true } } },
     });
     if (!model) return null;
 
@@ -1156,7 +1156,7 @@ export const permaDeleteModelById = async ({
   const deletedModel = await dbWrite.$transaction(async (tx) => {
     const model = await tx.model.findUnique({
       where: { id },
-      select: { id: true, userId: true, nsfw: true, modelVersions: { select: { id: true } } },
+      select: { id: true, userId: true, nsfwLevel: true, modelVersions: { select: { id: true } } },
     });
     if (!model) return null;
 
@@ -1219,7 +1219,7 @@ export const upsertModel = async ({
 ModelUpsertInput & { userId: number; meta?: Prisma.ModelCreateInput['meta'] }) => {
   if (!id || templateId) {
     const result = await dbWrite.model.create({
-      select: { id: true, nsfw: true },
+      select: { id: true, nsfwLevel: true },
       data: {
         ...data,
         meta:
@@ -1256,7 +1256,7 @@ ModelUpsertInput & { userId: number; meta?: Prisma.ModelCreateInput['meta'] }) =
     });
 
     const result = await dbWrite.model.update({
-      select: { id: true, nsfw: true, poi: true },
+      select: { id: true, nsfwLevel: true, poi: true },
       where: { id },
       data: {
         ...data,
@@ -1691,7 +1691,7 @@ export const getAssociatedResourcesSimple = async ({
         select: associatedResourceSelect,
       },
       toArticle: {
-        select: { id: true, title: true, nsfw: true, user: { select: simpleUserSelect } },
+        select: { id: true, title: true, nsfwLevel: true, user: { select: simpleUserSelect } },
       },
     },
   });

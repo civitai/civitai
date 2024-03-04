@@ -326,7 +326,7 @@ export const getClubPostResourceData = async ({
     postIds.length > 0
       ? await getImagesForPosts({
           postIds: postIds,
-          userId: user?.id,
+          user: user,
           coverOnly: false,
         })
       : [];

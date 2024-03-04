@@ -55,6 +55,10 @@ import { CollectionReviewSort } from '~/server/common/enums';
 import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
 import { truncate } from 'lodash-es';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
+import {
+  useBrowsingLevel,
+  useBrowsingLevelDebounced,
+} from '~/components/BrowsingLevel/BrowsingLevelProvider';
 
 type StoreState = {
   selected: Record<number, boolean>;
@@ -111,10 +115,14 @@ const ReviewCollection = () => {
     }),
     [collectionId, statuses, sort]
   );
+  const browsingLevel = useBrowsingLevelDebounced();
   const { data, isLoading, isRefetching, fetchNextPage, hasNextPage, isFetchingNextPage } =
-    trpc.collection.getAllCollectionItems.useInfiniteQuery(filters, {
-      getNextPageParam: (lastPage) => lastPage.nextCursor,
-    });
+    trpc.collection.getAllCollectionItems.useInfiniteQuery(
+      { ...filters, browsingLevel },
+      {
+        getNextPageParam: (lastPage) => lastPage.nextCursor,
+      }
+    );
 
   const collectionItems = useMemo(
     () => data?.pages.flatMap((x) => x.collectionItems) ?? [],
@@ -401,13 +409,14 @@ function ModerationControls({
     withinPortal: true,
   };
 
+  const browsingLevel = useBrowsingLevelDebounced();
   const updateCollectionItemsStatusMutation =
     trpc.collection.updateCollectionItemsStatus.useMutation({
       async onMutate({ collectionItemIds, status }) {
         await queryUtils.collection.getAllCollectionItems.cancel();
 
         queryUtils.collection.getAllCollectionItems.setInfiniteData(
-          filters,
+          { ...filters, browsingLevel },
           produce((data) => {
             if (!data?.pages?.length) return;
 

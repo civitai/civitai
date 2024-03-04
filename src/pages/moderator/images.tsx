@@ -492,7 +492,6 @@ function ModerationControls({
       if (input.reviewAction === 'delete') actions.push('deleted');
       else if (input.reviewAction === 'removeName') actions.push('name removed');
       else if (!input.needsReview) actions.push('approved');
-      else if (input.nsfw) actions.push('marked as NSFW');
 
       showSuccessNotification({ message: `The images have been ${actions.join(', ')}` });
     },

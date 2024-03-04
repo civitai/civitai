@@ -473,6 +473,7 @@ export const getAllImages = async ({
   cursor,
   skip,
   postId,
+  postIds,
   collectionId,
   modelId,
   modelVersionId,
@@ -616,6 +617,7 @@ export const getAllImages = async ({
 
   // Filter to a specific post
   if (postId) AND.push(Prisma.sql`i."postId" = ${postId}`);
+  if (!!postIds?.length) AND.push(Prisma.sql`i."postId" IN (${Prisma.join(postIds)})`);
 
   // Filter to a specific image
   if (imageId) AND.push(Prisma.sql`i.id = ${imageId}`);
@@ -1326,37 +1328,48 @@ export const getImagesForModelVersion = async ({
 export const getImagesForPosts = async ({
   postIds,
   excludedIds,
-  userId,
-  isOwnerRequest,
+  user,
   coverOnly = true,
   browsingLevel,
+  pending,
 }: {
   postIds: number | number[];
   excludedIds?: number[];
-  userId?: number;
-  isOwnerRequest?: boolean;
   coverOnly?: boolean;
   browsingLevel?: number;
+  user?: SessionUser;
+  pending?: boolean;
 }) => {
+  const userId = user?.id;
+  const isModerator = user?.isModerator ?? false;
+
   if (!Array.isArray(postIds)) postIds = [postIds];
   const imageWhere: Prisma.Sql[] = [
     Prisma.sql`i."postId" IN (${Prisma.join(postIds)})`,
     Prisma.sql`i."needsReview" IS NULL`,
   ];
 
-  if (!isOwnerRequest) {
-    // ensure that only scanned images make it to the main feed
-    imageWhere.push(
-      Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`
-    );
-
-    if (!!excludedIds?.length)
-      imageWhere.push(Prisma.sql`i."id" NOT IN (${Prisma.join(excludedIds)})`);
-  }
+  //   if (!!excludedIds?.length)
+  //     imageWhere.push(Prisma.sql`i."id" NOT IN (${Prisma.join(excludedIds)})`);
+  // }
 
   console.log('service', { browsingLevel });
   if (!!browsingLevel) imageWhere.push(Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`);
   else imageWhere.push(Prisma.sql`i."nsfwLevel" = ${NsfwLevel.PG}`);
+
+  if (pending) {
+    if (isModerator) {
+      imageWhere.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" === 0)`);
+    } else if (userId) {
+      imageWhere.push(Prisma.sql`(i."needsReview" IS NULL OR i."userId" = ${userId})`);
+      imageWhere.push(
+        Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR (i."nsfwLevel" === 0 AND i."userId" = ${userId}))`
+      );
+    }
+  } else {
+    imageWhere.push(Prisma.sql`i."needsReview" IS NULL`);
+    imageWhere.push(Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`);
+  }
 
   const images = await dbRead.$queryRaw<
     {
@@ -1371,7 +1384,6 @@ export const getImagesForPosts = async ({
       createdAt: Date;
       generationProcess: ImageGenerationProcess | null;
       postId: number;
-      imageCount: number;
       cryCount: number;
       laughCount: number;
       likeCount: number;
@@ -1385,15 +1397,6 @@ export const getImagesForPosts = async ({
       reactions?: ReviewReactions[];
     }[]
   >`
-    WITH targets AS (
-      SELECT
-        i."postId",
-        ${Prisma.raw(coverOnly ? 'MIN(i.index) "index",' : '')}
-        COUNT(*) "count"
-      FROM "Image" i
-      WHERE ${Prisma.join(imageWhere, ' AND ')}
-      GROUP BY i."postId"
-    )
     SELECT
       i.id,
       i."userId",
@@ -1408,8 +1411,7 @@ export const getImagesForPosts = async ({
       i.meta,
       i."createdAt",
       i."generationProcess",
-      t."postId",
-      t.count "imageCount",
+      i."postId",
       COALESCE(im."cryCount", 0) "cryCount",
       COALESCE(im."laughCount", 0) "laughCount",
       COALESCE(im."likeCount", 0) "likeCount",
@@ -1423,11 +1425,10 @@ export const getImagesForPosts = async ({
         WHERE "imageId" = i.id
         AND "userId" = ${userId}
       ) reactions
-    FROM targets t
-    JOIN "Image" i ON i."postId" = t."postId" ${Prisma.raw(
-      coverOnly ? 'AND i.index = t.index' : ''
-    )}
+    FROM "Image i
     LEFT JOIN "ImageMetric" im ON im."imageId" = i.id AND im.timeframe = 'AllTime'
+    WHERE ${Prisma.join(imageWhere, ' AND ')}
+    ORDER BY i.index ASC
   `;
   const imageIds = images.map((i) => i.id);
   const rawTags =

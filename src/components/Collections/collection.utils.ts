@@ -12,6 +12,7 @@ import { trpc } from '~/utils/trpc';
 import { CollectionByIdModel } from '~/types/router';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 
 const collectionQueryParamSchema = z
   .object({
@@ -86,7 +87,7 @@ export const getCollectionItemReviewData = (collectionItem: CollectionItemExpand
     case 'post': {
       return {
         type: collectionItem.type,
-        image: collectionItem.data.image,
+        image: collectionItem.data.images[0],
         user: collectionItem.data.user,
         url: `/posts/${collectionItem.data.id}`,
         itemAddedAt: collectionItem.createdAt,

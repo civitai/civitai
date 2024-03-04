@@ -40,10 +40,8 @@ import {
 import { editPostSelect } from './../selectors/post.selector';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { bustCacheTag, queryCache } from '~/server/utils/cache-helpers';
-import { hasEntityAccess } from './common.service';
 import { env } from 'process';
 import { CacheTTL } from '../common/constants';
-import { flagifyBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 
 type GetAllPostsRaw = {
   id: number;
@@ -89,6 +87,7 @@ export const getPostsInfinite = async ({
   followed,
   clubId,
   browsingLevel,
+  pending,
 }: Omit<PostsQueryInput, 'include'> & {
   user?: SessionUser;
   include?: string[];
@@ -97,6 +96,8 @@ export const getPostsInfinite = async ({
   const WITH: Prisma.Sql[] = [];
   const cacheTags: string[] = [];
   let cacheTime = CacheTTL.xs;
+  const userId = user?.id;
+  const isModerator = user?.isModerator ?? false;
 
   const isOwnerRequest =
     !!user?.username && !!username && postgresSlugify(user.username) === postgresSlugify(username);
@@ -148,12 +149,6 @@ export const getPostsInfinite = async ({
   if (!isOwnerRequest) {
     AND.push(Prisma.sql`p."publishedAt" < now()`);
 
-    // We could techically do this on the FE.
-    // TODO.nsfwLevel
-    // if (browsingMode === BrowsingMode.SFW) {
-    //   AND.push(Prisma.sql`p."nsfw" = false`);
-    // }
-
     if (period !== 'AllTime' && periodMode !== 'stats') {
       AND.push(Prisma.raw(`p."publishedAt" > now() - INTERVAL '1 ${period.toLowerCase()}'`));
     }
@@ -172,13 +167,17 @@ export const getPostsInfinite = async ({
     else AND.push(Prisma.sql`p."publishedAt" IS NOT NULL`);
   }
 
-  // TODO.nsfwLevel - owner visibility
-  if (!!browsingLevel) {
-    AND.push(Prisma.sql`(p."nsfwLevel" & ${browsingLevel}) != 0`);
+  if (pending) {
+    if (isModerator) {
+      AND.push(Prisma.sql`((p."nsfwLevel" & ${browsingLevel}) != 0 OR p."nsfwLevel" === 0)`);
+    } else if (userId) {
+      AND.push(
+        Prisma.sql`((p."nsfwLevel" & ${browsingLevel}) != 0 OR (p."nsfwLevel" === 0 AND p."userId" = ${userId}))`
+      );
+    }
   } else {
-    AND.push(
-      Prisma.sql`(p."nsfwLevel" & ${flagifyBrowsingLevel([NsfwLevel.PG, NsfwLevel.PG13])}) != 0`
-    );
+    AND.push(Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`);
+    AND.push(Prisma.sql`p.availability === "Public"`);
   }
 
   if (ids) AND.push(Prisma.sql`p.id IN (${Prisma.join(ids)})`);
@@ -315,10 +314,10 @@ export const getPostsInfinite = async ({
   const images = postsRaw.length
     ? await getImagesForPosts({
         postIds: postsRaw.map((x) => x.id),
-        excludedIds: excludedImageIds,
-        userId: user?.id,
-        isOwnerRequest,
+        // excludedIds: excludedImageIds,
+        user,
         browsingLevel,
+        pending,
       })
     : [];
 
@@ -394,12 +393,11 @@ export const getPostsInfinite = async ({
         return true;
       })
       .map(({ stats, username, userId: creatorId, userImage, deletedAt, ...post }) => {
-        const { imageCount, ...image } =
-          images.find((x) => x.postId === post.id) ?? ({ imageCount: 0 } as (typeof images)[0]);
+        const _images = images.filter((x) => x.postId === post.id);
 
         return {
           ...post,
-          imageCount: Number(imageCount ?? 0),
+          imageCount: _images.length,
           user: {
             id: creatorId,
             username,
@@ -409,7 +407,7 @@ export const getPostsInfinite = async ({
             profilePicture: profilePictures[creatorId] ?? null,
           },
           stats,
-          image,
+          images: _images,
         };
       })
       .filter((x) => x.imageCount !== 0),
@@ -432,7 +430,7 @@ export const getPostDetail = async ({ id, user }: GetByIdInput & { user?: Sessio
     },
     select: {
       id: true,
-      nsfw: true,
+      nsfwLevel: true,
       title: true,
       detail: true,
       modelVersionId: true,

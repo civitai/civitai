@@ -163,19 +163,19 @@ export function ManagePostStatus() {
 
 export function ManagePostMaturity() {
   const id = useEditPostContext((state) => state.id);
-  const nsfw = useEditPostContext((state) => state.nsfw);
+  // const nsfw = useEditPostContext((state) => state.nsfw);
   const toggleNsfw = useEditPostContext((state) => state.toggleNsfw);
 
   const { mutate, isLoading } = trpc.post.update.useMutation();
 
   const toggleCheckbox = () => {
     toggleNsfw();
-    mutate({ id, nsfw: !nsfw }, { onError: () => toggleNsfw(false) });
+    mutate({ id, userNsfwLevel: 0 }, { onError: () => toggleNsfw(false) }); // TODO.nsfwLevel
   };
 
   return (
     <Checkbox
-      checked={nsfw}
+      checked={false} // TODO.nsfwLevel
       onChange={toggleCheckbox}
       disabled={isLoading}
       label={

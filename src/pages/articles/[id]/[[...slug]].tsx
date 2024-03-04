@@ -54,6 +54,7 @@ import { useContainerSmallerThan } from '~/components/ContainerProvider/useConta
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
+import { getIsSafeBrowsingLevel } from '../../../shared/constants/browsingLevel.constants';
 
 const querySchema = z.object({
   id: z.preprocess(parseNumericString, z.number()),
@@ -103,7 +104,7 @@ export default function ArticleDetailsPage({
   if (isLoading) return <PageLoader />;
   if (!article) return <NotFound />;
 
-  if (article.nsfw && !currentUser)
+  if (!getIsSafeBrowsingLevel(article.nsfwLevel) && !currentUser)
     return (
       <>
         {meta}

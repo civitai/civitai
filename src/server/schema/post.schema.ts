@@ -37,6 +37,7 @@ export const postsQuerySchema = baseQuerySchema.merge(
     include: z.array(postInclude).default(['cosmetics']).optional(),
     followed: z.boolean().optional(),
     clubId: z.number().optional(),
+    pending: z.boolean().optional(),
   })
 );
 
@@ -52,7 +53,7 @@ export const postCreateSchema = z.object({
 export type PostUpdateInput = z.infer<typeof postUpdateSchema>;
 export const postUpdateSchema = z.object({
   id: z.number(),
-  nsfw: z.boolean().optional(),
+  userNsfwLevel: z.number().optional(),
   title: z.string().optional(),
   detail: z.string().optional(),
   publishedAt: z.date().optional(),

@@ -6,7 +6,6 @@ export const imageSelect = Prisma.validator<Prisma.ImageSelect>()({
   id: true,
   name: true,
   url: true,
-  nsfw: true,
   nsfwLevel: true,
   width: true,
   height: true,

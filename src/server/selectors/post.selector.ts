@@ -6,7 +6,6 @@ export const editPostImageSelect = Prisma.validator<Prisma.ImageSelect>()({
   id: true,
   name: true,
   url: true,
-  nsfw: true,
   width: true,
   height: true,
   hash: true,
@@ -20,6 +19,7 @@ export const editPostImageSelect = Prisma.validator<Prisma.ImageSelect>()({
   resourceHelper: true,
   ingestion: true,
   blockedFor: true,
+  nsfwLevel: true,
   // tagComposites: {
   //   where: { OR: [{ score: { gt: 0 } }, { tagType: 'Moderation' }] },
   //   select: imageTagCompositeSelect,
@@ -33,7 +33,8 @@ const postImage = Prisma.validator<Prisma.ImageArgs>()({ select: editPostImageSe
 
 export const editPostSelect = Prisma.validator<Prisma.PostSelect>()({
   id: true,
-  nsfw: true,
+  userNsfwLevel: true,
+  nsfwLevel: true,
   title: true,
   detail: true,
   modelVersionId: true,
@@ -46,19 +47,19 @@ export const editPostSelect = Prisma.validator<Prisma.PostSelect>()({
   tags: { select: { tag: { select: simpleTagSelect } } },
 });
 
-export const postForHomePageSelector = Prisma.validator<Prisma.PostSelect>()({
-  id: true,
-  nsfw: true,
-  title: true,
-  publishedAt: true,
-  stats: {
-    select: {
-      commentCountAllTime: true,
-      likeCountAllTime: true,
-      dislikeCountAllTime: true,
-      heartCountAllTime: true,
-      laughCountAllTime: true,
-      cryCountAllTime: true,
-    },
-  },
-});
+// export const postForHomePageSelector = Prisma.validator<Prisma.PostSelect>()({
+//   id: true,
+//   nsfwLevel: true,
+//   title: true,
+//   publishedAt: true,
+//   stats: {
+//     select: {
+//       commentCountAllTime: true,
+//       likeCountAllTime: true,
+//       dislikeCountAllTime: true,
+//       heartCountAllTime: true,
+//       laughCountAllTime: true,
+//       cryCountAllTime: true,
+//     },
+//   },
+// });

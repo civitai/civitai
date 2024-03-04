@@ -41,6 +41,7 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { env } from '~/env/client.mjs';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
+import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { toStringList } from '~/utils/array-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { removeTags } from '~/utils/string-helpers';
@@ -76,7 +77,7 @@ export function PostDetail({ postId }: { postId: number }) {
   if (postLoading) return <PageLoader />;
   if (!post) return <NotFound />;
 
-  if (post.nsfw && !currentUser)
+  if (!getIsSafeBrowsingLevel(post.nsfwLevel) && !currentUser)
     return (
       <>
         {meta}

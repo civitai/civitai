@@ -773,14 +773,15 @@ export const useQueryClubs = (
   const clubs = useMemo(() => {
     if (isLoadingHidden) return [];
     const items = data?.pages.flatMap((x) => x.items) ?? [];
-    return applyUserPreferencesClub<ClubGetAll[number]>({
-      items,
-      currentUserId: currentUser?.id,
-      hiddenImages,
-      hiddenTags,
-      hiddenUsers,
-      showNsfw,
-    });
+    return [];
+    // return applyUserPreferencesClub<ClubGetAll[number]>({
+    //   items,
+    //   currentUserId: currentUser?.id,
+    //   hiddenImages,
+    //   hiddenTags,
+    //   hiddenUsers,
+    //   showNsfw,
+    // });
   }, [data?.pages, hiddenImages, hiddenTags, hiddenUsers, currentUser, isLoadingHidden, showNsfw]);
 
   return { data, clubs, ...rest };

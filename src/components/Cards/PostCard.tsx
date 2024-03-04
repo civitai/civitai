@@ -21,7 +21,7 @@ export function PostCard({ data }: Props) {
   const { classes, cx } = useCardStyles({ aspectRatio: 1 });
   const router = useRouter();
 
-  const image = data.image;
+  const image = data.images[0];
 
   return (
     <FeedCard href={`/posts/${data.id}`} aspectRatio="square">
@@ -39,7 +39,7 @@ export function PostCard({ data }: Props) {
                 <ImageContextMenu image={image} context="post" />
               </Group>
               {!safe ? (
-                <MediaHash {...data.image} />
+                <MediaHash {...image} />
               ) : (
                 <EdgeMedia
                   src={image.url}

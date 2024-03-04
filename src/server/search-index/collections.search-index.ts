@@ -114,6 +114,7 @@ type ImageProps = {
   scannedAt: Date | null;
   mimeType: string | null;
   meta: Prisma.JsonObject | null;
+  userId: number;
 } | null;
 
 type CollectionForSearchIndex = {
@@ -209,6 +210,7 @@ const onFetchItemsToIndex = async ({
         'mimeType', i."mimeType",
         'scannedAt', i."scannedAt",
         'type', i."type",
+        'userId', i."userId",
         'meta', i."meta"
       ) image
   `;

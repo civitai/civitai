@@ -219,6 +219,7 @@ export const getInfiniteImagesSchema = baseQuerySchema
     cursor: z.union([z.bigint(), z.number(), z.string(), z.date()]).optional(),
     skip: z.number().optional(),
     postId: z.number().optional(),
+    postIds: z.number().array().optional(),
     collectionId: z.number().optional(),
     modelId: z.number().optional(),
     modelVersionId: z.number().optional(),

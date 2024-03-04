@@ -44,7 +44,7 @@ type EditPostProps = {
   modelVersionId?: number;
   title?: string;
   detail?: string;
-  nsfw: boolean;
+  nsfwLevel?: number;
   publishedAt?: Date;
   tags: TagProps[];
   images: ImageProps[];
@@ -86,7 +86,7 @@ const processPost = (post?: PostEditDetail) => {
     id: post?.id ?? 0,
     title: post?.title ?? undefined,
     detail: post?.detail ?? undefined,
-    nsfw: post?.nsfw ?? false,
+    nsfwLevel: post?.nsfwLevel,
     publishedAt: post?.publishedAt ?? undefined,
     tags: post?.tags ?? [],
     images: post?.images ? prepareImages(post.images) : [],
@@ -126,7 +126,7 @@ const createEditPostStore = ({
             }),
           toggleNsfw: (value) =>
             set((state) => {
-              state.nsfw = value ?? !state.nsfw;
+              // state.nsfw = value ?? !state.nsfw; // TODO.nsfwLevel
             }),
           setPublishedAt: (publishedAt) =>
             set((state) => {
@@ -238,7 +238,7 @@ const createEditPostStore = ({
               const data = processPost(post);
               state.id = data.id;
               state.title = data.title;
-              state.nsfw = data.nsfw;
+              state.nsfwLevel = data.nsfwLevel;
               state.tags = data.tags;
               state.images = data.images;
               state.objectUrls = [];
