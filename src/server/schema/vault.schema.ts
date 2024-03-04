@@ -1,3 +1,4 @@
+import { ModelType } from '@prisma/client';
 import _ from 'lodash';
 import { z } from 'zod';
 import { paginationSchema } from '~/server/schema/base.schema';
@@ -6,6 +7,13 @@ export type GetPaginatedVaultItemsSchema = z.infer<typeof getPaginatedVaultItems
 export const getPaginatedVaultItemsSchema = paginationSchema.merge(
   z.object({
     limit: z.coerce.number().min(1).max(200).default(60),
+    query: z.string().optional(),
+    types: z.array(z.nativeEnum(ModelType)).optional(),
+    categories: z.array(z.string()).optional(),
+    dateCreatedFrom: z.date().optional(),
+    dateCreatedTo: z.date().optional(),
+    dateAddedFrom: z.date().optional(),
+    dateAddedTo: z.date().optional(),
   })
 );
 

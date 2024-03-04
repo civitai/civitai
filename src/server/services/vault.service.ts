@@ -38,8 +38,6 @@ const getVaultWithStorage = async ({ userId }: { userId: number }) => {
       v."meta"
   `;
 
-  console.log(row, 'ma row');
-
   return row;
 };
 
@@ -283,6 +281,53 @@ export const getPaginatedVaultItems = async (
   const where: Prisma.VaultItemFindManyArgs['where'] = {
     vaultId: input.userId,
   };
+
+  if (input.query) {
+    where.OR = [
+      {
+        modelName: {
+          contains: input.query,
+          mode: 'insensitive',
+        },
+      },
+      {
+        versionName: {
+          contains: input.query,
+          mode: 'insensitive',
+        },
+      },
+      {
+        creatorName: {
+          contains: input.query,
+          mode: 'insensitive',
+        },
+      },
+    ];
+  }
+
+  if (input.types && input.types.length) {
+    where.type = { in: input.types };
+  }
+
+  if (input.categories && input.categories.length) {
+    where.category = { in: input.categories };
+  }
+
+  if (input.dateCreatedFrom) {
+    where.createdAt = { gte: input.dateCreatedFrom };
+  }
+
+  if (input.dateCreatedTo) {
+    where.createdAt = { lte: input.dateCreatedTo };
+  }
+
+  if (input.dateAddedFrom) {
+    where.addedAt = { gte: input.dateAddedFrom };
+  }
+
+  if (input.dateAddedTo) {
+    where.addedAt = { lte: input.dateAddedTo };
+  }
 
   const items = await dbRead.vaultItem.findMany({
     where,
