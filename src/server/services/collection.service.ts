@@ -1405,7 +1405,7 @@ export const bulkSaveItems = async ({
     });
   }
 
-  if (collection.userId == -1 && !collection.mode && collection.name.includes('Fe')) {
+  if (collection.userId == -1 && !collection.mode && collection.name.includes('Featured')) {
     // Assume it's a featured collection:
     await validateFeaturedCollectionEntry({
       articleIds,
