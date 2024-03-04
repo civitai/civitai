@@ -1328,7 +1328,7 @@ const validateContestCollectionEntry = async ({
 
     if (existingCollectionItemsOnFeaturedCollections) {
       throw throwBadRequestError(
-        'At least one of the items provided is already in featured by civitai and cannot be added to the contest.'
+        'At least one of the items provided is already featured by civitai and cannot be added to the contest.'
       );
     }
   }
