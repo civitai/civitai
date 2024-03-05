@@ -758,11 +758,11 @@ export const getAllImages = async ({
 
   if (pending) {
     if (isModerator) {
-      AND.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" === 0)`);
+      AND.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`);
     } else if (userId) {
       AND.push(Prisma.sql`(i."needsReview" IS NULL OR i."userId" = ${userId})`);
       AND.push(
-        Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR (i."nsfwLevel" === 0 AND i."userId" = ${userId}))`
+        Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR (i."nsfwLevel" = 0 AND i."userId" = ${userId}))`
       );
     }
   } else {
@@ -1353,17 +1353,13 @@ export const getImagesForPosts = async ({
   //     imageWhere.push(Prisma.sql`i."id" NOT IN (${Prisma.join(excludedIds)})`);
   // }
 
-  console.log('service', { browsingLevel });
-  if (!!browsingLevel) imageWhere.push(Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`);
-  else imageWhere.push(Prisma.sql`i."nsfwLevel" = ${NsfwLevel.PG}`);
-
   if (pending) {
     if (isModerator) {
-      imageWhere.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" === 0)`);
+      imageWhere.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`);
     } else if (userId) {
       imageWhere.push(Prisma.sql`(i."needsReview" IS NULL OR i."userId" = ${userId})`);
       imageWhere.push(
-        Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR (i."nsfwLevel" === 0 AND i."userId" = ${userId}))`
+        Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR (i."nsfwLevel" = 0 AND i."userId" = ${userId}))`
       );
     }
   } else {
@@ -1425,7 +1421,7 @@ export const getImagesForPosts = async ({
         WHERE "imageId" = i.id
         AND "userId" = ${userId}
       ) reactions
-    FROM "Image i
+    FROM "Image" i
     LEFT JOIN "ImageMetric" im ON im."imageId" = i.id AND im.timeframe = 'AllTime'
     WHERE ${Prisma.join(imageWhere, ' AND ')}
     ORDER BY i.index ASC

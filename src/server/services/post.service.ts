@@ -176,8 +176,8 @@ export const getPostsInfinite = async ({
       );
     }
   } else {
-    AND.push(Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`);
-    AND.push(Prisma.sql`p.availability === "Public"`);
+    AND.push(Prisma.sql`(p."nsfwLevel" & ${browsingLevel}) != 0`);
+    AND.push(Prisma.sql`p."availability" = ${Availability.Public}::"Availability"`);
   }
 
   if (ids) AND.push(Prisma.sql`p.id IN (${Prisma.join(ids)})`);

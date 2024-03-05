@@ -2,7 +2,6 @@ import { ClickHouseClient, createClient } from '@clickhouse/client';
 import {
   ArticleEngagementType,
   BountyEngagementType,
-  NsfwLevel as NsfwLevelOld,
   ReportReason,
   ReportStatus,
   ReviewReactions,
@@ -13,6 +12,7 @@ import { isProd } from '~/env/other';
 import { env } from '~/env/server.mjs';
 import { ProhibitedSources } from '~/server/schema/user.schema';
 import { getServerAuthSession } from '../utils/get-server-auth-session';
+import { NsfwLevelDeprecated } from '~/shared/constants/browsingLevel.constants';
 
 declare global {
   // eslint-disable-next-line no-var, vars-on-top
@@ -254,7 +254,7 @@ export class Tracker {
     type: ReactionType;
     entityId: number;
     reaction: ReviewReactions;
-    nsfw: NsfwLevelOld;
+    nsfw: NsfwLevelDeprecated;
   }) {
     return this.track('reactions', values);
   }
@@ -286,7 +286,7 @@ export class Tracker {
   public image(values: {
     type: ImageActivityType;
     imageId: number;
-    nsfw: NsfwLevelOld;
+    nsfw: NsfwLevelDeprecated;
     tags: string[];
     ownerId: number;
   }) {

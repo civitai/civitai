@@ -1,6 +1,4 @@
-import { ImageIngestionStatus } from '@prisma/client';
-import { useMemo } from 'react';
-import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { useEffect, useMemo } from 'react';
 import { useHiddenPreferencesContext } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Flags } from '~/shared/utils';
@@ -22,10 +20,11 @@ export function useApplyHiddenPreferences<
 }) {
   const currentUser = useCurrentUser();
   const isModerator = !!currentUser?.isModerator;
-  const browsingLevel = useBrowsingLevelDebounced();
 
-  const { hiddenModels, hiddenImages, hiddenTags, hiddenUsers, hiddenLoading } =
-    useHiddenPreferencesContext();
+  const {
+    hiddenPreferences: { hiddenModels, hiddenImages, hiddenTags, hiddenUsers, hiddenLoading },
+    browsingLevel,
+  } = useHiddenPreferencesContext();
 
   const items = useMemo(
     () => {
@@ -33,7 +32,7 @@ export function useApplyHiddenPreferences<
       if (hiddenLoading || !data) return [];
       const { key, value } = paired<BaseDataTypeMap>(type, data);
 
-      function filter() {
+      function filterPreferences() {
         switch (key) {
           case 'models':
             return value
@@ -50,6 +49,10 @@ export function useApplyHiddenPreferences<
               .map(({ images, ...x }) => {
                 const filteredImages =
                   images?.filter((i) => {
+                    const userId = i.userId;
+                    const isOwner = userId && userId === currentUser?.id;
+                    // if ((isOwner || isModerator) && i.nsfwLevel === 0) return true;
+                    // if (!Flags.intersects(i.nsfwLevel, browsingLevel)) return false;
                     if (hiddenImages.get(i.id)) return false;
                     for (const tag of i.tags ?? []) if (hiddenTags.get(tag)) return false;
                     return true;
@@ -177,8 +180,6 @@ export function useApplyHiddenPreferences<
                   if ((isOwner || isModerator) && image.nsfwLevel === 0) return true;
                   if (!Flags.intersects(image.nsfwLevel, browsingLevel)) return false;
                   if (hiddenImages.get(image.id)) return false;
-                  if (image.ingestion && image.ingestion !== ImageIngestionStatus.Scanned)
-                    return false;
                   for (const tag of image.tagIds ?? []) if (hiddenTags.get(tag)) return false;
                   return true;
                 });
@@ -191,7 +192,7 @@ export function useApplyHiddenPreferences<
       }
 
       // console.time('useApplyHiddenFilters');
-      const filtered = filter();
+      const filtered = filterPreferences();
       // console.timeEnd('useApplyHiddenFilters');
       // console.log({ data, filtered });
 
@@ -222,14 +223,13 @@ type BaseImage = {
   userId?: number | null;
   user?: { id: number };
   tagIds?: number[];
-  ingestion?: ImageIngestionStatus;
   nsfwLevel: number; // TODO.nsfwLevel - apply to other entities
 };
 
 type BaseModel = {
   id: number;
   user: { id: number };
-  images: { id: number; tags?: number[]; nsfwLevel: number }[];
+  images: { id: number; tags?: number[]; nsfwLevel: number; userId?: number }[];
   tags?: number[];
   nsfwLevel: number;
 };
@@ -292,7 +292,6 @@ type BasePost = {
   images?: {
     id: number;
     tagIds?: number[];
-    ingestion?: ImageIngestionStatus;
     nsfwLevel: number;
     userId?: number;
     user?: { id: number };

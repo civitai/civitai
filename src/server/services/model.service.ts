@@ -374,18 +374,6 @@ export const getModelsRaw = async ({
     isPrivate = true;
   }
 
-  if (pending) {
-    if (isModerator) {
-      AND.push(Prisma.sql`((m."nsfwLevel" & ${browsingLevel}) != 0 OR m"nsfwLevel" === 0)`);
-    } else if (userId) {
-      AND.push(
-        Prisma.sql`((m"nsfwLevel" & ${browsingLevel}) != 0 OR (m"nsfwLevel" === 0 AND m."userId" = ${userId}))`
-      );
-    }
-  } else {
-    AND.push(Prisma.sql`(m"nsfwLevel" & ${browsingLevel}) != 0`);
-  }
-
   // Filter by model permissions
   if (allowCommercialUse && allowCommercialUse.length > 0) {
     AND.push(
@@ -554,6 +542,20 @@ export const getModelsRaw = async ({
     modelVersionWhere.push(Prisma.sql`cm."modelVersionId" = mv."id"`);
   }
 
+  if (pending) {
+    if (isModerator) {
+      modelVersionWhere.push(
+        Prisma.sql`((mv."nsfwLevel" & ${browsingLevel}) != 0 OR mv."nsfwLevel" = 0)`
+      );
+    } else if (userId) {
+      modelVersionWhere.push(
+        Prisma.sql`((mv."nsfwLevel" & ${browsingLevel}) != 0 OR (mv."nsfwLevel" === 0 AND m."userId" = ${userId}))`
+      );
+    }
+  } else {
+    modelVersionWhere.push(Prisma.sql`((mv."nsfwLevel" & ${browsingLevel}) != 0)`);
+  }
+
   const modelQuery = Prisma.sql`
     ${queryWith}
     SELECT
@@ -653,9 +655,6 @@ export const getModelsRaw = async ({
   const models = await dbRead.$queryRaw<(ModelRaw & { cursorId: string | bigint | null })[]>(
     modelQuery
   );
-  // const { rows: models } = await pgDbRead.query<ModelRaw & { cursorId: string | bigint | null }>(
-  //   modelQuery
-  // );
 
   const profilePictures = await dbRead.image.findMany({
     where: { id: { in: models.map((m) => m.user.profilePictureId).filter(isDefined) } },

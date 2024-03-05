@@ -4,8 +4,12 @@ import { Context } from '~/server/createContext';
 import { handleLogError, throwDbError } from '~/server/utils/errorHandling';
 import { dbRead } from '../db/client';
 import { ReactionType } from '../clickhouse/client';
-import { NsfwLevel } from '@prisma/client';
 import { encouragementReward, goodContentReward } from '~/server/rewards';
+import {
+  NsfwLevelDeprecated,
+  nsfwLevelReverseMapDeprecated,
+} from '~/shared/constants/browsingLevel.constants';
+import { NsfwLevel } from '~/server/common/enums';
 
 async function getTrackerEvent(input: ToggleReactionInput, result: 'removed' | 'created') {
   const shared = {
@@ -21,7 +25,7 @@ async function getTrackerEvent(input: ToggleReactionInput, result: 'removed' | '
           id: input.entityId,
         },
         select: {
-          nsfw: true,
+          nsfwLevel: true,
           userId: true,
         },
       });
@@ -29,7 +33,7 @@ async function getTrackerEvent(input: ToggleReactionInput, result: 'removed' | '
       if (image) {
         return {
           type: `Image_${action}`,
-          nsfw: image.nsfw,
+          nsfw: nsfwLevelReverseMapDeprecated[image.nsfwLevel as NsfwLevel],
           userId: image.userId,
           ...shared,
         };
@@ -41,7 +45,7 @@ async function getTrackerEvent(input: ToggleReactionInput, result: 'removed' | '
           id: input.entityId,
         },
         select: {
-          nsfw: true,
+          nsfwLevel: true,
           userId: true,
         },
       });
@@ -49,7 +53,7 @@ async function getTrackerEvent(input: ToggleReactionInput, result: 'removed' | '
       if (post) {
         return {
           type: `Post_${action}`,
-          nsfw: post.nsfw ? NsfwLevel.Mature : NsfwLevel.None,
+          nsfw: nsfwLevelReverseMapDeprecated[post.nsfwLevel as NsfwLevel],
           userId: post.userId,
           ...shared,
         };
@@ -61,7 +65,7 @@ async function getTrackerEvent(input: ToggleReactionInput, result: 'removed' | '
           id: input.entityId,
         },
         select: {
-          nsfw: true,
+          nsfwLevel: true,
           userId: true,
         },
       });
@@ -69,7 +73,7 @@ async function getTrackerEvent(input: ToggleReactionInput, result: 'removed' | '
       if (article) {
         return {
           type: `Article_${action}`,
-          nsfw: article.nsfw ? NsfwLevel.Mature : NsfwLevel.None,
+          nsfw: nsfwLevelReverseMapDeprecated[article.nsfwLevel as NsfwLevel],
           userId: article.userId,
           ...shared,
         };
@@ -83,7 +87,7 @@ async function getTrackerEvent(input: ToggleReactionInput, result: 'removed' | '
       if (commentOld) {
         return {
           type: `Comment_${action}`,
-          nsfw: NsfwLevel.None,
+          nsfw: NsfwLevelDeprecated.None,
           userId: commentOld.userId,
           ...shared,
         };
@@ -97,7 +101,7 @@ async function getTrackerEvent(input: ToggleReactionInput, result: 'removed' | '
       if (commentV2) {
         return {
           type: `CommentV2_${action}`,
-          nsfw: NsfwLevel.None,
+          nsfw: NsfwLevelDeprecated.None,
           userId: commentV2.userId,
           ...shared,
         };
@@ -111,7 +115,7 @@ async function getTrackerEvent(input: ToggleReactionInput, result: 'removed' | '
       if (question) {
         return {
           type: `Question_${action}`,
-          nsfw: NsfwLevel.None,
+          nsfw: NsfwLevelDeprecated.None,
           userId: question?.userId,
           ...shared,
         };
@@ -125,7 +129,7 @@ async function getTrackerEvent(input: ToggleReactionInput, result: 'removed' | '
       if (answer) {
         return {
           type: `Answer_${action}`,
-          nsfw: NsfwLevel.None,
+          nsfw: NsfwLevelDeprecated.None,
           userId: answer.userId,
           ...shared,
         };
@@ -139,7 +143,7 @@ async function getTrackerEvent(input: ToggleReactionInput, result: 'removed' | '
       if (bountyEntry) {
         return {
           type: `BountyEntry_${action}`,
-          nsfw: NsfwLevel.None,
+          nsfw: NsfwLevelDeprecated.None,
           userId: bountyEntry?.userId,
           ...shared,
         };

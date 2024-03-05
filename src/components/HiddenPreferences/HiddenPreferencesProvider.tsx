@@ -7,11 +7,13 @@ import { Flags } from '~/shared/utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 type HiddenPreferencesState = {
-  hiddenUsers: Map<number, boolean>;
-  hiddenTags: Map<number, boolean>;
-  hiddenModels: Map<number, boolean>;
-  hiddenImages: Map<number, boolean>;
-  hiddenLoading: boolean;
+  hiddenPreferences: {
+    hiddenUsers: Map<number, boolean>;
+    hiddenTags: Map<number, boolean>;
+    hiddenModels: Map<number, boolean>;
+    hiddenImages: Map<number, boolean>;
+    hiddenLoading: boolean;
+  };
   browsingLevel: number;
 };
 
@@ -53,14 +55,13 @@ export const HiddenPreferencesProvider = ({
       hiddenTags: tags,
       hiddenImages: images,
       hiddenLoading: isLoading,
-      browsingLevel,
     };
-  }, [data, browsingLevel, isLoading, disableHidden]);
+  }, [data, isLoading, disableHidden]);
 
   const hiddenDeferred = useDeferredValue(hidden);
 
   return (
-    <HiddenPreferencesContext.Provider value={hiddenDeferred}>
+    <HiddenPreferencesContext.Provider value={{ hiddenPreferences: hiddenDeferred, browsingLevel }}>
       {children}
     </HiddenPreferencesContext.Provider>
   );
