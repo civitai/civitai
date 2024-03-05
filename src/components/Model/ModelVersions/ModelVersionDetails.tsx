@@ -91,6 +91,7 @@ import { adsRegistry } from '~/components/Ads/adsRegistry';
 import { useLocalStorage } from '@mantine/hooks';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useQueryUserResourceReview } from '~/components/ResourceReview/resourceReview.utils';
+import { ModelVersionReview } from '~/components/Model/ModelVersions/ModelVersionReview';
 
 export function ModelVersionDetails({
   model,
@@ -242,9 +243,12 @@ export function ModelVersionDetails({
     {
       label: 'Reviews',
       value: (
-        <Group spacing={4}>
-          <Text>{version.rank?.thumbsUpCountAllTime?.toLocaleString() ?? 0}</Text>
-        </Group>
+        <ModelVersionReview
+          modelId={model.id}
+          versionId={version.id}
+          thumbsUpCount={version.rank?.thumbsUpCountAllTime ?? 0}
+          thumbsDownCount={version.rank?.thumbsDownCountAllTime ?? 0}
+        />
       ),
     },
     { label: 'Uploaded', value: formatDate(version.createdAt) },
