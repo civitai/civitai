@@ -154,6 +154,7 @@ export default function ModelReviews() {
               modelId={modelId}
               modelVersionId={modelVersionId}
               userReview={userReview}
+              withCount
             />
           </Stack>
           {userReview && (

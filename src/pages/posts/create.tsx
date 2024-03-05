@@ -196,6 +196,7 @@ export default function PostCreate() {
                         modelId={modelId}
                         modelVersionId={modelVersionId}
                         userReview={userReview}
+                        withCount
                       />
                     </Stack>
                     {userReview && (

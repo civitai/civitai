@@ -42,7 +42,6 @@ export function EditResourceReview({
   details: initialDetails,
   createdAt,
   name,
-  thumbsUpCount,
   onSuccess,
   onCancel,
   initialEditing = false,
@@ -137,7 +136,6 @@ export function EditResourceReview({
                 <Text color="success.5" size="xs" inline>
                   <Group spacing={4} noWrap>
                     <ThumbsUpIcon size={20} filled={isThumbsUp} />{' '}
-                    {abbreviateNumber(thumbsUpCount ?? 0)}
                   </Group>
                 </Text>
               </Button>

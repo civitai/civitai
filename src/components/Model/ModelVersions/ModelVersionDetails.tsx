@@ -92,6 +92,14 @@ import { useLocalStorage } from '@mantine/hooks';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useQueryUserResourceReview } from '~/components/ResourceReview/resourceReview.utils';
 import { ModelVersionReview } from '~/components/Model/ModelVersions/ModelVersionReview';
+import { useQueryModelVersionsEngagement } from '~/components/Model/ModelVersions/model-version.utils';
+import {
+  EditUserResourceReviewV2,
+  UserResourceReviewComposite,
+} from '~/components/ResourceReview/EditUserResourceReview';
+import { ResourceReviewThumbActions } from '~/components/ResourceReview/ResourceReviewThumbActions';
+import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
+import { openContext } from '~/providers/CustomModalsProvider';
 
 export function ModelVersionDetails({
   model,
@@ -145,6 +153,11 @@ export function ModelVersionDetails({
     modelVersionId: version.id,
   });
   const isFavorite = currentUserReview?.recommended;
+
+  const { alreadyDownloaded } = useQueryModelVersionsEngagement({
+    modelId: model.id,
+    versionId: version.id,
+  });
 
   const handlePublishClick = async (publishDate?: Date) => {
     try {
@@ -679,6 +692,67 @@ export function ModelVersionDetails({
             files={version.files}
             baseModel={version.baseModel}
           />
+          {!model.locked && alreadyDownloaded && (
+            <UserResourceReviewComposite
+              modelId={model.id}
+              modelVersionId={version.id}
+              modelName={model.name}
+            >
+              {({ modelId, modelVersionId, userReview }) => (
+                <Card p={8} withBorder>
+                  <Stack spacing={8}>
+                    <Group spacing={8} position="apart" noWrap>
+                      <Group spacing={8} noWrap>
+                        {userReview ? (
+                          <>
+                            {userReview.recommended ? (
+                              <ThumbsUpIcon size={18} />
+                            ) : (
+                              <ThumbsDownIcon size={18} />
+                            )}
+                            <Text size="sm">
+                              You reviewed this on {formatDate(userReview.createdAt)}
+                            </Text>
+                          </>
+                        ) : (
+                          <>
+                            <IconHeart size={18} />
+                            <Text size="sm">What did you think of this resource?</Text>
+                          </>
+                        )}
+                      </Group>
+                      {!userReview || !userReview.details ? (
+                        <ResourceReviewThumbActions
+                          modelId={modelId}
+                          modelVersionId={modelVersionId}
+                          userReview={userReview}
+                          size="xs"
+                        />
+                      ) : (
+                        <Button
+                          size="xs"
+                          variant="subtle"
+                          onClick={() => openContext('resourceReviewEdit', userReview)}
+                        >
+                          See Review
+                        </Button>
+                      )}
+                    </Group>
+                  </Stack>
+                  {userReview && !userReview.details && (
+                    <Card.Section py="sm" mt="sm" inheritPadding withBorder>
+                      <EditUserResourceReviewV2
+                        modelVersionId={modelVersionId}
+                        userReview={userReview}
+                        showReviewedAt={false}
+                        opened
+                      />
+                    </Card.Section>
+                  )}
+                </Card>
+              )}
+            </UserResourceReviewComposite>
+          )}
           <Accordion
             variant="separated"
             multiple

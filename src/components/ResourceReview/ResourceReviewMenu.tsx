@@ -52,9 +52,9 @@ export function ResourceReviewMenu({
   const queryUtils = trpc.useUtils();
   const deleteMutation = trpc.resourceReview.delete.useMutation({
     onSuccess: async () => {
-      await queryUtils.resourceReview.invalidate();
       closeAllModals();
       dialog.onClose();
+      await queryUtils.resourceReview.invalidate();
     },
   });
   const handleDelete = () => {

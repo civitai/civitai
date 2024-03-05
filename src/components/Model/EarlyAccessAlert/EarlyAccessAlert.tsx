@@ -17,7 +17,7 @@ import { trpc } from '~/utils/trpc';
 export function EarlyAccessAlert({ modelId, versionId, modelType, deadline }: Props) {
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
 
   const inEarlyAccess = features.earlyAccessModel && !!deadline && isFutureDate(deadline);
 

@@ -1,4 +1,4 @@
-import { Button, createStyles, Group, Text } from '@mantine/core';
+import { Button, createStyles, Group, MantineSize, Text } from '@mantine/core';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import {
   useCreateResourceReview,
@@ -10,14 +10,11 @@ import {
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
-import {
-  ResourceReviewModel,
-  ResourceReviewSimpleModel,
-} from '~/server/selectors/resourceReview.selector';
+import { ResourceReviewSimpleModel } from '~/server/selectors/resourceReview.selector';
 import { trpc } from '~/utils/trpc';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 
-const useThumbActionStyles = createStyles((theme) => ({
+const useThumbActionStyles = createStyles(() => ({
   button: {
     overflow: 'hidden',
     '.mantine-Button-leftIcon': {
@@ -41,16 +38,23 @@ export function ResourceReviewThumbActions({
   modelId,
   modelVersionId,
   userReview,
+  withCount,
+  size,
 }: {
   modelId: number;
   modelVersionId: number;
   userReview?: ResourceReviewSimpleModel | null;
+  withCount?: boolean;
+  size?: MantineSize;
 }) {
   const { classes } = useThumbActionStyles();
-  const { totals, loading: loadingTotals } = useQueryResourceReviewTotals({
-    modelId,
-    modelVersionId,
-  });
+  const { totals, loading: loadingTotals } = useQueryResourceReviewTotals(
+    {
+      modelId,
+      modelVersionId,
+    },
+    { enabled: withCount }
+  );
   const { loading: loadingUserReview } = useQueryUserResourceReview({
     modelVersionId,
   });
@@ -84,6 +88,7 @@ export function ResourceReviewThumbActions({
   const isThumbsUp = userReview?.recommended === true;
   const isThumbsDown = userReview?.recommended === false;
   const saving = createMutation.isLoading || updateMutation.isLoading || deleteMutation.isLoading;
+  const loading = loadingTotals || loadingUserReview || saving;
 
   return (
     <Button.Group style={{ gap: 4 }}>
@@ -92,17 +97,18 @@ export function ResourceReviewThumbActions({
           variant={isThumbsUp ? 'light' : 'filled'}
           color={isThumbsUp ? 'success' : 'dark.4'}
           radius="md"
-          loading={loadingTotals || loadingUserReview || saving}
+          disabled={loading}
           onClick={() =>
             isThumbsUp ? handleDeleteReview() : handleReviewRatingChange({ recommended: true })
           }
           className={classes.button}
+          size={size}
           fullWidth
         >
           <Text color="success.5" size="xs" inline>
             <Group spacing={4} noWrap>
               <ThumbsUpIcon size={20} filled={isThumbsUp} />{' '}
-              {!loadingTotals && abbreviateNumber(totals?.up ?? 0)}
+              {withCount && !loadingTotals && abbreviateNumber(totals?.up ?? 0)}
             </Group>
           </Text>
         </Button>
@@ -112,11 +118,12 @@ export function ResourceReviewThumbActions({
           variant={isThumbsDown ? 'light' : 'filled'}
           color={isThumbsDown ? 'red' : 'dark.4'}
           radius="md"
-          loading={loadingTotals || loadingUserReview || saving}
+          disabled={loading}
           onClick={() =>
             isThumbsDown ? handleDeleteReview() : handleReviewRatingChange({ recommended: false })
           }
           className={classes.button}
+          size={size}
           fullWidth
         >
           <Text color="red" inline>

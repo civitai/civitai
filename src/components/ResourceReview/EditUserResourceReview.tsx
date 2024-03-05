@@ -217,9 +217,12 @@ export function EditUserResourceReviewV2({
   innerRef,
   userReview,
   showReviewedAt = true,
+  opened: initialOpened = false,
+  autoFocus = true,
 }: PropsV2) {
   const { classes, cx } = useStyles();
-  const [opened, setOpened] = useState(false);
+  const [opened, setOpened] = useState(initialOpened);
+  const [error, setError] = useState<string | null>(null);
 
   const { loading: loadingUserReview } = useQueryUserResourceReview({ modelVersionId });
 
@@ -230,7 +233,9 @@ export function EditUserResourceReviewV2({
 
   const updateMutation = useUpdateResourceReview();
   const updateReview = ({ rating, details }: { rating?: number; details?: string }) => {
-    if (!userReview) return;
+    if (!userReview) return setError('Please select a rating');
+
+    setError(null);
     updateMutation.mutate(
       { id: userReview.id, rating, details },
       {
@@ -266,26 +271,18 @@ export function EditUserResourceReviewV2({
   }));
 
   return (
-    <Stack pos="relative">
+    <Stack spacing="sm" pos="relative">
       <Group spacing={8} position="apart">
-        {!userReview ? (
-          <Text size="sm" color="dimmed">
-            What did you think of this resource?
+        <Text variant="link" size="sm" style={{ cursor: 'pointer' }} onClick={handleToggleOpen}>
+          <Group spacing={4}>
+            <IconChevronDown className={cx({ [classes.opened]: opened })} size={20} />
+            <span>{hasComment ? 'Edit' : 'Add'} Review Comments</span>
+          </Group>
+        </Text>
+        {userReview && showReviewedAt && (
+          <Text color="dimmed" size="xs">
+            Reviewed <DaysFromNow date={userReview.createdAt} />
           </Text>
-        ) : (
-          <>
-            <Text variant="link" size="sm" style={{ cursor: 'pointer' }} onClick={handleToggleOpen}>
-              <Group spacing={4}>
-                <IconChevronDown className={cx({ [classes.opened]: opened })} size={20} />
-                <span>{hasComment ? 'Edit' : 'Add'} Review Comments</span>
-              </Group>
-            </Text>
-            {userReview && showReviewedAt && (
-              <Text color="dimmed" size="xs">
-                Reviewed <DaysFromNow date={userReview.createdAt} />
-              </Text>
-            )}
-          </>
         )}
       </Group>
       {opened && (
@@ -294,12 +291,21 @@ export function EditUserResourceReviewV2({
             <InputRTE
               name="details"
               includeControls={['formatting', 'link']}
-              editorSize="sm"
-              placeholder={`What did you think of ${modelName ?? 'this resource'}?`}
+              editorSize="lg"
+              placeholder={
+                modelName
+                  ? `What did you think of ${modelName ?? 'this resource'}?`
+                  : 'Tell us more about your experience with this resource'
+              }
               styles={{ content: { maxHeight: 500, overflowY: 'auto' } }}
+              autoFocus={autoFocus}
               hideToolbar
-              autoFocus
             />
+            {error && (
+              <Text color="red" mt={-5} size="xs">
+                {error}
+              </Text>
+            )}
             <Group grow spacing="xs">
               <Button size="xs" variant="default" onClick={handleCancel}>
                 Cancel
@@ -310,7 +316,7 @@ export function EditUserResourceReviewV2({
                 disabled={!isDirty}
                 loading={updateMutation.isLoading || loadingUserReview}
               >
-                Save
+                Post
               </Button>
             </Group>
           </Stack>
@@ -322,8 +328,10 @@ export function EditUserResourceReviewV2({
 
 type PropsV2 = {
   modelVersionId: number;
-  userReview: ResourceReviewSimpleModel | null;
+  userReview?: ResourceReviewSimpleModel | null;
   modelName?: string;
   showReviewedAt?: boolean;
   innerRef?: React.ForwardedRef<ReviewEditCommandsRef>;
+  opened?: boolean;
+  autoFocus?: boolean;
 };

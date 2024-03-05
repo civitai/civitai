@@ -59,12 +59,11 @@ export const useUpdateResourceReview = () => {
         { modelId },
         produce((old) => {
           if (!old) return;
-          return old.map((review) => {
+          old.forEach((review) => {
             if (review.modelVersionId === modelVersionId) {
               if (request.details) review.details = request.details as string;
               if (request.recommended != null) review.recommended = request.recommended;
             }
-            return review;
           });
         })
       );
@@ -126,7 +125,7 @@ export const useDeleteResourceReview = () => {
     onSuccess: async ({ modelId, modelVersionId, recommended }, { id }) => {
       // reset single review on model reviews page
       // /models/:id/reviews?modelVersionId
-      await queryUtils.resourceReview.getUserResourceReview.reset({ modelVersionId });
+      await queryUtils.resourceReview.getUserResourceReview.reset({ modelId });
       // reset single review on review details page
       // /reviews/:reviewId
       await queryUtils.resourceReview.get.reset({ id });
@@ -327,11 +326,17 @@ export function getAverageRating(totals: ResourceReviewRatingTotals | undefined,
   return roundRating(rating);
 }
 
-export const useQueryResourceReviewTotals = ({ modelId, modelVersionId }: GetRatingTotalsInput) => {
-  const { data, isLoading, isRefetching } = trpc.resourceReview.getRatingTotals.useQuery({
-    modelId,
-    modelVersionId,
-  });
+export const useQueryResourceReviewTotals = (
+  { modelId, modelVersionId }: GetRatingTotalsInput,
+  options?: { enabled?: boolean }
+) => {
+  const { data, isLoading, isRefetching } = trpc.resourceReview.getRatingTotals.useQuery(
+    {
+      modelId,
+      modelVersionId,
+    },
+    { ...options }
+  );
 
   return { totals: data, loading: isLoading || isRefetching };
 };
