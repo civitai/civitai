@@ -4,6 +4,7 @@ import { IconCaretRightFilled, IconChevronRight, IconHeart } from '@tabler/icons
 import { useEffect, useState } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { wiggle } from '~/libs/animations';
+import { constants } from '~/server/common/constants';
 import { getRandom } from '~/utils/array-helpers';
 
 export const SupportButton = ({ className, ...props }: Props) => {
@@ -26,7 +27,7 @@ export const SupportButton = ({ className, ...props }: Props) => {
           h={36}
           {...props}
         >
-          <EdgeMedia src="5844e919-31e3-4dd7-a3c3-f5affdc7af7a" width={24} />
+          <EdgeMedia src={constants.supporterBadge} width={24} />
           <IconChevronRight size={18} strokeWidth={2.5} />
         </Button>,
         <Button

@@ -19,7 +19,7 @@ import { topLevelModerationCategories } from '~/libs/moderation';
 import { tagsNeedingReview as minorTags, tagsToIgnore } from '~/libs/tags';
 import { logToDb } from '~/utils/logging';
 import { constants } from '~/server/common/constants';
-import { getComputedTags } from '~/server/utils/tag-computation';
+import { getComputedTags } from '~/server/utils/tag-rules';
 import { updatePostNsfwLevel } from '~/server/services/post.service';
 import { imagesSearchIndex } from '~/server/search-index';
 import { deleteUserProfilePictureCache } from '~/server/services/user.service';

@@ -121,8 +121,8 @@ export const getBuzzWithdrawalDetails = (buzzAmount: number, platformFeeRate?: n
   if (!platformFeeRate) {
     platformFeeRate = constants.buzz.platformFeeRate;
   }
-  const dollarAmount = (buzzAmount / constants.buzz.buzzDollarRatio) * 100;
-  const platformFee = dollarAmount * (platformFeeRate / 10000);
+  const dollarAmount = Math.round((buzzAmount / constants.buzz.buzzDollarRatio) * 100);
+  const platformFee = Math.round(dollarAmount * (platformFeeRate / 10000));
   const payoutAmount = dollarAmount - platformFee;
 
   return {
