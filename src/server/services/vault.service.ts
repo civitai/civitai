@@ -216,6 +216,7 @@ export const addModelVersionToVault = async ({
       hash: mainFile.hashes.find((h) => h.type === ModelHashType.SHA256)?.hash ?? '',
       type: modelVersion.model.type,
       category: category?.tag.name ?? '',
+      createdAt: modelVersion.createdAt,
     },
   });
 

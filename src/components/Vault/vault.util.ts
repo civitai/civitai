@@ -2,6 +2,8 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
   GetPaginatedVaultItemsSchema,
   VaultItemsAddModelVersionSchema,
+  VaultItemsRemoveModelVersionsSchema,
+  VaultItemsUpdateNotesSchema,
 } from '~/server/schema/vault.schema';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -37,13 +39,43 @@ export const useMutateVault = () => {
     },
   });
 
+  const updateItemsNotes = trpc.vault.updateItemsNotes.useMutation({
+    onSuccess: async () => {
+      await queryUtils.vault.getItemsPaged.invalidate();
+    },
+    onError: (error) => {
+      onError(error, 'Failed to update notes on these vault items');
+    },
+  });
+
+  const removeItems = trpc.vault.removeItemsFromVault.useMutation({
+    onSuccess: async () => {
+      await queryUtils.vault.getItemsPaged.invalidate();
+      // Refreshes storage:
+      await queryUtils.vault.get.invalidate();
+    },
+    onError: (error) => {
+      onError(error, 'Failed to rmeove these items from your Vault');
+    },
+  });
+
   const handleToggleModelVersion = (data: VaultItemsAddModelVersionSchema) => {
     return toggleModelVersion.mutateAsync(data);
+  };
+  const handleUpdateItemsNotes = (data: VaultItemsUpdateNotesSchema) => {
+    return updateItemsNotes.mutateAsync(data);
+  };
+  const handleRemoveItems = (data: VaultItemsRemoveModelVersionsSchema) => {
+    return removeItems.mutateAsync(data);
   };
 
   return {
     toggleModelVersion: handleToggleModelVersion,
     togglingModelVersion: toggleModelVersion.isLoading,
+    updateItemsNotes: handleUpdateItemsNotes,
+    updatingItemsNotes: updateItemsNotes.isLoading,
+    removeItems: handleRemoveItems,
+    removingItems: removeItems.isLoading,
   };
 };
 
