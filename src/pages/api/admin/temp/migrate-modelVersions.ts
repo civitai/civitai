@@ -32,19 +32,27 @@ export default WebhookEndpoint(async (req, res) => {
     console.log(`Updating modelVersions ${start} - ${end}`);
     return async () => {
       const { cancel, result } = await pgDbWrite.cancellableQuery(Prisma.sql`
-        WITH images as (
-          SELECT mv.id, i."nsfwLevel"
+        WITH level as (
+          SELECT
+            mv.id,
+            (
+              SELECT
+                COALESCE(bit_or(i."nsfwLevel"), 0) "nsfwLevel"
+              FROM (
+                SELECT
+                  i."nsfwLevel"
+                FROM "Post" p
+                JOIN "Image" i ON i."postId" = p.id
+                WHERE p."modelVersionId" = mv.id
+                AND p."userId" = m."userId"
+                AND p."publishedAt" IS NOT NULL AND i."nsfwLevel" != 0
+                ORDER BY p."postId", i."index"
+                LIMIT 20
+              ) AS i
+            ) AS "nsfwLevel"
           FROM "ModelVersion" mv
-          JOIN "Model" m ON m.id = mv."modelId"
-          JOIN "Post" p ON p."modelVersionId" = mv.id AND p."userId" = m."userId" AND p."publishedAt" IS NOT NULL
-          JOIN "Image" i on i."postId" = p.id
-          WHERE mv.id BETWEEN ${start} AND ${end}
-          ORDER BY p."publishedAt" DESC, i.index ASC
-          LIMIT 20
-        ),
-        level as (
-          SELECT DISTINCT ON (id) id, COALESCE(bit_or("nsfwLevel"), 0) as "nsfwLevel" from images
-          GROUP BY id
+          JOIN "Model" m ON mv."modelId" = m.id
+          WHERE mv.id BETWEEN 90000 AND 90100
         )
         UPDATE "ModelVersion" mv
         SET "nsfwLevel" = level."nsfwLevel"

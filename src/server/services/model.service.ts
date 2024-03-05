@@ -549,7 +549,7 @@ export const getModelsRaw = async ({
       );
     } else if (userId) {
       modelVersionWhere.push(
-        Prisma.sql`((mv."nsfwLevel" & ${browsingLevel}) != 0 OR (mv."nsfwLevel" === 0 AND m."userId" = ${userId}))`
+        Prisma.sql`((mv."nsfwLevel" & ${browsingLevel}) != 0 OR (mv."nsfwLevel" = 0 AND m."userId" = ${userId}))`
       );
     }
   } else {
@@ -1000,6 +1000,7 @@ export const getModelsWithImagesAndModelVersions = async ({
   });
 
   const modelVersionIds = items.flatMap((m) => m.modelVersions).map((m) => m.id);
+  console.log({ modelVersionIds: modelVersionIds.length });
 
   const images = !!modelVersionIds.length
     ? await getImagesForModelVersion({
