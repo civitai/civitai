@@ -668,6 +668,7 @@ export function ModelVersionDetails({
             </AlertWithIcon>
           )}
           <EarlyAccessAlert
+            modelId={model.id}
             versionId={version.id}
             modelType={model.type}
             deadline={version.earlyAccessDeadline}

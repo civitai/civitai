@@ -302,12 +302,42 @@ export const getUserEngagedModels = ({ id, type }: { id: number; type?: ModelEng
   });
 };
 
-export const getUserEngagedModelVersions = ({ id }: { id: number }) => {
+export async function getUserEngagedModelVersions({
+  userId,
+  modelVersionIds,
+}: {
+  userId: number;
+  modelVersionIds: number | number[];
+}) {
+  const versionIds = Array.isArray(modelVersionIds) ? modelVersionIds : [modelVersionIds];
+
   return dbRead.modelVersionEngagement.findMany({
-    where: { userId: id },
+    where: { userId, modelVersionId: { in: versionIds } },
     select: { modelVersionId: true, type: true },
   });
-};
+}
+
+export async function getUserDownloads({
+  userId,
+  modelVersionIds,
+}: {
+  userId: number;
+  modelVersionIds?: number | number[];
+}) {
+  const where: Prisma.DownloadHistoryWhereInput = {
+    userId,
+  };
+  if (modelVersionIds) {
+    const versionIds = Array.isArray(modelVersionIds) ? modelVersionIds : [modelVersionIds];
+    where.modelVersionId = { in: versionIds };
+  }
+
+  return dbRead.downloadHistory.findMany({
+    where,
+    select: { modelVersionId: true },
+    distinct: ['modelVersionId'],
+  });
+}
 
 export const getUserEngagedModelByModelId = ({
   userId,

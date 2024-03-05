@@ -75,6 +75,7 @@ import {
   toggleModelEngagement,
   toggleBookmarked,
   toggleReview,
+  getUserDownloads,
 } from '~/server/services/user.service';
 import {
   handleLogError,
@@ -476,20 +477,27 @@ export const getUserEngagedModelsHandler = async ({ ctx }: { ctx: DeepNonNullabl
   }
 };
 
-type EngagedModelVersionType = ModelVersionEngagementType | 'Recommended';
+type EngagedModelVersionType = ModelVersionEngagementType | 'Downloaded';
 
 export const getUserEngagedModelVersionsHandler = async ({
+  input,
   ctx,
 }: {
+  input: GetByIdInput;
   ctx: DeepNonNullable<Context>;
 }) => {
-  const { id } = ctx.user;
+  const userId = ctx.user.id;
+  const versions = await dbRead.modelVersion.findMany({
+    where: { modelId: input.id },
+    select: { id: true },
+  });
+  const modelVersionIds = versions.map((x) => x.id);
 
   try {
-    const engagements = await getUserEngagedModelVersions({ id });
-    const recommendedReviews = await getResourceReviewsByUserId({ userId: id, recommended: true });
+    const engagements = await getUserEngagedModelVersions({ userId, modelVersionIds });
+    const downloads = await getUserDownloads({ userId, modelVersionIds });
 
-    // turn array of user.engagedModelVersions into object with `type` as key and array of modelId as value
+    // turn array of user.engagedModelVersions into object with `type` as key and array of modelVersionId as value
     const engagedModelVersions = engagements.reduce<Record<EngagedModelVersionType, number[]>>(
       (acc, engagement) => {
         const { type, modelVersionId } = engagement;
@@ -499,9 +507,7 @@ export const getUserEngagedModelVersionsHandler = async ({
       },
       {} as Record<EngagedModelVersionType, number[]>
     );
-    engagedModelVersions.Recommended = recommendedReviews
-      .map((r) => r.modelVersionId)
-      .filter(isDefined);
+    engagedModelVersions.Downloaded = downloads.map((x) => x.modelVersionId);
 
     return engagedModelVersions;
   } catch (error) {
