@@ -12,7 +12,6 @@ export const newsletterRouter = router({
     updateSubscription({
       ...input,
       email: input.email ?? ctx.user?.email,
-      username: ctx.user?.username,
       userId: ctx.user?.id,
     })
   ),

@@ -201,6 +201,7 @@ export enum GENERATION_QUALITY {
   GOOD = 'GOOD_QUALITY',
   BAD = 'BAD_QUALITY',
 }
+
 export type SendFeedbackInput = z.infer<typeof sendFeedbackSchema>;
 export const sendFeedbackSchema = z.object({
   jobId: z.string(),

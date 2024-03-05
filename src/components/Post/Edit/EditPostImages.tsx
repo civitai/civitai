@@ -413,7 +413,7 @@ const useStyles = createStyles((theme) => {
     },
     floatingBadge: {
       color: 'white',
-      backdropFilter: 'blur(7px)',
+      // backdropFilter: 'blur(7px)',
       boxShadow: '1px 2px 3px -1px rgba(37,38,43,0.2)',
     },
     footer: {

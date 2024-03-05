@@ -3,11 +3,17 @@ import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';
 import Router from 'next/router';
 import { useCallback } from 'react';
+import { MAX_TAGS, MIN_THRESHOLD } from '~/components/Resource/Forms/Training/TrainingAutoTagModal';
+import { getCaptionAsList } from '~/components/Resource/Forms/Training/TrainingImages';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { SignalMessages } from '~/server/common/enums';
 import { TrainingUpdateSignalSchema } from '~/server/schema/signals.schema';
+import { AutoTagResponse, TagDataResponse } from '~/server/services/training.service';
+import { defaultTrainingState, trainingStore, useTrainingImageStore } from '~/store/training.store';
 import { MyTrainingModelGetAll } from '~/types/router';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { isDefined } from '~/utils/type-guards';
 
 export const basePath = '/models/train';
 export const maxSteps = 3;
@@ -30,7 +36,7 @@ export const goBack = (modelId: number | undefined, step: number) => {
 
 export const useTrainingSignals = () => {
   const queryClient = useQueryClient();
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
 
   const onUpdate = useCallback(
     (updated: TrainingUpdateSignalSchema) => {
@@ -74,4 +80,85 @@ export const useTrainingSignals = () => {
   );
 
   useSignalConnection(SignalMessages.TrainingUpdate, onUpdate);
+};
+
+export const useOrchestratorUpdateSignal = () => {
+  const onUpdate = ({
+    context,
+    jobType,
+    type,
+  }: {
+    context?: { data: TagDataResponse; modelId: number; isDone: boolean };
+    jobType: string;
+    type: string; // TODO enum, and in other places too
+  }) => {
+    if (jobType !== 'MediaTagging') return;
+
+    // TODO we could handle Initialized | Claimed | Succeeded
+    if (!['Updated', 'Failed'].includes(type)) return;
+
+    if (!isDefined(context)) return;
+    const { data, modelId, isDone } = context;
+
+    const { updateImage, setAutoCaptioning } = trainingStore;
+
+    if (type === 'Failed') {
+      showErrorNotification({
+        error: new Error('Could not complete. Please try again.'),
+        title: 'Failed to auto-tag',
+        autoClose: false,
+      });
+      setAutoCaptioning(modelId, { ...defaultTrainingState.autoCaptioning });
+      return;
+    }
+
+    const tagList = Object.entries(data).map(([f, t]) => ({
+      [f]: t.wdTagger.tags,
+    }));
+    const returnData: AutoTagResponse = Object.assign({}, ...tagList);
+
+    Object.entries(returnData).forEach(([k, v]) => {
+      const returnData = Object.entries(v);
+      const storeState = useTrainingImageStore.getState();
+      const { autoCaptioning } = storeState[modelId] ?? { ...defaultTrainingState };
+
+      const blacklist = getCaptionAsList(autoCaptioning.blacklist ?? '');
+      const prependList = getCaptionAsList(autoCaptioning.prependTags ?? '');
+      const appendList = getCaptionAsList(autoCaptioning.appendTags ?? '');
+
+      if (returnData.length === 0) {
+        setAutoCaptioning(modelId, { ...autoCaptioning, fails: [...autoCaptioning.fails, k] });
+      } else {
+        let tags = returnData
+          .sort(([, a], [, b]) => b - a)
+          .filter(
+            (t) => t[1] >= (autoCaptioning.threshold ?? MIN_THRESHOLD) && !blacklist.includes(t[0])
+          )
+          .slice(0, autoCaptioning.maxTags ?? MAX_TAGS)
+          .map((t) => t[0]);
+
+        tags = [...prependList, ...tags, ...appendList];
+
+        updateImage(modelId, {
+          matcher: k,
+          caption: tags.join(', '),
+          appendCaption: autoCaptioning.overwrite === 'append',
+        });
+        setAutoCaptioning(modelId, { ...autoCaptioning, successes: autoCaptioning.successes + 1 });
+      }
+    });
+
+    if (isDone) {
+      const storeState = useTrainingImageStore.getState();
+      const { autoCaptioning } = storeState[modelId] ?? { ...defaultTrainingState };
+      showSuccessNotification({
+        title: 'Images auto-tagged successfully!',
+        message: `Tagged ${autoCaptioning.successes} image${
+          autoCaptioning.successes === 1 ? '' : 's'
+        }. Failures: ${autoCaptioning.fails.length}`,
+      });
+      setAutoCaptioning(modelId, { ...defaultTrainingState.autoCaptioning });
+    }
+  };
+  useSignalConnection(SignalMessages.OrchestratorUpdate, onUpdate);
 };

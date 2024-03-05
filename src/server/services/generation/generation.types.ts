@@ -27,8 +27,10 @@ export namespace Generation {
 
   export type Status = {
     message?: string;
-    available?: boolean;
+    available: boolean;
     fullCoverageModels?: Partial<Record<BaseModelSetType, { id: number; name: string }[]>>;
+    minorFallback: boolean;
+    sfwEmbed: boolean;
   };
 
   export type Params = {

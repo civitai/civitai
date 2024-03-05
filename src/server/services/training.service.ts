@@ -5,7 +5,11 @@ import { constants } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { TrainingDetailsBaseModel, TrainingDetailsObj } from '~/server/schema/model-version.schema';
-import { CreateTrainingRequestInput, MoveAssetInput } from '~/server/schema/training.schema';
+import {
+  AutoTagInput,
+  CreateTrainingRequestInput,
+  MoveAssetInput,
+} from '~/server/schema/training.schema';
 import {
   createBuzzTransaction,
   getUserBuzzAccount,
@@ -17,7 +21,7 @@ import {
   throwRateLimitError,
   withRetries,
 } from '~/server/utils/errorHandling';
-import { getGetUrl, getPutUrl } from '~/utils/s3-utils';
+import { deleteObject, getGetUrl, getPutUrl, parseKey } from '~/utils/s3-utils';
 import { calcBuzzFromEta, calcEta } from '~/utils/training';
 import { getOrchestratorCaller } from '../http/orchestrator/orchestrator.caller';
 import { Orchestrator } from '../http/orchestrator/orchestrator.types';
@@ -25,10 +29,10 @@ import { Orchestrator } from '../http/orchestrator/orchestrator.types';
 const modelMap: { [key in TrainingDetailsBaseModel]: string } = {
   sdxl: 'civitai:101055@128078',
   sd_1_5: 'SD_1_5',
-  // anime: 'civitai:9409@33672', // TODO [bw] adjust this with rick
-  anime: 'anime',
+  anime: 'civitai:9409@90854',
   realistic: 'civitai:81458@132760',
   semi: 'civitai:4384@128713',
+  pony: 'civitai:257749@290640',
 };
 
 type TrainingRequest = {
@@ -44,9 +48,10 @@ async function getSubmittedAt(modelVersionId: number, userId: number) {
   const [modelFile] = await dbWrite.$queryRaw<MoveAssetRow[]>`
     SELECT mf.metadata, mv."updatedAt"
     FROM "ModelVersion" mv
-    JOIN "ModelFile" mf ON mf."modelVersionId" = mv.id AND mf.type = 'Training Data'
-    JOIN "Model" m ON m.id = mv."modelId"
-    WHERE mv.id = ${modelVersionId} AND m."userId" = ${userId}
+           JOIN "ModelFile" mf ON mf."modelVersionId" = mv.id AND mf.type = 'Training Data'
+           JOIN "Model" m ON m.id = mv."modelId"
+    WHERE mv.id = ${modelVersionId}
+      AND m."userId" = ${userId}
   `;
 
   if (!modelFile) throw throwBadRequestError('Invalid model version');
@@ -135,7 +140,9 @@ export const deleteAssets = async (jobId: string, submittedAt?: Date) => {
 export const createTrainingRequest = async ({
   userId,
   modelVersionId,
-}: CreateTrainingRequestInput & { userId?: number }) => {
+}: CreateTrainingRequestInput & {
+  userId?: number;
+}) => {
   const modelVersions = await dbWrite.$queryRaw<TrainingRequest[]>`
     SELECT mv."trainingDetails",
            m.name      "modelName",
@@ -162,7 +169,7 @@ export const createTrainingRequest = async ({
     const setting = trainingSettings.find((ts) => ts.name === key);
     if (!setting) continue;
     // TODO [bw] we should be doing more checking here (like validating this through zod), but this will handle the bad cases for now
-    if (typeof value === 'number') {
+    if (setting.type === 'int' || setting.type === 'number') {
       const override = baseModel ? setting.overrides?.[baseModel] : undefined;
       const overrideSetting = override ?? setting;
       if (
@@ -220,7 +227,7 @@ export const createTrainingRequest = async ({
     properties: { userId, transactionId, modelFileId: modelVersion.fileId },
     model: modelMap[baseModel!],
     trainingData: trainingUrl,
-    maxRetryAttempt: constants.maxTrainingRetries,
+    retries: constants.maxTrainingRetries,
     params: {
       ...trainingParams,
       modelFileId: modelVersion.fileId,
@@ -276,4 +283,55 @@ export const createTrainingRequest = async ({
 
   // const [formatted] = await formatGenerationRequests([data]);
   return data;
+};
+
+export type TagDataResponse = {
+  [key: string]: {
+    wdTagger: {
+      tags: {
+        [key: string]: number;
+      };
+    };
+  };
+};
+export type AutoTagResponse = {
+  [key: string]: {
+    [key: string]: number;
+  };
+};
+
+export const autoTagHandler = async ({
+  url,
+  modelId,
+  userId,
+}: AutoTagInput & {
+  userId: number;
+}) => {
+  const { url: getUrl } = await getGetUrl(url);
+  const { key, bucket } = parseKey(url);
+
+  const payload: Orchestrator.Training.ImageAutoTagJobPayload = {
+    mediaUrl: getUrl,
+    modelId,
+    properties: { userId },
+    retries: 0,
+  };
+
+  const response = await getOrchestratorCaller(new Date()).imageAutoTag({
+    payload,
+  });
+
+  if (response.status === 429) {
+    deleteObject(bucket, key).catch();
+    throw throwRateLimitError();
+  }
+
+  if (!response.ok) {
+    deleteObject(bucket, key).catch();
+    throw throwBadRequestError(
+      'We are not able to process your request at this time. Please try again later.'
+    );
+  }
+
+  return response.data;
 };

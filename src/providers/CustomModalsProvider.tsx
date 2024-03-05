@@ -1,22 +1,22 @@
+import { ModalProps } from '@mantine/core';
 import { ContextModalProps, ModalsProvider } from '@mantine/modals';
 import dynamic from 'next/dynamic';
+import { openBountyEntryFilesModal } from '~/components/Bounty/BountyEntryFilesModal';
 import { openCivitaiLinkModal } from '~/components/CivitaiLink/CivitaiLinkWizard';
-import { openBlockModelTagsModal } from '~/components/Modals/BlockModelTagsModal';
-import { openReportModal } from '~/components/Modals/ReportModal';
-import { openRunStrategyModal } from '~/components/Modals/RunStrategyModal';
-import { openResourceReviewEditModal } from '~/components/ResourceReview/EditResourceReviewModal';
-import { openUnpublishModal } from '~/components/Modals/UnpublishModal';
-import { openAssociateModelsModal } from '~/components/Modals/AssociateModelsModal';
 import { openAddToCollectionModal } from '~/components/Collections/AddToCollectionModal';
 import { openManageHomeBlocksModal } from '~/components/HomeBlocks/ManageHomeBlocksModal';
+import { openAssociateModelsModal } from '~/components/Modals/AssociateModelsModal';
+import { openBlockModelTagsModal } from '~/components/Modals/BlockModelTagsModal';
 import { openBuyBuzzModal } from '~/components/Modals/BuyBuzzModal';
-import { openSendTipModal } from '~/components/Modals/SendTipModal';
-import { openBountyEntryFilesModal } from '~/components/Bounty/BountyEntryFilesModal';
-import { openStripeTransactionModal } from '~/components/Modals/StripeTransactionModal';
-import { ModalProps } from '@mantine/core';
-import { openUserProfileEditModal } from '~/components/Modals/UserProfileEditModal';
-import { openManageClubPostModal } from '~/components/Modals/ManageClubPostModal';
 import { openGenQualityFeedbackModal } from '~/components/Modals/GenerationQualityFeedbackModal';
+import { openManageClubPostModal } from '~/components/Modals/ManageClubPostModal';
+import { openReportModal } from '~/components/Modals/ReportModal';
+import { openRunStrategyModal } from '~/components/Modals/RunStrategyModal';
+import { openSendTipModal } from '~/components/Modals/SendTipModal';
+import { openStripeTransactionModal } from '~/components/Modals/StripeTransactionModal';
+import { openUnpublishModal } from '~/components/Modals/UnpublishModal';
+import { openUserProfileEditModal } from '~/components/Modals/UserProfileEditModal';
+import { openResourceReviewEditModal } from '~/components/ResourceReview/EditResourceReviewModal';
 
 const DynamicOnboardingModal = dynamic(
   () => import('~/components/OnboardingModal/OnboardingModal')

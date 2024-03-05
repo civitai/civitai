@@ -210,13 +210,11 @@ export function QueueItem({ request }: Props) {
             </Text>
           </Group>
           <Group spacing="xs">
-            {currentUser?.isModerator && (
-              <Tooltip {...tooltipProps} label="Copy Job IDs">
-                <ActionIcon size="md" p={4} variant="light" radius={0} onClick={handleCopy}>
-                  {copied ? <IconCheck /> : <IconInfoHexagon />}
-                </ActionIcon>
-              </Tooltip>
-            )}
+            <Tooltip {...tooltipProps} label="Copy Job IDs">
+              <ActionIcon size="md" p={4} variant="light" radius={0} onClick={handleCopy}>
+                {copied ? <IconCheck /> : <IconInfoHexagon />}
+              </ActionIcon>
+            </Tooltip>
             {generationStatus.available && (
               <Tooltip {...tooltipProps} label="Generate">
                 <ActionIcon size="md" p={4} variant="light" radius={0} onClick={handleGenerate}>

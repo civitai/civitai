@@ -105,7 +105,7 @@ export function ImageDetail() {
                     background: hasReacted
                       ? theme.fn.rgba(theme.colors.blue[4], 0.4)
                       : theme.fn.rgba(theme.colors.gray[8], 0.4),
-                    backdropFilter: 'blur(7px)',
+                    // backdropFilter: 'blur(7px)',
                   },
                 }),
               }}

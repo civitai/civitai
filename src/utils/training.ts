@@ -3,6 +3,7 @@ import { TrainingDetailsBaseModel } from '~/server/schema/model-version.schema';
 const etaCoefficients = {
   models: {
     sdxl: 19.42979334,
+    pony: 19.42979334,
     sd_1_5: -25.38624804,
     anime: -23.84022578,
     semi: -20.56343578,

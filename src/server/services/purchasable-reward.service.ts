@@ -276,11 +276,11 @@ export const purchasableRewardPurchase = async ({
 
   // Pay for reward:
   const transaction = await createBuzzTransaction({
-    fromAccountId: 0, // bank
-    toAccountId: userId,
+    fromAccountId: userId, // bank
+    toAccountId: 0,
     amount: reward.unitPrice,
     type: TransactionType.Purchase,
-    description: 'Refund due to rejection or cancellation of withdrawal request',
+    description: 'Purchase of reward',
     // Safeguard in case the above check fails :shrug:
     externalTransactionId: `purchasable-reward-purchase-${userId}-${purchasableRewardId}`,
   });

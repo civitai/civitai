@@ -19,6 +19,7 @@ import type { StripePlan, StripeSubscription } from '~/server/services/stripe.se
 import { useState } from 'react';
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
 import { getStripeCurrencyDisplay } from '~/utils/string-helpers';
+import { constants } from '~/server/common/constants';
 
 type PlanCardProps = {
   product: StripePlan;
@@ -100,7 +101,7 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
 export const planDetails: PlanMeta[] = [
   {
     name: 'Supporter Tier',
-    image: '5844e919-31e3-4dd7-a3c3-f5affdc7af7a',
+    image: constants.supporterBadge,
     benefits: [
       { content: 'Ad-free Browsing', icon: <IconAdCircleOff size={benefitIconSize} /> },
       { content: 'Early access to new features' },
