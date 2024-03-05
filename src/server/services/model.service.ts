@@ -116,6 +116,7 @@ type ModelRaw = {
     downloadCount: number;
     favoriteCount: number;
     thumbsUpCount: number;
+    thumbsDownCount: number;
     commentCount: number;
     ratingCount: number;
     rating: number;
@@ -559,6 +560,7 @@ export const getModelsRaw = async ({
           'downloadCount', mm."downloadCount",
           'favoriteCount', mm."favoriteCount",
           'thumbsUpCount', mm."thumbsUpCount",
+          'thumbsDownCount', mm."thumbsDownCount",
           'commentCount', mm."commentCount",
           'ratingCount', mm."ratingCount",
           'rating', mm."rating",
@@ -660,6 +662,7 @@ export const getModelsRaw = async ({
         [`downloadCount${input.period}`]: rank.downloadCount,
         [`favoriteCount${input.period}`]: rank.favoriteCount,
         [`thumbsUpCount${input.period}`]: rank.thumbsUpCount,
+        [`thumbsDownCount${input.period}`]: rank.thumbsDownCount,
         [`commentCount${input.period}`]: rank.commentCount,
         [`ratingCount${input.period}`]: rank.ratingCount,
         [`rating${input.period}`]: rank.rating,
@@ -1027,6 +1030,7 @@ export const getModelsWithImagesAndModelVersions = async ({
             downloadCount: rank?.[`downloadCount${input.period}`] ?? 0,
             favoriteCount: rank?.[`favoriteCount${input.period}`] ?? 0,
             thumbsUpCount: rank?.[`thumbsUpCount${input.period}`] ?? 0,
+            thumbsDownCount: rank?.[`thumbsDownCount${input.period}`] ?? 0,
             commentCount: rank?.[`commentCount${input.period}`] ?? 0,
             ratingCount: rank?.[`ratingCount${input.period}`] ?? 0,
             collectedCount: rank?.[`collectedCount${input.period}`] ?? 0,

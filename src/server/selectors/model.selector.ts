@@ -126,6 +126,7 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
           ratingCount: true,
           rating: true,
           thumbsUpCount: true,
+          thumbsDownCount: true,
         },
       },
       files: {
@@ -157,6 +158,7 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
       rating: true,
       favoriteCount: true,
       thumbsUpCount: true,
+      thumbsDownCount: true,
       imageCount: true,
       collectedCount: true,
       tippedAmountCount: true,

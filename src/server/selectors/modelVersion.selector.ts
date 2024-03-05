@@ -26,6 +26,7 @@ export const getModelVersionDetailsSelect = Prisma.validator<Prisma.ModelVersion
       ratingCount: true,
       rating: true,
       thumbsUpCount: true,
+      thumbsDownCount: true,
     },
   },
   files: {

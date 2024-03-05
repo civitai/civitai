@@ -100,6 +100,13 @@ export const userUpdateSchema = z.object({
 });
 export type UserUpdateInput = z.input<typeof userUpdateSchema>;
 
+export const toggleFavoriteInput = z.object({
+  modelId: z.number(),
+  modelVersionId: z.number().optional(),
+  setTo: z.boolean(),
+});
+export type ToggleFavoriteInput = z.infer<typeof toggleFavoriteInput>;
+
 export const toggleModelEngagementInput = z.object({
   modelId: z.number(),
   type: z.nativeEnum(ModelEngagementType).optional(),

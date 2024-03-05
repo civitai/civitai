@@ -14,7 +14,10 @@ import { GetResourceReviewsInput } from '~/server/schema/resourceReview.schema';
 import { Prisma } from '@prisma/client';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { getPagedData, getPagingData } from '~/server/utils/pagination-helpers';
-import { resourceReviewSelect } from '~/server/selectors/resourceReview.selector';
+import {
+  resourceReviewSelect,
+  resourceReviewSimpleSelect,
+} from '~/server/selectors/resourceReview.selector';
 import { ReviewSort } from '~/server/common/enums';
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
 
@@ -33,17 +36,18 @@ export const getResourceReview = async ({ id, userId }: GetByIdInput & { userId?
 };
 
 export const getUserResourceReview = async ({
+  modelId,
   modelVersionId,
   userId,
 }: GetUserResourceReviewInput & { userId: number }) => {
   if (!userId) throw throwAuthorizationError();
-  const result = await dbRead.resourceReview.findFirst({
-    where: { modelVersionId, userId },
-    select: resourceReviewSelect,
+  const results = await dbRead.resourceReview.findMany({
+    where: { modelId, modelVersionId, userId },
+    select: resourceReviewSimpleSelect,
   });
-  if (!result) return null;
+  if (!results) return null;
 
-  return result;
+  return results;
 };
 
 export const getResourceReviewsByUserId = ({
@@ -221,7 +225,7 @@ export const deleteResourceReview = ({ id }: GetByIdInput) => {
 };
 
 export const createResourceReview = (data: CreateResourceReviewInput & { userId: number }) => {
-  return dbWrite.resourceReview.create({ data, select: resourceReviewSelect });
+  return dbWrite.resourceReview.create({ data, select: resourceReviewSimpleSelect });
 };
 
 export const updateResourceReview = ({ id, ...data }: UpdateResourceReviewInput) => {

@@ -30,6 +30,7 @@ import {
   getUserSettingsHandler,
   getUserBookmarkCollectionsHandler,
   getUserPurchasedRewardsHandler,
+  toggleFavoriteHandler,
 } from '~/server/controllers/user.controller';
 import {
   deleteUserHandler,
@@ -59,6 +60,7 @@ import {
   toggleFeatureInputSchema,
   dismissAlertSchema,
   setUserSettingsInput,
+  toggleFavoriteInput,
 } from '~/server/schema/user.schema';
 import {
   equipCosmetic,
@@ -67,6 +69,7 @@ import {
   cosmeticStatus,
   removeAllContent,
   getUserBookmarkedArticles,
+  toggleBookmarked,
   toggleBookmarkedArticle,
 } from '~/server/services/user.service';
 import {
@@ -100,6 +103,7 @@ export const userRouter = router({
   checkNotifications: protectedProcedure.query(checkUserNotificationsHandler),
   update: guardedProcedure.input(userUpdateSchema).mutation(updateUserHandler),
   delete: protectedProcedure.input(deleteUserSchema).mutation(deleteUserHandler),
+  toggleFavorite: protectedProcedure.input(toggleFavoriteInput).mutation(toggleFavoriteHandler),
   toggleNotifyModel: protectedProcedure
     .input(toggleModelEngagementInput)
     .mutation(toggleNotifyModelHandler),

@@ -15,7 +15,12 @@ export const useCreateResourceReview = () => {
   const queryUtils = trpc.useUtils();
   return trpc.resourceReview.create.useMutation({
     onSuccess: async (response, { modelId, recommended, modelVersionId }) => {
-      queryUtils.resourceReview.getUserResourceReview.setData({ modelVersionId }, () => response);
+      queryUtils.resourceReview.getUserResourceReview.setData({ modelId }, (old) => {
+        return [
+          ...(old ?? []).filter((review) => review.modelVersionId !== modelVersionId),
+          response,
+        ];
+      });
       queryUtils.resourceReview.getRatingTotals.setData({ modelId, modelVersionId }, (old) => {
         if (!old) return old;
         if (recommended) return { ...old, up: old.up + 1 };
@@ -51,12 +56,16 @@ export const useUpdateResourceReview = () => {
       // update single review on model reviews page
       // /models/:id/reviews?modelVersionId
       queryUtils.resourceReview.getUserResourceReview.setData(
-        { modelVersionId },
+        { modelId },
         produce((old) => {
           if (!old) return;
-          if (request.details) old.details = request.details as string;
-          if (request.rating) old.rating = request.rating;
-          if (request.recommended != null) old.recommended = request.recommended;
+          return old.map((review) => {
+            if (review.modelVersionId === modelVersionId) {
+              if (request.details) review.details = request.details as string;
+              if (request.recommended != null) review.recommended = request.recommended;
+            }
+            return review;
+          });
         })
       );
 
@@ -165,23 +174,129 @@ export const useQueryResourceReview = (
 };
 
 export const useQueryUserResourceReview = ({
+  modelId,
   modelVersionId,
 }: Partial<GetUserResourceReviewInput>) => {
   const currentUser = useCurrentUser();
 
-  if (!modelVersionId) return { currentUserReview: undefined, loading: false };
+  if (!modelId) return { currentUserReview: undefined, loading: false };
 
-  const {
-    data: currentUserReview,
-    isLoading,
-    isRefetching,
-  } = trpc.resourceReview.getUserResourceReview.useQuery(
-    { modelVersionId: modelVersionId },
+  const { data, isLoading, isRefetching } = trpc.resourceReview.getUserResourceReview.useQuery(
+    { modelId },
     { enabled: !!currentUser && !currentUser.muted }
   );
 
-  return { currentUserReview, loading: isLoading || isRefetching };
+  let currentUserReviews = data;
+  if (modelVersionId) currentUserReviews = data?.filter((x) => x.modelVersionId === modelVersionId);
+
+  return { currentUserReview: currentUserReviews?.[0], loading: isLoading || isRefetching };
 };
+
+export function useToggleFavoriteMutation() {
+  const queryUtils = trpc.useUtils();
+
+  const mutation = trpc.user.toggleFavorite.useMutation({
+    onMutate: async ({ modelId, modelVersionId, setTo }) => {
+      console.log('inner', { modelId, modelVersionId, setTo });
+      const engagedModels = queryUtils.user.getEngagedModels.getData();
+      const modelDetails = queryUtils.model.getById.getData({ id: modelId });
+
+      // Update model engagements
+      const alreadyNotified = engagedModels?.Notify?.indexOf(modelId) ?? -1;
+      const alreadyReviewed = engagedModels?.Recommended?.indexOf(modelId) ?? -1;
+      queryUtils.user.getEngagedModels.setData(undefined, (old) => {
+        if (!old) return;
+        if (setTo) {
+          if (alreadyNotified === -1) old.Notify = [...(old.Notify ?? []), modelId];
+          if (alreadyReviewed === -1) old.Recommended = [...(old.Recommended ?? []), modelId];
+        } else {
+          // We don't want to remove from notify on favorite toggle
+          // if (alreadyNotified !== -1) old.Notify = old.Notify.filter((id) => id !== modelId);
+          if (alreadyReviewed !== -1)
+            old.Recommended = old.Recommended.filter((id) => id !== modelId);
+        }
+        return old;
+      });
+
+      // Update model details
+      queryUtils.model.getById.setData({ id: modelId }, (old) => {
+        if (!old) return;
+        if (setTo && alreadyReviewed === -1) {
+          old.rank.thumbsUpCountAllTime += 1;
+          old.rank.collectedCountAllTime += 1;
+        } else if (!setTo && alreadyReviewed !== -1) {
+          old.rank.thumbsUpCountAllTime -= 1;
+          // We don't want to remove from collected on favorite toggle
+          // old.rank.collectedCountAllTime -= 1;
+        }
+
+        if (old.rank.thumbsUpCountAllTime < 0) old.rank.thumbsUpCountAllTime = 0;
+        if (old.rank.collectedCountAllTime < 0) old.rank.collectedCountAllTime = 0;
+
+        // Update model version details
+        old.modelVersions = old.modelVersions.map((version) => {
+          if (version.id === modelVersionId) {
+            if (setTo) version.rank.thumbsUpCountAllTime += 1;
+            else version.rank.thumbsUpCountAllTime -= 1;
+
+            if (version.rank.thumbsUpCountAllTime < 0) version.rank.thumbsUpCountAllTime = 0;
+          }
+          return version;
+        });
+
+        return old;
+      });
+
+      // Update user reviews
+      const firstVersionId = modelDetails?.modelVersions?.[0]?.id;
+      const userReviews = queryUtils.resourceReview.getUserResourceReview.getData({ modelId });
+      queryUtils.resourceReview.getUserResourceReview.setData({ modelId }, (old) => {
+        // Handle removal of review
+        if (!setTo) {
+          if (modelVersionId)
+            return old?.filter((review) => review.modelVersionId !== modelVersionId);
+          return [];
+        }
+        if (setTo) {
+          if (!old) old = [];
+          const targetVersion = modelVersionId ?? firstVersionId;
+          const existingReview = old.find((review) => review.modelVersionId === targetVersion);
+          if (!targetVersion) return old;
+
+          // Handle adding new review
+          if (!existingReview)
+            return [
+              ...old,
+              {
+                id: 0,
+                modelId,
+                modelVersionId: targetVersion,
+                recommended: true,
+                createdAt: new Date(),
+                exclude: false,
+              } as (typeof old)[number],
+            ];
+          // Handle updating existing review
+          return old.map((review) => {
+            if (review.modelVersionId === targetVersion) review.recommended = setTo;
+            return review;
+          });
+        }
+      });
+
+      return { prevData: { engagedModels, modelDetails, userReviews } };
+    },
+    onError: async (error, { modelId }, context) => {
+      await queryUtils.user.getEngagedModels.setData(undefined, context?.prevData?.engagedModels);
+      await queryUtils.model.getById.setData({ id: modelId }, context?.prevData?.modelDetails);
+    },
+    onSettled: async (result, error, { modelId }) => {
+      await queryUtils.resourceReview.getUserResourceReview.invalidate({ modelId });
+    },
+  });
+
+  return mutation;
+}
 
 export function roundRating(rating: number) {
   return Math.round(rating * 100) / 100;

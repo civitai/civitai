@@ -22,7 +22,10 @@ import {
 } from '~/components/ResourceReview/resourceReview.utils';
 import { EditorCommandsRef } from '~/components/RichTextEditor/RichTextEditor';
 import { Form, InputRTE, useForm } from '~/libs/form';
-import { ResourceReviewModel } from '~/server/selectors/resourceReview.selector';
+import {
+  ResourceReviewModel,
+  ResourceReviewSimpleModel,
+} from '~/server/selectors/resourceReview.selector';
 
 const schema = z.object({
   details: z.string().optional(),
@@ -184,7 +187,7 @@ const useStyles = createStyles(() => ({
 }));
 
 type UserResourceReviewCompositeProps = {
-  userReview: ResourceReviewModel | null | undefined;
+  userReview: ResourceReviewSimpleModel | null | undefined;
   modelId: number;
   modelVersionId: number;
   modelName?: string;
@@ -197,7 +200,7 @@ export function UserResourceReviewComposite({
   modelName,
   children,
 }: Props & { children: (props: UserResourceReviewCompositeProps) => JSX.Element | null }) {
-  const { currentUserReview, loading } = useQueryUserResourceReview({ modelVersionId });
+  const { currentUserReview, loading } = useQueryUserResourceReview({ modelId, modelVersionId });
 
   return children({
     userReview: currentUserReview,
@@ -319,7 +322,7 @@ export function EditUserResourceReviewV2({
 
 type PropsV2 = {
   modelVersionId: number;
-  userReview: ResourceReviewModel | null;
+  userReview: ResourceReviewSimpleModel | null;
   modelName?: string;
   showReviewedAt?: boolean;
   innerRef?: React.ForwardedRef<ReviewEditCommandsRef>;

@@ -26,6 +26,7 @@ import {
   ReportProhibitedRequestInput,
   SetUserSettingsInput,
   ToggleBlockedTagSchema,
+  ToggleFavoriteInput,
   ToggleFeatureInput,
   ToggleFollowUserSchema,
   ToggleModelEngagementInput,
@@ -72,6 +73,8 @@ import {
   getUserBookmarkCollections,
   getUserPurchasedRewards,
   toggleModelEngagement,
+  toggleBookmarked,
+  toggleReview,
 } from '~/server/services/user.service';
 import {
   handleLogError,
@@ -713,6 +716,46 @@ export const toggleHideModelHandler = async ({
     throw throwDbError(error);
   }
 };
+
+export async function toggleFavoriteHandler({
+  input: { modelId, modelVersionId, setTo },
+  ctx,
+}: {
+  input: ToggleFavoriteInput;
+  ctx: DeepNonNullable<Context>;
+}) {
+  const { id: userId } = ctx.user;
+  // If favoriting, also bookmark and notify
+  if (setTo) {
+    // Toggle notifications
+    await toggleModelEngagement({
+      modelId,
+      type: ModelEngagementType.Notify,
+      userId,
+      setTo,
+    });
+
+    // Toggle to bookmark collection
+    await toggleBookmarked({
+      type: 'Model',
+      entityId: modelId,
+      userId,
+      setTo,
+    });
+  }
+
+  if (ctx.user.muted) return false;
+
+  // Toggle review (on/off)
+  const reviewResult = await toggleReview({
+    modelId,
+    modelVersionId,
+    userId,
+    setTo,
+  });
+  await redis.del(`user:${userId}:model-engagements`);
+  return reviewResult;
+}
 
 export const toggleNotifyModelHandler = async ({
   input,

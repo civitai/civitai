@@ -73,9 +73,9 @@ export const createResourceReviewHandler = async ({
     await ctx.track.resourceReview({
       type: 'Create',
       modelId: result.modelId,
-      modelVersionId: result.modelVersion.id,
-      rating: result.rating,
-      nsfw: result.nsfw,
+      modelVersionId: result.modelVersionId,
+      rating: result.recommended ? 5 : 1,
+      nsfw: false,
     });
     await redis.del(`user:${ctx.user.id}:model-engagements`);
     return result;

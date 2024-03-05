@@ -10,7 +10,10 @@ import {
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
-import { ResourceReviewModel } from '~/server/selectors/resourceReview.selector';
+import {
+  ResourceReviewModel,
+  ResourceReviewSimpleModel,
+} from '~/server/selectors/resourceReview.selector';
 import { trpc } from '~/utils/trpc';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 
@@ -41,7 +44,7 @@ export function ResourceReviewThumbActions({
 }: {
   modelId: number;
   modelVersionId: number;
-  userReview?: ResourceReviewModel | null;
+  userReview?: ResourceReviewSimpleModel | null;
 }) {
   const { classes } = useThumbActionStyles();
   const { totals, loading: loadingTotals } = useQueryResourceReviewTotals({

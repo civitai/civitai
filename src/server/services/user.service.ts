@@ -53,7 +53,13 @@ import {
   usersSearchIndex,
 } from '~/server/search-index';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
-import { articleMetrics, imageMetrics, userMetrics } from '~/server/metrics';
+import {
+  articleMetrics,
+  imageMetrics,
+  modelMetrics,
+  postMetrics,
+  userMetrics,
+} from '~/server/metrics';
 import { refereeCreatedReward, userReferredReward } from '~/server/rewards';
 import { handleLogError } from '~/server/utils/errorHandling';
 import { isCosmeticAvailable } from '~/server/services/cosmetic.service';
@@ -360,37 +366,38 @@ export const toggleModelEngagement = async ({
   userId,
   modelId,
   type,
+  setTo,
 }: {
   userId: number;
   modelId: number;
   type: ModelEngagementType;
+  setTo?: boolean;
 }) => {
   const engagement = await dbWrite.modelEngagement.findUnique({
     where: { userId_modelId: { userId, modelId } },
     select: { type: true },
   });
+  setTo ??= engagement?.type === type ? false : true;
 
   if (engagement) {
-    if (engagement.type === type)
+    if (!setTo && engagement.type === type) {
       await dbWrite.modelEngagement.delete({
         where: { userId_modelId: { userId, modelId } },
       });
-    else if (engagement.type !== type)
+      if (type === 'Hide') await refreshHiddenModelsForUser({ userId });
+      return false;
+    } else if (setTo && engagement.type !== type) {
       await dbWrite.modelEngagement.update({
         where: { userId_modelId: { userId, modelId } },
         data: { type, createdAt: new Date() },
       });
-
-    return engagement.type !== type;
-  }
+      return true;
+    }
+    return true; // no change
+  } else if (setTo === false) return false;
 
   await dbWrite.modelEngagement.create({ data: { type, modelId, userId } });
-  if (type === 'Hide') {
-    await refreshHiddenModelsForUser({ userId });
-    // await playfab.trackEvent(userId, { eventName: 'user_hide_model', modelId });
-  } else if (type === 'Notify') {
-    // await playfab.trackEvent(userId, { eventName: 'user_favorite_model', modelId });
-  }
+  if (type === 'Hide') await refreshHiddenModelsForUser({ userId });
   return true;
 };
 
@@ -970,14 +977,39 @@ export const toggleBookmarkedArticle = async ({
 }: {
   articleId: number;
   userId: number;
+}) => toggleBookmarked({ entityId: articleId, type: CollectionType.Article, userId });
+
+const collectionEntityProps = {
+  [CollectionType.Article]: 'articleId',
+  [CollectionType.Model]: 'modelId',
+  [CollectionType.Image]: 'imageId',
+  [CollectionType.Post]: 'postId',
+};
+const collectionEntityMetrics = {
+  [CollectionType.Article]: articleMetrics,
+  [CollectionType.Model]: modelMetrics,
+  [CollectionType.Image]: imageMetrics,
+  [CollectionType.Post]: postMetrics,
+};
+export const toggleBookmarked = async ({
+  entityId,
+  type,
+  userId,
+  setTo,
+}: {
+  entityId: number;
+  type: CollectionType;
+  userId: number;
+  setTo?: boolean;
 }) => {
   const collection = await dbRead.collection.findFirstOrThrow({
-    where: { userId, type: CollectionType.Article, mode: CollectionMode.Bookmark },
+    where: { userId, type, mode: CollectionMode.Bookmark },
   });
 
+  const entityProp = collectionEntityProps[type];
   const collectionItem = await dbRead.collectionItem.findFirst({
     where: {
-      articleId,
+      [entityProp]: entityId,
       collectionId: collection.id,
     },
   });
@@ -985,21 +1017,78 @@ export const toggleBookmarkedArticle = async ({
   const exists = collectionItem;
 
   // if the engagement exists, we only need to remove the existing engagmement
-  if (exists) {
+  if (exists && setTo !== true) {
     await dbWrite.collectionItem.delete({
       where: {
         id: collectionItem.id,
       },
     });
-    await articleMetrics.queueUpdate(articleId);
-  } else {
+    const metricsEngine = collectionEntityMetrics[type];
+    metricsEngine.queueUpdate(entityId);
+  } else if (!exists && setTo !== false) {
     await dbWrite.collectionItem.create({
-      data: { collectionId: collection.id, articleId },
+      data: { collectionId: collection.id, [entityProp]: entityId },
     });
   }
 
   return !exists;
 };
+// #endregion
+
+// #region [review]
+export async function toggleReview({
+  modelId,
+  userId,
+  modelVersionId,
+  setTo,
+}: {
+  modelId: number;
+  userId: number;
+  modelVersionId?: number;
+  setTo?: boolean;
+}) {
+  const review = await dbRead.resourceReview.findFirst({
+    where: { modelId, modelVersionId, userId },
+    select: { id: true, recommended: true },
+  });
+  setTo ??= review ? false : true;
+
+  if (setTo === false) {
+    await dbWrite.resourceReview.deleteMany({ where: { modelId, modelVersionId, userId } });
+    modelMetrics.queueUpdate(modelId);
+  } else {
+    if (review) {
+      if (setTo !== review.recommended) {
+        await dbWrite.resourceReview.update({
+          where: { id: review.id },
+          data: { recommended: setTo },
+        });
+      }
+    } else {
+      if (!modelVersionId) {
+        const latestVersion = await dbRead.modelVersion.findFirst({
+          where: { modelId, status: 'Published' },
+          orderBy: { index: 'asc' },
+          select: { id: true },
+        });
+        modelVersionId = latestVersion?.id;
+        if (!modelVersionId) throw throwNotFoundError('No published model versions found');
+      }
+
+      await dbWrite.resourceReview.create({
+        data: {
+          modelId,
+          modelVersionId,
+          userId,
+          recommended: setTo,
+          rating: setTo ? 5 : 1,
+        },
+      });
+    }
+  }
+
+  return setTo;
+}
 // #endregion
 
 //#region [bounty engagement]

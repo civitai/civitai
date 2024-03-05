@@ -3,7 +3,10 @@ import { paginationSchema } from '~/server/schema/base.schema';
 import { numericString, sanitizedNullableString } from '~/utils/zod-helpers';
 
 export type GetUserResourceReviewInput = z.infer<typeof getUserResourceReviewSchema>;
-export const getUserResourceReviewSchema = z.object({ modelVersionId: z.number() });
+export const getUserResourceReviewSchema = z.object({
+  modelId: z.number().optional(),
+  modelVersionId: z.number().optional(),
+});
 
 export type GetResourceReviewsInput = z.infer<typeof getResourceReviewsSchema>;
 export const getResourceReviewsSchema = z.object({

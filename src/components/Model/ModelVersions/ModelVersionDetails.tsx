@@ -25,6 +25,7 @@ import {
   IconLicense,
   IconMessageCircle2,
   IconShare3,
+  IconHeart,
 } from '@tabler/icons-react';
 import { TRPCClientErrorBase } from '@trpc/client';
 import { DefaultErrorShape } from '@trpc/server';
@@ -87,18 +88,16 @@ import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { Adunit } from '~/components/Ads/AdUnit';
 import { adsRegistry } from '~/components/Ads/adsRegistry';
-import {
-  EditUserResourceReviewV2,
-  UserResourceReviewComposite,
-} from '~/components/ResourceReview/EditUserResourceReview';
-import { ResourceReviewThumbActions } from '~/components/ResourceReview/ResourceReviewThumbActions';
 import { useLocalStorage } from '@mantine/hooks';
+import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
+import { useQueryUserResourceReview } from '~/components/ResourceReview/resourceReview.utils';
 
 export function ModelVersionDetails({
   model,
   version,
   user,
   onBrowseClick,
+  onFavoriteClick,
   hasAccess = true,
 }: Props) {
   const { connected: civitaiLinked } = useCivitaiLink();
@@ -139,6 +138,12 @@ export function ModelVersionDetails({
   const publishModelMutation = trpc.model.publish.useMutation();
   const requestReviewMutation = trpc.model.requestReview.useMutation();
   const requestVersionReviewMutation = trpc.modelVersion.requestReview.useMutation();
+
+  const { currentUserReview, loading: loadingUserReview } = useQueryUserResourceReview({
+    modelId: model.id,
+    modelVersionId: version.id,
+  });
+  const isFavorite = currentUserReview?.recommended;
 
   const handlePublishClick = async (publishDate?: Date) => {
     try {
@@ -231,6 +236,14 @@ export function ModelVersionDetails({
               </IconBadge>
             </GenerateButton>
           )}
+        </Group>
+      ),
+    },
+    {
+      label: 'Reviews',
+      value: (
+        <Group spacing={4}>
+          <Text>{version.rank?.thumbsUpCountAllTime?.toLocaleString() ?? 0}</Text>
         </Group>
       ),
     },
@@ -607,6 +620,19 @@ export function ModelVersionDetails({
                     </ShareButton>
                   </div>
                 </Tooltip>
+                <Tooltip label={isFavorite ? 'Unlike' : 'Like'} position="top" withArrow>
+                  <div>
+                    <LoginRedirect reason="favorite-model">
+                      <Button
+                        onClick={onFavoriteClick}
+                        color={isFavorite ? 'red' : 'gray'}
+                        sx={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
+                      >
+                        <IconHeart color="#fff" />
+                      </Button>
+                    </LoginRedirect>
+                  </div>
+                </Tooltip>
               </Group>
               {primaryFileDetails}
             </Stack>
@@ -648,44 +674,6 @@ export function ModelVersionDetails({
             files={version.files}
             baseModel={version.baseModel}
           />
-          {!model.locked && (
-            <UserResourceReviewComposite
-              modelId={model.id}
-              modelVersionId={version.id}
-              modelName={model.name}
-            >
-              {({ modelId, modelVersionId, modelName, userReview }) => (
-                <Card p="sm" withBorder>
-                  <Stack spacing={8}>
-                    <Group spacing={8} position="apart">
-                      <Text size="md">Reviews</Text>
-                      <Anchor
-                        component={NextLink}
-                        href={`/models/${modelId}/reviews?modelVersionId=${modelVersionId}`}
-                        size="sm"
-                      >
-                        See All Reviews
-                      </Anchor>
-                    </Group>
-                    <ResourceReviewThumbActions
-                      modelId={modelId}
-                      modelVersionId={modelVersionId}
-                      userReview={userReview}
-                    />
-                  </Stack>
-                  {userReview && (
-                    <Card.Section py="sm" mt="sm" inheritPadding withBorder>
-                      <EditUserResourceReviewV2
-                        modelVersionId={modelVersionId}
-                        modelName={modelName}
-                        userReview={userReview}
-                      />
-                    </Card.Section>
-                  )}
-                </Card>
-              )}
-            </UserResourceReviewComposite>
-          )}
           <Accordion
             variant="separated"
             multiple
@@ -997,6 +985,7 @@ type Props = {
   model: ModelById;
   user?: SessionUser | null;
   onBrowseClick?: VoidFunction;
+  onFavoriteClick?: VoidFunction;
   hasAccess?: boolean;
 };
 

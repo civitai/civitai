@@ -47,6 +47,7 @@ import {
   IconRadar2,
   IconBrush,
   IconRepeat,
+  IconHeart,
 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
 import { InferGetServerSidePropsType } from 'next';
@@ -111,8 +112,8 @@ import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { HowToButton } from '~/components/Model/HowToUseModel/HowToUseModel';
 import { Adunit } from '~/components/Ads/AdUnit';
 import { adsRegistry } from '~/components/Ads/adsRegistry';
-import { ResourceReviewThumbBadge } from '~/components/ResourceReview/ResourceReviewThumbActions';
 import { ToggleModelNotification } from '~/components/Model/Actions/ToggleModelNotification';
+import { useToggleFavoriteMutation } from '~/components/ResourceReview/resourceReview.utils';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -197,6 +198,14 @@ export default function ModelDetailsV2({
   const modelVersionId = Number(
     (Array.isArray(rawVersionId) ? rawVersionId[0] : rawVersionId) ?? model?.modelVersions[0]?.id
   );
+
+  const { data: { Recommended: reviewedModels = [] } = { Recommended: [] } } =
+    trpc.user.getEngagedModels.useQuery(undefined, {
+      enabled: !!currentUser,
+      cacheTime: Infinity,
+      staleTime: Infinity,
+    });
+  const isFavorite = model && reviewedModels.includes(model.id);
 
   const isModerator = currentUser?.isModerator ?? false;
   const isCreator = model?.user.id === currentUser?.id;
@@ -376,6 +385,22 @@ export default function ModelDetailsV2({
     rescanModelMutation.mutate({ id });
   };
 
+  const favoriteMutation = useToggleFavoriteMutation();
+  const handleToggleFavorite = (wholeModel = false) => {
+    if (!model) return;
+    if (wholeModel === true && !selectedVersion) return;
+    console.log({
+      modelId: model.id,
+      modelVersionId: wholeModel === true ? undefined : selectedVersion!.id,
+      setTo: !isFavorite,
+    });
+    favoriteMutation.mutate({
+      modelId: model.id,
+      modelVersionId: wholeModel === true ? undefined : selectedVersion!.id,
+      setTo: !isFavorite,
+    });
+  };
+
   const handlePublishModel = () => {
     if (model && model.status === ModelStatus.Unpublished && isCreator)
       openConfirmModal({
@@ -521,6 +546,26 @@ export default function ModelDetailsV2({
                   <Title className={classes.title} order={1}>
                     {model?.name}
                   </Title>
+                  <LoginRedirect reason="favorite-model">
+                    <IconBadge
+                      radius="sm"
+                      color={isFavorite ? 'red' : 'gray'}
+                      size="lg"
+                      icon={
+                        <IconHeart
+                          size={18}
+                          color={isFavorite ? theme.colors.red[6] : undefined}
+                          style={{ fill: isFavorite ? theme.colors.red[6] : undefined }}
+                        />
+                      }
+                      sx={{ cursor: 'pointer' }}
+                      onClick={() => handleToggleFavorite(true)}
+                    >
+                      <Text className={classes.modelBadgeText}>
+                        {abbreviateNumber(model.rank?.thumbsUpCountAllTime ?? 0)}
+                      </Text>
+                    </IconBadge>
+                  </LoginRedirect>
                   <IconBadge radius="sm" size="lg" icon={<IconDownload size={18} />}>
                     <Text className={classes.modelBadgeText}>
                       {abbreviateNumber(model.rank?.downloadCountAllTime ?? 0)}
@@ -576,16 +621,6 @@ export default function ModelDetailsV2({
                       </Text>
                     </IconBadge>
                   </InteractiveTipBuzzButton>
-
-                  {!model.locked && (
-                    <ResourceReviewThumbBadge
-                      count={model.rank?.ratingCountAllTime}
-                      modelId={model.id}
-                      onClick={() =>
-                        gallerySectionRef.current?.scrollIntoView({ behavior: 'smooth' })
-                      }
-                    />
-                  )}
                   {inEarlyAccess && (
                     <IconBadge radius="sm" color="green" size="lg" icon={<IconClock size={18} />}>
                       Early Access
@@ -937,6 +972,7 @@ export default function ModelDetailsV2({
               model={model}
               version={selectedVersion}
               user={currentUser}
+              onFavoriteClick={handleToggleFavorite}
               onBrowseClick={() => {
                 gallerySectionRef.current?.scrollIntoView({ behavior: 'smooth' });
               }}
