@@ -975,7 +975,7 @@ export const getModelsWithImagesAndModelVersions = async ({
   user,
 }: {
   input: GetAllModelsOutput;
-  user?: { id: number; isModerator?: boolean; username?: string };
+  user?: SessionUser;
 }) => {
   input.limit = input.limit ?? 100;
   const take = input.limit + 1;
@@ -1007,7 +1007,9 @@ export const getModelsWithImagesAndModelVersions = async ({
         imagesPerVersion: 10,
         excludedTagIds: input.excludedTagIds,
         include: ['tags'],
-        currentUserId: user?.id,
+        user,
+        pending: input.pending,
+        browsingLevel: input.browsingLevel,
       })
     : [];
 

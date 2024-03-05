@@ -12,7 +12,7 @@ import {
   AspectRatio,
   Skeleton,
 } from '@mantine/core';
-import { Fragment, useMemo } from 'react';
+import { Fragment, useEffect, useMemo } from 'react';
 import {
   IconArrowRight,
   IconCategory,
@@ -141,16 +141,21 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
     return shuffle(collection.items);
   }, [collection?.items]);
 
+  const shuffledData = useMemo(() => shuffled.map((x) => x.data), [shuffled]);
+  useEffect(() => console.log('shuffledData'), [shuffledData]);
+
   // TODO - find a different way to return collections so that the type isn't set on the individual item
   const type = shuffled[0]?.type ?? 'model';
   const { loadingPreferences, items: filtered } = useApplyHiddenPreferences({
     type: `${type}s`,
-    data: shuffled.map((x) => x.data),
+    data: shuffledData,
   });
   const items = useMemo(() => {
     const itemsToShow = ITEMS_PER_ROW * rows;
     return filtered.slice(0, itemsToShow);
   }, [filtered, rows]);
+
+  // useEffect(() => console.log('items'), [items]);
 
   if (!metadata.link) metadata.link = `/collections/${collection?.id ?? metadata.collection?.id}`;
   const itemType = collection?.items?.[0]?.type || 'model';

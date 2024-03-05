@@ -95,6 +95,7 @@ export const useQueryBounties = (
   const { items: bounties, loadingPreferences } = useApplyHiddenPreferences({
     type: 'bounties',
     data: flatData,
+    isLoading: rest.isRefetching,
   });
 
   return { data, bounties, isLoading: isLoading || loadingPreferences, ...rest };

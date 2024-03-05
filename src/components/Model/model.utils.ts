@@ -122,6 +122,7 @@ export const useQueryModels = (
     type: 'models',
     data: flatData,
     showHidden: !!_filters.hidden,
+    isLoading: rest.isRefetching,
   });
 
   return { data, models: items, isLoading: isLoading || loadingPreferences, ...rest };

@@ -2,6 +2,7 @@ import { MetricTimeframe } from '@prisma/client';
 import { useMemo } from 'react';
 import { z } from 'zod';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
 
 import { useFiltersContext } from '~/providers/FiltersProvider';
@@ -54,7 +55,7 @@ export const useQueryArticles = (
 ) => {
   filters ??= {};
   const browsingLevel = useBrowsingLevelDebounced();
-  const { data, ...rest } = trpc.article.getInfinite.useInfiniteQuery(
+  const { data, isLoading, ...rest } = trpc.article.getInfinite.useInfiniteQuery(
     { ...filters, browsingLevel },
     {
       getNextPageParam: (lastPage) => lastPage.nextCursor,
@@ -63,7 +64,13 @@ export const useQueryArticles = (
     }
   );
 
-  const articles = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data]);
+  const flatData = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data]);
 
-  return { data, articles, ...rest };
+  const { items: articles, loadingPreferences } = useApplyHiddenPreferences({
+    type: 'articles',
+    data: flatData,
+    isLoading: rest.isRefetching,
+  });
+
+  return { data, articles, isLoading: isLoading || loadingPreferences, ...rest };
 };

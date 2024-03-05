@@ -1,4 +1,5 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useHiddenPreferencesContext } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Flags } from '~/shared/utils';
@@ -12,19 +13,21 @@ export function useApplyHiddenPreferences<
   data,
   showHidden,
   disabled,
+  isLoading,
 }: {
   type: T;
   data?: TData;
   showHidden?: boolean;
   disabled?: boolean;
+  isLoading?: boolean;
 }) {
   const currentUser = useCurrentUser();
   const isModerator = !!currentUser?.isModerator;
+  const [previous, setPrevious] = useState<any[]>([]);
+  const browsingLevel = useBrowsingLevelDebounced();
 
-  const {
-    hiddenPreferences: { hiddenModels, hiddenImages, hiddenTags, hiddenUsers, hiddenLoading },
-    browsingLevel,
-  } = useHiddenPreferencesContext();
+  const { hiddenModels, hiddenImages, hiddenTags, hiddenUsers, hiddenLoading } =
+    useHiddenPreferencesContext();
 
   const items = useMemo(
     () => {
@@ -51,8 +54,8 @@ export function useApplyHiddenPreferences<
                   images?.filter((i) => {
                     const userId = i.userId;
                     const isOwner = userId && userId === currentUser?.id;
-                    // if ((isOwner || isModerator) && i.nsfwLevel === 0) return true;
-                    // if (!Flags.intersects(i.nsfwLevel, browsingLevel)) return false;
+                    if ((isOwner || isModerator) && i.nsfwLevel === 0) return true;
+                    if (!Flags.intersects(i.nsfwLevel, browsingLevel)) return false;
                     if (hiddenImages.get(i.id)) return false;
                     for (const tag of i.tags ?? []) if (hiddenTags.get(tag)) return false;
                     return true;
@@ -211,10 +214,17 @@ export function useApplyHiddenPreferences<
     ]
   );
 
+  useEffect(() => setPrevious(items), [data]);
+  // const _items = useMemo(
+  //   () => (isLoading ? previous : items) as TData,
+  //   [isLoading, items, previous]
+  // );
+  const hiddenCount = !!data?.length ? data.length - items.length : 0;
+
   return {
     loadingPreferences: hiddenLoading,
-    items: items as TData,
-    hiddenCount: !!data?.length ? data.length - items.length : 0,
+    items: (isLoading ? previous : items) as TData,
+    hiddenCount,
   };
 }
 

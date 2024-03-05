@@ -487,7 +487,9 @@ export const getModelsWithVersionsHandler = async ({
       excludedTagIds: input.excludedTagIds,
       excludedIds: input.excludedImageIds,
       excludedUserIds: input.excludedUserIds,
-      currentUserId: ctx.user?.id,
+      user: ctx.user,
+      browsingLevel: input.browsingLevel,
+      pending: input.pending,
     });
 
     const vaeIds = rawResults.items
@@ -1159,7 +1161,9 @@ export const getAssociatedResourcesCardDataHandler = async ({
           excludedTagIds: modelInput.excludedTagIds,
           excludedIds: input.excludedImageIds,
           excludedUserIds: modelInput.excludedUserIds,
-          currentUserId: user?.id,
+          user,
+          pending: modelInput.pending,
+          browsingLevel: modelInput.browsingLevel,
         })
       : [];
 

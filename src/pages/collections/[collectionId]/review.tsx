@@ -55,10 +55,7 @@ import { CollectionReviewSort } from '~/server/common/enums';
 import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
 import { truncate } from 'lodash-es';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
-import {
-  useBrowsingLevel,
-  useBrowsingLevelDebounced,
-} from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 
 type StoreState = {
   selected: Record<number, boolean>;

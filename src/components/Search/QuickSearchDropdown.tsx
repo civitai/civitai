@@ -184,7 +184,10 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
   const indexName = results?.index
     ? reverseSearchIndexMap[results.index as ReverseSearchIndexKey]
     : indexNameProp;
-  const { key, value } = paired<SearchIndexDataMap>(indexName, hits as SearchIndexDataMap[TIndex]);
+  const { key, value } = useMemo(
+    () => paired<SearchIndexDataMap>(indexName, hits as SearchIndexDataMap[TIndex]),
+    [indexName, hits]
+  );
   const { items: filtered } = useApplyHiddenPreferences({
     type: key,
     data: value,

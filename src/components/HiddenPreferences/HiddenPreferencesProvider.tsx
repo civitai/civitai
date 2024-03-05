@@ -1,20 +1,13 @@
 import { useContext, createContext, ReactNode, useMemo, useDeferredValue } from 'react';
-import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
-
 import { useQueryHiddenPreferences } from '~/hooks/hidden-preferences';
-import { NsfwLevel } from '~/server/common/enums';
-import { Flags } from '~/shared/utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 type HiddenPreferencesState = {
-  hiddenPreferences: {
-    hiddenUsers: Map<number, boolean>;
-    hiddenTags: Map<number, boolean>;
-    hiddenModels: Map<number, boolean>;
-    hiddenImages: Map<number, boolean>;
-    hiddenLoading: boolean;
-  };
-  browsingLevel: number;
+  hiddenUsers: Map<number, boolean>;
+  hiddenTags: Map<number, boolean>;
+  hiddenModels: Map<number, boolean>;
+  hiddenImages: Map<number, boolean>;
+  hiddenLoading: boolean;
 };
 
 const HiddenPreferencesContext = createContext<HiddenPreferencesState | null>(null);
@@ -25,17 +18,7 @@ export const useHiddenPreferencesContext = () => {
   return context;
 };
 
-export const HiddenPreferencesProvider = ({
-  children,
-  browsingLevel: browsingLevelOverride,
-}: {
-  children: ReactNode;
-  browsingLevel?: NsfwLevel[];
-}) => {
-  const browsingLevelGlobal = useBrowsingLevelDebounced();
-  const browsingLevel = browsingLevelOverride?.length
-    ? Flags.arrayToInstance(browsingLevelOverride)
-    : browsingLevelGlobal;
+export const HiddenPreferencesProvider = ({ children }: { children: ReactNode }) => {
   const { data, isLoading } = useQueryHiddenPreferences();
   const currentUser = useCurrentUser();
   const disableHidden = currentUser?.disableHidden;
@@ -61,7 +44,7 @@ export const HiddenPreferencesProvider = ({
   const hiddenDeferred = useDeferredValue(hidden);
 
   return (
-    <HiddenPreferencesContext.Provider value={{ hiddenPreferences: hiddenDeferred, browsingLevel }}>
+    <HiddenPreferencesContext.Provider value={hiddenDeferred}>
       {children}
     </HiddenPreferencesContext.Provider>
   );

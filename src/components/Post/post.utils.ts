@@ -56,6 +56,7 @@ export const useQueryPosts = (
   const { items: posts, loadingPreferences } = useApplyHiddenPreferences({
     type: 'posts',
     data: flatData,
+    isLoading: rest.isRefetching,
   });
   return { data, posts, isLoading: isLoading || loadingPreferences, ...rest };
 };

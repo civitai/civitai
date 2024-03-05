@@ -169,10 +169,10 @@ export const getArticles = async ({
 
     if (pending) {
       if (isModerator) {
-        AND.push(Prisma.sql`((a."nsfwLevel" & ${browsingLevel}) != 0 OR a."nsfwLevel" === 0)`);
+        AND.push(Prisma.sql`((a."nsfwLevel" & ${browsingLevel}) != 0 OR a."nsfwLevel" = 0)`);
       } else if (userId) {
         AND.push(
-          Prisma.sql`((a."nsfwLevel" & ${browsingLevel}) != 0 OR (a."nsfwLevel" === 0 AND a."userId" = ${userId}))`
+          Prisma.sql`((a."nsfwLevel" & ${browsingLevel}) != 0 OR (a."nsfwLevel" = 0 AND a."userId" = ${userId}))`
         );
       }
     } else {

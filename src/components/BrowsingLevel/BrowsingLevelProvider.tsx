@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import {
   BrowsingLevel,
   getIsPublicBrowsingLevel,
@@ -118,12 +118,32 @@ export function BrowsingModeProvider({ children }: { children: React.ReactNode }
   return <BrowsingModeCtx.Provider value={store}>{children}</BrowsingModeCtx.Provider>;
 }
 
+const BrowsingModeOverrideCtx = createContext<{ browsingLevelOverride?: number }>({});
+const useBrowsingModeOverrideContext = () => useContext(BrowsingModeOverrideCtx);
+export function BrowsingModeOverrideProvider({
+  children,
+  browsingLevel,
+}: {
+  children: React.ReactNode;
+  browsingLevel?: number;
+}) {
+  const overrides = useMemo(() => ({ browsingLevelOverride: browsingLevel }), [browsingLevel]);
+
+  return (
+    <BrowsingModeOverrideCtx.Provider value={overrides}>
+      {children}
+    </BrowsingModeOverrideCtx.Provider>
+  );
+}
+
 /** returns the user selected browsing level or the system default browsing level */
-export function useBrowsingLevel() {
+function useBrowsingLevel() {
   const { data } = useSession();
   const currentUser = data?.user;
+  const { browsingLevelOverride } = useBrowsingModeOverrideContext();
   const { useStore } = useBrowsingModeContext();
   const browsingLevel = useStore((x) => x.browsingLevel);
+  if (browsingLevelOverride) return browsingLevelOverride;
   if (!currentUser) return publicBrowsingLevelsFlag;
   return !browsingLevel ? publicBrowsingLevelsFlag : browsingLevel;
 }

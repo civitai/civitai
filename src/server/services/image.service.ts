@@ -84,7 +84,7 @@ export const deleteImageById = async ({ id }: GetByIdInput) => {
   try {
     const image = await dbRead.image.findUnique({
       where: { id },
-      select: { url: true, postId: true, nsfw: true, userId: true },
+      select: { url: true, postId: true, nsfwLevel: true, userId: true },
     });
     if (!image) return;
 
@@ -1220,20 +1220,27 @@ export const getImagesForModelVersion = async ({
   excludedTagIds,
   excludedIds,
   excludedUserIds,
-  currentUserId,
   imagesPerVersion = 1,
   include = [],
+  user,
+  pending,
+  browsingLevel,
 }: {
   modelVersionIds: number | number[];
   excludedTagIds?: number[];
   excludedIds?: number[];
   excludedUserIds?: number[];
-  currentUserId?: number;
   imagesPerVersion?: number;
   include?: Array<'meta' | 'tags'>;
+  user?: SessionUser;
+  pending?: boolean;
+  browsingLevel?: number;
 }) => {
   if (!Array.isArray(modelVersionIds)) modelVersionIds = [modelVersionIds];
   if (!modelVersionIds.length) return [] as ImagesForModelVersions[];
+
+  const userId = user?.id;
+  const isModerator = user?.isModerator ?? false;
 
   const imageWhere: Prisma.Sql[] = [
     // Use this to return models that are live on the site, and have images, but are now owned by Civitai.
@@ -1262,7 +1269,7 @@ export const getImagesForModelVersion = async ({
         ' AND '
       ),
     ];
-    if (currentUserId) excludedTagsOr.push(Prisma.sql`i."userId" = ${currentUserId}`);
+    if (userId) excludedTagsOr.push(Prisma.sql`i."userId" = ${userId}`);
     imageWhere.push(Prisma.sql`(${Prisma.join(excludedTagsOr, ' OR ')})`);
   }
   if (!!excludedIds?.length) {
@@ -1270,6 +1277,21 @@ export const getImagesForModelVersion = async ({
   }
   if (!!excludedUserIds?.length) {
     imageWhere.push(Prisma.sql`i."userId" NOT IN (${Prisma.join(excludedUserIds)})`);
+  }
+
+  if (pending) {
+    if (isModerator && browsingLevel) {
+      imageWhere.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`);
+    } else if (userId) {
+      imageWhere.push(Prisma.sql`(i."needsReview" IS NULL OR i."userId" = ${userId})`);
+      if (browsingLevel)
+        imageWhere.push(
+          Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR (i."nsfwLevel" = 0 AND i."userId" = ${userId}))`
+        );
+    }
+  } else {
+    imageWhere.push(Prisma.sql`i."needsReview" IS NULL`);
+    if (browsingLevel) imageWhere.push(Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`);
   }
 
   const query = Prisma.sql`
@@ -1354,17 +1376,18 @@ export const getImagesForPosts = async ({
   // }
 
   if (pending) {
-    if (isModerator) {
+    if (isModerator && browsingLevel) {
       imageWhere.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`);
     } else if (userId) {
       imageWhere.push(Prisma.sql`(i."needsReview" IS NULL OR i."userId" = ${userId})`);
-      imageWhere.push(
-        Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR (i."nsfwLevel" = 0 AND i."userId" = ${userId}))`
-      );
+      if (browsingLevel)
+        imageWhere.push(
+          Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR (i."nsfwLevel" = 0 AND i."userId" = ${userId}))`
+        );
     }
   } else {
     imageWhere.push(Prisma.sql`i."needsReview" IS NULL`);
-    imageWhere.push(Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`);
+    if (browsingLevel) imageWhere.push(Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`);
   }
 
   const images = await dbRead.$queryRaw<

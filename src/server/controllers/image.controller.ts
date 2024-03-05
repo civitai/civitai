@@ -34,9 +34,9 @@ import {
 import { BlockedReason, ImageSort } from '~/server/common/enums';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { hasEntityAccess } from '../services/common.service';
-import { isDefined } from '../../utils/type-guards';
 import { getGallerySettingsByModelId } from '~/server/services/model.service';
 import { Flags } from '~/shared/utils';
+import { getNsfwLeveLDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
 
 type SortableImage = {
   nsfw: NsfwLevel;
@@ -95,7 +95,7 @@ export const deleteImageHandler = async ({
       await ctx.track.image({
         type: 'Delete',
         imageId: input.id,
-        nsfw: image.nsfw,
+        nsfw: getNsfwLeveLDeprecatedReverseMapping(image.nsfwLevel),
         tags: imageTags.map((x) => x.tagName),
         ownerId: image.userId,
       });
@@ -124,7 +124,7 @@ export const setTosViolationHandler = async ({
     const image = await dbRead.image.findFirst({
       where: { id },
       select: {
-        nsfw: true,
+        nsfwLevel: true,
         tags: {
           select: {
             tag: {
@@ -182,7 +182,7 @@ export const setTosViolationHandler = async ({
     await ctx.track.image({
       type: 'DeleteTOS',
       imageId: id,
-      nsfw: image.nsfw,
+      nsfw: getNsfwLeveLDeprecatedReverseMapping(image.nsfwLevel),
       tags: image.tags.map((x) => x.tag.name),
       ownerId: image.userId,
     });

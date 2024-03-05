@@ -1,5 +1,4 @@
 import { Box, Button, Center, Group, Loader, Popover, Text, Title } from '@mantine/core';
-import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { trpc } from '~/utils/trpc';
 import { HomeBlockType, MetricTimeframe } from '@prisma/client';
 import { CollectionHomeBlock } from '~/components/HomeBlocks/CollectionHomeBlock';
@@ -15,24 +14,16 @@ import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { ImageSort, ModelSort } from '~/server/common/enums';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import Link from 'next/link';
-import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { SocialHomeBlock } from '~/components/HomeBlocks/SocialHomeBlock';
 import { Meta } from '~/components/Meta/Meta';
 import { env } from '~/env/client.mjs';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { EventHomeBlock } from '~/components/HomeBlocks/EventHomeBlock';
-import { HiddenPreferencesProvider } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import { Adunit } from '~/components/Ads/AdUnit';
 import { adsRegistry } from '~/components/Ads/adsRegistry';
-import { publicBrowsingLevelsArray } from '~/shared/constants/browsingLevel.constants';
-
-export const getServerSideProps = createServerSideProps({
-  resolver: async () => {
-    // TODO.homepage: always return 404 not found until we migrate new homepage to index
-    return { notFound: true };
-  },
-});
+import { homePageBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { BrowsingModeOverrideProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 
 export default function Home() {
   const { data: homeBlocks = [], isLoading } = trpc.homeBlock.getHomeBlocks.useQuery();
@@ -42,10 +33,6 @@ export default function Home() {
   const [displayModelsInfiniteFeed, setDisplayModelsInfiniteFeed] = useState(false);
   const { ref, inView } = useInView();
 
-  const moderatedTagIds = useHiddenPreferencesData()
-    .hiddenTags.filter((x) => x.nsfwLevel !== undefined)
-    .map((x) => x.id);
-
   useEffect(() => {
     if (inView && !displayModelsInfiniteFeed) {
       setDisplayModelsInfiniteFeed(true);
@@ -53,7 +40,7 @@ export default function Home() {
   }, [inView, displayModelsInfiniteFeed, setDisplayModelsInfiniteFeed]);
 
   return (
-    <HiddenPreferencesProvider browsingLevel={publicBrowsingLevelsArray}>
+    <BrowsingModeOverrideProvider browsingLevel={homePageBrowsingLevelsFlag}>
       <Meta
         title="Civitai: The Home of Open-Source Generative AI"
         description="Explore thousands of high-quality Stable Diffusion models, share your AI-generated art, and engage with a vibrant community of creators"
@@ -249,13 +236,10 @@ export default function Home() {
                     <ModelsInfinite
                       showAds
                       filters={{
-                        excludedImageTagIds: [
-                          ...homeExcludedTags.map((tag) => tag.id),
-                          ...moderatedTagIds,
-                        ],
+                        excludedImageTagIds: [...homeExcludedTags.map((tag) => tag.id)],
                         excludedTagIds: homeExcludedTags.map((tag) => tag.id),
                         // Required to override localStorage filters
-                        period: MetricTimeframe.Week,
+                        period: MetricTimeframe.AllTime,
                         sort: ModelSort.HighestRated,
                         types: undefined,
                         collectionId: undefined,
@@ -272,6 +256,6 @@ export default function Home() {
           )}
         </Box>
       </MasonryProvider>
-    </HiddenPreferencesProvider>
+    </BrowsingModeOverrideProvider>
   );
 }

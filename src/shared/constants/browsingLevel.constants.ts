@@ -41,7 +41,8 @@ export const browsingLevelDescriptions = {
 export const publicBrowsingLevelsArray: BrowsingLevel[] = [NsfwLevel.PG];
 export const publicBrowsingLevelsFlag = flagifyBrowsingLevel(publicBrowsingLevelsArray);
 
-export const homePageBrowsingLevelsFlag = flagifyBrowsingLevel([NsfwLevel.PG, NsfwLevel.PG13]);
+export const homePageBrowsingLevelsArray: BrowsingLevel[] = [NsfwLevel.PG, NsfwLevel.PG13];
+export const homePageBrowsingLevelsFlag = flagifyBrowsingLevel(homePageBrowsingLevelsArray);
 
 // nsfw browsing levels
 export const nsfwBrowsingLevelsArray: BrowsingLevel[] = [NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX];
@@ -80,11 +81,15 @@ export const nsfwLevelMapDeprecated = {
   X: flagifyBrowsingLevel([NsfwLevel.X, NsfwLevel.XXX]),
   Blocked: NsfwLevel.Blocked,
 };
-export const nsfwLevelReverseMapDeprecated = {
+const nsfwLevelReverseMapDeprecated = {
   [NsfwLevel.PG]: NsfwLevelDeprecated.None,
   [NsfwLevel.PG13]: NsfwLevelDeprecated.Soft,
   [NsfwLevel.R]: NsfwLevelDeprecated.Mature,
   [NsfwLevel.X]: NsfwLevelDeprecated.X,
   [NsfwLevel.XXX]: NsfwLevelDeprecated.X,
   [NsfwLevel.Blocked]: NsfwLevelDeprecated.Blocked,
+};
+
+export const getNsfwLeveLDeprecatedReverseMapping = (level: number) => {
+  return nsfwLevelReverseMapDeprecated[level as NsfwLevel] ?? NsfwLevelDeprecated.None;
 };
