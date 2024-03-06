@@ -20,6 +20,7 @@ import {
   Textarea,
   TextInput,
   Title,
+  Tooltip,
   useMantineTheme,
 } from '@mantine/core';
 import { FileWithPath } from '@mantine/dropzone';
@@ -45,6 +46,7 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import { goBack, goNext } from '~/components/Resource/Forms/Training/TrainingCommon';
 import { TrainingEditTagsModal } from '~/components/Resource/Forms/Training/TrainingEditTagsModal';
+import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import { UploadType } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE, ZIP_MIME_TYPE } from '~/server/common/mime-types';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
@@ -143,6 +145,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
   const { classes, cx } = useStyles();
   const queryUtils = trpc.useUtils();
   const { upload, getStatus: getUploadStatus } = useS3UploadStore();
+  const { connected } = useSignalContext();
 
   const thisModelVersion = model.modelVersions[0];
   const existingDataFile = thisModelVersion.files[0];
@@ -673,31 +676,45 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                   {`${totalCaptioned} / ${imageList.length} captioned`}
                 </Text>
               </Paper>
-              <Button
-                compact
-                disabled={autoCaptioning.isRunning}
-                onClick={() =>
-                  dialogStore.trigger({
-                    component: AutoTagModal,
-                    props: {
-                      imageList,
-                      modelId: model.id,
-                      setAutoCaptioning,
-                    },
-                  })
-                }
+              <Tooltip
+                label="Not connected - will not receive updates. Please try refreshing the page."
+                disabled={connected}
               >
-                <IconTags size={16} />
-                <Text inline ml={4}>
-                  Auto Tag
-                </Text>
-              </Button>
-              {/*perhaps open a modal here to confirm*/}
+                <Button
+                  compact
+                  disabled={autoCaptioning.isRunning || !connected}
+                  style={!connected ? { pointerEvents: 'initial' } : undefined}
+                  onClick={() =>
+                    dialogStore.trigger({
+                      component: AutoTagModal,
+                      props: {
+                        imageList,
+                        modelId: model.id,
+                        setAutoCaptioning,
+                      },
+                    })
+                  }
+                >
+                  <IconTags size={16} />
+                  <Text inline ml={4}>
+                    Auto Tag
+                  </Text>
+                </Button>
+              </Tooltip>
+
               <Button
                 compact
                 color="red"
                 disabled={autoCaptioning.isRunning}
-                onClick={() => setImageList(model.id, [])}
+                onClick={() => {
+                  openConfirmModal({
+                    title: 'Remove all images?',
+                    children: 'This cannot be undone.',
+                    labels: { cancel: 'Cancel', confirm: 'Confirm' },
+                    centered: true,
+                    onConfirm: () => setImageList(model.id, []),
+                  });
+                }}
               >
                 <IconTrash size={16} />
                 <Text inline ml={4}>
@@ -925,6 +942,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                         color="red"
                         variant="filled"
                         size="md"
+                        disabled={autoCaptioning.isRunning}
                         onClick={() => {
                           const newLen = imageList.length - 1;
                           setImageList(
