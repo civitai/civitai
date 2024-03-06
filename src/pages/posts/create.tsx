@@ -34,22 +34,40 @@ import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { ResourceReviewThumbActions } from '~/components/ResourceReview/ResourceReviewThumbActions';
+import { z } from 'zod';
+import { booleanString } from '~/utils/zod-helpers';
+
+const querySchema = z.object({
+  modelId: z.coerce.number().optional(),
+  modelVersionId: z.coerce.number().optional(),
+  tag: z.coerce.number().optional(),
+  video: booleanString().optional(),
+  returnUrl: z.string().optional(),
+  clubId: z.coerce.number().optional(),
+  reviewing: booleanString().optional(),
+});
 
 export default function PostCreate() {
   const currentUser = useCurrentUser();
   const router = useRouter();
-  const tagId = router.query.tag ? Number(router.query.tag) : undefined;
-  const modelId = router.query.modelId ? Number(router.query.modelId) : undefined;
-  const modelVersionId = router.query.modelVersionId
-    ? Number(router.query.modelVersionId)
-    : undefined;
-  const clubId = router.query.clubId ? Number(router.query.clubId) : undefined;
-  const postingVideo = router.query.video != null;
-
-  const reviewing = router.query.reviewing ? router.query.reviewing === 'true' : undefined;
+  const parsed = querySchema.safeParse(router.query);
+  const tagId = parsed.success ? parsed.data.tag : undefined;
+  const modelId = parsed.success ? parsed.data.modelId : undefined;
+  const modelVersionId = parsed.success ? parsed.data.modelVersionId : undefined;
+  const clubId = parsed.success ? parsed.data.clubId : undefined;
+  const postingVideo = parsed.success ? parsed.data.video : false;
+  const reviewing = parsed.success ? parsed.data.reviewing : false;
+  const returnUrl = parsed.success ? parsed.data.returnUrl : undefined;
   const isMuted = currentUser?.muted ?? false;
   const displayReview = !isMuted && !!reviewing && !!modelVersionId && !!modelId;
   const reviewEditRef = useRef<ReviewEditCommandsRef | null>(null);
+
+  if (!parsed.success) {
+    showErrorNotification({
+      title: 'Failed to parse query parameters',
+      error: new Error(parsed.error.issues.map((i) => i.path + '\n' + i.message).join('\n')),
+    });
+  }
 
   const reset = useEditPostContext((state) => state.reset);
   const images = useEditPostContext((state) => state.images);
@@ -94,7 +112,7 @@ export default function PostCreate() {
           const postId = response.id;
           queryUtils.post.getEdit.setData({ id: postId }, () => response);
           upload({ postId, modelVersionId: versionId }, files);
-          const returnUrl = router.query.returnUrl as string;
+
           let pathname = `/posts/${postId}/edit`;
           const queryParams: string[] = [];
           if (returnUrl) queryParams.push(`returnUrl=${returnUrl}`);

@@ -1,16 +1,16 @@
 import {
+  ActionIcon,
   Button,
   Card,
-  Center,
   Divider,
   Group,
-  Loader,
   Rating,
   Stack,
   Text,
   createStyles,
 } from '@mantine/core';
-import { IconChevronDown } from '@tabler/icons-react';
+import { IconChevronDown, IconPhotoPlus, IconSend } from '@tabler/icons-react';
+import { useRouter } from 'next/router';
 import { useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { z } from 'zod';
 
@@ -21,7 +21,7 @@ import {
   useUpdateResourceReview,
 } from '~/components/ResourceReview/resourceReview.utils';
 import { EditorCommandsRef } from '~/components/RichTextEditor/RichTextEditor';
-import { Form, InputRTE, useForm } from '~/libs/form';
+import { Form, InputRTE, InputTextArea, useForm } from '~/libs/form';
 import {
   ResourceReviewModel,
   ResourceReviewSimpleModel,
@@ -222,7 +222,6 @@ export function EditUserResourceReviewV2({
 }: PropsV2) {
   const { classes, cx } = useStyles();
   const [opened, setOpened] = useState(initialOpened);
-  const [error, setError] = useState<string | null>(null);
 
   const { loading: loadingUserReview } = useQueryUserResourceReview({ modelVersionId });
 
@@ -233,9 +232,7 @@ export function EditUserResourceReviewV2({
 
   const updateMutation = useUpdateResourceReview();
   const updateReview = ({ rating, details }: { rating?: number; details?: string }) => {
-    if (!userReview) return setError('Please select a rating');
-
-    setError(null);
+    if (!userReview) return;
     updateMutation.mutate(
       { id: userReview.id, rating, details },
       {
@@ -288,24 +285,17 @@ export function EditUserResourceReviewV2({
       {opened && (
         <Form form={form} onSubmit={handleSubmit}>
           <Stack spacing="xs">
-            <InputRTE
+            <InputTextArea
               name="details"
-              includeControls={['formatting', 'link']}
-              editorSize="lg"
               placeholder={
                 modelName
                   ? `What did you think of ${modelName ?? 'this resource'}?`
-                  : 'Tell us more about your experience with this resource'
+                  : 'Tell us more about why? What was it good at? Where did it struggle?'
               }
-              styles={{ content: { maxHeight: 500, overflowY: 'auto' } }}
+              maxRows={5}
               autoFocus={autoFocus}
-              hideToolbar
+              autosize
             />
-            {error && (
-              <Text color="red" mt={-5} size="xs">
-                {error}
-              </Text>
-            )}
             <Group grow spacing="xs">
               <Button size="xs" variant="default" onClick={handleCancel}>
                 Cancel
@@ -323,6 +313,87 @@ export function EditUserResourceReviewV2({
         </Form>
       )}
     </Stack>
+  );
+}
+
+export function EditUserResourceReviewLight({
+  modelVersionId,
+  modelId,
+  userReview,
+}: Pick<PropsV2, 'modelVersionId' | 'userReview'> & { modelId: number }) {
+  const router = useRouter();
+  const { loading: loadingUserReview } = useQueryUserResourceReview({ modelVersionId });
+
+  const form = useForm({
+    schema,
+    defaultValues: { details: userReview?.details ?? '' },
+  });
+
+  const updateMutation = useUpdateResourceReview();
+  const updateReview = ({ details }: { details?: string }) => {
+    if (!userReview) return;
+
+    return updateMutation.mutateAsync(
+      { id: userReview.id, details },
+      {
+        onSuccess: (_, payload) => {
+          if (payload.details) {
+            form.reset({ details: payload.details as string });
+          }
+        },
+      }
+    );
+  };
+
+  const handlePostClick = ({ details }: z.infer<typeof schema>) => updateReview({ details });
+  const handleImageUploadClick = async () => {
+    await form.handleSubmit(handlePostClick)();
+    await router.push(
+      `/posts/create?reviewing=true&modelId=${modelId}&modelVersionId=${modelVersionId}`
+    );
+  };
+
+  useEffect(() => {
+    form.reset({ details: userReview?.details ?? '' });
+  }, [userReview?.details]); // eslint-disable-line
+
+  const { isDirty } = form.formState;
+
+  return (
+    <Form form={form} onSubmit={handlePostClick}>
+      <Group spacing={0} align="flex-end" noWrap>
+        <InputTextArea
+          name="details"
+          variant="unstyled"
+          placeholder="Tell us more about why? What was it good at? Where did it struggle?"
+          maxRows={5}
+          minRows={2}
+          styles={{ root: { flex: 1 }, input: { padding: '0 2px !important' } }}
+          autoFocus
+          autosize
+        />
+        <Group spacing={8} noWrap>
+          <ActionIcon
+            size="lg"
+            variant="light"
+            disabled={updateMutation.isLoading}
+            onClick={handleImageUploadClick}
+          >
+            <IconPhotoPlus size={16} />
+          </ActionIcon>
+          <ActionIcon
+            variant="filled"
+            size="lg"
+            color="blue"
+            type="submit"
+            disabled={!isDirty}
+            loading={updateMutation.isLoading || loadingUserReview}
+          >
+            <IconSend size={16} />
+          </ActionIcon>
+        </Group>
+      </Group>
+    </Form>
   );
 }
 

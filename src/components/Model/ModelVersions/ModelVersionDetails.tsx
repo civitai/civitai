@@ -95,7 +95,7 @@ import { useQueryUserResourceReview } from '~/components/ResourceReview/resource
 import { ModelVersionReview } from '~/components/Model/ModelVersions/ModelVersionReview';
 import { useQueryModelVersionsEngagement } from '~/components/Model/ModelVersions/model-version.utils';
 import {
-  EditUserResourceReviewV2,
+  EditUserResourceReviewLight,
   UserResourceReviewComposite,
 } from '~/components/ResourceReview/EditUserResourceReview';
 import { ResourceReviewThumbActions } from '~/components/ResourceReview/ResourceReviewThumbActions';
@@ -745,11 +745,10 @@ export function ModelVersionDetails({
                   </Stack>
                   {userReview && !userReview.details && (
                     <Card.Section py="sm" mt="sm" inheritPadding withBorder>
-                      <EditUserResourceReviewV2
+                      <EditUserResourceReviewLight
+                        modelId={modelId}
                         modelVersionId={modelVersionId}
                         userReview={userReview}
-                        showReviewedAt={false}
-                        opened
                       />
                     </Card.Section>
                   )}

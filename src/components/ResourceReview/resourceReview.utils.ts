@@ -158,7 +158,7 @@ export const useUpdateResourceReview = () => {
       queryUtils.model.getById.setData({ id: modelId }, (old) => {
         if (!old) return;
 
-        if (request.recommended) {
+        if (request.recommended === true) {
           old.rank.thumbsUpCountAllTime += 1;
           old.rank.collectedCountAllTime += 1;
           if (old.rank.thumbsDownCountAllTime > 0) old.rank.thumbsDownCountAllTime -= 1;
@@ -173,7 +173,7 @@ export const useUpdateResourceReview = () => {
               return version;
             });
           }
-        } else {
+        } else if (request.recommended === false) {
           old.rank.thumbsDownCountAllTime += 1;
           if (old.rank.thumbsUpCountAllTime > 0) old.rank.thumbsUpCountAllTime -= 1;
 
