@@ -281,6 +281,13 @@ export const constants = {
     coverImageWidth: 180,
   },
   supportedBaseModelAddendums: ['SD 1.5', 'SDXL 1.0'],
+  vault: {
+    keys: {
+      details: ':modelVersionId/:userId/details.pdf',
+      images: ':modelVersionId/:userId/images.zip',
+      cover: ':modelVersionId/:userId/cover.jpg',
+    },
+  },
 } as const;
 
 export const zipModelFileTypes: ModelFileFormat[] = ['Core ML', 'Diffusers', 'ONNX'];

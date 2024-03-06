@@ -137,6 +137,7 @@ export const serverSchema = z.object({
   PAYPAL_SECRET: z.string().optional(),
   PAYPAL_CLIENT_ID: z.string().optional(),
   MEDIA_TAGGER_ENDPOINT: z.string().url().optional(),
+  S3_VAULT_BUCKET: z.string().optional(),
 });
 
 /**

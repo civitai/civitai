@@ -1,0 +1,147 @@
+import { NextApiRequest, NextApiResponse } from 'next';
+import requestIp from 'request-ip';
+import { z } from 'zod';
+
+import { clickhouse, Tracker } from '~/server/clickhouse/client';
+import { constants } from '~/server/common/constants';
+import { dbRead, dbWrite } from '~/server/db/client';
+import { playfab } from '~/server/playfab/client';
+import { REDIS_KEYS } from '~/server/redis/client';
+import { getFileForModelVersion } from '~/server/services/file.service';
+import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
+import { createLimiter, RateLimitedEndpoint } from '~/server/utils/rate-limiting';
+import { isRequestFromBrowser } from '~/server/utils/request-helpers';
+import { getJoinLink } from '~/utils/join-helpers';
+import { getLoginLink } from '~/utils/login-helpers';
+
+const schema = z.object({
+  type: z.enum(['model', 'images', 'details']),
+});
+
+export default RateLimitedEndpoint(
+  async function downloadModel(req: NextApiRequest, res: NextApiResponse) {
+    const isBrowser = isRequestFromBrowser(req);
+    function errorResponse(status: number, message: string) {
+      res.status(status);
+      if (isBrowser) return res.send(message);
+      return res.json({ error: message });
+    }
+
+    // Get ip so that we can block exploits we catch
+    const ip = requestIp.getClientIp(req);
+    const ipBlacklist = (
+      ((await dbRead.keyValue.findUnique({ where: { key: 'ip-blacklist' } }))?.value as string) ??
+      ''
+    ).split(',');
+    if (ip && ipBlacklist.includes(ip)) return errorResponse(403, 'Forbidden');
+
+    // Check if user is blacklisted
+    const session = await getServerAuthSession({ req, res });
+    if (!!session?.user) {
+      const userBlacklist = (
+        ((await dbRead.keyValue.findUnique({ where: { key: 'user-blacklist' } }))
+          ?.value as string) ?? ''
+      ).split(',');
+      if (userBlacklist.includes(session.user.id.toString()))
+        return errorResponse(403, 'Forbidden');
+    }
+
+    // Check if user has a concerning number of downloads
+    const isAuthed = !!session?.user;
+    const userKey = session?.user?.id?.toString() ?? ip;
+    if (!userKey) return errorResponse(403, 'Forbidden');
+    const fallbackKey = isAuthed ? 'authed' : 'anon';
+    if (await downloadLimiter.hasExceededLimit(userKey, fallbackKey)) {
+      return errorResponse(
+        429,
+        `We've noticed an unusual amount of downloading from your account. Contact support@civitai.com or come back later.`
+      );
+    }
+
+    // Validate query params
+    const queryResults = schema.safeParse(req.query);
+    if (!queryResults.success)
+      return res
+        .status(400)
+        .json({ error: `Invalid id: ${queryResults.error.flatten().fieldErrors.modelVersionId}` });
+    const input = queryResults.data;
+    const modelVersionId = input.modelVersionId;
+    if (!modelVersionId) return errorResponse(400, 'Missing modelVersionId');
+
+    // Get file
+    const fileResult = await getFileForModelVersion({
+      ...input,
+      user: session?.user,
+    });
+
+    if (fileResult.status === 'not-found') return errorResponse(404, 'File not found');
+    if (fileResult.status === 'archived')
+      return errorResponse(410, 'Model archived, not available for download');
+    if (fileResult.status === 'early-access') {
+      if (!isBrowser)
+        return res.status(403).json({
+          error: 'Early Access',
+          deadline: fileResult.details.deadline,
+          message: 'This asset is in Early Access and you need to be a member to download it',
+        });
+      else
+        return res.redirect(
+          getJoinLink({ reason: 'early-access', returnUrl: `/model-versions/${modelVersionId}` })
+        );
+    }
+    if (fileResult.status === 'unauthorized') {
+      if (!isBrowser)
+        return res.status(401).json({
+          error: 'Unauthorized',
+          message: 'The creator of this asset requires you to be logged in to download it',
+        });
+      else
+        return res.redirect(
+          getLoginLink({ reason: 'download-auth', returnUrl: `/model-versions/${modelVersionId}` })
+        );
+    }
+    if (fileResult.status !== 'success') return errorResponse(500, 'Error getting file');
+
+    // Track download
+    try {
+      const now = new Date();
+
+      const tracker = new Tracker(req, res);
+      await tracker.modelVersionEvent({
+        type: 'Download',
+        modelId: fileResult.modelId,
+        modelVersionId,
+        nsfw: fileResult.nsfw,
+        earlyAccess: fileResult.inEarlyAccess,
+        time: now,
+      });
+
+      const userId = session?.user?.id;
+      if (userId) {
+        await dbWrite.$executeRaw`
+          -- Update user history
+          INSERT INTO "DownloadHistory" ("userId", "modelVersionId", "downloadAt", hidden)
+          VALUES (${userId}, ${modelVersionId}, ${now}, false)
+          ON CONFLICT ("userId", "modelVersionId") DO UPDATE SET "downloadAt" = excluded."downloadAt"
+        `;
+
+        await playfab.trackEvent(userId, {
+          eventName: 'user_download_model',
+          modelId: fileResult.modelId,
+          modelVersionId,
+        });
+      }
+
+      // Increment download count for user
+      await downloadLimiter.increment(userKey);
+    } catch (error) {
+      // Don't return error to user
+      console.error(error);
+    }
+
+    // Redirect to download url
+    res.redirect(fileResult.url);
+  },
+  ['GET'],
+  'download'
+);
