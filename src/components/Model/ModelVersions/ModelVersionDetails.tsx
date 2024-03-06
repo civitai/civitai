@@ -27,6 +27,7 @@ import {
   IconMessageCircle2,
   IconShare3,
   IconHeart,
+  IconPhotoPlus,
 } from '@tabler/icons-react';
 import { TRPCClientErrorBase } from '@trpc/client';
 import { DefaultErrorShape } from '@trpc/server';
@@ -73,7 +74,7 @@ import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { unpublishReasons } from '~/server/common/moderation-helpers';
 import { getFileDisplayName, getPrimaryFile } from '~/server/utils/model-helpers';
 import { ModelById } from '~/types/router';
-import { formatDate } from '~/utils/date-helpers';
+import { formatDate, formatDateMin } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { formatKBytes } from '~/utils/number-helpers';
 import { getDisplayName, removeTags } from '~/utils/string-helpers';
@@ -719,7 +720,7 @@ export function ModelVersionDetails({
                         )}
                         {userReview ? (
                           <Text size="sm">
-                            You reviewed this on {formatDate(userReview.createdAt)}
+                            You reviewed this on {formatDateMin(userReview.createdAt, false)}
                           </Text>
                         ) : (
                           <Text size="sm">What did you think of this resource?</Text>
@@ -733,13 +734,24 @@ export function ModelVersionDetails({
                           size="xs"
                         />
                       ) : (
-                        <Button
-                          size="xs"
-                          variant="subtle"
-                          onClick={() => openContext('resourceReviewEdit', userReview)}
-                        >
-                          See Review
-                        </Button>
+                        <Group noWrap spacing={4}>
+                          <Button
+                            size="xs"
+                            color="gray"
+                            onClick={() => openContext('resourceReviewEdit', userReview)}
+                          >
+                            See Review
+                          </Button>
+                          <Button
+                            size="xs"
+                            color="gray"
+                            component={NextLink}
+                            px={7}
+                            href={`/posts/create?modelId=${modelId}&modelVersionId=${modelVersionId}`}
+                          >
+                            <IconPhotoPlus size={16} />
+                          </Button>
+                        </Group>
                       )}
                     </Group>
                   </Stack>
