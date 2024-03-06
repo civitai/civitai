@@ -163,8 +163,10 @@ export const createTrainingRequest = async ({
   if (userId && userId != modelVersion.userId) throw throwBadRequestError('Invalid user');
 
   const trainingParams = modelVersion.trainingDetails.params;
-  const baseModel = modelVersion.trainingDetails.baseModel;
   if (!trainingParams) throw throwBadRequestError('Missing training params');
+  const baseModel = modelVersion.trainingDetails.baseModel;
+  const samplePrompts = modelVersion.trainingDetails.samplePrompts;
+
   for (const [key, value] of Object.entries(trainingParams)) {
     const setting = trainingSettings.find((ts) => ts.name === key);
     if (!setting) continue;
@@ -230,6 +232,7 @@ export const createTrainingRequest = async ({
     retries: constants.maxTrainingRetries,
     params: {
       ...trainingParams,
+      samplePrompts: samplePrompts ?? ['', '', ''],
       modelFileId: modelVersion.fileId,
       loraName: modelVersion.modelName,
     },
@@ -313,7 +316,7 @@ export const autoTagHandler = async ({
   const payload: Orchestrator.Training.ImageAutoTagJobPayload = {
     mediaUrl: getUrl,
     modelId,
-    properties: { userId },
+    properties: { userId, modelId },
     retries: 0,
   };
 
