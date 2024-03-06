@@ -517,8 +517,12 @@ export async function getTopContributors({
 }
 
 export async function pingBuzzService() {
-  const response = await fetch(`${env.BUZZ_ENDPOINT}`);
-  return response.ok;
+  try {
+    const response = await fetch(`${env.BUZZ_ENDPOINT}`, { signal: AbortSignal.timeout(1000) });
+    return response.ok;
+  } catch {
+    return false;
+  }
 }
 
 export async function getTransactionByExternalId(externalId: string) {

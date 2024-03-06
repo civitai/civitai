@@ -136,6 +136,7 @@ export const serverSchema = z.object({
   PAYPAL_SECRET: z.string().optional(),
   PAYPAL_CLIENT_ID: z.string().optional(),
   MEDIA_TAGGER_ENDPOINT: z.string().url().optional(),
+  HEALTHCHECK_TIMEOUT: z.coerce.number().optional().default(1500),
 });
 
 /**
