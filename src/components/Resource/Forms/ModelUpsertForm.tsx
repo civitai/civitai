@@ -83,7 +83,12 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
     uploadType: model?.uploadType ?? 'Created',
     poi: model?.poi ?? false,
     nsfw: model?.nsfw ?? false,
-    allowCommercialUse: model?.allowCommercialUse ?? [CommercialUse.Sell],
+    allowCommercialUse: model?.allowCommercialUse ?? [
+      CommercialUse.Image,
+      CommercialUse.RentCivit,
+      CommercialUse.Rent,
+      CommercialUse.Sell,
+    ],
     allowDerivatives: model?.allowDerivatives ?? true,
     allowNoCredit: model?.allowNoCredit ?? true,
     allowDifferentLicense: model?.allowDifferentLicense ?? true,

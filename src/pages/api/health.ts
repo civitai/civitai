@@ -3,70 +3,78 @@ import { dbWrite, dbRead } from '~/server/db/client';
 import { redis } from '~/server/redis/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { getRandomInt } from '~/utils/number-helpers';
-import osu from 'node-os-utils';
 import { clickhouse } from '~/server/clickhouse/client';
 import client from 'prom-client';
 import { pingBuzzService } from '~/server/services/buzz.service';
+import { env } from '~/env/server.mjs';
 
-const checks = ['write', 'read', 'redis', 'clickhouse', 'overall', 'buzz'] as const;
+const checkFns = {
+  async write() {
+    return !!(await dbWrite.user.findUnique({
+      where: { id: -1 },
+      select: { id: true },
+    }));
+  },
+  async read() {
+    return !!(await dbRead.user.findUnique({
+      where: { id: -1 },
+      select: { id: true },
+    }));
+  },
+  async redis() {
+    return await redis
+      .ping()
+      .then((res) => res === 'PONG')
+      .catch(() => false);
+  },
+  async clickhouse() {
+    return (
+      (await clickhouse
+        ?.ping()
+        .then(({ success }) => success)
+        .catch(() => false)) ?? true
+    );
+  },
+  async buzz() {
+    return await pingBuzzService();
+  },
+} as const;
+type CheckKey = keyof typeof checkFns;
 const counters = (() =>
-  checks.reduce((agg, name) => {
-    agg[name] = new client.Counter({
+  [...Object.keys(checkFns), 'overall'].reduce((agg, name) => {
+    agg[name as CheckKey] = new client.Counter({
       name: `healthcheck_${name.toLowerCase()}`,
       help: `Healthcheck for ${name}`,
     });
     return agg;
-  }, {} as Record<(typeof checks)[number], client.Counter>))();
+  }, {} as Record<CheckKey | 'overall', client.Counter>))();
 
 export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
   const podname = process.env.PODNAME ?? getRandomInt(100, 999);
 
-  const writeDbCheck = !!(await dbWrite.user.findUnique({
-    where: { id: -1 },
-    select: { id: true },
-  }));
-  if (!writeDbCheck) counters.write.inc();
+  const resultsArray = await Promise.all(
+    Object.entries(checkFns).map(([name, fn]) =>
+      timeoutAsyncFn(fn).then((result) => ({ [name]: result }))
+    )
+  );
 
-  const readDbCheck = !!(await dbRead.user.findUnique({
-    where: { id: -1 },
-    select: { id: true },
-  }));
-  if (!readDbCheck) counters.read.inc();
-
-  const redisCheck = await redis
-    .ping()
-    .then((res) => res === 'PONG')
-    .catch(() => false);
-  if (!redisCheck) counters.redis.inc();
-
-  const clickhouseCheck =
-    (await clickhouse
-      ?.ping()
-      .then(({ success }) => success)
-      .catch(() => false)) ?? true;
-  if (!clickhouseCheck) counters.clickhouse.inc();
-
-  const buzzCheck = await pingBuzzService();
-  if (!buzzCheck) counters.buzz.inc();
-
-  const healthy = writeDbCheck && readDbCheck && redisCheck && clickhouseCheck && buzzCheck;
+  const healthy = resultsArray.every((result) => Object.values(result)[0]);
   if (!healthy) counters.overall.inc();
-  // const includeCPUCheck = await redis.get(`system:health-check:include-cpu-check`);
-  // let freeCPU: number | undefined;
-  // if (includeCPUCheck) {
-  //   const { requiredFreeCPU, interval } = JSON.parse(includeCPUCheck);
-  //   freeCPU = await osu.cpu.free(interval);
-  //   healthy = healthy && freeCPU > requiredFreeCPU;
-  // }
 
+  const results = resultsArray.reduce((agg, result) => ({ ...agg, ...result }), {}) as Record<
+    CheckKey,
+    boolean
+  >;
   return res.status(healthy ? 200 : 500).json({
     podname,
-    healthy: healthy,
-    writeDb: writeDbCheck,
-    readDb: readDbCheck,
-    redis: redisCheck,
-    clickhouse: clickhouseCheck,
-    buzz: buzzCheck,
-    // freeCPU,
+    healthy,
+    ...results,
   });
 });
+
+function timeoutAsyncFn(fn: () => Promise<boolean>) {
+  return Promise.race([
+    fn(),
+    new Promise<boolean>((resolve) => setTimeout(() => resolve(false), env.HEALTHCHECK_TIMEOUT)),
+  ]);
+}

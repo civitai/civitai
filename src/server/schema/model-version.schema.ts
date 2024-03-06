@@ -77,8 +77,8 @@ export const trainingDetailsObj = z.object({
   baseModel: z.enum(trainingDetailsBaseModels).optional(), // nb: this is not optional when submitting
   type: z.enum(constants.trainingModelTypes),
   // triggerWord: z.string().optional(),
-  // samplePrompts
   params: trainingDetailsParams.optional(),
+  samplePrompts: z.array(z.string()).optional(),
 });
 
 export const modelVersionUpsertSchema = z.object({
