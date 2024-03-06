@@ -7,6 +7,7 @@ import { MAX_TAGS, MIN_THRESHOLD } from '~/components/Resource/Forms/Training/Tr
 import { getCaptionAsList } from '~/components/Resource/Forms/Training/TrainingImages';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { SignalMessages } from '~/server/common/enums';
+import { Orchestrator } from '~/server/http/orchestrator/orchestrator.types';
 import { TrainingUpdateSignalSchema } from '~/server/schema/signals.schema';
 import { AutoTagResponse, TagDataResponse } from '~/server/services/training.service';
 import { defaultTrainingState, trainingStore, useTrainingImageStore } from '~/store/training.store';
@@ -85,21 +86,22 @@ export const useTrainingSignals = () => {
 export const useOrchestratorUpdateSignal = () => {
   const onUpdate = ({
     context,
+    jobProperties,
     jobType,
     type,
   }: {
     context?: { data: TagDataResponse; modelId: number; isDone: boolean };
+    jobProperties?: { modelId: number };
     jobType: string;
-    type: string; // TODO enum, and in other places too
+    type: Orchestrator.JobStatus;
   }) => {
     if (jobType !== 'MediaTagging') return;
 
     // TODO we could handle Initialized | Claimed | Succeeded
     if (!['Updated', 'Failed'].includes(type)) return;
 
-    if (!isDefined(context)) return;
-    const { data, modelId, isDone } = context;
-
+    if (!isDefined(jobProperties)) return;
+    const { modelId } = jobProperties;
     const { updateImage, setAutoCaptioning } = trainingStore;
 
     if (type === 'Failed') {
@@ -111,6 +113,9 @@ export const useOrchestratorUpdateSignal = () => {
       setAutoCaptioning(modelId, { ...defaultTrainingState.autoCaptioning });
       return;
     }
+
+    if (!isDefined(context)) return;
+    const { data, isDone } = context;
 
     const tagList = Object.entries(data).map(([f, t]) => ({
       [f]: t.wdTagger.tags,

@@ -257,7 +257,8 @@ export default function UserTrainingModels() {
                   )
                   .slice(-1)?.[0]?.time;
                 const numEpochs = thisTrainingDetails?.params?.maxTrainEpochs;
-                const epochsDone = thisFileMetadata?.trainingResults?.epochs?.length || 0;
+                const epochsDone =
+                  thisFileMetadata?.trainingResults?.epochs?.slice(-1)[0]?.epoch_number ?? 0;
                 // const epochsPct = Math.round((numEpochs ? epochsDone / numEpochs : 0) * 10);
 
                 const baseModel = thisTrainingDetails?.baseModel;
