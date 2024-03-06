@@ -4,6 +4,7 @@ import { IconRocketOff } from '@tabler/icons-react';
 import React from 'react';
 
 import { ArticleAltCard } from '~/components/Article/Infinite/ArticleAltCard';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { MasonryCarousel } from '~/components/MasonryColumns/MasonryCarousel';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
@@ -26,9 +27,11 @@ export function AssociatedModels({
   const currentUser = useCurrentUser();
   const isOwnerOrModerator = currentUser?.isModerator || currentUser?.id === ownerId;
 
+  const browsingLevel = useBrowsingLevelDebounced();
   const { data = [], isLoading } = trpc.model.getAssociatedResourcesCardData.useQuery({
     fromId,
     type,
+    browsingLevel,
   });
 
   const handleManageClick = () => {

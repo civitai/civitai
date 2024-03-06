@@ -11,7 +11,6 @@ import { GetInfiniteArticlesSchema } from '~/server/schema/article.schema';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
 import { booleanString, numericString, numericStringArray } from '~/utils/zod-helpers';
-import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 
 export const useArticleFilters = () => {
   const storeFilters = useFiltersContext((state) => state.articles);
@@ -57,7 +56,7 @@ export const useQueryArticles = (
   filters ??= {};
   const { applyHiddenPreferences = true, ...queryOptions } = options ?? {};
   const browsingLevel = useBrowsingLevelDebounced();
-  const { data, isLoading, isLoading, ...rest } = trpc.article.getInfinite.useInfiniteQuery(
+  const { data, isLoading, ...rest } = trpc.article.getInfinite.useInfiniteQuery(
     { ...filters, browsingLevel },
     {
       getNextPageParam: (lastPage) => lastPage.nextCursor,

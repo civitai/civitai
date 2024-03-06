@@ -46,9 +46,6 @@ export default WebhookEndpoint(async (req, res) => {
     };
   }, 10);
 
-  // TODO.nsfwLevel - delete posts with no images not attached to a modelVersion?
-  // delete from "Post" where "nsfwLevel" = 0 AND "modelVersionId" is null
-
   console.log('end');
   res.status(200).json({ finished: true });
 });

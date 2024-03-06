@@ -115,6 +115,7 @@ export default function UserModelsPage() {
                     ...queryFilters,
                     sort,
                     period,
+                    pending: true,
                   }}
                   showEmptyCta={selfView}
                 />

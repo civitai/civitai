@@ -37,6 +37,7 @@ export const infiniteQuerySchema = z.object({
 
 export type UserPreferencesInput = z.infer<typeof userPreferencesSchema>;
 export const userPreferencesSchema = z.object({
+  browsingLevel: z.number().optional(),
   excludedModelIds: z.array(z.number()).optional(),
   excludedUserIds: z.array(z.number()).optional(),
   excludedTagIds: z.array(z.number()).optional(),

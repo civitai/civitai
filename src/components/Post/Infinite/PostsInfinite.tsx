@@ -23,6 +23,7 @@ export type PostsInfiniteState = {
   collectionId?: number;
   draftOnly?: boolean;
   followed?: boolean;
+  pending?: boolean;
 };
 
 type PostsInfiniteProps = {

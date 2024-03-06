@@ -18,7 +18,7 @@ export default WebhookEndpoint(async (req, res) => {
     Prisma.sql`SELECT MAX(id) "max" FROM "Collection";`
   );
   const [{ min }] = await dbRead.$queryRaw<{ min: number }[]>(
-    Prisma.sql`SELECT MIN(id) "min" FROM "Collection" WHERE "nsfwLevel" = 0;`
+    Prisma.sql`SELECT MIN(id) "min" FROM "Collection";`
   );
 
   let cursor = min ?? 0;
@@ -42,7 +42,7 @@ export default WebhookEndpoint(async (req, res) => {
             LEFT JOIN "Article" a on a.id = ci."articleId" AND c.type = 'Article'
             WHERE ci."collectionId" = c.id
           )
-          WHERE c.id BETWEEN ${start} AND ${end} AND c."nsfwLevel" = 0;
+          WHERE c.id BETWEEN ${start} AND ${end};
       `);
       onCancel.push(cancel);
       await result();

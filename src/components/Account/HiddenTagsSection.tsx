@@ -14,7 +14,7 @@ export function HiddenTagsSection() {
 
   const tags = useHiddenPreferencesData().hiddenTags;
   const hiddenTags = uniqBy(
-    tags.filter((x) => x.hidden),
+    tags.filter((x) => x.hidden && !x.parentId),
     'id'
   );
 

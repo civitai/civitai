@@ -244,7 +244,7 @@ export const findResourcesToAssociateSchema = z.object({
 });
 
 export type GetAssociatedResourcesInput = z.infer<typeof getAssociatedResourcesSchema>;
-export const getAssociatedResourcesSchema = z.object({
+export const getAssociatedResourcesSchema = baseQuerySchema.extend({
   fromId: z.number(),
   type: z.nativeEnum(AssociationType),
 });

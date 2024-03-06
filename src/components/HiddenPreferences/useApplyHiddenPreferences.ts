@@ -233,7 +233,7 @@ type BaseImage = {
   userId?: number | null;
   user?: { id: number };
   tagIds?: number[];
-  nsfwLevel: number; // TODO.nsfwLevel - apply to other entities
+  nsfwLevel: number;
 };
 
 type BaseModel = {

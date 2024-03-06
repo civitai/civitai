@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import { ImageIngestionStatus, Prisma } from '@prisma/client';
 import { dbRead } from '~/server/db/client';
 import { pgDbWrite } from '~/server/db/pgDb';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
@@ -18,7 +18,7 @@ export default WebhookEndpoint(async (req, res) => {
     Prisma.sql`SELECT MAX(id) "max" FROM "Image";`
   );
   const [{ min }] = await dbRead.$queryRaw<{ min: number }[]>(
-    Prisma.sql`SELECT MIN(id) "min" FROM "Image" WHERE "nsfwLevel" = 0;`
+    Prisma.sql`SELECT MIN(id) "min" FROM "Image";`
   );
 
   let cursor = min ?? 0;
@@ -40,7 +40,7 @@ export default WebhookEndpoint(async (req, res) => {
           WHERE toi."imageId" = i.id
             AND NOT toi.disabled
         )
-        WHERE i.id BETWEEN ${start} AND ${end} AND i."nsfwLevel" = 0
+        WHERE i.id BETWEEN ${start} AND ${end} AND i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"
       `);
       onCancel.push(cancel);
       await result();

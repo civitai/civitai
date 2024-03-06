@@ -159,7 +159,7 @@ export const getUsers = async ({ limit, query, email, ids, include }: GetAllUser
   if (include?.includes('avatar'))
     select.push(
       'COALESCE(i.url, u.image) AS "avatarUrl"',
-      `COALESCE(i.nsfwLevel, 'None') AS "avatarNsfwLevel"` // TODO.nsfwLevel - remove this?
+      `COALESCE(i.nsfwLevel, 'None') AS "avatarNsfwLevel"`
     );
 
   const result = await dbRead.$queryRaw<GetUsersRow[]>`

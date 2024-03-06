@@ -46,13 +46,13 @@ export default WebhookEndpoint(async (req, res) => {
                 WHERE p."modelVersionId" = mv.id
                 AND p."userId" = m."userId"
                 AND p."publishedAt" IS NOT NULL AND i."nsfwLevel" != 0
-                ORDER BY p."postId", i."index"
+                ORDER BY p."id", i."index"
                 LIMIT 20
               ) AS i
             ) AS "nsfwLevel"
           FROM "ModelVersion" mv
           JOIN "Model" m ON mv."modelId" = m.id
-          WHERE mv.id BETWEEN 90000 AND 90100
+          WHERE mv.id BETWEEN ${start} AND ${end}
         )
         UPDATE "ModelVersion" mv
         SET "nsfwLevel" = level."nsfwLevel"

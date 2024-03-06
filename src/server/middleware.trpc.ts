@@ -9,24 +9,28 @@ import { middleware } from '~/server/trpc';
 import { hashifyObject, slugit } from '~/utils/string-helpers';
 
 export const applyUserPreferences = middleware(async ({ input, ctx, next }) => {
-  const _input = input as UserPreferencesInput;
+  const _input = input as UserPreferencesInput | undefined;
+  if (_input !== undefined && typeof _input === 'object' && !Array.isArray(_input)) {
+    _input.browsingLevel ??= ctx.browsingLevel;
 
-  // const browsingLevel = _input.browsingLevel ?? ctx.browsingLevel;
-  const { hiddenImages, hiddenTags, hiddenModels, hiddenUsers } = await getAllHiddenForUser({
-    userId: ctx.user?.id,
-  });
+    const { hiddenImages, hiddenTags, hiddenModels, hiddenUsers } = await getAllHiddenForUser({
+      userId: ctx.user?.id,
+    });
 
-  // TODO.nsfwLevel - determine if we still need to filter by hidden tags. Now we have nsfwLevel
-  const tagsToHide = hiddenTags.filter((x) => x.hidden).map((x) => x.id);
+    const tagsToHide = hiddenTags.filter((x) => x.hidden).map((x) => x.id);
 
-  const imagesToHide = hiddenImages
-    .filter((x) => !x.tagId || tagsToHide.findIndex((tagId) => tagId === x.tagId) > -1)
-    .map((x) => x.id);
+    const imagesToHide = hiddenImages
+      .filter((x) => !x.tagId || tagsToHide.findIndex((tagId) => tagId === x.tagId) > -1)
+      .map((x) => x.id);
 
-  _input.excludedTagIds = [...(_input.excludedTagIds ?? []), ...tagsToHide];
-  _input.excludedImageIds = [...(_input.excludedImageIds ?? []), ...imagesToHide];
-  _input.excludedUserIds = [...(_input.excludedUserIds ?? []), ...hiddenUsers.map((x) => x.id)];
-  _input.excludedModelIds = [...(_input.excludedModelIds ?? []), ...hiddenModels.map((x) => x.id)];
+    _input.excludedTagIds = [...(_input.excludedTagIds ?? []), ...tagsToHide];
+    _input.excludedImageIds = [...(_input.excludedImageIds ?? []), ...imagesToHide];
+    _input.excludedUserIds = [...(_input.excludedUserIds ?? []), ...hiddenUsers.map((x) => x.id)];
+    _input.excludedModelIds = [
+      ...(_input.excludedModelIds ?? []),
+      ...hiddenModels.map((x) => x.id),
+    ];
+  }
 
   return next({
     ctx: { user: ctx.user },

@@ -553,7 +553,7 @@ export const getModelsRaw = async ({
       );
     }
   } else {
-    modelVersionWhere.push(Prisma.sql`((mv."nsfwLevel" & ${browsingLevel}) != 0)`);
+    modelVersionWhere.push(Prisma.sql`(mv."nsfwLevel" & ${browsingLevel}) != 0`);
   }
 
   const modelQuery = Prisma.sql`

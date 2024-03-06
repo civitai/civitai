@@ -161,7 +161,7 @@ export default function BountyDetailsPage({
   const meta = bounty ? (
     <Meta
       title={`Civitai | ${bounty?.name}`}
-      images={bounty?.images} // TODO.nsfwLevel - make it so we can query images based off parent entity type
+      images={bounty?.images}
       description={bounty?.description}
       links={[
         {

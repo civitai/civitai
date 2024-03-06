@@ -173,7 +173,7 @@ export const getArticles = async ({
         );
       }
     } else {
-      AND.push(Prisma.sql`(a."nsfwLevel" & ${browsingLevel}) != 0 AND a."nsfwLevel" != 0`);
+      AND.push(Prisma.sql`(a."nsfwLevel" & ${browsingLevel}) != 0`);
     }
 
     if (username) {

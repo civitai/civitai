@@ -18,7 +18,7 @@ export default WebhookEndpoint(async (req, res) => {
     Prisma.sql`SELECT MAX(id) "max" FROM "Model";`
   );
   const [{ min }] = await dbRead.$queryRaw<{ min: number }[]>(
-    Prisma.sql`SELECT MIN(id) "min" FROM "Model" WHERE "nsfwLevel" = 0;`
+    Prisma.sql`SELECT MIN(id) "min" FROM "Model";`
   );
 
   let cursor = min ?? 0;
@@ -38,7 +38,7 @@ export default WebhookEndpoint(async (req, res) => {
             bit_or(mv."nsfwLevel") "nsfwLevel"
           FROM "ModelVersion" mv
           JOIN "Model" m on m.id = mv."modelId"
-          WHERE m.id BETWEEN ${start} AND ${end} AND m."nsfwLevel" = 0
+          WHERE m.id BETWEEN ${start} AND ${end}
           GROUP BY mv.id
         )
         UPDATE "Model" m

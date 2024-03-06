@@ -32,7 +32,10 @@ import { ModelGetAssociatedResourcesSimple } from '~/types/router';
 import { trpc } from '~/utils/trpc';
 import { QuickSearchDropdown, QuickSearchDropdownProps } from '../Search/QuickSearchDropdown';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import {
+  getIsSafeBrowsingLevel,
+  allBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import { SearchIndexDataMap } from '~/components/Search/search.utils2';
 
 type State = Array<Omit<ModelGetAssociatedResourcesSimple[number], 'id'> & { id?: number }>;
@@ -56,6 +59,7 @@ export function AssociateModels({
   const { data = [], isLoading } = trpc.model.getAssociatedResourcesSimple.useQuery({
     fromId,
     type,
+    browsingLevel: allBrowsingLevelsFlag,
   });
   const [associatedResources, setAssociatedResources] = useState<State>(data);
   const [searchMode, setSearchMode] = useState<'me' | 'all'>('all');
@@ -63,7 +67,7 @@ export function AssociateModels({
   const { mutate, isLoading: isSaving } = trpc.model.setAssociatedResources.useMutation({
     onSuccess: async () => {
       queryUtils.model.getAssociatedResourcesSimple.setData(
-        { fromId, type },
+        { fromId, type, browsingLevel: allBrowsingLevelsFlag },
         () => associatedResources as ModelGetAssociatedResourcesSimple
       );
       await queryUtils.model.getAssociatedResourcesCardData.invalidate({ fromId, type });

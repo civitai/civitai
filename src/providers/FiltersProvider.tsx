@@ -44,6 +44,7 @@ const modelFilterSchema = z.object({
   followed: z.boolean().optional(),
   archived: z.boolean().optional(),
   fileFormats: z.enum(constants.modelFileFormats).array().optional(),
+  pending: z.boolean().optional(),
 });
 
 type QuestionFilterSchema = z.infer<typeof questionFilterSchema>;

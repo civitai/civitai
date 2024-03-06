@@ -772,7 +772,7 @@ export const getAllImages = async ({
     }
   } else {
     AND.push(Prisma.sql`i."needsReview" IS NULL`);
-    AND.push(Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0 AND i."nsfwLevel" != 0`);
+    AND.push(Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`);
   }
 
   // TODO: Adjust ImageMetric
@@ -937,7 +937,7 @@ export const getAllImages = async ({
   > = rawImages
     .filter((x) => {
       // Filter out images that shouldn't be seen by user
-      if (isModerator) return true; // TODO.nsfwLevels - see if we can remove this filter altogether
+      if (isModerator) return true;
       // if (x.needsReview && x.userId !== userId) return false;
       if ((!x.publishedAt || x.publishedAt > now) && x.userId !== userId) return false;
       // if (x.ingestion !== 'Scanned' && x.userId !== userId) return false;
@@ -1219,7 +1219,7 @@ type ImagesForModelVersions = {
   tags?: number[];
   availability: Availability;
 };
-// TODO.nsfwLevel
+
 export const getImagesForModelVersion = async ({
   modelVersionIds,
   excludedTagIds,
@@ -1295,7 +1295,7 @@ export const getImagesForModelVersion = async ({
     }
   } else {
     imageWhere.push(Prisma.sql`i."needsReview" IS NULL`);
-    imageWhere.push(Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0 AND i."nsfwLevel" != 0`);
+    imageWhere.push(Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`);
   }
 
   const query = Prisma.sql`
@@ -1390,7 +1390,7 @@ export const getImagesForPosts = async ({
     }
   } else {
     imageWhere.push(Prisma.sql`i."needsReview" IS NULL`);
-    imageWhere.push(Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0 AND i."nsfwLevel" != 0`);
+    imageWhere.push(Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`);
   }
 
   const images = await dbRead.$queryRaw<

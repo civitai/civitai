@@ -18,7 +18,7 @@ export default WebhookEndpoint(async (req, res) => {
     Prisma.sql`SELECT MAX(id) "max" FROM "Bounty";`
   );
   const [{ min }] = await dbRead.$queryRaw<{ min: number }[]>(
-    Prisma.sql`SELECT MIN(id) "min" FROM "Bounty" WHERE "nsfwLevel" = 0;`
+    Prisma.sql`SELECT MIN(id) "min" FROM "Bounty";`
   );
 
   let cursor = min ?? 0;
@@ -39,7 +39,7 @@ export default WebhookEndpoint(async (req, res) => {
           FROM "ImageConnection" ic
           JOIN "Image" i ON i.id = ic."imageId"
           JOIN "Bounty" b on b.id = "entityId" AND "entityType" = 'Bounty'
-          WHERE "entityType" = 'Bounty' AND "entityId" BETWEEN ${start} AND ${end} AND b."nsfwLevel" = 0
+          WHERE "entityType" = 'Bounty' AND "entityId" BETWEEN ${start} AND ${end}
           GROUP BY 1
         )
         UPDATE "Bounty" b SET "nsfwLevel" = level."nsfwLevel"

@@ -111,6 +111,7 @@ export default function UserArticlesPage() {
                   sort,
                   period,
                   includeDrafts: !!currentUser?.isModerator,
+                  pending: true,
                 }}
                 showEmptyCta={selfView}
               />

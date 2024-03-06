@@ -18,7 +18,7 @@ export default WebhookEndpoint(async (req, res) => {
     Prisma.sql`SELECT MAX(id) "max" FROM "Post";`
   );
   const [{ min }] = await dbRead.$queryRaw<{ min: number }[]>(
-    Prisma.sql`SELECT MIN(id) "min" FROM "Post" WHERE "nsfwLevel" = 0;`
+    Prisma.sql`SELECT MIN(id) "min" FROM "Post";`
   );
 
   let cursor = min ?? 0;
@@ -36,7 +36,7 @@ export default WebhookEndpoint(async (req, res) => {
           SELECT DISTINCT ON (p.id) p.id, bit_or(i."nsfwLevel") "nsfwLevel"
           FROM "Post" p
           JOIN "Image" i ON i."postId" = p.id
-          WHERE p.id BETWEEN ${start} AND ${end} AND p."nsfwLevel" = 0
+          WHERE p.id BETWEEN ${start} AND ${end}
           GROUP BY p.id
         )
         UPDATE "Post" p
@@ -48,9 +48,6 @@ export default WebhookEndpoint(async (req, res) => {
       await result();
     };
   }, 10);
-
-  // TODO.nsfwLevel - delete posts with no images not attached to a modelVersion?
-  // delete from "Post" where "nsfwLevel" = 0 AND "modelVersionId" is null
 
   console.log('end');
   res.status(200).json({ finished: true });
