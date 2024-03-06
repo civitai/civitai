@@ -66,7 +66,7 @@ export const useQueryArticles = (
 
   const flatData = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data]);
   const { items, loadingPreferences, hiddenCount } = useApplyHiddenPreferences({
-    type: 'images',
+    type: 'articles',
     data: flatData,
     showHidden: !!filters.hidden,
     disabled: !applyHiddenPreferences,
