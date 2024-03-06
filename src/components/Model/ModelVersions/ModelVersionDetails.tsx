@@ -7,6 +7,7 @@ import {
   Card,
   Center,
   Group,
+  Loader,
   MantineTheme,
   Menu,
   Modal,
@@ -698,27 +699,30 @@ export function ModelVersionDetails({
               modelVersionId={version.id}
               modelName={model.name}
             >
-              {({ modelId, modelVersionId, userReview }) => (
+              {({ modelId, modelVersionId, userReview, loading }) => (
                 <Card p={8} withBorder>
                   <Stack spacing={8}>
                     <Group spacing={8} position="apart" noWrap>
                       <Group spacing={8} noWrap>
-                        {userReview ? (
+                        {loading ? (
+                          <Loader size="xs" />
+                        ) : userReview ? (
                           <>
                             {userReview.recommended ? (
                               <ThumbsUpIcon size={18} />
                             ) : (
                               <ThumbsDownIcon size={18} />
                             )}
-                            <Text size="sm">
-                              You reviewed this on {formatDate(userReview.createdAt)}
-                            </Text>
                           </>
                         ) : (
-                          <>
-                            <IconHeart size={18} />
-                            <Text size="sm">What did you think of this resource?</Text>
-                          </>
+                          <IconHeart size={18} />
+                        )}
+                        {userReview ? (
+                          <Text size="sm">
+                            You reviewed this on {formatDate(userReview.createdAt)}
+                          </Text>
+                        ) : (
+                          <Text size="sm">What did you think of this resource?</Text>
                         )}
                       </Group>
                       {!userReview || !userReview.details ? (

@@ -36,10 +36,47 @@ export const useCreateResourceReview = () => {
       queryUtils.user.getEngagedModels.setData(undefined, (old) => {
         if (!old) return;
 
-        const { Recommended = [], ...rest } = old;
-        if (shouldRemove)
-          return { Recommended: Recommended.filter((id) => id !== modelId), ...rest };
-        return { Recommended: [...Recommended, modelId], ...rest };
+        const { Recommended = [], Notify = [], ...rest } = old;
+        if (shouldRemove) {
+          return {
+            Recommended: Recommended.filter((id) => id !== modelId),
+            Notify: Notify.filter((id) => id !== modelId),
+            ...rest,
+          };
+        }
+
+        return { Recommended: [...Recommended, modelId], Notify: [...Notify, modelId], ...rest };
+      });
+
+      queryUtils.model.getById.setData({ id: modelId }, (old) => {
+        if (!old) return;
+
+        if (recommended) {
+          old.rank.thumbsUpCountAllTime += 1;
+          old.rank.collectedCountAllTime += 1;
+
+          if (modelVersionId) {
+            old.modelVersions = old.modelVersions.map((version) => {
+              if (version.id === modelVersionId) {
+                version.rank.thumbsUpCountAllTime += 1;
+              }
+              return version;
+            });
+          }
+        } else {
+          old.rank.thumbsDownCountAllTime += 1;
+
+          if (modelVersionId) {
+            old.modelVersions = old.modelVersions.map((version) => {
+              if (version.id === modelVersionId) {
+                version.rank.thumbsDownCountAllTime += 1;
+              }
+              return version;
+            });
+          }
+        }
+
+        return old;
       });
     },
   });
@@ -74,6 +111,8 @@ export const useUpdateResourceReview = () => {
         { id: request.id },
         produce((old) => {
           if (!old) return;
+
+          if (request.recommended != null) old.recommended = request.recommended;
           if (request.details) old.details = request.details as string;
           if (request.rating) old.rating = request.rating;
         })
@@ -115,6 +154,42 @@ export const useUpdateResourceReview = () => {
           return { Recommended: Recommended.filter((id) => id !== modelId), ...rest };
         return { Recommended: [...Recommended, modelId], ...rest };
       });
+
+      queryUtils.model.getById.setData({ id: modelId }, (old) => {
+        if (!old) return;
+
+        if (request.recommended) {
+          old.rank.thumbsUpCountAllTime += 1;
+          old.rank.collectedCountAllTime += 1;
+          if (old.rank.thumbsDownCountAllTime > 0) old.rank.thumbsDownCountAllTime -= 1;
+
+          if (modelVersionId) {
+            old.modelVersions = old.modelVersions.map((version) => {
+              if (version.id === modelVersionId) {
+                version.rank.thumbsUpCountAllTime += 1;
+                if (version.rank.thumbsDownCountAllTime > 0)
+                  version.rank.thumbsDownCountAllTime -= 1;
+              }
+              return version;
+            });
+          }
+        } else {
+          old.rank.thumbsDownCountAllTime += 1;
+          if (old.rank.thumbsUpCountAllTime > 0) old.rank.thumbsUpCountAllTime -= 1;
+
+          if (modelVersionId) {
+            old.modelVersions = old.modelVersions.map((version) => {
+              if (version.id === modelVersionId) {
+                version.rank.thumbsDownCountAllTime += 1;
+                if (version.rank.thumbsUpCountAllTime > 0) version.rank.thumbsUpCountAllTime -= 1;
+              }
+              return version;
+            });
+          }
+        }
+
+        return old;
+      });
     },
   });
 };
@@ -145,8 +220,43 @@ export const useDeleteResourceReview = () => {
       queryUtils.user.getEngagedModels.setData(undefined, (old) => {
         if (!old) return;
 
-        const { Recommended = [], ...rest } = old;
-        return { Recommended: Recommended.filter((id) => id !== modelId), ...rest };
+        const { Recommended = [], Notify = [], ...rest } = old;
+        return {
+          Recommended: Recommended.filter((id) => id !== modelId),
+          Notify: Notify.filter((id) => id !== modelId),
+          ...rest,
+        };
+      });
+
+      queryUtils.model.getById.setData({ id: modelId }, (old) => {
+        if (!old) return;
+
+        if (recommended && old.rank.thumbsUpCountAllTime > 0) {
+          old.rank.thumbsUpCountAllTime -= 1;
+          old.rank.collectedCountAllTime -= 1;
+
+          if (modelVersionId) {
+            old.modelVersions = old.modelVersions.map((version) => {
+              if (version.id === modelVersionId && version.rank.thumbsUpCountAllTime > 0) {
+                version.rank.thumbsUpCountAllTime -= 1;
+              }
+              return version;
+            });
+          }
+        } else {
+          if (old.rank.thumbsDownCountAllTime > 0) old.rank.thumbsDownCountAllTime -= 1;
+
+          if (modelVersionId) {
+            old.modelVersions = old.modelVersions.map((version) => {
+              if (version.id === modelVersionId && version.rank.thumbsDownCountAllTime > 0) {
+                version.rank.thumbsDownCountAllTime -= 1;
+              }
+              return version;
+            });
+          }
+        }
+
+        return old;
       });
     },
   });
@@ -196,7 +306,6 @@ export function useToggleFavoriteMutation() {
 
   const mutation = trpc.user.toggleFavorite.useMutation({
     onMutate: async ({ modelId, modelVersionId, setTo }) => {
-      console.log('inner', { modelId, modelVersionId, setTo });
       const engagedModels = queryUtils.user.getEngagedModels.getData();
       const modelDetails = queryUtils.model.getById.getData({ id: modelId });
 
@@ -285,9 +394,9 @@ export function useToggleFavoriteMutation() {
 
       return { prevData: { engagedModels, modelDetails, userReviews } };
     },
-    onError: async (error, { modelId }, context) => {
-      await queryUtils.user.getEngagedModels.setData(undefined, context?.prevData?.engagedModels);
-      await queryUtils.model.getById.setData({ id: modelId }, context?.prevData?.modelDetails);
+    onError: (error, { modelId }, context) => {
+      queryUtils.user.getEngagedModels.setData(undefined, context?.prevData?.engagedModels);
+      queryUtils.model.getById.setData({ id: modelId }, context?.prevData?.modelDetails);
     },
     onSettled: async (result, error, { modelId }) => {
       await queryUtils.resourceReview.getUserResourceReview.invalidate({ modelId });

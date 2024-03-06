@@ -10,17 +10,19 @@ export function ModelVersionReview({ modelId, versionId, thumbsDownCount, thumbs
 
   return (
     <Group position="left" align="flex-start" spacing={4}>
-      <Link href={`/models/${modelId}/reviews?modelVersionId=${versionId}`} passHref>
-        <Anchor tt="capitalize">
-          <Tooltip
-            label={`${Math.round(positiveRating * 100)}% of the ${numberWithCommas(
-              totalCount
-            )} reviews are positive`}
-          >
-            <Text>{getRatingLabel({ positiveRating, totalCount })}</Text>
-          </Tooltip>
-        </Anchor>
-      </Link>
+      <Tooltip
+        label={`${Math.round(positiveRating * 100)}% of the ${numberWithCommas(totalCount)} ${
+          totalCount > 1 ? 'reviews' : 'review'
+        } are positive`}
+      >
+        <div>
+          <Link href={`/models/${modelId}/reviews?modelVersionId=${versionId}`} passHref>
+            <Anchor tt="capitalize">
+              <Text>{getRatingLabel({ positiveRating, totalCount })}</Text>
+            </Anchor>
+          </Link>
+        </div>
+      </Tooltip>
       <Text>({numberWithCommas(totalCount)})</Text>
     </Group>
   );
