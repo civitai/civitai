@@ -96,6 +96,7 @@ export function UserImagesPage() {
       types = [MediaType.image],
       withMeta = false,
       followed = undefined,
+      fromPlatform = false,
       ...query
     },
   } = useImageQueryParams();
@@ -185,6 +186,7 @@ export function UserImagesPage() {
                 sort,
                 types,
                 withMeta,
+                fromPlatform,
                 hidden: undefined,
                 reactions: viewingReactions ? reactions ?? availableReactions : undefined,
                 username: viewingReactions ? undefined : username,

@@ -33,6 +33,7 @@ type ImageFilters = {
   withMeta?: boolean;
   followed?: boolean;
   hidden?: boolean;
+  fromPlatform?: boolean;
   pending?: boolean;
 };
 
