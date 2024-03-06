@@ -767,7 +767,7 @@ export const getAllImages = async ({
     }
   } else {
     AND.push(Prisma.sql`i."needsReview" IS NULL`);
-    AND.push(Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`);
+    AND.push(Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0 AND i."nsfwLevel" != 0`);
   }
 
   // TODO: Adjust ImageMetric
@@ -1284,14 +1284,13 @@ export const getImagesForModelVersion = async ({
       imageWhere.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`);
     } else if (userId) {
       imageWhere.push(Prisma.sql`(i."needsReview" IS NULL OR i."userId" = ${userId})`);
-      if (browsingLevel)
-        imageWhere.push(
-          Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR (i."nsfwLevel" = 0 AND i."userId" = ${userId}))`
-        );
+      imageWhere.push(
+        Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR (i."nsfwLevel" = 0 AND i."userId" = ${userId}))`
+      );
     }
   } else {
     imageWhere.push(Prisma.sql`i."needsReview" IS NULL`);
-    if (browsingLevel) imageWhere.push(Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`);
+    imageWhere.push(Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0 AND i."nsfwLevel" != 0`);
   }
 
   const query = Prisma.sql`
@@ -1380,14 +1379,13 @@ export const getImagesForPosts = async ({
       imageWhere.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`);
     } else if (userId) {
       imageWhere.push(Prisma.sql`(i."needsReview" IS NULL OR i."userId" = ${userId})`);
-      if (browsingLevel)
-        imageWhere.push(
-          Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR (i."nsfwLevel" = 0 AND i."userId" = ${userId}))`
-        );
+      imageWhere.push(
+        Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR (i."nsfwLevel" = 0 AND i."userId" = ${userId}))`
+      );
     }
   } else {
     imageWhere.push(Prisma.sql`i."needsReview" IS NULL`);
-    if (browsingLevel) imageWhere.push(Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`);
+    imageWhere.push(Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0 AND i."nsfwLevel" != 0`);
   }
 
   const images = await dbRead.$queryRaw<

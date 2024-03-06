@@ -1,6 +1,7 @@
 import { ActionIcon, Autocomplete, Badge, Card, Group, Loader, Stack, Text } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { IconSearch, IconX } from '@tabler/icons-react';
+import { uniqBy } from 'lodash-es';
 import { useRef, useState } from 'react';
 import { useHiddenPreferencesData, useToggleHiddenPreferences } from '~/hooks/hidden-preferences';
 
@@ -12,7 +13,10 @@ export function HiddenTagsSection() {
   const [debouncedSearch] = useDebouncedValue(search, 300);
 
   const tags = useHiddenPreferencesData().hiddenTags;
-  const hiddenTags = tags.filter((x) => x.hidden);
+  const hiddenTags = uniqBy(
+    tags.filter((x) => x.hidden),
+    'id'
+  );
 
   const { data, isLoading } = trpc.tag.getAll.useQuery({
     entityType: ['Model'],

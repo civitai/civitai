@@ -14,7 +14,7 @@ import {
   getImageResources,
   moderateImages,
 } from './../services/image.service';
-import { NsfwLevel, ReportReason, ReportStatus } from '@prisma/client';
+import { ReportReason, ReportStatus } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -37,19 +37,6 @@ import { hasEntityAccess } from '../services/common.service';
 import { getGallerySettingsByModelId } from '~/server/services/model.service';
 import { Flags } from '~/shared/utils';
 import { getNsfwLeveLDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
-
-type SortableImage = {
-  nsfw: NsfwLevel;
-  createdAt: Date;
-  connections: {
-    index: number | null;
-  } | null;
-};
-const sortByIndex = (a: SortableImage, b: SortableImage) => {
-  const aIndex = a.connections?.index ?? 0;
-  const bIndex = b.connections?.index ?? 0;
-  return aIndex - bIndex;
-};
 
 export const moderateImageHandler = async ({
   input,

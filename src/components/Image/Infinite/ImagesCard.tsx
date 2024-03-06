@@ -172,7 +172,6 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                               </Stack>
                             </Box>
                           ) : (
-                            // TODO.Briant - don't use group since group prevents clicking smaller images, or change pointer event?
                             <Group className={classes.info} spacing={4} position="apart" noWrap>
                               <Reactions
                                 entityId={image.id}

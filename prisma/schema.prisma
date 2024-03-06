@@ -152,7 +152,7 @@ model User {
   image               String?
   showNsfw            Boolean               @default(false)
   blurNsfw            Boolean               @default(true)
-  browsingLevel       Int                   @default(3)
+  browsingLevel       Int                   @default(1)
   onboarding          Int                   @default(0)
   isModerator         Boolean?              @default(false)
   createdAt           DateTime              @default(now())

@@ -15,10 +15,10 @@ export default WebhookEndpoint(async (req, res) => {
   });
   console.log('start');
   const [{ max: maxId }] = await dbRead.$queryRaw<{ max: number }[]>(
-    Prisma.sql`SELECT MAX(id) "max" FROM "Article";`
+    Prisma.sql`SELECT MAX(id) "max" FROM "User";`
   );
   const [{ min }] = await dbRead.$queryRaw<{ min: number }[]>(
-    Prisma.sql`SELECT MIN(id) "min" FROM "Article";`
+    Prisma.sql`SELECT MIN(id) "min" FROM "User";`
   );
 
   let cursor = min ?? 0;
@@ -29,25 +29,25 @@ export default WebhookEndpoint(async (req, res) => {
     const start = cursor;
     cursor += batchSize;
     const end = cursor;
-    console.log(`Updating articles ${start} - ${end}`);
+    console.log(`Updating users ${start} - ${end}`);
     return async () => {
       const { cancel, result } = await pgDbWrite.cancellableQuery(Prisma.sql`
-        WITH level AS (
-          SELECT DISTINCT ON (a.id) a.id, bit_or(i."nsfwLevel") "nsfwLevel"
-          FROM "Article" a
-          JOIN "Image" i ON a."coverId" = i.id
-          WHERE a.id BETWEEN ${start} AND ${end}
-          GROUP BY a.id
-        )
-        UPDATE "Article" a
-        SET "nsfwLevel" = level."nsfwLevel"
-        FROM level
-        WHERE level.id = a.id;
+        UPDATE "User" SET
+          "browsingLevel" = 1,
+          "onboarding" = (
+              IIF(tos, 1, 0) +
+              IIF(username IS NOT NULL AND email IS NOT NULL, 2, 0) +
+              IIF('Buzz'::"OnboardingStep" = ANY("onboardingSteps"), 0, 8)
+            )
+        WHERE id BETWEEN ${start} AND ${end};
       `);
       onCancel.push(cancel);
       await result();
     };
   }, 10);
+
+  // TODO.nsfwLevel - delete posts with no images not attached to a modelVersion?
+  // delete from "Post" where "nsfwLevel" = 0 AND "modelVersionId" is null
 
   console.log('end');
   res.status(200).json({ finished: true });

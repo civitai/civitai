@@ -16,7 +16,6 @@ import {
   CosmeticSource,
   CosmeticType,
   ModelEngagementType,
-  NsfwLevel,
   Prisma,
   SearchIndexUpdateQueueAction,
   TagEngagementType,
@@ -59,6 +58,7 @@ import { baseS3Client } from '~/utils/s3-client';
 import { isDefined } from '~/utils/type-guards';
 import { removeEmpty } from '~/utils/object-helpers';
 import { purchasableRewardDetails } from '~/server/selectors/purchasableReward.selector';
+import { getNsfwLeveLDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
 export const getUserCreator = async ({
@@ -142,11 +142,11 @@ type GetUsersRow = {
   username: string;
   status: 'active' | 'banned' | 'muted' | 'deleted' | undefined;
   avatarUrl: string | undefined;
-  avatarNsfw: NsfwLevel | undefined;
+  avatarNsfwLevel: number;
 };
 
 // Caution! this query is exposed to the public API, only non-sensitive data should be returned
-export const getUsers = ({ limit, query, email, ids, include }: GetAllUsersInput) => {
+export const getUsers = async ({ limit, query, email, ids, include }: GetAllUsersInput) => {
   const select = ['u.id', 'u.username'];
   if (include?.includes('status'))
     select.push(`
@@ -159,10 +159,10 @@ export const getUsers = ({ limit, query, email, ids, include }: GetAllUsersInput
   if (include?.includes('avatar'))
     select.push(
       'COALESCE(i.url, u.image) AS "avatarUrl"',
-      `COALESCE(i.nsfw, 'None') AS "avatarNsfw"` // TODO.nsfwLevel - remove this?
+      `COALESCE(i.nsfwLevel, 'None') AS "avatarNsfwLevel"` // TODO.nsfwLevel - remove this?
     );
 
-  return dbRead.$queryRaw<GetUsersRow[]>`
+  const result = await dbRead.$queryRaw<GetUsersRow[]>`
     SELECT
       ${Prisma.raw(select.join(','))}
     FROM "User" u
@@ -178,6 +178,10 @@ export const getUsers = ({ limit, query, email, ids, include }: GetAllUsersInput
     ${Prisma.raw(query ? 'ORDER BY LENGTH(username) ASC' : '')}
     ${Prisma.raw(limit ? 'LIMIT ' + limit : '')}
   `;
+  return result.map(({ avatarNsfwLevel, ...user }) => ({
+    ...user,
+    avatarNsfw: getNsfwLeveLDeprecatedReverseMapping(avatarNsfwLevel),
+  }));
 };
 
 export const getUserById = <TSelect extends Prisma.UserSelect = Prisma.UserSelect>({

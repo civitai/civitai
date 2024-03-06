@@ -163,9 +163,6 @@ export const getArticles = async ({
     if (!!ids?.length) {
       AND.push(Prisma.sql`a.id IN (${Prisma.join(ids, ',')})`);
     }
-    // if (browsingMode === BrowsingMode.SFW) {
-    //   AND.push(Prisma.sql`a."nsfw" = false`);
-    // }
 
     if (pending) {
       if (isModerator) {
@@ -176,7 +173,7 @@ export const getArticles = async ({
         );
       }
     } else {
-      AND.push(Prisma.sql`(a."nsfwLevel" & ${browsingLevel}) != 0`);
+      AND.push(Prisma.sql`(a."nsfwLevel" & ${browsingLevel}) != 0 AND a."nsfwLevel" != 0`);
     }
 
     if (username) {

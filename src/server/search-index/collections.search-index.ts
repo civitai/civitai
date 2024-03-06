@@ -17,7 +17,6 @@ import {
   CosmeticSource,
   CosmeticType,
   MediaType,
-  NsfwLevel,
   Prisma,
   PrismaClient,
   SearchIndexUpdateQueueAction,
