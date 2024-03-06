@@ -1,6 +1,7 @@
 import { ModelType } from '@prisma/client';
 import _ from 'lodash';
 import { z } from 'zod';
+import { VaultSort } from '~/server/common/enums';
 import { paginationSchema } from '~/server/schema/base.schema';
 
 export type GetPaginatedVaultItemsSchema = z.infer<typeof getPaginatedVaultItemsSchema>;
@@ -14,6 +15,7 @@ export const getPaginatedVaultItemsSchema = paginationSchema.merge(
     dateCreatedTo: z.date().optional(),
     dateAddedFrom: z.date().optional(),
     dateAddedTo: z.date().optional(),
+    sort: z.nativeEnum(VaultSort).default(VaultSort.RecentlyAdded),
   })
 );
 

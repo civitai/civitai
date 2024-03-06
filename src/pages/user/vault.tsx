@@ -50,6 +50,9 @@ import { showSuccessNotification } from '~/utils/notifications';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { NextLink } from '@mantine/next';
 import { VaultItemStatus } from '@prisma/client';
+import { SortFilter } from '~/components/Filters';
+import { VaultSort } from '~/server/common/enums';
+import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -253,6 +256,7 @@ export default function CivitaiVault() {
   const { vault, isLoading: isLoadingVault } = useQueryVault();
   const [filters, setFilters] = useState<Omit<GetPaginatedVaultItemsSchema, 'limit'>>({
     page: 1,
+    sort: VaultSort.RecentlyAdded,
   });
   const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
 
@@ -318,6 +322,14 @@ export default function CivitaiVault() {
                 <VaultItemsFiltersDropdown
                   filters={debouncedFilters}
                   setFilters={(f) => setFilters((c) => ({ ...c, ...f }))}
+                />
+                <SelectMenuV2
+                  label={getDisplayName(filters.sort)}
+                  options={Object.values(VaultSort).map((v) => ({ label: v, value: v }))}
+                  value={filters.sort}
+                  // Resets page:
+                  onClick={(x) => setFilters((c) => ({ ...c, sort: x as VaultSort, page: 1 }))}
+                  buttonProps={{ size: undefined, compact: false }}
                 />
               </Group>
 
@@ -470,7 +482,9 @@ export default function CivitaiVault() {
                           </Badge>
                         </Group>
                       </td>
-                      <td>{getDisplayName(item.category)}</td>
+                      <td>
+                        <Text transform="capitalize">{getDisplayName(item.category)}</Text>
+                      </td>
                       <td>{formatDate(item.createdAt)}</td>
                       <td>{formatDate(item.addedAt)}</td>
                       <td>{item.refreshedAt ? formatDate(item.refreshedAt) : '-'}</td>

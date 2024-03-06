@@ -1,6 +1,7 @@
 import { ModelHashType, ModelStatus, Prisma, VaultItemStatus } from '@prisma/client';
 import { env } from '~/env/server.mjs';
 import { constants } from '~/server/common/constants';
+import { VaultSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
   GetPaginatedVaultItemsSchema,
@@ -382,6 +383,19 @@ export const getPaginatedVaultItems = async (
   const where: Prisma.VaultItemFindManyArgs['where'] = {
     vaultId: input.userId,
   };
+  const orderBy: Prisma.VaultItemFindManyArgs['orderBy'] = {};
+
+  if (input.sort === VaultSort.RecentlyAdded) {
+    orderBy.addedAt = 'desc';
+  } else if (input.sort === VaultSort.RecentlyCreated) {
+    orderBy.createdAt = 'desc';
+  } else if (input.sort === VaultSort.BaseModel) {
+    orderBy.baseModel = 'asc';
+  } else if (input.sort === VaultSort.ModelName) {
+    orderBy.modelName = 'asc';
+  } else if (input.sort === VaultSort.Category) {
+    orderBy.category = 'asc';
+  }
 
   if (input.query) {
     where.OR = [
@@ -434,7 +448,7 @@ export const getPaginatedVaultItems = async (
     where,
     take,
     skip,
-    orderBy: { createdAt: 'desc' },
+    orderBy,
   });
 
   const itemsWithCoverImages = await Promise.all(
