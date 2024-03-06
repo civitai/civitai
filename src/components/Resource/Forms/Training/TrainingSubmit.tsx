@@ -1,4 +1,4 @@
-import { Accordion, Button, Group, Input, Stack, Text, Title } from '@mantine/core';
+import { Accordion, Button, Group, Input, Paper, Stack, Text, Title } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
 import { showNotification } from '@mantine/notifications';
@@ -52,7 +52,7 @@ const baseModelDescriptions: {
   sdxl: { label: 'Standard (SDXL)', description: 'Useful for all purposes, and uses SDXL.' },
   pony: {
     label: 'Pony (SDXL)',
-    description: 'Results tailored to visuals of various anthro, feral, or humanoids species.',
+    description: 'Results tailored to visuals of various anthro, feral, or humanoid species.',
   },
 };
 
@@ -380,7 +380,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   const thisFile = thisModelVersion.files[0];
   const thisMetadata = thisFile?.metadata as FileMetadata | null;
 
-  const [openedSection, setOpenedSection] = useState<string | null>(null);
+  const [openedSections, setOpenedSections] = useState<string[]>([]);
   const [formBaseModel, setDisplayBaseModel] = useState<TrainingDetailsBaseModel | undefined>(
     thisTrainingDetails?.baseModel ?? undefined
   );
@@ -413,6 +413,9 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     baseModel: z.enum(trainingDetailsBaseModels, {
       errorMap: () => ({ message: 'A base model must be chosen.' }),
     }),
+    samplePrompt1: z.string(),
+    samplePrompt2: z.string(),
+    samplePrompt3: z.string(),
   });
 
   // @ts-ignore ignoring because the reducer will use default functions in the next step in place of actual values
@@ -420,6 +423,9 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     baseModel: TrainingDetailsBaseModel | undefined;
   } = {
     baseModel: thisTrainingDetails?.baseModel ?? undefined,
+    samplePrompt1: thisTrainingDetails?.samplePrompts?.[0] ?? '',
+    samplePrompt2: thisTrainingDetails?.samplePrompts?.[1] ?? '',
+    samplePrompt3: thisTrainingDetails?.samplePrompts?.[2] ?? '',
     ...(thisTrainingDetails?.params
       ? thisTrainingDetails.params
       : trainingSettings.reduce((a, v) => ({ ...a, [v.name]: v.default }), {})),
@@ -598,7 +604,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   const handleConfirm = (data: z.infer<typeof schema>) => {
     setAwaitInvalidate(true);
 
-    const { baseModel, ...paramData } = data;
+    const { baseModel, samplePrompt1, samplePrompt2, samplePrompt3, ...paramData } = data;
 
     const baseModelConvert: BaseModel =
       baseModel === 'sd_1_5'
@@ -628,6 +634,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
       trainingDetails: {
         ...((thisModelVersion.trainingDetails as TrainingDetailsObj) || {}),
         baseModel: baseModel,
+        samplePrompts: [samplePrompt1, samplePrompt2, samplePrompt3],
         params: paramData,
       },
     };
@@ -804,15 +811,26 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
             fullWidth
           />
         </Input.Wrapper>
-        {formBaseModel && (baseModelDescriptions[formBaseModel]?.description || '')}
+        {formBaseModel && (
+          <Paper p="sm" withBorder style={{ marginTop: '-17px' }}>
+            <Text size="sm">
+              {baseModelDescriptions[formBaseModel]?.description || 'No description.'}
+            </Text>
+          </Paper>
+        )}
+
+        {formBaseModel && (
+          <Title mt="md" order={5}>
+            Advanced Settings
+          </Title>
+        )}
 
         {formBaseModel && (
           <Accordion
             variant="separated"
-            // multiple
-            // defaultValue={['training-settings']}
+            multiple
             mt="md"
-            onChange={setOpenedSection}
+            onChange={setOpenedSections}
             styles={(theme) => ({
               content: { padding: 0 },
               item: {
@@ -826,11 +844,43 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
               },
             })}
           >
+            <Accordion.Item value="custom-prompts">
+              <Accordion.Control>
+                <Stack spacing={4}>
+                  Sample Image Prompts
+                  {openedSections.includes('custom-prompts') && (
+                    <Text size="xs" color="dimmed">
+                      Set your own prompts for any of the 3 sample images we generate for each
+                      epoch.
+                    </Text>
+                  )}
+                </Stack>
+              </Accordion.Control>
+              <Accordion.Panel>
+                <Stack p="sm">
+                  <InputText
+                    name="samplePrompt1"
+                    label="Image #1"
+                    placeholder="Automatically set"
+                  />
+                  <InputText
+                    name="samplePrompt2"
+                    label="Image #2"
+                    placeholder="Automatically set"
+                  />
+                  <InputText
+                    name="samplePrompt3"
+                    label="Image #3"
+                    placeholder="Automatically set"
+                  />
+                </Stack>
+              </Accordion.Panel>
+            </Accordion.Item>
             <Accordion.Item value="training-settings">
               <Accordion.Control>
                 <Stack spacing={4}>
-                  Advanced Training Settings
-                  {openedSection === 'training-settings' && (
+                  Training Parameters
+                  {openedSections.includes('training-settings') && (
                     <Text size="xs" color="dimmed">
                       Hover over each setting for more information.
                     </Text>

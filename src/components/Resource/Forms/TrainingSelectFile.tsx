@@ -325,7 +325,7 @@ export default function TrainingSelectFile({
             <Text>
               Models are currently training{' '}
               {modelVersion.trainingDetails?.params?.maxTrainEpochs
-                ? `(${epochs.length}/${modelVersion.trainingDetails.params.maxTrainEpochs})`
+                ? `(0/${modelVersion.trainingDetails.params.maxTrainEpochs})`
                 : '...'}
             </Text>
             <Text>Results will stream in as they complete.</Text>
@@ -340,7 +340,9 @@ export default function TrainingSelectFile({
                 <Text>
                   Models are currently training{' '}
                   {modelVersion.trainingDetails?.params?.maxTrainEpochs
-                    ? `(${epochs.length}/${modelVersion.trainingDetails.params.maxTrainEpochs})`
+                    ? `(${epochs[0]?.epoch_number ?? 0}/${
+                        modelVersion.trainingDetails.params.maxTrainEpochs
+                      })`
                     : '...'}
                 </Text>
                 <Text>Results will stream in as they complete.</Text>

@@ -41,6 +41,11 @@ export const FeatureIntroductionModal = ({
   });
   const dialog = useDialogContext();
 
+  const videoKeysRequirements = [
+    ['youtube', 'embed'],
+    ['drive.google.com', 'preview'],
+  ];
+
   return (
     <Modal {...dialog} size="lg" title={content?.title} {...modalProps} withCloseButton>
       {isLoading || !content ? (
@@ -53,7 +58,11 @@ export const FeatureIntroductionModal = ({
           className="markdown-content"
           components={{
             a: ({ node, ...props }) => {
-              if (['youtube', 'embed'].every((item) => props.href?.includes(item)))
+              if (
+                videoKeysRequirements.some((requirements) =>
+                  requirements.every((item) => props.href?.includes(item))
+                )
+              ) {
                 return (
                   <AspectRatio ratio={16 / 9} maw={800} mx="auto">
                     <Box
@@ -71,6 +80,7 @@ export const FeatureIntroductionModal = ({
                     />
                   </AspectRatio>
                 );
+              }
 
               return (
                 <Link href={props.href as string} passHref>

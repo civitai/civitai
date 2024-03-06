@@ -1,4 +1,5 @@
 import {
+  ActionIcon,
   Alert,
   Button,
   ButtonProps,
@@ -17,7 +18,7 @@ import {
 import { StripeConnectStatus } from '@prisma/client';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { trpc } from '../../utils/trpc';
-import { IconExternalLink } from '@tabler/icons-react';
+import { IconExternalLink, IconInfoCircle } from '@tabler/icons-react';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -25,6 +26,7 @@ import { useState } from 'react';
 import { showErrorNotification } from '~/utils/notifications';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { FeatureIntroductionModal } from '~/components/FeatureIntroduction/FeatureIntroduction';
 
 const stripeConnectLoginUrl = 'https://connect.stripe.com/express_login';
 
@@ -215,9 +217,24 @@ export function StripeConnectCard() {
   return (
     <Card withBorder id="stripe">
       <Stack>
-        <Title order={2} id="payment-methods">
-          Stripe Connect
-        </Title>
+        <Group position="apart">
+          <Title order={2} id="payment-methods">
+            Stripe Connect
+          </Title>
+          <ActionIcon
+            onClick={() => {
+              dialogStore.trigger({
+                component: FeatureIntroductionModal,
+                props: {
+                  feature: 'getting-started',
+                  contentSlug: ['feature-introduction', 'stripe-connect'],
+                },
+              });
+            }}
+          >
+            <IconInfoCircle />
+          </ActionIcon>
+        </Group>
       </Stack>
 
       <Divider my="xl" />

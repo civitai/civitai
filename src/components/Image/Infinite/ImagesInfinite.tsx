@@ -34,6 +34,7 @@ type ImageFilters = {
   followed?: boolean;
   browsingMode?: BrowsingMode;
   hidden?: boolean;
+  fromPlatform?: boolean;
 };
 
 type ImagesInfiniteProps = {
