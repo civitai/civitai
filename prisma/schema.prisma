@@ -522,7 +522,6 @@ model Model {
   associations       ModelAssociations[]  @relation("FromModelAssociation")
   collectionItems    CollectionItem[]
   generationCoverage GenerationCoverage[]
-  VaultItem          VaultItem[]
 
   @@index([name])
   @@index([status, nsfw])
@@ -642,7 +641,6 @@ model ModelVersion {
   generationCoverage      GenerationCoverage?
   recommendedResources    RecommendedResource[]     @relation("recommendedResources")
   recommendedTo           RecommendedResource[]     @relation("recommendedTo")
-  VaultItem               VaultItem[]
 
   @@index([modelId], type: Hash)
 }
@@ -2796,11 +2794,11 @@ model VaultItem {
   vaultId        Int
   vault          Vault           @relation(fields: [vaultId], references: [userId], onDelete: Cascade)
   status         VaultItemStatus @default(Pending)
-  hash           String
-  modelVersionId Int?
-  modelVersion   ModelVersion?   @relation(fields: [modelVersionId], references: [id], onDelete: SetNull)
-  modelId        Int?
-  model          Model?          @relation(fields: [modelId], references: [id], onDelete: SetNull)
+  // Store the keys of whatever files we care for. This will be a list of keys to the files in the storage service.
+  files          String[]        @default([])
+  // These are not FKs because they will tie to the downloadable file even after the model/version is deleted
+  modelVersionId Int
+  modelId        Int
   modelName      String
   versionName    String
   creatorId      Int?

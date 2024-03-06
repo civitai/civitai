@@ -19,6 +19,8 @@ import {
   Title,
   Paper,
   ScrollArea,
+  Badge,
+  createStyles,
 } from '@mantine/core';
 import { IconCloudOff, IconSearch } from '@tabler/icons-react';
 import { useEffect, useMemo, useState } from 'react';
@@ -62,6 +64,10 @@ export const getServerSideProps = createServerSideProps({
     }
   },
 });
+
+const useStyles = createStyles((theme) => ({
+  selected: { background: theme.colors.blue[4], color: theme.colors.gray[0] },
+}));
 
 const VaultItemsAddNote = ({ vaultItems }: { vaultItems: VaultItemGetPaged[] }) => {
   const dialog = useDialogContext();
@@ -191,12 +197,11 @@ export default function CivitaiVault() {
     pagination,
   } = useQueryVaultItems(debouncedFilters, { keepPreviousData: true });
   const [selectedItems, setSelectedItems] = useState<VaultItemGetPaged[]>([]);
-
   const progress = vault ? (vault.usedStorageKb / vault.storageKb) * 100 : 0;
-
   const allSelectedInPage = useMemo(() => {
     return items.every((item) => selectedItems.find((i) => i.id === item.id));
   }, [items, selectedItems]);
+  const { classes, cx } = useStyles();
 
   //#region [useEffect] cancel debounced filters
   useEffect(() => {
@@ -345,7 +350,12 @@ export default function CivitaiVault() {
                   const isSelected = !!selectedItems.find((i) => i.id === item.id);
 
                   return (
-                    <tr key={item.id}>
+                    <tr
+                      key={item.id}
+                      className={cx({
+                        [classes.selected]: isSelected,
+                      })}
+                    >
                       <td>
                         <Checkbox
                           checked={isSelected}
@@ -369,7 +379,16 @@ export default function CivitaiVault() {
                         </Stack>
                       </td>
                       <td>{item.creatorName}</td>
-                      <td>{getDisplayName(item.type)}</td>
+                      <td>
+                        <Group>
+                          <Badge size="sm" color="blue" variant="light">
+                            {getDisplayName(item.type)}
+                          </Badge>
+                          <Badge size="sm" color="gray" variant="outline">
+                            {getDisplayName(item.baseModel)}
+                          </Badge>
+                        </Group>
+                      </td>
                       <td>{getDisplayName(item.category)}</td>
                       <td>{formatDate(item.createdAt)}</td>
                       <td>{formatDate(item.addedAt)}</td>

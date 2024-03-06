@@ -14,6 +14,7 @@ import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHa
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { formatKBytes } from '~/utils/number-helpers';
+import { parseKey } from '~/utils/s3-utils';
 
 type VaultWithUsedStorage = {
   userId: number;
@@ -200,8 +201,11 @@ export const addModelVersionToVault = async ({
     );
   }
 
+  const files = [mainFile].map((f) => parseKey(f.url).key);
+
   const vaultItem = await dbWrite.vaultItem.create({
     data: {
+      files,
       modelVersionId,
       vaultId: userId,
       modelName: modelVersion.model.name,
@@ -213,7 +217,6 @@ export const addModelVersionToVault = async ({
       detailsSizeKb: detail.length,
       imagesSizeKb: images.reduce((acc, img) => acc + (img.sizeKB ?? 0), 0),
       modelSizeKb: mainFile.sizeKB,
-      hash: mainFile.hashes.find((h) => h.type === ModelHashType.SHA256)?.hash ?? '',
       type: modelVersion.model.type,
       category: category?.tag.name ?? '',
       createdAt: modelVersion.createdAt,
