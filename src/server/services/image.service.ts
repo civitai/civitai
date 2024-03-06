@@ -551,7 +551,7 @@ export const getAllImages = async ({
     AND.push(Prisma.sql`NOT (i.meta IS NULL OR jsonb_typeof(i.meta) = 'null')`);
   }
 
-  if (fromPlatform) {
+  if (fromPlatform && types?.includes(MediaType.image)) {
     AND.push(Prisma.sql`(i.meta IS NOT NULL AND i.meta ? 'civitaiResources')`);
   }
 
@@ -694,7 +694,7 @@ export const getAllImages = async ({
       orderBy = `im."tippedAmountCount" DESC, im."reactionCount" DESC, im."imageId"`;
       if (!isGallery) AND.push(Prisma.sql`im."tippedAmountCount" > 0`);
     } else if (sort === ImageSort.Random) orderBy = 'ct."randomId" DESC';
-    else if (sort === ImageSort.Oldest) orderBy = `i."createdAt"`;
+    else if (sort === ImageSort.Oldest) orderBy = `i."createdAt" ASC`;
     else {
       if (from.indexOf(`irr`) !== -1) {
         // Ensure to sort by irr.imageId when reading from imageResources to maximize index utilization
@@ -722,6 +722,11 @@ export const getAllImages = async ({
     const ageGroups = getPeriods(period);
     AND.push(
       Prisma.sql`im."ageGroup" = ANY(ARRAY[${Prisma.join(ageGroups)}]::"MetricTimeframe"[])`
+    );
+  } else if (period && period !== 'AllTime' && periodMode !== 'stats') {
+    const interval = period.toLowerCase();
+    AND.push(
+      Prisma.sql`i."createdAt" >= date_trunc('day', now()) - interval '1 ${Prisma.raw(interval)}'`
     );
   }
 
