@@ -1,5 +1,6 @@
 import { ModelHashType, ModelStatus, Prisma, VaultItemStatus } from '@prisma/client';
 import { env } from '~/env/server.mjs';
+import { constants } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
   GetPaginatedVaultItemsSchema,
@@ -13,8 +14,10 @@ import { getCategoryTags } from '~/server/services/system-cache';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
+import { formatDate } from '~/utils/date-helpers';
 import { formatKBytes } from '~/utils/number-helpers';
-import { parseKey } from '~/utils/s3-utils';
+import { getGetUrlByKey, parseKey } from '~/utils/s3-utils';
+import { getDisplayName } from '~/utils/string-helpers';
 
 type VaultWithUsedStorage = {
   userId: number;
@@ -111,6 +114,9 @@ export const getModelVersionDataForVault = async ({
           user: true,
         },
       },
+      rank: {
+        select: { downloadCountAllTime: true },
+      },
     },
   });
 
@@ -148,10 +154,101 @@ export const getModelVersionDataForVault = async ({
     include: ['tags'],
   });
 
+  const modelVersionSettings = (modelVersion.settings ?? {}) as MixedObject;
+
+  const tableRows = [
+    {
+      header: 'Type',
+      value: `${getDisplayName(modelVersion.model.type)} ${
+        modelVersion.model.checkpointType ?? ''
+      }`,
+    },
+    {
+      header: 'Stats',
+      value: (modelVersion.rank?.downloadCountAllTime ?? 0).toLocaleString(),
+      visible: !!modelVersion?.rank,
+    },
+    {
+      header: 'Uploaded',
+      value: formatDate(modelVersion.createdAt),
+    },
+    {
+      header: 'Base Model',
+      value: `${modelVersion.baseModel} ${
+        modelVersion.baseModelType && modelVersion.baseModelType === 'Standard'
+          ? ''
+          : modelVersion.baseModelType ?? ''
+      }`,
+    },
+    {
+      header: 'Training',
+      value: `
+        ${modelVersion.steps ? `<span>${modelVersion.steps.toLocaleString()} steps</span>` : ''}
+        ${modelVersion.epochs ? `<span>${modelVersion.epochs.toLocaleString()} epochs</span>` : ''}
+      `,
+      visible: !!modelVersion.steps || !!modelVersion.epochs,
+    },
+    {
+      header: 'Usage Tips',
+      value: `
+      ${
+        modelVersion.clipSkip
+          ? `<span>Clip Skip: ${modelVersion.clipSkip.toLocaleString()}</span>`
+          : ''
+      }
+      ${
+        modelVersionSettings?.strength
+          ? `<span>Strength: ${modelVersionSettings.strength}</span>`
+          : ''
+      } 
+      `,
+      visible: !!modelVersion.clipSkip || !!modelVersionSettings?.strength,
+    },
+    {
+      header: 'Trigger Words',
+      value: modelVersion.trainedWords?.join(', ') ?? '',
+      visible: !!modelVersion.trainedWords?.length,
+    },
+  ].filter((r) => r.visible === undefined || r.visible);
+
   const detail = `
+    <style>
+      table {
+        width: 100%;
+        margin-bottom: 1rem;
+      }
+      table,
+      th,
+      td {
+        border: 1px solid black;
+        border-collapse: collapse;
+      }
+      th,
+      td {
+        padding: 5px;
+        text-align: left;
+      }
+    </style>
     <h1>${modelVersion.model.name} - ${modelVersion.name}</h1>
     <hr />
-    ${modelVersion.description}
+    <h3>Details</h3>
+    <table>
+      <tbody>
+        ${tableRows
+          .map(
+            (v) => `
+          <tr>
+            <th>${v.header}</th>
+            <td>${v.value}</td>
+          </tr>
+        `
+          )
+          .join('')} 
+      </tbody> 
+    </table>
+    <hr />
+    <h3>Description</h3>
+    ${modelVersion.description ?? modelVersion.model.description ?? '<p>N/A</p>'}
   `;
 
   return {
@@ -201,7 +298,7 @@ export const addModelVersionToVault = async ({
     );
   }
 
-  const files = [mainFile].map((f) => parseKey(f.url).key);
+  const files = [mainFile].map((f) => f.url);
 
   const vaultItem = await dbWrite.vaultItem.create({
     data: {
@@ -340,9 +437,25 @@ export const getPaginatedVaultItems = async (
     orderBy: { createdAt: 'desc' },
   });
 
+  const itemsWithCoverImages = await Promise.all(
+    items.map(async (item) => {
+      const { url } = await getGetUrlByKey(
+        constants.vault.keys.cover
+          .replace(':modelVersionId', item.modelVersionId.toString())
+          .replace(':userId', item.vaultId.toString()),
+        { bucket: env.S3_VAULT_BUCKET }
+      );
+
+      return {
+        ...item,
+        coverImageUrl: url,
+      };
+    })
+  );
+
   const count = await dbRead.vaultItem.count({ where });
 
-  return getPagingData({ items, count: (count as number) ?? 0 }, limit, page);
+  return getPagingData({ items: itemsWithCoverImages, count: (count as number) ?? 0 }, limit, page);
 };
 
 export const isModelVersionInVault = async ({

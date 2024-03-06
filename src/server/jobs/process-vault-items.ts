@@ -36,18 +36,17 @@ export const processVaultItems = createJob('process-vault-items', '1 * * * *', a
       const zip = new JSZip();
       let coverImage: { data: Blob; filename: string };
       await Promise.all(
-        images.map(async (img) => {
+        images.map(async (img, idx) => {
           try {
             const imageUrl = getEdgeUrl(img.url, { type: img.type });
             const blob = await fetchBlob(imageUrl);
             const filename = img.name ?? imageUrl.split('/').pop();
 
             if (filename && blob) {
-              if (!coverImage) {
+              if (idx === 0) {
                 coverImage = { data: blob, filename: `cover.${filename?.split('.').pop()}` };
               }
               const arrayBuffer = await blob.arrayBuffer();
-              console.log(filename, blob);
               zip.file(filename, arrayBuffer);
             }
           } catch (e) {

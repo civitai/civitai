@@ -21,8 +21,11 @@ import {
   ScrollArea,
   Badge,
   createStyles,
+  ActionIcon,
+  Anchor,
+  Image,
 } from '@mantine/core';
-import { IconCloudOff, IconSearch } from '@tabler/icons-react';
+import { IconCloudOff, IconDownload, IconSearch } from '@tabler/icons-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useMutateVault, useQueryVault } from '~/components/Vault/vault.util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -31,7 +34,10 @@ import { getLoginLink } from '~/utils/login-helpers';
 import { formatKBytes } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { useQueryVaultItems } from '../../components/Vault/vault.util';
-import { GetPaginatedVaultItemsSchema } from '~/server/schema/vault.schema';
+import {
+  GetPaginatedVaultItemsSchema,
+  vaultItemsAddModelVersionSchema,
+} from '~/server/schema/vault.schema';
 import { formatDate } from '~/utils/date-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import { isEqual, uniqBy } from 'lodash-es';
@@ -42,6 +48,8 @@ import { VaultItemGetPaged } from '~/types/router';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { showSuccessNotification } from '~/utils/notifications';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { NextLink } from '@mantine/next';
+import { VaultItemStatus } from '@prisma/client';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -66,7 +74,7 @@ export const getServerSideProps = createServerSideProps({
 });
 
 const useStyles = createStyles((theme) => ({
-  selected: { background: theme.colors.blue[4], color: theme.colors.gray[0] },
+  selected: { background: theme.fn.rgba(theme.colors.blue[8], 0.3), color: theme.colors.gray[0] },
 }));
 
 const VaultItemsAddNote = ({ vaultItems }: { vaultItems: VaultItemGetPaged[] }) => {
@@ -116,6 +124,7 @@ const VaultItemsRemove = ({ vaultItems }: { vaultItems: VaultItemGetPaged[] }) =
   const dialog = useDialogContext();
   const handleClose = dialog.onClose;
   const { removeItems, removingItems } = useMutateVault();
+  const { classes, cx } = useStyles();
 
   const handleConfirm = async () => {
     if (removingItems) return;
@@ -138,19 +147,29 @@ const VaultItemsRemove = ({ vaultItems }: { vaultItems: VaultItemGetPaged[] }) =
         <Text size="sm">Models deleted from your Civit Vault cannot be retrieved.</Text>
 
         <ScrollArea.Autosize maxHeight={500}>
-          {vaultItems.map((item) => (
-            <Paper withBorder p="sm" radius="lg" key={item.id}>
-              <Group>
-                <Text>IMG</Text>
-                <Stack spacing={0}>
-                  <Text>{item.modelName}</Text>
-                  <Text color="dimmed" size="sm">
-                    {item.versionName}
-                  </Text>
-                </Stack>
-              </Group>
-            </Paper>
-          ))}
+          <Stack>
+            {vaultItems.map((item) => (
+              <Paper withBorder p="sm" radius="lg" key={item.id}>
+                <Group>
+                  {item.coverImageUrl && (
+                    <Image
+                      src={item.coverImageUrl}
+                      alt="Model Image"
+                      radius="sm"
+                      width={50}
+                      height={50}
+                    />
+                  )}
+                  <Stack spacing={0}>
+                    <Text>{item.modelName}</Text>
+                    <Text color="dimmed" size="sm">
+                      {item.versionName}
+                    </Text>
+                  </Stack>
+                </Group>
+              </Paper>
+            ))}
+          </Stack>
         </ScrollArea.Autosize>
 
         <Divider mx="-lg" />
@@ -177,6 +196,53 @@ const VaultItemsRemove = ({ vaultItems }: { vaultItems: VaultItemGetPaged[] }) =
             Don&rsquo;t delete
           </Button>
         </Group>
+      </Stack>
+    </Modal>
+  );
+};
+
+const VaultItemDownload = ({ vaultItem }: { vaultItem: VaultItemGetPaged }) => {
+  const dialog = useDialogContext();
+  const handleClose = dialog.onClose;
+
+  return (
+    <Modal {...dialog} size="md" withCloseButton title={`Download your model`}>
+      <Stack>
+        <Text size="sm">Please select what you want to download from your model</Text>
+
+        <Button
+          component={NextLink}
+          href={`/api/download/vault/${vaultItem.id}?type=model`}
+          ml="auto"
+          variant="light"
+          fullWidth
+          radius="xl"
+          download
+        >
+          Model
+        </Button>
+        <Button
+          component={NextLink}
+          href={`/api/download/vault/${vaultItem.id}?type=details`}
+          ml="auto"
+          variant="light"
+          fullWidth
+          radius="xl"
+          download
+        >
+          Details
+        </Button>
+        <Button
+          component={NextLink}
+          href={`/api/download/vault/${vaultItem.id}?type=images`}
+          ml="auto"
+          variant="light"
+          fullWidth
+          radius="xl"
+          download
+        >
+          Images
+        </Button>
       </Stack>
     </Modal>
   );
@@ -371,12 +437,27 @@ export default function CivitaiVault() {
                         />
                       </td>
                       <td>
-                        <Stack spacing={0}>
-                          <Text>{item.modelName}</Text>
-                          <Text color="dimmed" size="sm">
-                            {item.versionName}
-                          </Text>
-                        </Stack>
+                        <Group>
+                          {item.coverImageUrl && (
+                            <Image
+                              src={item.coverImageUrl}
+                              alt="Model Image"
+                              radius="sm"
+                              width={50}
+                              height={50}
+                            />
+                          )}
+                          <Stack spacing={0}>
+                            <Anchor
+                              href={`/models/${item.modelId}?modelVersionId=${item.modelVersionId}`}
+                            >
+                              <Text>{item.modelName}</Text>
+                            </Anchor>
+                            <Text color="dimmed" size="sm">
+                              {item.versionName}
+                            </Text>
+                          </Stack>
+                        </Group>
                       </td>
                       <td>{item.creatorName}</td>
                       <td>
@@ -394,7 +475,22 @@ export default function CivitaiVault() {
                       <td>{formatDate(item.addedAt)}</td>
                       <td>{item.refreshedAt ? formatDate(item.refreshedAt) : '-'}</td>
                       <td>{item.notes ?? '-'}</td>
-                      <td>&nbsp;</td>
+                      <td>
+                        {/* {item.status === VaultItemStatus.Stored && ( */}
+                        <ActionIcon
+                          onClick={() => {
+                            dialogStore.trigger({
+                              component: VaultItemDownload,
+                              props: {
+                                vaultItem: item,
+                              },
+                            });
+                          }}
+                        >
+                          <IconDownload />
+                        </ActionIcon>
+                        {/* )} */}
+                      </td>
                     </tr>
                   );
                 })}
