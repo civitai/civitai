@@ -43,6 +43,7 @@ export const imagesQueryParamSchema = z
     section: z.enum(['images', 'reactions']),
     hidden: booleanString(),
     followed: booleanString(),
+    fromPlatform: booleanString(),
   })
   .partial();
 
