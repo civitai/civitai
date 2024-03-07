@@ -47,7 +47,6 @@ import {
   IconRadar2,
   IconBrush,
   IconRepeat,
-  IconHeart,
 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
 import { InferGetServerSidePropsType } from 'next';
@@ -114,6 +113,7 @@ import { Adunit } from '~/components/Ads/AdUnit';
 import { adsRegistry } from '~/components/Ads/adsRegistry';
 import { ToggleModelNotification } from '~/components/Model/Actions/ToggleModelNotification';
 import { useToggleFavoriteMutation } from '~/components/ResourceReview/resourceReview.utils';
+import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -388,18 +388,12 @@ export default function ModelDetailsV2({
   };
 
   const favoriteMutation = useToggleFavoriteMutation();
-  const handleToggleFavorite = (wholeModel = false) => {
+  const handleToggleFavorite = ({ versionId, setTo }: { versionId?: number; setTo: boolean }) => {
     if (!model) return;
-    if (wholeModel === true && !selectedVersion) return;
-    console.log({
-      modelId: model.id,
-      modelVersionId: wholeModel === true ? undefined : selectedVersion!.id,
-      setTo: !isFavorite,
-    });
     favoriteMutation.mutate({
       modelId: model.id,
-      modelVersionId: wholeModel === true ? undefined : selectedVersion!.id,
-      setTo: !isFavorite,
+      modelVersionId: versionId,
+      setTo,
     });
   };
 
@@ -551,17 +545,17 @@ export default function ModelDetailsV2({
                   <LoginRedirect reason="favorite-model">
                     <IconBadge
                       radius="sm"
-                      color={isFavorite ? 'red' : 'gray'}
+                      color={isFavorite ? 'green' : 'gray'}
                       size="lg"
                       icon={
-                        <IconHeart
+                        <ThumbsUpIcon
                           size={18}
-                          color={isFavorite ? theme.colors.red[6] : undefined}
-                          style={{ fill: isFavorite ? theme.colors.red[6] : undefined }}
+                          color={isFavorite ? 'green' : undefined}
+                          filled={isFavorite}
                         />
                       }
                       sx={{ cursor: 'pointer' }}
-                      onClick={() => handleToggleFavorite(true)}
+                      onClick={() => handleToggleFavorite({ setTo: !isFavorite })}
                     >
                       <Text className={classes.modelBadgeText}>
                         {abbreviateNumber(model.rank?.thumbsUpCountAllTime ?? 0)}

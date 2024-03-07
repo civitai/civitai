@@ -639,19 +639,23 @@ export function ModelVersionDetails({
                     </ShareButton>
                   </div>
                 </Tooltip>
-                <Tooltip label={isFavorite ? 'Unlike' : 'Like'} position="top" withArrow>
-                  <div>
-                    <LoginRedirect reason="favorite-model">
-                      <Button
-                        onClick={onFavoriteClick}
-                        color={isFavorite ? 'red' : 'gray'}
-                        sx={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
-                      >
-                        <IconHeart color="#fff" />
-                      </Button>
-                    </LoginRedirect>
-                  </div>
-                </Tooltip>
+                {onFavoriteClick && (
+                  <Tooltip label={isFavorite ? 'Unlike' : 'Like'} position="top" withArrow>
+                    <div>
+                      <LoginRedirect reason="favorite-model">
+                        <Button
+                          onClick={() =>
+                            onFavoriteClick({ versionId: version.id, setTo: !isFavorite })
+                          }
+                          color={isFavorite ? 'green' : 'gray'}
+                          sx={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
+                        >
+                          <ThumbsUpIcon color="#fff" filled={isFavorite} />
+                        </Button>
+                      </LoginRedirect>
+                    </div>
+                  </Tooltip>
+                )}
               </Group>
               {primaryFileDetails}
             </Stack>
@@ -1079,7 +1083,7 @@ type Props = {
   model: ModelById;
   user?: SessionUser | null;
   onBrowseClick?: VoidFunction;
-  onFavoriteClick?: VoidFunction;
+  onFavoriteClick?: (ctx: { versionId?: number; setTo: boolean }) => void;
   hasAccess?: boolean;
 };
 
