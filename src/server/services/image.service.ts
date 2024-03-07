@@ -827,15 +827,15 @@ export const getAllImages = async ({
       ) "baseModel",`
           : ''
       )}
-      COALESCE(im."cryCount", 0) "cryCount",
-      COALESCE(im."laughCount", 0) "laughCount",
-      COALESCE(im."likeCount", 0) "likeCount",
-      COALESCE(im."dislikeCount", 0) "dislikeCount",
-      COALESCE(im."heartCount", 0) "heartCount",
-      COALESCE(im."commentCount", 0) "commentCount",
-      COALESCE(im."collectedCount", 0) "collectedCount",
-      COALESCE(im."tippedAmountCount", 0) "tippedAmountCount",
-      COALESCE(im."viewCount", 0) "viewCount",
+      im."cryCount",
+      im."laughCount",
+      im."likeCount",
+      im."dislikeCount",
+      im."heartCount",
+      im."commentCount",
+      im."collectedCount",
+      im."tippedAmountCount",
+      im."viewCount",
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} "cursorId"
       ${queryFrom}
       ORDER BY ${Prisma.raw(orderBy)}
