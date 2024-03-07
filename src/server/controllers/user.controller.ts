@@ -454,20 +454,18 @@ export const getUserEngagedModelsHandler = async ({ ctx }: { ctx: DeepNonNullabl
     const engagementsCache = await redis.get(`user:${id}:model-engagements`);
     if (engagementsCache) return JSON.parse(engagementsCache) as Record<EngagedModelType, number[]>;
 
-    const hiddenEngagements = await getUserEngagedModels({ id, type: ModelEngagementType.Hide });
+    const engagements = await getUserEngagedModels({ id });
     const recommendedReviews = await getResourceReviewsByUserId({ userId: id, recommended: true });
 
     // turn array of user.engagedModels into object with `type` as key and array of modelId as value
-    const engagedModels = hiddenEngagements.reduce<Record<EngagedModelType, number[]>>(
-      (acc, model) => {
-        const { type, modelId } = model;
-        if (!acc[type]) acc[type] = [];
-        acc[type].push(modelId);
-        return acc;
-      },
-      {} as Record<EngagedModelType, number[]>
-    );
+    const engagedModels = engagements.reduce<Record<EngagedModelType, number[]>>((acc, model) => {
+      const { type, modelId } = model;
+      if (!acc[type]) acc[type] = [];
+      acc[type].push(modelId);
+      return acc;
+    }, {} as Record<EngagedModelType, number[]>);
     engagedModels.Recommended = recommendedReviews.map((r) => r.modelId).filter(isDefined);
+    console.log({ engagedModels });
 
     await redis.set(`user:${id}:model-engagements`, JSON.stringify(engagedModels), {
       EX: 60 * 60 * 24,
