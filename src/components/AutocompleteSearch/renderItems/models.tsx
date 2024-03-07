@@ -3,13 +3,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { AutocompleteItem, Badge, Center, Group, Stack, Text, ThemeIcon } from '@mantine/core';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import {
-  IconBrush,
-  IconDownload,
-  IconHeart,
-  IconMessageCircle2,
-  IconPhotoOff,
-} from '@tabler/icons-react';
+import { IconBrush, IconDownload, IconMessageCircle2, IconPhotoOff } from '@tabler/icons-react';
 import { Highlight } from 'react-instantsearch';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
@@ -18,12 +12,12 @@ import {
   useSearchItemStyles,
   ViewMoreItem,
 } from '~/components/AutocompleteSearch/renderItems/common';
-import { StarRating } from '~/components/StartRating/StarRating';
 import { truncate } from 'lodash-es';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { constants } from '~/server/common/constants';
 import { SearchIndexDataMap } from '~/components/Search/search.utils2';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 
 export const ModelSearchItem = forwardRef<
   HTMLDivElement,
@@ -102,11 +96,8 @@ export const ModelSearchItem = forwardRef<
           {category && <Badge size="xs">{category.name}</Badge>}
         </Group>
         <Group spacing={4}>
-          <IconBadge icon={<StarRating value={metrics.rating} size={12} />}>
-            {abbreviateNumber(metrics.ratingCount)}
-          </IconBadge>
-          <IconBadge icon={<IconHeart size={12} stroke={2.5} />}>
-            {abbreviateNumber(metrics.favoriteCount)}
+          <IconBadge icon={<ThumbsUpIcon size={12} />}>
+            {abbreviateNumber(metrics.thumbsUpCount)}
           </IconBadge>
           <IconBadge icon={<IconMessageCircle2 size={12} stroke={2.5} />}>
             {abbreviateNumber(metrics.commentCount)}

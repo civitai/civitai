@@ -20,7 +20,6 @@ import {
   IconDotsVertical,
   IconDownload,
   IconFlag,
-  IconHeart,
   IconMessageCircle2,
   IconTagOff,
 } from '@tabler/icons-react';
@@ -38,7 +37,6 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
 import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionMenuItem';
-import { StarRating } from '~/components/StartRating/StarRating';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
@@ -56,6 +54,7 @@ import { ImageMetaProps } from '~/server/schema/image.schema';
 import { ToggleSearchableMenuItem } from '../../MenuItems/ToggleSearchableMenuItem';
 import type { AssociatedResourceModelCardData } from '~/server/controllers/model.controller';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
+import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 
 const aDayAgo = dayjs().subtract(1, 'day').toDate();
 
@@ -66,7 +65,7 @@ export function ModelCategoryCard({
   data: AssociatedResourceModelCardData;
   height: number;
 }) {
-  const { classes, theme, cx } = useStyles();
+  const { classes, cx } = useStyles();
   const router = useRouter();
   const modelId = router.query.model ? Number(router.query.model) : undefined;
   const currentUser = useCurrentUser();
@@ -74,7 +73,7 @@ export function ModelCategoryCard({
 
   const [loading, setLoading] = useState(false);
 
-  const { id, images, name, rank, user, locked, earlyAccessDeadline } = data;
+  const { id, images, name, rank, user, earlyAccessDeadline } = data;
   const image = images[0];
   const inEarlyAccess = earlyAccessDeadline && isFutureDate(earlyAccessDeadline);
   const isNew = data.publishedAt && data.publishedAt > aDayAgo;
@@ -84,13 +83,13 @@ export function ModelCategoryCard({
     data.lastVersionAt > aDayAgo &&
     data.lastVersionAt.getTime() - data.publishedAt.getTime() > constants.timeCutOffs.updatedModel;
 
-  const { data: { Favorite: favoriteModels = [] } = { Favorite: [], Hide: [] } } =
+  const { data: { Recommended: reviewedModels = [] } = { Recommended: [], Hide: [] } } =
     trpc.user.getEngagedModels.useQuery(undefined, {
       enabled: !!currentUser,
       cacheTime: Infinity,
       staleTime: Infinity,
     });
-  const isFavorite = favoriteModels.find((modelId) => modelId === id);
+  const hasReview = reviewedModels.includes(id);
   const { hiddenUsers: hiddenUsers, hiddenModels: hiddenModels } = useHiddenPreferencesContext();
   const isHidden = hiddenUsers.get(user.id) || hiddenModels.get(id);
 
@@ -122,37 +121,23 @@ export function ModelCategoryCard({
     </>
   );
 
-  const modelRating = !locked ? (
-    <IconBadge
-      className={classes.statBadge}
-      sx={{ userSelect: 'none' }}
-      icon={<StarRating size={14} value={rank.rating} />}
-    >
-      <Text size="xs" color={rank.ratingCount > 0 ? undefined : 'dimmed'}>
-        {abbreviateNumber(rank.ratingCount)}
-      </Text>
-    </IconBadge>
-  ) : null;
-
   const modelDownloads = (
     <IconBadge className={classes.statBadge} icon={<IconDownload size={14} />}>
       <Text size={12}>{abbreviateNumber(rank.downloadCount)}</Text>
     </IconBadge>
   );
 
-  const modelLikes = !!rank.favoriteCount && (
+  const modelLikes = !!rank.thumbsUpCount && (
     <IconBadge
       className={classes.statBadge}
       icon={
-        <IconHeart
-          size={14}
-          style={{ fill: isFavorite ? theme.colors.red[6] : undefined }}
-          color={isFavorite ? theme.colors.red[6] : undefined}
-        />
+        <Text color={hasReview ? 'success.5' : undefined} inline>
+          <ThumbsUpIcon size={14} filled={hasReview} />
+        </Text>
       }
-      color={isFavorite ? 'red' : 'gray'}
+      color={hasReview ? 'success.5' : 'gray'}
     >
-      <Text size="xs">{abbreviateNumber(rank.favoriteCount)}</Text>
+      <Text size="xs">{abbreviateNumber(rank.thumbsUpCount)}</Text>
     </IconBadge>
   );
 
@@ -424,7 +409,6 @@ export function ModelCategoryCard({
                 {modelText}
               </Group>
               <Group position="apart" spacing={4}>
-                {modelRating}
                 <Group spacing={4} align="center">
                   {modelLikes}
                   {modelComments}

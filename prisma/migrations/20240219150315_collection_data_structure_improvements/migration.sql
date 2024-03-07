@@ -20,14 +20,14 @@ WHERE ("mode" = 'Bookmark');
 -- Create collection for all existing users:
 INSERT INTO "Collection" ("userId", "name", "description", "type", "availability", "mode")
 (
-	SELECT 
-		DISTINCT "userId",
-		'Bookmarked Articles' "name",
-		'Your bookmarked articles will appear in this collection.',
-		'Article'::"CollectionType" "type",
-		'Unsearchable'::"Availability" "availability",
-		'Bookmark'::"CollectionMode"
-	FROM "ArticleEngagement"
+    SELECT 
+        DISTINCT "userId",
+        'Bookmarked Articles' "name",
+        'Your bookmarked articles will appear in this collection.',
+        'Article'::"CollectionType" "type",
+        'Unsearchable'::"Availability" "availability",
+        'Bookmark'::"CollectionMode"
+    FROM "ArticleEngagement"
 )
 ON CONFLICT DO NOTHING;
 

@@ -13,8 +13,8 @@ import { containerQuery } from '~/utils/mantine-css-helpers';
 
 export default function ModelsPage() {
   const { set, view: queryView, ...queryFilters } = useModelQueryParams();
-  const { username, favorites, hidden, query } = queryFilters;
-  const periodMode = query || favorites ? ('stats' as PeriodMode) : undefined;
+  const { username, hidden, query } = queryFilters;
+  const periodMode = query ? ('stats' as PeriodMode) : undefined;
   if (periodMode) queryFilters.periodMode = periodMode;
 
   return (
@@ -26,7 +26,6 @@ export default function ModelsPage() {
       />
 
       {username && typeof username === 'string' && <Title>Models by {username}</Title>}
-      {favorites && <Title>Your Liked Models</Title>}
       {hidden && <Title>Your Hidden Models</Title>}
       <Stack spacing="xs">
         <Announcements

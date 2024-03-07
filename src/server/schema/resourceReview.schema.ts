@@ -1,11 +1,12 @@
 import { z } from 'zod';
 import { paginationSchema } from '~/server/schema/base.schema';
-import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import { numericString, sanitizedNullableString } from '~/utils/zod-helpers';
-import { ReviewSort } from '~/server/common/enums';
 
 export type GetUserResourceReviewInput = z.infer<typeof getUserResourceReviewSchema>;
-export const getUserResourceReviewSchema = z.object({ modelVersionId: z.number() });
+export const getUserResourceReviewSchema = z.object({
+  modelId: z.number().optional(),
+  modelVersionId: z.number().optional(),
+});
 
 export type GetResourceReviewsInput = z.infer<typeof getResourceReviewsSchema>;
 export const getResourceReviewsSchema = z.object({
@@ -26,6 +27,7 @@ export const getResourceReviewsInfiniteSchema = z.object({
   modelVersionId: z.number().optional(),
   username: z.string().optional(),
   include: z.array(z.enum(['model'])).optional(),
+  hasDetails: z.boolean().optional(),
 });
 
 export type UpsertResourceReviewInput = z.infer<typeof upsertResourceReviewSchema>;
@@ -34,6 +36,7 @@ export const upsertResourceReviewSchema = z.object({
   modelId: z.number(),
   modelVersionId: z.number(),
   rating: z.number(),
+  recommended: z.boolean(),
   details: sanitizedNullableString({
     allowedTags: ['div', 'strong', 'p', 'em', 'u', 's', 'a', 'br', 'span', 'code', 'pre'],
     stripEmpty: true,
@@ -45,6 +48,7 @@ export const createResourceReviewSchema = z.object({
   modelId: z.number(),
   modelVersionId: z.number(),
   rating: z.number(),
+  recommended: z.boolean(),
   details: sanitizedNullableString({
     allowedTags: ['div', 'strong', 'p', 'em', 'u', 's', 'a', 'br', 'span', 'code', 'pre'],
     stripEmpty: true,
@@ -55,6 +59,7 @@ export type UpdateResourceReviewInput = z.infer<typeof updateResourceReviewSchem
 export const updateResourceReviewSchema = z.object({
   id: z.number(),
   rating: z.number().optional(),
+  recommended: z.boolean().optional(),
   details: sanitizedNullableString({
     allowedTags: ['div', 'strong', 'p', 'em', 'u', 's', 'a', 'br', 'span', 'code', 'pre'],
     stripEmpty: true,

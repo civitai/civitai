@@ -4,7 +4,6 @@ import {
   Group,
   Highlight,
   Image,
-  Rating,
   Stack,
   Text,
   ThemeIcon,
@@ -19,7 +18,6 @@ import {
   IconDownload,
   IconEye,
   IconHash,
-  IconHeart,
   IconMessageCircle2,
   IconMoodSmile,
   IconPhoto,
@@ -36,6 +34,7 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { IconBadge, IconBadgeProps } from '~/components/IconBadge/IconBadge';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { applyQueryMatchers } from '~/components/QuickSearch/util';
+import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { Username } from '~/components/User/Username';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -243,14 +242,8 @@ function ModelSpotlightAction({
           {category && <Badge size="xs">{category.tag.name}</Badge>}
         </Group>
         <Group spacing={4}>
-          <ActionIconBadge
-            // @ts-ignore: ignoring because size doesn't allow number
-            icon={<Rating value={metrics.rating} size={12} readOnly />}
-          >
-            {abbreviateNumber(metrics.ratingCount)}
-          </ActionIconBadge>
-          <ActionIconBadge icon={<IconHeart size={12} stroke={2.5} />}>
-            {abbreviateNumber(metrics.favoriteCount)}
+          <ActionIconBadge icon={<ThumbsUpIcon size={12} stroke={2.5} />}>
+            {abbreviateNumber(metrics.thumbsUpCount)}
           </ActionIconBadge>
           <ActionIconBadge icon={<IconMessageCircle2 size={12} stroke={2.5} />}>
             {abbreviateNumber(metrics.commentCount)}
@@ -298,20 +291,14 @@ function UserSpotlightAction({
         </Text>
         {stats && (
           <Group spacing={4}>
-            <ActionIconBadge
-              // @ts-ignore: ignoring because size doesn't allow number
-              icon={<Rating value={stats.ratingAllTime} size={12} readOnly />}
-            >
-              {abbreviateNumber(stats.ratingCountAllTime)}
-            </ActionIconBadge>
             <ActionIconBadge icon={<IconUpload size={12} stroke={2.5} />}>
               {abbreviateNumber(stats.uploadCountAllTime)}
             </ActionIconBadge>
             <ActionIconBadge icon={<IconUsers size={12} stroke={2.5} />}>
               {abbreviateNumber(stats.followerCountAllTime)}
             </ActionIconBadge>
-            <ActionIconBadge icon={<IconHeart size={12} stroke={2.5} />}>
-              {abbreviateNumber(stats.favoriteCountAllTime)}
+            <ActionIconBadge icon={<ThumbsUpIcon size={12} stroke={2.5} />}>
+              {abbreviateNumber(stats.thumbsUpCountAllTime)}
             </ActionIconBadge>
             <ActionIconBadge icon={<IconDownload size={16} />}>
               {abbreviateNumber(stats.downloadCountAllTime)}

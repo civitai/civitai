@@ -6,8 +6,8 @@ import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { invalidateAllSessions } from '~/server/utils/session-helpers';
 
-const BATCH_SIZE = 10000;
-const CONCURRENCY_LIMIT = 10;
+const BATCH_SIZE = 500;
+const CONCURRENCY_LIMIT = 50;
 export default WebhookEndpoint(async (req, res) => {
   // TODO.nsfwLevel
 

@@ -48,7 +48,9 @@ const today = new Date();
 
 export function ManagePostStatus() {
   const router = useRouter();
-  const returnUrl = router.query.returnUrl as string;
+  let returnUrl: string | null = router.query.returnUrl as string;
+  if (returnUrl && !returnUrl.startsWith('/')) returnUrl = null;
+
   const currentUser = useCurrentUser();
   const queryUtils = trpc.useContext();
 

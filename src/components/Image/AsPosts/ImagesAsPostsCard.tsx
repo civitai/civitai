@@ -1,24 +1,13 @@
 import { Carousel, Embla } from '@mantine/carousel';
-import {
-  ActionIcon,
-  Center,
-  Group,
-  Menu,
-  Paper,
-  Text,
-  Tooltip,
-  createStyles,
-  Stack,
-} from '@mantine/core';
+import { ActionIcon, Group, Menu, Paper, Tooltip, createStyles, Stack, Badge } from '@mantine/core';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
-import { IconExclamationMark, IconInfoCircle, IconMessage, IconBrush } from '@tabler/icons-react';
+import { IconExclamationMark, IconInfoCircle, IconBrush, IconMessage } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { useImagesAsPostsInfiniteContext } from '~/components/Image/AsPosts/ImagesAsPostsInfinite';
 import { useModelGallerySettings } from '~/components/Image/AsPosts/gallery.utils';
 import { OnsiteIndicator } from '~/components/Image/Indicators/OnsiteIndicator';
@@ -26,9 +15,7 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
 import { Reactions } from '~/components/Reaction/Reactions';
-import { StarRating } from '~/components/StartRating/StarRating';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useInView } from '~/hooks/useInView';
 import { constants } from '~/server/common/constants';
 import { ImagesAsPostModel } from '~/server/controllers/image.controller';
@@ -37,6 +24,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { trpc } from '~/utils/trpc';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
+import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 
 export function ImagesAsPostsCard({
   data,
@@ -49,7 +37,6 @@ export function ImagesAsPostsCard({
 }) {
   const { ref, inView } = useInView({ rootMargin: '200%' });
   const { classes } = useStyles();
-  const currentUser = useCurrentUser();
   const features = useFeatureFlags();
   const queryUtils = trpc.useUtils();
 
@@ -108,11 +95,13 @@ export function ImagesAsPostsCard({
     );
   };
 
+  const isThumbsUp = !!data.review?.recommended;
+
   return (
     <MasonryCard withBorder shadow="sm" p={0} height={height} ref={ref} className={classes.card}>
-      <Paper radius={0} h={58}>
+      <Paper p="xs" radius={0}>
         {inView && (
-          <Group p="xs" align="flex-start" noWrap maw="100%">
+          <Group align="flex-start" noWrap maw="100%">
             <UserAvatar
               user={data.user}
               subText={
@@ -138,33 +127,19 @@ export function ImagesAsPostsCard({
               )}
               {data.review ? (
                 <RoutedDialogLink name="resourceReview" state={{ reviewId: data.review.id }}>
-                  <IconBadge
-                    className={classes.statBadge}
-                    sx={{
-                      userSelect: 'none',
-                      paddingTop: 4,
-                      paddingBottom: 4,
-                      height: 'auto',
-                    }}
-                    style={{ paddingRight: data.review?.details ? undefined : 0 }}
-                    icon={
-                      <Group spacing={2} align="center" noWrap>
-                        <StarRating size={14} value={data.review.rating / 5} count={1} />
-                        <Text size="xs" sx={{ lineHeight: 1.2 }}>
-                          {`${data.review.rating}.0`}
-                        </Text>
-                      </Group>
-                    }
+                  <Badge
+                    variant="light"
+                    radius="md"
+                    size="lg"
+                    style={{ userSelect: 'none', padding: 4, height: 'auto' }}
+                    color={isThumbsUp ? 'success.5' : 'red'}
                   >
-                    {data.review?.details && (
-                      <Center>
-                        <IconMessage size={18} strokeWidth={2.5} />
-                      </Center>
-                    )}
-                  </IconBadge>
+                    <Group spacing={4} noWrap>
+                      {isThumbsUp ? <ThumbsUpIcon filled /> : <ThumbsDownIcon filled />}
+                      {data.review.details && <IconMessage size={18} strokeWidth={2.5} />}
+                    </Group>
+                  </Badge>
                 </RoutedDialogLink>
-              ) : currentUser?.id === data.user.id ? (
-                <>{/* <Button compact>Add Review</Button> */}</>
               ) : null}
             </Group>
           </Group>
@@ -436,6 +411,7 @@ const useStyles = createStyles((theme) => ({
   card: {
     display: 'flex',
     flexDirection: 'column',
+    cursor: 'auto !important',
   },
   link: {
     width: '100%',

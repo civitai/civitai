@@ -75,7 +75,7 @@ export function BuzzTransactionButton({
       color={hasCost ? 'yellow.7' : 'blue'}
       {...buttonProps}
       onClick={onPerformTransaction ? onClick : undefined}
-      className={cx(classes.button, buttonProps?.className)}
+      className={cx(buttonProps?.className, { [classes.button]: hasCost })}
     >
       <Group spacing="md" noWrap position="apart">
         <Text size={size ?? 14}>{label}</Text>

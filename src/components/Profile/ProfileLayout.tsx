@@ -45,7 +45,7 @@ export function ProfileLayout({
           )}), Models Uploaded: ${abbreviateNumber(0)}, Followers: ${abbreviateNumber(
             stats.followerCountAllTime
           )}, Total Likes Received: ${abbreviateNumber(
-            stats.favoriteCountAllTime
+            stats.thumbsUpCountAllTime
           )}, Total Downloads Received: ${abbreviateNumber(stats.downloadCountAllTime)}. `}
           images={user.profilePicture}
           links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/user/${username}`, rel: 'canonical' }]}

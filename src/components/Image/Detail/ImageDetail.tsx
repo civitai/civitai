@@ -217,7 +217,7 @@ export function ImageDetail() {
                         size={30}
                         variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
                         radius="xl"
-                        onClick={(e) => {
+                        onClick={() => {
                           openContext('report', {
                             entityType: ReportEntity.Image,
                             entityId: image.id,

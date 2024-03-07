@@ -18,7 +18,7 @@ import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
 import {
   deleteImageById,
-  getAllImages,
+  deleteImagesForModelVersionCache,
   getImagesForPosts,
   ingestImage,
 } from '~/server/services/image.service';
@@ -525,13 +525,14 @@ export const updatePost = async ({
 export const deletePost = async ({ id }: GetByIdInput) => {
   const images = await dbWrite.image.findMany({ where: { postId: id } });
   if (images.length) {
-    for (const image of images) await deleteImageById({ id: image.id });
+    for (const image of images) await deleteImageById({ id: image.id, updatePost: false });
   }
 
   await dbWrite.clubPost.deleteMany({
     where: { entityId: id, entityType: 'Post' },
   });
 
+  await bustCachesForPost(id);
   await dbWrite.post.delete({ where: { id } });
 };
 
@@ -658,8 +659,26 @@ export const addPostImage = async ({
     }
   }
 
+  await bustCachesForPost(props.postId);
+
   return image;
 };
+
+export async function bustCachesForPost(postId: number) {
+  const [result] = await dbRead.$queryRaw<{ isShowcase: boolean; modelVersionId: number }[]>`
+    SELECT
+      m."userId" = p."userId" as "isShowcase",
+      p."modelVersionId"
+    FROM "Post" p
+    JOIN "ModelVersion" mv ON mv."id" = p."modelVersionId"
+    JOIN "Model" m ON m."id" = mv."modelId"
+    WHERE p."id" = ${postId}
+  `;
+
+  if (result?.isShowcase) {
+    await deleteImagesForModelVersionCache(result.modelVersionId);
+  }
+}
 
 export const updatePostImage = async (image: UpdatePostImageInput) => {
   // const updateResources = image.resources.filter(isImageResource);
@@ -688,12 +707,13 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
   };
 };
 
-export const reorderPostImages = async ({ id, imageIds }: ReorderPostImagesInput) => {
+export const reorderPostImages = async ({ id: postId, imageIds }: ReorderPostImagesInput) => {
   const transaction = await dbWrite.$transaction(
-    imageIds.map((id, index) => dbWrite.image.update({ where: { id }, data: { index } }))
+    imageIds.map((id, index) => dbWrite.image.update({ where: { id, postId }, data: { index } }))
   );
 
-  await updatePostNsfwLevel(id);
+  await updatePostNsfwLevel(postId);
+  await bustCachesForPost(postId);
 
   return transaction;
 };

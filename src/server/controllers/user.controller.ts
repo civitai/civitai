@@ -24,6 +24,7 @@ import {
   ReportProhibitedRequestInput,
   SetUserSettingsInput,
   ToggleBlockedTagSchema,
+  ToggleFavoriteInput,
   ToggleFeatureInput,
   ToggleFollowUserSchema,
   ToggleModelEngagementInput,
@@ -53,7 +54,7 @@ import {
   toggleBlockedTag,
   toggleFollowUser,
   toggleHideUser,
-  toggleModelFavorite,
+  toggleModelNotify,
   toggleModelHide,
   toggleUserArticleEngagement,
   toggleUserBountyEngagement,
@@ -67,6 +68,10 @@ import {
   unequipCosmeticByType,
   getUserBookmarkCollections,
   getUserPurchasedRewards,
+  toggleModelEngagement,
+  toggleBookmarked,
+  toggleReview,
+  getUserDownloads,
 } from '~/server/services/user.service';
 import {
   handleLogError,
@@ -97,6 +102,7 @@ import { FeatureAccess, toggleableFeatures } from '../services/feature-flags.ser
 import { isDefined } from '~/utils/type-guards';
 import { OnboardingSteps } from '~/server/common/enums';
 import { Flags } from '~/shared/utils';
+import { getResourceReviewsByUserId } from '~/server/services/resourceReview.service';
 
 export const getAllUsersHandler = async ({
   input,
@@ -429,26 +435,29 @@ export const deleteUserHandler = async ({
   }
 };
 
+type EngagedModelType = ModelEngagementType | 'Recommended';
+
 export const getUserEngagedModelsHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
   const { id } = ctx.user;
 
   try {
     const engagementsCache = await redis.get(`user:${id}:model-engagements`);
-    if (engagementsCache)
-      return JSON.parse(engagementsCache) as Record<ModelEngagementType, number[]>;
+    if (engagementsCache) return JSON.parse(engagementsCache) as Record<EngagedModelType, number[]>;
 
-    const engagements = await getUserEngagedModels({ id });
+    const hiddenEngagements = await getUserEngagedModels({ id, type: ModelEngagementType.Hide });
+    const recommendedReviews = await getResourceReviewsByUserId({ userId: id, recommended: true });
 
     // turn array of user.engagedModels into object with `type` as key and array of modelId as value
-    const engagedModels = engagements.reduce<Record<ModelEngagementType, number[]>>(
+    const engagedModels = hiddenEngagements.reduce<Record<EngagedModelType, number[]>>(
       (acc, model) => {
         const { type, modelId } = model;
         if (!acc[type]) acc[type] = [];
         acc[type].push(modelId);
         return acc;
       },
-      {} as Record<ModelEngagementType, number[]>
+      {} as Record<EngagedModelType, number[]>
     );
+    engagedModels.Recommended = recommendedReviews.map((r) => r.modelId).filter(isDefined);
 
     await redis.set(`user:${id}:model-engagements`, JSON.stringify(engagedModels), {
       EX: 60 * 60 * 24,
@@ -461,26 +470,37 @@ export const getUserEngagedModelsHandler = async ({ ctx }: { ctx: DeepNonNullabl
   }
 };
 
+type EngagedModelVersionType = ModelVersionEngagementType | 'Downloaded';
+
 export const getUserEngagedModelVersionsHandler = async ({
+  input,
   ctx,
 }: {
+  input: GetByIdInput;
   ctx: DeepNonNullable<Context>;
 }) => {
-  const { id } = ctx.user;
+  const userId = ctx.user.id;
+  const versions = await dbRead.modelVersion.findMany({
+    where: { modelId: input.id },
+    select: { id: true },
+  });
+  const modelVersionIds = versions.map((x) => x.id);
 
   try {
-    const engagements = await getUserEngagedModelVersions({ id });
+    const engagements = await getUserEngagedModelVersions({ userId, modelVersionIds });
+    const downloads = await getUserDownloads({ userId, modelVersionIds });
 
-    // turn array of user.engagedModelVersions into object with `type` as key and array of modelId as value
-    const engagedModelVersions = engagements.reduce<Record<ModelVersionEngagementType, number[]>>(
+    // turn array of user.engagedModelVersions into object with `type` as key and array of modelVersionId as value
+    const engagedModelVersions = engagements.reduce<Record<EngagedModelVersionType, number[]>>(
       (acc, engagement) => {
         const { type, modelVersionId } = engagement;
         if (!acc[type]) acc[type] = [];
         acc[type].push(modelVersionId);
         return acc;
       },
-      {} as Record<ModelVersionEngagementType, number[]>
+      {} as Record<EngagedModelVersionType, number[]>
     );
+    engagedModelVersions.Downloaded = downloads.map((x) => x.modelVersionId);
 
     return engagedModelVersions;
   } catch (error) {
@@ -696,7 +716,47 @@ export const toggleHideModelHandler = async ({
   }
 };
 
-export const toggleFavoriteModelHandler = async ({
+export async function toggleFavoriteHandler({
+  input: { modelId, modelVersionId, setTo },
+  ctx,
+}: {
+  input: ToggleFavoriteInput;
+  ctx: DeepNonNullable<Context>;
+}) {
+  const { id: userId } = ctx.user;
+  // If favoriting, also bookmark and notify
+  if (setTo) {
+    // Toggle notifications
+    await toggleModelEngagement({
+      modelId,
+      type: ModelEngagementType.Notify,
+      userId,
+      setTo,
+    });
+
+    // Toggle to bookmark collection
+    await toggleBookmarked({
+      type: 'Model',
+      entityId: modelId,
+      userId,
+      setTo,
+    });
+  }
+
+  if (ctx.user.muted) return false;
+
+  // Toggle review (on/off)
+  const reviewResult = await toggleReview({
+    modelId,
+    modelVersionId,
+    userId,
+    setTo,
+  });
+  await redis.del(`user:${userId}:model-engagements`);
+  return reviewResult;
+}
+
+export const toggleNotifyModelHandler = async ({
   input,
   ctx,
 }: {
@@ -705,10 +765,13 @@ export const toggleFavoriteModelHandler = async ({
 }) => {
   try {
     const { id: userId } = ctx.user;
-    const result = await toggleModelFavorite({ ...input, userId });
+    const result = input.type
+      ? toggleModelEngagement({ modelId: input.modelId, type: input.type, userId })
+      : await toggleModelNotify({ ...input, userId });
+
     if (result) {
       await ctx.track.modelEngagement({
-        type: 'Favorite',
+        type: 'Notify',
         modelId: input.modelId,
       });
     } else {
@@ -718,6 +781,8 @@ export const toggleFavoriteModelHandler = async ({
       });
     }
     await redis.del(`user:${userId}:model-engagements`);
+
+    return result;
   } catch (error) {
     throw throwDbError(error);
   }
@@ -749,6 +814,7 @@ export const getLeaderboardHandler = async ({ input }: { input: GetAllSchema }) 
             ratingCountMonth: true,
             downloadCountMonth: true,
             favoriteCountMonth: true,
+            thumbsUpCountMonth: true,
             uploadCountMonth: true,
             answerCountMonth: true,
           },

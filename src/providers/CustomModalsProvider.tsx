@@ -31,9 +31,6 @@ const CivitaiLinkSuccessModal = dynamic(
   () => import('~/components/CivitaiLink/CivitaiLinkSuccessModal')
 );
 const UnpublishModal = dynamic(() => import('~/components/Modals/UnpublishModal'));
-const GenerationResourceModal = dynamic(
-  () => import('~/components/ImageGeneration/GenerationResources/GenerationResourceModal')
-);
 const ResourceSelectModal = dynamic(
   () => import('~/components/ImageGeneration/GenerationForm/ResourceSelectModal')
 );
@@ -137,7 +134,6 @@ export const CustomModalsProvider = ({ children }: { children: React.ReactNode }
       modals={
         {
           questionsInfo: QuestionsInfoModal,
-          generationResourceModal: GenerationResourceModal,
           resourceSelectModal: ResourceSelectModal,
           boostModal: BoostModal,
           'civitai-link-success': CivitaiLinkSuccessModal,

@@ -1,30 +1,14 @@
-import { Badge, Group, MantineSize, Rating, Text, useMantineTheme } from '@mantine/core';
-import {
-  IconStar,
-  IconUpload,
-  IconUsers,
-  IconHeart,
-  IconDownload,
-  IconChecks,
-} from '@tabler/icons-react';
+import { Badge, Group, MantineSize, Text, useMantineTheme } from '@mantine/core';
+import { IconUpload, IconUsers, IconDownload, IconChecks } from '@tabler/icons-react';
 
 import { IconBadge } from '~/components/IconBadge/IconBadge';
-import { abbreviateNumber, formatToLeastDecimals } from '~/utils/number-helpers';
+import { abbreviateNumber } from '~/utils/number-helpers';
 import { StatTooltip } from '~/components/Tooltips/StatTooltip';
-import { StarRating } from '../StartRating/StarRating';
-
-const mapBadgeTextIconSize: Record<MantineSize, { textSize: MantineSize; iconSize: number }> = {
-  xs: { textSize: 'xs', iconSize: 12 },
-  sm: { textSize: 'xs', iconSize: 14 },
-  md: { textSize: 'sm', iconSize: 14 },
-  lg: { textSize: 'sm', iconSize: 16 },
-  xl: { textSize: 'md', iconSize: 18 },
-};
+import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 
 export function UserStatBadges({
-  rating,
   followers,
-  favorite,
+  favorites,
   uploads,
   downloads,
   answers,
@@ -34,26 +18,6 @@ export function UserStatBadges({
 
   return (
     <Group spacing={8} position="apart">
-      {rating != null ? (
-        <IconBadge
-          radius="xl"
-          tooltip={
-            <StatTooltip
-              label="Average Rating"
-              value={`${formatToLeastDecimals(rating.value)} (${rating.count})`}
-            />
-          }
-          sx={{ userSelect: 'none' }}
-          size="lg"
-          px={8}
-          icon={<StarRating size={14} value={rating.value} />}
-          variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-        >
-          <Text size="xs" weight={600} inline>
-            {abbreviateNumber(rating.count)}
-          </Text>
-        </IconBadge>
-      ) : null}
       <Badge
         size="lg"
         color="gray"
@@ -93,18 +57,18 @@ export function UserStatBadges({
               </Text>
             </IconBadge>
           ) : null}
-          {favorite != null ? (
+          {favorites != null ? (
             <IconBadge
               p={0}
-              tooltip={<StatTooltip label="Favorites" value={favorite} />}
-              icon={<IconHeart size={14} />}
+              tooltip={<StatTooltip label="Likes" value={favorites} />}
+              icon={<ThumbsUpIcon size={14} />}
               color="gray"
               // @ts-ignore: transparent variant does work
               variant="transparent"
               size="lg"
             >
               <Text size="xs" weight={600} inline>
-                {abbreviateNumber(favorite)}
+                {abbreviateNumber(favorites)}
               </Text>
             </IconBadge>
           ) : null}
@@ -144,10 +108,9 @@ export function UserStatBadges({
 
 type Props = {
   followers?: number;
-  rating?: { value: number; count: number };
   ratingValue?: number;
   uploads?: number;
-  favorite?: number;
+  favorites?: number;
   downloads?: number;
   answers?: number;
   username?: string | null;

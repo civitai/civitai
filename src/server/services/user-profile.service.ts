@@ -47,8 +47,7 @@ export const getUserContentOverview = async ({
       articleCount: number;
       bountyCount: number;
       bountyEntryCount: number;
-      receivedReviewCount: number;
-      writtenReviewCount: number;
+      hasReceivedReviews: boolean;
       collectionCount: number;
     }[]
   >`
@@ -60,8 +59,7 @@ export const getUserContentOverview = async ({
         (SELECT COUNT(*)::INT FROM "Article" a WHERE a."userId" = u.id AND a."publishedAt" <= NOW()) as "articleCount",
         (SELECT COUNT(*)::INT FROM "Bounty" b WHERE b."userId" = u.id AND b."startsAt" <= NOW() ) as "bountyCount",
         (SELECT COUNT(*)::INT FROM "BountyEntry" be WHERE be."userId" = u.id) as "bountyEntryCount",
-        (SELECT COUNT(*)::INT FROM "ResourceReview" r INNER JOIN "Model" m ON m.id = r."modelId" AND m."userId" = u.id WHERE r."userId" != u.id) as "receivedReviewCount",
-        (SELECT COUNT(*)::INT FROM "ResourceReview" r WHERE r."userId" = u.id) as "writtenReviewCount",
+        (SELECT EXISTS (SELECT 1 FROM "ResourceReview" r INNER JOIN "Model" m ON m.id = r."modelId" AND m."userId" = u.id WHERE r."userId" != u.id)) as "hasReceivedReviews",
         (SELECT COUNT(*)::INT FROM "Collection" c WHERE c."userId" = u.id AND c."read" = ${CollectionReadConfiguration.Public}::"CollectionReadConfiguration" ) as "collectionCount"
     FROM "User" u
     WHERE u.id = ${userId}

@@ -56,6 +56,7 @@ export const REDIS_KEYS = {
   COSMETICS: 'cosmetics',
   PROFILE_PICTURES: 'profile-pictures',
   BUZZ_EVENTS: 'buzz-events',
+  IMAGES_FOR_MODEL_VERSION: 'images-for-model-version',
   GENERATION: {
     RESOURCE_DATA: 'generation:resource-data',
     COUNT: 'generation:count',

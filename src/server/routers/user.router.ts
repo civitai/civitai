@@ -29,13 +29,14 @@ import {
   getUserSettingsHandler,
   getUserBookmarkCollectionsHandler,
   getUserPurchasedRewardsHandler,
+  toggleFavoriteHandler,
 } from '~/server/controllers/user.controller';
 import {
   deleteUserHandler,
   getAllUsersHandler,
   getCreatorsHandler,
   getUserByIdHandler,
-  toggleFavoriteModelHandler,
+  toggleNotifyModelHandler,
   updateUserHandler,
 } from '~/server/controllers/user.controller';
 import { createToken } from '~/server/integrations/integration-token';
@@ -58,6 +59,7 @@ import {
   dismissAlertSchema,
   setUserSettingsInput,
   userOnboardingSchema,
+  toggleFavoriteInput,
 } from '~/server/schema/user.schema';
 import {
   equipCosmetic,
@@ -66,6 +68,7 @@ import {
   cosmeticStatus,
   removeAllContent,
   getUserBookmarkedArticles,
+  toggleBookmarked,
   toggleBookmarkedArticle,
 } from '~/server/services/user.service';
 import {
@@ -85,7 +88,9 @@ export const userRouter = router({
     .query(getUsernameAvailableHandler),
   getById: publicProcedure.input(getByIdSchema).query(getUserByIdHandler),
   getEngagedModels: protectedProcedure.query(getUserEngagedModelsHandler),
-  getEngagedModelVersions: protectedProcedure.query(getUserEngagedModelVersionsHandler),
+  getEngagedModelVersions: protectedProcedure
+    .input(getByIdSchema)
+    .query(getUserEngagedModelVersionsHandler),
   getFollowingUsers: protectedProcedure.query(getUserFollowingListHandler),
   // getHiddenUsers: protectedProcedure.query(getUserHiddenListHandler),
   getTags: protectedProcedure.input(getUserTagsSchema.optional()).query(getUserTagsHandler),
@@ -99,9 +104,10 @@ export const userRouter = router({
   checkNotifications: protectedProcedure.query(checkUserNotificationsHandler),
   update: guardedProcedure.input(userUpdateSchema).mutation(updateUserHandler),
   delete: protectedProcedure.input(deleteUserSchema).mutation(deleteUserHandler),
-  toggleFavoriteModel: protectedProcedure
+  toggleFavorite: protectedProcedure.input(toggleFavoriteInput).mutation(toggleFavoriteHandler),
+  toggleNotifyModel: protectedProcedure
     .input(toggleModelEngagementInput)
-    .mutation(toggleFavoriteModelHandler),
+    .mutation(toggleNotifyModelHandler),
   completeOnboardingStep: protectedProcedure
     .input(userOnboardingSchema)
     .mutation(completeOnboardingHandler),
