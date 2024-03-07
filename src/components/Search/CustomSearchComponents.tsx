@@ -1,4 +1,5 @@
 import {
+  Configure,
   RangeInputProps,
   RefinementListProps,
   SearchBoxProps,
@@ -34,6 +35,8 @@ import { DatePicker } from '@mantine/dates';
 import dayjs from 'dayjs';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { TimeoutLoader } from './TimeoutLoader';
+import { useBrowsingLevelDebounced } from '../BrowsingLevel/BrowsingLevelProvider';
+import { Flags } from '~/shared/utils';
 
 const useStyles = createStyles((theme) => ({
   divider: {
@@ -240,6 +243,17 @@ export const ClearRefinements = ({ ...props }: ButtonProps) => {
     >
       Reset all filters
     </Button>
+  );
+};
+
+export const BrowsingLevelFilter = ({ attributeName }: { attributeName: string }) => {
+  const browsingLevel = useBrowsingLevelDebounced();
+  const browsingLevelArray = Flags.instanceToArray(browsingLevel);
+
+  return (
+    <Configure
+      filters={browsingLevelArray.map((value) => `${attributeName}=${value}`).join(' OR ')}
+    />
   );
 };
 

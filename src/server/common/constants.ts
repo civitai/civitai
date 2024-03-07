@@ -514,9 +514,9 @@ export const getGenerationConfig = (baseModel?: string) => {
   return key && generationConfig[key] ? generationConfig[key] : generationConfig['SD1'];
 };
 
-export const MODELS_SEARCH_INDEX = 'models_v5';
-export const IMAGES_SEARCH_INDEX = 'images_v3';
-export const ARTICLES_SEARCH_INDEX = 'articles_v3';
+export const MODELS_SEARCH_INDEX = 'models_v6';
+export const IMAGES_SEARCH_INDEX = 'images_v4';
+export const ARTICLES_SEARCH_INDEX = 'articles_v4';
 export const USERS_SEARCH_INDEX = 'users_v2';
 export const COLLECTIONS_SEARCH_INDEX = 'collections';
 export const BOUNTIES_SEARCH_INDEX = 'bounties';

@@ -25,6 +25,7 @@ import { withRetries } from '~/server/utils/errorHandling';
 import { getModelVersionsForSearchIndex } from '../selectors/modelVersion.selector';
 import { getUnavailableResources } from '../services/generation/generation.service';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { NsfwLevel } from '../common/enums';
 
 const RATING_BAYESIAN_M = 3.5;
 const RATING_BAYESIAN_C = 10;
@@ -260,6 +261,7 @@ const onFetchItemsToIndex = async ({
         ? await getImagesForModelVersion({
             modelVersionIds,
             imagesPerVersion: 10,
+            browsingLevel: Object.values(NsfwLevel).reduce((acc, level) => acc | level, 0),
           })
         : [];
 
