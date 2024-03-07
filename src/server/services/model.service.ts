@@ -50,7 +50,11 @@ import {
 } from '~/server/services/generation/generation.service';
 import { getImagesForModelVersionCache } from '~/server/services/image.service';
 import { getCategoryTags } from '~/server/services/system-cache';
-import { getProfilePicturesForUsers } from '~/server/services/user.service';
+import {
+  getCosmeticsForUsers,
+  getProfilePicturesForUsers,
+  getUserCosmetics,
+} from '~/server/services/user.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { getEarlyAccessDeadline, isEarlyAccess } from '~/server/utils/early-access-helpers';
 import {
@@ -144,18 +148,7 @@ type ModelRaw = {
     username: string | null;
     deletedAt: Date | null;
     image: string;
-    profilePictureId?: number | null;
   };
-  userCosmetics: {
-    data: Prisma.JsonValue;
-    cosmetic: {
-      data: Prisma.JsonValue;
-      type: CosmeticType;
-      id: number;
-      name: string;
-      source: CosmeticSource;
-    };
-  }[];
 };
 
 export const getModelsRaw = async ({
@@ -596,31 +589,8 @@ export const getModelsRaw = async ({
         'id', u."id",
         'username', u."username",
         'deletedAt', u."deletedAt",
-        'image', u."image",
-        'profilePictureId', u."profilePictureId"
+        'image', u."image"
       ) as "user",
-      (
-        SELECT
-          jsonb_agg(
-            jsonb_build_object(
-              'data', uc.data,
-              'cosmetic', jsonb_build_object(
-                'id', c.id,
-                'data', c.data,
-                'type', c.type,
-                'source', c.source,
-                'name', c.name,
-                'leaderboardId', c."leaderboardId",
-                'leaderboardPosition', c."leaderboardPosition"
-              )
-            )
-          )
-        FROM "UserCosmetic" uc
-        JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
-            AND "equippedAt" IS NOT NULL
-        WHERE uc."userId" = m."userId"
-        GROUP BY uc."userId"
-      ) as "userCosmetics",
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} as "cursorId"
     ${queryFrom}
     ORDER BY ${Prisma.raw(orderBy)}
@@ -636,6 +606,7 @@ export const getModelsRaw = async ({
 
   const userIds = models.map((m) => m.user.id);
   const profilePictures = await getProfilePicturesForUsers(userIds);
+  const userCosmetics = await getCosmeticsForUsers(userIds);
 
   let nextCursor: string | bigint | undefined;
   if (take && models.length > take) {
@@ -644,7 +615,7 @@ export const getModelsRaw = async ({
   }
 
   return {
-    items: models.map(({ userCosmetics, rank, modelVersion, cursorId, ...model }) => ({
+    items: models.map(({ rank, modelVersion, cursorId, ...model }) => ({
       ...model,
       rank: {
         [`downloadCount${input.period}`]: rank.downloadCount,
@@ -660,7 +631,7 @@ export const getModelsRaw = async ({
       user: {
         ...model.user,
         profilePicture: profilePictures?.[model.user.id] ?? null,
-        cosmetics: userCosmetics,
+        cosmetics: userCosmetics[model.user.id] ?? [],
       },
     })),
     nextCursor,
