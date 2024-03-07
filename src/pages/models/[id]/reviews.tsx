@@ -273,7 +273,7 @@ function ReviewCard({ creatorId, ...review }: ResourceReviewPagedModel & { creat
         <Group spacing="xs">
           <StarRating value={review.rating} />
 
-          <RoutedDialogLink
+          {/* <RoutedDialogLink
             name="resourceReview"
             state={{ reviewId: review.id }}
             style={{ display: 'flex' }}
@@ -288,7 +288,7 @@ function ReviewCard({ creatorId, ...review }: ResourceReviewPagedModel & { creat
             >
               {review.helper?.imageCount ?? '0'}
             </Badge>
-          </RoutedDialogLink>
+          </RoutedDialogLink> */}
 
           <RoutedDialogLink
             name="resourceReview"

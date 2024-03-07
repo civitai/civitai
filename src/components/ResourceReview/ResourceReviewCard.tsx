@@ -14,7 +14,7 @@ export function ResourceReviewCard({ data }: { data: ResourceReviewInfiniteModel
         {data.rating && (
           <Group position="apart">
             <StarRating value={data.rating ?? undefined} />
-            {data.helper?.imageCount && (
+            {/* {data.helper?.imageCount && (
               <Badge
                 leftSection={
                   <Center>
@@ -24,7 +24,7 @@ export function ResourceReviewCard({ data }: { data: ResourceReviewInfiniteModel
               >
                 {data.helper.imageCount}
               </Badge>
-            )}
+            )} */}
           </Group>
         )}
         {data.details && (

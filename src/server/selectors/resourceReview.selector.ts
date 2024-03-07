@@ -17,11 +17,11 @@ export const resourceReviewSelect = Prisma.validator<Prisma.ResourceReviewSelect
   nsfw: true,
   exclude: true,
   metadata: true,
-  helper: {
-    select: {
-      imageCount: true,
-    },
-  },
+  // helper: {
+  //   select: {
+  //     imageCount: true,
+  //   },
+  // },
   thread: {
     select: {
       _count: { select: { comments: true } },

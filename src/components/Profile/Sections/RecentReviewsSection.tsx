@@ -185,14 +185,14 @@ export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
                                 </Group>
                               </Button>
                             )}
-                            {review.helper && (review.helper?.imageCount ?? 0) > 0 && (
+                            {/* {review.helper && (review.helper?.imageCount ?? 0) > 0 && (
                               <Badge px={4} py={2} radius="sm" style={{ height: '26px' }}>
                                 <Group spacing={2}>
                                   <IconPhoto size={15} />{' '}
                                   <span>{abbreviateNumber(review.helper.imageCount)}</span>
                                 </Group>
                               </Badge>
-                            )}
+                            )} */}
                           </Group>
                         </Stack>
                       </Stack>
