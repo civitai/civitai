@@ -2792,6 +2792,14 @@ model UserPurchasedRewards {
   code                String
 }
 
+model NsfwLevelUpdateQueue {
+  entityType String
+  entityId   Int
+  createdAt  DateTime @default(now())
+
+  @@id([entityType, entityId])
+}
+
 /// @view
 model QuestionRank {
   questionId              Int      @id

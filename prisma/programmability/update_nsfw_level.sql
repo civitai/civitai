@@ -10,12 +10,20 @@ BEGIN
         WHEN bool_or(t.nsfw = 'Soft') THEN 'Soft'::"NsfwLevel"
         ELSE 'None'::"NsfwLevel"
       END "nsfw"
+      CASE
+        WHEN bool_or(t."nsfwLevel" = 32) THEN 32
+        WHEN bool_or(t."nsfwLevel" = 16) THEN 16
+        WHEN bool_or(t."nsfwLevel" = 8) THEN 8
+        WHEN bool_or(t."nsfwLevel" = 4) THEN 4
+        WHEN bool_or(t."nsfwLevel" = 2) THEN 2
+        ELSE 1
+      END "nsfwLevel"
     FROM "TagsOnImage" toi
-    LEFT JOIN "Tag" t ON t.id = toi."tagId" AND t.nsfw != 'None'
+    LEFT JOIN "Tag" t ON t.id = toi."tagId" AND (t.nsfw != 'None' OR t."nsfwLevel" > 1)
     WHERE toi."imageId" = ANY(image_ids) AND NOT toi.disabled
     GROUP BY toi."imageId"
   )
-  UPDATE "Image" i SET nsfw = il.nsfw
+  UPDATE "Image" i SET nsfw = il.nsfw, "nsfwLevel" = il."nsfwLevel"
   FROM image_level il
   WHERE il."imageId" = i.id;
 END;
