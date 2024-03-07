@@ -17,7 +17,7 @@ import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import { formatKBytes } from '~/utils/number-helpers';
-import { getGetUrlByKey, parseKey } from '~/utils/s3-utils';
+import { deleteManyObjects, getGetUrlByKey, parseKey } from '~/utils/s3-utils';
 import { getDisplayName } from '~/utils/string-helpers';
 
 type VaultWithUsedStorage = {
@@ -330,12 +330,33 @@ export const removeModelVersionsFromVault = async ({
 }: VaultItemsRemoveModelVersionsSchema & {
   userId: number;
 }) => {
-  return await dbWrite.vaultItem.deleteMany({
+  await dbWrite.vaultItem.deleteMany({
     where: {
       vaultId: userId,
       modelVersionId: { in: modelVersionIds },
     },
   });
+
+  const keys = modelVersionIds
+    .map((modelVersionId) => {
+      return [
+        constants.vault.keys.details
+          .replace(':modelVersionId', modelVersionId.toString())
+          .replace(':userId', userId.toString()),
+        constants.vault.keys.images
+          .replace(':modelVersionId', modelVersionId.toString())
+          .replace(':userId', userId.toString()),
+        constants.vault.keys.cover
+          .replace(':modelVersionId', modelVersionId.toString())
+          .replace(':userId', userId.toString()),
+      ];
+    })
+    .flat();
+  if (!keys.length) return;
+
+  if (env.S3_VAULT_BUCKET) {
+    await deleteManyObjects(env.S3_VAULT_BUCKET, keys);
+  }
 };
 
 export const updateVaultItemsNotes = async ({
