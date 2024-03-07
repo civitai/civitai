@@ -18,6 +18,7 @@ const taskGenerators: ((ctx: MigrationContext) => Task)[] = [
   likesToCollections,
   likesToCollectionItems,
   // likesToNotifications,
+  // likesToNotificationsUpdate,
   likesToReviews,
 ];
 
@@ -121,7 +122,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     // betweenTasksFn: waitForLag,
   });
 
-  console.log('Migration complete');
+  console.log('Migration complete:', maxCursor);
   return res.status(200).json({
     ok: true,
   });
