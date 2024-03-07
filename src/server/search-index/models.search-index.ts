@@ -62,7 +62,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
 
   const sortableAttributes = [
     // sort
-    'metrics.weightedRating',
+    'metrics.thumbsUpCount',
     'createdAt',
     'metrics.commentCount',
     'metrics.favoriteCount',
@@ -85,7 +85,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   const rankingRules = [
     'sort',
     'attribute',
-    'metrics.weightedRating:desc',
+    'metrics.thumbsUpCount:desc',
     'words',
     'proximity',
     'exactness',
