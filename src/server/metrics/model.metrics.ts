@@ -316,49 +316,34 @@ async function updateVersionRatingMetrics({
   let rows = 0;
   for (const batch of batches) {
     jobContext.checkIfCanceled();
-    const batchJson = JSON.stringify(batch);
     rows += await db.$executeRaw`
       -- update version rating metrics
       INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "thumbsUpCount", "thumbsDownCount")
       SELECT
-        mv.id,
+        r."modelVersionId",
         tf.timeframe,
-        COALESCE(SUM(
-          CASE
-              WHEN rr."userId" IS NULL OR rr.recommended = false THEN 0
-              WHEN tf.timeframe = 'AllTime' THEN 1
-              WHEN tf.timeframe = 'Year' THEN IIF(rr.created_at >= NOW() - interval '1 year', 1, 0)
-              WHEN tf.timeframe = 'Month' THEN IIF(rr.created_at >= NOW() - interval '1 month', 1, 0)
-              WHEN tf.timeframe = 'Week' THEN IIF(rr.created_at >= NOW() - interval '1 week', 1, 0)
-              WHEN tf.timeframe = 'Day' THEN IIF(rr.created_at >= NOW() - interval '1 day', 1, 0)
-          END
-        ), 0),
-        COALESCE(SUM(
-          CASE
-              WHEN rr."userId" IS NULL OR rr.recommended = true THEN 0
-              WHEN tf.timeframe = 'AllTime' THEN 1
-              WHEN tf.timeframe = 'Year' THEN IIF(rr.created_at >= NOW() - interval '1 year', 1, NULL)
-              WHEN tf.timeframe = 'Month' THEN IIF(rr.created_at >= NOW() - interval '1 month', 1, NULL)
-              WHEN tf.timeframe = 'Week' THEN IIF(rr.created_at >= NOW() - interval '1 week', 1, NULL)
-              WHEN tf.timeframe = 'Day' THEN IIF(rr.created_at >= NOW() - interval '1 day', 1, NULL)
-          END
-        ), 0)
-      FROM (
-          SELECT
-              r."userId",
-              r."modelVersionId",
-              BOOL_OR(r.recommended) AS recommended,
-              MAX(r."createdAt") AS created_at
-          FROM "ResourceReview" r
-          JOIN "Model" m ON m.id = r."modelId" AND m."userId" != r."userId"
-          WHERE r.exclude = FALSE
-          AND r."tosViolation" = FALSE
-          AND r."modelVersionId" = ANY (SELECT json_array_elements(${batchJson}::json)::text::integer)
-          GROUP BY r."userId", r."modelVersionId"
-      ) rr
-      JOIN "ModelVersion" mv ON rr."modelVersionId" = mv."id" -- confirm that model version exists
+        COUNT(DISTINCT CASE
+          WHEN NOT recommended THEN NULL
+          WHEN timeframe = 'AllTime' THEN r."userId"
+          WHEN timeframe = 'Year' AND r."createdAt" > NOW() - interval '1 year' THEN r."userId"
+          WHEN timeframe = 'Month' AND r."createdAt" > NOW() - interval '1 month' THEN r."userId"
+          WHEN timeframe = 'Week' AND r."createdAt" > NOW() - interval '1 week' THEN r."userId"
+          WHEN timeframe = 'Day' AND r."createdAt" > NOW() - interval '1 day' THEN r."userId"
+        END) "thumbsUpCount",
+        COUNT(DISTINCT CASE
+          WHEN recommended THEN NULL
+          WHEN timeframe = 'AllTime' THEN r."userId"
+          WHEN timeframe = 'Year' AND r."createdAt" > NOW() - interval '1 year' THEN r."userId"
+          WHEN timeframe = 'Month' AND r."createdAt" > NOW() - interval '1 month' THEN r."userId"
+          WHEN timeframe = 'Week' AND r."createdAt" > NOW() - interval '1 week' THEN r."userId"
+          WHEN timeframe = 'Day' AND r."createdAt" > NOW() - interval '1 day' THEN r."userId"
+        END) "thumbsDownCount"
+      FROM "ResourceReview" r
       CROSS JOIN ( SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe ) tf
-      GROUP BY mv.id, tf.timeframe
+      WHERE r.exclude = FALSE
+      AND r."tosViolation" = FALSE
+      AND r."modelVersionId" IN (${Prisma.join(batch)})
+      GROUP BY r."modelVersionId", tf.timeframe
       ON CONFLICT ("modelVersionId", timeframe) DO UPDATE SET "thumbsUpCount" = EXCLUDED."thumbsUpCount", "thumbsDownCount" = EXCLUDED."thumbsDownCount", "updatedAt" = now();
     `;
   }
@@ -386,50 +371,34 @@ async function updateModelRatingMetrics({ db, lastUpdate, jobContext }: MetricPr
   const modelIds = [...modelIdSet];
   const tasks = chunk(modelIds, 500).map((batch) => async () => {
     jobContext.checkIfCanceled();
-
-    const batchJson = JSON.stringify(batch);
     rows += await db.$executeRaw`
       -- Migrate model thumbs up metrics
       INSERT INTO "ModelMetric" ("modelId", timeframe, "thumbsUpCount", "thumbsDownCount")
       SELECT
-        mv.id,
+        r."modelId",
         tf.timeframe,
-        COALESCE(SUM(
-          CASE
-              WHEN rr."userId" IS NULL OR rr.recommended = false THEN 0
-              WHEN tf.timeframe = 'AllTime' THEN 1
-              WHEN tf.timeframe = 'Year' THEN IIF(rr.created_at >= NOW() - interval '1 year', 1, 0)
-              WHEN tf.timeframe = 'Month' THEN IIF(rr.created_at >= NOW() - interval '1 month', 1, 0)
-              WHEN tf.timeframe = 'Week' THEN IIF(rr.created_at >= NOW() - interval '1 week', 1, 0)
-              WHEN tf.timeframe = 'Day' THEN IIF(rr.created_at >= NOW() - interval '1 day', 1, 0)
-          END
-        ), 0),
-        COALESCE(SUM(
-          CASE
-              WHEN rr."userId" IS NULL OR rr.recommended = true THEN 0
-              WHEN tf.timeframe = 'AllTime' THEN 1
-              WHEN tf.timeframe = 'Year' THEN IIF(rr.created_at >= NOW() - interval '1 year', 1, NULL)
-              WHEN tf.timeframe = 'Month' THEN IIF(rr.created_at >= NOW() - interval '1 month', 1, NULL)
-              WHEN tf.timeframe = 'Week' THEN IIF(rr.created_at >= NOW() - interval '1 week', 1, NULL)
-              WHEN tf.timeframe = 'Day' THEN IIF(rr.created_at >= NOW() - interval '1 day', 1, NULL)
-          END
-        ), 0)
-      FROM (
-          SELECT
-              r."userId",
-              r."modelId",
-              BOOL_OR(r.recommended) AS recommended,
-              MAX(r."createdAt") AS created_at
-          FROM "ResourceReview" r
-          JOIN "Model" m ON m.id = r."modelId" AND m."userId" != r."userId"
-          WHERE r.exclude = FALSE
-          AND r."tosViolation" = FALSE
-          AND r."modelId" = ANY (SELECT json_array_elements(${batchJson}::json)::text::integer)
-          GROUP BY r."userId", r."modelId"
-      ) rr
-      JOIN "Model" m ON rr."modelId" = m."id" -- confirm that model exists
+        COUNT(DISTINCT CASE
+          WHEN NOT recommended THEN NULL
+          WHEN timeframe = 'Year' AND r."createdAt" > NOW() - interval '1 year' THEN r."userId"
+          WHEN timeframe = 'Month' AND r."createdAt" > NOW() - interval '1 month' THEN r."userId"
+          WHEN timeframe = 'Week' AND r."createdAt" > NOW() - interval '1 week' THEN r."userId"
+          WHEN timeframe = 'Day' AND r."createdAt" > NOW() - interval '1 day' THEN r."userId"
+          WHEN timeframe = 'AllTime' THEN r."userId"
+        END) "thumbsUpCount",
+        COUNT(DISTINCT CASE
+          WHEN recommended THEN NULL
+          WHEN timeframe = 'Year' AND r."createdAt" > NOW() - interval '1 year' THEN r."userId"
+          WHEN timeframe = 'Month' AND r."createdAt" > NOW() - interval '1 month' THEN r."userId"
+          WHEN timeframe = 'Week' AND r."createdAt" > NOW() - interval '1 week' THEN r."userId"
+          WHEN timeframe = 'Day' AND r."createdAt" > NOW() - interval '1 day' THEN r."userId"
+          WHEN timeframe = 'AllTime' THEN r."userId"
+        END) "thumbsDownCount"
+      FROM "ResourceReview" r
       CROSS JOIN ( SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe ) tf
-      GROUP BY m.id, tf.timeframe
+      WHERE r.exclude = FALSE
+      AND r."tosViolation" = FALSE
+      AND r."modelId" IN (${Prisma.join(batch)})
+      GROUP BY r."modelId", tf.timeframe
       ON CONFLICT ("modelId", timeframe) DO UPDATE SET
         "thumbsUpCount" = EXCLUDED."thumbsUpCount",
         "thumbsDownCount" = EXCLUDED."thumbsDownCount",
@@ -579,45 +548,29 @@ async function updateCollectMetrics({ db, lastUpdate, jobContext }: MetricProces
   const modelIds = affected.map((x) => x.modelId);
   console.log('collects', modelIds.length);
 
-  const batches = chunk(modelIds, 1000);
+  const batches = chunk(modelIds, 500);
   let rows = 0;
   for (const batch of batches) {
     jobContext.checkIfCanceled();
-    const batchJson = JSON.stringify(batch);
 
     rows += await db.$executeRaw`
-      -- update version collect metrics
-      INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "collectedCount")
+      -- update model collect metrics
+      INSERT INTO "ModelMetric" ("modelId", timeframe, "collectedCount")
       SELECT
-        mv."id",
-        tf.timeframe,
-        COALESCE(SUM(
-          CASE
-            WHEN tf.timeframe = 'AllTime' THEN 1
-            WHEN tf.timeframe = 'Year' THEN IIF(i."createdAt" >= NOW() - interval '1 year', 1, 0)
-            WHEN tf.timeframe = 'Month' THEN IIF(i."createdAt" >= NOW() - interval '1 month', 1, 0)
-            WHEN tf.timeframe = 'Week' THEN IIF(i."createdAt" >= NOW() - interval '1 week', 1, 0)
-            WHEN tf.timeframe = 'Day' THEN IIF(i."createdAt" >= NOW() - interval '1 day', 1, 0)
-          END
-        ), 0)
-      FROM (
-        SELECT
-          "modelId",
-          "addedById",
-          MAX(c."createdAt") "createdAt"
-        FROM "CollectionItem" c
-        JOIN "Model" m ON m.id = c."modelId"
-        WHERE "modelId" IS NOT NULL
-          AND m."userId" != c."addedById"
-          AND "modelId" = ANY (SELECT json_array_elements(${batchJson}::json)::text::integer)
-        GROUP BY "modelId", "addedById"
-      ) i
-      JOIN "ModelVersion" mv ON mv."modelId" = i."modelId"
-      CROSS JOIN (
-        SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
-      ) tf
-      GROUP BY mv."id", tf.timeframe
-      ON CONFLICT ("modelVersionId", timeframe) DO UPDATE SET "collectedCount" = EXCLUDED."collectedCount", "updatedAt" = now();
+        "modelId",
+        timeframe,
+        COUNT(DISTINCT CASE
+          WHEN timeframe = 'AllTime' THEN c."addedById"
+          WHEN timeframe = 'Year' AND c."createdAt" > NOW() - interval '1 year' THEN c."addedById"
+          WHEN timeframe = 'Month' AND c."createdAt" > NOW() - interval '1 month' THEN c."addedById"
+          WHEN timeframe = 'Week' AND c."createdAt" > NOW() - interval '1 week' THEN c."addedById"
+          WHEN timeframe = 'Day' AND c."createdAt" > NOW() - interval '1 day' THEN c."addedById"
+        END) as "collectedCount"
+      FROM "CollectionItem" c
+      CROSS JOIN ( SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe ) tf
+      WHERE c."modelId" IN (${Prisma.join(batch)})
+      GROUP BY "modelId", timeframe
+      ON CONFLICT ("modelId", timeframe) DO UPDATE SET "collectedCount" = EXCLUDED."collectedCount", "updatedAt" = now();
     `;
   }
   console.log('collects', rows);
@@ -691,7 +644,7 @@ async function updateTippedBuzzMetrics({ db, lastUpdate, jobContext }: MetricPro
 
 async function updateModelMetrics({ pg, lastUpdate, jobContext }: MetricProcessorRunContext) {
   const rowsQuery = await pg.cancellableQuery(Prisma.sql`
-    INSERT INTO "ModelMetric" ("modelId", timeframe, "downloadCount", "commentCount", "imageCount", "collectedCount", "tippedCount", "tippedAmountCount", "generationCount", "updatedAt")
+    INSERT INTO "ModelMetric" ("modelId", timeframe, "downloadCount", "commentCount", "imageCount", "tippedCount", "tippedAmountCount", "generationCount", "updatedAt")
     WITH affected AS (
       SELECT DISTINCT mv."modelId"
       FROM "ModelVersionMetric" mvm
@@ -704,7 +657,6 @@ async function updateModelMetrics({ pg, lastUpdate, jobContext }: MetricProcesso
       SUM(mvm."downloadCount") "downloadCount",
       MAX(mvm."commentCount") "commentCount",
       SUM(mvm."imageCount") "imageCount",
-      MAX(mvm."collectedCount") "collectedCount",
       MAX(mvm."tippedCount") "tippedCount",
       MAX(mvm."tippedAmountCount") "tippedAmountCount",
       SUM(mvm."generationCount") "generationCount",
@@ -717,7 +669,6 @@ async function updateModelMetrics({ pg, lastUpdate, jobContext }: MetricProcesso
       "downloadCount" = EXCLUDED."downloadCount",
       "commentCount" = EXCLUDED."commentCount",
       "imageCount" = EXCLUDED."imageCount",
-      "collectedCount" = EXCLUDED."collectedCount",
       "tippedCount" = EXCLUDED."tippedCount",
       "tippedAmountCount" = EXCLUDED."tippedAmountCount",
       "generationCount" = EXCLUDED."generationCount",

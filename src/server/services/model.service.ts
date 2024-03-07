@@ -114,7 +114,6 @@ type ModelRaw = {
   mode: string;
   rank: {
     downloadCount: number;
-    favoriteCount: number;
     thumbsUpCount: number;
     thumbsDownCount: number;
     commentCount: number;
@@ -187,7 +186,6 @@ export const getModelsRaw = async ({
     sort,
     period,
     periodMode,
-    favorites,
     hidden,
     checkpointType,
     status,
@@ -296,15 +294,6 @@ export const getModelsRaw = async ({
   if (types?.length) {
     AND.push(
       Prisma.sql`m.type IN (${Prisma.raw(types.map((t) => `'${t}'::"ModelType"`).join(','))})`
-    );
-  }
-
-  if (favorites && sessionUser?.id) {
-    AND.push(
-      Prisma.sql`EXISTS (
-          SELECT 1 FROM "ModelEngagement" e
-          WHERE e."modelId" = m."id" AND e."userId" = ${sessionUser?.id} AND e."type" = 'Favorite'::"ModelEngagementType")
-        `
     );
   }
 
@@ -558,7 +547,6 @@ export const getModelsRaw = async ({
       ${Prisma.raw(`
         jsonb_build_object(
           'downloadCount', mm."downloadCount",
-          'favoriteCount', mm."favoriteCount",
           'thumbsUpCount', mm."thumbsUpCount",
           'thumbsDownCount', mm."thumbsDownCount",
           'commentCount', mm."commentCount",
@@ -660,7 +648,6 @@ export const getModelsRaw = async ({
       ...model,
       rank: {
         [`downloadCount${input.period}`]: rank.downloadCount,
-        [`favoriteCount${input.period}`]: rank.favoriteCount,
         [`thumbsUpCount${input.period}`]: rank.thumbsUpCount,
         [`thumbsDownCount${input.period}`]: rank.thumbsDownCount,
         [`commentCount${input.period}`]: rank.commentCount,
@@ -1028,7 +1015,6 @@ export const getModelsWithImagesAndModelVersions = async ({
           hashes: hashes.map((hash) => hash.hash.toLowerCase()),
           rank: {
             downloadCount: rank?.[`downloadCount${input.period}`] ?? 0,
-            favoriteCount: rank?.[`favoriteCount${input.period}`] ?? 0,
             thumbsUpCount: rank?.[`thumbsUpCount${input.period}`] ?? 0,
             thumbsDownCount: rank?.[`thumbsDownCount${input.period}`] ?? 0,
             commentCount: rank?.[`commentCount${input.period}`] ?? 0,
