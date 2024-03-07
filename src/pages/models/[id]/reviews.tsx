@@ -283,22 +283,22 @@ function ReviewCard({ creatorId, ...review }: ResourceReviewPagedModel & { creat
                   <DaysFromNow date={review.createdAt} />
                 </Text>
 
-                <RoutedDialogLink
-                  name="resourceReview"
-                  state={{ reviewId: review.id }}
-                  style={{ display: 'flex' }}
-                >
-                  <Badge
-                    px={4}
-                    leftSection={
-                      <Center>
-                        <IconPhoto size={14} />
-                      </Center>
-                    }
-                  >
-                    {review.imageCount ?? '0'}
-                  </Badge>
-                </RoutedDialogLink>
+                {/* <RoutedDialogLink
+            name="resourceReview"
+            state={{ reviewId: review.id }}
+            style={{ display: 'flex' }}
+          >
+            <Badge
+              px={4}
+              leftSection={
+                <Center>
+                  <IconPhoto size={14} />
+                </Center>
+              }
+            >
+              {review.helper?.imageCount ?? '0'}
+            </Badge>
+          </RoutedDialogLink> */}
 
                 <RoutedDialogLink
                   name="resourceReview"

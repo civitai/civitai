@@ -29,11 +29,11 @@ export const resourceReviewSelect = Prisma.validator<Prisma.ResourceReviewSelect
   user: { select: userWithCosmeticsSelect },
   nsfw: true,
   metadata: true,
-  helper: {
-    select: {
-      imageCount: true,
-    },
-  },
+  // helper: {
+  //   select: {
+  //     imageCount: true,
+  //   },
+  // },
   thread: {
     select: {
       _count: { select: { comments: true } },
