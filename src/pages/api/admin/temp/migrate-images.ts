@@ -22,7 +22,6 @@ export default WebhookEndpoint(async (req, res) => {
   );
 
   let cursor = min ?? 0;
-  console.log(cursor > maxImageId);
   await limitConcurrency(() => {
     if (cursor > maxImageId || shouldStop) return null; // We've reached the end of the images
 
