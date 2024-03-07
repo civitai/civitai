@@ -1,10 +1,12 @@
 import {
   Configure,
+  ConfigureProps,
   RangeInputProps,
   RefinementListProps,
   SearchBoxProps,
   SortByProps,
   useClearRefinements,
+  useConfigure,
   useRange,
   useRefinementList,
   useSearchBox,
@@ -246,15 +248,18 @@ export const ClearRefinements = ({ ...props }: ButtonProps) => {
   );
 };
 
-export const BrowsingLevelFilter = ({ attributeName }: { attributeName: string }) => {
+export const BrowsingLevelFilter = ({
+  attributeName,
+  ...props
+}: { attributeName: string } & ConfigureProps) => {
   const browsingLevel = useBrowsingLevelDebounced();
   const browsingLevelArray = Flags.instanceToArray(browsingLevel);
+  const { refine } = useConfigure({
+    ...props,
+    filters: browsingLevelArray.map((value) => `${attributeName}=${value}`).join(' OR '),
+  });
 
-  return (
-    <Configure
-      filters={browsingLevelArray.map((value) => `${attributeName}=${value}`).join(' OR ')}
-    />
-  );
+  return null;
 };
 
 export const CustomSearchBox = forwardRef<
