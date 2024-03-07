@@ -80,13 +80,13 @@ export const modelNotifications = createNotificationProcessor({
       ), model_value AS (
         SELECT DISTINCT
           mm."modelId" model_id,
-          mm."thumbsUpCountAllTime" thumbs_up_count
+          mm."thumbsUpCount" thumbs_up_count
         FROM "ModelMetric" mm
         JOIN "Model" m ON m.id = mm."modelId"
         WHERE
           mm."updatedAt" > '${lastSent}'
           AND mm."timeframe" = 'AllTime'
-          AND "thumbsUpCountAllTime" > ${modelLikeMilestones[0]}
+          AND "thumbsUpCount" > ${modelLikeMilestones[0]}
           AND m."userId" > 0
       ), model_milestone AS (
         SELECT
@@ -204,7 +204,7 @@ export const modelNotifications = createNotificationProcessor({
       )
       INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
-        CONCAT('new-model-from-following:', details->>'modelId', ':', "userId"),
+        CONCAT('new-model-from-following:', details->>'modelId', ':', "ownerId"),
         "ownerId"    "userId",
         'new-model-from-following' "type",
         details,
