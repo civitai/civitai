@@ -12,12 +12,13 @@ export function formatDateNullable(value: dayjs.ConfigType, format = 'MMM D, YYY
   else return formatDate(value, format, utc);
 }
 
-export function formatDateMin(value: Date) {
-  if (dayjs().isSame(value, 'day')) return dayjs(value).format('h:mma');
-  if (dayjs().isSame(value, 'week')) return dayjs(value).format('dddd h:mma');
-  if (dayjs().isSame(value, 'month')) return dayjs(value).format('MMM D h:mma');
-  if (dayjs().isSame(value, 'year')) return dayjs(value).format('MMM D h:mma');
-  return dayjs(value).format('MMM D, YYYY h:mma');
+export function formatDateMin(value: Date, includeTime = true) {
+  const time = includeTime ? 'h:mma' : '';
+  if (dayjs().isSame(value, 'day')) return dayjs(value).format(includeTime ? 'h:mma' : 'MMM D');
+  if (dayjs().isSame(value, 'week')) return dayjs(value).format('dddd ' + time);
+  if (dayjs().isSame(value, 'month')) return dayjs(value).format('MMM D ' + time);
+  if (dayjs().isSame(value, 'year')) return dayjs(value).format('MMM D ' + time);
+  return dayjs(value).format('MMM D, YYYY ' + time);
 }
 
 // Deprecated: Use DaysFromNow component instead

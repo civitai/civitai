@@ -5,10 +5,18 @@ function isTaskGenerator(arg: any): arg is TaskGenerator {
   return typeof arg === 'function';
 }
 
+type LimitConcurrencyOptions = {
+  limit: number;
+  betweenTasksFn?: () => Promise<void>;
+};
 export function limitConcurrency(
   tasksOrGenerator: Task[] | TaskGenerator,
-  limit: number
+  options?: LimitConcurrencyOptions | number
 ): Promise<void> {
+  if (typeof options === 'number') options = { limit: options } as LimitConcurrencyOptions;
+  if (!options) options = { limit: 1 } as LimitConcurrencyOptions;
+  const { limit, betweenTasksFn } = options;
+
   return new Promise((resolve, reject) => {
     let active = 0;
     let finished = false;
@@ -16,7 +24,8 @@ export function limitConcurrency(
     const isGenerator = isTaskGenerator(tasksOrGenerator);
     const tasks = isGenerator ? [] : (tasksOrGenerator as Task[]);
 
-    const getNextTask = (): Task | null => {
+    const getNextTask = async (): Promise<Task | null> => {
+      if (betweenTasksFn) await betweenTasksFn();
       if (isGenerator) return tasksOrGenerator();
       else {
         if (index < tasks.length) return tasks[index++];
@@ -29,7 +38,7 @@ export function limitConcurrency(
     };
 
     const run = async () => {
-      const task = getNextTask();
+      const task = await getNextTask();
       if (!task) {
         finished = true;
         checkFinished();
@@ -52,4 +61,8 @@ export function limitConcurrency(
     // Start the initial set of tasks
     for (let i = 0; i < limit; i++) run();
   });
+}
+
+export function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

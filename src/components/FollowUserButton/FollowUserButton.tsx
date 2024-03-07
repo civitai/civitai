@@ -7,7 +7,7 @@ import { trpc } from '~/utils/trpc';
 
 export function FollowUserButton({ userId, onToggleFollow, ...buttonProps }: Props) {
   const currentUser = useCurrentUser();
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
 
   const { data: following = [] } = trpc.user.getFollowingUsers.useQuery(undefined, {
     enabled: !!currentUser,

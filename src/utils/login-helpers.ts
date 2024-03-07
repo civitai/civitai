@@ -10,7 +10,7 @@ export const loginRedirectReasons = {
   'create-review': 'You need to be logged in to add a review',
   'upload-model': 'You need to be logged in to upload a model',
   'train-model': 'You need to be logged in to train a model',
-  'favorite-model': 'You need to be logged in to like a model',
+  'notify-model': 'You need to be logged in to get notifications for a model',
   'create-comment': 'You need to be logged in to add a comment',
   'report-comment': 'You need to be logged in to report this comment',
   'confirm-membership': 'You need to be logged in to confirm your membership',
@@ -30,6 +30,7 @@ export const loginRedirectReasons = {
   'blur-toggle': 'Displaying NSFW content requires you to be logged in',
   'create-club': 'You need to be logged in to create a club',
   'join-club': 'You need to be logged in to join a club',
+  'favorite-model': 'You need to be logged in to favorite a model',
 };
 
 export type LoginRedirectReason = keyof typeof loginRedirectReasons;

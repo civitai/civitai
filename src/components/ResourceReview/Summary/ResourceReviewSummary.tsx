@@ -1,15 +1,23 @@
-import { Stack, Group, Text, Rating, Progress, createStyles, Skeleton } from '@mantine/core';
-import { createContext, useContext, Fragment } from 'react';
-import { ResourceReviewRatingTotals } from '~/types/router';
-import { trpc } from '~/utils/trpc';
-import { abbreviateNumber } from '~/utils/number-helpers';
+import { Group, Progress, Skeleton, Stack, Text, createStyles } from '@mantine/core';
+import { Fragment, createContext, useContext } from 'react';
+
 import { IconBadge } from '~/components/IconBadge/IconBadge';
+import {
+  getAverageRating,
+  getRatingCount,
+  roundRating,
+  useQueryResourceReviewTotals,
+} from '~/components/ResourceReview/resourceReview.utils';
 import { StarRating } from '~/components/StartRating/StarRating';
+import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
+import { ResourceReviewRatingTotals } from '~/types/router';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+import { abbreviateNumber } from '~/utils/number-helpers';
 
 type ContextState = {
   count: number;
   rating: number;
+  modelId: number;
   loading?: boolean;
   totals?: ResourceReviewRatingTotals;
   modelVersionId?: number;
@@ -28,41 +36,24 @@ const useSummaryContext = () => {
   return context;
 };
 
-function roundRating(rating: number) {
-  return Math.round(rating * 100) / 100;
-}
-export function getRatingCount(totals: ResourceReviewRatingTotals | undefined) {
-  const count = totals ? Object.values(totals).reduce<number>((acc, value) => acc + value, 0) : 0;
-  return count;
-}
-export function getAverageRating(totals: ResourceReviewRatingTotals | undefined, count?: number) {
-  if (!count) count = getRatingCount(totals);
-  const rating =
-    totals && count > 0
-      ? Object.entries(totals).reduce<number>((acc, [key, value]) => {
-          return acc + Number(key) * value;
-        }, 0) / count
-      : 0;
-  return roundRating(rating);
-}
-
 export function ResourceReviewSummary({ modelId, modelVersionId, children }: Props) {
-  const { data, isLoading, isRefetching } = trpc.resourceReview.getRatingTotals.useQuery({
+  const { totals, loading } = useQueryResourceReviewTotals({
     modelId,
     modelVersionId,
   });
 
-  const count = getRatingCount(data);
-  const rating = getAverageRating(data, count);
+  const count = getRatingCount(totals);
+  const rating = getAverageRating(totals, count);
 
   return (
     <SummaryContext.Provider
       value={{
         count,
-        rating: rating,
-        loading: isLoading || isRefetching,
-        totals: data,
+        rating,
+        loading,
+        totals,
         modelVersionId,
+        modelId,
       }}
     >
       {children}

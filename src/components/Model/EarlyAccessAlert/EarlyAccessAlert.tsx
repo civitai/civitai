@@ -14,19 +14,22 @@ import { showSuccessNotification, showErrorNotification } from '~/utils/notifica
 import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
-export function EarlyAccessAlert({ versionId, modelType, deadline }: Props) {
+export function EarlyAccessAlert({ modelId, versionId, modelType, deadline }: Props) {
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
 
   const inEarlyAccess = features.earlyAccessModel && !!deadline && isFutureDate(deadline);
 
   const { data: { Notify: notifying = [] } = { Notify: [] } } =
-    trpc.user.getEngagedModelVersions.useQuery(undefined, {
-      enabled: !!currentUser && inEarlyAccess,
-      cacheTime: Infinity,
-      staleTime: Infinity,
-    });
+    trpc.user.getEngagedModelVersions.useQuery(
+      { id: modelId },
+      {
+        enabled: !!currentUser && inEarlyAccess,
+        cacheTime: Infinity,
+        staleTime: Infinity,
+      }
+    );
   const alreadyNotifying = notifying.includes(versionId);
 
   const toggleNotifyMutation = trpc.modelVersion.toggleNotifyEarlyAccess.useMutation({
@@ -37,8 +40,8 @@ export function EarlyAccessAlert({ versionId, modelType, deadline }: Props) {
 
       // Toggle the model in the Notify list
       queryUtils.user.getEngagedModelVersions.setData(
-        undefined,
-        ({ Notify = [], ...old } = { Notify: [] }) => {
+        { id: modelId },
+        ({ Notify = [], ...old } = { Notify: [], Downloaded: [] }) => {
           if (alreadyNotifying) return { Notify: Notify.filter((id) => id !== versionId), ...old };
           return { Notify: [...Notify, versionId], ...old };
         }
@@ -55,7 +58,7 @@ export function EarlyAccessAlert({ versionId, modelType, deadline }: Props) {
     },
     onError(error, _variables, context) {
       showErrorNotification({ error: new Error(error.message) });
-      queryUtils.user.getEngagedModelVersions.setData(undefined, context?.prevEngaged);
+      queryUtils.user.getEngagedModelVersions.setData({ id: modelId }, context?.prevEngaged);
     },
   });
   const handleNotifyMeClick = () => {
@@ -91,4 +94,4 @@ export function EarlyAccessAlert({ versionId, modelType, deadline }: Props) {
   );
 }
 
-type Props = { versionId: number; modelType: ModelType; deadline?: Date };
+type Props = { modelId: number; versionId: number; modelType: ModelType; deadline?: Date };

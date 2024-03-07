@@ -1,52 +1,26 @@
+import { Badge, Button, Group, Paper, Stack, Text, ThemeIcon, createStyles } from '@mantine/core';
+import { IconCategory, IconPhoto, IconStar } from '@tabler/icons-react';
+import React from 'react';
+
+import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
+import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
+import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import {
   ProfileSection,
   ProfileSectionPreview,
   ProfileSectionProps,
   useProfileSectionStyles,
 } from '~/components/Profile/ProfileSection';
-import { useInView } from '~/hooks/useInView';
-import {
-  IconBrush,
-  IconCategory,
-  IconMessageChatbot,
-  IconPhoto,
-  IconStar,
-  IconX,
-} from '@tabler/icons-react';
-import React, { Fragment, useMemo } from 'react';
-import {
-  Avatar,
-  Badge,
-  Button,
-  Center,
-  createStyles,
-  Group,
-  Loader,
-  Paper,
-  Progress,
-  Rating,
-  Stack,
-  Text,
-  useMantineTheme,
-} from '@mantine/core';
-import { useQueryResourceReview } from '~/components/ResourceReview/resourceReview.utils';
-import { ReviewSort } from '~/server/common/enums';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { getInitials } from '~/utils/string-helpers';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { daysFromNow } from '~/utils/date-helpers';
-import { DaysFromNow } from '~/components/Dates/DaysFromNow';
-import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
+import { useQueryResourceReview } from '~/components/ResourceReview/resourceReview.utils';
+import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
+import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { useInView } from '~/hooks/useInView';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
-import { ResourceReviewSummary } from '~/components/ResourceReview/Summary/ResourceReviewSummary';
-import { isNumber } from '~/utils/type-guards';
-import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 
-const useStyles = createStyles((theme) => ({
+const useStyles = createStyles(() => ({
   title: {
     [containerQuery.smallerThan('sm')]: {
       fontSize: '24px',
@@ -83,25 +57,25 @@ export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
     }
   );
 
-  const userRatingsTotalCount = useMemo(() => {
-    if (!userRatingsTotal) {
-      return {
-        count: 0,
-        avgRating: 0,
-      };
-    }
+  // const userRatingsTotalCount = useMemo(() => {
+  //   if (!userRatingsTotal) {
+  //     return {
+  //       count: 0,
+  //       avgRating: 0,
+  //     };
+  //   }
 
-    const count = Object.values(userRatingsTotal).reduce<number>((acc, value) => acc + value, 0);
-    const avgRating =
-      Object.keys(userRatingsTotal)
-        .map((k) => Number(k) * userRatingsTotal[k as keyof typeof userRatingsTotal])
-        .reduce<number>((acc, value) => acc + value, 0) / (count ?? 1);
+  //   const count = Object.values(userRatingsTotal).reduce<number>((acc, value) => acc + value, 0);
+  //   const avgRating =
+  //     Object.keys(userRatingsTotal)
+  //       .map((k) => Number(k) * userRatingsTotal[k as keyof typeof userRatingsTotal])
+  //       .reduce<number>((acc, value) => acc + value, 0) / (count ?? 1);
 
-    return {
-      count,
-      avgRating,
-    };
-  }, [userRatingsTotal]);
+  //   return {
+  //     count,
+  //     avgRating,
+  //   };
+  // }, [userRatingsTotal]);
 
   const isNullState =
     (!isLoading && !resourceReviews.length) || (!userRatingsTotal && !isLoadingTotals);
@@ -121,6 +95,8 @@ export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
               <Stack>
                 {resourceReviews.map((review) => {
                   const reviewer = review.user;
+                  const isThumbsUp = review.recommended;
+
                   return (
                     <Paper
                       key={review.id}
@@ -138,8 +114,9 @@ export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
                           <UserAvatar
                             user={reviewer}
                             withUsername
-                            size="md"
-                            spacing="xs"
+                            size="lg"
+                            avatarSize={40}
+                            spacing="md"
                             linkToProfile
                             subText={
                               <Text color="dimmed" size="sm">
@@ -147,17 +124,14 @@ export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
                               </Text>
                             }
                           />
-                          <Badge
-                            radius="xl"
-                            px={8}
-                            py={4}
+                          <ThemeIcon
+                            size="lg"
+                            radius="md"
                             variant="light"
-                            color={theme.colorScheme === 'dark' ? 'dark' : 'gray'}
-                            style={{ height: '24px' }}
-                            ml="auto"
+                            color={isThumbsUp ? 'success.5' : 'red'}
                           >
-                            <Rating value={review.rating} fractions={2} readOnly />
-                          </Badge>
+                            {isThumbsUp ? <ThumbsUpIcon filled /> : <ThumbsDownIcon filled />}
+                          </ThemeIcon>
                         </Group>
                         <Stack w="100%">
                           {review.details && (
@@ -201,7 +175,7 @@ export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
                 })}
               </Stack>
             </ContainerGrid.Col>
-            <ContainerGrid.Col xs={12} md={4}>
+            {/* <ContainerGrid.Col xs={12} md={4}>
               {isLoadingTotals ? (
                 <Center>
                   <Loader />
@@ -262,7 +236,7 @@ export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
                   )}
                 </Stack>
               )}
-            </ContainerGrid.Col>
+            </ContainerGrid.Col> */}
           </ContainerGrid>
         </ProfileSection>
       )}

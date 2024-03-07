@@ -102,7 +102,7 @@ export type ReactionType =
   | 'Article_Create'
   | 'Article_Delete';
 export type ReportType = 'Create' | 'StatusChange';
-export type ModelEngagementType = 'Hide' | 'Favorite' | 'Delete';
+export type ModelEngagementType = 'Hide' | 'Favorite' | 'Delete' | 'Notify';
 export type TagEngagementType = 'Hide' | 'Allow';
 export type UserEngagementType = 'Follow' | 'Hide' | 'Delete';
 export type CommentType =

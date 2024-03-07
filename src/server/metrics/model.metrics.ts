@@ -3,6 +3,7 @@ import { createMetricProcessor, MetricProcessorRunContext } from '~/server/metri
 import { modelsSearchIndex } from '~/server/search-index';
 import { Prisma, PrismaClient, SearchIndexUpdateQueueAction } from '@prisma/client';
 import { chunk } from 'lodash-es';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 
 export const modelMetrics = createMetricProcessor({
   name: 'Model',
@@ -28,8 +29,7 @@ export const modelMetrics = createMetricProcessor({
   },
   rank: {
     async refresh(ctx) {
-      await refreshModelVersionRank(ctx);
-      await refreshModelRank(ctx);
+      // Do nothing. Rank views are now not used.
     },
     refreshInterval: 60 * 1000,
   },
@@ -40,7 +40,7 @@ const modelMetricProcessors = [
   updateVersionDownloadMetrics,
   updateVersionGenerationMetrics,
   updateVersionRatingMetrics,
-  updateVersionFavoriteMetrics,
+  updateModelRatingMetrics,
   updateVersionCommentMetrics,
   updateCollectMetrics,
   updateTippedBuzzMetrics,
@@ -289,22 +289,21 @@ async function updateVersionRatingMetrics({
   jobContext,
 }: MetricProcessorRunContext) {
   // Disabled clickhouse as it seems to be missing resource reviews somehow...
-  const clickhouseSince = dayjs(lastUpdate).toISOString();
-  const affectedModelVersionsResponse = await ch.query({
-    query: `
-      SELECT DISTINCT modelVersionId
-      FROM resourceReviews
-      WHERE time >= parseDateTimeBestEffortOrNull('${clickhouseSince}')
-    `,
-    format: 'JSONEachRow',
-  });
-
-  const affectedModelVersionsClickhouse = (await affectedModelVersionsResponse?.json()) as [
-    {
-      modelVersionId: number;
-    }
-  ];
-  const modelVersionIds = new Set(affectedModelVersionsClickhouse.map((x) => x.modelVersionId));
+  // const clickhouseSince = dayjs(lastUpdate).toISOString();
+  // const affectedModelVersionsResponse = await ch.query({
+  //   query: `
+  //     SELECT DISTINCT modelVersionId
+  //     FROM resourceReviews
+  //     WHERE time >= parseDateTimeBestEffortOrNull('${clickhouseSince}')
+  //   `,
+  //   format: 'JSONEachRow',
+  // });
+  // const affectedModelVersionsClickhouse = (await affectedModelVersionsResponse?.json()) as [
+  //   {
+  //     modelVersionId: number;
+  //   }
+  // ];
+  const modelVersionIds = new Set<number>();
 
   const affectedModelVersionsDb = await db.$queryRaw<{ modelVersionId: number }[]>`
     SELECT DISTINCT "modelVersionId"
@@ -317,53 +316,35 @@ async function updateVersionRatingMetrics({
   let rows = 0;
   for (const batch of batches) {
     jobContext.checkIfCanceled();
-    const batchJson = JSON.stringify(batch);
     rows += await db.$executeRaw`
       -- update version rating metrics
-      INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "ratingCount", rating)
+      INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "thumbsUpCount", "thumbsDownCount")
       SELECT
-          mv.id,
-          tf.timeframe,
-          COALESCE(SUM(
-              CASE
-                  WHEN rr."userId" IS NULL THEN 0
-                  WHEN tf.timeframe = 'AllTime' THEN 1
-                  WHEN tf.timeframe = 'Year' THEN IIF(rr.created_at >= NOW() - interval '1 year', 1, 0)
-                  WHEN tf.timeframe = 'Month' THEN IIF(rr.created_at >= NOW() - interval '1 month', 1, 0)
-                  WHEN tf.timeframe = 'Week' THEN IIF(rr.created_at >= NOW() - interval '1 week', 1, 0)
-                  WHEN tf.timeframe = 'Day' THEN IIF(rr.created_at >= NOW() - interval '1 day', 1, 0)
-              END
-          ), 0),
-          COALESCE(AVG(
-              CASE
-                  WHEN rr."userId" IS NULL THEN 0
-                  WHEN tf.timeframe = 'AllTime' THEN rating
-                  WHEN tf.timeframe = 'Year' THEN IIF(rr.created_at >= NOW() - interval '1 year', rating, NULL)
-                  WHEN tf.timeframe = 'Month' THEN IIF(rr.created_at >= NOW() - interval '1 month', rating, NULL)
-                  WHEN tf.timeframe = 'Week' THEN IIF(rr.created_at >= NOW() - interval '1 week', rating, NULL)
-                  WHEN tf.timeframe = 'Day' THEN IIF(rr.created_at >= NOW() - interval '1 day', rating, NULL)
-              END
-          ), 0)
-      FROM "ModelVersion" mv
-      LEFT JOIN (
-          SELECT
-              r."userId",
-              r."modelVersionId",
-              MAX(r.rating) rating,
-              MAX(r."createdAt") AS created_at
-          FROM "ResourceReview" r
-          JOIN "Model" m ON m.id = r."modelId" AND m."userId" != r."userId"
-          WHERE r.exclude = FALSE
-          AND r."tosViolation" = FALSE
-          AND r."modelVersionId" = ANY (SELECT json_array_elements(${batchJson}::json)::text::integer)
-          GROUP BY r."userId", r."modelVersionId"
-      ) rr ON rr."modelVersionId" = mv.id
-      CROSS JOIN (
-        SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
-      ) tf
-      WHERE mv.id = ANY (SELECT json_array_elements(${batchJson}::json)::text::integer)
-      GROUP BY mv.id, tf.timeframe
-      ON CONFLICT ("modelVersionId", timeframe) DO UPDATE SET "ratingCount" = EXCLUDED."ratingCount", rating = EXCLUDED.rating, "updatedAt" = now();
+        r."modelVersionId",
+        tf.timeframe,
+        COUNT(DISTINCT CASE
+          WHEN NOT recommended THEN NULL
+          WHEN timeframe = 'AllTime' THEN r."userId"
+          WHEN timeframe = 'Year' AND r."createdAt" > NOW() - interval '1 year' THEN r."userId"
+          WHEN timeframe = 'Month' AND r."createdAt" > NOW() - interval '1 month' THEN r."userId"
+          WHEN timeframe = 'Week' AND r."createdAt" > NOW() - interval '1 week' THEN r."userId"
+          WHEN timeframe = 'Day' AND r."createdAt" > NOW() - interval '1 day' THEN r."userId"
+        END) "thumbsUpCount",
+        COUNT(DISTINCT CASE
+          WHEN recommended THEN NULL
+          WHEN timeframe = 'AllTime' THEN r."userId"
+          WHEN timeframe = 'Year' AND r."createdAt" > NOW() - interval '1 year' THEN r."userId"
+          WHEN timeframe = 'Month' AND r."createdAt" > NOW() - interval '1 month' THEN r."userId"
+          WHEN timeframe = 'Week' AND r."createdAt" > NOW() - interval '1 week' THEN r."userId"
+          WHEN timeframe = 'Day' AND r."createdAt" > NOW() - interval '1 day' THEN r."userId"
+        END) "thumbsDownCount"
+      FROM "ResourceReview" r
+      CROSS JOIN ( SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe ) tf
+      WHERE r.exclude = FALSE
+      AND r."tosViolation" = FALSE
+      AND r."modelVersionId" IN (${Prisma.join(batch)})
+      GROUP BY r."modelVersionId", tf.timeframe
+      ON CONFLICT ("modelVersionId", timeframe) DO UPDATE SET "thumbsUpCount" = EXCLUDED."thumbsUpCount", "thumbsDownCount" = EXCLUDED."thumbsDownCount", "updatedAt" = now();
     `;
   }
   console.log('ratings', rows);
@@ -376,72 +357,59 @@ async function updateVersionRatingMetrics({
   return [];
 }
 
-async function updateVersionFavoriteMetrics({
-  ch,
-  pg,
-  lastUpdate,
-  jobContext,
-}: MetricProcessorRunContext) {
-  const clickhouseSince = dayjs(lastUpdate).toISOString();
-  const affectedModelsResponse = await ch.query({
-    query: `
-      SELECT DISTINCT modelId
-      FROM modelEngagements
-      WHERE time >= parseDateTimeBestEffortOrNull('${clickhouseSince}')
-      AND (type = 'Favorite' OR type = 'Delete')
-    `,
-    format: 'JSONEachRow',
+async function updateModelRatingMetrics({ db, lastUpdate, jobContext }: MetricProcessorRunContext) {
+  const modelIdSet = new Set<number>();
+
+  const affectedModelVersionsDb = await db.$queryRaw<{ modelId: number }[]>`
+    SELECT DISTINCT "modelId"
+    FROM "ResourceReview"
+    WHERE "createdAt" > ${lastUpdate} OR "updatedAt" > ${lastUpdate}
+  `;
+  affectedModelVersionsDb.forEach(({ modelId }) => modelIdSet.add(modelId));
+
+  let rows = 0;
+  const modelIds = [...modelIdSet];
+  const tasks = chunk(modelIds, 500).map((batch) => async () => {
+    jobContext.checkIfCanceled();
+    rows += await db.$executeRaw`
+      -- Migrate model thumbs up metrics
+      INSERT INTO "ModelMetric" ("modelId", timeframe, "thumbsUpCount", "thumbsDownCount")
+      SELECT
+        r."modelId",
+        tf.timeframe,
+        COUNT(DISTINCT CASE
+          WHEN NOT recommended THEN NULL
+          WHEN timeframe = 'Year' AND r."createdAt" > NOW() - interval '1 year' THEN r."userId"
+          WHEN timeframe = 'Month' AND r."createdAt" > NOW() - interval '1 month' THEN r."userId"
+          WHEN timeframe = 'Week' AND r."createdAt" > NOW() - interval '1 week' THEN r."userId"
+          WHEN timeframe = 'Day' AND r."createdAt" > NOW() - interval '1 day' THEN r."userId"
+          WHEN timeframe = 'AllTime' THEN r."userId"
+        END) "thumbsUpCount",
+        COUNT(DISTINCT CASE
+          WHEN recommended THEN NULL
+          WHEN timeframe = 'Year' AND r."createdAt" > NOW() - interval '1 year' THEN r."userId"
+          WHEN timeframe = 'Month' AND r."createdAt" > NOW() - interval '1 month' THEN r."userId"
+          WHEN timeframe = 'Week' AND r."createdAt" > NOW() - interval '1 week' THEN r."userId"
+          WHEN timeframe = 'Day' AND r."createdAt" > NOW() - interval '1 day' THEN r."userId"
+          WHEN timeframe = 'AllTime' THEN r."userId"
+        END) "thumbsDownCount"
+      FROM "ResourceReview" r
+      CROSS JOIN ( SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe ) tf
+      WHERE r.exclude = FALSE
+      AND r."tosViolation" = FALSE
+      AND r."modelId" IN (${Prisma.join(batch)})
+      GROUP BY r."modelId", tf.timeframe
+      ON CONFLICT ("modelId", timeframe) DO UPDATE SET
+        "thumbsUpCount" = EXCLUDED."thumbsUpCount",
+        "thumbsDownCount" = EXCLUDED."thumbsDownCount",
+        "updatedAt" = now();
+    `;
   });
 
-  const affectedModels = (await affectedModelsResponse?.json()) as [
-    {
-      modelId: number;
-    }
-  ];
+  await limitConcurrency(tasks, 3);
+  console.log('model ratings', rows);
 
-  const affectedModelsJson = JSON.stringify(affectedModels.map((x) => x.modelId));
-
-  const sqlAnd = [Prisma.sql`f.type = 'Favorite'`];
-  // Conditionally pass the affected models to the query if there are less than 1000 of them
-  if (affectedModels.length < 1000)
-    sqlAnd.push(
-      Prisma.sql`f."modelId" = ANY (SELECT json_array_elements(${affectedModelsJson}::json)::text::integer)`
-    );
-
-  const rowsQuery = await pg.cancellableQuery(Prisma.sql`
-    -- update version favorite metrics
-    INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "favoriteCount")
-    SELECT
-        mv."id",
-        tf.timeframe,
-        COALESCE(SUM(
-            CASE
-                WHEN tf.timeframe = 'AllTime' THEN 1
-                WHEN tf.timeframe = 'Year' THEN IIF(f."createdAt" >= NOW() - interval '1 year', 1, 0)
-                WHEN tf.timeframe = 'Month' THEN IIF(f."createdAt" >= NOW() - interval '1 month', 1, 0)
-                WHEN tf.timeframe = 'Week' THEN IIF(f."createdAt" >= NOW() - interval '1 week', 1, 0)
-                WHEN tf.timeframe = 'Day' THEN IIF(f."createdAt" >= NOW() - interval '1 day', 1, 0)
-            END
-        ), 0)
-    FROM (
-        SELECT
-            f."modelId",
-            f."createdAt"
-        FROM "ModelEngagement" f
-        WHERE ${Prisma.join(sqlAnd, ` AND `)}
-    ) f
-    JOIN "ModelVersion" mv ON f."modelId" = mv."modelId"
-    CROSS JOIN (
-      SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
-    ) tf
-    GROUP BY mv.id, tf.timeframe
-    ON CONFLICT ("modelVersionId", timeframe) DO UPDATE SET "favoriteCount" = EXCLUDED."favoriteCount", "updatedAt" = now();
-  `);
-  jobContext.on('cancel', rowsQuery.cancel);
-  const affectedModelsRows = await rowsQuery.result();
-  console.log('favorites', affectedModelsRows[0]);
-
-  return affectedModels.map(({ modelId }) => modelId);
+  return modelIds;
 }
 
 async function updateVersionCommentMetrics({
@@ -580,45 +548,29 @@ async function updateCollectMetrics({ db, lastUpdate, jobContext }: MetricProces
   const modelIds = affected.map((x) => x.modelId);
   console.log('collects', modelIds.length);
 
-  const batches = chunk(modelIds, 1000);
+  const batches = chunk(modelIds, 500);
   let rows = 0;
   for (const batch of batches) {
     jobContext.checkIfCanceled();
-    const batchJson = JSON.stringify(batch);
 
     rows += await db.$executeRaw`
-      -- update version collect metrics
-      INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "collectedCount")
+      -- update model collect metrics
+      INSERT INTO "ModelMetric" ("modelId", timeframe, "collectedCount")
       SELECT
-        mv."id",
-        tf.timeframe,
-        COALESCE(SUM(
-          CASE
-            WHEN tf.timeframe = 'AllTime' THEN 1
-            WHEN tf.timeframe = 'Year' THEN IIF(i."createdAt" >= NOW() - interval '1 year', 1, 0)
-            WHEN tf.timeframe = 'Month' THEN IIF(i."createdAt" >= NOW() - interval '1 month', 1, 0)
-            WHEN tf.timeframe = 'Week' THEN IIF(i."createdAt" >= NOW() - interval '1 week', 1, 0)
-            WHEN tf.timeframe = 'Day' THEN IIF(i."createdAt" >= NOW() - interval '1 day', 1, 0)
-          END
-        ), 0)
-      FROM (
-        SELECT
-          "modelId",
-          "addedById",
-          MAX(c."createdAt") "createdAt"
-        FROM "CollectionItem" c
-        JOIN "Model" m ON m.id = c."modelId"
-        WHERE "modelId" IS NOT NULL
-          AND m."userId" != c."addedById"
-          AND "modelId" = ANY (SELECT json_array_elements(${batchJson}::json)::text::integer)
-        GROUP BY "modelId", "addedById"
-      ) i
-      JOIN "ModelVersion" mv ON mv."modelId" = i."modelId"
-      CROSS JOIN (
-        SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
-      ) tf
-      GROUP BY mv."id", tf.timeframe
-      ON CONFLICT ("modelVersionId", timeframe) DO UPDATE SET "collectedCount" = EXCLUDED."collectedCount", "updatedAt" = now();
+        "modelId",
+        timeframe,
+        COUNT(DISTINCT CASE
+          WHEN timeframe = 'AllTime' THEN c."addedById"
+          WHEN timeframe = 'Year' AND c."createdAt" > NOW() - interval '1 year' THEN c."addedById"
+          WHEN timeframe = 'Month' AND c."createdAt" > NOW() - interval '1 month' THEN c."addedById"
+          WHEN timeframe = 'Week' AND c."createdAt" > NOW() - interval '1 week' THEN c."addedById"
+          WHEN timeframe = 'Day' AND c."createdAt" > NOW() - interval '1 day' THEN c."addedById"
+        END) as "collectedCount"
+      FROM "CollectionItem" c
+      CROSS JOIN ( SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe ) tf
+      WHERE c."modelId" IN (${Prisma.join(batch)})
+      GROUP BY "modelId", timeframe
+      ON CONFLICT ("modelId", timeframe) DO UPDATE SET "collectedCount" = EXCLUDED."collectedCount", "updatedAt" = now();
     `;
   }
   console.log('collects', rows);
@@ -692,7 +644,7 @@ async function updateTippedBuzzMetrics({ db, lastUpdate, jobContext }: MetricPro
 
 async function updateModelMetrics({ pg, lastUpdate, jobContext }: MetricProcessorRunContext) {
   const rowsQuery = await pg.cancellableQuery(Prisma.sql`
-    INSERT INTO "ModelMetric" ("modelId", timeframe, "downloadCount", rating, "ratingCount", "favoriteCount", "commentCount", "imageCount", "collectedCount", "tippedCount", "tippedAmountCount", "generationCount")
+    INSERT INTO "ModelMetric" ("modelId", timeframe, "downloadCount", "commentCount", "imageCount", "tippedCount", "tippedAmountCount", "generationCount", "updatedAt")
     WITH affected AS (
       SELECT DISTINCT mv."modelId"
       FROM "ModelVersionMetric" mvm
@@ -703,57 +655,29 @@ async function updateModelMetrics({ pg, lastUpdate, jobContext }: MetricProcesso
       mv."modelId",
       mvm.timeframe,
       SUM(mvm."downloadCount") "downloadCount",
-      COALESCE(SUM(mvm.rating * mvm."ratingCount") / NULLIF(SUM(mvm."ratingCount"), 0), 0) "rating",
-      SUM(mvm."ratingCount") "ratingCount",
-      MAX(mvm."favoriteCount") "favoriteCount",
       MAX(mvm."commentCount") "commentCount",
       SUM(mvm."imageCount") "imageCount",
-      MAX(mvm."collectedCount") "collectedCount",
       MAX(mvm."tippedCount") "tippedCount",
       MAX(mvm."tippedAmountCount") "tippedAmountCount",
-      SUM(mvm."generationCount") "generationCount"
+      SUM(mvm."generationCount") "generationCount",
+      NOW() "updatedAt"
     FROM "ModelVersionMetric" mvm
     JOIN "ModelVersion" mv ON mvm."modelVersionId" = mv.id
     WHERE mv."modelId" IN (SELECT "modelId" FROM affected)
     GROUP BY mv."modelId", mvm.timeframe
     ON CONFLICT ("modelId", timeframe) DO UPDATE SET
       "downloadCount" = EXCLUDED."downloadCount",
-      rating = EXCLUDED.rating,
-      "ratingCount" = EXCLUDED."ratingCount",
-      "favoriteCount" = EXCLUDED."favoriteCount",
       "commentCount" = EXCLUDED."commentCount",
       "imageCount" = EXCLUDED."imageCount",
-      "collectedCount" = EXCLUDED."collectedCount",
       "tippedCount" = EXCLUDED."tippedCount",
       "tippedAmountCount" = EXCLUDED."tippedAmountCount",
-      "generationCount" = EXCLUDED."generationCount"
+      "generationCount" = EXCLUDED."generationCount",
+      "updatedAt" = EXCLUDED."updatedAt";
   `);
   jobContext.on('cancel', rowsQuery.cancel);
   const affectedModelsRows = await rowsQuery.result();
   console.log('models', affectedModelsRows[0]);
 
   return [];
-}
-// #endregion
-
-// #region [ranks]
-async function refreshModelRank({ db }: MetricProcessorRunContext) {
-  // Disabling this for now since Prisma doesn't run it correctly.
-  // Instead this runs in a cron job every hour.
-  // await db.$executeRawUnsafe(`CALL update_model_rank(10000);`);
-}
-
-async function refreshModelVersionRank({ db }: MetricProcessorRunContext) {
-  await db.$executeRaw`DROP TABLE IF EXISTS "ModelVersionRank_New"`;
-  await db.$executeRaw`CREATE TABLE "ModelVersionRank_New" AS SELECT * FROM "ModelVersionRank_Live"`;
-  await db.$executeRaw`ALTER TABLE "ModelVersionRank_New" ADD CONSTRAINT "pk_ModelVersionRank_New" PRIMARY KEY ("modelVersionId")`;
-  await db.$executeRaw`CREATE INDEX "ModelVersionRank_New_idx" ON "ModelVersionRank_New"("modelVersionId")`;
-
-  await db.$transaction([
-    db.$executeRaw`DROP TABLE IF EXISTS "ModelVersionRank"`,
-    db.$executeRaw`ALTER TABLE "ModelVersionRank_New" RENAME TO "ModelVersionRank"`,
-    db.$executeRaw`ALTER TABLE "ModelVersionRank" RENAME CONSTRAINT "pk_ModelVersionRank_New" TO "pk_ModelVersionRank";`,
-    db.$executeRaw`ALTER INDEX "ModelVersionRank_New_idx" RENAME TO "ModelVersionRank_idx"`,
-  ]);
 }
 // #endregion

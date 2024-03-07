@@ -304,6 +304,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
         details: true,
         id: true,
         modelVersionId: true,
+        recommended: true,
       },
       orderBy: { rating: 'desc' },
     });
@@ -338,7 +339,8 @@ export const getImagesAsPostsInfiniteHandler = async ({
         review: review
           ? {
               rating: review.rating,
-              details: review?.details,
+              details: review.details,
+              recommended: review.recommended,
               id: review.id,
             }
           : undefined,

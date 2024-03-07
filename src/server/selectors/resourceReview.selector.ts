@@ -1,9 +1,24 @@
 import { Prisma } from '@prisma/client';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 
-export const resourceReviewSelect = Prisma.validator<Prisma.ResourceReviewSelect>()({
+export const resourceReviewSimpleSelect = Prisma.validator<Prisma.ResourceReviewSelect>()({
   id: true,
   modelId: true,
+  modelVersionId: true,
+  recommended: true,
+  details: true,
+  createdAt: true,
+  exclude: true,
+});
+const resourceReviewSimple = Prisma.validator<Prisma.ResourceReviewArgs>()({
+  select: resourceReviewSimpleSelect,
+});
+export type ResourceReviewSimpleModel = Prisma.ResourceReviewGetPayload<
+  typeof resourceReviewSimple
+>;
+
+export const resourceReviewSelect = Prisma.validator<Prisma.ResourceReviewSelect>()({
+  ...resourceReviewSimpleSelect,
   modelVersion: {
     select: {
       id: true,
@@ -11,11 +26,8 @@ export const resourceReviewSelect = Prisma.validator<Prisma.ResourceReviewSelect
     },
   },
   rating: true,
-  details: true,
   user: { select: userWithCosmeticsSelect },
-  createdAt: true,
   nsfw: true,
-  exclude: true,
   metadata: true,
   // helper: {
   //   select: {

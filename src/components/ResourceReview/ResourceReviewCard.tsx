@@ -1,19 +1,39 @@
-import { Card, Stack, Group, Rating, Badge, Center, Text, Button, ScrollArea } from '@mantine/core';
+import {
+  Card,
+  Stack,
+  Group,
+  Rating,
+  Badge,
+  Center,
+  Text,
+  Button,
+  ScrollArea,
+  ThemeIcon,
+} from '@mantine/core';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { IconPhoto, IconMessageCircle2 } from '@tabler/icons-react';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { ResourceReviewInfiniteModel } from '~/types/router';
-import { StarRating } from '../StartRating/StarRating';
+import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 
 export function ResourceReviewCard({ data }: { data: ResourceReviewInfiniteModel }) {
+  const isThumbsUp = data.recommended;
+
   return (
     <Card p="xs">
       <Stack>
         <UserAvatar user={data.user} withUsername withLink />
-        {data.rating && (
+        {data.recommended && (
           <Group position="apart">
-            <StarRating value={data.rating ?? undefined} />
+            <ThemeIcon
+              variant="light"
+              size="lg"
+              radius="md"
+              color={isThumbsUp ? 'success.5' : 'red'}
+            >
+              {isThumbsUp ? <ThumbsUpIcon filled /> : <ThumbsUpIcon filled />}
+            </ThemeIcon>
             {/* {data.helper?.imageCount && (
               <Badge
                 leftSection={

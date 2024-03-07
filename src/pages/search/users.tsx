@@ -168,10 +168,9 @@ export function UserCard({ data }: { data: UserSearchIndexRecord }) {
             <Group spacing={8}>
               <RankBadge size="md" rank={data.rank} />
               <UserStatBadges
-                rating={{ value: stats.ratingAllTime, count: stats.ratingCountAllTime }}
                 uploads={stats.uploadCountAllTime}
                 followers={stats.followerCountAllTime}
-                favorite={stats.favoriteCountAllTime}
+                favorites={stats.thumbsUpCountAllTime}
                 downloads={stats.downloadCountAllTime}
               />
             </Group>

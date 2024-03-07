@@ -110,6 +110,7 @@ type UserForSearchIndex = {
     ratingCountAllTime: number;
     downloadCountAllTime: number;
     favoriteCountAllTime: number;
+    thumbsUpCountAllTime: number;
     followerCountAllTime: number;
     answerAcceptCountAllTime: number;
     answerCountAllTime: number;
@@ -215,7 +216,8 @@ const onFetchItemsToIndex = async ({
           'ratingAllTime', IIF(sum("ratingCount") IS NULL OR sum("ratingCount") < 1, 0::double precision, sum("rating" * "ratingCount")/sum("ratingCount")),
               'ratingCountAllTime', SUM("ratingCount"),
               'downloadCountAllTime', SUM("downloadCount"),
-              'favoriteCountAllTime', SUM("favoriteCount")
+              'favoriteCountAllTime', SUM("favoriteCount"),
+              'thumbsUpCountAllTime', SUM("thumbsUpCount")
         ) stats
       FROM "ModelMetric" mm
       JOIN "Model" m ON mm."modelId" = m.id AND timeframe = 'AllTime'

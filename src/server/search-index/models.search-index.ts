@@ -218,6 +218,7 @@ const onFetchItemsToIndex = async ({
             select: {
               commentCount: true,
               favoriteCount: true,
+              thumbsUpCount: true,
               downloadCount: true,
               rating: true,
               ratingCount: true,
@@ -226,17 +227,6 @@ const onFetchItemsToIndex = async ({
             },
             where: {
               timeframe: MetricTimeframe.AllTime,
-            },
-          },
-          rank: {
-            select: {
-              [`downloadCount${MetricTimeframe.AllTime}`]: true,
-              [`favoriteCount${MetricTimeframe.AllTime}`]: true,
-              [`commentCount${MetricTimeframe.AllTime}`]: true,
-              [`ratingCount${MetricTimeframe.AllTime}`]: true,
-              [`rating${MetricTimeframe.AllTime}`]: true,
-              [`collectedCount${MetricTimeframe.AllTime}`]: true,
-              [`tippedAmountCount${MetricTimeframe.AllTime}`]: true,
             },
           },
         },
@@ -310,9 +300,9 @@ const onFetchItemsToIndex = async ({
 
       const indexReadyRecords = models
         .map((modelRecord) => {
-          const { user, modelVersions, tagsOnModels, hashes, rank, ...model } = modelRecord;
+          const { user, modelVersions, tagsOnModels, hashes, ...model } = modelRecord;
 
-          const metrics = modelRecord.metrics[0] || {};
+          const metrics = modelRecord.metrics[0] ?? {};
 
           const weightedRating =
             (metrics.rating * metrics.ratingCount + RATING_BAYESIAN_M * RATING_BAYESIAN_C) /
@@ -366,13 +356,14 @@ const onFetchItemsToIndex = async ({
               weightedRating,
             },
             rank: {
-              downloadCount: rank?.[`downloadCount${MetricTimeframe.AllTime}`] ?? 0,
-              favoriteCount: rank?.[`favoriteCount${MetricTimeframe.AllTime}`] ?? 0,
-              commentCount: rank?.[`commentCount${MetricTimeframe.AllTime}`] ?? 0,
-              ratingCount: rank?.[`ratingCount${MetricTimeframe.AllTime}`] ?? 0,
-              rating: rank?.[`rating${MetricTimeframe.AllTime}`] ?? 0,
-              collectedCount: rank?.[`collectedCount${MetricTimeframe.AllTime}`] ?? 0,
-              tippedAmountCount: rank?.[`tippedAmountCount${MetricTimeframe.AllTime}`] ?? 0,
+              downloadCount: metrics?.downloadCount ?? 0,
+              favoriteCount: metrics.favoriteCount ?? 0,
+              thumbsUpCount: metrics.thumbsUpCount ?? 0,
+              commentCount: metrics.commentCount ?? 0,
+              ratingCount: metrics.ratingCount ?? 0,
+              rating: metrics.rating ?? 0,
+              collectedCount: metrics.collectedCount ?? 0,
+              tippedAmountCount: metrics.tippedAmountCount ?? 0,
             },
             canGenerate,
           };
