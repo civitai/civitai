@@ -34,6 +34,7 @@ import { RouterTransition } from '~/components/RouterTransition/RouterTransition
 import { SignalProvider } from '~/components/Signals/SignalsProvider';
 import { isDev } from '~/env/other';
 import { CivitaiPosthogProvider } from '~/hooks/usePostHog';
+import { ActivityReportingProvider } from '~/providers/ActivityReportingProvider';
 import { CookiesContext, CookiesProvider, parseCookies } from '~/providers/CookiesProvider';
 import { CustomModalsProvider } from '~/providers/CustomModalsProvider';
 // import { ImageProcessingProvider } from '~/components/ImageProcessing';
@@ -41,6 +42,7 @@ import { FeatureFlagsProvider } from '~/providers/FeatureFlagsProvider';
 import { CookiesState, FiltersProvider, parseFilterCookies } from '~/providers/FiltersProvider';
 import { HiddenPreferencesProvider } from '~/providers/HiddenPreferencesProvider';
 import { IsClientProvider } from '~/providers/IsClientProvider';
+import { PaypalProvider } from '~/providers/PaypalProvider';
 import { StripeSetupSuccessProvider } from '~/providers/StripeProvider';
 import { TosProvider } from '~/providers/TosProvider';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
@@ -49,8 +51,6 @@ import { RegisterCatchNavigation } from '~/store/catch-navigation.store';
 import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 import { trpc } from '~/utils/trpc';
 import '~/styles/globals.css';
-import { ActivityReportingProvider } from '~/providers/ActivityReportingProvider';
-import { PaypalProvider } from '~/providers/PaypalProvider';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -204,6 +204,7 @@ function MyApp(props: CustomAppProps) {
             other: {
               fadeIn: `opacity 200ms ease-in`,
             },
+            respectReducedMotion: true,
           }}
           withGlobalStyles
           withNormalizeCSS
