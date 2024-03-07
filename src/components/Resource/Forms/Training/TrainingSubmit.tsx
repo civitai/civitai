@@ -136,7 +136,7 @@ export const trainingSettings: TrainingSettingsType[] = [
     min: 3,
     max: 500,
     step: 1,
-    overrides: { sdxl: { min: 1, default: 10 }, pony: { min: 1, default: 10 } },
+    overrides: { sdxl: { min: 1 }, pony: { min: 1 } },
   },
   {
     name: 'numRepeats',
@@ -161,7 +161,7 @@ export const trainingSettings: TrainingSettingsType[] = [
     overrides: {
       realistic: { default: 2, min: 1, max: 2 },
       sdxl: { max: 4, min: 1, default: 4 },
-      pony: { max: 4, min: 1, default: 4 },
+      pony: { max: 5, min: 1, default: 5 },
     },
   },
   {
@@ -291,6 +291,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       'constant_with_warmup',
       'linear',
     ],
+    overrides: { pony: { default: 'cosine' } },
   },
   // TODO add warmup if constant_with_warmup
   {
@@ -313,6 +314,7 @@ export const trainingSettings: TrainingSettingsType[] = [
     min: 0,
     max: 20,
     step: 1,
+    overrides: { pony: { default: 0 } },
   },
   {
     name: 'networkDim',
@@ -343,7 +345,7 @@ export const trainingSettings: TrainingSettingsType[] = [
     min: 1,
     max: 128,
     step: 1,
-    overrides: { sdxl: { max: 256 }, pony: { max: 256 } },
+    overrides: { sdxl: { max: 256 }, pony: { max: 256, default: 32 } },
   },
   {
     name: 'noiseOffset',
@@ -353,7 +355,8 @@ export const trainingSettings: TrainingSettingsType[] = [
     default: 0.1,
     min: 0,
     max: 1,
-    step: 0.1,
+    step: 0.01,
+    overrides: { pony: { default: 0.03 } },
   },
   {
     name: 'optimizerType',
@@ -370,7 +373,7 @@ export const trainingSettings: TrainingSettingsType[] = [
     type: 'select',
     default: 'AdamW8Bit',
     options: ['AdamW8Bit', 'Adafactor', 'Prodigy'], // TODO enum
-    overrides: { sdxl: { default: 'Adafactor' }, pony: { default: 'Adafactor' } },
+    overrides: { sdxl: { default: 'Adafactor' }, pony: { default: 'Prodigy' } },
   },
 ];
 
@@ -782,6 +785,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
             for more info.
           </Text>
         </Stack>
+        {/* TODO when using custom, split this into rows of 1.5, xl, and custom */}
         <Input.Wrapper
           label="Select a base model to train your model on"
           withAsterisk
@@ -883,6 +887,9 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                   {openedSections.includes('training-settings') && (
                     <Text size="xs" color="dimmed">
                       Hover over each setting for more information.
+                      <br />
+                      Default settings are based on your chosen model. Altering these settings may
+                      cause undesirable results.
                     </Text>
                   )}
                 </Stack>
@@ -914,6 +921,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                       );
                     } else if (ts.type === 'select') {
                       let options = ts.options;
+                      // TODO if we fix the bitsandbytes issue, we can disable this
                       if (
                         ts.name === 'optimizerType' &&
                         (formBaseModel === 'sdxl' || formBaseModel === 'pony')
