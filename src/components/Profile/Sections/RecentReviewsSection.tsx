@@ -39,11 +39,6 @@ export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
     delay: 100,
     triggerOnce: true,
   });
-  const { data: userRatingsTotal, isLoading: isLoadingTotals } =
-    trpc.resourceReview.getUserRatingsTotal.useQuery(
-      { username: user.username },
-      { enabled: inView }
-    );
   const { classes, theme } = useProfileSectionStyles({});
 
   const { resourceReviews, isLoading } = useQueryResourceReview(
@@ -51,34 +46,14 @@ export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
       username: user.username,
       include: ['model'],
       limit: 5,
+      hasDetails: true,
     },
     {
       enabled: inView,
     }
   );
 
-  // const userRatingsTotalCount = useMemo(() => {
-  //   if (!userRatingsTotal) {
-  //     return {
-  //       count: 0,
-  //       avgRating: 0,
-  //     };
-  //   }
-
-  //   const count = Object.values(userRatingsTotal).reduce<number>((acc, value) => acc + value, 0);
-  //   const avgRating =
-  //     Object.keys(userRatingsTotal)
-  //       .map((k) => Number(k) * userRatingsTotal[k as keyof typeof userRatingsTotal])
-  //       .reduce<number>((acc, value) => acc + value, 0) / (count ?? 1);
-
-  //   return {
-  //     count,
-  //     avgRating,
-  //   };
-  // }, [userRatingsTotal]);
-
-  const isNullState =
-    (!isLoading && !resourceReviews.length) || (!userRatingsTotal && !isLoadingTotals);
+  const isNullState = !isLoading && !resourceReviews.length;
 
   if (isNullState && inView) {
     return null;
@@ -175,68 +150,6 @@ export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
                 })}
               </Stack>
             </ContainerGrid.Col>
-            {/* <ContainerGrid.Col xs={12} md={4}>
-              {isLoadingTotals ? (
-                <Center>
-                  <Loader />
-                </Center>
-              ) : (
-                <Stack w="100%">
-                  <Stack spacing={0}>
-                    <Rating
-                      value={userRatingsTotalCount.avgRating}
-                      fractions={2}
-                      readOnly
-                      size="xl"
-                    />
-                    <Text
-                      style={{
-                        color: theme.colorScheme === 'dark' ? 'white' : 'black',
-                        fontSize: 24,
-                        fontWeight: 510,
-                      }}
-                    >
-                      {isNumber(userRatingsTotalCount.avgRating)
-                        ? userRatingsTotalCount.avgRating.toFixed(2)
-                        : 0}{' '}
-                      out of 5
-                    </Text>
-                    <Text size="lg" color="dimmed">
-                      {abbreviateNumber(userRatingsTotalCount.count)} Reviews
-                    </Text>
-                  </Stack>
-
-                  {userRatingsTotal && (
-                    <Stack spacing="xs" w="100%">
-                      {Object.keys(userRatingsTotal)
-                        .reverse()
-                        .map((rating: string) => {
-                          const key = rating as keyof typeof userRatingsTotal;
-                          const progress =
-                            (userRatingsTotal && userRatingsTotalCount.count
-                              ? userRatingsTotal[key] / userRatingsTotalCount.count
-                              : 0) * 100;
-                          const rounded = Math.ceil(progress);
-                          return (
-                            <Group key={key}>
-                              <Text>{rating} Star</Text>
-                              <Progress
-                                value={progress}
-                                color="yellow"
-                                size="lg"
-                                style={{ flex: 1 }}
-                              />
-                              <Text align="left" color="dimmed" w={30}>
-                                {rounded}%
-                              </Text>
-                            </Group>
-                          );
-                        })}
-                    </Stack>
-                  )}
-                </Stack>
-              )}
-            </ContainerGrid.Col> */}
           </ContainerGrid>
         </ProfileSection>
       )}

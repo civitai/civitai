@@ -83,6 +83,7 @@ export const getResourceReviewsInfinite = async ({
   modelVersionId,
   username,
   include,
+  hasDetails,
 }: GetResourceReviewsInfiniteInput) => {
   const AND: Prisma.Enumerable<Prisma.ResourceReviewWhereInput> = [];
   const orderBy: Prisma.Enumerable<Prisma.ResourceReviewOrderByWithRelationInput> = [];
@@ -106,6 +107,7 @@ export const getResourceReviewsInfinite = async ({
   }
   if (modelId) AND.push({ modelId });
   if (modelVersionId) AND.push({ modelVersionId });
+  if (hasDetails) AND.push({ details: { not: null } });
 
   if (!username) {
     AND.push({ details: { not: null } });
@@ -365,7 +367,7 @@ export const getUserRatingTotals = async ({ userId }: { userId: number }) => {
     FROM "ResourceReview" rr
     JOIN "Model" m ON rr."modelId" = m.id AND m."userId" = ${userId}
     WHERE rr."userId" != ${userId} AND NOT rr.exclude
-    GROUP BY rr.rating
+    GROUP BY rr.rating, rr.recommended
   `;
 
   const transformed = result.reduce(
