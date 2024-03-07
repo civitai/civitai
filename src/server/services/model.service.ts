@@ -48,7 +48,7 @@ import {
   getUnavailableResources,
   prepareModelInOrchestrator,
 } from '~/server/services/generation/generation.service';
-import { getImagesForModelVersion } from '~/server/services/image.service';
+import { getImagesForModelVersionCache } from '~/server/services/image.service';
 import { getCategoryTags } from '~/server/services/system-cache';
 import { getProfilePicturesForUsers } from '~/server/services/user.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
@@ -977,14 +977,8 @@ export const getModelsWithImagesAndModelVersions = async ({
   const modelVersionIds = items.flatMap((m) => m.modelVersions).map((m) => m.id);
 
   const images = !!modelVersionIds.length
-    ? await getImagesForModelVersion({
-        modelVersionIds,
-        imagesPerVersion: 10,
-        excludedTagIds: input.excludedImageTagIds,
-        include: ['tags'],
-        currentUserId: user?.id,
-      })
-    : [];
+    ? await getImagesForModelVersionCache(modelVersionIds)
+    : {};
 
   // let nextCursor: number | undefined;
   // if (items.length > input.limit) {
@@ -1000,7 +994,7 @@ export const getModelsWithImagesAndModelVersions = async ({
       .map(({ hashes, modelVersions, rank, tagsOnModels, ...model }) => {
         const [version] = modelVersions;
         if (!version) return null;
-        const versionImages = images.filter((i) => i.modelVersionId === version.id);
+        const versionImages = images[version.id]?.images ?? [];
         const showImageless =
           (user?.isModerator || model.user.id === user?.id) && (input.user || input.username);
         if (!versionImages.length && !showImageless) return null;
@@ -1024,7 +1018,7 @@ export const getModelsWithImagesAndModelVersions = async ({
             rating: rank?.[`rating${input.period}`] ?? 0,
           },
           version,
-          images: model.mode !== ModelModifier.TakenDown ? (versionImages as typeof images) : [],
+          images: model.mode !== ModelModifier.TakenDown ? versionImages : [],
           canGenerate,
         };
       })

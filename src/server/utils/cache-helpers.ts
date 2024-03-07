@@ -49,6 +49,7 @@ type CachedLookupOptions<T extends object> = {
   ids: number[];
   idKey: keyof T;
   lookupFn: (ids: number[]) => Promise<Record<string, object>>;
+  appendFn?: (results: Set<T>) => Promise<void>;
   ttl?: number;
   debounceTime?: number;
   cacheNotFound?: boolean;
@@ -58,6 +59,7 @@ export async function cachedArray<T extends object>({
   ids,
   idKey,
   lookupFn,
+  appendFn,
   ttl = CacheTTL.xs,
   debounceTime = 10,
   cacheNotFound = true,
@@ -114,6 +116,8 @@ export async function cachedArray<T extends object>({
     if (Object.keys(toCacheNotFound).length > 0)
       for (const [id, value] of Object.entries(toCacheNotFound)) await redis.hSetNX(key, id, value);
   }
+
+  if (appendFn) await appendFn(results);
 
   return [...results];
 }

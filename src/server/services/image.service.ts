@@ -33,7 +33,7 @@ import {
 import { articlesSearchIndex, imagesSearchIndex } from '~/server/search-index';
 import { ImageV2Model } from '~/server/selectors/imagev2.selector';
 import { imageTagCompositeSelect, simpleTagSelect } from '~/server/selectors/tag.selector';
-import { updatePostNsfwLevel } from '~/server/services/post.service';
+import { bustCachesForPost, updatePostNsfwLevel } from '~/server/services/post.service';
 import { getModerationTags, getTagsNeedingReview } from '~/server/services/system-cache';
 import { getTypeCategories } from '~/server/services/tag.service';
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
@@ -61,7 +61,7 @@ import { purgeCache } from '~/server/cloudflare/client';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { promptWordReplace } from '~/utils/metadata/audit';
 import { getCursor } from '~/server/utils/pagination-helpers';
-import { cachedObject, queryCache } from '~/server/utils/cache-helpers';
+import { bustCachedArray, cachedObject, queryCache } from '~/server/utils/cache-helpers';
 import { CacheTTL, constants } from '~/server/common/constants';
 import { getPeriods } from '~/server/utils/enum-helpers';
 import { bulkSetReportStatus } from '~/server/services/report.service';
@@ -84,7 +84,11 @@ export const imageUrlInUse = async ({ url, id }: { url: string; id: number }) =>
   return !!otherImagesWithSameUrl;
 };
 
-export const deleteImageById = async ({ id }: GetByIdInput) => {
+export const deleteImageById = async ({
+  id,
+  updatePost,
+}: GetByIdInput & { updatePost?: boolean }) => {
+  updatePost ??= true;
   try {
     const image = await dbRead.image.findUnique({
       where: { id },
@@ -110,7 +114,10 @@ export const deleteImageById = async ({ id }: GetByIdInput) => {
 
     await imagesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
     await dbWrite.$executeRaw`DELETE FROM "Image" WHERE id = ${id}`;
-    if (image.postId) await updatePostNsfwLevel(image.postId);
+    if (updatePost && image.postId) {
+      await updatePostNsfwLevel(image.postId);
+      await bustCachesForPost(image.postId);
+    }
     return image;
   } catch {
     // Ignore errors
@@ -1327,6 +1334,96 @@ export const getImagesForModelVersion = async ({
 
   return images;
 };
+
+type CachedImagesForModelVersions = {
+  modelVersionId: number;
+  images: ImagesForModelVersions[];
+};
+export async function getImagesForModelVersionCache(modelVersionIds: number[]) {
+  return await cachedObject<CachedImagesForModelVersions>({
+    key: REDIS_KEYS.IMAGES_FOR_MODEL_VERSION,
+    idKey: 'modelVersionId',
+    ids: modelVersionIds,
+    ttl: CacheTTL.sm,
+    lookupFn: async (ids) => {
+      const imageWhere: Prisma.Sql[] = [
+        // Use this to return models that are live on the site, and have images, but are now owned by Civitai.
+        Prisma.sql`(p."userId" = m."userId" OR m."userId" = -1)`,
+        Prisma.sql`p."modelVersionId" IN (${Prisma.join(ids)})`,
+        Prisma.sql`i."needsReview" IS NULL`,
+      ];
+
+      // ensure that only scanned images make it to the main feed
+      // nb: if image ingestion fails, models will not make it to any model feed (including the user published tab)
+      if (isProd) {
+        imageWhere.push(
+          Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`
+        );
+      }
+
+      const query = Prisma.sql`
+        WITH targets AS (
+          SELECT
+            id,
+            "modelVersionId"
+          FROM (
+            SELECT
+              i.id,
+              p."modelVersionId",
+              row_number() OVER (PARTITION BY p."modelVersionId" ORDER BY i."postId", i.index) row_num
+            FROM "Image" i
+            JOIN "Post" p ON p.id = i."postId"
+            JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
+            JOIN "Model" m ON m.id = mv."modelId"
+            WHERE ${Prisma.join(imageWhere, ' AND ')}
+          ) ranked
+          WHERE ranked.row_num <= 10
+        )
+        SELECT
+          i.id,
+          i."userId",
+          i.name,
+          i.url,
+          i.nsfw,
+          i.width,
+          i.height,
+          i.hash,
+          i.type,
+          i.metadata,
+          t."modelVersionId",
+          p."availability"
+        FROM targets t
+        JOIN "Image" i ON i.id = t.id
+        JOIN "Post" p ON p.id = i."postId"
+        ORDER BY i."postId", i."index"
+      `;
+      // const { rows: images } = await pgDbRead.query<ImagesForModelVersions>(query);
+      const images = await dbRead.$queryRaw<ImagesForModelVersions[]>(query);
+
+      const records: Record<number, CachedImagesForModelVersions> = {};
+      for (const image of images) {
+        if (!records[image.modelVersionId])
+          records[image.modelVersionId] = { modelVersionId: image.modelVersionId, images: [] };
+        records[image.modelVersionId].images.push(image);
+      }
+
+      return records;
+    },
+    appendFn: async (records) => {
+      const imageIds = [...records].flatMap((x) => x.images.map((i) => i.id));
+      const tagIdsVar = await getTagIdsForImages(imageIds);
+      for (const entry of records) {
+        for (const image of entry.images) {
+          image.tags = tagIdsVar?.[image.id]?.tags;
+        }
+      }
+    },
+  });
+}
+
+export async function deleteImagesForModelVersionCache(modelVersionId: number) {
+  await bustCachedArray(REDIS_KEYS.IMAGES_FOR_MODEL_VERSION, 'modelVersionId', modelVersionId);
+}
 
 export const getImagesForPosts = async ({
   postIds,
