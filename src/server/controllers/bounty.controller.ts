@@ -41,6 +41,7 @@ import { BountyEntryFileMeta } from '~/server/schema/bounty-entry.schema';
 import { Currency } from '@prisma/client';
 import { getReactionsSelectV2 } from '~/server/selectors/reaction.selector';
 import { handleLogError } from '~/server/utils/errorHandling';
+import { isNsfwBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 
 export const getInfiniteBountiesHandler = async ({
   input,
@@ -295,9 +296,9 @@ export const createBountyHandler = async ({
 }) => {
   try {
     const { id: userId } = ctx.user;
-    const { nsfw, poi } = input;
+    const { userNsfwLevel, poi } = input;
 
-    if (nsfw && poi)
+    if (userNsfwLevel && isNsfwBrowsingLevel(userNsfwLevel) && poi)
       throw throwBadRequestError('Mature content depicting actual people is not permitted.');
 
     const bounty = await createBounty({ ...input, userId });

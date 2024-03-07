@@ -3,6 +3,7 @@ import {
   Button,
   Checkbox,
   Group,
+  List,
   Stack,
   Text,
   ThemeIcon,
@@ -23,10 +24,26 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { ContentPolicyLink } from '~/components/ContentPolicyLink/ContentPolicyLink';
+import {
+  browsingLevelDescriptions,
+  browsingLevelLabels,
+  browsingLevels,
+} from '~/shared/constants/browsingLevel.constants';
 
 const publishText = 'Publish';
 export const hiddenLabel = `Click the '${publishText}' button to make your post Public to share with the Civitai community for comments and reactions.`;
-export const matureLabel = 'Mature content may include content that is suggestive or provocative';
+export const matureLabel = (
+  <List type="unordered" listStyleType="initial">
+    {browsingLevels.map((level) => (
+      <List.Item key={level}>
+        <Text weight={600} span>
+          {browsingLevelLabels[level]}:
+        </Text>{' '}
+        {browsingLevelDescriptions[level]}
+      </List.Item>
+    ))}
+  </List>
+);
 const tooltipProps: Partial<TooltipProps> = {
   maw: 300,
   multiline: true,

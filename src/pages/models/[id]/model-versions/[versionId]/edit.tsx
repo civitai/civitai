@@ -36,7 +36,7 @@ export default function ModelVersionEditPage() {
     <Container size="sm">
       <Stack spacing="xl">
         <Link href={`/models/${modelVersion?.model.id}`} passHref shallow>
-          <Anchor size="sm">
+          <Anchor size="xs">
             <Group spacing={4}>
               <IconArrowLeft size={18} strokeWidth={1.5} />
               <Text inherit>Back to {modelVersion?.model?.name} page</Text>
