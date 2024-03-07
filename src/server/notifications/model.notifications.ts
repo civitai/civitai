@@ -68,12 +68,16 @@ export const modelNotifications = createNotificationProcessor({
   'model-like-milestone': {
     displayName: 'Model like milestones',
     category: 'Milestone',
-    prepareMessage: ({ details }) => ({
-      message: `Congrats! Your ${
-        details.modelName
-      } model has received ${details.favoriteCount.toLocaleString()} likes`,
-      url: `/models/${details.modelId}`,
-    }),
+    prepareMessage: ({ details }) => {
+      const count = details.favoriteCount || details.thumbsUpCount;
+
+      return {
+        message: `Congrats! Your ${
+          details.modelName
+        } model has received ${count?.toLocaleString()} likes`,
+        url: `/models/${details.modelId}`,
+      };
+    },
     prepareQuery: ({ lastSent, category }) => `
       WITH milestones AS (
         SELECT * FROM (VALUES ${modelLikeMilestones.map((x) => `(${x})`).join(', ')}) m(value)

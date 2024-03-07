@@ -17,6 +17,6 @@ const errors: Record<string, string> = {
 type SignInErrorProps = { error: string } & Omit<AlertProps, 'children'>;
 
 export const SignInError = ({ error, ...alertProps }: SignInErrorProps) => {
-  const errorMessage = error && (errors[error] ?? errors.default);
+  const errorMessage = error && (errors[error] ?? `${error}: ${errors.default}`);
   return <Alert {...alertProps}>{errorMessage}</Alert>;
 };

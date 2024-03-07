@@ -234,7 +234,10 @@ const verifyAvatar = (avatar: string) => {
 export const acceptTOSHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
   try {
     const { id } = ctx.user;
-    await acceptTOS({ id });
+    const updatedUser = await acceptTOS({ id });
+    if (!updatedUser) throw throwNotFoundError(`No user with id ${id}`);
+
+    return updatedUser;
   } catch (e) {
     throw throwDbError(e);
   }
