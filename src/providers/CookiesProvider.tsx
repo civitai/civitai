@@ -18,12 +18,13 @@ export const CookiesProvider = ({
   children: React.ReactNode;
   value: ParsedCookies;
 }) => {
-  const { data } = useSession();
+  const { status } = useSession();
+  const isAuthed = status === 'authenticated';
   const isClient = useIsClient();
   const cookies = useMemo(() => {
     if (!isClient) return initialValue;
     else return parseCookies(getCookies());
-  }, [isClient, data]);
+  }, [isAuthed]);
 
   return <CookiesCtx.Provider value={cookies}>{children}</CookiesCtx.Provider>;
 };

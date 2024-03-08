@@ -107,6 +107,7 @@ export const Provider = ({
   );
 };
 
+// TODO.nsfwLevel - state may be out of sync
 export const useCivitaiSessionContext = () => {
   const rerender = useState<Record<string, unknown>>()[1];
   const tracked = useRef<Record<string, boolean>>({});

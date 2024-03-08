@@ -1,6 +1,4 @@
 import {
-  CosmeticSource,
-  CosmeticType,
   MetricTimeframe,
   ModelModifier,
   ModelStatus,

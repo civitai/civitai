@@ -73,8 +73,8 @@ function updateCookieValues({ browsingLevel, blurNsfw, showNsfw, disableHidden }
 
 export function BrowsingModeProvider({ children }: { children: React.ReactNode }) {
   const queryUtils = trpc.useContext();
-  const { status } = useSession();
-  const { data } = useSession();
+  const { status, data } = useSession();
+  const isAuthed = status === 'authenticated';
   const currentUser = data?.user;
   const debouncer = useDebouncer(1000);
   const cookies = useCookies();
@@ -93,10 +93,10 @@ export function BrowsingModeProvider({ children }: { children: React.ReactNode }
   }
 
   useDidUpdate(() => {
-    if (status === 'authenticated' && currentUser) {
+    if (isAuthed) {
       setStore(createBrowsingModeStore(getStoreInitialValues()));
     }
-  }, [currentUser, status]);
+  }, [isAuthed]);
 
   // update the cookie to reflect the browsingLevel state of the current tab
   useEffect(() => {
@@ -110,7 +110,7 @@ export function BrowsingModeProvider({ children }: { children: React.ReactNode }
   }, [store]);
 
   useEffect(() => {
-    if (store && currentUser) {
+    if (store && isAuthed) {
       return store.subscribe((state) => {
         updateCookieValues(state);
         if (currentUser)
@@ -120,7 +120,7 @@ export function BrowsingModeProvider({ children }: { children: React.ReactNode }
           });
       });
     }
-  }, [store, currentUser]);
+  }, [store, isAuthed]);
 
   return <BrowsingModeCtx.Provider value={store}>{children}</BrowsingModeCtx.Provider>;
 }
@@ -145,13 +145,12 @@ export function BrowsingModeOverrideProvider({
 
 /** returns the user selected browsing level or the system default browsing level */
 function useBrowsingLevel() {
-  const { data } = useSession();
-  const currentUser = data?.user;
   const { browsingLevelOverride } = useBrowsingModeOverrideContext();
   const { useStore } = useBrowsingModeContext();
   const browsingLevel = useStore((x) => x.browsingLevel);
+  const showNsfw = useStore((x) => x.showNsfw);
   if (browsingLevelOverride) return browsingLevelOverride;
-  if (!currentUser) return publicBrowsingLevelsFlag;
+  if (!showNsfw) return publicBrowsingLevelsFlag;
   return !browsingLevel ? publicBrowsingLevelsFlag : browsingLevel;
 }
 
