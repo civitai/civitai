@@ -158,6 +158,22 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
   const canMonetize = !model?.poi;
 
   const upsertVersionMutation = trpc.modelVersion.upsert.useMutation({
+    onSuccess(result) {
+      // Set data as soon as we get a response
+      queryUtils.modelVersion.getById.setData({ id: result.id }, (old) =>
+        // Using any just to make ts happy
+        old ? { ...old, ...(result as any), files: [], posts: [] } : old
+      );
+      queryUtils.model.getById.setData({ id: result.modelId }, (old) =>
+        old
+          ? {
+              ...old,
+              // Using any just to make ts happy
+              modelVersions: [{ ...(result as any), files: [], posts: [] }, ...old.modelVersions],
+            }
+          : old
+      );
+    },
     onError(error) {
       showErrorNotification({
         error: new Error(error.message),
