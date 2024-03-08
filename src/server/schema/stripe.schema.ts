@@ -68,3 +68,8 @@ export type PaymentMethodDeleteInput = z.infer<typeof paymentMethodDeleteInput>;
 export const paymentMethodDeleteInput = z.object({
   paymentMethodId: z.string(),
 });
+
+export type ProductMetadata = z.infer<typeof productMetadataSchema>;
+export const productMetadataSchema = z.object({
+  vaultSizeKb: z.coerce.number().positive().optional(),
+});

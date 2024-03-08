@@ -53,11 +53,12 @@ import { VaultItemStatus } from '@prisma/client';
 import { SortFilter } from '~/components/Filters';
 import { VaultSort } from '~/server/common/enums';
 import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
+import { dbRead } from '~/server/db/client';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
-  resolver: async ({ session, ctx, features }) => {
-    if (!session)
+  resolver: async ({ session, ctx }) => {
+    if (!session || !session.user)
       return {
         redirect: {
           destination: getLoginLink({ returnUrl: ctx.resolvedUrl, reason: 'civitai-vault' }),
@@ -65,14 +66,17 @@ export const getServerSideProps = createServerSideProps({
         },
       };
 
-    if (!session.user?.subscriptionId) {
+    const hasUsedVault = await dbRead.vault.findFirst({
+      where: { userId: session.user.id },
+    });
+
+    if (!hasUsedVault)
       return {
         redirect: {
           destination: '/pricing',
           permanent: false,
         },
       };
-    }
   },
 });
 
@@ -267,7 +271,11 @@ export default function CivitaiVault() {
     pagination,
   } = useQueryVaultItems(debouncedFilters, { keepPreviousData: true });
   const [selectedItems, setSelectedItems] = useState<VaultItemGetPaged[]>([]);
-  const progress = vault ? (vault.usedStorageKb / vault.storageKb) * 100 : 0;
+  const progress = vault
+    ? vault.storageKb <= vault.usedStorageKb
+      ? 100
+      : (vault.usedStorageKb / vault.storageKb) * 100
+    : 0;
   const allSelectedInPage = useMemo(() => {
     return items.every((item) => selectedItems.find((i) => i.id === item.id));
   }, [items, selectedItems]);

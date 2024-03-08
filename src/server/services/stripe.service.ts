@@ -22,6 +22,7 @@ import { TransactionType } from '../schema/buzz.schema';
 import * as Schema from '../schema/stripe.schema';
 import { PaymentMethodDeleteInput } from '../schema/stripe.schema';
 import { completeStripeBuzzTransaction, createBuzzTransaction } from './buzz.service';
+import { getOrCreateVault } from '~/server/services/vault.service';
 
 const baseUrl = getBaseUrl();
 const log = createLogger('stripe', 'blue');
@@ -323,6 +324,35 @@ export const upsertSubscription = async (
       eventName: data.status === 'active' ? 'user_start_membership' : 'user_cancel_membership',
       productId: data.productId,
     });
+  }
+
+  const userVault = await dbRead.vault.findFirst({
+    where: { userId: user.id },
+  });
+
+  // Get Stripe details on the vault:
+  const product = await dbRead.product.findFirst({
+    where: { id: data.productId },
+  });
+
+  if (data.status === 'canceled' && userVault) {
+    await dbWrite.vault.update({
+      where: { userId: user.id },
+      data: {
+        storageKb: 0, // Reset storage to 0
+      },
+    });
+  } else if (data.status === 'active') {
+    const parsedMeta = Schema.productMetadataSchema.safeParse(product?.metadata);
+    const vault = userVault ? userVault : await getOrCreateVault({ userId: user.id });
+    if (parsedMeta.success && vault.storageKb !== parsedMeta.data.vaultSizeKb) {
+      await dbWrite.vault.update({
+        where: { userId: vault.userId },
+        data: {
+          storageKb: parsedMeta.data.vaultSizeKb,
+        },
+      });
+    }
   }
 
   await invalidateSession(user.id);

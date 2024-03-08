@@ -81,9 +81,8 @@ export const useMutateVault = () => {
 
 export const useQueryVault = () => {
   const currentUser = useCurrentUser();
-  const isMember = currentUser?.isMember;
   const { data: vault, ...rest } = trpc.vault.get.useQuery(undefined, {
-    enabled: !!currentUser && isMember,
+    enabled: !!currentUser,
   });
 
   return { vault, ...rest };
