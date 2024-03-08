@@ -13,7 +13,8 @@ import { YoutubeEmbed } from '~/components/YoutubeEmbed/YoutubeEmbed';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NextLink } from '@mantine/next';
-import linkAnimation from '~/utils/lotties/link-animation.json';
+import Lottie from 'react-lottie';
+import * as linkAnimation from '~/utils/lotties/link-animation.json';
 
 export default function LinkApp() {
   const { classes } = useStyles();
@@ -47,18 +48,9 @@ export default function LinkApp() {
         </Flex>
       </Flex>
 
-      {/* TODO: Insert Lottie */}
       <Flex direction="row" className={classes.gradientContainer}>
         <Flex justify="center" className={classes.videoBorder}>
-          {/* <LottiePlayer
-            src={linkAnimation}
-            background="transparent"
-            speed="1"
-            direction="1"
-            playMode="normal"
-            loop
-            autoplay
-          /> */}
+          <Lottie options={{ animationData: linkAnimation }} />
         </Flex>
         <div className={classes.gradientBox} />
       </Flex>
@@ -138,6 +130,7 @@ const useStyles = createStyles((theme) => ({
     borderRadius: 12,
     width: '100%',
     border: '1px solid #2D2E32',
+    borderBottom: 'none',
   },
   gradientContainer: {
     position: 'relative',
