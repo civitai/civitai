@@ -90,7 +90,7 @@ const querySchema = z.object({
 export function ModelVersionUpsertForm({ model, version, children, onSubmit }: Props) {
   const features = useFeatureFlags();
   const router = useRouter();
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
 
   const acceptsTrainedWords = [
     'Checkpoint',
@@ -194,6 +194,9 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
         templateId,
         bountyId,
       });
+
+      // Reset dirty state, but keep the values
+      form.reset({}, { keepValues: true });
 
       await queryUtils.modelVersion.getById.invalidate();
       if (model) await queryUtils.model.getById.invalidate({ id: model.id });

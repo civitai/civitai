@@ -3,15 +3,30 @@ import {
   completeNavigationProgress,
   NavigationProgress,
 } from '@mantine/nprogress';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/router';
 
 export function RouterTransition() {
+  useIsChangingLocation();
+
+  return <NavigationProgress autoReset />;
+}
+
+export const useIsChangingLocation = () => {
   const router = useRouter();
+  const [isTransitioning, setIsTransitioning] = useState(false);
 
   useEffect(() => {
-    const handleStart = (url: string) => url !== router.asPath && startNavigationProgress();
-    const handleComplete = () => completeNavigationProgress();
+    const handleStart = (url: string) => {
+      if (url !== router.asPath) {
+        setIsTransitioning(true);
+        startNavigationProgress();
+      }
+    };
+    const handleComplete = () => {
+      setIsTransitioning(false);
+      completeNavigationProgress();
+    };
 
     router.events.on('routeChangeStart', handleStart);
     router.events.on('routeChangeComplete', handleComplete);
@@ -24,5 +39,5 @@ export function RouterTransition() {
     };
   }, [router.asPath, router.events]);
 
-  return <NavigationProgress autoReset={true} />;
-}
+  return isTransitioning;
+};
