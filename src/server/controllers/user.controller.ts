@@ -465,7 +465,6 @@ export const getUserEngagedModelsHandler = async ({ ctx }: { ctx: DeepNonNullabl
       return acc;
     }, {} as Record<EngagedModelType, number[]>);
     engagedModels.Recommended = recommendedReviews.map((r) => r.modelId).filter(isDefined);
-    console.log({ engagedModels });
 
     await redis.set(`user:${id}:model-engagements`, JSON.stringify(engagedModels), {
       EX: 60 * 60 * 24,
