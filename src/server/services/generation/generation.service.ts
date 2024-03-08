@@ -47,7 +47,7 @@ import orchestratorCaller from '~/server/http/orchestrator/orchestrator.caller';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { includesNsfw, includesPoi, includesMinor } from '~/utils/metadata/audit';
-import { cachedArray } from '~/server/utils/cache-helpers';
+import { bustCachedArray, cachedArray } from '~/server/utils/cache-helpers';
 import { fromJson, toJson } from '~/utils/json-helpers';
 import { extModeration } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
@@ -251,6 +251,10 @@ const getResourceData = async (modelVersionIds: number[]) => {
     ttl: CacheTTL.hour,
   });
 };
+
+export async function deleteResourceDataCache(modelVersionIds: number | number[]) {
+  await bustCachedArray(REDIS_KEYS.GENERATION.RESOURCE_DATA, 'id', modelVersionIds);
+}
 
 const baseModelSetsEntries = Object.entries(baseModelSets);
 const formatGenerationRequests = async (requests: Generation.Api.RequestProps[]) => {
