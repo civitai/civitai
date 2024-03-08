@@ -30,6 +30,7 @@ import { ShowcaseItemSchema } from '~/server/schema/user-profile.schema';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { paired } from '~/utils/type-guards';
 import { searchClient } from '~/components/Search/search.client';
+import { BrowsingLevelFilter } from './CustomSearchComponents';
 
 const meilisearch = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -141,12 +142,25 @@ export const QuickSearchDropdown = ({
     setTargetIndex(value);
   };
 
+  const indexSupportsNsfwLevel = useMemo(
+    () =>
+      [
+        searchIndexMap.articles,
+        searchIndexMap.bounties,
+        searchIndexMap.models,
+        searchIndexMap.images,
+        searchIndexMap.collections,
+      ].some((i) => i === searchIndexMap[targetIndex]),
+    [targetIndex]
+  );
+
   return (
     <InstantSearch
       searchClient={disableInitialSearch ? searchClient : meilisearch}
       indexName={searchIndexMap[targetIndex]}
     >
       <Configure hitsPerPage={dropdownItemLimit} filters={filters} />
+      {indexSupportsNsfwLevel && <BrowsingLevelFilter attributeName="nsfwLevel" />}
 
       <QuickSearchDropdownContent
         {...props}
