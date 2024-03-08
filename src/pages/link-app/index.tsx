@@ -27,8 +27,12 @@ export default function LinkApp() {
 
   return (
     <Container size="md">
-      <Flex direction="row" justify="space-between" className={classes.heroContainer}>
-        <Stack spacing={12}>
+      <Flex
+        direction={{ base: 'column', md: 'row' }}
+        justify="space-between"
+        className={classes.heroContainer}
+      >
+        <Stack spacing={12} mb={{ base: 24, md: 0 }}>
           <Title className={classes.heroTitle}>Civitai Link App</Title>
           {!isMember ? (
             <Text className={classes.heroText}>❤️ Civitia Link is only available to members</Text>
@@ -40,6 +44,7 @@ export default function LinkApp() {
             color="blue"
             size="lg"
             radius="xl"
+            fullWidth
             component={NextLink}
             href={buttonData.href}
           >
@@ -91,6 +96,7 @@ export default function LinkApp() {
         size="lg"
         radius="xl"
         fullWidth
+        mb={40}
         component={NextLink}
         href={buttonData.href}
       >

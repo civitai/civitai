@@ -193,6 +193,7 @@
     "@types/randomstring": "^1.1.8",
     "@types/react": "18.0.14",
     "@types/react-dom": "18.0.5",
+    "@types/react-lottie": "^1.2.10",
     "@types/request-ip": "^0.0.37",
     "@types/sanitize-html": "^2.6.2",
     "@types/sharp": "^0.31.0",
