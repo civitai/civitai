@@ -443,6 +443,7 @@ export const createGenerationRequest = async ({
     let message = 'You have exceeded the generation limit.';
     if (!limitHitTime) message += ' Please try again later.';
     else message += ` Please try again ${dayjs(limitHitTime).add(60, 'minutes').fromNow()}.`;
+    message += ' Time to go outside.';
     throw throwRateLimitError(message);
   }
 

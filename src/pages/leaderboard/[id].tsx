@@ -17,6 +17,7 @@ import {
   createStyles,
   SegmentedControl,
   SegmentedControlProps,
+  Alert,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { IconInfoCircle, IconLayoutSidebarLeftExpand } from '@tabler/icons-react';
@@ -238,7 +239,13 @@ Bronze - Top 100: ${constants.leaderboard.legendScoring.bronze * 100} points per
                   </Popover.Dropdown>
                 </Popover>
               </Group>
-              <Text color="dimmed" size="xs" mb="lg">
+              <Alert color="yellow" my="sm" py={6} px={12}>
+                <Text lh={1.3} size="sm">
+                  Leaderboards are being reworked as part of the reviews update, check back tomorrow
+                  💖
+                </Text>
+              </Alert>
+              {/* <Text color="dimmed" size="xs" mb="lg">
                 As of{' '}
                 {leaderboardResults[0]
                   ? dayjs(leaderboardResults[0].date).format('MMMM D, YYYY h:mma')
@@ -247,7 +254,7 @@ Bronze - Top 100: ${constants.leaderboard.legendScoring.bronze * 100} points per
                 <Text span>
                   <Countdown endTime={endTime} />
                 </Text>
-              </Text>
+              </Text> */}
               {loadingLeaderboardResults ? (
                 <Center p="xl">
                   <Loader size="xl" />

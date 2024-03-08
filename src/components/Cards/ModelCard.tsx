@@ -404,29 +404,11 @@ export function ModelCard({ data, forceInView }: Props) {
                       />
                     </UnstyledButton>
                   )}
-                  <Text size="xl" weight={700} lineClamp={2} lh={1.3}>
+                  <Text size="xl" weight={700} lineClamp={3} lh={1.2}>
                     {data.name}
                   </Text>
                   {data.rank && (
-                    <>
-                      {!data.locked && !!data.rank.thumbsUpCount && (
-                        <Badge
-                          className={cx(classes.statChip, classes.chip)}
-                          variant="light"
-                          radius="xl"
-                        >
-                          <Group spacing={4}>
-                            <Text
-                              color={hasReview ? 'success.5' : undefined}
-                              component="span"
-                              mt={2}
-                            >
-                              <ThumbsUpIcon size={16} filled={hasReview} />
-                            </Text>
-                            <Text size="xs">{abbreviateNumber(data.rank.thumbsUpCount)}</Text>
-                          </Group>
-                        </Badge>
-                      )}
+                    <Group align="center" position="apart" spacing={0}>
                       {(!!data.rank.downloadCount ||
                         !!data.rank.collectedCount ||
                         !!data.rank.tippedAmountCount) && (
@@ -454,14 +436,36 @@ export function ModelCard({ data, forceInView }: Props) {
                           >
                             <Group spacing={2}>
                               <IconBolt size={14} strokeWidth={2.5} />
-                              <Text size="xs">
+                              <Text size="xs" tt="uppercase">
                                 {abbreviateNumber(data.rank.tippedAmountCount + tippedAmount)}
                               </Text>
                             </Group>
                           </InteractiveTipBuzzButton>
                         </Badge>
                       )}
-                    </>
+                      {!data.locked && !!data.rank.thumbsUpCount && (
+                        <Badge
+                          className={cx(classes.statChip, classes.chip)}
+                          pl={6}
+                          pr={8}
+                          data-reviewed={hasReview}
+                          radius="xl"
+                        >
+                          <Group spacing={4}>
+                            <Text
+                              color={hasReview ? 'success.5' : 'yellow'}
+                              component="span"
+                              mt={2}
+                            >
+                              <ThumbsUpIcon size={20} filled={hasReview} strokeWidth={2.5} />
+                            </Text>
+                            <Text size={16} weight={500}>
+                              {abbreviateNumber(data.rank.thumbsUpCount)}
+                            </Text>
+                          </Group>
+                        </Badge>
+                      )}
+                    </Group>
                   )}
                 </Stack>
                 {onSite && <OnsiteIndicator />}
