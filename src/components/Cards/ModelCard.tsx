@@ -419,7 +419,7 @@ export function ModelCard({ data, forceInView }: Props) {
                     {data.name}
                   </Text>
                   {data.rank && (
-                    <Group align="center" position="apart" spacing={0}>
+                    <Group align="center" position="apart" spacing={4}>
                       {(!!data.rank.downloadCount ||
                         !!data.rank.collectedCount ||
                         !!data.rank.tippedAmountCount) && (
