@@ -95,7 +95,10 @@ import { BountyDetailsSchema } from '../schema/bounty.schema';
 import {
   allBrowsingLevelsFlag,
   getIsSafeBrowsingLevel,
+  isNsfwBrowsingLevel,
+  nsfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
+import { Flags } from '~/shared/utils';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
@@ -336,6 +339,11 @@ export const upsertModelHandler = async ({
 }) => {
   try {
     const { id: userId } = ctx.user;
+    const { userNsfwLevel, poi } = input;
+
+    if (userNsfwLevel && isNsfwBrowsingLevel(userNsfwLevel) && poi)
+      throw throwBadRequestError('Mature content depicting actual people is not permitted.');
+
     // Check tags for multiple categories
     const { tagsOnModels } = input;
     if (tagsOnModels?.length) {
@@ -1335,7 +1343,7 @@ export async function getModelTemplateFieldsHandler({
         allowDerivatives: true,
         allowDifferentLicense: true,
         allowNoCredit: true,
-        nsfw: true,
+        userNsfwLevel: true,
         poi: true,
         tagsOnModels: {
           select: {
@@ -1417,7 +1425,7 @@ export async function getModelTemplateFromBountyHandler({
     const files = await getFilesByEntity({ id: awardedEntry.id, type: 'BountyEntry' });
 
     return {
-      nsfw: bounty.nsfw,
+      userNsfwLevel: bounty.userNsfwLevel,
       poi: bounty.poi,
       name: bounty.name,
       description: bounty.description,

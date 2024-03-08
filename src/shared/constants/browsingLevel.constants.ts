@@ -29,12 +29,11 @@ export const browsingLevelLabels = {
 } as const;
 
 export const browsingLevelDescriptions = {
-  [NsfwLevel.PG]: 'Some explanation',
-  [NsfwLevel.PG13]: 'Some explanation',
-  [NsfwLevel.R]: 'Some explanation',
-  [NsfwLevel.X]: 'Some explanation',
-  [NsfwLevel.XXX]: 'Some explanation',
-  [NsfwLevel.Blocked]: '',
+  [NsfwLevel.PG]: 'Suitable for all ages',
+  [NsfwLevel.PG13]: 'Suitable for ages 13 and up',
+  [NsfwLevel.R]: 'Suitable for ages 17 and up',
+  [NsfwLevel.X]: 'Adult content',
+  [NsfwLevel.XXX]: 'Explicit adult content',
 } as const;
 
 // public browsing levels
@@ -58,6 +57,10 @@ export function getIsPublicBrowsingLevel(level: number) {
 
 export function getIsSafeBrowsingLevel(level: number) {
   return level !== 0 && !Flags.intersects(level, nsfwBrowsingLevelsFlag);
+}
+
+export function isNsfwBrowsingLevel(level: number) {
+  return Flags.intersects(level, nsfwBrowsingLevelsFlag);
 }
 
 export const browsingLevelOr = (array: (number | undefined)[]) => {

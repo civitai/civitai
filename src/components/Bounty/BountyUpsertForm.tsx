@@ -49,6 +49,7 @@ import {
   InputTags,
   InputText,
   useForm,
+  InputFlag,
 } from '~/libs/form';
 import { upsertBountyInputSchema } from '~/server/schema/bounty.schema';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
@@ -76,6 +77,12 @@ import { containerQuery } from '~/utils/mantine-css-helpers';
 import { FeatureIntroductionHelpButton } from '~/components/FeatureIntroduction/FeatureIntroduction';
 import { ContentPolicyLink } from '../ContentPolicyLink/ContentPolicyLink';
 import { InfoPopover } from '../InfoPopover/InfoPopover';
+import {
+  nsfwBrowsingLevelsFlag,
+  browsingLevelLabels,
+} from '~/shared/constants/browsingLevel.constants';
+import { Flags } from '~/shared/utils';
+import { NsfwLevel } from '~/server/common/enums';
 
 const tooltipProps: Partial<TooltipProps> = {
   maw: 300,
@@ -99,9 +106,12 @@ const bountyEntryModeDescription: Record<BountyEntryMode, string> = {
 
 const formSchema = upsertBountyInputSchema
   .omit({ images: true })
-  .refine((data) => !(data.nsfw && data.poi), {
-    message: 'Mature content depicting actual people is not permitted.',
-  })
+  .refine(
+    (data) => !(Flags.intersects(data.userNsfwLevel ?? 0, nsfwBrowsingLevelsFlag) && data.poi),
+    {
+      message: 'Mature content depicting actual people is not permitted.',
+    }
+  )
   .refine((data) => data.startsAt < data.expiresAt, {
     message: 'Start date must be before expiration date',
     path: ['startsAt'],
@@ -217,6 +227,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
         !!bounty &&
         bounty.files.length > 0 &&
         bounty.files.every((f) => f.metadata?.ownRights === true),
+      userNsfwLevel: bounty?.userNsfwLevel ?? 0,
     },
     shouldUnregister: false,
   });
@@ -229,10 +240,9 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
     form,
     timeout: 1000,
     key: `bounty_new`,
-    watch: ({ mode, name, type, nsfw, currency, description, entryMode, unitAmount }) => ({
+    watch: ({ mode, name, type, currency, description, entryMode, unitAmount }) => ({
       mode,
       name,
-      nsfw,
       currency,
       description,
       entryMode,
@@ -244,7 +254,8 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
   const mode = form.watch('mode');
   const currency = form.watch('currency');
   const unitAmount = form.watch('unitAmount');
-  const nsfwPoi = form.watch(['nsfw', 'poi']);
+  const [userNsfwLevel = 0, poi] = form.watch(['userNsfwLevel', 'poi']);
+  const hasPoiInNsfw = Flags.intersects(userNsfwLevel ?? 0, nsfwBrowsingLevelsFlag) && poi;
   const expiresAt = form.watch('expiresAt');
   const files = form.watch('files');
 
@@ -273,7 +284,6 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
 
   const { upsertBounty, upserting } = useMutateBounty({ bountyId: bounty?.id });
 
-  const hasPoiInNsfw = nsfwPoi.every((item) => !!item);
   const alreadyStarted = !!bounty && bounty.startsAt < new Date();
   const images = [...bountyImages, ...imageFiles];
 
@@ -807,23 +817,21 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                   </Stack>
                 }
               />
-              <InputSwitch
-                name="nsfw"
+              <InputFlag
+                spacing="xs"
+                name="userNsfwLevel"
+                flag="NsfwLevel"
                 label={
-                  <Stack spacing={4}>
-                    <Group spacing={4}>
-                      <Text inline>Mature theme</Text>
-                      <Tooltip label={matureLabel} {...tooltipProps}>
-                        <ThemeIcon radius="xl" size="xs" color="gray">
-                          <IconQuestionMark />
-                        </ThemeIcon>
-                      </Tooltip>
-                    </Group>
-                    <Text size="xs" color="dimmed">
-                      This bounty is intended to produce mature content.
-                    </Text>
-                  </Stack>
+                  <Group spacing={4} noWrap>
+                    <Text inline>Maturity Level</Text>
+                    <Tooltip label={matureLabel} {...tooltipProps}>
+                      <ThemeIcon radius="xl" size="xs" color="gray">
+                        <IconQuestionMark />
+                      </ThemeIcon>
+                    </Tooltip>
+                  </Group>
                 }
+                mapLabel={({ value }) => browsingLevelLabels[value as NsfwLevel]}
               />
               {hasPoiInNsfw && (
                 <>

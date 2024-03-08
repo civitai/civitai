@@ -42,6 +42,7 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
   description: true,
   poi: true,
   nsfwLevel: true,
+  userNsfwLevel: true,
   type: true,
   uploadType: true,
   updatedAt: true,

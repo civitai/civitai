@@ -9,6 +9,7 @@ export const articleDetailSelect = Prisma.validator<Prisma.ArticleSelect>()({
   id: true,
   createdAt: true,
   nsfwLevel: true,
+  userNsfwLevel: true,
   content: true,
   cover: true,
   updatedAt: true,

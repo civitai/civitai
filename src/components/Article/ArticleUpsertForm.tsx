@@ -27,6 +27,7 @@ import { useFormStorage } from '~/hooks/useFormStorage';
 import {
   Form,
   InputCheckbox,
+  InputFlag,
   InputMultiFileUpload,
   InputRTE,
   InputSelect,
@@ -49,6 +50,8 @@ import { ContentPolicyLink } from '../ContentPolicyLink/ContentPolicyLink';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { constants } from '~/server/common/constants';
 import { imageSchema } from '~/server/schema/image.schema';
+import { NsfwLevel } from '~/server/common/enums';
+import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
 
 const schema = upsertArticleInput.omit({ coverImage: true }).extend({
   categoryId: z.number().min(0, 'Please select a valid category'),
@@ -89,6 +92,7 @@ export function ArticleUpsertForm({ article }: Props) {
       ...article,
       title: article?.title ?? '',
       content: article?.content ?? '',
+      userNsfwLevel: article?.userNsfwLevel ?? 0,
       categoryId: article?.tags.find((tag) => tag.isCategory)?.id ?? defaultCategory,
       tags: article?.tags.filter((tag) => !tag.isCategory) ?? [],
       coverImage: article?.coverImage ?? null,
@@ -99,11 +103,10 @@ export function ArticleUpsertForm({ article }: Props) {
     form,
     timeout: 1000,
     key: `article${article?.id ? `_${article?.id}` : 'new'}`,
-    watch: ({ content, coverImage, categoryId, nsfw, tags, title }) => ({
+    watch: ({ content, coverImage, categoryId, tags, title }) => ({
       content,
       coverImage,
       categoryId,
-      nsfw,
       tags,
       title,
     }),
@@ -222,11 +225,13 @@ export function ArticleUpsertForm({ article }: Props) {
               }}
               sx={hideMobile}
             />
-            <InputCheckbox
-              name="nsfw"
+            <InputFlag
+              spacing="xs"
+              name="userNsfwLevel"
+              flag="NsfwLevel"
               label={
-                <Group spacing={4}>
-                  Mature
+                <Group spacing={4} noWrap>
+                  Maturity Level
                   <Tooltip label={matureLabel} {...tooltipProps}>
                     <ThemeIcon radius="xl" size="xs" color="gray">
                       <IconQuestionMark />
@@ -235,6 +240,7 @@ export function ArticleUpsertForm({ article }: Props) {
                   <ContentPolicyLink size="xs" variant="text" color="dimmed" td="underline" />
                 </Group>
               }
+              mapLabel={({ value }) => browsingLevelLabels[value as NsfwLevel]}
             />
             <InputSimpleImageUpload
               name="coverImage"

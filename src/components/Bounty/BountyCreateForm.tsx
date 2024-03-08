@@ -68,6 +68,8 @@ import { getMinMaxDates, useMutateBounty } from './bounty.utils';
 import { DaysFromNow } from '../Dates/DaysFromNow';
 import { stripTime } from '~/utils/date-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { Flags } from '~/shared/utils';
 
 const tooltipProps: Partial<TooltipProps> = {
   maw: 300,
@@ -93,9 +95,10 @@ const formSchema = createBountyInputSchema
   .omit({
     images: true,
   })
-  .refine((data) => !(data.nsfw && data.poi), {
-    message: 'Mature content depicting actual people is not permitted.',
-  })
+  .refine(
+    (data) => !(Flags.intersects(data.userNsfwLevel ?? 0, nsfwBrowsingLevelsFlag) && data.poi),
+    { message: 'Mature content depicting actual people is not permitted.' }
+  )
   .refine((data) => data.startsAt < data.expiresAt, {
     message: 'Start date must be before expiration date',
     path: ['startsAt'],
@@ -192,7 +195,6 @@ export function BountyCreateForm() {
       description: '',
       tags: [],
       unitAmount: constants.bounties.minCreateAmount,
-      nsfw: false,
       currency: Currency.BUZZ,
       type: BountyType.LoraCreation,
       mode: BountyMode.Individual,
@@ -204,6 +206,7 @@ export function BountyCreateForm() {
       expiresAt: dayjs().add(7, 'day').endOf('day').toDate(),
       startsAt: new Date(),
       details: { baseModel: 'SD 1.5' },
+      userNsfwLevel: 0,
     },
     shouldUnregister: false,
   });
@@ -216,10 +219,9 @@ export function BountyCreateForm() {
     form,
     timeout: 1000,
     key: `bounty_new`,
-    watch: ({ mode, name, type, nsfw, currency, description, entryMode, unitAmount }) => ({
+    watch: ({ mode, name, type, currency, description, entryMode, unitAmount }) => ({
       mode,
       name,
-      nsfw,
       currency,
       description,
       entryMode,
@@ -231,7 +233,8 @@ export function BountyCreateForm() {
   const mode = form.watch('mode');
   const currency = form.watch('currency');
   const unitAmount = form.watch('unitAmount');
-  const nsfwPoi = form.watch(['nsfw', 'poi']);
+  const [userNsfwLevel = 0, poi] = form.watch(['userNsfwLevel', 'poi']);
+  const hasPoiInNsfw = Flags.intersects(userNsfwLevel, nsfwBrowsingLevelsFlag) && poi;
   const files = form.watch('files');
   const expiresAt = form.watch('expiresAt');
   const requireBaseModelSelection = [
@@ -281,8 +284,6 @@ export function BountyCreateForm() {
       performTransaction();
     }
   };
-
-  const hasPoiInNsfw = nsfwPoi.every((item) => !!item);
 
   return (
     <Form form={form} onSubmit={handleSubmit}>

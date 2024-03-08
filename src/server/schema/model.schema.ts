@@ -158,11 +158,11 @@ export const modelUpsertSchema = licensingSchema.extend({
   status: z.nativeEnum(ModelStatus),
   checkpointType: z.nativeEnum(CheckpointType).nullish(),
   tagsOnModels: z.array(tagSchema).nullish(),
-  nsfw: z.boolean().optional(),
   poi: z.boolean().optional(),
   locked: z.boolean().optional(),
   templateId: z.number().optional(),
   bountyId: z.number().optional(),
+  userNsfwLevel: z.number().optional(),
 });
 
 export type UpdateGallerySettingsInput = z.infer<typeof updateGallerySettingsSchema>;
