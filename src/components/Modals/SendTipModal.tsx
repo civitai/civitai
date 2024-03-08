@@ -18,16 +18,13 @@ import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { createContextModal } from '~/components/Modals/utils/createContextModal';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Form, InputChipGroup, InputNumber, InputTextArea, useForm } from '~/libs/form';
-import { TransactionType } from '~/server/schema/buzz.schema';
 import { showErrorNotification } from '~/utils/notifications';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { useTrackEvent } from '../TrackView/track.utils';
 import { UserBuzz } from '../User/UserBuzz';
 import { constants } from '~/server/common/constants';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 
 const useStyles = createStyles((theme) => ({
   presetCard: {
@@ -143,7 +140,6 @@ const { openModal, Modal } = createContextModal<{
   withCloseButton: false,
   Element: ({ context, props: { toUserId, entityId, entityType } }) => {
     const { classes } = useStyles();
-    const currentUser = useCurrentUser();
 
     const [loading, setLoading] = useState(false);
 
@@ -194,7 +190,7 @@ const { openModal, Modal } = createContextModal<{
         return tipUserMutation.mutate({
           toAccountId: toUserId,
           amount: amountToSend,
-          description,
+          description: description || null,
           entityId,
           entityType,
         });
