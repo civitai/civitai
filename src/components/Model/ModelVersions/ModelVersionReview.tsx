@@ -5,7 +5,6 @@ import { numberWithCommas } from '~/utils/number-helpers';
 export function ModelVersionReview({ modelId, versionId, thumbsDownCount, thumbsUpCount }: Props) {
   const totalCount = thumbsUpCount + thumbsDownCount;
   const positiveRating = totalCount > 0 ? thumbsUpCount / totalCount : 0;
-  console.log({ positiveRating });
 
   if (totalCount === 0) return <Text>No reviews yet</Text>;
 
