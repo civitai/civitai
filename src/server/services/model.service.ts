@@ -527,7 +527,7 @@ export const getModelsRaw = async ({
     modelVersionWhere.push(Prisma.sql`cm."modelVersionId" = mv."id"`);
   }
 
-  if (pending) {
+  if (pending && (isModerator || userId)) {
     if (isModerator) {
       modelVersionWhere.push(
         Prisma.sql`((mv."nsfwLevel" & ${browsingLevel}) != 0 OR mv."nsfwLevel" = 0)`

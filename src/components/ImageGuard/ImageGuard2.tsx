@@ -91,8 +91,11 @@ export function ImageGuard2({
     useCallback((state) => (key ? state[key] : undefined), [key])
   );
 
+  const userId = image.userId ?? image.user?.id;
+  const showUnprocessed =
+    !image.nsfwLevel && (currentUser?.isModerator || userId === currentUser?.id);
   const nsfw = Flags.hasFlag(nsfwBrowsingLevelsFlag, image.nsfwLevel);
-  const shouldBlur = currentUser?.blurNsfw ?? true;
+  const shouldBlur = (currentUser?.blurNsfw ?? true) && !showUnprocessed;
   const safe = !nsfw ? true : !shouldBlur;
   const show = safe || (showConnect ?? showImage);
 

@@ -164,7 +164,7 @@ export const getArticles = async ({
       AND.push(Prisma.sql`a.id IN (${Prisma.join(ids, ',')})`);
     }
 
-    if (pending) {
+    if (pending && (isModerator || userId)) {
       if (isModerator) {
         AND.push(Prisma.sql`((a."nsfwLevel" & ${browsingLevel}) != 0 OR a."nsfwLevel" = 0)`);
       } else if (userId) {

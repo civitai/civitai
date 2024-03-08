@@ -167,7 +167,7 @@ export const getPostsInfinite = async ({
     else AND.push(Prisma.sql`p."publishedAt" IS NOT NULL`);
   }
 
-  if (pending) {
+  if (pending && (isModerator || userId)) {
     if (isModerator) {
       AND.push(Prisma.sql`((p."nsfwLevel" & ${browsingLevel}) != 0 OR p."nsfwLevel" = 0)`);
     } else if (userId) {
