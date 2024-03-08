@@ -56,6 +56,13 @@ const baseModelDescriptions: {
   },
 };
 
+// nb: keep this in line with what is set by the worker
+const optimizerArgMap: { [key: string]: string } = {
+  Adafactor: 'scale_parameter=False, relative_step=False, warmup_init=False',
+  AdamW8Bit: 'weight_decay=0.1',
+  Prodigy: 'weight_decay=0.5, decouple=True, betas=0.9,0.99, use_bias_correction=False',
+};
+
 type BaseTrainingSettingsType = {
   name: keyof TrainingDetailsParams;
   label: string;
@@ -308,7 +315,16 @@ export const trainingSettings: TrainingSettingsType[] = [
   {
     name: 'minSnrGamma',
     label: 'Min SNR Gamma',
-    hint: 'In LoRA learning, learning is performed by putting noise of various strengths on the training image (details about this are omitted), but depending on the difference in strength of the noise on which it is placed, learning will be stable by moving closer to or farther from the learning target. not, and the Min SNR gamma was introduced to compensate for that. Especially when learning images with little noise on them, it may deviate greatly from the target, so try to suppress this jump.',
+    hint: (
+      <>
+        Learning is performed by putting noise of various strengths on the training image, but
+        depending on the difference in strength of the noise on which it is placed, learning will be
+        stable by moving closer to or farther from the learning target.
+        <br />
+        Min SNR gamma was introduced to compensate for that. When learning images have little noise,
+        it may deviate greatly from the target, so try to suppress this jump.
+      </>
+    ),
     type: 'int',
     default: 5, // TODO maybe float
     min: 0,
@@ -374,6 +390,15 @@ export const trainingSettings: TrainingSettingsType[] = [
     default: 'AdamW8Bit',
     options: ['AdamW8Bit', 'Adafactor', 'Prodigy'], // TODO enum
     overrides: { sdxl: { default: 'Adafactor' }, pony: { default: 'Prodigy' } },
+  },
+  {
+    // this is only used for display
+    name: 'optimizerArgs',
+    label: 'Optimizer Args',
+    hint: 'Additional arguments can be passed to control the behavior of the selected optimizer. This is set automatically.',
+    type: 'string',
+    default: optimizerArgMap.AdamW8Bit,
+    disabled: true,
   },
 ];
 
@@ -461,6 +486,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
 
   const watchFields = form.watch(['maxTrainEpochs', 'numRepeats', 'trainBatchSize']);
   const watchFieldsBuzz = form.watch(['networkDim', 'networkAlpha', 'targetSteps']);
+  const watchFieldOptimizer = form.watch('optimizerType');
 
   // apply default overrides for base model upon selection
   useEffect(() => {
@@ -507,6 +533,12 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     const price = eta !== undefined ? calcBuzzFromEta(eta) : eta;
     setBuzzCost(price);
   }, [watchFieldsBuzz, formBaseModel]);
+
+  useEffect(() => {
+    const newArgs = optimizerArgMap[watchFieldOptimizer] ?? '';
+    form.setValue('optimizerArgs', newArgs);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [watchFieldOptimizer]);
 
   const { errors } = form.formState;
 
@@ -607,7 +639,8 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   const handleConfirm = (data: z.infer<typeof schema>) => {
     setAwaitInvalidate(true);
 
-    const { baseModel, samplePrompt1, samplePrompt2, samplePrompt3, ...paramData } = data;
+    const { baseModel, samplePrompt1, samplePrompt2, samplePrompt3, optimizerArgs, ...paramData } =
+      data;
 
     const baseModelConvert: BaseModel =
       baseModel === 'sd_1_5'
@@ -939,7 +972,13 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                     } else if (ts.type === 'bool') {
                       inp = <InputCheckbox py={8} name={ts.name} disabled={ts.disabled === true} />;
                     } else if (ts.type === 'string') {
-                      inp = <InputText name={ts.name} disabled={ts.disabled === true} />;
+                      inp = (
+                        <InputText
+                          name={ts.name}
+                          disabled={ts.disabled === true}
+                          clearable={ts.disabled !== true}
+                        />
+                      );
                     }
 
                     return {
