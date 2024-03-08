@@ -14,14 +14,18 @@ import { env } from '~/env/server.mjs';
 import { ProhibitedSources } from '~/server/schema/user.schema';
 import { getServerAuthSession } from '../utils/get-server-auth-session';
 
+type CustomClickHouseClient = ClickHouseClient & {
+  $query: <T extends object>(query: string) => Promise<T[]>;
+};
+
 declare global {
   // eslint-disable-next-line no-var, vars-on-top
-  var globalClickhouse: ClickHouseClient | undefined;
+  var globalClickhouse: CustomClickHouseClient | undefined;
 }
 
 function getClickHouse() {
   console.log('Creating ClickHouse client');
-  return createClient({
+  const client = createClient({
     host: env.CLICKHOUSE_HOST,
     username: env.CLICKHOUSE_USERNAME,
     password: env.CLICKHOUSE_PASSWORD,
@@ -29,10 +33,21 @@ function getClickHouse() {
       async_insert: 1,
       wait_for_async_insert: 0,
     },
-  });
+  }) as CustomClickHouseClient;
+
+  client.$query = async function <T extends object>(query: string) {
+    const response = await client.query({
+      query,
+      format: 'JSONEachRow',
+    });
+    const data = (await response?.json()) as T[];
+    return data;
+  };
+
+  return client;
 }
 
-export let clickhouse: ClickHouseClient | undefined;
+export let clickhouse: CustomClickHouseClient | undefined;
 const shouldConnect = env.CLICKHOUSE_HOST && env.CLICKHOUSE_USERNAME && env.CLICKHOUSE_PASSWORD;
 if (shouldConnect) {
   if (isProd) clickhouse = getClickHouse();
