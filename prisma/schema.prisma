@@ -3506,6 +3506,7 @@ model PostResourceHelper {
   post                  Post       @relation(fields: [postId], references: [id])
   reviewId              Int?
   reviewRating          Int?
+  reviewRecommended     Boolean?
   reviewDetails         String?
   reviewCreatedAt       DateTime?
   name                  String?

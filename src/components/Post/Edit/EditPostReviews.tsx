@@ -98,6 +98,7 @@ export function EditPostReviews() {
                 key={resource.id ?? resource.name ?? index}
                 id={resource.reviewId}
                 rating={resource.reviewRating}
+                recommended={resource.reviewRecommended}
                 details={resource.reviewDetails}
                 createdAt={resource.reviewCreatedAt}
                 modelId={resource.modelId}
@@ -116,6 +117,7 @@ export function EditPostReviews() {
                     key={resource.id ?? resource.name ?? index}
                     id={resource.reviewId}
                     rating={resource.reviewRating}
+                    recommended={resource.reviewRecommended}
                     details={resource.reviewDetails}
                     createdAt={resource.reviewCreatedAt}
                     modelId={resource.modelId}

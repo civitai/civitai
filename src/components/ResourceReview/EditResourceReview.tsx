@@ -171,17 +171,33 @@ export function EditResourceReview({
                 </Text>
               ) : (
                 <Form form={form} onSubmit={handleSubmit}>
-                  <Stack spacing="xs">
+                  <Stack spacing={4}>
                     <InputRTE
                       name="details"
                       includeControls={['formatting', 'link']}
                       editorSize="sm"
                       placeholder={`What did you think of ${modelName ?? 'this resource'}?`}
-                      styles={{ content: { maxHeight: 500, overflowY: 'auto' } }}
+                      styles={{
+                        content: {
+                          minHeight: 50,
+                          maxHeight: 500,
+                          padding: 0,
+                          fontSize: 12,
+
+                          '.ProseMirror': {
+                            padding: `6px 10px`,
+                            minHeight: 22,
+                            cursor: 'text',
+                          },
+                          '.ProseMirror p.is-editor-empty:first-of-type::before': {
+                            fontSize: 12,
+                          },
+                        },
+                      }}
                       hideToolbar
                       autoFocus
                     />
-                    <Group grow spacing="xs">
+                    <Group grow spacing={4}>
                       <Button
                         size="xs"
                         variant="default"
