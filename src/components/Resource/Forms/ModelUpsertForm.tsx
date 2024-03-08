@@ -294,7 +294,7 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                     <Text size="xs" color="dimmed">
                       Learn more about how licensing works by reading our{' '}
                       <Anchor
-                        href="https://education.civitai.com"
+                        href="https://education.civitai.com/guide-to-licensing-options-on-civitai/ "
                         target="_blank"
                         rel="nofollow noreferrer"
                       >

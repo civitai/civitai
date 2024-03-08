@@ -143,7 +143,7 @@ export default function ModelReviews() {
         <Card p="sm" style={{ position: 'sticky', top: 24 }} withBorder>
           <Stack spacing={8}>
             <Text size="md" weight={510}>
-              Have you tried this resource?
+              Did you like this resource?
             </Text>
             {userReview && (
               <Text color="dimmed" size="xs">

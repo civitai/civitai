@@ -68,25 +68,29 @@ export const modelNotifications = createNotificationProcessor({
   'model-like-milestone': {
     displayName: 'Model like milestones',
     category: 'Milestone',
-    prepareMessage: ({ details }) => ({
-      message: `Congrats! Your ${
-        details.modelName
-      } model has received ${details.favoriteCount.toLocaleString()} likes`,
-      url: `/models/${details.modelId}`,
-    }),
+    prepareMessage: ({ details }) => {
+      const count = details.favoriteCount || details.thumbsUpCount;
+
+      return {
+        message: `Congrats! Your ${
+          details.modelName
+        } model has received ${count?.toLocaleString()} likes`,
+        url: `/models/${details.modelId}`,
+      };
+    },
     prepareQuery: ({ lastSent, category }) => `
       WITH milestones AS (
         SELECT * FROM (VALUES ${modelLikeMilestones.map((x) => `(${x})`).join(', ')}) m(value)
       ), model_value AS (
         SELECT DISTINCT
           mm."modelId" model_id,
-          mm."thumbsUpCountAllTime" thumbs_up_count
+          mm."thumbsUpCount" thumbs_up_count
         FROM "ModelMetric" mm
         JOIN "Model" m ON m.id = mm."modelId"
         WHERE
           mm."updatedAt" > '${lastSent}'
           AND mm."timeframe" = 'AllTime'
-          AND "thumbsUpCountAllTime" > ${modelLikeMilestones[0]}
+          AND "thumbsUpCount" > ${modelLikeMilestones[0]}
           AND m."userId" > 0
       ), model_milestone AS (
         SELECT
@@ -204,7 +208,7 @@ export const modelNotifications = createNotificationProcessor({
       )
       INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
-        CONCAT('new-model-from-following:', details->>'modelId', ':', "userId"),
+        CONCAT('new-model-from-following:', details->>'modelId', ':', "ownerId"),
         "ownerId"    "userId",
         'new-model-from-following' "type",
         details,

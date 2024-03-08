@@ -123,6 +123,9 @@ export const useCardStyles = createStyles<string, { aspectRatio: number }>(
           gap: theme.spacing.xs,
         },
         color: theme.white,
+        [`&[data-reviewed=true]`]: {
+          backgroundColor: theme.fn.rgba(theme.colors.success[5], 0.2),
+        },
       },
 
       chip: {

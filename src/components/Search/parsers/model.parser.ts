@@ -7,7 +7,7 @@ import { IMAGES_SEARCH_INDEX, MODELS_SEARCH_INDEX } from '~/server/common/consta
 
 export const ModelSearchIndexSortBy = [
   MODELS_SEARCH_INDEX,
-  `${MODELS_SEARCH_INDEX}:metrics.weightedRating:desc`,
+  `${MODELS_SEARCH_INDEX}:metrics.thumbsUpCount:desc`,
   `${MODELS_SEARCH_INDEX}:metrics.downloadCount:desc`,
   `${MODELS_SEARCH_INDEX}:metrics.favoriteCount:desc`,
   `${MODELS_SEARCH_INDEX}:metrics.commentCount:desc`,
