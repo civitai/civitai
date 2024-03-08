@@ -8,6 +8,7 @@ import {
   Stack,
   Text,
   Title,
+  Image,
 } from '@mantine/core';
 import { YoutubeEmbed } from '~/components/YoutubeEmbed/YoutubeEmbed';
 import { containerQuery } from '~/utils/mantine-css-helpers';
@@ -70,14 +71,36 @@ export default function LinkApp() {
       {/* TODO: Update copy */}
       <Grid gutter={40} gutterMd={80}>
         <Grid.Col md={6}>
-          {/* TODO: Image */}
+          <Flex justify="center" className={classes.gradientContainer}>
+            <Image
+              src="/images/link/download.png"
+              alt="download"
+              id="download"
+              width="auto"
+              imageProps={{
+                style: { objectFit: 'cover', objectPosition: 'top', height: '100%' },
+              }}
+            />
+            <div className={classes.gradientBox} />
+          </Flex>
           <Title className={classes.heading}>Manage files</Title>
           <Text className={classes.copy}>
             Directly add any models from Civitai to your Stable Diffusion instance.
           </Text>
         </Grid.Col>
         <Grid.Col md={6}>
-          {/* TODO: Image */}
+          <Flex justify="center" className={classes.gradientContainer}>
+            <Image
+              src="/images/link/activity.png"
+              alt="activity"
+              id="activity"
+              width="auto"
+              imageProps={{
+                style: { objectFit: 'cover', objectPosition: 'top', height: '100%' },
+              }}
+            />
+            <div className={classes.gradientBox} />
+          </Flex>
           <Title className={classes.heading}>Keep track of activities</Title>
           <Text className={classes.copy}>
             See the history of all the models you have added to your Stable Diffusion instance.
