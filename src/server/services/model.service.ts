@@ -32,6 +32,7 @@ import {
   ModelMeta,
   ModelUpsertInput,
   PublishModelSchema,
+  ToggleCheckpointCoverageInput,
   ToggleModelLockInput,
   UnpublishModelSchema,
 } from '~/server/schema/model.schema';
@@ -1745,3 +1746,27 @@ export const getGalleryHiddenPreferences = async ({
 
   return { hiddenTags, hiddenUsers, hiddenImages: images ?? [] };
 };
+
+export async function getCheckpointGenerationCoverage(versionIds: number[]) {
+  const ids = Prisma.join(versionIds);
+  const coveredResources = await dbRead.$queryRaw<{ version_id: number }[]>`
+    SELECT version_id FROM "CoveredCheckpointDetails"
+    WHERE version_id IN (${ids});
+  `;
+
+  return coveredResources.map((x) => x.version_id);
+}
+
+export async function toggleCheckpointCoverage({ id, versionId }: ToggleCheckpointCoverageInput) {
+  const affectedRows = await dbWrite.$executeRaw`
+    INSERT INTO "CoveredCheckpoint" ("model_id", "version_id")
+    VALUES (${id}, ${versionId})
+    ON CONFLICT DO NOTHING;
+  `;
+
+  await dbWrite.$executeRaw`
+    REFRESH MATERIALIZED VIEW "CoveredCheckpointDetails";
+  `;
+
+  return affectedRows;
+}

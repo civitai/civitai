@@ -85,7 +85,7 @@ import { getDisplayName, removeTags, splitUppercase, slugit } from '~/utils/stri
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
 import useIsClient from '~/hooks/useIsClient';
-import { ImageSort } from '~/server/common/enums';
+import { ImageSort, ModelType } from '~/server/common/enums';
 import { useQueryImages } from '~/components/Image/image.utils';
 import { CAROUSEL_LIMIT } from '~/server/common/constants';
 import { ToggleLockModel } from '~/components/Model/Actions/ToggleLockModel';
@@ -961,6 +961,7 @@ export default function ModelDetailsV2({
               }}
               onDeleteClick={handleDeleteVersion}
               showExtraIcons={isOwner || isModerator}
+              showToggleCoverage={model.type === ModelType.Checkpoint}
             />
           </Group>
           {!!selectedVersion && (
