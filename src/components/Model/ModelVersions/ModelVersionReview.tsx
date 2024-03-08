@@ -1,7 +1,6 @@
-import { Anchor, Group, MantineColor, Text, Tooltip } from '@mantine/core';
-import { numberWithCommas } from '~/utils/number-helpers';
-import Link from 'next/link';
+import { Group, MantineColor, Text, Tooltip } from '@mantine/core';
 import { NextLink } from '@mantine/next';
+import { numberWithCommas } from '~/utils/number-helpers';
 
 export function ModelVersionReview({ modelId, versionId, thumbsDownCount, thumbsUpCount }: Props) {
   const totalCount = thumbsUpCount + thumbsDownCount;
