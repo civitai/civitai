@@ -43,6 +43,7 @@ import { cacheCleanup } from '~/server/jobs/cache-cleanup';
 import { applyTagRules } from '~/server/jobs/apply-tag-rules';
 import { processCreatorProgramEarlyAccessRewards } from '~/server/jobs/process-creator-program-early-access-rewards';
 import { processCreatorProgramImageGenerationRewards } from '~/server/jobs/process-creator-program-image-generation-rewards';
+import { nsfwLevelsUpdateJobs } from '~/server/jobs/update-nsfw-levels';
 
 export const jobs: Job[] = [
   scanFilesJob,
@@ -84,6 +85,7 @@ export const jobs: Job[] = [
   applyTagRules,
   processCreatorProgramEarlyAccessRewards,
   processCreatorProgramImageGenerationRewards,
+  ...nsfwLevelsUpdateJobs,
 ];
 
 const log = createLogger('jobs', 'green');

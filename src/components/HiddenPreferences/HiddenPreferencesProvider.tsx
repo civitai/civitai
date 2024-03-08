@@ -1,4 +1,4 @@
-import { useContext, createContext, ReactNode, useMemo, useDeferredValue } from 'react';
+import { useContext, createContext, ReactNode, useMemo, useDeferredValue, useEffect } from 'react';
 import { useQueryHiddenPreferences } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 

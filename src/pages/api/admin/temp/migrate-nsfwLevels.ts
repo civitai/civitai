@@ -9,8 +9,6 @@ import { invalidateAllSessions } from '~/server/utils/session-helpers';
 const BATCH_SIZE = 500;
 const CONCURRENCY_LIMIT = 50;
 export default WebhookEndpoint(async (req, res) => {
-  // TODO.nsfwLevel
-
   const migrations = [
     [migrateImages, migrateUsers],
     [migratePosts, migrateArticles, migrateBounties, migrateBountyEntries],
@@ -19,12 +17,14 @@ export default WebhookEndpoint(async (req, res) => {
     [migrateCollections],
   ];
 
+  console.time('run migrations');
   let counter = 0;
   for (const steps of migrations) {
     await Promise.all(steps.map((step) => step(res)));
     counter++;
     console.log(`end ${counter}`);
   }
+  console.timeEnd('run migrations');
 
   res.status(200).json({ finished: true });
 });
@@ -184,8 +184,8 @@ async function migrateBounties(res: NextApiResponse) {
             bit_or(i."nsfwLevel") "nsfwLevel"
           FROM "ImageConnection" ic
           JOIN "Image" i ON i.id = ic."imageId"
-          JOIN "Bounty" b on b.id = "entityId" AND "entityType" = 'Bounty'
-          WHERE "entityType" = 'Bounty' AND "entityId" BETWEEN ${start} AND ${end}
+          JOIN "Bounty" b on b.id = "entityId" AND ic."entityType" = 'Bounty'
+          WHERE ic."entityType" = 'Bounty' AND ic."entityId" BETWEEN ${start} AND ${end}
           GROUP BY 1
         )
         UPDATE "Bounty" b SET "nsfwLevel" = level."nsfwLevel"
@@ -229,8 +229,8 @@ async function migrateBountyEntries(res: NextApiResponse) {
             bit_or(i."nsfwLevel") "nsfwLevel"
           FROM "ImageConnection" ic
           JOIN "Image" i ON i.id = ic."imageId"
-          JOIN "BountyEntry" b on b.id = "entityId" AND "entityType" = 'BountyEntry'
-          WHERE "entityType" = 'BountyEntry' AND "entityId" BETWEEN ${start} AND ${end}
+          JOIN "BountyEntry" b on b.id = "entityId" AND ic."entityType" = 'BountyEntry'
+          WHERE ic."entityType" = 'BountyEntry' AND ic."entityId" BETWEEN ${start} AND ${end}
           GROUP BY 1
         )
         UPDATE "BountyEntry" b SET "nsfwLevel" = level."nsfwLevel"

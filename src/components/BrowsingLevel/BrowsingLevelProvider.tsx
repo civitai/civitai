@@ -1,4 +1,11 @@
-import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import React, {
+  createContext,
+  useContext,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useState,
+} from 'react';
 import {
   BrowsingLevel,
   getIsPublicBrowsingLevel,
@@ -151,13 +158,13 @@ function useBrowsingLevel() {
 export function useBrowsingLevelDebounced() {
   const browsingLevel = useBrowsingLevel();
   const [debounced] = useDebouncedValue(browsingLevel, 500);
-  return debounced ?? browsingLevel;
+  return useDeferredValue(debounced ?? browsingLevel);
 }
 
-export function useIsPublicBrowsingLevel() {
-  const level = useBrowsingLevelDebounced();
-  return getIsPublicBrowsingLevel(level);
-}
+// export function useIsPublicBrowsingLevel() {
+//   const level = useBrowsingLevelDebounced();
+//   return getIsPublicBrowsingLevel(level);
+// }
 
 export function useIsBrowsingLevelSelected(level: BrowsingLevel) {
   const { useStore } = useBrowsingModeContext();

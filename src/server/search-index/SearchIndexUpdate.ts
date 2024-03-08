@@ -1,5 +1,5 @@
 import { SearchIndexUpdateQueueAction } from '@prisma/client';
-import { chunk } from 'lodash';
+import { chunk } from 'lodash-es';
 import { dbWrite } from '~/server/db/client';
 
 export abstract class SearchIndexUpdate {

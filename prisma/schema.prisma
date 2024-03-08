@@ -765,6 +765,7 @@ model ModelMetric {
   generationCount   Int             @default(0)
   thumbsUpCount     Int             @default(0)
   thumbsDownCount   Int             @default(0)
+  updatedAt         DateTime        @updatedAt
 
   @@id([modelId, timeframe])
 }
@@ -785,6 +786,7 @@ model ModelVersionMetric {
   generationCount   Int             @default(0)
   thumbsUpCount     Int             @default(0)
   thumbsDownCount   Int             @default(0)
+  updatedAt         DateTime        @updatedAt
 
   @@id([modelVersionId, timeframe])
 }
@@ -1071,6 +1073,7 @@ model Post {
   modelVersion   ModelVersion? @relation(fields: [modelVersionId], references: [id], onDelete: SetNull)
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
+  deletedAt      DateTime?
   publishedAt    DateTime?
   metadata       Json?
   tosViolation   Boolean       @default(false)
@@ -1152,6 +1155,7 @@ model Image {
   userId            Int
   createdAt         DateTime                @default(now())
   updatedAt         DateTime                @updatedAt
+  deletedAt         DateTime?
   meta              Json? // image generation params
   hash              String?
   height            Int?
@@ -1977,6 +1981,7 @@ model Article {
   id            Int          @id @default(autoincrement())
   createdAt     DateTime?    @default(now())
   updatedAt     DateTime?    @updatedAt
+  deletedAt     DateTime?
   nsfw          Boolean      @default(false)
   tosViolation  Boolean      @default(false)
   metadata      Json?
@@ -2798,6 +2803,14 @@ model UserPurchasedRewards {
 }
 
 model NsfwLevelUpdateQueue {
+  entityType String
+  entityId   Int
+  createdAt  DateTime @default(now())
+
+  @@id([entityType, entityId])
+}
+
+model DeleteQueue {
   entityType String
   entityId   Int
   createdAt  DateTime @default(now())
