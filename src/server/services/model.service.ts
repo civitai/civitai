@@ -1748,17 +1748,16 @@ export const getGalleryHiddenPreferences = async ({
 };
 
 export async function getCheckpointGenerationCoverage(versionIds: number[]) {
-  const ids = Prisma.join(versionIds);
   const coveredResources = await dbRead.$queryRaw<{ version_id: number }[]>`
     SELECT version_id FROM "CoveredCheckpointDetails"
-    WHERE version_id IN (${ids});
+    WHERE version_id IN (${Prisma.join(versionIds)});
   `;
 
   return coveredResources.map((x) => x.version_id);
 }
 
 export async function toggleCheckpointCoverage({ id, versionId }: ToggleCheckpointCoverageInput) {
-  const affectedRows = await dbWrite.$executeRaw`
+  await dbWrite.$executeRaw`
     INSERT INTO "CoveredCheckpoint" ("model_id", "version_id")
     VALUES (${id}, ${versionId})
     ON CONFLICT DO NOTHING;
@@ -1768,5 +1767,11 @@ export async function toggleCheckpointCoverage({ id, versionId }: ToggleCheckpoi
     REFRESH MATERIALIZED VIEW "CoveredCheckpointDetails";
   `;
 
-  return affectedRows;
+  const affectedVersionIds = await dbWrite.$queryRaw<{ version_id: number }[]>`
+    SELECT version_id FROM "CoveredCheckpointDetails"
+    JOIN "ModelVersion" mv ON mv.id = version_id
+    WHERE mv."modelId" = id;
+  `;
+
+  return affectedVersionIds.map((x) => x.version_id);
 }

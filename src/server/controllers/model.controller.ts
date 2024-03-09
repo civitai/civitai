@@ -127,7 +127,8 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
       select: { id: true, modelVersionId: true },
       orderBy: { id: 'asc' },
     });
-    const coveredCheckpoints = await getCheckpointGenerationCoverage(modelVersionIds);
+    const coveredCheckpoints =
+      model.type === 'Checkpoint' ? await getCheckpointGenerationCoverage(modelVersionIds) : null;
 
     // recommended VAEs
     const vaeIds = filteredVersions.map((x) => x.vaeId).filter(isDefined);
@@ -190,8 +191,7 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
         const canGenerate =
           !!version.generationCoverage?.covered &&
           unavailableGenResources.indexOf(version.id) === -1;
-        const hasCheckpointCoverage =
-          model.type === ModelType.Checkpoint ? coveredCheckpoints.includes(version.id) : false;
+        const hasCheckpointCoverage = coveredCheckpoints?.includes(version.id) ?? false;
 
         // sort version files by file type, 'Model' type goes first
         const vaeFile = vaeFiles.filter((x) => x.modelVersionId === version.vaeId);
@@ -1490,14 +1490,14 @@ export async function addCheckpointCoverageHandler({
   input: ToggleCheckpointCoverageInput;
 }) {
   try {
-    const affectedRows = await toggleCheckpointCoverage(input);
-    if (input.versionId) await deleteResourceDataCache(input.versionId);
+    const affectedVersionIds = await toggleCheckpointCoverage(input);
+    if (affectedVersionIds) await deleteResourceDataCache(affectedVersionIds);
 
     await modelsSearchIndex.queueUpdate([
       { id: input.id, action: SearchIndexUpdateQueueAction.Update },
     ]);
 
-    return affectedRows;
+    return affectedVersionIds;
   } catch (error) {
     throw throwDbError(error);
   }
