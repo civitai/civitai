@@ -6,10 +6,10 @@ export const reviewNotifications = createNotificationProcessor({
     category: 'Update',
     prepareMessage: ({ details }) => {
       if (details.version === 2) {
-        details.recommended = details.recommended ?? (!!details.rating && details.rating >= 3);
+        const recommended = details.recommended ?? (!!details.rating && details.rating >= 3);
         let message = `${details.username} reviewed ${details.modelName} ${details.modelVersionName}`;
         if (details.imageCount) message += ` with ${details.imageCount} images`;
-        if (details.recommended != null) message += `with ${details.recommended ? '👍' : '👎'}`;
+        if (recommended != null) message += `with ${recommended ? '👍' : '👎'}`;
         return {
           message,
           url: `/reviews/${details.reviewId}`,
