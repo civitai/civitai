@@ -15,7 +15,7 @@ const log = createLogger('leaderboard', 'blue');
 const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async (jobContext) => {
   const [lastRun, setLastRun] = await getJobDate('prepare-leaderboard');
 
-  await setCoverImageNsfwLevel();
+  // await setCoverImageNsfwLevel();
 
   const leaderboards = await dbWrite.leaderboard.findMany({
     where: {
@@ -30,11 +30,9 @@ const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async 
 
   // Get latest results for date
   const addDays = dayjs().utc().hour() >= 23 ? 1 : 0;
-  console.log(addDays);
+  log('Leaderboards - Starting');
   const tasks = leaderboards.map(({ id, query }) => async () => {
     jobContext.checkIfCanceled();
-    log(`Leaderboard ${id} - Starting`);
-    const start = Date.now();
     const hasDataQuery = await pgDbWrite.query<{ count: number }>(`
       SELECT COUNT(*) as count FROM "LeaderboardResult"
       WHERE "leaderboardId" = '${id}' AND date = current_date + interval '${addDays} days'
@@ -44,6 +42,9 @@ const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async 
       log(`Leaderboard ${id} - Previously completed`);
       return;
     }
+
+    const start = Date.now();
+    log(`Leaderboard ${id} - Starting`);
 
     const includesCTE = query.includes('WITH ');
     if (includesCTE && !query.includes('scores')) throw new Error('Query must include scores CTE');
@@ -65,6 +66,7 @@ const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async 
     log(`Leaderboard ${id} - Done - ${(Date.now() - start) / 1000}s`);
   });
   await limitConcurrency(tasks, 3);
+  log('Leaderboards - Done');
 
   await updateLegendsBoardResults();
 
@@ -128,6 +130,7 @@ const updateUserDiscordLeaderboardRoles = createJob(
 );
 
 async function setCoverImageNsfwLevel() {
+  log('Setting cover image nsfw level - version');
   await dbWrite.$executeRaw`
     -- set version nsfw image level based on post nsfw level
     WITH model_version_nsfw_level AS (
@@ -145,6 +148,7 @@ async function setCoverImageNsfwLevel() {
     WHERE level.id = mv.id;
   `;
 
+  log('Setting cover image nsfw level - model');
   await dbWrite.$executeRaw`
     -- set model nsfw image level based on version nsfw level
     WITH model_nsfw_level AS (
