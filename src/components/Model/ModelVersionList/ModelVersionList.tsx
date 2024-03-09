@@ -3,6 +3,7 @@ import {
   Box,
   Button,
   Group,
+  Loader,
   Menu,
   ScrollArea,
   ThemeIcon,
@@ -32,6 +33,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 
 import { ModelById } from '~/types/router';
+import { useToggleCheckpointCoverageMutation } from '~/components/Model/model.utils';
 
 const useStyles = createStyles((theme) => ({
   scrollContainer: { position: 'relative' },
@@ -99,6 +101,7 @@ export function ModelVersionList({
   versions,
   selected,
   showExtraIcons,
+  showToggleCoverage,
   onVersionClick,
   onDeleteClick,
 }: Props) {
@@ -117,6 +120,18 @@ export function ModelVersionList({
 
   const scrollLeft = () => viewportRef.current?.scrollBy({ left: -200, behavior: 'smooth' });
   const scrollRight = () => viewportRef.current?.scrollBy({ left: 200, behavior: 'smooth' });
+
+  const { toggle, isLoading } = useToggleCheckpointCoverageMutation();
+  const handleToggleCoverage = async ({
+    modelId,
+    versionId,
+  }: {
+    modelId: number;
+    versionId: number;
+  }) => {
+    // Error is handled at the hook level
+    await toggle({ id: modelId, versionId }).catch(() => null);
+  };
 
   useEffect(() => {
     if (viewportRef.current) {
@@ -204,18 +219,19 @@ export function ModelVersionList({
               compact
             >
               <Group spacing={8} noWrap>
-                {features.imageGeneration && version.canGenerate && (
-                  <ThemeIcon
-                    title="This version is available for image generation"
-                    color="cyan"
-                    variant="light"
-                    radius="xl"
-                    size="sm"
-                    sx={{ backgroundColor: 'transparent' }}
-                  >
-                    <IconBrush size={16} stroke={2.5} />
-                  </ThemeIcon>
-                )}
+                {features.imageGeneration &&
+                  (version.canGenerate || version.hasCheckpointCoverage) && (
+                    <ThemeIcon
+                      title="This version is available for image generation"
+                      color="cyan"
+                      variant="light"
+                      radius="xl"
+                      size="sm"
+                      sx={{ backgroundColor: 'transparent' }}
+                    >
+                      <IconBrush size={16} stroke={2.5} />
+                    </ThemeIcon>
+                  )}
                 {version.name}
               </Group>
             </Button>
@@ -310,6 +326,27 @@ export function ModelVersionList({
                       Add images
                     </Menu.Item>
                   )}
+                  {currentUser?.isModerator && showToggleCoverage && (
+                    <>
+                      <Menu.Divider />
+                      <Menu.Label>Moderation zone</Menu.Label>
+                      <Menu.Item
+                        disabled={isLoading}
+                        icon={isLoading ? <Loader size="xs" /> : undefined}
+                        onClick={() =>
+                          handleToggleCoverage({
+                            modelId: version.modelId,
+                            versionId: version.id,
+                          })
+                        }
+                        closeMenuOnClick={false}
+                      >
+                        {version.hasCheckpointCoverage
+                          ? 'Remove from generation'
+                          : 'Add to generation'}
+                      </Menu.Item>
+                    </>
+                  )}
                 </Menu.Dropdown>
               </Menu>
             </Button.Group>
@@ -341,4 +378,5 @@ type Props = {
   onDeleteClick: (versionId: number) => void;
   selected?: number;
   showExtraIcons?: boolean;
+  showToggleCoverage?: boolean;
 };
