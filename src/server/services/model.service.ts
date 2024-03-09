@@ -1748,6 +1748,10 @@ export const getGalleryHiddenPreferences = async ({
 };
 
 export async function getCheckpointGenerationCoverage(versionIds: number[]) {
+  if (versionIds.length === 0) {
+    return [];
+  }
+
   const coveredResources = await dbRead.$queryRaw<{ version_id: number }[]>`
     SELECT version_id FROM "CoveredCheckpointDetails"
     WHERE version_id IN (${Prisma.join(versionIds)});
