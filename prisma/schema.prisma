@@ -2814,6 +2814,7 @@ model VaultItem {
   detailsSizeKb  Int
   imagesSizeKb   Int
   notes          String?
+  meta           Json            @default("{}")
 }
 
 model Vault {

@@ -54,6 +54,7 @@ import { SortFilter } from '~/components/Filters';
 import { VaultSort } from '~/server/common/enums';
 import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
 import { dbRead } from '~/server/db/client';
+import { Tooltip } from 'chart.js';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -255,6 +256,24 @@ const VaultItemDownload = ({ vaultItem }: { vaultItem: VaultItemGetPaged }) => {
   );
 };
 
+const VaultItemsStatusDetailsMap = {
+  [VaultItemStatus.Stored]: {
+    badgeColor: 'green',
+    tooltip: (meta: VaultItemMetadataSchema) =>
+      'This model is stored in your Civit Vault and is ready for you to download.',
+  },
+  [VaultItemStatus.Pending]: {
+    badgeColor: 'yellow',
+    tooltip: (meta: VaultItemMetadataSchema) =>
+      'We will be processing this model soon and will be ready to download shortly.',
+  },
+  [VaultItemStatus.Failed]: {
+    badgeColor: 'yellow',
+    tooltip: (meta: VaultItemMetadataSchema) =>
+      `This model has failed to process ${meta.failuresC} times. After 3 failed attempts, the model will be removed from your Civit Vault.`,
+  },
+};
+
 export default function CivitaiVault() {
   const currentUser = useCurrentUser();
   const { vault, isLoading: isLoadingVault } = useQueryVault();
@@ -434,6 +453,7 @@ export default function CivitaiVault() {
                 )}
                 {items.map((item) => {
                   const isSelected = !!selectedItems.find((i) => i.id === item.id);
+                  const meta = (item.meta ?? {}) as VaultItemMetadataSchema;
 
                   return (
                     <tr
@@ -496,7 +516,21 @@ export default function CivitaiVault() {
                       <td>{formatDate(item.createdAt)}</td>
                       <td>{formatDate(item.addedAt)}</td>
                       <td>{item.refreshedAt ? formatDate(item.refreshedAt) : '-'}</td>
-                      <td>{item.notes ?? '-'}</td>
+                      <td>
+                        <Stack>
+                          <Tooltip
+                            label={VaultItemsStatusDetailsMap[item.status].tooltip(meta.failures)}
+                          >
+                            <Badge
+                              size="xs"
+                              color={VaultItemsStatusDetailsMap[item.status].badgeColor}
+                            >
+                              {getDisplayName(item.status as VaultItemStatus)}
+                            </Badge>
+                          </Tooltip>
+                          <Text>{item.notes ?? '-'}</Text>
+                        </Stack>
+                      </td>
                       <td>
                         {/* {item.status === VaultItemStatus.Stored && ( */}
                         <ActionIcon

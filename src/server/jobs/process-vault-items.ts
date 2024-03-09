@@ -1,4 +1,4 @@
-import { VaultItemStatus } from '@prisma/client';
+import { Prisma, VaultItemStatus } from '@prisma/client';
 import JSZip, { file } from 'jszip';
 import { createJob } from './job';
 import { dbWrite } from '~/server/db/client';
@@ -10,6 +10,9 @@ import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { fetchBlob } from '~/utils/file-utils';
 import { constants } from '~/server/common/constants';
 import { withRetries } from '~/server/utils/errorHandling';
+import { VaultItemMetadataSchema } from '../schema/vault.schema';
+
+const MAX_FAILURES = 3;
 
 export const processVaultItems = createJob('process-vault-items', '1 * * * *', async () => {
   if (!env.S3_VAULT_BUCKET) {
@@ -21,6 +24,20 @@ export const processVaultItems = createJob('process-vault-items', '1 * * * *', a
       status: {
         in: [VaultItemStatus.Pending, VaultItemStatus.Failed],
       },
+      OR: [
+        {
+          meta: {
+            path: ['failures'],
+            lte: MAX_FAILURES,
+          },
+        },
+        {
+          meta: {
+            path: ['failures'],
+            equals: Prisma.JsonNull,
+          },
+        },
+      ],
     },
   });
 
@@ -100,21 +117,29 @@ export const processVaultItems = createJob('process-vault-items', '1 * * * *', a
           )
         )
       );
+
       // If everything above went out smoothly, the user can now download the files from the vault.
-      // await dbWrite.vaultItem.update({
-      //   where: { id: vaultItem.id },
-      //   data: {
-      //     status: VaultItemStatus.Stored,
-      //   },
-      // });
+      await dbWrite.vaultItem.update({
+        where: { id: vaultItem.id },
+        data: {
+          status: VaultItemStatus.Stored,
+        },
+      });
     } catch (e) {
       console.error('Error processing vault item:', e);
+      const meta = (vaultItem.meta ?? { failures: 0 }) as VaultItemMetadataSchema;
+
       await dbWrite.vaultItem.update({
         where: { id: vaultItem.id },
         data: {
           status: VaultItemStatus.Failed,
+          meta: {
+            ...meta,
+            failures: meta.failures + 1,
+          },
         },
       });
+
       continue;
     }
   }

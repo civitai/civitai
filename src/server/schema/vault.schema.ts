@@ -41,3 +41,8 @@ export type VaultItemsRemoveModelVersionsSchema = z.infer<
 export const vaultItemsRemoveModelVersionsSchema = z.object({
   modelVersionIds: z.array(z.number()),
 });
+
+export type VaultItemMetadataSchema = z.infer<typeof vaultItemMetadataSchema>;
+export const vaultItemMetadataSchema = z.object({
+  failures: z.number().default(0),
+});
