@@ -32,6 +32,7 @@ const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async 
   const addDays = dayjs().utc().hour() >= 23 ? 1 : 0;
   log('Leaderboards - Starting');
   const tasks = leaderboards.map(({ id, query }) => async () => {
+    if (id === 'images-nsfw') return; // Skip images nsfw leaderboard until we can fix it
     jobContext.checkIfCanceled();
     const hasDataQuery = await pgDbWrite.query<{ count: number }>(`
       SELECT COUNT(*) as count FROM "LeaderboardResult"
