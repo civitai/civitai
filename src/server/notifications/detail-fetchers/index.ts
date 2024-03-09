@@ -5,6 +5,7 @@ import { buzzDetailFetcher } from '~/server/notifications/detail-fetchers/buzz.d
 import { commentDetailFetcher } from '~/server/notifications/detail-fetchers/comment.detail-fetcher';
 import { followDetailFetcher } from '~/server/notifications/detail-fetchers/follow.detail-fetcher';
 import { modelDetailFetcher } from '~/server/notifications/detail-fetchers/model.detail-fetcher';
+import { reviewDetailFetcher } from '~/server/notifications/detail-fetchers/review.detail-fetcher';
 
 const detailFetchers = [
   commentDetailFetcher,
@@ -12,6 +13,7 @@ const detailFetchers = [
   articleDetailFetcher,
   buzzDetailFetcher,
   followDetailFetcher,
+  reviewDetailFetcher,
 ];
 export async function populateNotificationDetails(notifications: BareNotification[]) {
   for (const { types, fetcher } of detailFetchers) {
