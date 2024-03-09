@@ -39,7 +39,8 @@ export const reviewNotifications = createNotificationProcessor({
                 JOIN "ImageResource" ir ON ir."imageId" = i.id AND ir."modelVersionId" = mv.id
                 WHERE i."userId" = r."userId"
             )
-          ) "details"
+          ) "details",
+          r.details AS "content"
         FROM "ResourceReview" r
         JOIN "User" u ON r."userId" = u.id
         JOIN "ModelVersion" mv ON mv.id = r."modelVersionId"
@@ -47,7 +48,8 @@ export const reviewNotifications = createNotificationProcessor({
         WHERE
           m."userId" > 0 AND
           m."userId" != r."userId" AND
-          r."createdAt" > '${lastSent}'
+          r."createdAt" > '${lastSent}'::timestamp - INTERVAL '5 minutes' AND
+          r."createdAt" <= NOW() - INTERVAL '5 minutes'
       )
       INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
@@ -57,7 +59,8 @@ export const reviewNotifications = createNotificationProcessor({
         details,
         '${category}'::"NotificationCategory" "category"
       FROM new_reviews
-      WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-review');`,
+      WHERE (CAST(details->'imageCount' as int) > 0 OR content IS NOT NULL) AND
+        NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-review');`,
   },
   'review-reminder': {
     displayName: 'Review reminders',
