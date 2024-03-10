@@ -487,7 +487,7 @@ const onIndexUpdate = async ({
         indexName,
         documents: updateIndexReadyRecords,
         batchSize: MEILISEARCH_DOCUMENT_BATCH_SIZE,
-        jobContext,
+        // jobContext,
       });
 
       console.log('onIndexUpdate :: base tasks for updated items have been added');
@@ -499,7 +499,7 @@ const onIndexUpdate = async ({
         indexName,
         documents: updateIndexRecordsWithImages,
         batchSize: MEILISEARCH_DOCUMENT_BATCH_SIZE,
-        jobContext,
+        // jobContext,
       });
 
       console.log('onIndexUpdate :: image tasks for updated items have been added');
@@ -511,7 +511,7 @@ const onIndexUpdate = async ({
   // Now, we can tackle new additions
   let offset = 0;
   while (true) {
-    jobContext.checkIfCanceled();
+    // jobContext.checkIfCanceled();
     const whereOr: Prisma.Enumerable<Prisma.ModelWhereInput> = [];
     if (lastUpdatedAt) {
       whereOr.push({
@@ -550,7 +550,7 @@ const onIndexUpdate = async ({
       indexName,
       documents: indexReadyRecords,
       batchSize: MEILISEARCH_DOCUMENT_BATCH_SIZE,
-      jobContext,
+      // jobContext,
     });
 
     console.log('onIndexUpdate :: base tasks have been added');
@@ -559,7 +559,7 @@ const onIndexUpdate = async ({
       indexName,
       documents: indexRecordsWithImages,
       batchSize: MEILISEARCH_DOCUMENT_BATCH_SIZE,
-      jobContext,
+      // jobContext,
     });
 
     console.log('onIndexUpdate :: image tasks have been added');
