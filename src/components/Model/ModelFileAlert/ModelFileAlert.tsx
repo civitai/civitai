@@ -24,7 +24,7 @@ export const ModelFileAlert = ({ files, modelType, versionId, baseModel }: Model
 
   return (
     <>
-      {isPony && (
+      {isPony && modelType !== 'Checkpoint' && (
         <AlertWithIcon icon={<IconAlertCircle />}>
           <Text>
             This asset is designed to work best with the{' '}
