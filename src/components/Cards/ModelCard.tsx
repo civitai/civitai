@@ -187,6 +187,11 @@ export function ModelCard({ data, forceInView }: Props) {
   const isArchived = data.mode === ModelModifier.Archived;
   const onSite = !!data.version.trainingStatus;
 
+  const thumbsUpCount = data.rank?.thumbsUpCount ?? 0;
+  const thumbsDownCount = data.rank?.thumbsDownCount ?? 0;
+  const totalCount = thumbsUpCount + thumbsDownCount;
+  const positiveRating = totalCount > 0 ? thumbsUpCount / totalCount : 0;
+
   const { useModelVersionRedirect } = useModelCardContext();
   let href = `/models/${data.id}/${slugit(data.name)}`;
   if (useModelVersionRedirect) href += `?modelVersionId=${data.version.id}`;
@@ -461,6 +466,7 @@ export function ModelCard({ data, forceInView }: Props) {
                           pr={8}
                           data-reviewed={hasReview}
                           radius="xl"
+                          title={`${Math.round(positiveRating * 100)}% of reviews are positive`}
                         >
                           <Group spacing={4}>
                             <Text
