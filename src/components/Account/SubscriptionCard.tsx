@@ -7,8 +7,9 @@ import {
 } from '~/components/DescriptionTable/DescriptionTable';
 import { ManageSubscriptionButton } from '~/components/Stripe/ManageSubscriptionButton';
 import { PlanBenefitList } from '~/components/Stripe/PlanBenefitList';
-import { planDetails } from '~/components/Stripe/PlanCard';
+import { getPlanDetails } from '~/components/Stripe/PlanCard';
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
+import { ProductMetadata } from '~/server/schema/stripe.schema';
 import { getStripeCurrencyDisplay } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -94,7 +95,9 @@ export function SubscriptionCard() {
             <Text size="md" weight={500}>
               Your Membership Includes
             </Text>
-            <PlanBenefitList benefits={planDetails[0].benefits} />
+            <PlanBenefitList
+              benefits={getPlanDetails(data?.product?.metadata as ProductMetadata)[0].benefits}
+            />
           </Stack>
         )}
       </Stack>

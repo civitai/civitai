@@ -273,7 +273,7 @@ const VaultItemsStatusDetailsMap = {
   [VaultItemStatus.Failed]: {
     badgeColor: 'yellow',
     tooltip: (meta: VaultItemMetadataSchema) =>
-      `This model has failed to process ${meta.failuresC} times. After 3 failed attempts, the model will be removed from your Civit Vault.`,
+      `This model has failed to process ${meta.failures} times. After 3 failed attempts, the model will be removed from your Civit Vault.`,
   },
 };
 

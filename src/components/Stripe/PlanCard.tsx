@@ -9,7 +9,7 @@ import {
   Select,
   Button,
 } from '@mantine/core';
-import { IconAdCircleOff, IconBolt, IconChevronDown } from '@tabler/icons-react';
+import { IconAdCircleOff, IconBolt, IconChevronDown, IconCloud } from '@tabler/icons-react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { benefitIconSize, BenefitItem, PlanBenefitList } from '~/components/Stripe/PlanBenefitList';
 import { CurrencyBadge } from '../Currency/CurrencyBadge';
@@ -19,6 +19,9 @@ import type { StripePlan, StripeSubscription } from '~/server/services/stripe.se
 import { useState } from 'react';
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
 import { getStripeCurrencyDisplay } from '~/utils/string-helpers';
+import { ProductMetadata } from '~/server/schema/stripe.schema';
+import { isDefined } from '~/utils/type-guards';
+import { formatKBytes } from '~/utils/number-helpers';
 
 type PlanCardProps = {
   product: StripePlan;
@@ -27,7 +30,8 @@ type PlanCardProps = {
 
 export function PlanCard({ product, subscription }: PlanCardProps) {
   const { classes } = useStyles();
-  const { benefits, image } = planDetails.find((x) => x.name === product.name) ?? {};
+  const meta = (product.metadata ?? {}) as ProductMetadata;
+  const { benefits, image } = getPlanDetails(meta).find((x) => x.name === product.name) ?? {};
   const defaultPriceId = subscription?.price.id ?? product.defaultPriceId;
   const [priceId, setPriceId] = useState<string | null>(defaultPriceId);
   const price = product.prices.find((p) => p.id === priceId) ?? product.prices[0];
@@ -97,7 +101,9 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
   );
 }
 
-export const planDetails: PlanMeta[] = [
+export const getPlanDetails: (metadata: ProductMetadata) => PlanMeta[] = (
+  metadata: ProductMetadata = {}
+) => [
   {
     name: 'Supporter Tier',
     image: '5844e919-31e3-4dd7-a3c3-f5affdc7af7a',
@@ -131,7 +137,14 @@ export const planDetails: PlanMeta[] = [
           </Text>
         ),
       },
-    ],
+      metadata.vaultSizeKb
+        ? {
+            content: `Vault size: ${formatKBytes(metadata.vaultSizeKb)}`,
+            icon: <IconCloud />,
+            iconColor: 'blue',
+          }
+        : undefined,
+    ].filter(isDefined),
   },
 ];
 

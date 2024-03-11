@@ -42,7 +42,8 @@ export const getVaultWithStorage = async ({ userId }: { userId: number }) => {
     GROUP BY 
       v."userId",
       v."storageKb",
-      v."meta"
+      v."meta",
+      v."updatedAt"
   `;
 
   return row;
