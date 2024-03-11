@@ -32,6 +32,8 @@ function getClient({ readonly }: { readonly: boolean } = { readonly: false }) {
     connectionTimeoutMillis: env.DATABASE_CONNECTION_TIMEOUT,
     max: env.DATABASE_POOL_MAX,
     idleTimeoutMillis: env.DATABASE_POOL_IDLE_TIMEOUT,
+    statement_timeout: readonly ? env.DATABASE_READ_TIMEOUT : env.DATABASE_WRITE_TIMEOUT,
+    application_name: `node-pg${env.PODNAME ? '-' + env.PODNAME : ''}`,
   }) as AugmentedPool;
 
   pool.cancellableQuery = async function <R extends QueryResultRow = any>(
