@@ -28,8 +28,16 @@ import {
   Tooltip,
   Grid,
   AspectRatio,
+  Menu,
 } from '@mantine/core';
-import { IconCloudOff, IconDeviceDesktop, IconDownload, IconSearch } from '@tabler/icons-react';
+import {
+  IconCloudCheck,
+  IconCloudOff,
+  IconCloudUp,
+  IconDeviceDesktop,
+  IconDownload,
+  IconSearch,
+} from '@tabler/icons-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useMutateVault, useQueryVault } from '~/components/Vault/vault.util';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -57,6 +65,7 @@ import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
 import { dbRead } from '~/server/db/client';
 import { getVaultState } from '~/utils/vault';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -231,65 +240,41 @@ const VaultItemsRemove = ({ vaultItems }: { vaultItems: VaultItemGetPaged[] }) =
 };
 
 const VaultItemDownload = ({ vaultItem }: { vaultItem: VaultItemGetPaged }) => {
-  const dialog = useDialogContext();
-  const handleClose = dialog.onClose;
-
   return (
-    <Modal {...dialog} size="md" withCloseButton title={`Download your model`}>
-      <Stack>
-        <Text size="sm">Please select what you want to download from your model</Text>
-
-        <Button
-          component={NextLink}
-          href={`/api/download/vault/${vaultItem.id}?type=model`}
-          ml="auto"
-          variant="light"
-          fullWidth
-          radius="xl"
-          download
-        >
+    <Menu withinPortal>
+      <Menu.Target>
+        <ActionIcon ml="auto">
+          <IconDownload />
+        </ActionIcon>
+      </Menu.Target>
+      <Menu.Dropdown>
+        <Menu.Item component={NextLink} href={`/api/download/vault/${vaultItem.id}?type=model`}>
           Model
-        </Button>
-        <Button
-          component={NextLink}
-          href={`/api/download/vault/${vaultItem.id}?type=details`}
-          ml="auto"
-          variant="light"
-          fullWidth
-          radius="xl"
-          download
-        >
+        </Menu.Item>
+        <Menu.Item component={NextLink} href={`/api/download/vault/${vaultItem.id}?type=details`}>
           Details
-        </Button>
-        <Button
-          component={NextLink}
-          href={`/api/download/vault/${vaultItem.id}?type=images`}
-          ml="auto"
-          variant="light"
-          fullWidth
-          radius="xl"
-          download
-        >
+        </Menu.Item>
+        <Menu.Item component={NextLink} href={`/api/download/vault/${vaultItem.id}?type=images`}>
           Images
-        </Button>
-      </Stack>
-    </Modal>
+        </Menu.Item>
+      </Menu.Dropdown>
+    </Menu>
   );
 };
 
 const VaultItemsStatusDetailsMap = {
   [VaultItemStatus.Stored]: {
-    badgeColor: 'green',
+    icon: <IconCloudCheck />,
     tooltip: (meta: VaultItemMetadataSchema) =>
       'This model is stored in your Civit Vault and is ready for you to download.',
   },
   [VaultItemStatus.Pending]: {
-    badgeColor: 'yellow',
+    icon: <IconCloudUp />,
     tooltip: (meta: VaultItemMetadataSchema) =>
       'We will be processing this model soon and will be ready to download shortly.',
   },
   [VaultItemStatus.Failed]: {
-    badgeColor: 'yellow',
+    icon: <IconCloudOff />,
     tooltip: (meta: VaultItemMetadataSchema) =>
       `This model has failed to process ${meta.failures} times. After 3 failed attempts, the model will be removed from your Civit Vault.`,
   },
@@ -445,21 +430,28 @@ export default function CivitaiVault() {
   return (
     <Container size="fluid">
       <Stack mb="xl">
-        <Group position="apart" align="flex-end" grow>
+        <Group position="apart" align="flex-end">
           <Title order={1}>Civitai Vault</Title>
-          {vault && vault.storageKb > 0 && (
-            <Stack spacing={0}>
-              <Progress
-                style={{ width: '100%', maxWidth: '400px', marginRight: 'auto' }}
-                size="xl"
-                value={progress}
-                color={progress >= 100 ? 'red' : 'blue'}
-              />
-              <Text align="right">
-                {progress.toFixed(2)}% of {formatKBytes(vault.storageKb)} Used
-              </Text>
-            </Stack>
-          )}
+          <Group ml="auto" align="start">
+            {vault && vault.storageKb > 0 && (
+              <Stack spacing={0}>
+                <Progress
+                  style={{ width: '100%', maxWidth: '400px', marginLeft: 'auto' }}
+                  size="xl"
+                  value={progress}
+                  color={progress >= 100 ? 'red' : 'blue'}
+                />
+                <Text align="right">
+                  {progress.toFixed(2)}% of {formatKBytes(vault.storageKb, 0)} Used
+                </Text>
+              </Stack>
+            )}
+            {(progress >= 75 || (vault && vault.storageKb === 0)) && (
+              <Button component={NextLink} href="/pricing" variant="outline" size="sm">
+                Upgrade
+              </Button>
+            )}
+          </Group>
         </Group>
         {(items?.length ?? 0) > 0 && <VaultStateNotice />}
       </Stack>
@@ -548,7 +540,7 @@ export default function CivitaiVault() {
             <Table>
               <thead>
                 <tr>
-                  <th>
+                  <th width={50}>
                     <Checkbox
                       checked={allSelectedInPage}
                       onChange={() => {
@@ -568,6 +560,7 @@ export default function CivitaiVault() {
                   <th>Creator</th>
                   <th>Type</th>
                   <th>Category</th>
+                  <th>Size</th>
                   <th>Date Created</th>
                   <th>Date Added</th>
                   <th>Last Refreshed</th>
@@ -601,7 +594,7 @@ export default function CivitaiVault() {
                         [classes.selected]: isSelected,
                       })}
                     >
-                      <td>
+                      <td width={50}>
                         <Checkbox
                           checked={isSelected}
                           onChange={() => {
@@ -617,7 +610,7 @@ export default function CivitaiVault() {
                       </td>
                       <td>
                         <Group>
-                          {item.coverImageUrl && (
+                          {item.coverImageUrl ? (
                             <Image
                               src={item.coverImageUrl}
                               alt="Model Image"
@@ -625,6 +618,10 @@ export default function CivitaiVault() {
                               width={50}
                               height={50}
                             />
+                          ) : (
+                            <Tooltip label={VaultItemsStatusDetailsMap[item.status].tooltip(meta)}>
+                              {VaultItemsStatusDetailsMap[item.status].icon}
+                            </Tooltip>
                           )}
                           <Stack spacing={0}>
                             <Anchor
@@ -652,54 +649,46 @@ export default function CivitaiVault() {
                       <td>
                         <Text transform="capitalize">{getDisplayName(item.category)}</Text>
                       </td>
+                      <td>
+                        {formatKBytes(
+                          (item.modelSizeKb ?? 0) +
+                            (item.imagesSizeKb ?? 0) +
+                            (item.detailsSizeKb ?? 0)
+                        )}
+                      </td>
                       <td>{formatDate(item.createdAt)}</td>
                       <td>{formatDate(item.addedAt)}</td>
                       <td>{item.refreshedAt ? formatDate(item.refreshedAt) : '-'}</td>
                       <td>
-                        <Stack>
-                          <Tooltip label={VaultItemsStatusDetailsMap[item.status].tooltip(meta)}>
-                            <Badge
-                              size="xs"
-                              color={VaultItemsStatusDetailsMap[item.status].badgeColor}
-                            >
-                              {getDisplayName(item.status)}
-                            </Badge>
-                          </Tooltip>
-                          {item.notes && <Text>{item.notes ?? '-'}</Text>}
+                        <Stack maw="25vw">
+                          <ContentClamp maxHeight={48}>
+                            {item.notes && <Text>{item.notes ?? '-'}</Text>}
+                          </ContentClamp>
                         </Stack>
                       </td>
                       <td>
                         {item.status === VaultItemStatus.Stored && (
-                          <ActionIcon
-                            onClick={() => {
-                              dialogStore.trigger({
-                                component: VaultItemDownload,
-                                props: {
-                                  vaultItem: item,
-                                },
-                              });
-                            }}
-                            ml="auto"
-                          >
-                            <IconDownload />
-                          </ActionIcon>
+                          <VaultItemDownload vaultItem={item} />
                         )}
                       </td>
                     </tr>
                   );
                 })}
               </tbody>
-              {pagination && pagination.totalPages > 1 && (
-                <Group position="apart">
-                  <Text>Total {pagination.totalItems.toLocaleString()} items</Text>
-                  <Pagination
-                    page={filters.page}
-                    onChange={(page) => setFilters((curr) => ({ ...curr, page }))}
-                    total={pagination.totalPages}
-                  />
-                </Group>
-              )}
             </Table>
+            {pagination && pagination.totalPages > 1 && (
+              <Group position="apart">
+                <Text>Total {pagination.totalItems.toLocaleString()} items</Text>
+                <Pagination
+                  page={filters.page}
+                  onChange={(page) => {
+                    setFilters((curr) => ({ ...curr, page }));
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                  }}
+                  total={pagination.totalPages}
+                />
+              </Group>
+            )}
           </Stack>
         </div>
       )}

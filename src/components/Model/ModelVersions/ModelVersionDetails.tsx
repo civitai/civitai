@@ -7,6 +7,7 @@ import {
   Card,
   Center,
   Group,
+  Loader,
   MantineTheme,
   Menu,
   Modal,
@@ -29,6 +30,7 @@ import {
   IconCloudCheck,
   IconCloudUp,
   IconCloudLock,
+  IconLoader,
 } from '@tabler/icons-react';
 import { TRPCClientErrorBase } from '@trpc/client';
 import { DefaultErrorShape } from '@trpc/server';
@@ -637,10 +639,16 @@ export function ModelVersionDetails({
                           sx={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
                           color={isInVault ? 'green' : 'gray'}
                           onClick={toggleVaultItem}
-                          loading={isLoading}
+                          disabled={isLoading}
                           variant={isInVault ? 'light' : undefined}
                         >
-                          {isLoading ? null : isInVault ? <IconCloudCheck /> : <IconCloudLock />}
+                          {isLoading ? (
+                            <Loader size="xs" />
+                          ) : isInVault ? (
+                            <IconCloudCheck />
+                          ) : (
+                            <IconCloudLock />
+                          )}
                         </Button>
                       </div>
                     </Tooltip>

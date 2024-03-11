@@ -168,11 +168,6 @@ export const getModelVersionDataForVault = async ({
       }`,
     },
     {
-      header: 'Stats',
-      value: (modelVersion.rank?.downloadCountAllTime ?? 0).toLocaleString(),
-      visible: !!modelVersion?.rank,
-    },
-    {
       header: 'Uploaded',
       value: formatDate(modelVersion.createdAt),
     },
@@ -217,6 +212,9 @@ export const getModelVersionDataForVault = async ({
 
   const detail = `
     <style>
+      p {
+        color: black !important;
+      }
       table {
         width: 100%;
         margin-bottom: 1rem;
@@ -250,7 +248,6 @@ export const getModelVersionDataForVault = async ({
           .join('')} 
       </tbody> 
     </table>
-    <hr />
     <h3>Description</h3>
     ${modelVersion.description ?? modelVersion.model.description ?? '<p>N/A</p>'}
   `;
@@ -477,12 +474,15 @@ export const getPaginatedVaultItems = async (
 
   const itemsWithCoverImages = await Promise.all(
     items.map(async (item) => {
-      const { url } = await getGetUrlByKey(
-        constants.vault.keys.cover
-          .replace(':modelVersionId', item.modelVersionId.toString())
-          .replace(':userId', item.vaultId.toString()),
-        { bucket: env.S3_VAULT_BUCKET }
-      );
+      const { url } =
+        item.status === VaultItemStatus.Stored
+          ? await getGetUrlByKey(
+              constants.vault.keys.cover
+                .replace(':modelVersionId', item.modelVersionId.toString())
+                .replace(':userId', item.vaultId.toString()),
+              { bucket: env.S3_VAULT_BUCKET }
+            )
+          : { url: null };
 
       return {
         ...item,

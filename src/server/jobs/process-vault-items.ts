@@ -24,20 +24,20 @@ export const processVaultItems = createJob('process-vault-items', '1 * * * *', a
       status: {
         in: [VaultItemStatus.Pending, VaultItemStatus.Failed],
       },
-      // OR: [
-      //   {
-      //     meta: {
-      //       path: ['failures'],
-      //       lte: MAX_FAILURES,
-      //     },
-      //   },
-      //   {
-      //     meta: {
-      //       path: ['failures'],
-      //       equals: Prisma.JsonNull,
-      //     },
-      //   },
-      // ],
+      OR: [
+        {
+          meta: {
+            path: ['failures'],
+            lte: MAX_FAILURES,
+          },
+        },
+        {
+          meta: {
+            path: ['failures'],
+            equals: Prisma.AnyNull,
+          },
+        },
+      ],
       // TODO: Deleting is showing down instead of side.
     },
   });

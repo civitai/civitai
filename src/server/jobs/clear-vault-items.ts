@@ -35,6 +35,7 @@ export const clearVaultItems = createJob('clear-vault-items', '0 0 * * *', async
 
   for (const vault of problemVaults) {
     // I don't expect many vaults to be exceeded by over 50 items, but if it happens, we will need to run this loop multiple times.
+    let removedKb = 0;
     while (true) {
       const items = await dbWrite.vaultItem.findMany({
         where: {
@@ -47,7 +48,6 @@ export const clearVaultItems = createJob('clear-vault-items', '0 0 * * *', async
       });
 
       // Removed kb:
-      let removedKb = 0;
       const removedModelVersionIds = [];
       for (const item of items) {
         removedKb += item.detailsSizeKb + item.imagesSizeKb + item.modelSizeKb;
