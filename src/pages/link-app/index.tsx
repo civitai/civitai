@@ -1,5 +1,5 @@
 import {
-  AspectRatio,
+  // AspectRatio,
   Button,
   Container,
   createStyles,
@@ -10,7 +10,7 @@ import {
   Title,
   Image,
 } from '@mantine/core';
-import { YoutubeEmbed } from '~/components/YoutubeEmbed/YoutubeEmbed';
+// import { YoutubeEmbed } from '~/components/YoutubeEmbed/YoutubeEmbed';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NextLink } from '@mantine/next';
@@ -108,10 +108,10 @@ export default function LinkApp() {
         </Grid.Col>
       </Grid>
 
-      {/* TODO: Replace video */}
-      <AspectRatio ratio={16 / 9} my={40}>
+      {/* TODO: Add video once created */}
+      {/* <AspectRatio ratio={16 / 9} my={40}>
         <YoutubeEmbed videoId="MaSRXvM05x4" />
-      </AspectRatio>
+      </AspectRatio> */}
 
       <Button
         variant="filled"
