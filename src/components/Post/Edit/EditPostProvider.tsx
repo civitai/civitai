@@ -44,6 +44,7 @@ type EditPostProps = {
   modelVersionId?: number;
   title?: string;
   detail?: string;
+  nsfw?: boolean;
   nsfwLevel?: number;
   publishedAt?: Date;
   tags: TagProps[];
@@ -126,7 +127,7 @@ const createEditPostStore = ({
             }),
           toggleNsfw: (value) =>
             set((state) => {
-              // state.nsfw = value ?? !state.nsfw; // TODO.nsfwLevel
+              state.nsfw = value ?? !state.nsfw;
             }),
           setPublishedAt: (publishedAt) =>
             set((state) => {

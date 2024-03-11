@@ -26,8 +26,6 @@ import { hiddenLabel, matureLabel } from '~/components/Post/Edit/EditPostControl
 import { useFormStorage } from '~/hooks/useFormStorage';
 import {
   Form,
-  InputCheckbox,
-  InputFlag,
   InputMultiFileUpload,
   InputRTE,
   InputSelect,
@@ -50,12 +48,12 @@ import { ContentPolicyLink } from '../ContentPolicyLink/ContentPolicyLink';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { constants } from '~/server/common/constants';
 import { imageSchema } from '~/server/schema/image.schema';
-import { NsfwLevel } from '~/server/common/enums';
-import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
+import { browsingLevelLabels, browsingLevels } from '~/shared/constants/browsingLevel.constants';
 
-const schema = upsertArticleInput.omit({ coverImage: true }).extend({
+const schema = upsertArticleInput.omit({ coverImage: true, userNsfwLevel: true }).extend({
   categoryId: z.number().min(0, 'Please select a valid category'),
   coverImage: imageSchema.refine((data) => !!data.url, { message: 'Please upload a cover image' }),
+  userNsfwLevel: z.string().optional(),
 });
 const querySchema = z.object({
   category: z.preprocess(parseNumericString, z.number().optional().default(-1)),
@@ -77,6 +75,11 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
+export const browsingLevelSelectOptions = browsingLevels.map((level) => ({
+  label: browsingLevelLabels[level],
+  value: String(level),
+}));
+
 export function ArticleUpsertForm({ article }: Props) {
   const { classes } = useStyles();
   const queryUtils = trpc.useUtils();
@@ -92,7 +95,7 @@ export function ArticleUpsertForm({ article }: Props) {
       ...article,
       title: article?.title ?? '',
       content: article?.content ?? '',
-      userNsfwLevel: article?.userNsfwLevel ?? 0,
+      userNsfwLevel: article?.userNsfwLevel ? String(article.userNsfwLevel) : undefined,
       categoryId: article?.tags.find((tag) => tag.isCategory)?.id ?? defaultCategory,
       tags: article?.tags.filter((tag) => !tag.isCategory) ?? [],
       coverImage: article?.coverImage ?? null,
@@ -112,20 +115,6 @@ export function ArticleUpsertForm({ article }: Props) {
     }),
   });
 
-  // useEffect(() => {
-  //   const result = schema.safeParse({
-  //     ...article,
-  //     title: article?.title ?? '',
-  //     content: article?.content ?? '',
-  //     categoryId: article?.tags.find((tag) => tag.isCategory)?.id ?? defaultCategory,
-  //     tags: article?.tags.filter((tag) => !tag.isCategory) ?? [],
-  //     coverImage: article?.coverImage ?? null,
-  //   });
-  //   if (result.success) form.reset({ ...result.data });
-  //   else console.error(result.error);
-  //   // eslint-disable-next-line react-hooks/exhaustive-deps
-  // }, [article]);
-
   const [publishing, setPublishing] = useState(false);
 
   const { data, isLoading: loadingCategories } = trpc.tag.getAll.useQuery({
@@ -143,6 +132,7 @@ export function ArticleUpsertForm({ article }: Props) {
     categoryId,
     tags: selectedTags,
     coverImage,
+    userNsfwLevel,
     ...rest
   }: z.infer<typeof schema>) => {
     const selectedCategory = data?.items.find((cat) => cat.id === categoryId);
@@ -151,6 +141,7 @@ export function ArticleUpsertForm({ article }: Props) {
     upsertArticleMutation.mutate(
       {
         ...rest,
+        userNsfwLevel: userNsfwLevel ? Number(userNsfwLevel) : 0,
         tags,
         publishedAt: publishing ? new Date() : null,
         coverImage: coverImage,
@@ -225,10 +216,9 @@ export function ArticleUpsertForm({ article }: Props) {
               }}
               sx={hideMobile}
             />
-            <InputFlag
-              spacing="xs"
+            <InputSelect
               name="userNsfwLevel"
-              flag="NsfwLevel"
+              data={browsingLevelSelectOptions}
               label={
                 <Group spacing={4} noWrap>
                   Maturity Level
@@ -240,7 +230,6 @@ export function ArticleUpsertForm({ article }: Props) {
                   <ContentPolicyLink size="xs" variant="text" color="dimmed" td="underline" />
                 </Group>
               }
-              mapLabel={({ value }) => browsingLevelLabels[value as NsfwLevel]}
             />
             <InputSimpleImageUpload
               name="coverImage"

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useHiddenPreferencesContext } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { NsfwLevel } from '~/server/common/enums';
 import { Flags } from '~/shared/utils';
 import { isDefined, paired } from '~/utils/type-guards';
 
@@ -44,6 +45,9 @@ export function useApplyHiddenPreferences<
                 const isOwner = userId === currentUser?.id;
                 if ((isOwner || isModerator) && model.nsfwLevel === 0) return true;
                 if (!Flags.intersects(model.nsfwLevel, browsingLevel)) return false;
+                // if (model.nsfw) {
+                //   if (!Flags.hasFlag(browsingLevel, NsfwLevel.XXX)) return false;
+                // }
                 if (userId && hiddenUsers.get(userId)) return false;
                 if (hiddenModels.get(model.id) && !showHidden) return false;
                 for (const tag of model.tags ?? []) if (hiddenTags.get(tag)) return false;
@@ -242,6 +246,7 @@ type BaseModel = {
   images: { id: number; tags?: number[]; nsfwLevel: number; userId?: number }[];
   tags?: number[];
   nsfwLevel: number;
+  nsfw?: boolean;
 };
 
 type BaseArticle = {
@@ -286,6 +291,7 @@ type BaseBounty = {
   user: { id: number };
   tags?: number[];
   nsfwLevel: number;
+  nsfw?: boolean;
   images: {
     id: number;
     tagIds?: number[];

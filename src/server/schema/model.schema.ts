@@ -162,7 +162,7 @@ export const modelUpsertSchema = licensingSchema.extend({
   locked: z.boolean().optional(),
   templateId: z.number().optional(),
   bountyId: z.number().optional(),
-  userNsfwLevel: z.number().optional(),
+  nsfw: z.boolean().optional(),
 });
 
 export type UpdateGallerySettingsInput = z.infer<typeof updateGallerySettingsSchema>;

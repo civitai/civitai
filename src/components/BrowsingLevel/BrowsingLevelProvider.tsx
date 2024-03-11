@@ -8,7 +8,6 @@ import React, {
 } from 'react';
 import {
   BrowsingLevel,
-  getIsPublicBrowsingLevel,
   publicBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { useCookies } from '~/providers/CookiesProvider';

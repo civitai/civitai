@@ -42,6 +42,7 @@ import { Currency } from '@prisma/client';
 import { getReactionsSelectV2 } from '~/server/selectors/reaction.selector';
 import { handleLogError } from '~/server/utils/errorHandling';
 import { isNsfwBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { NsfwLevel } from '~/server/common/enums';
 
 export const getInfiniteBountiesHandler = async ({
   input,
@@ -65,6 +66,7 @@ export const getInfiniteBountiesHandler = async ({
         type: true,
         complete: true,
         user: { select: userWithCosmeticsSelect },
+        nsfw: true,
         nsfwLevel: true,
         tags: {
           select: {
@@ -112,9 +114,13 @@ export const getInfiniteBountiesHandler = async ({
 
           return {
             ...item,
+            nsfwLevel: item.nsfw ? NsfwLevel.XXX : item.nsfwLevel,
             user,
-            images: itemImages.map((image) => ({ ...image, tagIds: image.tags.map((x) => x.id) })),
-            // tags: tags.map(({ tag }) => ({ id: tag.id, name: tag.name })),
+            images: itemImages.map((image) => ({
+              ...image,
+              tagIds: image.tags.map((x) => x.id),
+              nsfwLevel: item.nsfw ? NsfwLevel.XXX : image.nsfwLefel,
+            })),
             tags: tags.map(({ tagId }) => tagId),
           };
         })
@@ -296,9 +302,9 @@ export const createBountyHandler = async ({
 }) => {
   try {
     const { id: userId } = ctx.user;
-    const { userNsfwLevel, poi } = input;
+    const { nsfw, poi } = input;
 
-    if (userNsfwLevel && isNsfwBrowsingLevel(userNsfwLevel) && poi)
+    if (nsfw && poi)
       throw throwBadRequestError('Mature content depicting actual people is not permitted.');
 
     const bounty = await createBounty({ ...input, userId });

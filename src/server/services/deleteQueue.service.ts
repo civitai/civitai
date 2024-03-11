@@ -3,7 +3,13 @@ import { dbWrite } from '~/server/db/client';
 import { chunk } from 'lodash-es';
 import { isProd } from '~/env/other';
 
-export async function queueDelete({ entityType, ids }: { entityType: EntityType; ids?: number[] }) {
+export async function createDeleteQueues({
+  entityType,
+  ids,
+}: {
+  entityType: EntityType;
+  ids?: number[];
+}) {
   if (!ids?.length) return;
 
   if (!isProd) console.log(`enqueue delete :: ${entityType} :: called with ${ids.length} items`);

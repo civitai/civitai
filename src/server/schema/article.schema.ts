@@ -54,7 +54,7 @@ export const upsertArticleInput = z.object({
   }, 'Cannot be empty'),
   coverImage: imageSchema.nullish(),
   tags: z.array(tagSchema).nullish(),
-  userNsfwLevel: z.number().optional(),
+  userNsfwLevel: z.number().default(0),
   publishedAt: z.date().nullish(),
   attachments: z.array(baseFileSchema).optional(),
 });

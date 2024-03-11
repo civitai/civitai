@@ -15,7 +15,7 @@ import { SessionUser } from 'next-auth';
 
 import { env } from '~/env/server.mjs';
 import { BaseModel, BaseModelType, CacheTTL } from '~/server/common/constants';
-import { ModelSort } from '~/server/common/enums';
+import { ModelSort, NsfwLevel } from '~/server/common/enums';
 import { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
@@ -106,6 +106,7 @@ type ModelRaw = {
   id: number;
   name: string;
   type: ModelType;
+  nsfw: boolean;
   nsfwLevel: number;
   status: string;
   createdAt: Date;
@@ -545,6 +546,7 @@ export const getModelsRaw = async ({
       m."id",
       m."name",
       m."type",
+      m."nsfw",
       m."nsfwLevel",
       m."status",
       m."createdAt",
@@ -952,26 +954,21 @@ export const getModelsWithImagesAndModelVersions = async ({
     modelVersionWhere = undefined;
   }
 
-  console.time('getModelsRaw');
   const { items, isPrivate, nextCursor } = await getModelsRaw({
     input: { ...input, take },
     user,
   });
-  console.timeEnd('getModelsRaw');
 
-  const modelVersionIds = items.flatMap((m) => m.modelVersions).map((m) => m.id);
+  const modelVersionIds = items
+    .filter((model) => model.mode !== ModelModifier.TakenDown)
+    .flatMap((m) => m.modelVersions)
+    .map((m) => m.id);
 
   console.time('getImagesForModelVersionCache');
-  const images = !!modelVersionIds.length
+  const modelVersionImages = !!modelVersionIds.length
     ? await getImagesForModelVersionCache(modelVersionIds)
     : {};
   console.timeEnd('getImagesForModelVersionCache');
-
-  // let nextCursor: number | undefined;
-  // if (items.length > input.limit) {
-  //   const nextItem = items.pop();
-  //   nextCursor = nextItem?.id;
-  // }
 
   const unavailableGenResources = await getUnavailableResources();
   const result = {
@@ -981,7 +978,7 @@ export const getModelsWithImagesAndModelVersions = async ({
       .map(({ hashes, modelVersions, rank, tagsOnModels, ...model }) => {
         const [version] = modelVersions;
         if (!version) return null;
-        const versionImages = images[version.id]?.images ?? [];
+        const versionImages = modelVersionImages[version.id]?.images ?? [];
         const showImageless =
           (user?.isModerator || model.user.id === user?.id) && (input.user || input.username);
         if (!versionImages.length && !showImageless) return null;
@@ -1005,7 +1002,9 @@ export const getModelsWithImagesAndModelVersions = async ({
             rating: rank?.[`rating${input.period}`] ?? 0,
           },
           version,
-          images: model.mode !== ModelModifier.TakenDown ? versionImages : [],
+          images: model.nsfw
+            ? versionImages.map((x) => ({ ...x, nsfwLevel: NsfwLevel.XXX }))
+            : versionImages,
           canGenerate,
         };
       })

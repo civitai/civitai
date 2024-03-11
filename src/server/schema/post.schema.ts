@@ -53,7 +53,6 @@ export const postCreateSchema = z.object({
 export type PostUpdateInput = z.infer<typeof postUpdateSchema>;
 export const postUpdateSchema = z.object({
   id: z.number(),
-  userNsfwLevel: z.number().optional(),
   title: z.string().optional(),
   detail: z.string().optional(),
   publishedAt: z.date().optional(),

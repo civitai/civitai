@@ -55,7 +55,7 @@ export function EditPostControls() {
   return (
     <Stack>
       <ManagePostStatus />
-      <ManagePostMaturity />
+      {/* <ManagePostMaturity /> */}
       <ReorderImagesButton />
     </Stack>
   );
@@ -180,34 +180,34 @@ export function ManagePostStatus() {
   );
 }
 
-export function ManagePostMaturity() {
-  const id = useEditPostContext((state) => state.id);
-  // const nsfw = useEditPostContext((state) => state.nsfw);
-  const toggleNsfw = useEditPostContext((state) => state.toggleNsfw);
+// export function ManagePostMaturity() {
+//   const id = useEditPostContext((state) => state.id);
+//   const nsfw = useEditPostContext((state) => state.nsfw);
+//   const toggleNsfw = useEditPostContext((state) => state.toggleNsfw);
 
-  const { mutate, isLoading } = trpc.post.update.useMutation();
+//   const { mutate, isLoading } = trpc.post.update.useMutation();
 
-  const toggleCheckbox = () => {
-    toggleNsfw();
-    mutate({ id, userNsfwLevel: 0 }, { onError: () => toggleNsfw(false) }); // TODO.nsfwLevel
-  };
+//   const toggleCheckbox = () => {
+//     toggleNsfw();
+//     mutate({ id, nsfw }, { onError: () => toggleNsfw(false) });
+//   };
 
-  return (
-    <Checkbox
-      checked={false} // TODO.nsfwLevel
-      onChange={toggleCheckbox}
-      disabled={isLoading}
-      label={
-        <Group spacing={4}>
-          Mature
-          <Tooltip label={matureLabel} {...tooltipProps}>
-            <ThemeIcon radius="xl" size="xs" color="gray">
-              <IconQuestionMark />
-            </ThemeIcon>
-          </Tooltip>
-          <ContentPolicyLink size="xs" variant="text" color="dimmed" td="underline" />
-        </Group>
-      }
-    />
-  );
-}
+//   return (
+//     <Checkbox
+//       checked={false} // TODO.nsfwLevel
+//       onChange={toggleCheckbox}
+//       disabled={isLoading}
+//       label={
+//         <Group spacing={4}>
+//           Mature
+//           <Tooltip label={matureLabel} {...tooltipProps}>
+//             <ThemeIcon radius="xl" size="xs" color="gray">
+//               <IconQuestionMark />
+//             </ThemeIcon>
+//           </Tooltip>
+//           <ContentPolicyLink size="xs" variant="text" color="dimmed" td="underline" />
+//         </Group>
+//       }
+//     />
+//   );
+// }

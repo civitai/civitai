@@ -489,7 +489,6 @@ model Model {
   gallerySettings     Json            @default("{\"users\": [], \"tags\": [], \"images\": []}")
   availability        Availability    @default(Public)
   nsfwLevel           Int             @default(0)
-  userNsfwLevel       Int             @default(0)
 
   // Licensing
   allowNoCredit         Boolean         @default(true)
@@ -621,7 +620,6 @@ model ModelVersion {
   settings             Json?
   availability         Availability    @default(Public)
   nsfwLevel            Int             @default(0)
-  userNsfwLevel        Int             @default(0)
 
   monetization            ModelVersionMonetization?
   metrics                 ModelVersionMetric[]
@@ -1082,7 +1080,6 @@ model Post {
   unlisted       Boolean       @default(false)
   availability   Availability  @default(Public)
   nsfwLevel      Int           @default(0)
-  userNsfwLevel  Int           @default(0)
 
   images          Image[]
   tags            TagsOnPost[]
@@ -2346,7 +2343,6 @@ model Bounty {
   refunded                Boolean         @default(false)
   availability            Availability    @default(Public)
   nsfwLevel               Int             @default(0)
-  userNsfwLevel           Int             @default(0)
 
   tags        TagsOnBounty[]
   entries     BountyEntry[]

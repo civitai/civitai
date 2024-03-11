@@ -47,6 +47,7 @@ type ArticleRaw = {
   coverId?: number | null;
   title: string;
   publishedAt: Date | null;
+  userNsfwLevel: number;
   nsfwLevel: number;
   availability: Availability;
   userId: number | null;
@@ -341,6 +342,7 @@ export const getArticles = async ({
         a.title,
         a."publishedAt",
         a."nsfwLevel",
+        a."userNsfwLevel",
         a."userId",
         a."createdAt",
         a."updatedAt",

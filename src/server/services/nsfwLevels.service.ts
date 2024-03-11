@@ -59,6 +59,7 @@ export async function updateArticleNsfwLevels(articleIds: number[]) {
 }
 
 export async function updateBountyNsfwLevels(bountyIds: number[]) {
+  // TODO.nsfwLevel - if bounty.nsfw then set bounty.NsfwLevel to NsfwLevel.XXX
   await dbWrite.$queryRaw(Prisma.sql`
     WITH level AS (
       SELECT DISTINCT ON ("entityId")
@@ -111,6 +112,7 @@ export async function updateCollectionsNsfwLevels(collectionIds: number[]) {
 }
 
 export async function updateModelNsfwLevels(modelIds: number[]) {
+  // TODO.nsfwLevel - if model.nsfw then set model.NsfwLevel to NsfwLevel.XXX
   await dbWrite.$queryRaw(Prisma.sql`
     WITH level AS (
       SELECT DISTINCT ON ("modelId")
