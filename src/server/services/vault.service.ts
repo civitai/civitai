@@ -25,14 +25,16 @@ type VaultWithUsedStorage = {
   storageKb: number;
   meta: MixedObject;
   usedStorageKb: number;
+  updatedAt: Date;
 };
 
-const getVaultWithStorage = async ({ userId }: { userId: number }) => {
+export const getVaultWithStorage = async ({ userId }: { userId: number }) => {
   const [row] = await dbWrite.$queryRaw<VaultWithUsedStorage[]>`
     SELECT
       v."userId",
       v."storageKb",
       v."meta",
+      v."updatedAt",
       COALESCE(SUM(vi."detailsSizeKb" + vi."imagesSizeKb" + vi."modelSizeKb")::int, 0) as "usedStorageKb"
     FROM "Vault" v
     LEFT JOIN "VaultItem" vi ON v."userId" = vi."vaultId"

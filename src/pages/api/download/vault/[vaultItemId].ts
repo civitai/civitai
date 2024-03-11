@@ -6,6 +6,7 @@ import { constants } from '~/server/common/constants';
 
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getFileForModelVersion } from '~/server/services/file.service';
+import { getVaultWithStorage } from '~/server/services/vault.service';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { RateLimitedEndpoint } from '~/server/utils/rate-limiting';
 import { isRequestFromBrowser } from '~/server/utils/request-helpers';
@@ -13,6 +14,7 @@ import { getDownloadUrl } from '~/utils/delivery-worker';
 import { getJoinLink } from '~/utils/join-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { getGetUrlByKey } from '~/utils/s3-utils';
+import { getVaultState } from '~/utils/vault';
 
 const schema = z.object({
   vaultItemId: z.preprocess((val) => Number(val), z.number()),
@@ -70,6 +72,21 @@ export default RateLimitedEndpoint(
     const input = queryResults.data;
     const vaultItemId = input.vaultItemId;
     if (!vaultItemId) return onError(400, 'Missing vaultItemId');
+
+    const userVault = await getVaultWithStorage({ userId: session?.user.id });
+
+    if (!userVault) {
+      return onError(404, 'Vault not found');
+    }
+    const { canDownload } = getVaultState(
+      userVault.updatedAt,
+      userVault.storageKb,
+      userVault.usedStorageKb
+    );
+
+    if (!canDownload) {
+      return onError(403, 'You cannot download items from your vault at this time.');
+    }
 
     const vaultItem = await dbRead.vaultItem.findUnique({
       where: { id: Number(req.query.vaultItemId), vaultId: session?.user.id },

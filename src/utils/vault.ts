@@ -1,22 +1,25 @@
 import dayjs from 'dayjs';
 
 export const getVaultState = (
-  lastUpdatedAt: string | Date,
+  updatedAt: string | Date,
   storageKb: number,
   usedStorageKb: number
 ) => {
-  const lastUpdated = dayjs(lastUpdatedAt);
-  const downloadLimit = dayjs(lastUpdatedAt).add(7, 'day');
-  const lastUpdatedIsLessThan7Days = lastUpdated.isAfter(downloadLimit);
-  const lastUpdatedIsLessThan30Days = lastUpdated.isAfter(dayjs().subtract(30, 'day'));
+  // It is only possible to be above storage limit if the user has downgraded their account, as we do not
+  // allow the user to upload more files than their current storage limit.
+  const isBadState = usedStorageKb > storageKb;
+  const downloadLimit = dayjs(updatedAt).add(7, 'day');
+  const eraseLimit = dayjs(updatedAt).add(30, 'day');
+  const isPastDownloadLimit = dayjs().isAfter(downloadLimit);
   const isOutOfStorage = storageKb <= usedStorageKb;
-  const canDownload =
-    usedStorageKb > 0 && (storageKb > usedStorageKb || lastUpdatedIsLessThan7Days);
+  const canDownload = usedStorageKb > 0 && (storageKb > usedStorageKb || !isPastDownloadLimit);
 
   return {
-    lastUpdatedIsLessThan7Days,
-    lastUpdatedIsLessThan30Days,
+    isBadState,
+    isPastDownloadLimit,
     isOutOfStorage,
     canDownload,
+    downloadLimit,
+    eraseLimit,
   };
 };

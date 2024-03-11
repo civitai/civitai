@@ -24,6 +24,8 @@ import {
   ActionIcon,
   Anchor,
   Image,
+  Alert,
+  Tooltip,
 } from '@mantine/core';
 import { IconCloudOff, IconDownload, IconSearch } from '@tabler/icons-react';
 import { useEffect, useMemo, useState } from 'react';
@@ -36,6 +38,7 @@ import { trpc } from '~/utils/trpc';
 import { useQueryVaultItems } from '../../components/Vault/vault.util';
 import {
   GetPaginatedVaultItemsSchema,
+  VaultItemMetadataSchema,
   vaultItemsAddModelVersionSchema,
 } from '~/server/schema/vault.schema';
 import { formatDate } from '~/utils/date-helpers';
@@ -54,7 +57,7 @@ import { SortFilter } from '~/components/Filters';
 import { VaultSort } from '~/server/common/enums';
 import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
 import { dbRead } from '~/server/db/client';
-import { Tooltip } from 'chart.js';
+import { getVaultState } from '~/utils/vault';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -274,6 +277,44 @@ const VaultItemsStatusDetailsMap = {
   },
 };
 
+const VaultStateNotice = () => {
+  const { vault } = useQueryVault();
+
+  if (!vault) {
+    return null;
+  }
+
+  const { isBadState, isPastDownloadLimit, eraseLimit, downloadLimit, canDownload } = getVaultState(
+    vault.updatedAt,
+    vault.storageKb,
+    vault.usedStorageKb
+  );
+
+  if (!isBadState) {
+    return null;
+  }
+
+  return (
+    <Alert color="red">
+      {isPastDownloadLimit && (
+        <Text>
+          You cannot download because you&rsquo;ve exceeded your storage limit. Please upgrade or
+          delete some models to regain the ability to download. After {formatDate(eraseLimit)} we
+          will automatically start deleting models to keep you within your storage limit.
+        </Text>
+      )}
+
+      {canDownload && !isPastDownloadLimit && (
+        <Text>
+          You have until {formatDate(downloadLimit)} to download anytthing from your cloud. After
+          that you will have to delete models to be within your tier storage limit or upgrade again
+          to download.
+        </Text>
+      )}
+    </Alert>
+  );
+};
+
 export default function CivitaiVault() {
   const currentUser = useCurrentUser();
   const { vault, isLoading: isLoadingVault } = useQueryVault();
@@ -308,24 +349,27 @@ export default function CivitaiVault() {
 
   return (
     <Container size="xl">
-      <Group position="apart" align="flex-end" mb="xl">
-        <Title order={1}>Civitai Vaut</Title>
-        {vault && (
-          <Stack spacing={0}>
-            <Progress
-              style={{ width: '100%' }}
-              size="xl"
-              value={progress}
-              color={progress >= 100 ? 'red' : 'blue'}
-              striped
-              animate
-            />
-            <Text>
-              {formatKBytes(vault.usedStorageKb)} of {formatKBytes(vault.storageKb)} Used
-            </Text>
-          </Stack>
-        )}
-      </Group>
+      <Stack mb="xl">
+        <Group position="apart" align="flex-end">
+          <Title order={1}>Civitai Vaut</Title>
+          {vault && (
+            <Stack spacing={0}>
+              <Progress
+                style={{ width: '100%' }}
+                size="xl"
+                value={progress}
+                color={progress >= 100 ? 'red' : 'blue'}
+                striped
+                animate
+              />
+              <Text>
+                {formatKBytes(vault.usedStorageKb)} of {formatKBytes(vault.storageKb)} Used
+              </Text>
+            </Stack>
+          )}
+        </Group>
+        <VaultStateNotice />
+      </Stack>
 
       {isLoadingVault ? (
         <Center p="xl">
@@ -454,6 +498,7 @@ export default function CivitaiVault() {
                 {items.map((item) => {
                   const isSelected = !!selectedItems.find((i) => i.id === item.id);
                   const meta = (item.meta ?? {}) as VaultItemMetadataSchema;
+                  console.log(VaultItemsStatusDetailsMap[item.status].tooltip(meta));
 
                   return (
                     <tr
@@ -518,34 +563,32 @@ export default function CivitaiVault() {
                       <td>{item.refreshedAt ? formatDate(item.refreshedAt) : '-'}</td>
                       <td>
                         <Stack>
-                          <Tooltip
-                            label={VaultItemsStatusDetailsMap[item.status].tooltip(meta.failures)}
-                          >
+                          <Tooltip label={VaultItemsStatusDetailsMap[item.status].tooltip(meta)}>
                             <Badge
                               size="xs"
                               color={VaultItemsStatusDetailsMap[item.status].badgeColor}
                             >
-                              {getDisplayName(item.status as VaultItemStatus)}
+                              {getDisplayName(item.status)}
                             </Badge>
                           </Tooltip>
                           <Text>{item.notes ?? '-'}</Text>
                         </Stack>
                       </td>
                       <td>
-                        {/* {item.status === VaultItemStatus.Stored && ( */}
-                        <ActionIcon
-                          onClick={() => {
-                            dialogStore.trigger({
-                              component: VaultItemDownload,
-                              props: {
-                                vaultItem: item,
-                              },
-                            });
-                          }}
-                        >
-                          <IconDownload />
-                        </ActionIcon>
-                        {/* )} */}
+                        {item.status === VaultItemStatus.Stored && (
+                          <ActionIcon
+                            onClick={() => {
+                              dialogStore.trigger({
+                                component: VaultItemDownload,
+                                props: {
+                                  vaultItem: item,
+                                },
+                              });
+                            }}
+                          >
+                            <IconDownload />
+                          </ActionIcon>
+                        )}
                       </td>
                     </tr>
                   );
