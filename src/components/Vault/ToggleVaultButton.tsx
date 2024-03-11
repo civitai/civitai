@@ -1,5 +1,6 @@
 import React, { useCallback } from 'react';
 import { useMutateVault } from '~/components/Vault/vault.util';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 
 export function ToggleVaultButton({
@@ -13,13 +14,19 @@ export function ToggleVaultButton({
     isLoading: boolean;
   }) => React.ReactElement;
 }) {
+  const currentUser = useCurrentUser();
   const {
     data: isInVault = false,
     isLoading: isCheckingVault,
     isRefetching,
-  } = trpc.vault.isModelVersionInVault.useQuery({
-    modelVersionId,
-  });
+  } = trpc.vault.isModelVersionInVault.useQuery(
+    {
+      modelVersionId,
+    },
+    {
+      enabled: currentUser?.isMember,
+    }
+  );
 
   const { toggleModelVersion, togglingModelVersion } = useMutateVault();
   const toggleVaultItem = useCallback(
@@ -27,7 +34,7 @@ export function ToggleVaultButton({
     [toggleModelVersion, modelVersionId]
   );
 
-  if (isCheckingVault) {
+  if (isCheckingVault || !currentUser?.isMember) {
     return null;
   }
 
