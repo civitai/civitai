@@ -1,6 +1,5 @@
-import { Accordion, Button, Group, Input, Paper, Stack, Text, Title } from '@mantine/core';
+import { Accordion, Anchor, Button, Group, Input, Paper, Stack, Text, Title } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
-import { NextLink } from '@mantine/next';
 import { showNotification } from '@mantine/notifications';
 import { Currency, TrainingStatus } from '@prisma/client';
 import { useRouter } from 'next/router';
@@ -537,6 +536,13 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   useEffect(() => {
     const newArgs = optimizerArgMap[watchFieldOptimizer] ?? '';
     form.setValue('optimizerArgs', newArgs);
+
+    if (
+      watchFieldOptimizer === 'Prodigy' &&
+      form.getValues('lrScheduler') === 'cosine_with_restarts'
+    ) {
+      form.setValue('lrScheduler', 'cosine');
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [watchFieldOptimizer]);
 
@@ -806,15 +812,13 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           </Title>
           <Text color="dimmed" size="sm">
             Not sure which one to choose? Read our{' '}
-            <Text
-              component={NextLink}
-              variant="link"
-              target="_blank"
+            <Anchor
               href="https://education.civitai.com/using-civitai-the-on-site-lora-trainer"
+              target="_blank"
               rel="nofollow noreferrer"
             >
               On-Site LoRA Trainer Guide
-            </Text>{' '}
+            </Anchor>{' '}
             for more info.
           </Text>
         </Stack>
@@ -960,6 +964,9 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                         (formBaseModel === 'sdxl' || formBaseModel === 'pony')
                       ) {
                         options = options.filter((o) => o !== 'AdamW8Bit');
+                      }
+                      if (ts.name === 'lrScheduler' && watchFieldOptimizer === 'Prodigy') {
+                        options = options.filter((o) => o !== 'cosine_with_restarts');
                       }
 
                       inp = (
