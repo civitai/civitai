@@ -1,6 +1,7 @@
 import {
   Accordion,
   ActionIcon,
+  Anchor,
   Badge,
   Button,
   Center,
@@ -615,14 +616,13 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
           <Text>
             You can add an existing dataset for your model, or create a new one here. Not sure what
             to do? Read our{' '}
-            <Text
-              component={NextLink}
-              variant="link"
+            <Anchor
+              href="https://education.civitai.com/using-civitai-the-on-site-lora-trainer"
               target="_blank"
-              href="/content/training/dataset-guidelines"
+              rel="nofollow noreferrer"
             >
               Dataset and Training Guidelines
-            </Text>{' '}
+            </Anchor>{' '}
             for more info.
           </Text>
         </div>

@@ -4,8 +4,6 @@ import {
   Center,
   Button,
   Group,
-  Box,
-  CloseButton,
   ActionIcon,
   Text,
   Stack,
@@ -24,7 +22,7 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { useAspectRatioFit } from '~/hooks/useAspectRatioFit';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import { generationPanel } from '~/store/generation.store';
 import { containerQuery } from '~/utils/mantine-css-helpers';
@@ -39,7 +37,6 @@ type GalleryCarouselProps = {
 */
 const maxIndicators = 20;
 export function ImageDetailCarousel({ className }: GalleryCarouselProps) {
-  const currentUser = useCurrentUser();
   const { classes, cx, theme } = useStyles();
   const {
     images,
@@ -58,6 +55,8 @@ export function ImageDetailCarousel({ className }: GalleryCarouselProps) {
     height: current?.height ?? 1200,
     width: current?.width ?? 1200,
   });
+
+  const flags = useFeatureFlags();
 
   // #region [navigation]
   useHotkeys([
@@ -80,6 +79,7 @@ export function ImageDetailCarousel({ className }: GalleryCarouselProps) {
   ));
 
   const hasMultipleImages = images.length > 1;
+  const canCreate = flags.imageGeneration && !!current.meta?.prompt;
 
   return (
     <div ref={setRef} className={cx(classes.root, className)}>
@@ -133,7 +133,7 @@ export function ImageDetailCarousel({ className }: GalleryCarouselProps) {
                   </Badge>
                 </Group>
                 <Group spacing="xs">
-                  {image.meta && (
+                  {canCreate && (
                     <Button
                       size="md"
                       radius="xl"
