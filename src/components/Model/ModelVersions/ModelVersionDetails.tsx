@@ -632,6 +632,7 @@ export function ModelVersionDetails({
                       withArrow
                     >
                       <div>
+                        {/* TODO: Fix loader here. */}
                         <Button
                           sx={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
                           color={isInVault ? 'green' : 'gray'}
@@ -639,7 +640,7 @@ export function ModelVersionDetails({
                           loading={isLoading}
                           variant={isInVault ? 'light' : undefined}
                         >
-                          {isInVault ? <IconCloudCheck /> : <IconCloudLock />}
+                          {isLoading ? null : isInVault ? <IconCloudCheck /> : <IconCloudLock />}
                         </Button>
                       </div>
                     </Tooltip>

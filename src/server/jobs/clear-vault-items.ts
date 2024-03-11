@@ -39,7 +39,6 @@ export const clearVaultItems = createJob('clear-vault-items', '0 0 * * *', async
       const items = await dbWrite.vaultItem.findMany({
         where: {
           vaultId: vault.userId,
-          status: VaultItemStatus.Stored,
         },
         take: 50,
         orderBy: {

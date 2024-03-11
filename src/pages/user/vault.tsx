@@ -173,27 +173,29 @@ const VaultItemsRemove = ({ vaultItems }: { vaultItems: VaultItemGetPaged[] }) =
   return (
     <Modal {...dialog} size="md" withCloseButton title={`Deleting ${vaultItems.length} models`}>
       <Stack>
-        <Text size="sm">Models deleted from your Civit Vault cannot be retrieved.</Text>
+        <Text size="sm">Models deleted from your Vault cannot be retrieved.</Text>
 
         <ScrollArea.Autosize maxHeight={500}>
           <Stack>
             {vaultItems.map((item) => (
               <Paper withBorder p="sm" radius="lg" key={item.id}>
-                {item.coverImageUrl && (
-                  <Image
-                    src={item.coverImageUrl}
-                    alt="Model Image"
-                    radius="sm"
-                    width={50}
-                    height={50}
-                  />
-                )}
-                <Stack spacing={0}>
-                  <Text>{item.modelName}</Text>
-                  <Text color="dimmed" size="sm">
-                    {item.versionName}
-                  </Text>
-                </Stack>
+                <Group>
+                  {item.coverImageUrl && (
+                    <Image
+                      src={item.coverImageUrl}
+                      alt="Model Image"
+                      radius="sm"
+                      width={50}
+                      height={50}
+                    />
+                  )}
+                  <Stack spacing={0}>
+                    <Text>{item.modelName}</Text>
+                    <Text color="dimmed" size="sm">
+                      {item.versionName}
+                    </Text>
+                  </Stack>
+                </Group>
               </Paper>
             ))}
           </Stack>
@@ -201,6 +203,16 @@ const VaultItemsRemove = ({ vaultItems }: { vaultItems: VaultItemGetPaged[] }) =
 
         <Divider mx="-lg" />
         <Group grow>
+          <Button
+            ml="auto"
+            disabled={removingItems}
+            onClick={handleClose}
+            color="gray"
+            fullWidth
+            radius="xl"
+          >
+            Don&rsquo;t delete
+          </Button>
           <Button
             ml="auto"
             loading={removingItems}
@@ -211,16 +223,6 @@ const VaultItemsRemove = ({ vaultItems }: { vaultItems: VaultItemGetPaged[] }) =
             radius="xl"
           >
             Confirm delete
-          </Button>
-          <Button
-            ml="auto"
-            disabled={removingItems}
-            onClick={handleClose}
-            color="gray"
-            fullWidth
-            radius="xl"
-          >
-            Don&rsquo;t delete
           </Button>
         </Group>
       </Stack>
@@ -323,9 +325,9 @@ const VaultStateNotice = () => {
 
       {canDownload && !isPastDownloadLimit && (
         <Text>
-          You have until {formatDate(downloadLimit)} to download anytthing from your cloud. After
-          that you will have to delete models to be within your tier storage limit or upgrade again
-          to download.
+          You have until {formatDate(downloadLimit)} to download things from your Vault. After that
+          you will have to delete models to be within your tier storage limit or upgrade again to
+          download.
         </Text>
       )}
     </Alert>
@@ -344,7 +346,7 @@ const MobileVault = () => {
     <Container size="xl">
       <Stack mb="xl">
         <Group position="apart" align="flex-end" grow>
-          <Title order={1}>Civitai Vaut</Title>
+          <Title order={1}>Civitai Vault</Title>
         </Group>
         <Alert color="yellow">
           <Group>
@@ -370,7 +372,7 @@ const MobileVault = () => {
                   <ThemeIcon size={62} radius={100}>
                     <IconCloudOff />
                   </ThemeIcon>
-                  <Text align="center">No items found.</Text>
+                  <Text align="center">No items in your Vault</Text>
                 </Stack>
               </Grid.Col>
             )}
@@ -420,7 +422,7 @@ export default function CivitaiVault() {
   } = useQueryVaultItems(debouncedFilters, { keepPreviousData: true });
   const [selectedItems, setSelectedItems] = useState<VaultItemGetPaged[]>([]);
   const progress = vault
-    ? vault.storageKb <= vault.usedStorageKb
+    ? vault.storageKb < vault.usedStorageKb
       ? 100
       : (vault.usedStorageKb / vault.storageKb) * 100
     : 0;
@@ -441,22 +443,20 @@ export default function CivitaiVault() {
   }
 
   return (
-    <Container size="xl">
+    <Container size="fluid">
       <Stack mb="xl">
         <Group position="apart" align="flex-end" grow>
-          <Title order={1}>Civitai Vaut</Title>
-          {vault && (
+          <Title order={1}>Civitai Vault</Title>
+          {vault && vault.storageKb > 0 && (
             <Stack spacing={0}>
               <Progress
-                style={{ width: '100%' }}
+                style={{ width: '100%', maxWidth: '400px', marginRight: 'auto' }}
                 size="xl"
                 value={progress}
                 color={progress >= 100 ? 'red' : 'blue'}
-                striped
-                animate
               />
-              <Text>
-                {formatKBytes(vault.usedStorageKb)} of {formatKBytes(vault.storageKb)} Used
+              <Text align="right">
+                {progress.toFixed(2)}% of {formatKBytes(vault.storageKb)} Used
               </Text>
             </Stack>
           )}
@@ -583,7 +583,9 @@ export default function CivitaiVault() {
                         <ThemeIcon size={62} radius={100}>
                           <IconCloudOff />
                         </ThemeIcon>
-                        <Text align="center">No items found.</Text>
+                        <Text align="center" size="lg">
+                          No items in your Vault.
+                        </Text>
                       </Stack>
                     </td>
                   </tr>
@@ -638,7 +640,7 @@ export default function CivitaiVault() {
                       </td>
                       <td>{item.creatorName}</td>
                       <td>
-                        <Group>
+                        <Group spacing={4}>
                           <Badge size="sm" color="blue" variant="light">
                             {getDisplayName(item.type)}
                           </Badge>
@@ -663,7 +665,7 @@ export default function CivitaiVault() {
                               {getDisplayName(item.status)}
                             </Badge>
                           </Tooltip>
-                          <Text>{item.notes ?? '-'}</Text>
+                          {item.notes && <Text>{item.notes ?? '-'}</Text>}
                         </Stack>
                       </td>
                       <td>
@@ -677,6 +679,7 @@ export default function CivitaiVault() {
                                 },
                               });
                             }}
+                            ml="auto"
                           >
                             <IconDownload />
                           </ActionIcon>

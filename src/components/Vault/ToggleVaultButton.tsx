@@ -34,7 +34,7 @@ export function ToggleVaultButton({
     [toggleModelVersion, modelVersionId]
   );
 
-  if (isCheckingVault || !currentUser?.isMember) {
+  if (!currentUser?.isMember) {
     return null;
   }
 

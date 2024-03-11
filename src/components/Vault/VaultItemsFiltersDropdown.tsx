@@ -67,6 +67,10 @@ export function VaultItemsFiltersDropdown({ filters, setFilters, ...buttonProps 
       classNames={{ root: classes.indicatorRoot, indicator: classes.indicatorIndicator }}
       inline
     >
+      {/* 
+        NOTE: 
+        - Add pending to models tab.
+      */}
       <Button
         className={classes.actionButton}
         color="gray"
@@ -86,8 +90,8 @@ export function VaultItemsFiltersDropdown({ filters, setFilters, ...buttonProps 
   );
 
   const dropdown = (
-    <Stack spacing="lg">
-      <Stack spacing="md">
+    <Stack spacing="xs">
+      <Stack spacing="xs">
         <Divider label="Type" labelProps={{ weight: 'bold', size: 'sm' }} />
         <Chip.Group
           spacing={8}
