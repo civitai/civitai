@@ -26,20 +26,19 @@ import {
   Image,
   Alert,
   Tooltip,
+  Grid,
+  AspectRatio,
 } from '@mantine/core';
-import { IconCloudOff, IconDownload, IconSearch } from '@tabler/icons-react';
+import { IconCloudOff, IconDeviceDesktop, IconDownload, IconSearch } from '@tabler/icons-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useMutateVault, useQueryVault } from '~/components/Vault/vault.util';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { formatKBytes } from '~/utils/number-helpers';
-import { trpc } from '~/utils/trpc';
 import { useQueryVaultItems } from '../../components/Vault/vault.util';
 import {
   GetPaginatedVaultItemsSchema,
   VaultItemMetadataSchema,
-  vaultItemsAddModelVersionSchema,
 } from '~/server/schema/vault.schema';
 import { formatDate } from '~/utils/date-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
@@ -53,11 +52,11 @@ import { showSuccessNotification } from '~/utils/notifications';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { NextLink } from '@mantine/next';
 import { VaultItemStatus } from '@prisma/client';
-import { SortFilter } from '~/components/Filters';
 import { VaultSort } from '~/server/common/enums';
 import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
 import { dbRead } from '~/server/db/client';
 import { getVaultState } from '~/utils/vault';
+import { useIsMobile } from '~/hooks/useIsMobile';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -86,6 +85,25 @@ export const getServerSideProps = createServerSideProps({
 
 const useStyles = createStyles((theme) => ({
   selected: { background: theme.fn.rgba(theme.colors.blue[8], 0.3), color: theme.colors.gray[0] },
+  mobileCard: {
+    position: 'relative',
+    color: 'white',
+    width: '100%',
+    borderRadius: theme.radius.md,
+    overflow: 'hidden',
+
+    ['& .mantine-Stack-root']: {
+      background: 'linear-gradient(transparent, rgba(0,0,0,.6))',
+      color: 'white',
+      position: 'absolute',
+      width: '100%',
+      maxHeight: '50%',
+      bottom: 0,
+      top: 'initial',
+      padding: theme.spacing.sm,
+      alignItems: 'flex-start',
+    },
+  },
 }));
 
 const VaultItemsAddNote = ({ vaultItems }: { vaultItems: VaultItemGetPaged[] }) => {
@@ -161,23 +179,21 @@ const VaultItemsRemove = ({ vaultItems }: { vaultItems: VaultItemGetPaged[] }) =
           <Stack>
             {vaultItems.map((item) => (
               <Paper withBorder p="sm" radius="lg" key={item.id}>
-                <Group>
-                  {item.coverImageUrl && (
-                    <Image
-                      src={item.coverImageUrl}
-                      alt="Model Image"
-                      radius="sm"
-                      width={50}
-                      height={50}
-                    />
-                  )}
-                  <Stack spacing={0}>
-                    <Text>{item.modelName}</Text>
-                    <Text color="dimmed" size="sm">
-                      {item.versionName}
-                    </Text>
-                  </Stack>
-                </Group>
+                {item.coverImageUrl && (
+                  <Image
+                    src={item.coverImageUrl}
+                    alt="Model Image"
+                    radius="sm"
+                    width={50}
+                    height={50}
+                  />
+                )}
+                <Stack spacing={0}>
+                  <Text>{item.modelName}</Text>
+                  <Text color="dimmed" size="sm">
+                    {item.versionName}
+                  </Text>
+                </Stack>
               </Paper>
             ))}
           </Stack>
@@ -298,9 +314,10 @@ const VaultStateNotice = () => {
     <Alert color="red">
       {isPastDownloadLimit && (
         <Text>
-          You cannot download because you&rsquo;ve exceeded your storage limit. Please upgrade or
-          delete some models to regain the ability to download. After {formatDate(eraseLimit)} we
-          will automatically start deleting models to keep you within your storage limit.
+          You cannot download items from your vault because you&rsquo;ve exceeded your storage
+          limit. Please upgrade or delete some models to regain the ability to download. After{' '}
+          {formatDate(eraseLimit)} we will automatically start deleting models to keep you within
+          your storage limit.
         </Text>
       )}
 
@@ -315,8 +332,79 @@ const VaultStateNotice = () => {
   );
 };
 
+const MobileVault = () => {
+  const { isLoading: isLoadingVault } = useQueryVault();
+  const { items, isLoading: isLoadingVaultItems } = useQueryVaultItems(
+    {},
+    { keepPreviousData: true }
+  );
+  const { classes } = useStyles();
+
+  return (
+    <Container size="xl">
+      <Stack mb="xl">
+        <Group position="apart" align="flex-end" grow>
+          <Title order={1}>Civitai Vaut</Title>
+        </Group>
+        <Alert color="yellow">
+          <Group>
+            <IconDeviceDesktop />
+            <Text>Please use desktop for full functionalities</Text>
+          </Group>
+        </Alert>
+        {(items?.length ?? 0) > 0 && <VaultStateNotice />}
+      </Stack>
+
+      {isLoadingVault ? (
+        <Center p="xl">
+          <Loader />
+        </Center>
+      ) : (
+        <div style={{ position: 'relative' }}>
+          <LoadingOverlay visible={isLoadingVaultItems ?? false} zIndex={9} />
+
+          <Grid>
+            {items.length === 0 && (
+              <Grid.Col span={12}>
+                <Stack align="center" my="xl">
+                  <ThemeIcon size={62} radius={100}>
+                    <IconCloudOff />
+                  </ThemeIcon>
+                  <Text align="center">No items found.</Text>
+                </Stack>
+              </Grid.Col>
+            )}
+            {items.map((item) => {
+              return (
+                <Grid.Col span={6} key={item.id}>
+                  <Anchor href={`/models/${item.modelId}?modelVersionId=${item.modelVersionId}`}>
+                    <AspectRatio ratio={1} className={classes.mobileCard}>
+                      {item.coverImageUrl && (
+                        <Image
+                          src={item.coverImageUrl}
+                          alt="Model Image"
+                          radius="sm"
+                          width="100%"
+                          height="100%"
+                        />
+                      )}
+                      <Stack spacing={0}>
+                        <Text>{item.modelName}</Text>
+                        <Text size="sm">{item.versionName}</Text>
+                      </Stack>
+                    </AspectRatio>
+                  </Anchor>
+                </Grid.Col>
+              );
+            })}
+          </Grid>
+        </div>
+      )}
+    </Container>
+  );
+};
+
 export default function CivitaiVault() {
-  const currentUser = useCurrentUser();
   const { vault, isLoading: isLoadingVault } = useQueryVault();
   const [filters, setFilters] = useState<Omit<GetPaginatedVaultItemsSchema, 'limit'>>({
     page: 1,
@@ -340,6 +428,7 @@ export default function CivitaiVault() {
     return items.every((item) => selectedItems.find((i) => i.id === item.id));
   }, [items, selectedItems]);
   const { classes, cx } = useStyles();
+  const isMobile = useIsMobile();
 
   //#region [useEffect] cancel debounced filters
   useEffect(() => {
@@ -347,10 +436,14 @@ export default function CivitaiVault() {
   }, [cancel, debouncedFilters, filters]);
   //#endregion
 
+  if (isMobile) {
+    return <MobileVault />;
+  }
+
   return (
     <Container size="xl">
       <Stack mb="xl">
-        <Group position="apart" align="flex-end">
+        <Group position="apart" align="flex-end" grow>
           <Title order={1}>Civitai Vaut</Title>
           {vault && (
             <Stack spacing={0}>
@@ -368,7 +461,7 @@ export default function CivitaiVault() {
             </Stack>
           )}
         </Group>
-        <VaultStateNotice />
+        {(items?.length ?? 0) > 0 && <VaultStateNotice />}
       </Stack>
 
       {isLoadingVault ? (
@@ -498,7 +591,6 @@ export default function CivitaiVault() {
                 {items.map((item) => {
                   const isSelected = !!selectedItems.find((i) => i.id === item.id);
                   const meta = (item.meta ?? {}) as VaultItemMetadataSchema;
-                  console.log(VaultItemsStatusDetailsMap[item.status].tooltip(meta));
 
                   return (
                     <tr
