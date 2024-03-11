@@ -6,9 +6,9 @@ import { pgDbWrite } from '~/server/db/pgDb';
 import { applyDiscordLeaderboardRoles } from '~/server/jobs/apply-discord-roles';
 import { isLeaderboardPopulated } from '~/server/services/leaderboard.service';
 import { updateLeaderboardRank } from '~/server/services/user.service';
-import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { limitConcurrency, Task } from '~/server/utils/concurrency-helpers';
 import { createLogger } from '~/utils/logging';
-import { createJob, getJobDate } from './job';
+import { createJob, getJobDate, JobContext } from './job';
 
 const log = createLogger('leaderboard', 'blue');
 
@@ -30,9 +30,9 @@ const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async 
 
   // Get latest results for date
   const addDays = dayjs().utc().hour() >= 23 ? 1 : 0;
+  let imageRange: [number, number] | undefined;
   log('Leaderboards - Starting');
   const tasks = leaderboards.map(({ id, query }) => async () => {
-    if (id === 'images-nsfw') return; // Skip images nsfw leaderboard until we can fix it
     jobContext.checkIfCanceled();
     const hasDataQuery = await pgDbWrite.query<{ count: number }>(`
       SELECT COUNT(*) as count FROM "LeaderboardResult"
@@ -44,25 +44,20 @@ const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async 
       return;
     }
 
+    const includesCTE = query.includes('WITH ');
+    const context = { jobContext, id, query, includesCTE, addDays };
+
     const start = Date.now();
     log(`Leaderboard ${id} - Starting`);
 
-    const includesCTE = query.includes('WITH ');
-    if (includesCTE && !query.includes('scores')) throw new Error('Query must include scores CTE');
-    const leaderboardUpdateQuery = await pgDbWrite.cancellableQuery(`
-      ${includesCTE ? query : `WITH scores AS (${query})`}
-      INSERT INTO "LeaderboardResult"("leaderboardId", "date", "userId", "score", "metrics", "position")
-      SELECT
-        '${id}' as "leaderboardId",
-        current_date + interval '${addDays} days' as date,
-        *,
-        row_number() OVER (ORDER BY score DESC) as position
-      FROM scores
-      ORDER BY score DESC
-      LIMIT 1000
-    `);
-    jobContext.on('cancel', leaderboardUpdateQuery.cancel);
-    await leaderboardUpdateQuery.result();
+    if (includesCTE && query.includes('image_scores AS')) {
+      if (!imageRange) imageRange = await getImageRange();
+      await imageLeaderboardPopulation(context, imageRange);
+    } else {
+      if (includesCTE && !query.includes('scores'))
+        throw new Error('Query must include scores CTE');
+      await defaultLeadboardPopulation(context);
+    }
 
     log(`Leaderboard ${id} - Done - ${(Date.now() - start) / 1000}s`);
   });
@@ -112,6 +107,14 @@ async function updateLegendsBoardResults() {
   log('Legends Board - Done');
 }
 
+type LeaderboardContext = {
+  jobContext: JobContext;
+  id: string;
+  query: string;
+  includesCTE: boolean;
+  addDays?: number;
+};
+
 const updateUserLeaderboardRank = createJob(
   'update-user-leaderboard-rank',
   '1 0 * * *',
@@ -129,6 +132,133 @@ const updateUserDiscordLeaderboardRoles = createJob(
     await applyDiscordLeaderboardRoles();
   }
 );
+
+async function defaultLeadboardPopulation(ctx: LeaderboardContext) {
+  const leaderboardUpdateQuery = await pgDbWrite.cancellableQuery(`
+    ${ctx.includesCTE ? ctx.query : `WITH scores AS (${ctx.query})`}
+    INSERT INTO "LeaderboardResult"("leaderboardId", "date", "userId", "score", "metrics", "position")
+    SELECT
+      '${ctx.id}' as "leaderboardId",
+      current_date + interval '${ctx.addDays} days' as date,
+      *,
+      row_number() OVER (ORDER BY score DESC) as position
+    FROM scores
+    ORDER BY score DESC
+    LIMIT 1000
+  `);
+  ctx.jobContext.on('cancel', leaderboardUpdateQuery.cancel);
+  await leaderboardUpdateQuery.result();
+}
+
+async function getImageRange() {
+  const {
+    rows: [{ min, max }],
+  } = await pgDbWrite.query<{ min: number; max: number }>(`
+    WITH dates AS (
+      SELECT MIN("createdAt") as start, MAX("createdAt") as end FROM "Image" WHERE "createdAt" > now() - interval '30 days'
+    )
+    SELECT MIN(id) as min, MAX(id) as max
+    FROM "Image" i
+    JOIN dates d ON d.start = i."createdAt" OR d.end = i."createdAt";
+  `);
+  return [min, max] as [number, number];
+}
+
+type ImageScores = {
+  imageId: number;
+  userId: number;
+  score: number;
+  metrics: Record<string, number>;
+};
+const IMAGE_SCORE_BATCH_SIZE = 10000;
+const IMAGE_SCORE_FALLOFF = 120;
+const IMAGE_SCORE_MULTIPLIER = 100;
+async function imageLeaderboardPopulation(ctx: LeaderboardContext, [min, max]: [number, number]) {
+  // Fetch Scores
+  let scores: ImageScores[] = [];
+  const tasks: Task[] = [];
+  const numTasks = Math.ceil((max - min) / IMAGE_SCORE_BATCH_SIZE);
+  log(`Leaderboard ${ctx.id} - Fetching scores - ${numTasks} tasks`);
+  for (let i = 0; i < numTasks; i++) {
+    const startIndex = min + i * IMAGE_SCORE_BATCH_SIZE;
+    const endIndex = Math.min(startIndex + IMAGE_SCORE_BATCH_SIZE - 1, max);
+
+    tasks.push(async () => {
+      ctx.jobContext.checkIfCanceled();
+      const key = `Leaderboard ${ctx.id} - Fetching scores - ${startIndex} to ${endIndex}`;
+      log(key);
+      console.time(key);
+      const batchScores = await pgDbWrite.query<ImageScores>(
+        `${ctx.query} SELECT * FROM image_scores`,
+        [startIndex, endIndex]
+      );
+      console.timeEnd(key);
+      scores.push(...batchScores.rows);
+    });
+  }
+  await limitConcurrency(tasks, 5);
+
+  // Add up scores
+  log(`Leaderboard ${ctx.id} - Adding up scores`);
+  scores = scores.sort((a, b) => b.score - a.score);
+  const userScores: Record<number, { score: number; metrics: Record<string, number> }> = {};
+  for (const score of scores) {
+    // Build user score
+    if (!userScores[score.userId])
+      userScores[score.userId] = { score: 0, metrics: { imageCount: 0 } };
+
+    // Add score
+    userScores[score.userId].metrics.imageCount++;
+    const entryRank = userScores[score.userId].metrics.imageCount;
+    const quantityMultiplier = Math.max(0, 1 - Math.pow(entryRank / IMAGE_SCORE_FALLOFF, 0.5));
+    userScores[score.userId].score += score.score * quantityMultiplier;
+
+    // Add up metrics
+    for (const metric in score.metrics) {
+      if (!userScores[score.userId].metrics[metric]) userScores[score.userId].metrics[metric] = 0;
+      userScores[score.userId].metrics[metric] += score.metrics[metric];
+    }
+  }
+
+  // Apply multipliers and sqrt
+  for (const userId in userScores) {
+    userScores[userId].score = Math.round(
+      Math.sqrt(userScores[userId].score) * IMAGE_SCORE_MULTIPLIER
+    );
+  }
+
+  // Rank
+  const userScoresArray = Object.entries(userScores)
+    .map(([userId, score]) => ({
+      userId: parseInt(userId),
+      ...score,
+    }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 1100);
+
+  // Insert into leaderboard
+  log(`Leaderboard ${ctx.id} - Inserting into leaderboard`);
+  // console.time(`Leaderboard ${ctx.id} - Inserting into leaderboard`);
+  const userScoresJson = JSON.stringify(userScoresArray);
+  const leaderboardUpdateQuery = await pgDbWrite.cancellableQuery(`
+    INSERT INTO "LeaderboardResult"("leaderboardId", "date", "userId", "score", "metrics", "position")
+    SELECT
+      '${ctx.id}' as "leaderboardId",
+      current_date + interval '${ctx.addDays} days' as date,
+      (s->>'userId')::int,
+      (s->>'score')::int,
+      (s->>'metrics')::jsonb,
+      row_number() OVER (ORDER BY (s->>'score')::int DESC) as position
+    FROM jsonb_array_elements('${userScoresJson}'::jsonb) s
+    JOIN "User" u ON u.id = (s->>'userId')::int
+    WHERE u."deletedAt" IS NULL AND u.id > 0
+    ORDER BY (s->>'score')::int DESC
+    LIMIT 1000
+  `);
+  ctx.jobContext.on('cancel', leaderboardUpdateQuery.cancel);
+  await leaderboardUpdateQuery.result();
+  console.timeEnd(`Leaderboard ${ctx.id} - Inserting into leaderboard`);
+}
 
 async function setCoverImageNsfwLevel() {
   log('Setting cover image nsfw level - version');
