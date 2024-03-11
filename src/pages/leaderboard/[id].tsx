@@ -61,7 +61,8 @@ export default function Leaderboard() {
   const { id, date, position, board } = leaderboardQuerySchema.parse(query);
   const currentUser = useCurrentUser();
   const { classes } = useStyles();
-  const isDisabled = id === 'images-nsfw';
+  // const isDisabled = id === 'images-nsfw';
+  const isDisabled = false;
 
   const [drawerOpen, { close, toggle }] = useDisclosure();
 
