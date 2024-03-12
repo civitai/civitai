@@ -187,12 +187,12 @@ async function imageLeaderboardPopulation(ctx: LeaderboardContext, [min, max]: [
       ctx.jobContext.checkIfCanceled();
       const key = `Leaderboard ${ctx.id} - Fetching scores - ${startIndex} to ${endIndex}`;
       log(key);
-      console.time(key);
+      // console.time(key);
       const batchScores = await pgDbWrite.query<ImageScores>(
         `${ctx.query} SELECT * FROM image_scores`,
         [startIndex, endIndex]
       );
-      console.timeEnd(key);
+      // console.timeEnd(key);
       scores.push(...batchScores.rows);
     });
   }
@@ -257,7 +257,7 @@ async function imageLeaderboardPopulation(ctx: LeaderboardContext, [min, max]: [
   `);
   ctx.jobContext.on('cancel', leaderboardUpdateQuery.cancel);
   await leaderboardUpdateQuery.result();
-  console.timeEnd(`Leaderboard ${ctx.id} - Inserting into leaderboard`);
+  // console.timeEnd(`Leaderboard ${ctx.id} - Inserting into leaderboard`);
 }
 
 async function setCoverImageNsfwLevel() {
