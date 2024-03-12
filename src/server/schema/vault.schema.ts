@@ -27,12 +27,12 @@ export const vaultItemsAddModelVersionSchema = z.object({
 
 export type VaultItemsRefreshSchema = z.infer<typeof vaultItemsRefreshSchema>;
 export const vaultItemsRefreshSchema = z.object({
-  modelVersionIds: z.array(z.number()),
+  modelVersionIds: z.array(z.number()).min(1),
 });
 
 export type VaultItemsUpdateNotesSchema = z.infer<typeof vaultItemsUpdateNotesSchema>;
 export const vaultItemsUpdateNotesSchema = z.object({
-  modelVersionIds: z.array(z.number()),
+  modelVersionIds: z.array(z.number()).min(1),
   notes: z.string().optional(),
 });
 
@@ -40,7 +40,7 @@ export type VaultItemsRemoveModelVersionsSchema = z.infer<
   typeof vaultItemsRemoveModelVersionsSchema
 >;
 export const vaultItemsRemoveModelVersionsSchema = z.object({
-  modelVersionIds: z.array(z.number()),
+  modelVersionIds: z.array(z.number()).min(1),
 });
 
 export type VaultItemMetadataSchema = z.infer<typeof vaultItemMetadataSchema>;

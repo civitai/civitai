@@ -30,9 +30,7 @@ export const useMutateVault = () => {
 
   const toggleModelVersion = trpc.vault.toggleModelVersion.useMutation({
     onSuccess: async (res, { modelVersionId }) => {
-      await queryUtils.vault.isModelVersionInVault.setData({ modelVersionId }, (old) => {
-        return !old;
-      });
+      await queryUtils.vault.isModelVersionInVault.setData({ modelVersionId }, (old) => !old);
     },
     onError: (error) => {
       onError(error, 'Failed to toggle model version');

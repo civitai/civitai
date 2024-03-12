@@ -26,7 +26,7 @@ export function ToggleVaultButton({
       modelVersionId,
     },
     {
-      enabled: currentUser?.isMember,
+      enabled: !!currentUser?.isMember,
     }
   );
 

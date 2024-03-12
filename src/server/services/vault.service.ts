@@ -329,8 +329,6 @@ export const addModelVersionToVault = async ({
     );
   }
 
-  console.log(files, totalKb);
-
   const vaultItem = await dbWrite.vaultItem.create({
     data: {
       files,

@@ -66,6 +66,7 @@ import { dbRead } from '~/server/db/client';
 import { getVaultState } from '~/utils/vault';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
+import { Meta } from '~/components/Meta/Meta';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -447,272 +448,277 @@ export default function CivitaiVault() {
   }
 
   return (
-    <Container fluid>
-      <Stack mb="xl">
-        <Group position="apart" align="flex-end">
-          <Title order={1}>Civitai Vault</Title>
-          <Group ml="auto" align="start">
-            {vault && vault.storageKb > 0 && (
-              <Stack spacing={0}>
-                <Progress
-                  style={{ width: '100%', maxWidth: '400px', marginLeft: 'auto' }}
-                  size="xl"
-                  value={progress}
-                  color={progress >= 100 ? 'red' : 'blue'}
-                />
-                <Text align="right">
-                  {progress.toFixed(2)}% of {formatKBytes(vault.storageKb, 0)} Used
-                </Text>
-              </Stack>
-            )}
-            {(progress >= 75 || (vault && vault.storageKb === 0)) && (
-              <Button component={NextLink} href="/pricing" variant="outline" size="sm">
-                Upgrade
-              </Button>
-            )}
+    <>
+      <Meta title="Civitai Vault" deIndex="noindex, nofollow" />
+      <Container fluid>
+        <Stack mb="xl">
+          <Group position="apart" align="flex-end">
+            <Title order={1}>Civitai Vault</Title>
+            <Group ml="auto" align="start">
+              {vault && vault.storageKb > 0 && (
+                <Stack spacing={0}>
+                  <Progress
+                    style={{ width: '100%', maxWidth: '400px', marginLeft: 'auto' }}
+                    size="xl"
+                    value={progress}
+                    color={progress >= 100 ? 'red' : 'blue'}
+                  />
+                  <Text align="right">
+                    {progress.toFixed(2)}% of {formatKBytes(vault.storageKb, 0)} Used
+                  </Text>
+                </Stack>
+              )}
+              {(progress >= 75 || (vault && vault.storageKb === 0)) && (
+                <Button component={NextLink} href="/pricing" variant="outline" size="sm">
+                  Upgrade
+                </Button>
+              )}
+            </Group>
           </Group>
-        </Group>
-        {(items?.length ?? 0) > 0 && <VaultStateNotice />}
-      </Stack>
+          {(items?.length ?? 0) > 0 && <VaultStateNotice />}
+        </Stack>
 
-      {isLoadingVault ? (
-        <Center p="xl">
-          <Loader />
-        </Center>
-      ) : (
-        <div style={{ position: 'relative' }}>
-          <LoadingOverlay visible={(isLoadingVaultItems || isRefetching) ?? false} zIndex={9} />
+        {isLoadingVault ? (
+          <Center p="xl">
+            <Loader />
+          </Center>
+        ) : (
+          <div style={{ position: 'relative' }}>
+            <LoadingOverlay visible={(isLoadingVaultItems || isRefetching) ?? false} zIndex={9} />
 
-          <Stack>
-            <Group position="apart">
-              <Group>
-                <TextInput
-                  radius="xl"
-                  variant="filled"
-                  icon={<IconSearch size={20} />}
-                  onChange={(e) => setFilters((f) => ({ ...f, query: e.target.value }))}
-                  value={filters.query}
-                  placeholder="Models or creators..."
-                />
-                <VaultItemsFiltersDropdown
-                  filters={debouncedFilters}
-                  setFilters={(f) => setFilters((c) => ({ ...c, ...f }))}
-                />
-                <SelectMenuV2
-                  label={getDisplayName(filters.sort)}
-                  options={Object.values(VaultSort).map((v) => ({ label: v, value: v }))}
-                  value={filters.sort}
-                  // Resets page:
-                  onClick={(x) => setFilters((c) => ({ ...c, sort: x as VaultSort, page: 1 }))}
-                  buttonProps={{ size: undefined, compact: false }}
-                />
-              </Group>
+            <Stack>
+              <Group position="apart">
+                <Group>
+                  <TextInput
+                    radius="xl"
+                    variant="filled"
+                    icon={<IconSearch size={20} />}
+                    onChange={(e) => setFilters((f) => ({ ...f, query: e.target.value }))}
+                    value={filters.query}
+                    placeholder="Models or creators..."
+                  />
+                  <VaultItemsFiltersDropdown
+                    filters={debouncedFilters}
+                    setFilters={(f) => setFilters((c) => ({ ...c, ...f }))}
+                  />
+                  <SelectMenuV2
+                    label={getDisplayName(filters.sort)}
+                    options={Object.values(VaultSort).map((v) => ({ label: v, value: v }))}
+                    value={filters.sort}
+                    // Resets page:
+                    onClick={(x) => setFilters((c) => ({ ...c, sort: x as VaultSort, page: 1 }))}
+                    buttonProps={{ size: undefined, compact: false }}
+                  />
+                </Group>
 
-              <Group>
-                {selectedItems.length > 0 && (
+                <Group>
+                  {selectedItems.length > 0 && (
+                    <Button
+                      disabled={selectedItems.length === 0}
+                      radius="xl"
+                      color="blue"
+                      variant="light"
+                      onClick={() => {
+                        setSelectedItems([]);
+                      }}
+                      rightIcon={<IconX size={14} />}
+                    >
+                      {selectedItems.length} selected
+                    </Button>
+                  )}
                   <Button
                     disabled={selectedItems.length === 0}
                     radius="xl"
-                    color="blue"
-                    variant="light"
+                    color="gray"
                     onClick={() => {
-                      setSelectedItems([]);
+                      dialogStore.trigger({
+                        component: VaultItemsAddNote,
+                        props: {
+                          vaultItems: selectedItems,
+                        },
+                      });
                     }}
-                    rightIcon={<IconX size={14} />}
                   >
-                    {selectedItems.length} selected
+                    Add notes
                   </Button>
-                )}
-                <Button
-                  disabled={selectedItems.length === 0}
-                  radius="xl"
-                  color="gray"
-                  onClick={() => {
-                    dialogStore.trigger({
-                      component: VaultItemsAddNote,
-                      props: {
-                        vaultItems: selectedItems,
-                      },
-                    });
-                  }}
-                >
-                  Add notes
-                </Button>
-                <Button
-                  disabled={selectedItems.length === 0}
-                  radius="xl"
-                  color="red"
-                  onClick={() => {
-                    dialogStore.trigger({
-                      component: VaultItemsRemove,
-                      props: {
-                        vaultItems: selectedItems,
-                      },
-                    });
-                  }}
-                >
-                  Delete
-                </Button>
+                  <Button
+                    disabled={selectedItems.length === 0}
+                    radius="xl"
+                    color="red"
+                    onClick={() => {
+                      dialogStore.trigger({
+                        component: VaultItemsRemove,
+                        props: {
+                          vaultItems: selectedItems,
+                        },
+                      });
+                    }}
+                  >
+                    Delete
+                  </Button>
+                </Group>
               </Group>
-            </Group>
 
-            <Table>
-              <thead>
-                <tr>
-                  <th style={{ width: 50 }}>
-                    <Checkbox
-                      checked={allSelectedInPage}
-                      onChange={() => {
-                        if (allSelectedInPage) {
-                          setSelectedItems((c) =>
-                            c.filter((i) => !items.find((item) => item.id === i.id))
-                          );
-                        } else {
-                          setSelectedItems((c) => uniqBy([...c, ...items], 'id'));
-                        }
-                      }}
-                      aria-label="Select all items in page"
-                      size="sm"
-                    />
-                  </th>
-                  <th>Models</th>
-                  <th>Creator</th>
-                  <th>Type</th>
-                  <th>Category</th>
-                  <th>Size</th>
-                  <th>Date Created</th>
-                  <th>Date Added</th>
-                  <th>Last Refreshed</th>
-                  <th>Notes</th>
-                  <th>&nbsp;</th>
-                </tr>
-              </thead>
-              <tbody>
-                {items.length === 0 && (
+              <Table>
+                <thead>
                   <tr>
-                    <td colSpan={9}>
-                      <Stack align="center" my="xl">
-                        <ThemeIcon size={62} radius={100}>
-                          <IconCloudOff />
-                        </ThemeIcon>
-                        <Text align="center" size="lg">
-                          No items in your Vault.
-                        </Text>
-                      </Stack>
-                    </td>
+                    <th style={{ width: 50 }}>
+                      <Checkbox
+                        checked={allSelectedInPage}
+                        onChange={() => {
+                          if (allSelectedInPage) {
+                            setSelectedItems((c) =>
+                              c.filter((i) => !items.find((item) => item.id === i.id))
+                            );
+                          } else {
+                            setSelectedItems((c) => uniqBy([...c, ...items], 'id'));
+                          }
+                        }}
+                        aria-label="Select all items in page"
+                        size="sm"
+                      />
+                    </th>
+                    <th>Models</th>
+                    <th>Creator</th>
+                    <th>Type</th>
+                    <th>Category</th>
+                    <th>Size</th>
+                    <th>Date Created</th>
+                    <th>Date Added</th>
+                    <th>Last Refreshed</th>
+                    <th>Notes</th>
+                    <th>&nbsp;</th>
                   </tr>
-                )}
-                {items.map((item) => {
-                  const isSelected = !!selectedItems.find((i) => i.id === item.id);
-                  const meta = (item.meta ?? {}) as VaultItemMetadataSchema;
-
-                  return (
-                    <tr
-                      key={item.id}
-                      className={cx({
-                        [classes.selected]: isSelected,
-                      })}
-                    >
-                      <td width={50}>
-                        <Checkbox
-                          checked={isSelected}
-                          onChange={() => {
-                            if (isSelected) {
-                              setSelectedItems((c) => c.filter((i) => i.id !== item.id));
-                            } else {
-                              setSelectedItems((c) => [...c, item]);
-                            }
-                          }}
-                          aria-label="Select item"
-                          size="sm"
-                        />
-                      </td>
-                      <td>
-                        <Group>
-                          {item.coverImageUrl ? (
-                            <Image
-                              src={item.coverImageUrl}
-                              alt="Model Image"
-                              radius="sm"
-                              width={50}
-                              height={50}
-                            />
-                          ) : (
-                            <Tooltip label={VaultItemsStatusDetailsMap[item.status].tooltip(meta)}>
-                              {VaultItemsStatusDetailsMap[item.status].icon}
-                            </Tooltip>
-                          )}
-                          <Stack spacing={0}>
-                            <Anchor
-                              href={`/models/${item.modelId}?modelVersionId=${item.modelVersionId}`}
-                            >
-                              <Text>{item.modelName}</Text>
-                            </Anchor>
-                            <Text color="dimmed" size="sm">
-                              {item.versionName}
-                            </Text>
-                          </Stack>
-                        </Group>
-                      </td>
-                      <td>
-                        <Anchor href={`/user/${item.creatorName}`}>{item.creatorName}</Anchor>
-                      </td>
-                      <td>
-                        <Group spacing={4}>
-                          <Badge size="sm" color="blue" variant="light">
-                            {getDisplayName(item.type)}
-                          </Badge>
-                          <Badge size="sm" color="gray" variant="outline">
-                            {getDisplayName(item.baseModel)}
-                          </Badge>
-                        </Group>
-                      </td>
-                      <td>
-                        <Text transform="capitalize">{getDisplayName(item.category)}</Text>
-                      </td>
-                      <td>
-                        {formatKBytes(
-                          (item.modelSizeKb ?? 0) +
-                            (item.imagesSizeKb ?? 0) +
-                            (item.detailsSizeKb ?? 0)
-                        )}
-                      </td>
-                      <td>{formatDate(item.createdAt)}</td>
-                      <td>{formatDate(item.addedAt)}</td>
-                      <td>{item.refreshedAt ? formatDate(item.refreshedAt) : '-'}</td>
-                      <td>
-                        <Stack maw="25vw">
-                          <ContentClamp maxHeight={48}>
-                            {item.notes && <Text>{item.notes ?? '-'}</Text>}
-                          </ContentClamp>
+                </thead>
+                <tbody>
+                  {items.length === 0 && (
+                    <tr>
+                      <td colSpan={9}>
+                        <Stack align="center" my="xl">
+                          <ThemeIcon size={62} radius={100}>
+                            <IconCloudOff />
+                          </ThemeIcon>
+                          <Text align="center" size="lg">
+                            No items in your Vault.
+                          </Text>
                         </Stack>
                       </td>
-                      <td>
-                        {item.status === VaultItemStatus.Stored && (
-                          <VaultItemDownload vaultItem={item} />
-                        )}
-                      </td>
                     </tr>
-                  );
-                })}
-              </tbody>
-            </Table>
-            {pagination && pagination.totalPages > 1 && (
-              <Group position="apart">
-                <Text>Total {pagination.totalItems.toLocaleString()} items</Text>
-                <Pagination
-                  page={filters.page}
-                  onChange={(page) => {
-                    setFilters((curr) => ({ ...curr, page }));
-                    window.scrollTo({ top: 0, behavior: 'smooth' });
-                  }}
-                  total={pagination.totalPages}
-                />
-              </Group>
-            )}
-          </Stack>
-        </div>
-      )}
-    </Container>
+                  )}
+                  {items.map((item) => {
+                    const isSelected = !!selectedItems.find((i) => i.id === item.id);
+                    const meta = (item.meta ?? {}) as VaultItemMetadataSchema;
+
+                    return (
+                      <tr
+                        key={item.id}
+                        className={cx({
+                          [classes.selected]: isSelected,
+                        })}
+                      >
+                        <td width={50}>
+                          <Checkbox
+                            checked={isSelected}
+                            onChange={() => {
+                              if (isSelected) {
+                                setSelectedItems((c) => c.filter((i) => i.id !== item.id));
+                              } else {
+                                setSelectedItems((c) => [...c, item]);
+                              }
+                            }}
+                            aria-label="Select item"
+                            size="sm"
+                          />
+                        </td>
+                        <td>
+                          <Group>
+                            {item.coverImageUrl ? (
+                              <Image
+                                src={item.coverImageUrl}
+                                alt="Model Image"
+                                radius="sm"
+                                width={50}
+                                height={50}
+                              />
+                            ) : (
+                              <Tooltip
+                                label={VaultItemsStatusDetailsMap[item.status].tooltip(meta)}
+                              >
+                                {VaultItemsStatusDetailsMap[item.status].icon}
+                              </Tooltip>
+                            )}
+                            <Stack spacing={0}>
+                              <Anchor
+                                href={`/models/${item.modelId}?modelVersionId=${item.modelVersionId}`}
+                              >
+                                <Text>{item.modelName}</Text>
+                              </Anchor>
+                              <Text color="dimmed" size="sm">
+                                {item.versionName}
+                              </Text>
+                            </Stack>
+                          </Group>
+                        </td>
+                        <td>
+                          <Anchor href={`/user/${item.creatorName}`}>{item.creatorName}</Anchor>
+                        </td>
+                        <td>
+                          <Group spacing={4}>
+                            <Badge size="sm" color="blue" variant="light">
+                              {getDisplayName(item.type)}
+                            </Badge>
+                            <Badge size="sm" color="gray" variant="outline">
+                              {getDisplayName(item.baseModel)}
+                            </Badge>
+                          </Group>
+                        </td>
+                        <td>
+                          <Text transform="capitalize">{getDisplayName(item.category)}</Text>
+                        </td>
+                        <td>
+                          {formatKBytes(
+                            (item.modelSizeKb ?? 0) +
+                              (item.imagesSizeKb ?? 0) +
+                              (item.detailsSizeKb ?? 0)
+                          )}
+                        </td>
+                        <td>{formatDate(item.createdAt)}</td>
+                        <td>{formatDate(item.addedAt)}</td>
+                        <td>{item.refreshedAt ? formatDate(item.refreshedAt) : '-'}</td>
+                        <td>
+                          <Stack maw="25vw">
+                            <ContentClamp maxHeight={48}>
+                              {item.notes && <Text>{item.notes ?? '-'}</Text>}
+                            </ContentClamp>
+                          </Stack>
+                        </td>
+                        <td>
+                          {item.status === VaultItemStatus.Stored && (
+                            <VaultItemDownload vaultItem={item} />
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </Table>
+              {pagination && pagination.totalPages > 1 && (
+                <Group position="apart">
+                  <Text>Total {pagination.totalItems.toLocaleString()} items</Text>
+                  <Pagination
+                    page={filters.page}
+                    onChange={(page) => {
+                      setFilters((curr) => ({ ...curr, page }));
+                      window.scrollTo({ top: 0, behavior: 'smooth' });
+                    }}
+                    total={pagination.totalPages}
+                  />
+                </Group>
+              )}
+            </Stack>
+          </div>
+        )}
+      </Container>
+    </>
   );
 }

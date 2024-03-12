@@ -249,7 +249,7 @@ model User {
   createdRewards             PurchasableReward[]
   purchasedRewards           UserPurchasedRewards[]
   vault                      Vault?
-  VaultItem                  VaultItem[]
+  vaultItems                 VaultItem[]
 }
 
 enum OnboardingStep {

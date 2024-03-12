@@ -632,7 +632,6 @@ export function ModelVersionDetails({
                       withArrow
                     >
                       <div>
-                        {/* TODO: Fix loader here. */}
                         <Button
                           sx={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
                           color={isInVault ? 'green' : 'gray'}

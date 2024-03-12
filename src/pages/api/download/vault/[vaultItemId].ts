@@ -23,17 +23,16 @@ const schema = z.object({
 
 export default RateLimitedEndpoint(
   async function downloadFromVault(req: NextApiRequest, res: NextApiResponse) {
-    if (!env.S3_VAULT_BUCKET) {
-      return res.status(500).json({ error: 'We cannot serve vault downloads at this time.' });
-    }
-
     const isBrowser = isRequestFromBrowser(req);
-
     const onError = (status: number, message: string) => {
       res.status(status);
       if (isBrowser) return res.send(message);
       return res.json({ error: message });
     };
+
+    if (!env.S3_VAULT_BUCKET) {
+      return onError(500, 'We cannot serve vault downloads at this time.');
+    }
 
     // Get ip so that we can block exploits we catch
     const ip = requestIp.getClientIp(req);
