@@ -241,6 +241,11 @@ Bronze - Top 100: ${constants.leaderboard.legendScoring.bronze * 100} points per
                   </Popover.Dropdown>
                 </Popover>
               </Group>
+              <Alert color="yellow" my="sm" py={6} px={12}>
+                <Text lh={1.3} size="sm">
+                  {`We are in the process of rebalancing these leaderboards. There may be significant changes from day-to-day this week. Be sure to click the "i" icon for more information about scoring.`}
+                </Text>
+              </Alert>
               {isDisabled ? (
                 <Alert color="yellow" my="sm" py={6} px={12}>
                   <Text lh={1.3} size="sm">
