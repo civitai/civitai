@@ -12,8 +12,13 @@ import { constants } from '~/server/common/constants';
 import { withRetries } from '~/server/utils/errorHandling';
 import { VaultItemMetadataSchema } from '../schema/vault.schema';
 import { isDefined } from '~/utils/type-guards';
+import { logToAxiom } from '~/server/logging/client';
 
 const MAX_FAILURES = 3;
+
+const logErrors = (data: MixedObject) => {
+  logToAxiom({ name: 'process-vault-items', type: 'error', ...data }, 'webhooks').catch();
+};
 
 export const processVaultItems = createJob('process-vault-items', '*/10 * * * *', async () => {
   if (!env.S3_VAULT_BUCKET) {
@@ -136,7 +141,13 @@ export const processVaultItems = createJob('process-vault-items', '*/10 * * * *'
         },
       });
     } catch (e) {
-      console.error('Error processing vault item:', e);
+      const error = e as Error;
+      await logErrors({
+        message: 'Error processing vault item',
+        error: error.message,
+        vaultItem,
+      });
+
       const meta = (vaultItem.meta ?? { failures: 0 }) as VaultItemMetadataSchema;
 
       await dbWrite.vaultItem.update({
@@ -146,6 +157,7 @@ export const processVaultItems = createJob('process-vault-items', '*/10 * * * *'
           meta: {
             ...meta,
             failures: meta.failures + 1,
+            latestError: error.message,
           },
         },
       });
