@@ -122,9 +122,6 @@ export const getModelVersionDataForVault = async ({
           user: true,
         },
       },
-      rank: {
-        select: { downloadCountAllTime: true },
-      },
     },
   });
 
