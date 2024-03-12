@@ -208,3 +208,10 @@ export enum PurchasableRewardModeratorViewMode {
   History = 'History',
   Purchased = 'Purchased',
 }
+
+export enum VaultSort {
+  RecentlyAdded = 'Recently Added',
+  RecentlyCreated = 'Recently Created',
+  ModelName = 'Model Name',
+  ModelSize = 'Model Size',
+}

@@ -281,6 +281,13 @@ export const constants = {
     coverImageWidth: 180,
   },
   supportedBaseModelAddendums: ['SD 1.5', 'SDXL 1.0'],
+  vault: {
+    keys: {
+      details: ':modelVersionId/:userId/details.pdf',
+      images: ':modelVersionId/:userId/images.zip',
+      cover: ':modelVersionId/:userId/cover.jpg',
+    },
+  },
   supporterBadge: '020f374d-f165-4f45-9082-371e696a44ff',
 } as const;
 
