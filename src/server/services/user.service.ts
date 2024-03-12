@@ -19,10 +19,9 @@ import {
   NsfwLevel,
   OnboardingStep,
   Prisma,
-  SearchIndexUpdateQueueAction,
   TagEngagementType,
 } from '@prisma/client';
-
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbWrite, dbRead } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {

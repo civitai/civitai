@@ -1,5 +1,6 @@
 import { createMetricProcessor, MetricProcessorRunContext } from '~/server/metrics/base.metrics';
-import { Prisma, SearchIndexUpdateQueueAction } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { imagesSearchIndex } from '~/server/search-index';
 import dayjs from 'dayjs';
 import { chunk } from 'lodash-es';

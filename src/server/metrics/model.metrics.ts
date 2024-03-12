@@ -1,7 +1,8 @@
 import dayjs from 'dayjs';
 import { createMetricProcessor, MetricProcessorRunContext } from '~/server/metrics/base.metrics';
 import { modelsSearchIndex } from '~/server/search-index';
-import { Prisma, PrismaClient, SearchIndexUpdateQueueAction } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { chunk } from 'lodash-es';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 

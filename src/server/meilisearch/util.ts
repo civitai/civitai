@@ -1,7 +1,9 @@
 import { IndexOptions, MeiliSearchErrorInfo, MeiliSearchTimeOutError, Task } from 'meilisearch';
 import { client } from '~/server/meilisearch/client';
-import { PrismaClient, SearchIndexUpdateQueueAction } from '@prisma/client';
+import { PrismaClient } from '@prisma/client';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { withRetries } from '~/server/utils/errorHandling';
+import { SearchIndexUpdate } from '~/server/search-index/SearchIndexUpdate';
 
 const WAIT_FOR_TASKS_MAX_RETRIES = 5;
 
@@ -96,14 +98,11 @@ const onSearchIndexDocumentsCleanup = async ({
     return;
   }
 
-  const queuedItemsToDelete = await db.searchIndexUpdateQueue.findMany({
-    select: {
-      id: true,
-    },
-    where: { type: indexName, action: SearchIndexUpdateQueueAction.Delete },
-  });
-
-  const itemIds = queuedItemsToDelete.map((queuedItem) => queuedItem.id);
+  const queuedItemsToDelete = await SearchIndexUpdate.getQueue(
+    indexName,
+    SearchIndexUpdateQueueAction.Delete
+  );
+  const itemIds = queuedItemsToDelete.content;
 
   if (itemIds.length === 0) {
     return;
@@ -121,6 +120,7 @@ const onSearchIndexDocumentsCleanup = async ({
   }
 
   await index.deleteDocuments(itemIds);
+  await queuedItemsToDelete.commit();
   console.log('onSearchIndexDocumentsCleanup :: tasks for deletion has been added');
 };
 

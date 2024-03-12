@@ -1,6 +1,7 @@
 import { createMetricProcessor } from '~/server/metrics/base.metrics';
-import { Prisma, SearchIndexUpdateQueueAction } from '@prisma/client';
-import { bountiesSearchIndex, collectionsSearchIndex } from '~/server/search-index';
+import { Prisma } from '@prisma/client';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { bountiesSearchIndex } from '~/server/search-index';
 
 export const bountyMetrics = createMetricProcessor({
   name: 'Bounty',
@@ -15,7 +16,7 @@ export const bountyMetrics = createMetricProcessor({
       WHERE ("createdAt" > ${lastUpdate})
 
       UNION
-      
+
       SELECT
         "bountyId" AS id
       FROM "BountyEntry"
@@ -29,12 +30,12 @@ export const bountyMetrics = createMetricProcessor({
       WHERE ("createdAt" > ${lastUpdate})
 
       UNION
-      
+
       SELECT t."bountyId" as id
       FROM "Thread" t
       JOIN "CommentV2" c ON c."threadId" = t.id
       WHERE t."bountyId" IS NOT NULL AND c."createdAt" > ${lastUpdate}
-      
+
       UNION
 
       SELECT
@@ -74,28 +75,28 @@ export const bountyMetrics = createMetricProcessor({
           WHEN tf.timeframe = 'Month' THEN month_favorite_count
           WHEN tf.timeframe = 'Week' THEN week_favorite_count
           WHEN tf.timeframe = 'Day' THEN day_favorite_count
-        END AS favorite_count, 
+        END AS favorite_count,
         CASE
           WHEN tf.timeframe = 'AllTime' THEN track_count
           WHEN tf.timeframe = 'Year' THEN year_track_count
           WHEN tf.timeframe = 'Month' THEN month_track_count
           WHEN tf.timeframe = 'Week' THEN week_track_count
           WHEN tf.timeframe = 'Day' THEN day_track_count
-        END AS track_count, 
+        END AS track_count,
         CASE
           WHEN tf.timeframe = 'AllTime' THEN entry_count
           WHEN tf.timeframe = 'Year' THEN year_entry_count
           WHEN tf.timeframe = 'Month' THEN month_entry_count
           WHEN tf.timeframe = 'Week' THEN week_entry_count
           WHEN tf.timeframe = 'Day' THEN day_entry_count
-        END AS entry_count, 
+        END AS entry_count,
         CASE
           WHEN tf.timeframe = 'AllTime' THEN benefactor_count
           WHEN tf.timeframe = 'Year' THEN year_benefactor_count
           WHEN tf.timeframe = 'Month' THEN month_benefactor_count
           WHEN tf.timeframe = 'Week' THEN week_benefactor_count
           WHEN tf.timeframe = 'Day' THEN day_benefactor_count
-        END AS benefactor_count, 
+        END AS benefactor_count,
         CASE
           WHEN tf.timeframe = 'AllTime' THEN unit_amount_count
           WHEN tf.timeframe = 'Year' THEN year_unit_amount_count
@@ -118,22 +119,22 @@ export const bountyMetrics = createMetricProcessor({
           COALESCE(be.year_favorite_count, 0) AS year_favorite_count,
           COALESCE(be.month_favorite_count, 0) AS month_favorite_count,
           COALESCE(be.week_favorite_count, 0) AS week_favorite_count,
-          COALESCE(be.day_favorite_count, 0) AS day_favorite_count, 
+          COALESCE(be.day_favorite_count, 0) AS day_favorite_count,
           COALESCE(be.track_count, 0) AS track_count,
           COALESCE(be.year_track_count, 0) AS year_track_count,
           COALESCE(be.month_track_count, 0) AS month_track_count,
           COALESCE(be.week_track_count, 0) AS week_track_count,
-          COALESCE(be.day_track_count, 0) AS day_track_count, 
+          COALESCE(be.day_track_count, 0) AS day_track_count,
           COALESCE(bentry.entry_count, 0) AS entry_count,
           COALESCE(bentry.year_entry_count, 0) AS year_entry_count,
           COALESCE(bentry.month_entry_count, 0) AS month_entry_count,
           COALESCE(bentry.week_entry_count, 0) AS week_entry_count,
-          COALESCE(bentry.day_entry_count, 0) AS day_entry_count, 
+          COALESCE(bentry.day_entry_count, 0) AS day_entry_count,
           COALESCE(bf.benefactor_count, 0) AS benefactor_count,
           COALESCE(bf.year_benefactor_count, 0) AS year_benefactor_count,
           COALESCE(bf.month_benefactor_count, 0) AS month_benefactor_count,
           COALESCE(bf.week_benefactor_count, 0) AS week_benefactor_count,
-          COALESCE(bf.day_benefactor_count, 0) AS day_benefactor_count, 
+          COALESCE(bf.day_benefactor_count, 0) AS day_benefactor_count,
           COALESCE(bf.unit_amount_count, 0) AS unit_amount_count,
           COALESCE(bf.year_unit_amount_count, 0) AS year_unit_amount_count,
           COALESCE(bf.month_unit_amount_count, 0) AS month_unit_amount_count,

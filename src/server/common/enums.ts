@@ -208,3 +208,8 @@ export enum PurchasableRewardModeratorViewMode {
   History = 'History',
   Purchased = 'Purchased',
 }
+
+export enum SearchIndexUpdateQueueAction {
+  Update = 'Update',
+  Delete = 'Delete',
+}

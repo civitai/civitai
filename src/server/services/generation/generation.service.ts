@@ -19,7 +19,7 @@ import {
   throwRateLimitError,
   withRetries,
 } from '~/server/utils/errorHandling';
-import { Availability, ModelType, Prisma, SearchIndexUpdateQueueAction } from '@prisma/client';
+import { Availability, ModelType, Prisma } from '@prisma/client';
 import {
   GenerationResourceSelect,
   generationResourceSelect,
@@ -57,6 +57,7 @@ import { modelsSearchIndex } from '~/server/search-index';
 import { createLimiter } from '~/server/utils/rate-limiting';
 import { clickhouse } from '~/server/clickhouse/client';
 import dayjs from 'dayjs';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 
 export function parseModelVersionId(assetId: string) {
   const pattern = /^@civitai\/(\d+)$/;

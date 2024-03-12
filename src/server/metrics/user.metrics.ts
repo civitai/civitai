@@ -1,6 +1,7 @@
 import { createMetricProcessor } from '~/server/metrics/base.metrics';
-import { Prisma, SearchIndexUpdateQueueAction } from '@prisma/client';
-import { tagsSearchIndex, usersSearchIndex } from '~/server/search-index';
+import { Prisma } from '@prisma/client';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { usersSearchIndex } from '~/server/search-index';
 
 export const userMetrics = createMetricProcessor({
   name: 'User',

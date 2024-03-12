@@ -1,6 +1,7 @@
 import { chunk } from 'lodash-es';
 import { createMetricProcessor } from '~/server/metrics/base.metrics';
-import { Prisma, SearchIndexUpdateQueueAction } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { articlesSearchIndex } from '~/server/search-index';
 
 export const articleMetrics = createMetricProcessor({
@@ -358,7 +359,7 @@ export const articleMetrics = createMetricProcessor({
           SUM(IIF(aci."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_collected_count,
           SUM(IIF(aci."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_collected_count,
           SUM(IIF(aci."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_collected_count
-        FROM "CollectionItem" aci 
+        FROM "CollectionItem" aci
         JOIN "Collection" c ON aci."collectionId" = c."id" AND c."mode" IS NULL AND c."type" = 'Article'
         WHERE aci."articleId" IS NOT NULL
         GROUP BY aci."articleId"
