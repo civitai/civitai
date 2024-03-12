@@ -15,7 +15,7 @@ import { isDefined } from '~/utils/type-guards';
 
 const MAX_FAILURES = 3;
 
-export const processVaultItems = createJob('process-vault-items', '10 * * * *', async () => {
+export const processVaultItems = createJob('process-vault-items', '*/10 * * * *', async () => {
   if (!env.S3_VAULT_BUCKET) {
     throw new Error('S3_VAULT_BUCKET is not defined');
   }
