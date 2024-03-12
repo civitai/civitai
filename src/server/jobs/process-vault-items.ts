@@ -123,6 +123,8 @@ export const processVaultItems = createJob('process-vault-items', '1 * * * *', a
       await dbWrite.vaultItem.update({
         where: { id: vaultItem.id },
         data: {
+          // Update with the actual zip size:
+          imagesSizeKb: imagesZip.size / 1024,
           status: VaultItemStatus.Stored,
         },
       });
