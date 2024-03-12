@@ -470,16 +470,6 @@ export function AppHeader({
         ),
       },
       {
-        href: '/models?hidden=true',
-        visible: !!currentUser,
-        label: (
-          <Group align="center" spacing="xs">
-            <IconCircleDashed stroke={1.5} color={theme.colors.yellow[theme.fn.primaryShade()]} />
-            Hidden models
-          </Group>
-        ),
-      },
-      {
         href: `/user/${currentUser?.username}/following`,
         visible: !!currentUser,
         label: (

@@ -29,6 +29,7 @@ const modelQueryParamSchema = z
     favorites: z.coerce.boolean(),
     hidden: z.coerce.boolean(),
     archived: z.coerce.boolean(),
+    followed: z.coerce.boolean(),
     view: z.enum(['categories', 'feed']),
     section: z.enum(['published', 'draft', 'training']),
     collectionId: z.coerce.number(),
