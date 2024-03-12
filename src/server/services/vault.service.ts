@@ -5,6 +5,7 @@ import { VaultSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
   GetPaginatedVaultItemsSchema,
+  VaultItemFilesSchema,
   VaultItemsAddModelVersionSchema,
   VaultItemsRefreshSchema,
   VaultItemsRemoveModelVersionsSchema,
@@ -13,12 +14,13 @@ import {
 import { getImagesForModelVersion } from '~/server/services/image.service';
 import { getCategoryTags } from '~/server/services/system-cache';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
-import { getPrimaryFile } from '~/server/utils/model-helpers';
+import { getFileDisplayName, getPrimaryFile } from '~/server/utils/model-helpers';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import { formatKBytes } from '~/utils/number-helpers';
 import { deleteManyObjects, getGetUrlByKey, parseKey } from '~/utils/s3-utils';
 import { getDisplayName } from '~/utils/string-helpers';
+import { isDefined } from '~/utils/type-guards';
 
 type VaultWithUsedStorage = {
   userId: number;
@@ -101,8 +103,10 @@ export const getOrCreateVault = async ({ userId }: { userId: number }) => {
 
 export const getModelVersionDataForVault = async ({
   modelVersionId,
+  filePreferences,
 }: {
   modelVersionId: number;
+  filePreferences?: UserFilePreferences;
 }) => {
   const modelVersion = await dbRead.modelVersion.findUnique({
     where: { id: modelVersionId },
@@ -136,20 +140,22 @@ export const getModelVersionDataForVault = async ({
     throw throwNotFoundError('Model version has no files.');
   }
 
-  const validFiles = modelVersion.files
-    .filter(
-      (file) => file.hashes.length > 0 && file.hashes.some((h) => h.type === ModelHashType.SHA256)
-    )
-    .map((file) => ({
-      ...file,
-      metadata: (file.metadata || {}) as FileMetadata,
-    }));
+  const parsedFiles = modelVersion.files.map((file) => ({
+    ...file,
+    metadata: (file.metadata || {}) as FileMetadata,
+  }));
 
-  const mainFile = getPrimaryFile(validFiles);
+  const mainFile = getPrimaryFile(parsedFiles, { metadata: filePreferences });
 
   if (!mainFile) {
     throw throwNotFoundError('Model version has no primary file.');
   }
+
+  const otherFiles = parsedFiles.filter(
+    (f) => f.id !== mainFile.id && ['Negative', 'Config'].includes(f.type)
+  );
+
+  const files = [mainFile, ...otherFiles].filter(isDefined);
 
   const images = await getImagesForModelVersion({
     modelVersionIds: [modelVersionId],
@@ -254,7 +260,7 @@ export const getModelVersionDataForVault = async ({
 
   return {
     modelVersion,
-    mainFile,
+    files,
     images,
     detail,
   };
@@ -278,9 +284,23 @@ export const addModelVersionToVault = async ({
     return existingVaultItem;
   }
 
+  const user = await dbRead.user.findUnique({
+    where: {
+      id: userId,
+    },
+    select: {
+      filePreferences: true,
+    },
+  });
   const vault = await getOrCreateVault({ userId });
-  const { modelVersion, mainFile, images, detail } = await getModelVersionDataForVault({
+  const {
+    modelVersion,
+    files: modelVersionFiles,
+    images,
+    detail,
+  } = await getModelVersionDataForVault({
     modelVersionId,
+    filePreferences: user?.filePreferences as UserFilePreferences,
   });
   const modelCategories = await getCategoryTags('model');
   const modelCategoriesIds = modelCategories.map((category) => category.id);
@@ -288,8 +308,18 @@ export const addModelVersionToVault = async ({
     modelCategoriesIds.includes(tagOnModel.tag.id)
   );
 
+  const files = modelVersionFiles.map((file) => {
+    return {
+      id: file.id,
+      sizeKB: file.sizeKB,
+      url: file.url,
+      displayName: getFileDisplayName({ file, modelType: modelVersion.model.type }),
+    };
+  });
+  const modelSizeKb = modelVersionFiles.reduce((acc, file) => acc + (file.sizeKB ?? 0), 0);
+
   const totalKb =
-    mainFile.sizeKB + images.reduce((acc, img) => acc + (img.sizeKB ?? 0), 0) + detail.length;
+    modelSizeKb + images.reduce((acc, img) => acc + (img.sizeKB ?? 0), 0) + detail.length;
 
   if (vault.usedStorageKb + totalKb > vault.storageKb) {
     throw throwBadRequestError(
@@ -299,7 +329,7 @@ export const addModelVersionToVault = async ({
     );
   }
 
-  const files = [mainFile].map((f) => f.url);
+  console.log(files, totalKb);
 
   const vaultItem = await dbWrite.vaultItem.create({
     data: {
@@ -315,7 +345,7 @@ export const addModelVersionToVault = async ({
       creatorId: modelVersion.model.userId === -1 ? null : modelVersion.model.userId,
       detailsSizeKb: detail.length,
       imagesSizeKb: images.reduce((acc, img) => acc + (img.sizeKB ?? 0), 0),
-      modelSizeKb: mainFile.sizeKB,
+      modelSizeKb,
       type: modelVersion.model.type,
       category: category?.tag.name ?? '',
       createdAt: modelVersion.createdAt,
@@ -490,6 +520,7 @@ export const getPaginatedVaultItems = async (
       return {
         ...item,
         coverImageUrl: url,
+        files: (item.files ?? []) as VaultItemFilesSchema,
       };
     })
   );

@@ -64,6 +64,12 @@ if (isProd) {
     if (env.LOGGING.includes('prisma-slow-write'))
       // @ts-ignore - this is necessary to get the query event
       global.globalDbWrite.$on('query', logFor('write'));
+
+    global.globalDbWrite.$on('query', async (e) => {
+      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+      // @ts-ignore
+      console.log(`${e.query} ${e.params}`);
+    });
   }
   if (!global.globalDbRead) {
     global.globalDbRead = singleClient

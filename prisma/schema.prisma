@@ -2794,8 +2794,8 @@ model VaultItem {
   vaultId        Int
   vault          Vault           @relation(fields: [vaultId], references: [userId], onDelete: Cascade)
   status         VaultItemStatus @default(Pending)
-  // Store the keys of whatever files we care for. This will be a list of keys to the files in the storage service.
-  files          String[]        @default([])
+  // We'll store some file details here as a JSON array of objects
+  files          Json            @default("[]")
   // These are not FKs because they will tie to the downloadable file even after the model/version is deleted
   modelVersionId Int
   modelId        Int

@@ -5,20 +5,20 @@ import { z } from 'zod';
 import { constants } from '~/server/common/constants';
 
 import { dbRead, dbWrite } from '~/server/db/client';
+import { VaultItemFilesSchema } from '~/server/schema/vault.schema';
 import { getFileForModelVersion } from '~/server/services/file.service';
 import { getVaultWithStorage } from '~/server/services/vault.service';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { RateLimitedEndpoint } from '~/server/utils/rate-limiting';
 import { isRequestFromBrowser } from '~/server/utils/request-helpers';
 import { getDownloadUrl } from '~/utils/delivery-worker';
-import { getJoinLink } from '~/utils/join-helpers';
-import { getLoginLink } from '~/utils/login-helpers';
 import { getGetUrlByKey } from '~/utils/s3-utils';
 import { getVaultState } from '~/utils/vault';
 
 const schema = z.object({
   vaultItemId: z.preprocess((val) => Number(val), z.number()),
   type: z.enum(['model', 'images', 'details']),
+  fileId: z.coerce.number().optional(),
 });
 
 export default RateLimitedEndpoint(
@@ -96,9 +96,10 @@ export default RateLimitedEndpoint(
 
     switch (input.type) {
       case 'model': {
-        const [fileUrl] = vaultItem.files;
-        if (!fileUrl) return onError(404, 'File not found');
-        const { url } = await getDownloadUrl(fileUrl);
+        const files = (vaultItem.files ?? []) as VaultItemFilesSchema;
+        const file = input.fileId ? files.find((f) => f.id === input.fileId) : files[0];
+        if (!file || !file.url) return onError(404, 'File not found');
+        const { url } = await getDownloadUrl(file.url);
         return res.redirect(url);
       }
       case 'images': {

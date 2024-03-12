@@ -47,3 +47,13 @@ export type VaultItemMetadataSchema = z.infer<typeof vaultItemMetadataSchema>;
 export const vaultItemMetadataSchema = z.object({
   failures: z.number().default(0),
 });
+
+export type VaultItemFilesSchema = z.infer<typeof vaultItemFilesSchema>;
+export const vaultItemFilesSchema = z.array(
+  z.object({
+    id: z.number(),
+    sizeKB: z.number(),
+    url: z.string(),
+    displayName: z.string(),
+  })
+);
