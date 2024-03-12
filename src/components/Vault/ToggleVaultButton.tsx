@@ -1,6 +1,7 @@
 import React, { useCallback } from 'react';
 import { useMutateVault } from '~/components/Vault/vault.util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { trpc } from '~/utils/trpc';
 
 export function ToggleVaultButton({
@@ -15,6 +16,7 @@ export function ToggleVaultButton({
   }) => React.ReactElement;
 }) {
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
   const {
     data: isInVault = false,
     isLoading: isCheckingVault,
@@ -34,7 +36,7 @@ export function ToggleVaultButton({
     [toggleModelVersion, modelVersionId]
   );
 
-  if (!currentUser?.isMember) {
+  if (!currentUser?.isMember || !features.vault) {
     return null;
   }
 

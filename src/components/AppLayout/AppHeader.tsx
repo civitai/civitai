@@ -457,7 +457,7 @@ export function AppHeader({
       },
       {
         href: '/user/vault',
-        visible: !!currentUser,
+        visible: !!currentUser && features.vault,
         label: (
           <Group align="center" spacing="xs">
             <IconCloudLock stroke={1.5} color={theme.colors.yellow[7]} />
