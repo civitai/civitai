@@ -48,6 +48,8 @@ export default function UserModelsPage() {
   const { set, section: querySection, ...queryFilters } = useModelQueryParams();
   const period = queryFilters.period ?? MetricTimeframe.AllTime;
   const sort = queryFilters.sort ?? ModelSort.Newest;
+  const hidden = queryFilters.hidden ?? false;
+  const followed = queryFilters.followed ?? false;
   const username = queryFilters.username ?? '';
   const selfView =
     !!currentUser && postgresSlugify(currentUser.username) === postgresSlugify(username);
@@ -115,6 +117,8 @@ export default function UserModelsPage() {
                     ...queryFilters,
                     sort,
                     period,
+                    hidden,
+                    followed,
                   }}
                   showEmptyCta={selfView}
                 />

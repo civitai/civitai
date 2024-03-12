@@ -540,6 +540,7 @@
     "yourusername",
     "zlib",
     "buzz-dashboard",
-    "transactions"
+    "transactions",
+    "vault"
   ]
 }
