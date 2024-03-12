@@ -10,27 +10,38 @@ import {
   createStyles,
   Drawer,
   ButtonProps,
+  Text,
 } from '@mantine/core';
 import { IconChevronDown, IconFilter } from '@tabler/icons-react';
 import { getDisplayName } from '~/utils/string-helpers';
 import { useCallback, useState } from 'react';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { containerQuery } from '~/utils/mantine-css-helpers';
-import { PurchasableRewardModeratorViewMode } from '~/server/common/enums';
+import { PurchasableRewardModeratorViewMode, TagSort } from '~/server/common/enums';
 import { GetPaginatedVaultItemsSchema } from '~/server/schema/vault.schema';
 import { ModelType } from '@prisma/client';
 import { DatePicker } from '@mantine/dates';
+import { trpc } from '~/utils/trpc';
+import { constants } from '~/server/common/constants';
 
 type Filters = Omit<GetPaginatedVaultItemsSchema, 'limit'>;
 
 export function VaultItemsFiltersDropdown({ filters, setFilters, ...buttonProps }: Props) {
   const { classes, theme, cx } = useStyles();
   const mobile = useIsMobile();
+  const { data: { items: categories } = { items: [] } } = trpc.tag.getAll.useQuery({
+    entityType: ['Model'],
+    sort: TagSort.MostModels,
+    unlisted: false,
+    categories: true,
+    limit: 100,
+  });
 
   const [opened, setOpened] = useState(false);
   const filterLength =
     (filters.types?.length ?? 0) +
     (filters.categories?.length ?? 0) +
+    (filters.baseModels?.length ?? 0) +
     (filters.dateCreatedFrom ? 1 : 0) +
     (filters.dateCreatedTo ? 1 : 0) +
     (filters.dateAddedFrom ? 1 : 0) +
@@ -50,7 +61,7 @@ export function VaultItemsFiltersDropdown({ filters, setFilters, ...buttonProps 
   );
 
   const chipProps: Partial<ChipProps> = {
-    size: 'sm',
+    size: 'xs',
     radius: 'xl',
     variant: 'filled',
     classNames: classes,
@@ -106,6 +117,44 @@ export function VaultItemsFiltersDropdown({ filters, setFilters, ...buttonProps 
           {Object.values(ModelType).map((type, index) => (
             <Chip key={index} value={type} {...chipProps}>
               {getDisplayName(type)}
+            </Chip>
+          ))}
+        </Chip.Group>
+        <Divider label="Category" labelProps={{ weight: 'bold', size: 'sm' }} />
+        <Chip.Group
+          spacing={8}
+          value={filters.categories ?? []}
+          onChange={(categories: string[]) => {
+            setFilters({
+              categories,
+            });
+          }}
+          multiple
+        >
+          {categories.map((category) => (
+            <Chip key={category.id} value={category.name} {...chipProps}>
+              <Text component="span" transform="capitalize">
+                {getDisplayName(category.name)}
+              </Text>
+            </Chip>
+          ))}
+        </Chip.Group>
+        <Divider label="Base Model" labelProps={{ weight: 'bold', size: 'sm' }} />
+        <Chip.Group
+          spacing={8}
+          value={filters.baseModels ?? []}
+          onChange={(baseModels: string[]) => {
+            setFilters({
+              baseModels,
+            });
+          }}
+          multiple
+        >
+          {constants.baseModels.map((baseModel) => (
+            <Chip key={baseModel} value={baseModel} {...chipProps}>
+              <Text component="span" transform="capitalize">
+                {baseModel}
+              </Text>
             </Chip>
           ))}
         </Chip.Group>
@@ -208,7 +257,7 @@ export function VaultItemsFiltersDropdown({ filters, setFilters, ...buttonProps 
       middlewares={{ flip: true, shift: true }}
     >
       <Popover.Target>{target}</Popover.Target>
-      <Popover.Dropdown maw={468} p="md" w="100%">
+      <Popover.Dropdown maw={700} p="md" w="100%">
         {dropdown}
       </Popover.Dropdown>
     </Popover>

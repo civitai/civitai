@@ -23,6 +23,7 @@ import { truncate } from 'lodash-es';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { constants } from '~/server/common/constants';
 import { SearchIndexDataMap } from '~/components/Search/search.utils2';
+import { getDisplayName } from '~/utils/string-helpers';
 
 export const ModelSearchItem = forwardRef<
   HTMLDivElement,
@@ -96,7 +97,7 @@ export const ModelSearchItem = forwardRef<
             </Badge>
           )}
           <Badge size="xs">{type}</Badge>
-          {category && <Badge size="xs">{category.name}</Badge>}
+          {category && <Badge size="xs">{getDisplayName(category.name)}</Badge>}
         </Group>
         <Group spacing={4}>
           <IconBadge icon={<StarRating value={metrics.rating} size={12} />}>

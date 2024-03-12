@@ -310,8 +310,9 @@ export const addModelVersionToVault = async ({
       versionName: modelVersion.name,
       modelId: modelVersion.modelId,
       baseModel: modelVersion.baseModel,
-      creatorName: modelVersion.model.user?.username ?? '',
-      creatorId: modelVersion.model.userId,
+      creatorName:
+        modelVersion.model.user?.id === -1 ? '' : modelVersion.model.user?.username ?? '',
+      creatorId: modelVersion.model.userId === -1 ? null : modelVersion.model.userId,
       detailsSizeKb: detail.length,
       imagesSizeKb: images.reduce((acc, img) => acc + (img.sizeKB ?? 0), 0),
       modelSizeKb: mainFile.sizeKB,
@@ -410,12 +411,10 @@ export const getPaginatedVaultItems = async (
     orderBy.addedAt = 'desc';
   } else if (input.sort === VaultSort.RecentlyCreated) {
     orderBy.createdAt = 'desc';
-  } else if (input.sort === VaultSort.BaseModel) {
-    orderBy.baseModel = 'asc';
   } else if (input.sort === VaultSort.ModelName) {
     orderBy.modelName = 'asc';
-  } else if (input.sort === VaultSort.Category) {
-    orderBy.category = 'asc';
+  } else if (input.sort === VaultSort.ModelSize) {
+    orderBy.modelSizeKb = 'desc';
   }
 
   if (input.query) {
@@ -447,6 +446,10 @@ export const getPaginatedVaultItems = async (
 
   if (input.categories && input.categories.length) {
     where.category = { in: input.categories };
+  }
+
+  if (input.baseModels && input.baseModels.length) {
+    where.baseModel = { in: input.baseModels };
   }
 
   if (input.dateCreatedFrom) {

@@ -212,6 +212,5 @@ export enum VaultSort {
   RecentlyAdded = 'Recently Added',
   RecentlyCreated = 'Recently Created',
   ModelName = 'Model Name',
-  BaseModel = 'Base Model',
-  Category = 'Category',
+  ModelSize = 'Model Size',
 }

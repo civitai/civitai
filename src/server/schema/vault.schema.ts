@@ -11,6 +11,7 @@ export const getPaginatedVaultItemsSchema = paginationSchema.merge(
     query: z.string().optional(),
     types: z.array(z.nativeEnum(ModelType)).optional(),
     categories: z.array(z.string()).optional(),
+    baseModels: z.array(z.string()).optional(),
     dateCreatedFrom: z.date().optional(),
     dateCreatedTo: z.date().optional(),
     dateAddedFrom: z.date().optional(),
