@@ -87,6 +87,7 @@ const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByI
         view: undefined,
         supportsGeneration: undefined,
         followed: undefined,
+        hidden: undefined,
         sort,
         period: MetricTimeframe.AllTime,
         collectionId: collection.id,
@@ -94,6 +95,8 @@ const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByI
     : {
         ...query,
         sort,
+        followed: undefined,
+        hidden: undefined,
         period: MetricTimeframe.AllTime,
         collectionId: collection.id,
       };
@@ -110,7 +113,6 @@ const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByI
                 onChange={(x) => set({ sort: x as ModelSort })}
               />
               <Group spacing="xs">
-                <PeriodFilter type="models" value={period} onChange={(x) => set({ period: x })} />
                 <ModelFiltersDropdown />
               </Group>
             </Group>

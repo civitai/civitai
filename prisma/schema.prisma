@@ -248,6 +248,8 @@ model User {
   builds                     BuildGuide[]
   createdRewards             PurchasableReward[]
   purchasedRewards           UserPurchasedRewards[]
+  vault                      Vault?
+  vaultItems                 VaultItem[]
 }
 
 enum OnboardingStep {
@@ -2770,6 +2772,56 @@ model UserPurchasedRewards {
   // We should store the product name & details in the meta at the time or purchase in case the reward is later on deleted - will be a good safeguard
   meta                Json               @default("{}")
   code                String
+}
+
+enum VaultItemStatus {
+  Pending
+  Stored
+  Failed
+}
+
+model VaultItem {
+  id             Int             @id @default(autoincrement())
+  vaultId        Int
+  vault          Vault           @relation(fields: [vaultId], references: [userId], onDelete: Cascade)
+  status         VaultItemStatus @default(Pending)
+  // We'll store some file details here as a JSON array of objects
+  files          Json            @default("[]")
+  // These are not FKs because they will tie to the downloadable file even after the model/version is deleted
+  modelVersionId Int
+  modelId        Int
+  modelName      String
+  versionName    String
+  creatorId      Int?
+  creator        User?           @relation(fields: [creatorId], references: [id], onDelete: SetNull)
+  creatorName    String
+  type           ModelType
+  baseModel      String
+  category       String
+  createdAt      DateTime        @default(now())
+  addedAt        DateTime        @default(now())
+  refreshedAt    DateTime?
+  modelSizeKb    Int
+  detailsSizeKb  Int
+  imagesSizeKb   Int
+  notes          String?
+  meta           Json            @default("{}")
+
+  @@index([vaultId], type: Hash)
+  @@index([modelVersionId], type: Hash)
+}
+
+model Vault {
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  storageKb Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  meta      Json     @default("{}")
+
+  items VaultItem[]
+
+  @@id([userId])
 }
 
 /// @view

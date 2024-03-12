@@ -53,6 +53,7 @@ import {
   IconVideoPlus,
   IconWriting,
   IconClubs,
+  IconCloudLock,
 } from '@tabler/icons-react';
 import { signOut } from 'next-auth/react';
 import Link from 'next/link';
@@ -457,6 +458,16 @@ export function AppHeader({
         ),
       },
       {
+        href: '/user/vault',
+        visible: !!currentUser && features.vault,
+        label: (
+          <Group align="center" spacing="xs">
+            <IconCloudLock stroke={1.5} color={theme.colors.yellow[7]} />
+            My vault
+          </Group>
+        ),
+      },
+      {
         href: '',
         label: <Divider my={4} />,
       },
@@ -466,16 +477,6 @@ export function AppHeader({
           <Group align="center" spacing="xs">
             <IconCrown stroke={1.5} color={theme.colors.yellow[theme.fn.primaryShade()]} />
             Leaderboard
-          </Group>
-        ),
-      },
-      {
-        href: '/models?hidden=true',
-        visible: !!currentUser,
-        label: (
-          <Group align="center" spacing="xs">
-            <IconCircleDashed stroke={1.5} color={theme.colors.yellow[theme.fn.primaryShade()]} />
-            Hidden models
           </Group>
         ),
       },

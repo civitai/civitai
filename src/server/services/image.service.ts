@@ -1226,6 +1226,7 @@ type ImagesForModelVersions = {
   metadata: Prisma.JsonValue;
   tags?: number[];
   availability: Availability;
+  sizeKB?: number;
 };
 export const getImagesForModelVersion = async ({
   modelVersionIds,
@@ -1314,7 +1315,8 @@ export const getImagesForModelVersion = async ({
       i.type,
       i.metadata,
       t."modelVersionId",
-      p."availability"
+      p."availability",
+      i."sizeKB"
       ${Prisma.raw(include.includes('meta') ? ', i.meta' : '')}
     FROM targets t
     JOIN "Image" i ON i.id = t.id
