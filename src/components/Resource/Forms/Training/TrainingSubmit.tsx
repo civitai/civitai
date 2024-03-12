@@ -1,6 +1,5 @@
-import { Accordion, Button, Group, Input, Stack, Text, Title } from '@mantine/core';
+import { Accordion, Anchor, Button, Group, Input, Paper, Stack, Text, Title } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
-import { NextLink } from '@mantine/next';
 import { showNotification } from '@mantine/notifications';
 import { Currency, TrainingStatus } from '@prisma/client';
 import { useRouter } from 'next/router';
@@ -52,8 +51,15 @@ const baseModelDescriptions: {
   sdxl: { label: 'Standard (SDXL)', description: 'Useful for all purposes, and uses SDXL.' },
   pony: {
     label: 'Pony (SDXL)',
-    description: 'Results tailored to visuals of various anthro, feral, or humanoids species.',
+    description: 'Results tailored to visuals of various anthro, feral, or humanoid species.',
   },
+};
+
+// nb: keep this in line with what is set by the worker
+const optimizerArgMap: { [key: string]: string } = {
+  Adafactor: 'scale_parameter=False, relative_step=False, warmup_init=False',
+  AdamW8Bit: 'weight_decay=0.1',
+  Prodigy: 'weight_decay=0.5, decouple=True, betas=0.9,0.99, use_bias_correction=False',
 };
 
 type BaseTrainingSettingsType = {
@@ -136,7 +142,7 @@ export const trainingSettings: TrainingSettingsType[] = [
     min: 3,
     max: 500,
     step: 1,
-    overrides: { sdxl: { min: 1, default: 10 }, pony: { min: 1, default: 10 } },
+    overrides: { sdxl: { min: 1 }, pony: { min: 1 } },
   },
   {
     name: 'numRepeats',
@@ -161,7 +167,7 @@ export const trainingSettings: TrainingSettingsType[] = [
     overrides: {
       realistic: { default: 2, min: 1, max: 2 },
       sdxl: { max: 4, min: 1, default: 4 },
-      pony: { max: 4, min: 1, default: 4 },
+      pony: { max: 5, min: 1, default: 5 },
     },
   },
   {
@@ -291,6 +297,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       'constant_with_warmup',
       'linear',
     ],
+    overrides: { pony: { default: 'cosine' } },
   },
   // TODO add warmup if constant_with_warmup
   {
@@ -307,12 +314,22 @@ export const trainingSettings: TrainingSettingsType[] = [
   {
     name: 'minSnrGamma',
     label: 'Min SNR Gamma',
-    hint: 'In LoRA learning, learning is performed by putting noise of various strengths on the training image (details about this are omitted), but depending on the difference in strength of the noise on which it is placed, learning will be stable by moving closer to or farther from the learning target. not, and the Min SNR gamma was introduced to compensate for that. Especially when learning images with little noise on them, it may deviate greatly from the target, so try to suppress this jump.',
+    hint: (
+      <>
+        Learning is performed by putting noise of various strengths on the training image, but
+        depending on the difference in strength of the noise on which it is placed, learning will be
+        stable by moving closer to or farther from the learning target.
+        <br />
+        Min SNR gamma was introduced to compensate for that. When learning images have little noise,
+        it may deviate greatly from the target, so try to suppress this jump.
+      </>
+    ),
     type: 'int',
     default: 5, // TODO maybe float
     min: 0,
     max: 20,
     step: 1,
+    overrides: { pony: { default: 0 } },
   },
   {
     name: 'networkDim',
@@ -343,7 +360,7 @@ export const trainingSettings: TrainingSettingsType[] = [
     min: 1,
     max: 128,
     step: 1,
-    overrides: { sdxl: { max: 256 }, pony: { max: 256 } },
+    overrides: { sdxl: { max: 256 }, pony: { max: 256, default: 32 } },
   },
   {
     name: 'noiseOffset',
@@ -353,7 +370,8 @@ export const trainingSettings: TrainingSettingsType[] = [
     default: 0.1,
     min: 0,
     max: 1,
-    step: 0.1,
+    step: 0.01,
+    overrides: { pony: { default: 0.03 } },
   },
   {
     name: 'optimizerType',
@@ -370,7 +388,16 @@ export const trainingSettings: TrainingSettingsType[] = [
     type: 'select',
     default: 'AdamW8Bit',
     options: ['AdamW8Bit', 'Adafactor', 'Prodigy'], // TODO enum
-    overrides: { sdxl: { default: 'Adafactor' }, pony: { default: 'Adafactor' } },
+    overrides: { sdxl: { default: 'Adafactor' }, pony: { default: 'Prodigy' } },
+  },
+  {
+    // this is only used for display
+    name: 'optimizerArgs',
+    label: 'Optimizer Args',
+    hint: 'Additional arguments can be passed to control the behavior of the selected optimizer. This is set automatically.',
+    type: 'string',
+    default: optimizerArgMap.AdamW8Bit,
+    disabled: true,
   },
 ];
 
@@ -380,7 +407,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   const thisFile = thisModelVersion.files[0];
   const thisMetadata = thisFile?.metadata as FileMetadata | null;
 
-  const [openedSection, setOpenedSection] = useState<string | null>(null);
+  const [openedSections, setOpenedSections] = useState<string[]>([]);
   const [formBaseModel, setDisplayBaseModel] = useState<TrainingDetailsBaseModel | undefined>(
     thisTrainingDetails?.baseModel ?? undefined
   );
@@ -413,6 +440,9 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     baseModel: z.enum(trainingDetailsBaseModels, {
       errorMap: () => ({ message: 'A base model must be chosen.' }),
     }),
+    samplePrompt1: z.string(),
+    samplePrompt2: z.string(),
+    samplePrompt3: z.string(),
   });
 
   // @ts-ignore ignoring because the reducer will use default functions in the next step in place of actual values
@@ -420,6 +450,9 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     baseModel: TrainingDetailsBaseModel | undefined;
   } = {
     baseModel: thisTrainingDetails?.baseModel ?? undefined,
+    samplePrompt1: thisTrainingDetails?.samplePrompts?.[0] ?? '',
+    samplePrompt2: thisTrainingDetails?.samplePrompts?.[1] ?? '',
+    samplePrompt3: thisTrainingDetails?.samplePrompts?.[2] ?? '',
     ...(thisTrainingDetails?.params
       ? thisTrainingDetails.params
       : trainingSettings.reduce((a, v) => ({ ...a, [v.name]: v.default }), {})),
@@ -452,6 +485,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
 
   const watchFields = form.watch(['maxTrainEpochs', 'numRepeats', 'trainBatchSize']);
   const watchFieldsBuzz = form.watch(['networkDim', 'networkAlpha', 'targetSteps']);
+  const watchFieldOptimizer = form.watch('optimizerType');
 
   // apply default overrides for base model upon selection
   useEffect(() => {
@@ -498,6 +532,19 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     const price = eta !== undefined ? calcBuzzFromEta(eta) : eta;
     setBuzzCost(price);
   }, [watchFieldsBuzz, formBaseModel]);
+
+  useEffect(() => {
+    const newArgs = optimizerArgMap[watchFieldOptimizer] ?? '';
+    form.setValue('optimizerArgs', newArgs);
+
+    if (
+      watchFieldOptimizer === 'Prodigy' &&
+      form.getValues('lrScheduler') === 'cosine_with_restarts'
+    ) {
+      form.setValue('lrScheduler', 'cosine');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [watchFieldOptimizer]);
 
   const { errors } = form.formState;
 
@@ -598,10 +645,17 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   const handleConfirm = (data: z.infer<typeof schema>) => {
     setAwaitInvalidate(true);
 
-    const { baseModel, ...paramData } = data;
+    const { baseModel, samplePrompt1, samplePrompt2, samplePrompt3, optimizerArgs, ...paramData } =
+      data;
 
     const baseModelConvert: BaseModel =
-      baseModel === 'sd_1_5' ? 'SD 1.5' : baseModel === 'sdxl' ? 'SDXL 1.0' : 'Other';
+      baseModel === 'sd_1_5'
+        ? 'SD 1.5'
+        : baseModel === 'sdxl'
+        ? 'SDXL 1.0'
+        : baseModel === 'pony'
+        ? 'Pony'
+        : 'Other';
 
     // these top vars appear to be required for upsert, but aren't actually being updated.
     // only ID should technically be necessary
@@ -622,6 +676,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
       trainingDetails: {
         ...((thisModelVersion.trainingDetails as TrainingDetailsObj) || {}),
         baseModel: baseModel,
+        samplePrompts: [samplePrompt1, samplePrompt2, samplePrompt3],
         params: paramData,
       },
     };
@@ -757,18 +812,17 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           </Title>
           <Text color="dimmed" size="sm">
             Not sure which one to choose? Read our{' '}
-            <Text
-              component={NextLink}
-              variant="link"
-              target="_blank"
+            <Anchor
               href="https://education.civitai.com/using-civitai-the-on-site-lora-trainer"
+              target="_blank"
               rel="nofollow noreferrer"
             >
               On-Site LoRA Trainer Guide
-            </Text>{' '}
+            </Anchor>{' '}
             for more info.
           </Text>
         </Stack>
+        {/* TODO when using custom, split this into rows of 1.5, xl, and custom */}
         <Input.Wrapper
           label="Select a base model to train your model on"
           withAsterisk
@@ -798,15 +852,26 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
             fullWidth
           />
         </Input.Wrapper>
-        {formBaseModel && (baseModelDescriptions[formBaseModel]?.description || '')}
+        {formBaseModel && (
+          <Paper p="sm" withBorder style={{ marginTop: '-17px' }}>
+            <Text size="sm">
+              {baseModelDescriptions[formBaseModel]?.description || 'No description.'}
+            </Text>
+          </Paper>
+        )}
+
+        {formBaseModel && (
+          <Title mt="md" order={5}>
+            Advanced Settings
+          </Title>
+        )}
 
         {formBaseModel && (
           <Accordion
             variant="separated"
-            // multiple
-            // defaultValue={['training-settings']}
+            multiple
             mt="md"
-            onChange={setOpenedSection}
+            onChange={setOpenedSections}
             styles={(theme) => ({
               content: { padding: 0 },
               item: {
@@ -820,13 +885,48 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
               },
             })}
           >
+            <Accordion.Item value="custom-prompts">
+              <Accordion.Control>
+                <Stack spacing={4}>
+                  Sample Image Prompts
+                  {openedSections.includes('custom-prompts') && (
+                    <Text size="xs" color="dimmed">
+                      Set your own prompts for any of the 3 sample images we generate for each
+                      epoch.
+                    </Text>
+                  )}
+                </Stack>
+              </Accordion.Control>
+              <Accordion.Panel>
+                <Stack p="sm">
+                  <InputText
+                    name="samplePrompt1"
+                    label="Image #1"
+                    placeholder="Automatically set"
+                  />
+                  <InputText
+                    name="samplePrompt2"
+                    label="Image #2"
+                    placeholder="Automatically set"
+                  />
+                  <InputText
+                    name="samplePrompt3"
+                    label="Image #3"
+                    placeholder="Automatically set"
+                  />
+                </Stack>
+              </Accordion.Panel>
+            </Accordion.Item>
             <Accordion.Item value="training-settings">
               <Accordion.Control>
                 <Stack spacing={4}>
-                  Advanced Training Settings
-                  {openedSection === 'training-settings' && (
+                  Training Parameters
+                  {openedSections.includes('training-settings') && (
                     <Text size="xs" color="dimmed">
                       Hover over each setting for more information.
+                      <br />
+                      Default settings are based on your chosen model. Altering these settings may
+                      cause undesirable results.
                     </Text>
                   )}
                 </Stack>
@@ -858,11 +958,15 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                       );
                     } else if (ts.type === 'select') {
                       let options = ts.options;
+                      // TODO if we fix the bitsandbytes issue, we can disable this
                       if (
                         ts.name === 'optimizerType' &&
                         (formBaseModel === 'sdxl' || formBaseModel === 'pony')
                       ) {
                         options = options.filter((o) => o !== 'AdamW8Bit');
+                      }
+                      if (ts.name === 'lrScheduler' && watchFieldOptimizer === 'Prodigy') {
+                        options = options.filter((o) => o !== 'cosine_with_restarts');
                       }
 
                       inp = (
@@ -875,7 +979,13 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                     } else if (ts.type === 'bool') {
                       inp = <InputCheckbox py={8} name={ts.name} disabled={ts.disabled === true} />;
                     } else if (ts.type === 'string') {
-                      inp = <InputText name={ts.name} disabled={ts.disabled === true} />;
+                      inp = (
+                        <InputText
+                          name={ts.name}
+                          disabled={ts.disabled === true}
+                          clearable={ts.disabled !== true}
+                        />
+                      );
                     }
 
                     return {

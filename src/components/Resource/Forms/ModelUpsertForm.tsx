@@ -83,7 +83,12 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
     uploadType: model?.uploadType ?? 'Created',
     poi: model?.poi ?? false,
     nsfw: model?.nsfw ?? false,
-    allowCommercialUse: model?.allowCommercialUse ?? [CommercialUse.Sell],
+    allowCommercialUse: model?.allowCommercialUse ?? [
+      CommercialUse.Image,
+      CommercialUse.RentCivit,
+      CommercialUse.Rent,
+      CommercialUse.Sell,
+    ],
     allowDerivatives: model?.allowDerivatives ?? true,
     allowNoCredit: model?.allowNoCredit ?? true,
     allowDifferentLicense: model?.allowDifferentLicense ?? true,
@@ -119,6 +124,8 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
 
   const upsertModelMutation = trpc.model.upsert.useMutation({
     onSuccess: async (data, payload) => {
+      // Reset dirty state, but keep the values
+      form.reset({}, { keepValues: true });
       await queryUtils.model.getById.invalidate({ id: data.id });
       await queryUtils.model.getAllInfiniteSimple.invalidate();
       if (!payload.id) await queryUtils.model.getMyDraftModels.invalidate();
@@ -280,7 +287,7 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                     <Text size="xs" color="dimmed">
                       Learn more about how licensing works by reading our{' '}
                       <Anchor
-                        href="https://education.civitai.com"
+                        href="https://education.civitai.com/guide-to-licensing-options-on-civitai/ "
                         target="_blank"
                         rel="nofollow noreferrer"
                       >

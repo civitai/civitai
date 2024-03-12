@@ -4,7 +4,6 @@ import {
   Card,
   Center,
   Container,
-  Divider,
   Group,
   Loader,
   LoadingOverlay,
@@ -16,34 +15,35 @@ import {
   Text,
   ThemeIcon,
   Title,
+  createStyles,
 } from '@mantine/core';
-import { useRouter } from 'next/router';
 import { IconLock, IconMessage, IconMessageCircleOff, IconPhoto } from '@tabler/icons-react';
+import { useRouter } from 'next/router';
 
+import { NotFound } from '~/components/AppLayout/NotFound';
 import { BackButton } from '~/components/BackButton/BackButton';
+import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
+import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
+import { Meta } from '~/components/Meta/Meta';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
-import { EditUserResourceReview } from '~/components/ResourceReview/EditUserResourceReview';
-import { ResourceReviewMenu } from '~/components/ResourceReview/ResourceReviewMenu';
 import {
-  getAverageRating,
-  getRatingCount,
-  ResourceReviewSummary,
-} from '~/components/ResourceReview/Summary/ResourceReviewSummary';
+  EditUserResourceReviewV2,
+  UserResourceReviewComposite,
+} from '~/components/ResourceReview/EditUserResourceReview';
+import { ResourceReviewMenu } from '~/components/ResourceReview/ResourceReviewMenu';
+import { ResourceReviewThumbActions } from '~/components/ResourceReview/ResourceReviewThumbActions';
+import { getAverageRating, getRatingCount } from '~/components/ResourceReview/resourceReview.utils';
+import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { env } from '~/env/client.mjs';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getResourceReviewPagedSchema } from '~/server/schema/resourceReview.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ResourceReviewPagedModel } from '~/types/router';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
-import { Meta } from '~/components/Meta/Meta';
-import { StarRating } from '~/components/StartRating/StarRating';
-import { env } from '~/env/client.mjs';
-import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
-import { NotFound } from '~/components/AppLayout/NotFound';
-import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -90,15 +90,6 @@ export default function ModelReviews() {
     modelVersionId,
   });
 
-  const {
-    data: currentUserReview,
-    isLoading: loadingCurrentUserReview,
-    isRefetching: refetchingCurrentUserReview,
-  } = trpc.resourceReview.getUserResourceReview.useQuery(
-    { modelVersionId: modelVersionId ?? 0 },
-    { enabled: !!currentUser && !isMuted && !!modelVersionId }
-  );
-
   const handleModelVersionChange = (value: string | null) => {
     router.replace(
       {
@@ -121,18 +112,18 @@ export default function ModelReviews() {
 
   const Model = loadingModel ? (
     <Skeleton height={44} />
-  ) : (
-    <Group spacing="xs">
-      <BackButton url={`/models/${modelId}?modelVersionId=${modelVersionId}`} />
-      <Title>{model?.name}</Title>
+  ) : model ? (
+    <Group spacing="xs" noWrap>
+      <BackButton url={`/models/${model.id}?modelVersionId=${modelVersionId}`} />
+      <Title lineClamp={1}>{model.name} Reviews</Title>
     </Group>
-  );
+  ) : null;
   const Versions = loadingVersions ? (
     <Skeleton height={36} />
   ) : !!versions?.length ? (
     <Select
       placeholder="Showing all versions"
-      clearable={versions && versions.length > 1}
+      // clearable={versions && versions.length > 1}
       data={versions.map((version) => ({ label: version.name, value: version.id.toString() }))}
       value={(router.query.modelVersionId as string) ?? null}
       onChange={handleModelVersionChange}
@@ -142,31 +133,43 @@ export default function ModelReviews() {
   const version = versions?.find((v) => v.id === modelVersionId);
   const UserReview = !currentUser ? (
     <Alert>You must be logged in to leave a review</Alert>
-  ) : !modelVersionId ? (
+  ) : !modelVersionId || !model ? (
     <Alert>Select a model version to leave a review</Alert>
   ) : version?.isEarlyAccess && !currentUser.isMember ? (
     <Alert>{`Only Supporters can review this while it's in early access.`}</Alert>
-  ) : loadingCurrentUserReview || refetchingCurrentUserReview ? (
-    <Center p="xl">
-      <Loader />
-    </Center>
   ) : (
-    <Stack spacing={4}>
-      <Text weight={500}>Leave a review</Text>
-      <EditUserResourceReview
-        modelId={modelId}
-        modelName={model?.name}
-        modelVersionId={modelVersionId}
-        resourceReview={currentUserReview}
-      />
-    </Stack>
-  );
-
-  const Summary = (
-    <ResourceReviewSummary modelVersionId={modelVersionId} modelId={modelId}>
-      <ResourceReviewSummary.Header />
-      <ResourceReviewSummary.Totals />
-    </ResourceReviewSummary>
+    <UserResourceReviewComposite modelId={model.id} modelVersionId={modelVersionId}>
+      {({ modelId, modelVersionId, modelName, userReview }) => (
+        <Card p="sm" style={{ position: 'sticky', top: 24 }} withBorder>
+          <Stack spacing={8}>
+            <Text size="md" weight={510}>
+              Did you like this resource?
+            </Text>
+            {userReview && (
+              <Text color="dimmed" size="xs">
+                Reviewed <DaysFromNow date={userReview.createdAt} />
+              </Text>
+            )}
+            <ResourceReviewThumbActions
+              modelId={modelId}
+              modelVersionId={modelVersionId}
+              userReview={userReview}
+              withCount
+            />
+          </Stack>
+          {userReview && (
+            <Card.Section py="sm" mt="sm" inheritPadding withBorder>
+              <EditUserResourceReviewV2
+                modelVersionId={modelVersionId}
+                modelName={modelName}
+                userReview={userReview}
+                showReviewedAt={false}
+              />
+            </Card.Section>
+          )}
+        </Card>
+      )}
+    </UserResourceReviewComposite>
   );
 
   const ratingCount = getRatingCount(ratingTotals);
@@ -181,135 +184,176 @@ export default function ModelReviews() {
           { href: `${env.NEXT_PUBLIC_BASE_URL}/models/${modelId}/reviews`, rel: 'canonical' },
         ]}
       />
-      <Container size="md">
-        {Model}
-        <Divider my="md" />
-        {model?.locked ? (
-          <Paper p="lg" withBorder bg={`rgba(0,0,0,0.1)`}>
-            <Center>
-              <Group spacing="xs">
-                <ThemeIcon color="gray" size="xl" radius="xl">
-                  <IconMessageCircleOff />
-                </ThemeIcon>
-                <Text size="lg" color="dimmed">
-                  Reviews are turned off for this model.
-                </Text>
-              </Group>
-            </Center>
-          </Paper>
-        ) : (
-          <ContainerGrid gutter="xl">
-            <ContainerGrid.Col sm={12} md={4}>
-              <Stack>
-                {Versions}
-                {Summary}
-                {!isMuted ? (
-                  UserReview
-                ) : (
-                  <Alert color="yellow" icon={<IconLock />}>
-                    You cannot add reviews because you have been muted
-                  </Alert>
-                )}
-              </Stack>
-            </ContainerGrid.Col>
-            <ContainerGrid.Col sm={12} md={8}>
-              {loadingResourceReviews ? (
-                <Center p="xl">
-                  <Loader />
+      <Container size="xl">
+        <ContainerGrid gutter={48}>
+          <ContainerGrid.Col sm={12} md={7} offsetMd={2} orderMd={1}>
+            <Group spacing={8} position="apart">
+              {Model}
+              {Versions}
+            </Group>
+          </ContainerGrid.Col>
+          <ContainerGrid.Col sm={12} md={3} orderMd={3}>
+            {isMuted ? (
+              <Alert color="yellow" icon={<IconLock />}>
+                You cannot add reviews because you have been muted
+              </Alert>
+            ) : model?.locked ? (
+              <Paper p="lg" withBorder bg={`rgba(0,0,0,0.1)`}>
+                <Center>
+                  <Group spacing="xs">
+                    <ThemeIcon color="gray" size="xl" radius="xl">
+                      <IconMessageCircleOff />
+                    </ThemeIcon>
+                    <Text size="lg" color="dimmed">
+                      Reviews are turned off for this model.
+                    </Text>
+                  </Group>
                 </Center>
-              ) : (
-                <Stack spacing="xl" style={{ position: 'relative' }}>
-                  <LoadingOverlay visible={refetchingResourceReviews} />
-                  {resourceReviews?.items.map((review) => (
-                    <ReviewCard key={review.id} creatorId={model?.user.id} {...review} />
-                  ))}
-                  {resourceReviews && resourceReviews.totalPages > 1 && (
+              </Paper>
+            ) : (
+              UserReview
+            )}
+          </ContainerGrid.Col>
+          <ContainerGrid.Col sm={12} md={7} offsetMd={2} orderMd={2}>
+            {loadingResourceReviews ? (
+              <Center p="xl">
+                <Loader />
+              </Center>
+            ) : (
+              <Stack style={{ position: 'relative' }}>
+                <LoadingOverlay visible={refetchingResourceReviews} />
+                {resourceReviews?.items.map((review) => (
+                  <ReviewCard key={review.id} creatorId={model?.user.id} {...review} />
+                ))}
+                {resourceReviews && resourceReviews.totalPages > 1 && (
+                  <Center mt="md">
                     <Pagination
                       page={page}
                       onChange={handlePaginationChange}
                       total={resourceReviews.totalPages}
                     />
-                  )}
-                </Stack>
-              )}
-            </ContainerGrid.Col>
-          </ContainerGrid>
-        )}
+                  </Center>
+                )}
+              </Stack>
+            )}
+          </ContainerGrid.Col>
+        </ContainerGrid>
       </Container>
     </>
   );
 }
 
+const useCardStyles = createStyles((theme) => ({
+  card: {
+    padding: theme.spacing.xl,
+
+    [theme.fn.smallerThan('sm')]: {
+      padding: theme.spacing.sm,
+    },
+  },
+  actionsWrapper: {
+    gap: theme.spacing.md,
+
+    [theme.fn.smallerThan('sm')]: {
+      gap: 8,
+    },
+  },
+}));
+
 function ReviewCard({ creatorId, ...review }: ResourceReviewPagedModel & { creatorId?: number }) {
+  const { classes } = useCardStyles();
   const isCreator = creatorId === review.user.id;
+  const isThumbsUp = review.recommended;
 
   return (
-    <Card withBorder shadow="sm">
-      <Stack key={review.id} spacing={4}>
+    <Card className={classes.card} shadow="sm" radius="md" w="100%" p="xl" withBorder>
+      <Stack spacing="sm">
+        {(review.exclude || isCreator) && (
+          <Group position="left">
+            <Badge color="red">Excluded from count</Badge>
+          </Group>
+        )}
+
         <Group position="apart" noWrap>
           <UserAvatar
             user={review.user}
             subText={
-              <>
-                <DaysFromNow date={review.createdAt} /> - {review.modelVersion.name}
-              </>
+              <Group mt={4} spacing={8} noWrap>
+                <Text size="sm" lineClamp={1}>
+                  <DaysFromNow date={review.createdAt} />
+                </Text>
+
+                <RoutedDialogLink
+                  name="resourceReview"
+                  state={{ reviewId: review.id }}
+                  style={{ display: 'flex' }}
+                >
+                  <Badge
+                    px={4}
+                    leftSection={
+                      <Center>
+                        <IconPhoto size={14} />
+                      </Center>
+                    }
+                  >
+                    {review.imageCount ?? '0'}
+                  </Badge>
+                </RoutedDialogLink>
+
+                <RoutedDialogLink
+                  name="resourceReview"
+                  state={{ reviewId: review.id }}
+                  style={{ display: 'flex' }}
+                >
+                  <Badge
+                    px={4}
+                    leftSection={
+                      <Center>
+                        <IconMessage size={14} />
+                      </Center>
+                    }
+                  >
+                    {review.commentCount ?? '0'}
+                  </Badge>
+                </RoutedDialogLink>
+              </Group>
             }
             subTextForce
-            size="md"
-            spacing="xs"
+            avatarSize={40}
+            size="lg"
+            spacing="md"
             withUsername
             linkToProfile
           />
-          <ResourceReviewMenu
-            reviewId={review.id}
-            userId={review.user.id}
-            review={{
-              ...review,
-              details: review.details ?? undefined,
-              modelVersionId: review.modelVersion.id,
-            }}
-          />
-        </Group>
-        <Group spacing="xs">
-          <StarRating value={review.rating} />
-
-          <RoutedDialogLink
-            name="resourceReview"
-            state={{ reviewId: review.id }}
-            style={{ display: 'flex' }}
-          >
-            <Badge
-              px={4}
-              leftSection={
-                <Center>
-                  <IconPhoto size={14} />
-                </Center>
-              }
+          <Group className={classes.actionsWrapper} noWrap>
+            <RoutedDialogLink
+              name="resourceReview"
+              state={{ reviewId: review.id }}
+              style={{ display: 'flex' }}
             >
-              {review.helper?.imageCount ?? '0'}
-            </Badge>
-          </RoutedDialogLink>
-
-          <RoutedDialogLink
-            name="resourceReview"
-            state={{ reviewId: review.id }}
-            style={{ display: 'flex' }}
-          >
-            <Badge
-              px={4}
-              leftSection={
-                <Center>
-                  <IconMessage size={14} />
-                </Center>
-              }
-            >
-              {review.thread?._count.comments ?? '0'}
-            </Badge>
-          </RoutedDialogLink>
-          {(review.exclude || isCreator) && <Badge color="red">Excluded from average</Badge>}
+              {isThumbsUp ? (
+                <ThemeIcon color="success.5" size="lg" radius="md" variant="light">
+                  <ThumbsUpIcon filled />
+                </ThemeIcon>
+              ) : (
+                <ThemeIcon color="red" size="lg" radius="md" variant="light">
+                  <ThumbsDownIcon filled />
+                </ThemeIcon>
+              )}
+            </RoutedDialogLink>
+            <ResourceReviewMenu
+              reviewId={review.id}
+              userId={review.user.id}
+              review={{
+                ...review,
+                details: review.details ?? '',
+                modelVersionId: review.modelVersionId,
+              }}
+            />
+          </Group>
         </Group>
         {review.details && (
-          <ContentClamp maxHeight={300}>
+          <ContentClamp maxHeight={300} ml="56px">
             <RenderHtml html={review.details} />
           </ContentClamp>
         )}

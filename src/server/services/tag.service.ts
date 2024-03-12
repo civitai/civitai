@@ -23,6 +23,7 @@ import { tagsSearchIndex } from '~/server/search-index';
 import { imageTagCompositeSelect, modelTagCompositeSelect } from '~/server/selectors/tag.selector';
 import { getCategoryTags, getSystemTags } from '~/server/services/system-cache';
 import { userCache } from '~/server/services/user-cache.service';
+import { clearImageTagIdsCache } from '~/server/services/image.service';
 
 export const getTagWithModelCount = ({ name }: { name: string }) => {
   return dbRead.$queryRaw<[{ id: number; name: string; count: number }]>`
@@ -458,6 +459,7 @@ export const disableTags = async ({ tags, entityIds, entityType }: AdjustTagsSch
       }
     `);
     updateImageNSFWLevels(entityIds);
+    await clearImageTagIdsCache(entityIds);
   } else if (entityType === 'tag') {
     await dbWrite.$executeRawUnsafe(`
       DELETE FROM "TagsOnTags"
@@ -493,6 +495,7 @@ export const moderateTags = async ({ entityIds, entityType, disable }: ModerateT
 
     // Update nsfw baseline
     if (disable) updateImageNSFWLevels(entityIds);
+    await clearImageTagIdsCache(entityIds);
   }
 };
 

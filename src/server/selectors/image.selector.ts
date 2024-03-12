@@ -68,11 +68,10 @@ export const imageResourceHelperSelect = Prisma.validator<Prisma.ImageResourceHe
   modelVersionCreatedAt: true,
   modelId: true,
   modelName: true,
-  modelRating: true,
-  modelRatingCount: true,
   modelDownloadCount: true,
   modelCommentCount: true,
-  modelFavoriteCount: true,
+  modelThumbsUpCount: true,
+  modelThumbsDownCount: true,
   modelType: true,
 });
 

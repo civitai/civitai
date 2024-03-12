@@ -262,10 +262,12 @@ export function AppHeader({
 
   const isMuted = currentUser?.muted ?? false;
   const isMember = !!currentUser?.tier;
-  const { systemCollections } = useSystemCollections();
-  const bookmarkedArticlesCollection = systemCollections.find(
-    (c) => c.type === CollectionType.Article
-  );
+  const {
+    groupedCollections: {
+      Article: bookmarkedArticlesCollection,
+      Model: bookmarkedModelsCollection,
+    },
+  } = useSystemCollections();
 
   const mainActions = useMemo<MenuLink[]>(
     () => [
@@ -404,7 +406,7 @@ export function AppHeader({
         ),
       },
       {
-        href: '/models?favorites=true',
+        href: `/collections/${bookmarkedModelsCollection?.id}`,
         visible: !!currentUser,
         label: (
           <Group align="center" spacing="xs">
@@ -475,16 +477,6 @@ export function AppHeader({
           <Group align="center" spacing="xs">
             <IconCrown stroke={1.5} color={theme.colors.yellow[theme.fn.primaryShade()]} />
             Leaderboard
-          </Group>
-        ),
-      },
-      {
-        href: '/models?hidden=true',
-        visible: !!currentUser,
-        label: (
-          <Group align="center" spacing="xs">
-            <IconCircleDashed stroke={1.5} color={theme.colors.yellow[theme.fn.primaryShade()]} />
-            Hidden models
           </Group>
         ),
       },
@@ -560,8 +552,10 @@ export function AppHeader({
       features.imageTrainingResults,
       features.bounties,
       features.buzz,
+      features.questions,
+      bookmarkedModelsCollection,
+      bookmarkedArticlesCollection,
       router.asPath,
-      theme,
     ]
   );
 

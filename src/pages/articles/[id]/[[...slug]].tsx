@@ -143,7 +143,7 @@ export default function ArticleDetailsPage({
           </Text>
         </IconBadge>
       </InteractiveTipBuzzButton>
-      <LoginRedirect reason="favorite-model">
+      <LoginRedirect reason="favorite-article">
         <ToggleArticleEngagement articleId={article.id}>
           {({ toggle, isToggled }) => {
             const isFavorite = isToggled?.Favorite;

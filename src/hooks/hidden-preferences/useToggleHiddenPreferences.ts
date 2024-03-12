@@ -4,7 +4,7 @@ import { invalidateModeratedContentDebounced } from '~/utils/query-invalidation-
 import { trpc } from '~/utils/trpc';
 
 export const useToggleHiddenPreferences = () => {
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const updateHiddenPreferences = useUpdateHiddenPreferences();
 
   return trpc.hiddenPreferences.toggleHidden.useMutation({
@@ -43,7 +43,7 @@ export const useToggleHiddenPreferences = () => {
 };
 
 export const useUpdateHiddenPreferences = () => {
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const updateHiddenPreferences = ({ kind, data, hidden }: ToggleHiddenSchemaOutput) => {
     const type = kind === 'tag' ? 'hidden' : 'always';
     queryUtils.hiddenPreferences.getHidden.setData(

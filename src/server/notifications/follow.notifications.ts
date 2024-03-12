@@ -22,6 +22,7 @@ export const followNotifications = createNotificationProcessor({
       FROM "UserEngagement" ue
       JOIN "User" u ON u.id = ue."userId"
       WHERE ue.type = 'Follow' AND ue."createdAt" > '${lastSent}'
+      AND NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = ue."targetUserId" AND type = 'followed-by')
       ON CONFLICT ("id") DO NOTHING;`,
   },
 });

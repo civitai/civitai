@@ -18,6 +18,7 @@ import { openContext } from '~/providers/CustomModalsProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { ResourceReviewPagedModel } from '~/types/router';
 
 export function ResourceReviewMenu({
   reviewId,
@@ -29,15 +30,17 @@ export function ResourceReviewMenu({
   reviewId: number;
   userId: number;
   size?: MantineNumberSize;
-  review: {
-    id: number;
-    rating: number;
-    details?: string;
-    modelId: number;
-    modelVersionId: number;
-    exclude?: boolean;
-    metadata?: any;
-  };
+  review: Pick<
+    ResourceReviewPagedModel,
+    | 'id'
+    | 'rating'
+    | 'modelId'
+    | 'modelVersionId'
+    | 'recommended'
+    | 'details'
+    | 'exclude'
+    | 'metadata'
+  >;
 } & MenuProps) {
   const currentUser = useCurrentUser();
   const dialog = useDialogContext();
@@ -46,12 +49,12 @@ export function ResourceReviewMenu({
   const isOwner = currentUser?.id === userId;
   const isMuted = currentUser?.muted ?? false;
 
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const deleteMutation = trpc.resourceReview.delete.useMutation({
     onSuccess: async () => {
-      await queryUtils.resourceReview.invalidate();
       closeAllModals();
       dialog.onClose();
+      await queryUtils.resourceReview.invalidate();
     },
   });
   const handleDelete = () => {
@@ -90,8 +93,8 @@ export function ResourceReviewMenu({
       title: 'Exclude Review',
       children: (
         <Text size="sm">
-          Are you sure you want to exclude this review from the average score of this model? You
-          will not be able to revert this.
+          Are you sure you want to exclude this review from the count of this model? You will not be
+          able to revert this.
         </Text>
       ),
       centered: true,
@@ -139,14 +142,14 @@ export function ResourceReviewMenu({
                 icon={<IconCalculatorOff size={14} stroke={1.5} />}
                 onClick={handleExcludeReview}
               >
-                Exclude from average
+                Exclude from count
               </Menu.Item>
             ) : review.metadata?.excludeReason !== 'reviewManipulation' ? (
               <Menu.Item
                 icon={<IconCalculator size={14} stroke={1.5} />}
                 onClick={handleUnexcludeReview}
               >
-                Unexclude from average
+                Include into count
               </Menu.Item>
             ) : null}
             <ToggleLockComments entityId={reviewId} entityType="review">

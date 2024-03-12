@@ -14,7 +14,7 @@ const etaCoefficients = {
   steps: 0.014458002,
 };
 
-const dollarsPerMinute = 0.17 / 30;
+const dollarsPerMinute = 0.44 / 60;
 const dollarsToBuzz = 1000;
 const baseBuzzTake = 500;
 const minEta = 1;

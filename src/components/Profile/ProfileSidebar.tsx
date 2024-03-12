@@ -256,9 +256,8 @@ export function ProfileSidebar({ username, className }: { username: string; clas
 
       {shouldDisplayStats && (
         <UserStats
-          rating={{ value: stats.ratingAllTime, count: stats.ratingCountAllTime }}
           followers={stats.followerCountAllTime}
-          favorites={stats.favoriteCountAllTime}
+          favorites={stats.thumbsUpCountAllTime}
           downloads={stats.downloadCountAllTime}
         />
       )}

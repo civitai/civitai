@@ -69,6 +69,12 @@ class OrchestratorCaller extends HttpCaller {
     });
   }
 
+  public imageAutoTag({ payload }: { payload: Orchestrator.Training.ImageAutoTagJobPayload }) {
+    return this.post<Orchestrator.Training.ImageAutoTagJobResponse>('/v1/consumer/jobs', {
+      payload: { $type: 'mediaTagging', ...payload },
+    });
+  }
+
   public getEventById({ id, take, descending }: Orchestrator.Events.QueryParams) {
     return this.get<Orchestrator.Events.GetResponse>(`/v1/producer/jobs/${id}/events`, {
       queryParams: { take, descending },
@@ -87,6 +93,10 @@ class OrchestratorCaller extends HttpCaller {
 
   public taintJobById({ id, payload }: { id: string; payload: Orchestrator.TaintJobByIdPayload }) {
     return this.put(`/v1/consumer/jobs/${id}`, { payload });
+  }
+
+  public deleteJobById({ id }: { id: string }) {
+    return this.delete(`/v1/consumer/jobs/${id}`);
   }
 }
 

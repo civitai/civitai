@@ -1,6 +1,5 @@
 import { TrainingStatus } from '@prisma/client';
 import { isEmpty } from 'lodash-es';
-import { env } from '~/env/server.mjs';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { refundTransaction } from '~/server/services/buzz.service';
@@ -106,6 +105,7 @@ async function handleJob({
 
       // Otherwise, resubmit it
       log(`Could not fetch position in queue.`);
+      getOrchestratorCaller(submittedAt).deleteJobById({ id: jobId }).catch();
       await requeueTraining();
       // Note: If for some reason we can't do the training run, this should be in the Failed status on the next pass.
     }
@@ -136,6 +136,7 @@ async function handleJob({
   async function requeueTraining() {
     try {
       log(`Resubmitting training request`);
+      // TODO need userId here?
       await createTrainingRequest({ modelVersionId });
       log(`Resubmitted training request`);
       return true;
@@ -197,19 +198,20 @@ type TrainingRunResult = {
 export const handleLongTrainings = createJob('handle-long-trainings', `*/10 * * * *`, async () => {
   const [lastRun, setLastRun] = await getJobDate('handle-long-trainings');
   const oldTraining = await dbWrite.$queryRaw<TrainingRunResult[]>`
-    SELECT mf.id as "modelFileId",
-           mv.id as "modelVersionId",
-           mv."trainingStatus" as status,
+    SELECT mf.id               as                                                      "modelFileId",
+           mv.id               as                                                      "modelVersionId",
+           mv."trainingStatus" as                                                      status,
            COALESCE(mf."metadata" -> 'trainingResults' ->> 'jobId',
                     mf."metadata" -> 'trainingResults' -> 'history' -> -1 ->> 'jobId') "jobId",
-           mf."metadata" -> 'trainingResults' ->> 'transactionId' "transactionId",
+           mf."metadata" -> 'trainingResults' ->> 'transactionId'                      "transactionId",
            COALESCE(COALESCE(mf."metadata" -> 'trainingResults' ->> 'submittedAt',
-		                mf."metadata" -> 'trainingResults' -> 'history' -> 0 ->> 'time')::timestamp,
-		        mv."updatedAt"
-	        ) "submittedAt"
+                             mf."metadata" -> 'trainingResults' -> 'history' -> 0 ->>
+                             'time')::timestamp,
+                    mv."updatedAt"
+           )                                                                           "submittedAt"
     FROM "ModelVersion" mv
-    JOIN "ModelFile" mf ON mv.id = mf."modelVersionId"
-    JOIN "Model" m ON m.id = mv."modelId"
+           JOIN "ModelFile" mf ON mv.id = mf."modelVersionId"
+           JOIN "Model" m ON m.id = mv."modelId"
     WHERE mf.type = 'Training Data'
       AND m."uploadType" = 'Trained'
       AND mv."trainingStatus" in ('Processing', 'Submitted')

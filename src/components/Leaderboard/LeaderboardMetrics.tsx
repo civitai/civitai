@@ -13,6 +13,7 @@ import {
 import {
   IconBookmark,
   IconBox,
+  IconBrush,
   IconBulb,
   IconCheck,
   IconChecks,
@@ -31,6 +32,7 @@ import {
   IconTarget,
   IconTargetArrow,
   IconTargetOff,
+  IconThumbUp,
   IconTrophy,
 } from '@tabler/icons-react';
 import Link from 'next/link';
@@ -73,6 +75,14 @@ const metricTypes: Record<
       />
     ),
     tooltip: 'Average Rating',
+  }),
+  thumbsUpCount: () => ({
+    tooltip: 'Likes',
+    icon: <IconThumbUp {...iconProps} />,
+  }),
+  generationCount: () => ({
+    tooltip: 'Generations',
+    icon: <IconBrush {...iconProps} />,
   }),
   heart: () => ({
     icon: <IconHeart {...iconProps} />,

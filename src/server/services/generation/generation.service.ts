@@ -34,6 +34,7 @@ import {
   baseModelSets,
   BaseModelSetType,
   CacheTTL,
+  constants,
   getGenerationConfig,
   Sampler,
 } from '~/server/common/constants';
@@ -47,7 +48,7 @@ import orchestratorCaller from '~/server/http/orchestrator/orchestrator.caller';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { includesNsfw, includesPoi, includesMinor } from '~/utils/metadata/audit';
-import { cachedArray } from '~/server/utils/cache-helpers';
+import { bustCachedArray, cachedArray } from '~/server/utils/cache-helpers';
 import { fromJson, toJson } from '~/utils/json-helpers';
 import { extModeration } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
@@ -111,6 +112,7 @@ function mapGenerationResource(
 }
 
 const baseModelSetsArray = Object.values(baseModelSets);
+/** @deprecated using search index instead... */
 export const getGenerationResources = async (
   input: GetGenerationResourcesInput & { user?: SessionUser }
 ) => {
@@ -179,7 +181,7 @@ export const getGenerationResources = async (
       }
 
       let orderBy = 'mv.index';
-      if (!query) orderBy = `mr."ratingAllTimeRank", ${orderBy}`;
+      if (!query) orderBy = `mm."thumbsUpCount", ${orderBy}`;
 
       const results = await dbRead.$queryRaw<Array<Generation.Resource & { index: number }>>`
         SELECT
@@ -199,7 +201,7 @@ export const getGenerationResources = async (
             : ''
         )}
         ${Prisma.raw(
-          orderBy.startsWith('mr') ? `LEFT JOIN "ModelRank" mr ON mr."modelId" = m.id` : ''
+          orderBy.startsWith('mm') ? `JOIN "ModelMetric" mm ON mm."modelId" = m.id` : ''
         )}
         WHERE ${Prisma.join(sqlAnd, ' AND ')}
         ORDER BY ${Prisma.raw(orderBy)}
@@ -250,6 +252,10 @@ const getResourceData = async (modelVersionIds: number[]) => {
     ttl: CacheTTL.hour,
   });
 };
+
+export async function deleteResourceDataCache(modelVersionIds: number | number[]) {
+  await bustCachedArray(REDIS_KEYS.GENERATION.RESOURCE_DATA, 'id', modelVersionIds);
+}
 
 const baseModelSetsEntries = Object.entries(baseModelSets);
 const formatGenerationRequests = async (requests: Generation.Api.RequestProps[]) => {
@@ -442,8 +448,20 @@ export const createGenerationRequest = async ({
     let message = 'You have exceeded the generation limit.';
     if (!limitHitTime) message += ' Please try again later.';
     else message += ` Please try again ${dayjs(limitHitTime).add(60, 'minutes').fromNow()}.`;
+    message += ' Time to go outside.';
     throw throwRateLimitError(message);
   }
+
+  // This is disabled for now, because it performs so poorly...
+  // const requests = await getGenerationRequests({
+  //   userId,
+  //   status: [GenerationRequestStatus.Pending, GenerationRequestStatus.Processing],
+  //   take: constants.imageGeneration.maxConcurrentRequests + 1,
+  // });
+  // if (requests.items.length >= constants.imageGeneration.maxConcurrentRequests)
+  //   throw throwRateLimitError(
+  //     'You have too many pending generation requests. Try again when some are completed.'
+  //   );
 
   if (!resources || resources.length === 0) throw throwBadRequestError('No resources provided');
   if (resources.length > 10) throw throwBadRequestError('Too many resources provided');

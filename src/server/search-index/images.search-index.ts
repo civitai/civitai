@@ -462,7 +462,7 @@ const onIndexUpdate = async ({
         indexName,
         documents: updateTasks,
         batchSize: MEILISEARCH_DOCUMENT_BATCH_SIZE,
-        jobContext,
+        // jobContext,
       });
 
       console.log('onIndexUpdate :: base tasks for updated items have been added');
@@ -471,7 +471,7 @@ const onIndexUpdate = async ({
   }
 
   while (true) {
-    jobContext.checkIfCanceled();
+    // jobContext.checkIfCanceled();
     const indexReadyRecords = await onFetchItemsToIndex({
       db,
       indexName,
@@ -487,7 +487,7 @@ const onIndexUpdate = async ({
       indexName,
       documents: indexReadyRecords,
       batchSize: MEILISEARCH_DOCUMENT_BATCH_SIZE,
-      jobContext,
+      // jobContext,
     });
 
     imageTasks.push(...tasks);

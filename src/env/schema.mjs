@@ -14,6 +14,8 @@ export const serverSchema = z.object({
   DATABASE_CONNECTION_TIMEOUT: z.coerce.number().default(0),
   DATABASE_POOL_MAX: z.coerce.number().default(20),
   DATABASE_POOL_IDLE_TIMEOUT: z.coerce.number().default(30000),
+  DATABASE_READ_TIMEOUT: z.coerce.number().optional(),
+  DATABASE_WRITE_TIMEOUT: z.coerce.number().optional(),
   REDIS_URL: z.string().url(),
   REDIS_TIMEOUT: z.preprocess((x) => x ? parseInt(String(x)) : 5000, z.number().optional()),
   NODE_ENV: z.enum(['development', 'test', 'production']),
@@ -99,7 +101,6 @@ export const serverSchema = z.object({
   FEATUREBASE_URL: z.string().url().optional(),
   NEWSLETTER_ID: z.string().optional(),
   NEWSLETTER_KEY: z.string().optional(),
-  NEWSLETTER_SERVER: z.string().optional(),
   BUZZ_ENDPOINT: z.string().url().optional(),
   SIGNALS_ENDPOINT: z.string().url().optional(),
   CACHE_DNS: zc.booleanString,
@@ -138,6 +139,7 @@ export const serverSchema = z.object({
   PAYPAL_CLIENT_ID: z.string().optional(),
   MEDIA_TAGGER_ENDPOINT: z.string().url().optional(),
   S3_VAULT_BUCKET: z.string().optional(),
+  HEALTHCHECK_TIMEOUT: z.coerce.number().optional().default(1500),
 });
 
 /**

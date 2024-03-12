@@ -29,6 +29,7 @@ import { QS } from '~/utils/qs';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
 import { TemplateSelect } from './TemplateSelect';
+import { useIsChangingLocation } from '~/components/RouterTransition/RouterTransition';
 
 export type ModelWithTags = Omit<ModelById, 'tagsOnModels'> & {
   tagsOnModels: Array<{ isCategory: boolean; id: number; name: string }>;
@@ -293,6 +294,7 @@ function getWizardUrl({
   return `/models/${id}/wizard?${query}`;
 }
 
+const MAX_STEPS = 4;
 export function ModelWizard() {
   const currentUser = useCurrentUser();
   const router = useRouter();
@@ -306,14 +308,13 @@ export function ModelWizard() {
   const isNew = router.pathname.includes('/create');
   const [state, setState] = useState<WizardState>({ step: 1 });
   const [opened, setOpened] = useState(false);
+  const isTransitioning = useIsChangingLocation();
 
   const {
     data: model,
     isInitialLoading: modelLoading,
     isError: modelError,
   } = trpc.model.getById.useQuery({ id: Number(id) }, { enabled: !!id });
-
-  const maxSteps = 4;
 
   const hasVersions = model && model.modelVersions.length > 0;
   const modelVersion = hasVersions ? model.modelVersions[0] : undefined;
@@ -326,7 +327,8 @@ export function ModelWizard() {
     );
 
   const goNext = () => {
-    if (state.step < maxSteps) {
+    if (isTransitioning) return;
+    if (state.step < MAX_STEPS) {
       // TODO does bountyId need to be here?
       router.replace(getWizardUrl({ id, step: state.step + 1, templateId, src }), undefined, {
         shallow: true,
@@ -373,7 +375,7 @@ export function ModelWizard() {
     if (state.step.toString() !== router.query.step) {
       const rawStep = router.query.step;
       const step = Number(rawStep);
-      const validStep = isNumber(step) && step >= 1 && step <= maxSteps;
+      const validStep = isNumber(step) && step >= 1 && step <= MAX_STEPS;
 
       setState((current) => ({ ...current, step: validStep ? step : 1 }));
     }

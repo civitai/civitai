@@ -17,16 +17,6 @@ export const getAllModelsWithVersionsSelect = Prisma.validator<Prisma.ModelSelec
   allowDerivatives: true,
   allowDifferentLicense: true,
   mode: true,
-  rank: {
-    select: {
-      downloadCountAllTime: true,
-      commentCountAllTime: true,
-      favoriteCountAllTime: true,
-      ratingCountAllTime: true,
-      ratingAllTime: true,
-      tippedAmountCountAllTimeRank: true,
-    },
-  },
   user: {
     select: {
       image: true,
@@ -128,12 +118,15 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
       meta: true,
       vaeId: true,
       settings: true,
-      rank: {
+      metrics: {
+        where: { timeframe: 'AllTime' },
         select: {
-          downloadCountAllTime: true,
-          generationCountAllTime: true,
-          ratingCountAllTime: true,
-          ratingAllTime: true,
+          generationCount: true,
+          downloadCount: true,
+          ratingCount: true,
+          rating: true,
+          thumbsUpCount: true,
+          thumbsDownCount: true,
         },
       },
       files: {
@@ -157,17 +150,20 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
       },
     },
   },
-  rank: {
+  metrics: {
+    where: { timeframe: 'AllTime' },
     select: {
-      downloadCountAllTime: true,
-      ratingCountAllTime: true,
-      ratingAllTime: true,
-      favoriteCountAllTime: true,
-      imageCountAllTime: true,
-      collectedCountAllTime: true,
-      tippedAmountCountAllTime: true,
-      generationCountAllTime: true,
-      commentCountAllTime: true,
+      downloadCount: true,
+      ratingCount: true,
+      rating: true,
+      favoriteCount: true,
+      thumbsUpCount: true,
+      thumbsDownCount: true,
+      imageCount: true,
+      collectedCount: true,
+      tippedAmountCount: true,
+      generationCount: true,
+      commentCount: true,
     },
   },
   tagsOnModels: {

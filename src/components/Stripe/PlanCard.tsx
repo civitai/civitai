@@ -22,6 +22,7 @@ import { getStripeCurrencyDisplay } from '~/utils/string-helpers';
 import { ProductMetadata } from '~/server/schema/stripe.schema';
 import { isDefined } from '~/utils/type-guards';
 import { formatKBytes } from '~/utils/number-helpers';
+import { constants } from '~/server/common/constants';
 
 type PlanCardProps = {
   product: StripePlan;
@@ -106,7 +107,7 @@ export const getPlanDetails: (metadata: ProductMetadata) => PlanMeta[] = (
 ) => [
   {
     name: 'Supporter Tier',
-    image: '5844e919-31e3-4dd7-a3c3-f5affdc7af7a',
+    image: constants.supporterBadge,
     benefits: [
       { content: 'Ad-free Browsing', icon: <IconAdCircleOff size={benefitIconSize} /> },
       { content: 'Early access to new features' },

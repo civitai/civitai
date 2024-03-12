@@ -40,9 +40,9 @@ const featureFlags = createFeatureFlags({
   collections: ['public'],
   air: {
     toggleable: true,
-    default: false,
+    default: true,
     displayName: 'AI Resource Identifier',
-    description: `Show the Civitai AIR on resources to make it easier to pull them into the Civitai Comfy Nodes.`,
+    description: `Show the Civitai AIR on resources for easy use within the Civitai Services API or Civitai Comfy Nodes.`,
     availability: ['user'],
   },
   modelCardV2: {

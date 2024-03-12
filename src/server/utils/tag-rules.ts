@@ -198,6 +198,7 @@ const tagCombos: ComputedTagCombo[] = [
       'breast press',
       'grabbing own breast',
       'oral invitation',
+      'erection under clothes',
     ],
     sources: [TagSource.WD14],
   },

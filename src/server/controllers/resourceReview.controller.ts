@@ -23,6 +23,7 @@ import { Context } from '~/server/createContext';
 import { GetByUsernameSchema } from '~/server/schema/user.schema';
 import { dbRead } from '~/server/db/client';
 import { hasEntityAccess } from '../services/common.service';
+import { redis } from '~/server/redis/client';
 
 export const upsertResourceReviewHandler = async ({
   input,
@@ -72,10 +73,11 @@ export const createResourceReviewHandler = async ({
     await ctx.track.resourceReview({
       type: 'Create',
       modelId: result.modelId,
-      modelVersionId: result.modelVersion.id,
-      rating: result.rating,
-      nsfw: result.nsfw,
+      modelVersionId: result.modelVersionId,
+      rating: result.recommended ? 5 : 1,
+      nsfw: false,
     });
+    await redis.del(`user:${ctx.user.id}:model-engagements`);
     return result;
   } catch (error) {
     throw throwDbError(error);
@@ -98,7 +100,7 @@ export const updateResourceReviewHandler = async ({
       rating: result.rating,
       nsfw: result.nsfw,
     });
-
+    await redis.del(`user:${ctx.user.id}:model-engagements`);
     return result;
   } catch (error) {
     throw throwDbError(error);

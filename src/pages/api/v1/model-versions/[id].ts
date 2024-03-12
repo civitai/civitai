@@ -41,7 +41,7 @@ export async function prepareModelVersionResponse(
   baseUrl: URL,
   images?: AsyncReturnType<typeof getImagesForModelVersion>
 ) {
-  const { files, model, rank, vaeId, ...version } = modelVersion;
+  const { files, model, metrics, vaeId, ...version } = modelVersion;
   const vae = !!vaeId ? await getVaeFiles({ vaeIds: [vaeId] }) : [];
   files.push(...vae);
   const castedFiles = files as Array<
@@ -61,9 +61,10 @@ export async function prepareModelVersionResponse(
   return {
     ...version,
     stats: {
-      downloadCount: rank?.downloadCountAllTime ?? 0,
-      ratingCount: rank?.ratingCountAllTime ?? 0,
-      rating: Number(rank?.ratingAllTime?.toFixed(2) ?? 0),
+      downloadCount: metrics[0]?.downloadCount ?? 0,
+      ratingCount: metrics[0]?.ratingCount ?? 0,
+      rating: Number(metrics[0]?.rating?.toFixed(2) ?? 0),
+      thumbsUpCount: metrics[0]?.thumbsUpCount ?? 0,
     },
     model: { ...model, mode: model.mode == null ? undefined : model.mode },
     files: includeDownloadUrl

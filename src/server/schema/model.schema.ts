@@ -45,7 +45,7 @@ export const userPreferencesForModelsSchema = z.object({
 export const getAllModelsSchema = licensingSchema.merge(userPreferencesForModelsSchema).extend({
   limit: z.preprocess((val) => Number(val), z.number().min(0).max(100)).optional(),
   page: z.preprocess((val) => Number(val), z.number().min(1)).optional(),
-  cursor: z.preprocess((val) => Number(val), z.number()).optional(),
+  cursor: z.union([z.bigint(), z.number(), z.string(), z.date()]).optional(),
   query: z.string().optional(),
   tag: z.string().optional(),
   tagname: z.string().optional(),
@@ -77,10 +77,6 @@ export const getAllModelsSchema = licensingSchema.merge(userPreferencesForModels
   sort: z.nativeEnum(ModelSort).default(constants.modelFilterDefaults.sort),
   period: z.nativeEnum(MetricTimeframe).default(constants.modelFilterDefaults.period),
   periodMode: periodModeSchema,
-  rating: z
-    .preprocess((val) => Number(val), z.number())
-    .transform((val) => Math.floor(val))
-    .optional(),
   favorites: z.coerce.boolean().optional().default(false),
   hidden: z.coerce.boolean().optional().default(false),
   needsReview: z.coerce.boolean().optional(),
@@ -346,4 +342,10 @@ export type GetSimpleModelsInfiniteSchema = z.infer<typeof getSimpleModelsInfini
 export const getSimpleModelsInfiniteSchema = infiniteQuerySchema.extend({
   query: z.string().trim().optional(),
   userId: z.number(),
+});
+
+export type ToggleCheckpointCoverageInput = z.infer<typeof toggleCheckpointCoverageSchema>;
+export const toggleCheckpointCoverageSchema = z.object({
+  id: z.number(),
+  versionId: z.number().nullish(),
 });

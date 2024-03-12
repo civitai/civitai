@@ -1,4 +1,6 @@
 import { MetricTimeframe, NsfwLevel } from '@prisma/client';
+import { TRPCError } from '@trpc/server';
+import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 
@@ -42,65 +44,75 @@ const imagesEndpointSchema = z.object({
 });
 
 export default PublicEndpoint(async function handler(req: NextApiRequest, res: NextApiResponse) {
-  const reqParams = imagesEndpointSchema.safeParse(req.query);
-  if (!reqParams.success) return res.status(400).json({ error: reqParams.error });
+  try {
+    const reqParams = imagesEndpointSchema.safeParse(req.query);
+    if (!reqParams.success) return res.status(400).json({ error: reqParams.error });
 
-  // Handle pagination
-  const { limit, page, cursor, ...data } = reqParams.data;
-  let skip: number | undefined;
-  const usingPaging = page && !cursor;
-  if (usingPaging) {
-    ({ skip } = getPagination(limit, page));
-    if (skip && skip * limit > 10000)
-      // Enforce new paging limit
-      return res
-        .status(429)
-        .json({ error: "You've requested too many pages, please use cursors instead" });
+    // Handle pagination
+    const { limit, page, cursor, ...data } = reqParams.data;
+    let skip: number | undefined;
+    const usingPaging = page && !cursor;
+    if (usingPaging) {
+      ({ skip } = getPagination(limit, page));
+      if (skip && skip * limit > 10000)
+        // Enforce new paging limit
+        return res
+          .status(429)
+          .json({ error: "You've requested too many pages, please use cursors instead" });
+    }
+
+    const { items, nextCursor } = await getAllImages({
+      ...data,
+      limit,
+      skip,
+      cursor,
+      periodMode: 'published',
+      include: ['count'],
+      headers: { src: '/api/v1/images' },
+    });
+
+    const metadata: Metadata = {
+      nextCursor,
+    };
+    if (usingPaging) {
+      metadata.currentPage = page;
+      metadata.pageSize = limit;
+    }
+    metadata.nextPage = getNextPage({ req, ...metadata });
+
+    res.status(200).json({
+      items: items.map((image) => ({
+        id: image.id,
+        url: getEdgeUrl(image.url, { width: image.width ?? 450 }),
+        hash: image.hash,
+        width: image.width,
+        height: image.height,
+        nsfwLevel: image.nsfw,
+        nsfw: image.nsfw !== NsfwLevel.None,
+        createdAt: image.createdAt,
+        postId: image.postId,
+        stats: {
+          cryCount: image.stats?.cryCountAllTime ?? 0,
+          laughCount: image.stats?.laughCountAllTime ?? 0,
+          likeCount: image.stats?.likeCountAllTime ?? 0,
+          dislikeCount: image.stats?.dislikeCountAllTime ?? 0,
+          heartCount: image.stats?.heartCountAllTime ?? 0,
+          commentCount: image.stats?.commentCountAllTime ?? 0,
+        },
+        meta: image.meta,
+        username: image.user.username,
+      })),
+      metadata,
+    });
+  } catch (error) {
+    const trpcError = error as TRPCError;
+    const statusCode = getHTTPStatusCodeFromError(trpcError);
+
+    return res.status(statusCode).json({
+      error: trpcError.message,
+      code: trpcError.code,
+    });
   }
-
-  const { items, nextCursor } = await getAllImages({
-    ...data,
-    limit,
-    skip,
-    cursor,
-    periodMode: 'published',
-    include: ['count'],
-    headers: { src: '/api/v1/images' },
-  });
-
-  const metadata: Metadata = {
-    nextCursor,
-  };
-  if (usingPaging) {
-    metadata.currentPage = page;
-    metadata.pageSize = limit;
-  }
-  metadata.nextPage = getNextPage({ req, ...metadata });
-
-  res.status(200).json({
-    items: items.map((image) => ({
-      id: image.id,
-      url: getEdgeUrl(image.url, { width: image.width ?? 450 }),
-      hash: image.hash,
-      width: image.width,
-      height: image.height,
-      nsfwLevel: image.nsfw,
-      nsfw: image.nsfw !== NsfwLevel.None,
-      createdAt: image.createdAt,
-      postId: image.postId,
-      stats: {
-        cryCount: image.stats?.cryCountAllTime ?? 0,
-        laughCount: image.stats?.laughCountAllTime ?? 0,
-        likeCount: image.stats?.likeCountAllTime ?? 0,
-        dislikeCount: image.stats?.dislikeCountAllTime ?? 0,
-        heartCount: image.stats?.heartCountAllTime ?? 0,
-        commentCount: image.stats?.commentCountAllTime ?? 0,
-      },
-      meta: image.meta,
-      username: image.user.username,
-    })),
-    metadata,
-  });
 });
 
 type Metadata = {

@@ -46,6 +46,7 @@ export type ResourceReviewInfiniteModel = ResourceReviewRouter['getInfinite']['i
 export type ResourceReviewRatingTotals = ResourceReviewRouter['getRatingTotals'];
 export type ResourceReviewPaged = ResourceReviewRouter['getPaged'];
 export type ResourceReviewPagedModel = ResourceReviewRouter['getPaged']['items'][number];
+export type ResourceReviewGetById = ResourceReviewRouter['get'];
 
 type ArticleRouter = RouterOutput['article'];
 export type ArticleGetById = ArticleRouter['getById'];

@@ -190,7 +190,7 @@ export const constants = {
       notified: 5,
       muted: 8,
     },
-    maxConcurrentRequests: 10,
+    maxConcurrentRequests: 4,
   },
   tagVoting: {
     voteDuration: 1000 * 60 * 60 * 24,
@@ -288,6 +288,7 @@ export const constants = {
       cover: ':modelVersionId/:userId/cover.jpg',
     },
   },
+  supporterBadge: '020f374d-f165-4f45-9082-371e696a44ff',
 } as const;
 
 export const zipModelFileTypes: ModelFileFormat[] = ['Core ML', 'Diffusers', 'ONNX'];
@@ -450,7 +451,7 @@ export const generation = {
   maxValues: {
     seed: 4294967295,
     steps: 50,
-    quantity: 10,
+    quantity: 4,
     clipSkip: 10,
   },
 } as const;
@@ -530,7 +531,7 @@ export const getGenerationConfig = (baseModel?: string) => {
   return key && generationConfig[key] ? generationConfig[key] : generationConfig['SD1'];
 };
 
-export const MODELS_SEARCH_INDEX = 'models_v5';
+export const MODELS_SEARCH_INDEX = 'models_v6';
 export const IMAGES_SEARCH_INDEX = 'images_v3';
 export const ARTICLES_SEARCH_INDEX = 'articles_v3';
 export const USERS_SEARCH_INDEX = 'users_v2';

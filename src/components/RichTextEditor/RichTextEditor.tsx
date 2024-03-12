@@ -376,6 +376,7 @@ export function RichTextEditor({
 
             '& p.is-editor-empty:first-of-type::before': {
               color: error ? theme.colors.red[8] : undefined,
+              fontSize: 14,
             },
           },
 

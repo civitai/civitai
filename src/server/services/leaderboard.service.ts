@@ -116,7 +116,7 @@ export async function getLeaderboard(input: GetLeaderboardInput) {
   const date = dayjs(input.date ?? dayjs().utc()).format('YYYY-MM-DD');
 
   const leaderboardResultsRaw = await dbRead.$queryRaw<LeaderboardRaw[]>`
-    WITH yesterday AS MATERIALIZED (
+    WITH yesterday AS (
       SELECT
         "userId",
         position,
@@ -124,7 +124,7 @@ export async function getLeaderboard(input: GetLeaderboardInput) {
       FROM "LeaderboardResult"
       WHERE
         "leaderboardId" = ${input.id}
-        AND "createdAt" = date(${date}) - interval '1 day'
+        AND "date" = date(${date}) - interval '1 day'
         AND position < 2000
     )
     SELECT

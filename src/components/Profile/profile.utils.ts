@@ -85,6 +85,6 @@ export const shouldDisplayUserNullState = ({
     (overview.modelCount === 0 || !someSectionEnabled(['modelsOverview', 'popularModels'])) &&
     (overview.imageCount === 0 || !someSectionEnabled(['imagesOverview'])) &&
     (overview.articleCount === 0 || !someSectionEnabled(['popularArticles'])) &&
-    (overview.receivedReviewCount === 0 || !someSectionEnabled(['recentReviews']))
+    (!overview.hasReceivedReviews || !someSectionEnabled(['recentReviews']))
   );
 };

@@ -23,7 +23,6 @@ import {
   IconDownload,
   IconBrush,
   IconExclamationMark,
-  IconHeart,
   IconLicense,
   IconMessageCircle2,
   IconShare3,
@@ -31,6 +30,8 @@ import {
   IconCloudUp,
   IconCloudLock,
   IconLoader,
+  IconHeart,
+  IconPhotoPlus,
 } from '@tabler/icons-react';
 import { TRPCClientErrorBase } from '@trpc/client';
 import { DefaultErrorShape } from '@trpc/server';
@@ -50,7 +51,6 @@ import {
   type Props as DescriptionTableProps,
 } from '~/components/DescriptionTable/DescriptionTable';
 import { FileInfo } from '~/components/FileInfo/FileInfo';
-import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { EarlyAccessAlert } from '~/components/Model/EarlyAccessAlert/EarlyAccessAlert';
 import { HowToButton, HowToUseModel } from '~/components/Model/HowToUseModel/HowToUseModel';
 import { ModelCarousel } from '~/components/Model/ModelCarousel/ModelCarousel';
@@ -61,7 +61,6 @@ import { DownloadButton } from '~/components/Model/ModelVersions/DownloadButton'
 import { ScheduleModal } from '~/components/Model/ScheduleModal/ScheduleModal';
 import { PermissionIndicator } from '~/components/PermissionIndicator/PermissionIndicator';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
-import { ResourceReviewSummary } from '~/components/ResourceReview/Summary/ResourceReviewSummary';
 import { GenerateButton } from '~/components/RunStrategy/GenerateButton';
 import { RunButton } from '~/components/RunStrategy/RunButton';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
@@ -79,7 +78,7 @@ import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { unpublishReasons } from '~/server/common/moderation-helpers';
 import { getFileDisplayName, getPrimaryFile } from '~/server/utils/model-helpers';
 import { ModelById } from '~/types/router';
-import { formatDate } from '~/utils/date-helpers';
+import { formatDate, formatDateMin } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { formatKBytes } from '~/utils/number-helpers';
 import { getDisplayName, removeTags } from '~/utils/string-helpers';
@@ -97,14 +96,24 @@ import { Adunit } from '~/components/Ads/AdUnit';
 import { adsRegistry } from '~/components/Ads/adsRegistry';
 import { useLocalStorage } from '@mantine/hooks';
 import { ToggleVaultButton } from '~/components/Vault/ToggleVaultButton';
+import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
+import { useQueryUserResourceReview } from '~/components/ResourceReview/resourceReview.utils';
+import { ModelVersionReview } from '~/components/Model/ModelVersions/ModelVersionReview';
+import { useQueryModelVersionsEngagement } from '~/components/Model/ModelVersions/model-version.utils';
+import {
+  EditUserResourceReviewLight,
+  UserResourceReviewComposite,
+} from '~/components/ResourceReview/EditUserResourceReview';
+import { ResourceReviewThumbActions } from '~/components/ResourceReview/ResourceReviewThumbActions';
+import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
+import { openContext } from '~/providers/CustomModalsProvider';
 
 export function ModelVersionDetails({
   model,
   version,
   user,
-  isFavorite,
-  onFavoriteClick,
   onBrowseClick,
+  onFavoriteClick,
   hasAccess = true,
 }: Props) {
   const { connected: civitaiLinked } = useCivitaiLink();
@@ -145,6 +154,17 @@ export function ModelVersionDetails({
   const publishModelMutation = trpc.model.publish.useMutation();
   const requestReviewMutation = trpc.model.requestReview.useMutation();
   const requestVersionReviewMutation = trpc.modelVersion.requestReview.useMutation();
+
+  const { currentUserReview, loading: loadingUserReview } = useQueryUserResourceReview({
+    modelId: model.id,
+    modelVersionId: version.id,
+  });
+  const isFavorite = currentUserReview?.recommended;
+
+  const { alreadyDownloaded } = useQueryModelVersionsEngagement({
+    modelId: model.id,
+    versionId: version.id,
+  });
 
   const handlePublishClick = async (publishDate?: Date) => {
     try {
@@ -238,6 +258,17 @@ export function ModelVersionDetails({
             </GenerateButton>
           )}
         </Group>
+      ),
+    },
+    {
+      label: 'Reviews',
+      value: (
+        <ModelVersionReview
+          modelId={model.id}
+          versionId={version.id}
+          thumbsUpCount={version.rank?.thumbsUpCountAllTime ?? 0}
+          thumbsDownCount={version.rank?.thumbsDownCountAllTime ?? 0}
+        />
       ),
     },
     { label: 'Uploaded', value: formatDate(version.createdAt) },
@@ -611,19 +642,24 @@ export function ModelVersionDetails({
                     </ShareButton>
                   </div>
                 </Tooltip>
-                <Tooltip label={isFavorite ? 'Unlike' : 'Like'} position="top" withArrow>
-                  <div>
-                    <LoginRedirect reason="favorite-model">
-                      <Button
-                        onClick={onFavoriteClick}
-                        color={isFavorite ? 'red' : 'gray'}
-                        sx={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
-                      >
-                        <IconHeart color="#fff" />
-                      </Button>
-                    </LoginRedirect>
-                  </div>
-                </Tooltip>
+
+                {onFavoriteClick && (
+                  <Tooltip label={isFavorite ? 'Unlike' : 'Like'} position="top" withArrow>
+                    <div>
+                      <LoginRedirect reason="favorite-model">
+                        <Button
+                          onClick={() =>
+                            onFavoriteClick({ versionId: version.id, setTo: !isFavorite })
+                          }
+                          color={isFavorite ? 'green' : 'gray'}
+                          sx={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
+                        >
+                          <ThumbsUpIcon color="#fff" filled={isFavorite} />
+                        </Button>
+                      </LoginRedirect>
+                    </div>
+                  </Tooltip>
+                )}
                 <ToggleVaultButton modelVersionId={version.id}>
                   {({ isLoading, isInVault, toggleVaultItem }) => (
                     <Tooltip
@@ -682,6 +718,7 @@ export function ModelVersionDetails({
             </AlertWithIcon>
           )}
           <EarlyAccessAlert
+            modelId={model.id}
             versionId={version.id}
             modelType={model.type}
             deadline={version.earlyAccessDeadline}
@@ -692,6 +729,80 @@ export function ModelVersionDetails({
             files={version.files}
             baseModel={version.baseModel}
           />
+          {!model.locked && alreadyDownloaded && (
+            <UserResourceReviewComposite
+              modelId={model.id}
+              modelVersionId={version.id}
+              modelName={model.name}
+            >
+              {({ modelId, modelVersionId, userReview, loading }) => (
+                <Card p={8} withBorder>
+                  <Stack spacing={8}>
+                    <Group spacing={8} position="apart" noWrap>
+                      <Group spacing={8} noWrap>
+                        {loading ? (
+                          <Loader size="xs" />
+                        ) : userReview ? (
+                          <>
+                            {userReview.recommended ? (
+                              <ThumbsUpIcon size={18} />
+                            ) : (
+                              <ThumbsDownIcon size={18} />
+                            )}
+                          </>
+                        ) : (
+                          <IconHeart size={18} />
+                        )}
+                        {userReview ? (
+                          <Text size="sm">
+                            You reviewed this on {formatDateMin(userReview.createdAt, false)}
+                          </Text>
+                        ) : (
+                          <Text size="sm">What did you think of this resource?</Text>
+                        )}
+                      </Group>
+                      {!userReview || !userReview.details ? (
+                        <ResourceReviewThumbActions
+                          modelId={modelId}
+                          modelVersionId={modelVersionId}
+                          userReview={userReview}
+                          size="xs"
+                        />
+                      ) : (
+                        <Group noWrap spacing={4}>
+                          <Button
+                            size="xs"
+                            color="gray"
+                            onClick={() => openContext('resourceReviewEdit', userReview)}
+                          >
+                            See Review
+                          </Button>
+                          <Button
+                            size="xs"
+                            color="gray"
+                            component={NextLink}
+                            px={7}
+                            href={`/posts/create?modelId=${modelId}&modelVersionId=${modelVersionId}`}
+                          >
+                            <IconPhotoPlus size={16} />
+                          </Button>
+                        </Group>
+                      )}
+                    </Group>
+                  </Stack>
+                  {userReview && !userReview.details && (
+                    <Card.Section py="sm" mt="sm" inheritPadding withBorder>
+                      <EditUserResourceReviewLight
+                        modelId={modelId}
+                        modelVersionId={modelVersionId}
+                        userReview={userReview}
+                      />
+                    </Card.Section>
+                  )}
+                </Card>
+              )}
+            </UserResourceReviewComposite>
+          )}
           <Accordion
             variant="separated"
             multiple
@@ -788,7 +899,7 @@ export function ModelVersionDetails({
                 </Stack>
               </Accordion.Panel>
             </Accordion.Item>
-            {version.recommendedResources.length > 0 && (
+            {version.recommendedResources && version.recommendedResources.length > 0 && (
               <Accordion.Item value="recommended-resources">
                 <Accordion.Control>Recommended Resources</Accordion.Control>
                 <Accordion.Panel>
@@ -826,47 +937,9 @@ export function ModelVersionDetails({
                 </Accordion.Panel>
               </Accordion.Item>
             )}
-            {!model.locked && (
-              <ResourceReviewSummary modelId={model.id} modelVersionId={version.id}>
-                <Accordion.Item value="resource-reviews">
-                  <Accordion.Control>
-                    <Group>
-                      <ResourceReviewSummary.Header
-                        rating={version.rank?.ratingAllTime}
-                        count={version.rank?.ratingCountAllTime}
-                      />
-                      <Stack spacing={4} ml="auto">
-                        <Button
-                          component={NextLink}
-                          href={`/posts/create?modelId=${model.id}&modelVersionId=${version.id}&reviewing=true&returnUrl=${router.asPath}`}
-                          variant="outline"
-                          size="xs"
-                          onClick={(e) => e.stopPropagation()}
-                          compact
-                        >
-                          Add Review
-                        </Button>
-                        <Text
-                          component={NextLink}
-                          href={`/models/${model.id}/reviews?modelVersionId=${version.id}`}
-                          variant="link"
-                          size="sm"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          See Reviews
-                        </Text>
-                      </Stack>
-                    </Group>
-                  </Accordion.Control>
-                  <Accordion.Panel px="sm" pb="sm">
-                    <ResourceReviewSummary.Totals />
-                  </Accordion.Panel>
-                </Accordion.Item>
-              </ResourceReviewSummary>
-            )}
             {version.description && (
               <Accordion.Item value="version-description">
-                <Accordion.Control>{`About this version`}</Accordion.Control>
+                <Accordion.Control>About this version</Accordion.Control>
                 <Accordion.Panel px="sm" pb="sm">
                   <Stack spacing={4}>
                     {version.description && (
@@ -901,6 +974,7 @@ export function ModelVersionDetails({
               </Accordion.Item>
             )}
           </Accordion>
+
           <CreatorCard user={model.user} tipBuzzEntityType="Model" tipBuzzEntityId={model.id} />
           {onSite && (
             <Group
@@ -1038,10 +1112,9 @@ export function ModelVersionDetails({
 type Props = {
   version: ModelById['modelVersions'][number];
   model: ModelById;
-  onFavoriteClick: VoidFunction;
   user?: SessionUser | null;
-  isFavorite?: boolean;
   onBrowseClick?: VoidFunction;
+  onFavoriteClick?: (ctx: { versionId?: number; setTo: boolean }) => void;
   hasAccess?: boolean;
 };
 

@@ -4,22 +4,21 @@ import {
   Badge,
   Card,
   CopyButton,
+  Divider,
   Group,
-  Rating,
   Skeleton,
   Stack,
   Text,
   createStyles,
-  Divider,
 } from '@mantine/core';
 import { useSessionStorage } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
-import { IconDownload, IconHeart, IconMessageCircle2, IconStar, IconX } from '@tabler/icons-react';
+import { IconDownload, IconMessageCircle2, IconX } from '@tabler/icons-react';
 import Link from 'next/link';
 import { cloneElement, useMemo, useState } from 'react';
 
 import { IconBadge } from '~/components/IconBadge/IconBadge';
-import { StarRating } from '~/components/StartRating/StarRating';
+import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { abbreviateNumber } from '~/utils/number-helpers';
@@ -37,7 +36,7 @@ const LIMIT = 3;
 export function ImageResources({ imageId }: { imageId: number }) {
   const currentUser = useCurrentUser();
   const { classes, theme } = useStyles();
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
 
   const [selectedResource, setSelectedResource] = useState<number | null>(null);
   const [showAll, setShowAll] = useSessionStorage<boolean>({
@@ -50,7 +49,7 @@ export function ImageResources({ imageId }: { imageId: number }) {
     { trpc: { context: { skipBatch: true } } }
   );
 
-  const { data: { Favorite: favoriteModels = [] } = { Favorite: [] } } =
+  const { data: { Recommended: reviewedModels = [] } = { Recommended: [] } } =
     trpc.user.getEngagedModels.useQuery(undefined, {
       enabled: !!currentUser,
       cacheTime: Infinity,
@@ -61,24 +60,24 @@ export function ImageResources({ imageId }: { imageId: number }) {
     const resources =
       data
         ?.map((resource, index) => {
-          const isFavorite = favoriteModels.find((id) => resource.modelId === id);
+          const hasReview = resource.modelId ? reviewedModels.includes(resource.modelId) : false;
           const isAvailable = resource.modelVersionId !== null;
           return {
             ...resource,
             key: resource.modelVersionId ?? resource.modelName ?? index,
-            isFavorite,
+            hasReview,
             isAvailable,
           };
         })
         .sort((a, b) => {
           if (a.isAvailable && !b.isAvailable) return -1;
           if (!a.isAvailable && b.isAvailable) return 1;
-          if (a.isFavorite && !b.isFavorite) return -1;
-          if (!a.isFavorite && b.isFavorite) return 1;
+          if (a.hasReview && !b.hasReview) return -1;
+          if (!a.hasReview && b.hasReview) return 1;
           return 0;
         }) ?? [];
     return resources;
-  }, [data, favoriteModels]);
+  }, [data, reviewedModels]);
 
   const { mutate, isLoading: removingResource } = trpc.image.removeResource.useMutation();
   const handleRemoveResource = (resourceId: number) => {
@@ -126,7 +125,7 @@ export function ImageResources({ imageId }: { imageId: number }) {
         <Alert>There are no resources associated with this image</Alert>
       ) : (
         (showAll ? resources : resources.slice(0, LIMIT)).map(
-          ({ key, isFavorite, isAvailable, ...resource }) => {
+          ({ key, hasReview, isAvailable, ...resource }) => {
             const removing = selectedResource === resource.id && removingResource;
 
             return (
@@ -188,33 +187,24 @@ export function ImageResources({ imageId }: { imageId: number }) {
                       </Group>
                     </Group>
                     {isAvailable && (
-                      <Group spacing={0} position="apart">
-                        <IconBadge
-                          className={classes.statBadge}
-                          sx={{ userSelect: 'none' }}
-                          icon={<StarRating size={14} value={resource.modelRating ?? 0} />}
-                        >
-                          <Text
-                            size="xs"
-                            color={(resource.modelRatingCount ?? 0) > 0 ? undefined : 'dimmed'}
-                          >
-                            {abbreviateNumber(resource.modelRatingCount ?? 0)}
+                      <Group spacing={8} position="apart" noWrap>
+                        {resource.modelVersionName && (
+                          <Text color="dimmed" size="sm" lineClamp={1}>
+                            {resource.modelVersionName}
                           </Text>
-                        </IconBadge>
-                        <Group spacing={4}>
+                        )}
+                        <Group spacing={4} ml="auto" noWrap>
                           <IconBadge
                             className={classes.statBadge}
                             icon={
-                              <IconHeart
-                                size={14}
-                                style={{ fill: isFavorite ? theme.colors.red[6] : undefined }}
-                                color={isFavorite ? theme.colors.red[6] : undefined}
-                              />
+                              <Text color={hasReview ? 'success.5' : undefined} inline>
+                                <ThumbsUpIcon size={14} filled={!!hasReview} />
+                              </Text>
                             }
-                            color={isFavorite ? 'red' : 'gray'}
+                            color={hasReview ? 'success.5' : 'gray'}
                           >
                             <Text size="xs">
-                              {abbreviateNumber(resource.modelFavoriteCount ?? 0)}
+                              {abbreviateNumber(resource.modelThumbsUpCount ?? 0)}
                             </Text>
                           </IconBadge>
                           <IconBadge

@@ -6,6 +6,9 @@ import { parseNumericString } from '~/utils/query-string-helpers';
 export const getByIdSchema = z.object({ id: z.number() });
 export type GetByIdInput = z.infer<typeof getByIdSchema>;
 
+export const getByIdsSchema = z.object({ ids: z.number().array() });
+export type GetByIdsInput = z.infer<typeof getByIdsSchema>;
+
 export const getByIdStringSchema = z.object({ id: z.string() });
 export type GetByIdStringInput = z.infer<typeof getByIdStringSchema>;
 

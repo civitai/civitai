@@ -320,7 +320,7 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
           )}), Models Uploaded: ${abbreviateNumber(uploads)}, Followers: ${abbreviateNumber(
             stats.followerCountAllTime
           )}, Total Likes Received: ${abbreviateNumber(
-            stats.favoriteCountAllTime
+            stats.thumbsUpCountAllTime
           )}, Total Downloads Received: ${abbreviateNumber(stats.downloadCountAllTime)}. `}
           image={!user.image ? undefined : getEdgeUrl(user.image, { width: 1200 })}
           links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/user/${username}`, rel: 'canonical' }]}
@@ -394,13 +394,9 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
                           <RankBadge rank={user.rank} size="lg" />
                           {stats && (
                             <UserStatBadges
-                              rating={{
-                                value: stats.ratingAllTime,
-                                count: stats.ratingCountAllTime,
-                              }}
                               uploads={uploads}
                               followers={stats.followerCountAllTime}
-                              favorite={stats.favoriteCountAllTime}
+                              favorites={stats.thumbsUpCountAllTime}
                               downloads={stats.downloadCountAllTime}
                               username={user.username}
                             />

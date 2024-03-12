@@ -218,7 +218,7 @@ export function UserAvatar({
         </UserProfileLink>
       )}
       {withUsername || subText ? (
-        <Stack spacing={0}>
+        <Stack spacing={0} align="flex-start">
           {withUsername && (
             <UserProfileLink user={avatarUser} linkToProfile={linkToProfile}>
               <Group spacing={4} align="center">

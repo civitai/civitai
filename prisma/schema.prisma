@@ -512,7 +512,6 @@ model Model {
   comments           Comment[]
   interests          ModelInterest[]
   licenses           License[]
-  rank               ModelRank?
   reportStats        ModelReportStat?
   hashes             ModelHash[]
   threads            Thread[]
@@ -547,6 +546,8 @@ model ModelInterest {
 enum ModelEngagementType {
   Favorite
   Hide
+  Mute
+  Notify
 }
 
 model ModelEngagement {
@@ -629,7 +630,6 @@ model ModelVersion {
   files                   ModelFile[]
   runStrategies           RunStrategy[]
   engagements             ModelVersionEngagement[]
-  rank                    ModelVersionRank?
   downloads               DownloadHistory[]
   imageResources          ImageResource[]
   posts                   Post[]
@@ -765,6 +765,8 @@ model ModelMetric {
   tippedCount       Int             @default(0)
   tippedAmountCount Int             @default(0)
   generationCount   Int             @default(0)
+  thumbsUpCount     Int             @default(0)
+  thumbsDownCount   Int             @default(0)
 
   @@id([modelId, timeframe])
 }
@@ -783,6 +785,8 @@ model ModelVersionMetric {
   tippedCount       Int             @default(0)
   tippedAmountCount Int             @default(0)
   generationCount   Int             @default(0)
+  thumbsUpCount     Int             @default(0)
+  thumbsDownCount   Int             @default(0)
 
   @@id([modelVersionId, timeframe])
 }
@@ -1017,6 +1021,7 @@ model ResourceReview {
   modelVersionId Int
   modelVersion   ModelVersion             @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
   rating         Int
+  recommended    Boolean
   details        String?
   userId         Int
   user           User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -2916,113 +2921,6 @@ model AnswerRank {
 }
 
 /// @view
-model ModelRank {
-  model                        Model @relation(fields: [modelId], references: [id], onDelete: NoAction)
-  modelId                      Int   @id
-  downloadCountDay             Int   @default(0)
-  downloadCountWeek            Int   @default(0)
-  downloadCountMonth           Int   @default(0)
-  downloadCountYear            Int   @default(0)
-  downloadCountAllTime         Int   @default(0)
-  ratingCountDay               Int   @default(0)
-  ratingCountWeek              Int   @default(0)
-  ratingCountMonth             Int   @default(0)
-  ratingCountYear              Int   @default(0)
-  ratingCountAllTime           Int   @default(0)
-  ratingDay                    Float @default(0)
-  ratingWeek                   Float @default(0)
-  ratingMonth                  Float @default(0)
-  ratingYear                   Float @default(0)
-  ratingAllTime                Float @default(0)
-  favoriteCountDay             Int   @default(0)
-  favoriteCountWeek            Int   @default(0)
-  favoriteCountMonth           Int   @default(0)
-  favoriteCountYear            Int   @default(0)
-  favoriteCountAllTime         Int   @default(0)
-  commentCountDay              Int   @default(0)
-  commentCountWeek             Int   @default(0)
-  commentCountMonth            Int   @default(0)
-  commentCountYear             Int   @default(0)
-  commentCountAllTime          Int   @default(0)
-  downloadCountDayRank         Int   @default(0)
-  downloadCountWeekRank        Int   @default(0)
-  downloadCountMonthRank       Int   @default(0)
-  downloadCountYearRank        Int   @default(0)
-  downloadCountAllTimeRank     Int   @default(0)
-  ratingCountDayRank           Int   @default(0)
-  ratingCountWeekRank          Int   @default(0)
-  ratingCountMonthRank         Int   @default(0)
-  ratingCountYearRank          Int   @default(0)
-  ratingCountAllTimeRank       Int   @default(0)
-  ratingDayRank                Int   @default(0)
-  ratingWeekRank               Int   @default(0)
-  ratingMonthRank              Int   @default(0)
-  ratingYearRank               Int   @default(0)
-  ratingAllTimeRank            Int   @default(0)
-  favoriteCountDayRank         Int   @default(0)
-  favoriteCountWeekRank        Int   @default(0)
-  favoriteCountMonthRank       Int   @default(0)
-  favoriteCountYearRank        Int   @default(0)
-  favoriteCountAllTimeRank     Int   @default(0)
-  collectedCountDay            Int   @default(0)
-  collectedCountWeek           Int   @default(0)
-  collectedCountMonth          Int   @default(0)
-  collectedCountYear           Int   @default(0)
-  collectedCountAllTime        Int   @default(0)
-  collectedCountDayRank        Int   @default(0)
-  collectedCountWeekRank       Int   @default(0)
-  collectedCountMonthRank      Int   @default(0)
-  collectedCountYearRank       Int   @default(0)
-  collectedCountAllTimeRank    Int   @default(0)
-  imageCountDay                Int   @default(0)
-  imageCountWeek               Int   @default(0)
-  imageCountMonth              Int   @default(0)
-  imageCountYear               Int   @default(0)
-  imageCountAllTime            Int   @default(0)
-  imageCountDayRank            Int   @default(0)
-  imageCountWeekRank           Int   @default(0)
-  imageCountMonthRank          Int   @default(0)
-  imageCountYearRank           Int   @default(0)
-  imageCountAllTimeRank        Int   @default(0)
-  commentCountDayRank          Int   @default(0)
-  commentCountWeekRank         Int   @default(0)
-  commentCountMonthRank        Int   @default(0)
-  commentCountYearRank         Int   @default(0)
-  commentCountAllTimeRank      Int   @default(0)
-  tippedCountDayRank           Int   @default(0)
-  tippedCountWeekRank          Int   @default(0)
-  tippedCountMonthRank         Int   @default(0)
-  tippedCountYearRank          Int   @default(0)
-  tippedCountAllTimeRank       Int   @default(0)
-  tippedCountDay               Int   @default(0)
-  tippedCountWeek              Int   @default(0)
-  tippedCountMonth             Int   @default(0)
-  tippedCountYear              Int   @default(0)
-  tippedCountAllTime           Int   @default(0)
-  tippedAmountCountDayRank     Int   @default(0)
-  tippedAmountCountWeekRank    Int   @default(0)
-  tippedAmountCountMonthRank   Int   @default(0)
-  tippedAmountCountYearRank    Int   @default(0)
-  tippedAmountCountAllTimeRank Int   @default(0)
-  tippedAmountCountDay         Int   @default(0)
-  tippedAmountCountWeek        Int   @default(0)
-  tippedAmountCountMonth       Int   @default(0)
-  tippedAmountCountYear        Int   @default(0)
-  tippedAmountCountAllTime     Int   @default(0)
-  generationCountDayRank       Int   @default(0)
-  generationCountWeekRank      Int   @default(0)
-  generationCountMonthRank     Int   @default(0)
-  generationCountYearRank      Int   @default(0)
-  generationCountAllTimeRank   Int   @default(0)
-  generationCountDay           Int   @default(0)
-  generationCountWeek          Int   @default(0)
-  generationCountMonth         Int   @default(0)
-  generationCountYear          Int   @default(0)
-  generationCountAllTime       Int   @default(0)
-  newRank                      Int   @default(0)
-}
-
-/// @view
 model ModelReportStat {
   model                    Model @relation(fields: [modelId], references: [id], onDelete: NoAction)
   modelId                  Int   @id
@@ -3042,62 +2940,6 @@ model ModelReportStat {
   claimPending             Int
   claimActioned            Int
   claimUnactioned          Int
-}
-
-/// @view
-model ModelVersionRank {
-  modelVersion               ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: NoAction)
-  modelVersionId             Int          @id
-  downloadCountDay           Int          @default(0)
-  downloadCountWeek          Int          @default(0)
-  downloadCountMonth         Int          @default(0)
-  downloadCountYear          Int          @default(0)
-  downloadCountAllTime       Int          @default(0)
-  ratingCountDay             Int          @default(0)
-  ratingCountWeek            Int          @default(0)
-  ratingCountMonth           Int          @default(0)
-  ratingCountYear            Int          @default(0)
-  ratingCountAllTime         Int          @default(0)
-  ratingDay                  Float        @default(0)
-  ratingWeek                 Float        @default(0)
-  ratingMonth                Float        @default(0)
-  ratingYear                 Float        @default(0)
-  ratingAllTime              Float        @default(0)
-  generationCountDay         Int          @default(0)
-  generationCountWeek        Int          @default(0)
-  generationCountMonth       Int          @default(0)
-  generationCountYear        Int          @default(0)
-  generationCountAllTime     Int          @default(0)
-  downloadCountDayRank       Int          @default(0)
-  downloadCountWeekRank      Int          @default(0)
-  downloadCountMonthRank     Int          @default(0)
-  downloadCountYearRank      Int          @default(0)
-  downloadCountAllTimeRank   Int          @default(0)
-  ratingCountDayRank         Int          @default(0)
-  ratingCountWeekRank        Int          @default(0)
-  ratingCountMonthRank       Int          @default(0)
-  ratingCountYearRank        Int          @default(0)
-  ratingCountAllTimeRank     Int          @default(0)
-  ratingDayRank              Int          @default(0)
-  ratingWeekRank             Int          @default(0)
-  ratingMonthRank            Int          @default(0)
-  ratingYearRank             Int          @default(0)
-  ratingAllTimeRank          Int          @default(0)
-  imageCountDay              Int          @default(0)
-  imageCountWeek             Int          @default(0)
-  imageCountMonth            Int          @default(0)
-  imageCountYear             Int          @default(0)
-  imageCountAllTime          Int          @default(0)
-  imageCountDayRank          Int          @default(0)
-  imageCountWeekRank         Int          @default(0)
-  imageCountMonthRank        Int          @default(0)
-  imageCountYearRank         Int          @default(0)
-  imageCountAllTimeRank      Int          @default(0)
-  generationCountDayRank     Int          @default(0)
-  generationCountWeekRank    Int          @default(0)
-  generationCountMonthRank   Int          @default(0)
-  generationCountYearRank    Int          @default(0)
-  generationCountAllTimeRank Int          @default(0)
 }
 
 /// @view
@@ -3296,6 +3138,16 @@ model UserStat {
   answerAcceptCountMonth   Int
   answerAcceptCountYear    Int
   answerAcceptCountAllTime Int
+  thumbsUpCountDay         Int
+  thumbsUpCountWeek        Int
+  thumbsUpCountMonth       Int
+  thumbsUpCountYear        Int
+  thumbsUpCountAllTime     Int
+  thumbsDownCountDay       Int
+  thumbsDownCountWeek      Int
+  thumbsDownCountMonth     Int
+  thumbsDownCountYear      Int
+  thumbsDownCountAllTime   Int
 }
 
 /// @view
@@ -3337,6 +3189,16 @@ model UserRank {
   answerAcceptCountMonthRank   Int     @default(0)
   answerAcceptCountYearRank    Int     @default(0)
   answerAcceptCountAllTimeRank Int     @default(0)
+  thumbsUpCountDayRank         Int     @default(0)
+  thumbsUpCountWeekRank        Int     @default(0)
+  thumbsUpCountMonthRank       Int     @default(0)
+  thumbsUpCountYearRank        Int     @default(0)
+  thumbsUpCountAllTimeRank     Int     @default(0)
+  thumbsDownCountDayRank       Int     @default(0)
+  thumbsDownCountWeekRank      Int     @default(0)
+  thumbsDownCountMonthRank     Int     @default(0)
+  thumbsDownCountYearRank      Int     @default(0)
+  thumbsDownCountAllTimeRank   Int     @default(0)
   leaderboardRank              Int?
   leaderboardId                String?
   leaderboardTitle             String?
@@ -3680,11 +3542,10 @@ model ImageResourceHelper {
   modelVersionCreatedAt DateTime?
   modelId               Int?
   modelName             String?
-  modelRating           Float?
-  modelRatingCount      Int?
   modelDownloadCount    Int?
   modelCommentCount     Int?
-  modelFavoriteCount    Int?
+  modelThumbsUpCount    Int?
+  modelThumbsDownCount  Int?
   modelType             ModelType?
 
   @@unique([imageId, name, modelVersionId])
@@ -3697,6 +3558,7 @@ model PostResourceHelper {
   post                  Post       @relation(fields: [postId], references: [id])
   reviewId              Int?
   reviewRating          Int?
+  reviewRecommended     Boolean?
   reviewDetails         String?
   reviewCreatedAt       DateTime?
   name                  String?
@@ -3705,11 +3567,10 @@ model PostResourceHelper {
   modelVersionCreatedAt DateTime?
   modelId               Int?
   modelName             String?
-  modelRating           Int?
-  modelRatingCount      Int?
   modelDownloadCount    Int?
   modelCommentCount     Int?
-  modelFavoriteCount    Int?
+  modelThumbsUpCount    Int?
+  modelThumbsDownCount  Int?
   modelType             ModelType?
 
   @@unique([postId, name, modelVersionId])

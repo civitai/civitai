@@ -41,7 +41,13 @@ export function EditPostReviews() {
     if (data) {
       let hasBaseModel = false;
       let hasAdditionalResource = false;
-      for (const review of data) {
+      // remove duplicates items from data based on modelVersionId
+      const dedupedReviews = data.filter(
+        (review, index, items) =>
+          !!review.modelVersionId &&
+          items.findIndex((t) => t.modelVersionId === review.modelVersionId) === index
+      );
+      for (const review of dedupedReviews) {
         if (review.reviewCreatedAt) {
           previous.push(review);
         } else {
@@ -92,6 +98,7 @@ export function EditPostReviews() {
                 key={resource.id ?? resource.name ?? index}
                 id={resource.reviewId}
                 rating={resource.reviewRating}
+                recommended={resource.reviewRecommended}
                 details={resource.reviewDetails}
                 createdAt={resource.reviewCreatedAt}
                 modelId={resource.modelId}
@@ -99,6 +106,7 @@ export function EditPostReviews() {
                 modelVersionId={resource.modelVersionId}
                 modelVersionName={resource.modelVersionName}
                 name={resource.name}
+                thumbsUpCount={resource.modelThumbsUpCount ?? 0}
               />
             ))}
             {reviews.previous.length > 0 && (
@@ -109,6 +117,7 @@ export function EditPostReviews() {
                     key={resource.id ?? resource.name ?? index}
                     id={resource.reviewId}
                     rating={resource.reviewRating}
+                    recommended={resource.reviewRecommended}
                     details={resource.reviewDetails}
                     createdAt={resource.reviewCreatedAt}
                     modelId={resource.modelId}
@@ -116,6 +125,7 @@ export function EditPostReviews() {
                     modelVersionId={resource.modelVersionId}
                     modelVersionName={resource.modelVersionName}
                     name={resource.name}
+                    thumbsUpCount={resource.modelThumbsUpCount ?? 0}
                   />
                 ))}
               </>

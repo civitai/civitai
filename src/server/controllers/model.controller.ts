@@ -39,6 +39,7 @@ import {
   ModelUpsertInput,
   PublishModelSchema,
   ReorderModelVersionsSchema,
+  ToggleCheckpointCoverageInput,
   ToggleModelLockInput,
   UnpublishModelSchema,
   UpdateGallerySettingsInput,
@@ -74,6 +75,8 @@ import {
   updateModelEarlyAccessDeadline,
   upsertModel,
   getGallerySettingsByModelId,
+  toggleCheckpointCoverage,
+  getCheckpointGenerationCoverage,
 } from '~/server/services/model.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { getCategoryTags } from '~/server/services/system-cache';
@@ -92,7 +95,10 @@ import { getDownloadUrl } from '~/utils/delivery-worker';
 import { isDefined } from '~/utils/type-guards';
 import { redis } from '../redis/client';
 import { modelHashSelect } from './../selectors/modelHash.selector';
-import { getUnavailableResources } from '../services/generation/generation.service';
+import {
+  deleteResourceDataCache,
+  getUnavailableResources,
+} from '../services/generation/generation.service';
 import { BountyDetailsSchema } from '../schema/bounty.schema';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
@@ -121,6 +127,8 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
       select: { id: true, modelVersionId: true },
       orderBy: { id: 'asc' },
     });
+    const coveredCheckpoints =
+      model.type === 'Checkpoint' ? await getCheckpointGenerationCoverage(modelVersionIds) : null;
 
     // recommended VAEs
     const vaeIds = filteredVersions.map((x) => x.vaeId).filter(isDefined);
@@ -133,8 +141,24 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
     const modelCategories = await getCategoryTags('model');
     const unavailableGenResources = await getUnavailableResources();
 
+    const metrics = model.metrics[0];
+
     return {
       ...model,
+      metrics: undefined,
+      rank: {
+        downloadCountAllTime: metrics?.downloadCount ?? 0,
+        favoriteCountAllTime: metrics?.favoriteCount ?? 0,
+        thumbsUpCountAllTime: metrics?.thumbsUpCount ?? 0,
+        thumbsDownCountAllTime: metrics?.thumbsDownCount ?? 0,
+        commentCountAllTime: metrics?.commentCount ?? 0,
+        ratingCountAllTime: metrics?.ratingCount ?? 0,
+        ratingAllTime: Number(metrics?.rating?.toFixed(2) ?? 0),
+        tippedAmountCountAllTime: metrics?.tippedAmountCount ?? 0,
+        imageCountAllTime: metrics?.imageCount ?? 0,
+        collectedCountAllTime: metrics?.collectedCount ?? 0,
+        generationCountAllTime: metrics?.generationCount ?? 0,
+      },
       canGenerate: filteredVersions.some(
         (version) =>
           !!version.generationCoverage?.covered &&
@@ -167,6 +191,7 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
         const canGenerate =
           !!version.generationCoverage?.covered &&
           unavailableGenResources.indexOf(version.id) === -1;
+        const hasCheckpointCoverage = coveredCheckpoints?.includes(version.id) ?? false;
 
         // sort version files by file type, 'Model' type goes first
         const vaeFile = vaeFiles.filter((x) => x.modelVersionId === version.vaeId);
@@ -189,13 +214,25 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
           )
           .filter(isDefined);
 
+        const versionMetrics = version.metrics[0];
+
         return {
           ...version,
+          metrics: undefined,
+          rank: {
+            generationCountAllTime: versionMetrics?.generationCount ?? 0,
+            downloadCountAllTime: versionMetrics?.downloadCount ?? 0,
+            ratingCountAllTime: versionMetrics?.ratingCount ?? 0,
+            ratingAllTime: Number(versionMetrics?.rating?.toFixed(2) ?? 0),
+            thumbsUpCountAllTime: versionMetrics?.thumbsUpCount ?? 0,
+            thumbsDownCountAllTime: versionMetrics?.thumbsDownCount ?? 0,
+          },
           posts: posts.filter((x) => x.modelVersionId === version.id).map((x) => ({ id: x.id })),
           hashes,
           earlyAccessDeadline,
           canDownload,
           canGenerate,
+          hasCheckpointCoverage,
           files: files as Array<
             Omit<(typeof files)[number], 'metadata'> & { metadata: FileMetadata }
           >,
@@ -252,10 +289,10 @@ export const getModelsPagedSimpleHandler = async ({
   input: GetAllModelsOutput;
   ctx: Context;
 }) => {
-  const { limit = DEFAULT_PAGE_SIZE, page } = input || {};
+  const { limit = DEFAULT_PAGE_SIZE, page, cursor, ...restInput } = input || {};
   const { take, skip } = getPagination(limit, page);
   const results = await getModels({
-    input: { ...input, take, skip },
+    input: { ...restInput, take, skip },
     user: ctx.user,
     select: {
       id: true,
@@ -465,9 +502,10 @@ export const getModelsWithVersionsHandler = async ({
   input: GetAllModelsOutput & { ids?: number[] };
   ctx: Context;
 }) => {
-  const { limit = DEFAULT_PAGE_SIZE, page, ...queryInput } = input;
+  const { limit = DEFAULT_PAGE_SIZE, page, cursor, ...queryInput } = input;
   const { take, skip } = getPagination(limit, page);
   try {
+    // TODO.manuel: Make this use the getModelsRaw instead...
     const rawResults = await getModels({
       input: { ...queryInput, take, skip },
       user: ctx.user,
@@ -493,20 +531,41 @@ export const getModelsWithVersionsHandler = async ({
       .filter(isDefined);
     const vaeFiles = await getVaeFiles({ vaeIds });
 
+    const modelIds = rawResults.items.map(({ id }) => id);
+    const metrics = await dbRead.modelMetric.findMany({
+      where: { modelId: { in: modelIds }, timeframe: MetricTimeframe.AllTime },
+    });
+
+    function getStatsForModel(modelId: number) {
+      const stats = metrics.find((x) => x.modelId === modelId);
+      return {
+        downloadCount: stats?.downloadCount ?? 0,
+        favoriteCount: stats?.favoriteCount ?? 0,
+        thumbsUpCount: stats?.thumbsUpCount ?? 0,
+        thumbsDownCount: stats?.thumbsDownCount ?? 0,
+        commentCount: stats?.commentCount ?? 0,
+        ratingCount: stats?.ratingCount ?? 0,
+        rating: Number(stats?.rating?.toFixed(2) ?? 0),
+        tippedAmountCount: stats?.tippedAmountCount ?? 0,
+      };
+    }
+
     const results = {
       count: rawResults.count,
-      items: rawResults.items.map(({ rank, modelVersions, ...model }) => ({
+      items: rawResults.items.map(({ modelVersions, ...model }) => ({
         ...model,
-        modelVersions: modelVersions.map(({ rank, files, ...modelVersion }) => {
+        modelVersions: modelVersions.map(({ metrics, files, ...modelVersion }) => {
           const vaeFile = vaeFiles.filter((x) => x.modelVersionId === modelVersion.vaeId);
           files.push(...vaeFile);
           return {
             ...modelVersion,
             files,
             stats: {
-              downloadCount: rank?.downloadCountAllTime ?? 0,
-              ratingCount: rank?.ratingCountAllTime ?? 0,
-              rating: Number(rank?.ratingAllTime?.toFixed(2) ?? 0),
+              downloadCount: metrics[0]?.downloadCount ?? 0,
+              ratingCount: metrics[0]?.ratingCount ?? 0,
+              rating: Number(metrics[0]?.rating?.toFixed(2) ?? 0),
+              thumbsUpCount: metrics[0]?.thumbsUpCount ?? 0,
+              thumbsDownCount: metrics[0]?.thumbsDownCount ?? 0,
             },
             images: images
               .filter((image) => image.modelVersionId === modelVersion.id)
@@ -515,14 +574,7 @@ export const getModelsWithVersionsHandler = async ({
               })),
           };
         }),
-        stats: {
-          downloadCount: rank?.downloadCountAllTime ?? 0,
-          favoriteCount: rank?.favoriteCountAllTime ?? 0,
-          commentCount: rank?.commentCountAllTime ?? 0,
-          ratingCount: rank?.ratingCountAllTime ?? 0,
-          rating: Number(rank?.ratingAllTime?.toFixed(2) ?? 0),
-          tippedAmountCount: rank?.tippedAmountCountAllTimeRank ?? 0,
-        },
+        stats: getStatsForModel(model.id),
       })),
     };
 
@@ -1021,7 +1073,7 @@ export const findResourcesToAssociateHandler = async ({
   ctx: Context;
 }) => {
   try {
-    const modelInput = getAllModelsSchema.parse(input);
+    const { cursor, ...modelInput } = getAllModelsSchema.parse(input);
     const articleInput = getInfiniteArticlesSchema.parse(input);
 
     const [{ items: models }, { items: articles }] = await Promise.all([
@@ -1082,7 +1134,7 @@ export const getAssociatedResourcesCardDataHandler = async ({
       .map(({ id }) => id);
 
     const period = MetricTimeframe.AllTime;
-    const modelInput = getAllModelsSchema.parse({
+    const { cursor, ...modelInput } = getAllModelsSchema.parse({
       ...userPreferences,
       ids: modelResources,
       period,
@@ -1110,14 +1162,17 @@ export const getAssociatedResourcesCardDataHandler = async ({
               locked: true,
               earlyAccessDeadline: true,
               mode: true,
-              rank: {
+              metrics: {
                 select: {
-                  [`downloadCount${period}`]: true,
-                  [`favoriteCount${period}`]: true,
-                  [`commentCount${period}`]: true,
-                  [`ratingCount${period}`]: true,
-                  [`rating${period}`]: true,
+                  downloadCount: true,
+                  favoriteCount: true,
+                  commentCount: true,
+                  ratingCount: true,
+                  rating: true,
+                  thumbsUpCount: true,
+                  thumbsDownCount: true,
                 },
+                where: { timeframe: period },
               },
               modelVersions: {
                 orderBy: { index: 'asc' },
@@ -1161,7 +1216,7 @@ export const getAssociatedResourcesCardDataHandler = async ({
       : [];
 
     const completeModels = models
-      .map(({ hashes, modelVersions, rank, ...model }) => {
+      .map(({ hashes, modelVersions, metrics, ...model }) => {
         const [version] = modelVersions;
         if (!version) return null;
         const versionImages = images.filter((i) => i.modelVersionId === version.id);
@@ -1175,11 +1230,13 @@ export const getAssociatedResourcesCardDataHandler = async ({
           ...model,
           hashes: hashes.map((hash) => hash.hash.toLowerCase()),
           rank: {
-            downloadCount: rank?.downloadCountAllTime ?? 0,
-            favoriteCount: rank?.[`favoriteCount${period}`] ?? 0,
-            commentCount: rank?.[`commentCount${period}`] ?? 0,
-            ratingCount: rank?.[`ratingCount${period}`] ?? 0,
-            rating: rank?.[`rating${period}`] ?? 0,
+            downloadCount: metrics[0]?.downloadCount ?? 0,
+            favoriteCount: metrics[0]?.favoriteCount ?? 0,
+            thumbsUpCount: metrics[0]?.thumbsUpCount ?? 0,
+            thumbsDownCount: metrics[0]?.thumbsDownCount ?? 0,
+            commentCount: metrics[0]?.commentCount ?? 0,
+            ratingCount: metrics[0]?.ratingCount ?? 0,
+            rating: metrics[0]?.rating ?? 0,
           },
           images: model.mode !== ModelModifier.TakenDown ? (versionImages as typeof images) : [],
           canGenerate,
@@ -1426,3 +1483,22 @@ export const updateGallerySettingsHandler = async ({
     throw throwDbError(error);
   }
 };
+
+export async function addCheckpointCoverageHandler({
+  input,
+}: {
+  input: ToggleCheckpointCoverageInput;
+}) {
+  try {
+    const affectedVersionIds = await toggleCheckpointCoverage(input);
+    if (affectedVersionIds) await deleteResourceDataCache(affectedVersionIds);
+
+    await modelsSearchIndex.queueUpdate([
+      { id: input.id, action: SearchIndexUpdateQueueAction.Update },
+    ]);
+
+    return affectedVersionIds;
+  } catch (error) {
+    throw throwDbError(error);
+  }
+}

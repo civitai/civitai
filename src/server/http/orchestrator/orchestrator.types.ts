@@ -6,6 +6,18 @@ export namespace Orchestrator {
   export type JobResponse<TJob = Job> = { token: string; jobs: TJob[] };
   export type JobQueryParams = { id?: string; wait?: boolean };
 
+  export type JobStatus =
+    | 'Initialized'
+    | 'Claimed'
+    | 'Updated'
+    | 'Succeeded'
+    | 'Failed'
+    | 'Rejected'
+    | 'LateRejected'
+    | 'Deleted'
+    | 'Expired'
+    | 'ClaimExpired';
+
   type QueuePosition = {
     precedingJobs: number;
     precedingCost: number;
@@ -46,11 +58,12 @@ export namespace Orchestrator {
       callbackUrl: z.string().url().optional(),
       model: z.string(),
       trainingData: z.string().url(),
-      maxRetryAttempt: z.number(),
+      retries: z.number(),
       params: z
         .object({
           modelFileId: z.number(),
           loraName: z.string(),
+          samplePrompts: z.array(z.string()),
         })
         .merge(trainingDetailsParams),
       properties: z.record(z.unknown()).optional(),
@@ -59,6 +72,18 @@ export namespace Orchestrator {
       typeof imageResourceTrainingJobInputSchema
     >;
     export type ImageResourceTrainingResponse = Orchestrator.JobResponse;
+
+    const imageAutoTagInputSchema = z.object({
+      retries: z.number().positive(),
+      mediaUrl: z.string().url(),
+      modelId: z.number().positive(),
+      properties: z.object({
+        userId: z.number(),
+        modelId: z.number().positive(),
+      }),
+    });
+    export type ImageAutoTagJobPayload = z.infer<typeof imageAutoTagInputSchema>;
+    export type ImageAutoTagJobResponse = Orchestrator.JobResponse; // TODO is this right?
   }
 
   export namespace Generation {

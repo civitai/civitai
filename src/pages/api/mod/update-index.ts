@@ -28,7 +28,7 @@ export default ModEndpoint(async function updateIndexSync(
       throw new Error('No ids provided');
     }
 
-    inJobContext(res, async (jobContext) => {
+    await inJobContext(res, async (jobContext) => {
       switch (input.index) {
         case USERS_SEARCH_INDEX:
           await usersSearchIndex.updateSync(data, jobContext);

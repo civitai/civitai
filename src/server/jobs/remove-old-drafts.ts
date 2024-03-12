@@ -8,10 +8,13 @@ export const removeOldDrafts = createJob('remove-old-drafts', '43 2 * * *', asyn
     WHERE m.id IN (
       SELECT DISTINCT m.id
       FROM "Model" m
-      JOIN "ModelRank" mr ON mr."modelId" = m.id
+      JOIN "ModelMetric" mm ON mm."modelId" = m.id AND mm.timeframe = 'AllTime'
       WHERE m.status IN ('Draft', 'Deleted')
       AND m."updatedAt" < now() - INTERVAL '30 days'
-      AND mr."downloadCountAllTime" < 10
+      AND (
+        mm."modelId" IS NULL
+        OR mm."downloadCount" < 10
+      )
     );
   `;
 });

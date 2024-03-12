@@ -1,6 +1,7 @@
 import {
   Accordion,
   ActionIcon,
+  Anchor,
   Badge,
   Button,
   Center,
@@ -20,6 +21,7 @@ import {
   Textarea,
   TextInput,
   Title,
+  Tooltip,
   useMantineTheme,
 } from '@mantine/core';
 import { FileWithPath } from '@mantine/dropzone';
@@ -34,6 +36,7 @@ import {
   IconChevronDown,
   IconReplace,
   IconSearch,
+  IconTags,
   IconTrash,
   IconX,
 } from '@tabler/icons-react';
@@ -44,6 +47,7 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import { goBack, goNext } from '~/components/Resource/Forms/Training/TrainingCommon';
 import { TrainingEditTagsModal } from '~/components/Resource/Forms/Training/TrainingEditTagsModal';
+import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import { UploadType } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE, ZIP_MIME_TYPE } from '~/server/common/mime-types';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
@@ -60,6 +64,7 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { bytesToKB } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
+import { AutoTagModal } from './TrainingAutoTagModal';
 
 const MAX_FILES_ALLOWED = 1000;
 
@@ -141,6 +146,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
   const { classes, cx } = useStyles();
   const queryUtils = trpc.useUtils();
   const { upload, getStatus: getUploadStatus } = useS3UploadStore();
+  const { connected } = useSignalContext();
 
   const thisModelVersion = model.modelVersions[0];
   const existingDataFile = thisModelVersion.files[0];
@@ -610,14 +616,13 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
           <Text>
             You can add an existing dataset for your model, or create a new one here. Not sure what
             to do? Read our{' '}
-            <Text
-              component={NextLink}
-              variant="link"
+            <Anchor
+              href="https://education.civitai.com/using-civitai-the-on-site-lora-trainer"
               target="_blank"
-              href="/content/training/dataset-guidelines"
+              rel="nofollow noreferrer"
             >
               Dataset and Training Guidelines
-            </Text>{' '}
+            </Anchor>{' '}
             for more info.
           </Text>
         </div>
@@ -671,31 +676,45 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                   {`${totalCaptioned} / ${imageList.length} captioned`}
                 </Text>
               </Paper>
-              {/*<Button*/}
-              {/*  compact*/}
-              {/*  disabled={autoCaptioning.isRunning}*/}
-              {/*  onClick={() =>*/}
-              {/*    dialogStore.trigger({*/}
-              {/*      component: AutoTagModal,*/}
-              {/*      props: {*/}
-              {/*        imageList,*/}
-              {/*        modelId: model.id,*/}
-              {/*        setAutoCaptioning,*/}
-              {/*      },*/}
-              {/*    })*/}
-              {/*  }*/}
-              {/*>*/}
-              {/*  <IconTags size={16} />*/}
-              {/*  <Text inline ml={4}>*/}
-              {/*    Auto Tag*/}
-              {/*  </Text>*/}
-              {/*</Button>*/}
-              {/*perhaps open a modal here to confirm*/}
+              <Tooltip
+                label="Not connected - will not receive updates. Please try refreshing the page."
+                disabled={connected}
+              >
+                <Button
+                  compact
+                  disabled={autoCaptioning.isRunning || !connected}
+                  style={!connected ? { pointerEvents: 'initial' } : undefined}
+                  onClick={() =>
+                    dialogStore.trigger({
+                      component: AutoTagModal,
+                      props: {
+                        imageList,
+                        modelId: model.id,
+                        setAutoCaptioning,
+                      },
+                    })
+                  }
+                >
+                  <IconTags size={16} />
+                  <Text inline ml={4}>
+                    Auto Tag
+                  </Text>
+                </Button>
+              </Tooltip>
+
               <Button
                 compact
                 color="red"
                 disabled={autoCaptioning.isRunning}
-                onClick={() => setImageList(model.id, [])}
+                onClick={() => {
+                  openConfirmModal({
+                    title: 'Remove all images?',
+                    children: 'This cannot be undone.',
+                    labels: { cancel: 'Cancel', confirm: 'Confirm' },
+                    centered: true,
+                    onConfirm: () => setImageList(model.id, []),
+                  });
+                }}
               >
                 <IconTrash size={16} />
                 <Text inline ml={4}>
@@ -923,6 +942,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                         color="red"
                         variant="filled"
                         size="md"
+                        disabled={autoCaptioning.isRunning}
                         onClick={() => {
                           const newLen = imageList.length - 1;
                           setImageList(

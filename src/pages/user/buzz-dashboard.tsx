@@ -136,8 +136,8 @@ export default function UserBuzzDashboard() {
           </Paper>
           <EarlyAccessRewards />
           <GeneratedImagesReward />
-          <PurchasableRewards />
           <SpendingBuzz withCTA />
+          <PurchasableRewards />
         </Stack>
       </Container>
     </>

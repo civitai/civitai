@@ -32,10 +32,8 @@ export function CreatorCard({
     links: [],
     stats: {
       downloadCountAllTime: 0,
-      favoriteCountAllTime: 0,
+      thumbsUpCountAllTime: 0,
       followerCountAllTime: 0,
-      ratingAllTime: 0,
-      ratingCountAllTime: 0,
     },
   };
 
@@ -75,10 +73,9 @@ export function CreatorCard({
             <RankBadge size="md" rank={creator.rank} />
             {stats && (
               <UserStatBadges
-                rating={{ value: stats.ratingAllTime, count: stats.ratingCountAllTime }}
                 uploads={uploads}
                 followers={stats.followerCountAllTime}
-                favorite={stats.favoriteCountAllTime}
+                favorites={stats.thumbsUpCountAllTime}
                 downloads={stats.downloadCountAllTime}
               />
             )}

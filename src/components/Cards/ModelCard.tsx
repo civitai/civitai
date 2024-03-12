@@ -6,12 +6,10 @@ import {
   Menu,
   Stack,
   Text,
-  ThemeIcon,
   UnstyledButton,
 } from '@mantine/core';
 import {
   IconDownload,
-  IconHeart,
   IconMessageCircle2,
   IconTagOff,
   IconDotsVertical,
@@ -24,7 +22,7 @@ import {
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React from 'react';
-import { z } from 'zod';
+// import { z } from 'zod';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -49,7 +47,6 @@ import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { CivitiaLinkManageButton } from '~/components/CivitaiLink/CivitiaLinkManageButton';
 import { generationPanel } from '~/store/generation.store';
 import { UseQueryModelReturn } from '~/components/Model/model.utils';
-import { StarRating } from '../StartRating/StarRating';
 import { env } from '~/env/client.mjs';
 import {
   InteractiveTipBuzzButton,
@@ -63,13 +60,9 @@ import { HolidayFrame } from '../Decorations/HolidayFrame';
 import { truncate } from 'lodash-es';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { ToggleSearchableMenuItem } from '../MenuItems/ToggleSearchableMenuItem';
+import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 
 const IMAGE_CARD_WIDTH = 450;
-// To validate url query string
-const querySchema = z.object({
-  model: z.coerce.number().optional(),
-  hidden: z.coerce.boolean().optional(),
-});
 
 export function ModelCard({ data, forceInView }: Props) {
   const { ref, inView } = useInView({
@@ -78,28 +71,22 @@ export function ModelCard({ data, forceInView }: Props) {
     initialInView: forceInView,
   });
   const image = data.images[0];
-  const { classes, cx, theme } = useCardStyles({
+  const { classes, cx } = useCardStyles({
     aspectRatio: image && image.width && image.height ? image.width / image.height : 1,
   });
 
   const router = useRouter();
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
-  const queryResult = querySchema.safeParse(router.query);
-  const hiddenQuery = queryResult.success ? queryResult.data.hidden : false;
-  const modelId = queryResult.success ? queryResult.data.model : undefined;
   const tippedAmount = useBuzzTippingStore({ entityType: 'Model', entityId: data.id });
 
-  const { data: { Favorite: favoriteModels = [] } = { Favorite: [] } } =
+  const { data: { Recommended: reviewedModels = [] } = { Recommended: [] } } =
     trpc.user.getEngagedModels.useQuery(undefined, {
       enabled: !!currentUser,
       cacheTime: Infinity,
       staleTime: Infinity,
     });
-  const isFavorite = favoriteModels.find((modelId) => modelId === data.id);
-
-  // const { users: hiddenUsers, models: hiddenModels } = useHiddenPreferencesContext();
-  // const isHidden = hiddenUsers.get(data.user.id) || hiddenModels.get(data.id);
+  const hasReview = reviewedModels.includes(data.id);
 
   const reportOption = (
     <ReportMenuItem
@@ -116,8 +103,7 @@ export function ModelCard({ data, forceInView }: Props) {
       onReport={() =>
         openContext('report', {
           entityType: ReportEntity.Image,
-          // Explicitly cast to number because we know it's not undefined
-          entityId: image?.id as number,
+          entityId: image.id,
         })
       }
     />
@@ -201,6 +187,11 @@ export function ModelCard({ data, forceInView }: Props) {
   const isArchived = data.mode === ModelModifier.Archived;
   const onSite = !!data.version.trainingStatus;
 
+  const thumbsUpCount = data.rank?.thumbsUpCount ?? 0;
+  const thumbsDownCount = data.rank?.thumbsDownCount ?? 0;
+  const totalCount = thumbsUpCount + thumbsDownCount;
+  const positiveRating = totalCount > 0 ? thumbsUpCount / totalCount : 0;
+
   const { useModelVersionRedirect } = useModelCardContext();
   let href = `/models/${data.id}/${slugit(data.name)}`;
   if (useModelVersionRedirect) href += `?modelVersionId=${data.version.id}`;
@@ -277,7 +268,7 @@ export function ModelCard({ data, forceInView }: Props) {
                                       radius="xl"
                                       sx={(theme) => ({
                                         backgroundColor: isUpdated
-                                          ? '#1EBD8E'
+                                          ? theme.colors.success[5]
                                           : theme.colors.blue[theme.fn.primaryShade()],
                                       })}
                                     >
@@ -429,25 +420,12 @@ export function ModelCard({ data, forceInView }: Props) {
                       />
                     </UnstyledButton>
                   )}
-                  <Text size="xl" weight={700} lineClamp={2} lh={1.3}>
+                  <Text size="xl" weight={700} lineClamp={3} lh={1.2}>
                     {data.name}
                   </Text>
                   {data.rank && (
-                    <>
-                      {!data.locked && !!data.rank.ratingCount && (
-                        <Badge
-                          className={cx(classes.statChip, classes.chip)}
-                          variant="light"
-                          radius="xl"
-                        >
-                          <Group spacing={4}>
-                            <StarRating size={14} value={data.rank.rating} />
-                            <Text size="xs">{data.rank.ratingCount}</Text>
-                          </Group>
-                        </Badge>
-                      )}
-                      {(!!data.rank.favoriteCount ||
-                        !!data.rank.downloadCount ||
+                    <Group align="center" position="apart" spacing={4}>
+                      {(!!data.rank.downloadCount ||
                         !!data.rank.collectedCount ||
                         !!data.rank.tippedAmountCount) && (
                         <Badge
@@ -458,15 +436,6 @@ export function ModelCard({ data, forceInView }: Props) {
                           <Group spacing={2}>
                             <IconDownload size={14} strokeWidth={2.5} />
                             <Text size="xs">{abbreviateNumber(data.rank.downloadCount)}</Text>
-                          </Group>
-                          <Group spacing={2}>
-                            <IconHeart
-                              size={14}
-                              strokeWidth={2.5}
-                              style={{ fill: isFavorite ? theme.colors.red[6] : undefined }}
-                              color={isFavorite ? theme.colors.red[6] : undefined}
-                            />
-                            <Text size="xs">{abbreviateNumber(data.rank.favoriteCount)}</Text>
                           </Group>
                           <Group spacing={2}>
                             <IconBookmark size={14} strokeWidth={2.5} />
@@ -483,14 +452,37 @@ export function ModelCard({ data, forceInView }: Props) {
                           >
                             <Group spacing={2}>
                               <IconBolt size={14} strokeWidth={2.5} />
-                              <Text size="xs">
+                              <Text size="xs" tt="uppercase">
                                 {abbreviateNumber(data.rank.tippedAmountCount + tippedAmount)}
                               </Text>
                             </Group>
                           </InteractiveTipBuzzButton>
                         </Badge>
                       )}
-                    </>
+                      {!data.locked && !!data.rank.thumbsUpCount && (
+                        <Badge
+                          className={cx(classes.statChip, classes.chip)}
+                          pl={6}
+                          pr={8}
+                          data-reviewed={hasReview}
+                          radius="xl"
+                          title={`${Math.round(positiveRating * 100)}% of reviews are positive`}
+                        >
+                          <Group spacing={4}>
+                            <Text
+                              color={hasReview ? 'success.5' : 'yellow'}
+                              component="span"
+                              mt={2}
+                            >
+                              <ThumbsUpIcon size={20} filled={hasReview} strokeWidth={2.5} />
+                            </Text>
+                            <Text size={16} weight={500}>
+                              {abbreviateNumber(data.rank.thumbsUpCount)}
+                            </Text>
+                          </Group>
+                        </Badge>
+                      )}
+                    </Group>
                   )}
                 </Stack>
                 {onSite && <OnsiteIndicator />}
