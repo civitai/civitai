@@ -2815,6 +2815,9 @@ model VaultItem {
   imagesSizeKb   Int
   notes          String?
   meta           Json            @default("{}")
+
+  @@index([vaultId], type: Hash)
+  @@index([modelVersionId], type: Hash)
 }
 
 model Vault {
