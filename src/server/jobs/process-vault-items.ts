@@ -11,10 +11,11 @@ import { fetchBlob } from '~/utils/file-utils';
 import { constants } from '~/server/common/constants';
 import { withRetries } from '~/server/utils/errorHandling';
 import { VaultItemMetadataSchema } from '../schema/vault.schema';
+import { isDefined } from '~/utils/type-guards';
 
 const MAX_FAILURES = 3;
 
-export const processVaultItems = createJob('process-vault-items', '1 * * * *', async () => {
+export const processVaultItems = createJob('process-vault-items', '10 * * * *', async () => {
   if (!env.S3_VAULT_BUCKET) {
     throw new Error('S3_VAULT_BUCKET is not defined');
   }
@@ -52,7 +53,9 @@ export const processVaultItems = createJob('process-vault-items', '1 * * * *', a
       // Now, prepare the PDF file:
       const pdfFile = await htmlToPdf(detail);
       const zip = new JSZip();
-      let coverImage: { data: Blob; filename: string };
+
+      let coverImage: { data: Blob; filename: string } | undefined;
+
       await Promise.all(
         images.map(async (img, idx) => {
           try {
@@ -101,22 +104,26 @@ export const processVaultItems = createJob('process-vault-items', '1 * * * *', a
         [
           { url: detailsUploadUrl, data: pdfFile, headers: { 'Content-Type': 'application/pdf' } },
           { url: imagesUploadUrl, data: imagesZip, headers: { 'Content-Type': 'application/zip' } },
-          {
-            url: coverImageUploadUrl,
-            data: coverImage.data,
-            headers: { 'Content-Type': 'image/*' },
-          },
-        ].map((upload) =>
-          withRetries(() =>
-            fetch(upload.url, {
-              method: 'PUT',
-              body: upload.data,
-              headers: {
-                ...upload.headers,
-              },
-            })
+          !!coverImage
+            ? {
+                url: coverImageUploadUrl,
+                data: coverImage.data,
+                headers: { 'Content-Type': 'image/*' },
+              }
+            : undefined,
+        ]
+          .filter(isDefined)
+          .map((upload) =>
+            withRetries(() =>
+              fetch(upload.url, {
+                method: 'PUT',
+                body: upload.data,
+                headers: {
+                  ...upload.headers,
+                },
+              })
+            )
           )
-        )
       );
 
       // If everything above went out smoothly, the user can now download the files from the vault.

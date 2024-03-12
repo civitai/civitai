@@ -250,7 +250,7 @@ const VaultItemDownload = ({ vaultItem }: { vaultItem: VaultItemGetPaged }) => {
       <Menu.Dropdown>
         {vaultItem.files.map((f) => (
           <Menu.Item
-            id={f.id}
+            key={f.id}
             component={NextLink}
             href={`/api/download/vault/${vaultItem.id}?type=model&fileId=${f.id}`}
           >
@@ -559,7 +559,7 @@ export default function CivitaiVault() {
             <Table>
               <thead>
                 <tr>
-                  <th width="50px">
+                  <th style={{ width: 50 }}>
                     <Checkbox
                       checked={allSelectedInPage}
                       onChange={() => {
