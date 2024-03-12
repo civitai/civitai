@@ -34,6 +34,7 @@ import {
   baseModelSets,
   BaseModelSetType,
   CacheTTL,
+  constants,
   getGenerationConfig,
   Sampler,
 } from '~/server/common/constants';
@@ -450,6 +451,17 @@ export const createGenerationRequest = async ({
     message += ' Time to go outside.';
     throw throwRateLimitError(message);
   }
+
+  // This is disabled for now, because it performs so poorly...
+  // const requests = await getGenerationRequests({
+  //   userId,
+  //   status: [GenerationRequestStatus.Pending, GenerationRequestStatus.Processing],
+  //   take: constants.imageGeneration.maxConcurrentRequests + 1,
+  // });
+  // if (requests.items.length >= constants.imageGeneration.maxConcurrentRequests)
+  //   throw throwRateLimitError(
+  //     'You have too many pending generation requests. Try again when some are completed.'
+  //   );
 
   if (!resources || resources.length === 0) throw throwBadRequestError('No resources provided');
   if (resources.length > 10) throw throwBadRequestError('Too many resources provided');
