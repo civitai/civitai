@@ -263,10 +263,18 @@ const VaultItemDownload = ({ vaultItem }: { vaultItem: VaultItemGetPaged }) => {
           </Menu.Item>
         ))}
         <Menu.Item component={NextLink} href={`/api/download/vault/${vaultItem.id}?type=details`}>
-          Details
+          <Stack spacing={0}>
+            <Text>Details</Text>
+            <Text size="xs" color="dimmed">
+              {formatKBytes(vaultItem.detailsSizeKb)}
+            </Text>
+          </Stack>
         </Menu.Item>
         <Menu.Item component={NextLink} href={`/api/download/vault/${vaultItem.id}?type=images`}>
-          Images
+          <Text>Images</Text>
+          <Text size="xs" color="dimmed">
+            {formatKBytes(vaultItem.imagesSizeKb)}
+          </Text>
         </Menu.Item>
       </Menu.Dropdown>
     </Menu>
@@ -646,7 +654,9 @@ export default function CivitaiVault() {
                           </Stack>
                         </Group>
                       </td>
-                      <td>{item.creatorName}</td>
+                      <td>
+                        <Anchor href={`/user/${item.creatorName}`}>{item.creatorName}</Anchor>
+                      </td>
                       <td>
                         <Group spacing={4}>
                           <Badge size="sm" color="blue" variant="light">
