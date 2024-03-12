@@ -49,6 +49,7 @@ import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApp
 import { isDefined } from '~/utils/type-guards';
 import { Adunit } from '~/components/Ads/AdUnit';
 import { adsRegistry } from '~/components/Ads/adsRegistry';
+import { QS } from '~/utils/qs';
 
 type ModelVersionsProps = { id: number; name: string; modelId: number };
 type ImagesAsPostsInfiniteState = {
@@ -216,14 +217,22 @@ export default function ImagesAsPostsInfinite({
   //   showHidden,
   // ]);
 
+  const handleAddPostClick = (opts?: { reviewing?: boolean }) => {
+    const queryString = QS.stringify({
+      modelId: model.id,
+      modelVersionId: selectedVersionId,
+      returnUrl: router.asPath,
+      reviewing: opts?.reviewing,
+    });
+
+    router.push(`/posts/create?${queryString}`);
+  };
+
   useEffect(() => {
     if (galleryHiddenImages.size === 0) setShowHidden(false);
   }, [galleryHiddenImages.size]);
 
   const isMuted = currentUser?.muted ?? false;
-  const addPostLink = `/posts/create?modelId=${model.id}${
-    selectedVersionId ? `&modelVersionId=${selectedVersionId}` : ''
-  }&returnUrl=${router.asPath}`;
   const { excludeCrossPosts } = imageFilters;
   const hasModerationPreferences =
     galleryHiddenImages.size > 0 || galleryHiddenTags.size > 0 || galleryHiddenUsers.size > 0;
@@ -263,20 +272,26 @@ export default function ImagesAsPostsInfinite({
                 <Title order={2}>Gallery</Title>
                 {!isMuted && (
                   <Group>
-                    <LoginRedirect reason="create-review">
-                      <Link href={addPostLink}>
-                        <Button variant="outline" size="xs" leftIcon={<IconPlus size={16} />}>
-                          Add Post
-                        </Button>
-                      </Link>
+                    <LoginRedirect reason="post-images">
+                      <Button
+                        variant="outline"
+                        size="xs"
+                        leftIcon={<IconPlus size={16} />}
+                        onClick={() => handleAddPostClick()}
+                      >
+                        Add Post
+                      </Button>
                     </LoginRedirect>
                     {canReview && (
                       <LoginRedirect reason="create-review">
-                        <Link href={addPostLink + '&reviewing=true'}>
-                          <Button leftIcon={<IconStar size={16} />} variant="outline" size="xs">
-                            Add Review
-                          </Button>
-                        </Link>
+                        <Button
+                          leftIcon={<IconStar size={16} />}
+                          variant="outline"
+                          size="xs"
+                          onClick={() => handleAddPostClick({ reviewing: true })}
+                        >
+                          Add Review
+                        </Button>
                       </LoginRedirect>
                     )}
                   </Group>

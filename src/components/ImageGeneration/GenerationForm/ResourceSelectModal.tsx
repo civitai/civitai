@@ -289,7 +289,7 @@ function ResourceSelectCard({
   const handleSelect = () => {
     const version = data.versions.find((x) => x.id === selected);
     if (!version) return;
-    const { id, name, trainedWords, baseModel } = version;
+    const { id, name, trainedWords, baseModel, settings } = version;
 
     onSelect({
       id,
@@ -301,7 +301,9 @@ function ResourceSelectCard({
       modelType: data.type,
       image: image,
       covered: data.canGenerate,
-      strength: 1, // TODO - use version recommendations or default to 1
+      strength: settings?.strength ?? 1,
+      minStrength: settings?.minStrength ?? -1,
+      maxStrength: settings?.maxStrength ?? 2,
     });
   };
 
@@ -371,6 +373,7 @@ function ResourceSelectCard({
     contextMenuItems.unshift(
       <Menu.Item
         component="a"
+        key="lookup-model"
         target="_blank"
         icon={<IconInfoCircle size={14} stroke={1.5} />}
         href={`${env.NEXT_PUBLIC_MODEL_LOOKUP_URL}${data.id}`}
