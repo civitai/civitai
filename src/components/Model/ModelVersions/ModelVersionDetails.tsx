@@ -868,7 +868,7 @@ export function ModelVersionDetails({
                 </Stack>
               </Accordion.Panel>
             </Accordion.Item>
-            {version.recommendedResources.length > 0 && (
+            {version.recommendedResources && version.recommendedResources.length > 0 && (
               <Accordion.Item value="recommended-resources">
                 <Accordion.Control>Recommended Resources</Accordion.Control>
                 <Accordion.Panel>
