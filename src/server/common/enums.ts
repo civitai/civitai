@@ -209,6 +209,11 @@ export enum PurchasableRewardModeratorViewMode {
   Purchased = 'Purchased',
 }
 
+export enum SearchIndexUpdateQueueAction {
+  Update = 'Update',
+  Delete = 'Delete',
+}
+
 export enum VaultSort {
   RecentlyAdded = 'Recently Added',
   RecentlyCreated = 'Recently Created',

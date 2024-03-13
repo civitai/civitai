@@ -45,9 +45,7 @@ function getClient({ readonly }: { readonly: boolean } = { readonly: false }) {
 
     // Fix dates
     if (typeof sql === 'object') {
-      for (const i in sql.values) {
-        if (sql.values[i] instanceof Date) sql.values[i] = (sql.values[i] as Date).toISOString();
-      }
+      for (const i in sql.values) sql.values[i] = formatSqlType(sql.values[i]);
     }
 
     let done = false;
@@ -73,6 +71,25 @@ function getClient({ readonly }: { readonly: boolean } = { readonly: false }) {
   };
 
   return pool;
+}
+
+function formatSqlType(value: any): string {
+  if (value instanceof Date) return value.toISOString();
+  if (typeof value === 'object') {
+    if (Array.isArray(value)) {
+      return value.map(formatSqlType).join(',');
+    }
+    if (value === null) return 'null';
+    return JSON.stringify(value);
+  }
+  return value;
+}
+
+export function templateHandler<T>(fn: (value: string) => Promise<T> | T) {
+  return function (sql: TemplateStringsArray, ...values: any[]) {
+    const sqlString = sql.reduce((acc, part, i) => acc + part + formatSqlType(values[i] ?? ''), '');
+    return fn(sqlString);
+  };
 }
 
 // Fix Dates

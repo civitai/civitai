@@ -73,5 +73,8 @@ export const REDIS_KEYS = {
     TAGS_NEEDING_REVIEW: 'system:tags-needing-review',
     HOME_EXCLUDED_TAGS: 'system:home-excluded-tags',
   },
+  QUEUES: {
+    BUCKETS: 'queues:buckets',
+  },
   LIVE_NOW: 'live-now',
 } as const;

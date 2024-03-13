@@ -19,7 +19,6 @@ import {
   NsfwLevel,
   Prisma,
   PrismaClient,
-  SearchIndexUpdateQueueAction,
 } from '@prisma/client';
 import { imageGenerationSchema } from '~/server/schema/image.schema';
 import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
@@ -32,6 +31,8 @@ import {
   profileImageSelect,
 } from '../selectors/image.selector';
 import { isDefined } from '~/utils/type-guards';
+import { SearchIndexUpdate } from '~/server/search-index/SearchIndexUpdate';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 
 const READ_BATCH_SIZE = 10000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 10000;
@@ -395,24 +396,16 @@ const onFetchItemsToIndex = async ({
 };
 
 const onUpdateQueueProcess = async ({ db, indexName }: { db: PrismaClient; indexName: string }) => {
-  const queuedItems = await db.searchIndexUpdateQueue.findMany({
-    select: {
-      id: true,
-    },
-    where: { type: INDEX_ID, action: SearchIndexUpdateQueueAction.Update },
-  });
+  const queue = await SearchIndexUpdate.getQueue(indexName, SearchIndexUpdateQueueAction.Update);
 
   console.log(
     'onUpdateQueueProcess :: A total of ',
-    queuedItems.length,
+    queue.content.length,
     ' have been updated and will be re-indexed'
   );
 
   const itemsToIndex: ImageSearchIndexRecord[] = [];
-  const batches = chunk(
-    queuedItems.map((x) => x.id),
-    READ_BATCH_SIZE
-  );
+  const batches = chunk(queue.content, READ_BATCH_SIZE);
   for (const batch of batches) {
     const newItems = await onFetchItemsToIndex({
       db,
@@ -424,6 +417,7 @@ const onUpdateQueueProcess = async ({ db, indexName }: { db: PrismaClient; index
     itemsToIndex.push(...newItems);
   }
 
+  await queue.commit();
   return itemsToIndex;
 };
 

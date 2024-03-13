@@ -27,7 +27,6 @@ import {
   MetricTimeframe,
   NsfwLevel,
   Prisma,
-  SearchIndexUpdateQueueAction,
 } from '@prisma/client';
 import {
   throwAuthorizationError,
@@ -49,6 +48,7 @@ import {
   ImageSort,
   ModelSort,
   PostSort,
+  SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
 import {
   deleteImageById,

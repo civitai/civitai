@@ -7,12 +7,11 @@ import {
   ModelType,
   ModelUploadType,
   Prisma,
-  SearchIndexUpdateQueueAction,
 } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { CommandResourcesAdd, ResourceType } from '~/components/CivitaiLink/shared-types';
 import { BaseModel, BaseModelType, ModelFileType, constants } from '~/server/common/constants';
-import { ModelSort } from '~/server/common/enums';
+import { ModelSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { Context } from '~/server/createContext';
 
 import { dbRead, dbWrite } from '~/server/db/client';

@@ -1,14 +1,7 @@
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import * as z from 'zod';
 import { dbWrite } from '~/server/db/client';
-import {
-  ImageIngestionStatus,
-  Prisma,
-  SearchIndexUpdateQueueAction,
-  TagSource,
-  TagTarget,
-  TagType,
-} from '@prisma/client';
+import { ImageIngestionStatus, Prisma, TagSource, TagTarget, TagType } from '@prisma/client';
 import {
   auditMetaData,
   getTagsFromPrompt,
@@ -25,7 +18,7 @@ import { imagesSearchIndex } from '~/server/search-index';
 import { deleteUserProfilePictureCache } from '~/server/services/user.service';
 import { updateImageTagIdsForImages } from '~/server/services/image.service';
 import { signalClient } from '~/utils/signal-client';
-import { SignalMessages } from '~/server/common/enums';
+import { SignalMessages, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { scanJobsSchema } from '~/server/schema/image.schema';
 import { getTagRules } from '~/server/services/system-cache';
 import { uniqBy } from 'lodash-es';

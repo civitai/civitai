@@ -7,7 +7,6 @@ import {
   ModelType,
   ModelUploadType,
   Prisma,
-  SearchIndexUpdateQueueAction,
   TagTarget,
 } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
@@ -17,7 +16,7 @@ import { SessionUser } from 'next-auth';
 
 import { env } from '~/env/server.mjs';
 import { BaseModel, BaseModelType, CacheTTL } from '~/server/common/constants';
-import { BrowsingMode, ModelSort } from '~/server/common/enums';
+import { BrowsingMode, ModelSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
