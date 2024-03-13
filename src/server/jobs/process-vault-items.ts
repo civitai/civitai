@@ -1,6 +1,6 @@
 import { Prisma, VaultItemStatus } from '@prisma/client';
 import JSZip from 'jszip';
-import { createJob } from './job';
+import { createJob, getJobDate } from './job';
 import { dbWrite } from '~/server/db/client';
 import { getModelVersionDataForVault } from '~/server/services/vault.service';
 import { getModelVersionDetailsPDF } from '~/server/utils/pdf-helpers';
@@ -21,6 +21,8 @@ const logErrors = (data: MixedObject) => {
 };
 
 export const processVaultItems = createJob('process-vault-items', '*/10 * * * *', async () => {
+  const [, setLastRun] = await getJobDate('process-vault-items');
+
   if (!env.S3_VAULT_BUCKET) {
     throw new Error('S3_VAULT_BUCKET is not defined');
   }
@@ -165,4 +167,6 @@ export const processVaultItems = createJob('process-vault-items', '*/10 * * * *'
       continue;
     }
   }
+
+  await setLastRun();
 });

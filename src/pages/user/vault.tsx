@@ -273,10 +273,12 @@ const VaultItemDownload = ({ vaultItem }: { vaultItem: VaultItemGetPaged }) => {
           </Stack>
         </Menu.Item>
         <Menu.Item component={NextLink} href={`/api/download/vault/${vaultItem.id}?type=images`}>
-          <Text>Images</Text>
-          <Text size="xs" color="dimmed">
-            {formatKBytes(vaultItem.imagesSizeKb)}
-          </Text>
+          <Stack>
+            <Text>Images</Text>
+            <Text size="xs" color="dimmed">
+              {formatKBytes(vaultItem.imagesSizeKb)}
+            </Text>
+          </Stack>
         </Menu.Item>
       </Menu.Dropdown>
     </Menu>
