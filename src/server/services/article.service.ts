@@ -5,9 +5,9 @@ import {
   CosmeticType,
   MetricTimeframe,
   Prisma,
-  SearchIndexUpdateQueueAction,
   TagTarget,
 } from '@prisma/client';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { TRPCError } from '@trpc/server';
 import { ManipulateType } from 'dayjs';
 import { truncate } from 'lodash-es';

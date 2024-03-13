@@ -1,236 +1,30 @@
-import { createMetricProcessor } from '~/server/metrics/base.metrics';
-import { Prisma } from '@prisma/client';
+import { createMetricProcessor, MetricProcessorRunContext } from '~/server/metrics/base.metrics';
+import { createLogger } from '~/utils/logging';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { executeRefresh, getAffected, snippets } from '~/server/metrics/metric-helpers';
+import { chunk } from 'lodash-es';
+
+const log = createLogger('metrics:bounty');
 
 export const bountyEntryMetrics = createMetricProcessor({
   name: 'BountyEntry',
-  async update({ db, lastUpdate }) {
-    const recentEngagementSubquery = Prisma.sql`
-    -- Get all engagements that have happened since then that affect metrics
-    WITH recent_engagements AS
-    (
-      SELECT
-        "bountyEntryId" AS id
-      FROM "BountyEntryReaction"
-      WHERE ("createdAt" > ${lastUpdate})
-
-      UNION
-
-      SELECT
-        "awardedToId" AS id
-      FROM "BountyBenefactor"
-      WHERE ("createdAt" > ${lastUpdate})
-
-      UNION
-      
-      SELECT bt."entityId" as id
-        FROM "BuzzTip" bt
-      WHERE bt."entityId" IS NOT NULL AND bt."entityType" = 'BountyEntry'
-        AND (bt."createdAt" > ${lastUpdate} OR bt."updatedAt" > ${lastUpdate})
-
-      UNION
-
-      SELECT
-        "id"
-      FROM "BountyEntry"
-      WHERE ("createdAt" > ${lastUpdate})
-
-      UNION
-
-      SELECT
-        "id"
-      FROM "MetricUpdateQueue"
-      WHERE type = 'BountyEntry'
-    )
-    `;
-
-    await db.$executeRaw`
-      ${recentEngagementSubquery},
-      -- Get all affected
-      affected AS
-      (
-          SELECT DISTINCT
-              r.id
-          FROM recent_engagements r
-          JOIN "BountyEntry" b ON b.id = r.id
-          WHERE r.id IS NOT NULL
-      )
-      -- upsert metrics for all affected
-      -- perform a one-pass table scan producing all metrics for all affected users
-      INSERT INTO "BountyEntryMetric" ("bountyEntryId", timeframe, "likeCount", "dislikeCount", "laughCount", "cryCount", "heartCount", "unitAmountCount", "tippedCount", "tippedAmountCount")
-      SELECT
-        m.id,
-        tf.timeframe,
-        CASE
-          WHEN tf.timeframe = 'AllTime' THEN like_count
-          WHEN tf.timeframe = 'Year' THEN year_like_count
-          WHEN tf.timeframe = 'Month' THEN month_like_count
-          WHEN tf.timeframe = 'Week' THEN week_like_count
-          WHEN tf.timeframe = 'Day' THEN day_like_count
-        END AS like_count, 
-        CASE
-          WHEN tf.timeframe = 'AllTime' THEN dislike_count
-          WHEN tf.timeframe = 'Year' THEN year_dislike_count
-          WHEN tf.timeframe = 'Month' THEN month_dislike_count
-          WHEN tf.timeframe = 'Week' THEN week_dislike_count
-          WHEN tf.timeframe = 'Day' THEN day_dislike_count
-        END AS dislike_count, 
-        CASE
-          WHEN tf.timeframe = 'AllTime' THEN laugh_count
-          WHEN tf.timeframe = 'Year' THEN year_laugh_count
-          WHEN tf.timeframe = 'Month' THEN month_laugh_count
-          WHEN tf.timeframe = 'Week' THEN week_laugh_count
-          WHEN tf.timeframe = 'Day' THEN day_laugh_count
-        END AS laugh_count, 
-        CASE
-          WHEN tf.timeframe = 'AllTime' THEN cry_count
-          WHEN tf.timeframe = 'Year' THEN year_cry_count
-          WHEN tf.timeframe = 'Month' THEN month_cry_count
-          WHEN tf.timeframe = 'Week' THEN week_cry_count
-          WHEN tf.timeframe = 'Day' THEN day_cry_count
-        END AS cry_count, 
-        CASE
-          WHEN tf.timeframe = 'AllTime' THEN heart_count
-          WHEN tf.timeframe = 'Year' THEN year_heart_count
-          WHEN tf.timeframe = 'Month' THEN month_heart_count
-          WHEN tf.timeframe = 'Week' THEN week_heart_count
-          WHEN tf.timeframe = 'Day' THEN day_heart_count
-        END AS heart_count, 
-        CASE
-          WHEN tf.timeframe = 'AllTime' THEN unit_amount_count
-          WHEN tf.timeframe = 'Year' THEN year_unit_amount_count
-          WHEN tf.timeframe = 'Month' THEN month_unit_amount_count
-          WHEN tf.timeframe = 'Week' THEN week_unit_amount_count
-          WHEN tf.timeframe = 'Day' THEN day_unit_amount_count
-        END AS unit_amount_count,
-        CASE
-          WHEN tf.timeframe = 'AllTime' THEN tipped_count
-          WHEN tf.timeframe = 'Year' THEN year_tipped_count
-          WHEN tf.timeframe = 'Month' THEN month_tipped_count
-          WHEN tf.timeframe = 'Week' THEN week_tipped_count
-          WHEN tf.timeframe = 'Day' THEN day_tipped_count
-        END AS tipped_count,
-        CASE
-          WHEN tf.timeframe = 'AllTime' THEN tipped_amount_count
-          WHEN tf.timeframe = 'Year' THEN year_tipped_amount_count
-          WHEN tf.timeframe = 'Month' THEN month_tipped_amount_count
-          WHEN tf.timeframe = 'Week' THEN week_tipped_amount_count
-          WHEN tf.timeframe = 'Day' THEN day_tipped_amount_count
-        END AS tipped_amount_count
-      FROM
-      (
-        SELECT
-          a.id,
-          COALESCE(ber.heart_count, 0) AS heart_count,
-          COALESCE(ber.year_heart_count, 0) AS year_heart_count,
-          COALESCE(ber.month_heart_count, 0) AS month_heart_count,
-          COALESCE(ber.week_heart_count, 0) AS week_heart_count,
-          COALESCE(ber.day_heart_count, 0) AS day_heart_count,
-          COALESCE(ber.laugh_count, 0) AS laugh_count,
-          COALESCE(ber.year_laugh_count, 0) AS year_laugh_count,
-          COALESCE(ber.month_laugh_count, 0) AS month_laugh_count,
-          COALESCE(ber.week_laugh_count, 0) AS week_laugh_count,
-          COALESCE(ber.day_laugh_count, 0) AS day_laugh_count,
-          COALESCE(ber.cry_count, 0) AS cry_count,
-          COALESCE(ber.year_cry_count, 0) AS year_cry_count,
-          COALESCE(ber.month_cry_count, 0) AS month_cry_count,
-          COALESCE(ber.week_cry_count, 0) AS week_cry_count,
-          COALESCE(ber.day_cry_count, 0) AS day_cry_count,
-          COALESCE(ber.dislike_count, 0) AS dislike_count,
-          COALESCE(ber.year_dislike_count, 0) AS year_dislike_count,
-          COALESCE(ber.month_dislike_count, 0) AS month_dislike_count,
-          COALESCE(ber.week_dislike_count, 0) AS week_dislike_count,
-          COALESCE(ber.day_dislike_count, 0) AS day_dislike_count,
-          COALESCE(ber.like_count, 0) AS like_count,
-          COALESCE(ber.year_like_count, 0) AS year_like_count,
-          COALESCE(ber.month_like_count, 0) AS month_like_count,
-          COALESCE(ber.week_like_count, 0) AS week_like_count,
-          COALESCE(ber.day_like_count, 0) AS day_like_count, 
-          COALESCE(bf.unit_amount_count, 0) AS unit_amount_count,
-          COALESCE(bf.year_unit_amount_count, 0) AS year_unit_amount_count,
-          COALESCE(bf.month_unit_amount_count, 0) AS month_unit_amount_count,
-          COALESCE(bf.week_unit_amount_count, 0) AS week_unit_amount_count,
-          COALESCE(bf.day_unit_amount_count, 0) AS day_unit_amount_count,
-          COALESCE(bt.tipped_count, 0) AS tipped_count,
-          COALESCE(bt.year_tipped_count, 0) AS year_tipped_count,
-          COALESCE(bt.month_tipped_count, 0) AS month_tipped_count,
-          COALESCE(bt.week_tipped_count, 0) AS week_tipped_count,
-          COALESCE(bt.day_tipped_count, 0) AS day_tipped_count,
-          COALESCE(bt.tipped_amount_count, 0) AS tipped_amount_count,
-          COALESCE(bt.year_tipped_amount_count, 0) AS year_tipped_amount_count,
-          COALESCE(bt.month_tipped_amount_count, 0) AS month_tipped_amount_count,
-          COALESCE(bt.week_tipped_amount_count, 0) AS week_tipped_amount_count,
-          COALESCE(bt.day_tipped_amount_count, 0) AS day_tipped_amount_count
-        FROM affected a
-        LEFT JOIN (
-          SELECT
-            ber."bountyEntryId",
-            SUM(IIF(ber.reaction = 'Heart', 1, 0)) AS heart_count,
-            SUM(IIF(ber.reaction = 'Heart' AND ber."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_heart_count,
-            SUM(IIF(ber.reaction = 'Heart' AND ber."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_heart_count,
-            SUM(IIF(ber.reaction = 'Heart' AND ber."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_heart_count,
-            SUM(IIF(ber.reaction = 'Heart' AND ber."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_heart_count,
-            SUM(IIF(ber.reaction = 'Like', 1, 0)) AS like_count,
-            SUM(IIF(ber.reaction = 'Like' AND ber."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_like_count,
-            SUM(IIF(ber.reaction = 'Like' AND ber."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_like_count,
-            SUM(IIF(ber.reaction = 'Like' AND ber."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_like_count,
-            SUM(IIF(ber.reaction = 'Like' AND ber."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_like_count,
-            SUM(IIF(ber.reaction = 'Dislike', 1, 0)) AS dislike_count,
-            SUM(IIF(ber.reaction = 'Dislike' AND ber."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_dislike_count,
-            SUM(IIF(ber.reaction = 'Dislike' AND ber."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_dislike_count,
-            SUM(IIF(ber.reaction = 'Dislike' AND ber."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_dislike_count,
-            SUM(IIF(ber.reaction = 'Dislike' AND ber."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_dislike_count,
-            SUM(IIF(ber.reaction = 'Cry', 1, 0)) AS cry_count,
-            SUM(IIF(ber.reaction = 'Cry' AND ber."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_cry_count,
-            SUM(IIF(ber.reaction = 'Cry' AND ber."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_cry_count,
-            SUM(IIF(ber.reaction = 'Cry' AND ber."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_cry_count,
-            SUM(IIF(ber.reaction = 'Cry' AND ber."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_cry_count,
-            SUM(IIF(ber.reaction = 'Laugh', 1, 0)) AS laugh_count,
-            SUM(IIF(ber.reaction = 'Laugh' AND ber."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_laugh_count,
-            SUM(IIF(ber.reaction = 'Laugh' AND ber."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_laugh_count,
-            SUM(IIF(ber.reaction = 'Laugh' AND ber."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_laugh_count,
-            SUM(IIF(ber.reaction = 'Laugh' AND ber."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_laugh_count
-          FROM "BountyEntryReaction" ber
-          GROUP BY ber."bountyEntryId"
-        ) ber ON ber."bountyEntryId" = a.id
-        LEFT JOIN (
-          SELECT
-              bf."awardedToId",
-              SUM(bf."unitAmount") unit_amount_count,
-              SUM(IIF(bf."createdAt" > now() - INTERVAL '1 year', bf."unitAmount", 0)) year_unit_amount_count,
-              SUM(IIF(bf."createdAt" > now() - INTERVAL '1 month', bf."unitAmount", 0)) month_unit_amount_count,
-              SUM(IIF(bf."createdAt" > now() - INTERVAL '1 week', bf."unitAmount", 0)) week_unit_amount_count,
-              SUM(IIF(bf."createdAt" > now() - INTERVAL '1 day', bf."unitAmount", 0)) day_unit_amount_count
-          FROM "BountyBenefactor" bf
-          GROUP BY bf."awardedToId"
-        ) bf ON bf."awardedToId" = a.id
-        LEFT JOIN (
-          SELECT
-            abt."entityId" AS id,
-            COALESCE(COUNT(*), 0) AS tipped_count,
-            SUM(IIF(abt."updatedAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_tipped_count,
-            SUM(IIF(abt."updatedAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_tipped_count,
-            SUM(IIF(abt."updatedAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_tipped_count,
-            SUM(IIF(abt."updatedAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_tipped_count,
-            COALESCE(SUM(abt.amount), 0) AS tipped_amount_count,
-            SUM(IIF(abt."updatedAt" >= (NOW() - interval '365 days'), abt.amount, 0)) AS year_tipped_amount_count,
-            SUM(IIF(abt."updatedAt" >= (NOW() - interval '30 days'), abt.amount, 0)) AS month_tipped_amount_count,
-            SUM(IIF(abt."updatedAt" >= (NOW() - interval '7 days'), abt.amount, 0)) AS week_tipped_amount_count,
-            SUM(IIF(abt."updatedAt" >= (NOW() - interval '1 days'), abt.amount, 0)) AS day_tipped_amount_count
-          FROM "BuzzTip" abt
-          WHERE abt."entityType" = 'BountyEntry' AND abt."entityId" IS NOT NULL
-          GROUP BY abt."entityId"
-        ) bt ON a.id = bt.id
-      ) m
-      CROSS JOIN (
-        SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
-      ) tf
-      ON CONFLICT ("bountyEntryId", timeframe) DO UPDATE
-        SET "likeCount" = EXCLUDED."likeCount", "dislikeCount" = EXCLUDED."dislikeCount", "laughCount" = EXCLUDED."laughCount",  "cryCount" = EXCLUDED."cryCount", "heartCount" = EXCLUDED."heartCount", "unitAmountCount" = EXCLUDED."unitAmountCount", "tippedCount" = EXCLUDED."tippedCount", "tippedAmountCount" = EXCLUDED."tippedAmountCount";
-    `;
+  async update(ctx) {
+    // Get the metric tasks
+    //---------------------------------------
+    const taskBatches = await Promise.all([
+      getReactionTasks(ctx),
+      getBenefactorTasks(ctx),
+      getBuzzTasks(ctx),
+    ]);
+    log('BountyEntryMetrics update', taskBatches.flat().length, 'tasks');
+    for (const tasks of taskBatches) await limitConcurrency(tasks, 5);
   },
-  async clearDay({ db }) {
-    await db.$executeRaw`
-      UPDATE "BountyEntryMetric" SET "likeCount" = 0, "dislikeCount" = 0, "laughCount" = 0, "cryCount" = 0, "heartCount" = 0, "unitAmountCount" = 0, "tippedCount" = 0, "tippedAmountCount" = 0 WHERE timeframe = 'Day';
+  async clearDay(ctx) {
+    await executeRefresh(ctx)`
+      UPDATE "BountyEntryMetric"
+        SET "likeCount" = 0, "dislikeCount" = 0, "laughCount" = 0, "cryCount" = 0, "heartCount" = 0, "unitAmountCount" = 0, "tippedCount" = 0, "tippedAmountCount" = 0
+      WHERE timeframe = 'Day'
+        AND "updatedAt" > date_trunc('day', now() - interval '1 day');
     `;
   },
   rank: {
@@ -239,3 +33,103 @@ export const bountyEntryMetrics = createMetricProcessor({
     refreshInterval: 5 * 60 * 1000,
   },
 });
+
+async function getReactionTasks(ctx: MetricProcessorRunContext) {
+  log('getReactionTasks', ctx.lastUpdate);
+  const affected = await getAffected(ctx)`
+    -- get recent bounty entry reactions
+    SELECT
+      "bountyEntryId" AS id
+    FROM "BountyEntryReaction"
+    WHERE "createdAt" > '${ctx.lastUpdate}'
+  `;
+
+  const tasks = chunk(affected, 1000).map((ids, i) => async () => {
+    ctx.jobContext.checkIfCanceled();
+    log('getReactionTasks', i + 1, 'of', tasks.length);
+
+    await executeRefresh(ctx)`
+      -- update bounty entry reaction metrics
+      INSERT INTO "BountyEntryMetric" ("bountyEntryId", timeframe, ${snippets.reactionMetricNames})
+      SELECT
+        r."bountyEntryId",
+        tf.timeframe,
+        ${snippets.reactionTimeframes()}
+      FROM "BountyEntryReaction" r
+      JOIN "BountyEntry" be ON be.id = r."bountyEntryId" -- ensure the bountyEntry exists
+      CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
+      WHERE r."bountyEntryId" IN (${ids.join(',')})
+      GROUP BY r."bountyEntryId", tf.timeframe
+      ON CONFLICT ("bountyEntryId", timeframe) DO UPDATE
+        SET ${snippets.reactionMetricUpserts}, "updatedAt" = NOW()
+    `;
+    log('getReactionTasks', i + 1, 'of', tasks.length, 'done');
+  });
+
+  return tasks;
+}
+
+async function getBenefactorTasks(ctx: MetricProcessorRunContext) {
+  const affected = await getAffected(ctx)`
+    -- get recent bounty entry benefactors
+    SELECT "awardedToId" as id
+    FROM "BountyBenefactor"
+    WHERE "createdAt" > '${ctx.lastUpdate}'
+      AND "awardedToId" IS NOT NULL
+  `;
+
+  const tasks = chunk(affected, 1000).map((ids, i) => async () => {
+    ctx.jobContext.checkIfCanceled();
+    log('getBenefactorTasks', i + 1, 'of', tasks.length);
+    await executeRefresh(ctx)`
+      -- update bounty entry benefactor metrics
+      INSERT INTO "BountyEntryMetric" ("bountyEntryId", timeframe, "unitAmountCount")
+      SELECT
+        "awardedToId",
+        tf.timeframe,
+        ${snippets.timeframeSum('"createdAt"', '"unitAmount"')} as "unitAmountCount"
+      FROM "BountyBenefactor"
+      CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
+      WHERE "awardedToId" IN (${ids.join(',')})
+      GROUP BY "bountyId", tf.timeframe
+      ON CONFLICT ("bountyId", timeframe) DO UPDATE
+        SET "unitAmountCount" = EXCLUDED."unitAmountCount", "updatedAt" = NOW()
+    `;
+    log('getBenefactorTasks', i + 1, 'of', tasks.length, 'done');
+  });
+
+  return tasks;
+}
+
+async function getBuzzTasks(ctx: MetricProcessorRunContext) {
+  const affected = await getAffected(ctx)`
+    -- get recent bountyEntry tips
+    SELECT "entityId" as id
+    FROM "BuzzTip"
+    WHERE "entityType" = 'bountyEntry' AND "createdAt" > '${ctx.lastUpdate}'
+  `;
+
+  const tasks = chunk(affected, 1000).map((ids, i) => async () => {
+    ctx.jobContext.checkIfCanceled();
+    log('getBuzzTasks', i + 1, 'of', tasks.length);
+    await executeRefresh(ctx)`
+      -- update bountyEntry tip metrics
+      INSERT INTO "BountyEntryMetric" ("bountyEntryId", timeframe, "tippedCount", "tippedAmountCount")
+      SELECT
+        "entityId",
+        tf.timeframe,
+        ${snippets.timeframeSum('bt."updatedAt"')} "tippedCount",
+        ${snippets.timeframeSum('bt."updatedAt"', 'amount')} "tippedAmountCount"
+      FROM "BuzzTip" bt
+      JOIN "BountyEntry" be ON be.id = bt."entityId" -- ensure the bountyEntry exists
+      CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
+      WHERE "entityId" IN (${ids.join(',')}) AND "entityType" = 'bountyEntry'
+      GROUP BY "entityId", tf.timeframe
+      ON CONFLICT ("bountyEntryId", timeframe) DO UPDATE
+        SET "tippedCount" = EXCLUDED."tippedCount", "tippedAmountCount" = EXCLUDED."tippedAmountCount", "updatedAt" = NOW()
+    `;
+    log('getBuzzTasks', i + 1, 'of', tasks.length, 'done');
+  });
+
+  return tasks;
+}

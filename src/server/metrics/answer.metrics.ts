@@ -3,6 +3,9 @@ import { createMetricProcessor } from '~/server/metrics/base.metrics';
 export const answerMetrics = createMetricProcessor({
   name: 'Answer',
   async update({ db, lastUpdate }) {
+    return;
+    // Disabled for now
+
     await db.$executeRaw`
     WITH recent_engagements AS
     (

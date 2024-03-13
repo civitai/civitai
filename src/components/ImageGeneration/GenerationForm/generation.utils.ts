@@ -184,7 +184,7 @@ export const getFormData = (
       // only use generationConfig for previous and new baseModels
       const config = Object.entries(generationConfig)
         .filter(([key]) => [baseModel, newBaseModel].includes(key as BaseModelSetType))
-        .map(([key, value]) => value);
+        .map(([, value]) => value);
 
       const shouldUpdate = !config.every(({ additionalResourceTypes }) => {
         return additionalResourceTypes.some(({ type, baseModelSet, baseModels }) => {
@@ -224,7 +224,7 @@ export const getFormData = (
       .filter((x) => x.modelType !== 'Checkpoint' && x.modelType !== 'VAE')
       .filter(resourceFilter);
   } else if (type === 'remix') {
-    formData.vae = resources.filter((x) => x.modelType === 'VAE')[0];
+    formData.vae = resources.find((x) => x.modelType === 'VAE') ?? formData.vae;
     formData.resources = resources
       .filter((x) => x.modelType !== 'Checkpoint' && x.modelType !== 'VAE')
       .filter(resourceFilter);
@@ -238,7 +238,9 @@ export const getFormData = (
         params?.baseModel
       );
     if (params.sampler)
-      formData.sampler = generation.samplers.includes(params.sampler as any)
+      formData.sampler = generation.samplers.includes(
+        params.sampler as (typeof generation.samplers)[number]
+      )
         ? params.sampler
         : undefined;
   }
@@ -258,7 +260,9 @@ export const getFormData = (
   }
 
   if (type !== 'remix') formData = removeEmpty(formData);
-  formData.resources = formData.resources?.length ? uniqBy(formData.resources, 'id') : undefined;
+  formData.resources = formData.resources?.length
+    ? uniqBy(formData.resources, 'id').slice(0, 9)
+    : undefined;
 
   return {
     ...formData,
@@ -280,14 +284,14 @@ export const getClosestAspectRatio = (width?: number, height?: number, baseModel
 export const getBaseModelSetKey = (baseModel?: string) => {
   if (!baseModel) return undefined;
   return Object.entries(baseModelSets).find(
-    ([key, baseModels]) => key === baseModel || baseModels.includes(baseModel as any)
+    ([key, baseModels]) => key === baseModel || baseModels.includes(baseModel as BaseModel)
   )?.[0] as BaseModelSetType | undefined;
 };
 
 export const getBaseModelSet = (baseModel?: string) => {
   if (!baseModel) return undefined;
   return Object.entries(baseModelSets).find(
-    ([key, set]) => key === baseModel || set.includes(baseModel as any)
+    ([key, set]) => key === baseModel || set.includes(baseModel as BaseModel)
   )?.[1];
 };
 

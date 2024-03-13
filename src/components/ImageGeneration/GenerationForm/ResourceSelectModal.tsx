@@ -235,13 +235,7 @@ function ResourceHitList() {
         <Text color="dimmed">{hiddenCount} models have been hidden due to your settings.</Text>
       )}
       <Box className={classes.grid}>
-        {models.map((model, index) => {
-          return (
-            <div key={model.id.toString()} id={model.id.toString()}>
-              {createRenderElement(ResourceSelectCard, index, model)}
-            </div>
-          );
-        })}
+        {models.map((model, index) => createRenderElement(ResourceSelectCard, index, model))}
       </Box>
       {hits.length > 0 && !isLastPage && (
         <InViewLoader loadFn={showMore} loadCondition={status === 'idle'}>
@@ -307,8 +301,9 @@ function ResourceSelectCard({
     });
   };
 
-  const isSDXL = baseModelSets.SDXL.includes(data.version?.baseModel as BaseModel);
-  const isPony = data.version?.baseModel === 'Pony';
+  const selectedVersion = data.versions.find((x) => x.id === selected);
+  const isSDXL = baseModelSets.SDXL.includes(selectedVersion?.baseModel as BaseModel);
+  const isPony = selectedVersion?.baseModel === 'Pony';
   const isNew = data.publishedAt && data.publishedAt > aDayAgo;
   const isUpdated =
     data.lastVersionAt &&
@@ -389,7 +384,8 @@ function ResourceSelectCard({
   }
 
   return (
-    <FeedCard ref={ref}>
+    // Visually hide card if there are no versions
+    <FeedCard ref={ref} style={{ display: versions.length === 0 ? 'none' : undefined }}>
       {inView ? (
         <div className={classes.root} onClick={handleSelect}>
           <ImageGuard

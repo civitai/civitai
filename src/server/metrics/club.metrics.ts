@@ -4,6 +4,9 @@ import { Prisma } from '@prisma/client';
 export const clubMetrics = createMetricProcessor({
   name: 'Club',
   async update({ db, lastUpdate }) {
+    return;
+    // Disabled for now
+
     const recentEngagementSubquery = Prisma.sql`
     -- Get all engagements that have happened since then that affect metrics
     WITH recent_engagements AS
@@ -54,7 +57,7 @@ export const clubMetrics = createMetricProcessor({
       INSERT INTO "ClubMetric" ("clubId", timeframe, "memberCount", "resourceCount", "clubPostCount")
       SELECT
         m.id,
-        tf.timeframe, 
+        tf.timeframe,
         CASE
           WHEN tf.timeframe = 'AllTime' THEN member_count
           WHEN tf.timeframe = 'Year' THEN year_member_count
@@ -103,7 +106,7 @@ export const clubMetrics = createMetricProcessor({
               SUM(IIF(cm."startedAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_member_count,
               SUM(IIF(cm."startedAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_member_count,
               SUM(IIF(cm."startedAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_member_count,
-              SUM(IIF(cm."startedAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_member_count 
+              SUM(IIF(cm."startedAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_member_count
             FROM "ClubMembership" cm
             WHERE cm."expiresAt" IS NULL OR cm."expiresAt" > NOW()
             GROUP BY cm."clubId"
@@ -122,7 +125,7 @@ export const clubMetrics = createMetricProcessor({
           LEFT JOIN "Club" c ON ea."accessorId" = c.id AND ea."accessorType" = 'Club'
           LEFT JOIN "ClubTier" ct ON ea."accessorId" = ct."id" AND ea."accessorType" = 'ClubTier'
           WHERE  ea."accessorType" IN ('Club', 'ClubTier')
-            AND COALESCE(c.id, ct."clubId") IS NOT NULL  
+            AND COALESCE(c.id, ct."clubId") IS NOT NULL
           GROUP BY COALESCE(c.id, ct."clubId")
         ) ea ON ea."clubId" = a.id
         LEFT JOIN (
@@ -133,7 +136,7 @@ export const clubMetrics = createMetricProcessor({
             SUM(IIF(cp."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_club_post_count,
             SUM(IIF(cp."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_club_post_count,
             SUM(IIF(cp."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_club_post_count
-          FROM "ClubPost" cp 
+          FROM "ClubPost" cp
           GROUP BY cp."clubId"
         ) cp ON cp."clubId" = a.id
       ) m

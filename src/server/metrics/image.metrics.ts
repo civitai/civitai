@@ -1,37 +1,25 @@
 import { createMetricProcessor, MetricProcessorRunContext } from '~/server/metrics/base.metrics';
-import { Prisma, SearchIndexUpdateQueueAction } from '@prisma/client';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { imagesSearchIndex } from '~/server/search-index';
 import dayjs from 'dayjs';
 import { chunk } from 'lodash-es';
-import { limitConcurrency, Task } from '~/server/utils/concurrency-helpers';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { createLogger } from '~/utils/logging';
+import { executeRefresh, getAffected, snippets } from '~/server/metrics/metric-helpers';
 
-const log = createLogger('metrics:post');
-
-type ImageMetricContext = MetricProcessorRunContext & {
-  addAffected: (id: number | number[]) => void;
-};
+const log = createLogger('metrics:image');
 
 export const imageMetrics = createMetricProcessor({
   name: 'Image',
   async update(ctx) {
-    // Prepare the context
-    const { pg, jobContext } = ctx;
-    const imageCtx = ctx as ImageMetricContext;
-    const affected = new Set<number>();
-    imageCtx.addAffected = (id) => {
-      if (Array.isArray(id)) id.forEach((x) => affected.add(x));
-      else affected.add(id);
-    };
-
     // Get the metric tasks
     //---------------------------------------
     const taskBatches = await Promise.all([
-      getReactionTasks(imageCtx),
-      getCommentTasks(imageCtx),
-      getCollectionTasks(imageCtx),
-      getBuzzTasks(imageCtx),
-      getViewTasks(imageCtx),
+      getReactionTasks(ctx),
+      getCommentTasks(ctx),
+      getCollectionTasks(ctx),
+      getBuzzTasks(ctx),
+      getViewTasks(ctx),
     ]);
     log('imageMetrics update', taskBatches.flat().length, 'tasks');
     for (const tasks of taskBatches) await limitConcurrency(tasks, 5);
@@ -40,7 +28,7 @@ export const imageMetrics = createMetricProcessor({
     //---------------------------------------
     log('update search index');
     await imagesSearchIndex.queueUpdate(
-      [...affected].map((id) => ({
+      [...ctx.affected].map((id) => ({
         id,
         action: SearchIndexUpdateQueueAction.Update,
       }))
@@ -49,7 +37,7 @@ export const imageMetrics = createMetricProcessor({
     // Update the age group of the metrics
     //---------------------------------------
     log('update age groups');
-    const updateAgeGroupsQuery = await pg.cancellableQuery(Prisma.sql`
+    await executeRefresh(ctx)`
       UPDATE "ImageMetric"
       SET "ageGroup" = CASE
           WHEN "createdAt" >= now() - interval '1 day' THEN 'Day'::"MetricTimeframe"
@@ -63,326 +51,200 @@ export const imageMetrics = createMetricProcessor({
         ("ageGroup" = 'Month' AND "createdAt" < now() - interval '1 month') OR
         ("ageGroup" = 'Week' AND "createdAt" < now() - interval '1 week') OR
         ("ageGroup" = 'Day' AND "createdAt" < now() - interval '1 day');
-    `);
-    jobContext.on('cancel', updateAgeGroupsQuery.cancel);
-    await updateAgeGroupsQuery.result();
+    `;
   },
-  async clearDay({ pg, jobContext }) {
+  async clearDay(ctx) {
     // Clear day of things updated in the last day
-    const clearDayQuery = await pg.cancellableQuery(Prisma.sql`
-      UPDATE "ImageMetric" SET "heartCount" = 0, "likeCount" = 0, "dislikeCount" = 0, "laughCount" = 0, "cryCount" = 0, "commentCount" = 0, "collectedCount" = 0, "tippedCount" = 0, "tippedAmountCount" = 0 WHERE timeframe = 'Day' AND "updatedAt" > date_trunc('day', now() - interval '1 day');
-    `);
-    jobContext.on('cancel', clearDayQuery.cancel);
-    await clearDayQuery.result();
+    await executeRefresh(ctx)`
+      UPDATE "ImageMetric"
+        SET "heartCount" = 0, "likeCount" = 0, "dislikeCount" = 0, "laughCount" = 0, "cryCount" = 0, "commentCount" = 0, "collectedCount" = 0, "tippedCount" = 0, "tippedAmountCount" = 0
+      WHERE timeframe = 'Day'
+        AND "updatedAt" > date_trunc('day', now() - interval '1 day');
+    `;
   },
 });
 
-async function getReactionTasks({ pg, lastUpdate, jobContext, ...ctx }: ImageMetricContext) {
-  log('getReactionTasks', lastUpdate);
-  const affectedQuery = await pg.cancellableQuery<{ id: number }>(Prisma.sql`
+async function getReactionTasks(ctx: MetricProcessorRunContext) {
+  log('getReactionTasks', ctx.lastUpdate);
+  const affected = await getAffected(ctx)`
     -- get recent image reactions
     SELECT
       "imageId" AS id
     FROM "ImageReaction"
-    WHERE "createdAt" > ${lastUpdate}
+    WHERE "createdAt" > '${ctx.lastUpdate}'
+  `;
 
-    UNION
-
-    SELECT
-      "id"
-    FROM "MetricUpdateQueue"
-    WHERE type = 'Image'
-  `);
-  jobContext.on('cancel', affectedQuery.cancel);
-  const affected = await affectedQuery.result();
-  const ids = [...new Set(affected.map((x) => x.id))];
-  ctx.addAffected(ids);
-
-  const tasks = chunk(ids, 1000).map((ids, i) => async () => {
-    jobContext.checkIfCanceled();
+  const tasks = chunk(affected, 1000).map((ids, i) => async () => {
+    ctx.jobContext.checkIfCanceled();
     log('getReactionTasks', i + 1, 'of', tasks.length);
 
-    const query = await pg.cancellableQuery(Prisma.sql`
+    await executeRefresh(ctx)`
       -- update image reaction metrics
-      INSERT INTO "ImageMetric" ("imageId", timeframe, "likeCount", "dislikeCount", "heartCount", "laughCount", "cryCount")
+      INSERT INTO "ImageMetric" ("imageId", timeframe, ${snippets.reactionMetricNames})
       SELECT
-        ir."imageId",
+        r."imageId",
         tf.timeframe,
-        SUM(CASE
-          WHEN ir.reaction = 'Like' AND tf.timeframe = 'AllTime' THEN 1
-          WHEN ir.reaction = 'Like' AND tf.timeframe = 'Year' AND ir."createdAt" > (NOW() - interval '365 days') THEN 1
-          WHEN ir.reaction = 'Like' AND tf.timeframe = 'Month' AND ir."createdAt" > (NOW() - interval '30 days') THEN 1
-          WHEN ir.reaction = 'Like' AND tf.timeframe = 'Week' AND ir."createdAt" > (NOW() - interval '7 days') THEN 1
-          WHEN ir.reaction = 'Like' AND tf.timeframe = 'Day' AND ir."createdAt" > (NOW() - interval '1 days') THEN 1
-          ELSE 0
-        END) "likeCount",
-        SUM(CASE
-          WHEN ir.reaction = 'Dislike' AND tf.timeframe = 'AllTime' THEN 1
-          WHEN ir.reaction = 'Dislike' AND tf.timeframe = 'Year' AND ir."createdAt" > (NOW() - interval '365 days') THEN 1
-          WHEN ir.reaction = 'Dislike' AND tf.timeframe = 'Month' AND ir."createdAt" > (NOW() - interval '30 days') THEN 1
-          WHEN ir.reaction = 'Dislike' AND tf.timeframe = 'Week' AND ir."createdAt" > (NOW() - interval '7 days') THEN 1
-          WHEN ir.reaction = 'Dislike' AND tf.timeframe = 'Day' AND ir."createdAt" > (NOW() - interval '1 days') THEN 1
-          ELSE 0
-        END) "dislikeCount",
-        SUM(CASE
-          WHEN ir.reaction = 'Heart' AND tf.timeframe = 'AllTime' THEN 1
-          WHEN ir.reaction = 'Heart' AND tf.timeframe = 'Year' AND ir."createdAt" > (NOW() - interval '365 days') THEN 1
-          WHEN ir.reaction = 'Heart' AND tf.timeframe = 'Month' AND ir."createdAt" > (NOW() - interval '30 days') THEN 1
-          WHEN ir.reaction = 'Heart' AND tf.timeframe = 'Week' AND ir."createdAt" > (NOW() - interval '7 days') THEN 1
-          WHEN ir.reaction = 'Heart' AND tf.timeframe = 'Day' AND ir."createdAt" > (NOW() - interval '1 days') THEN 1
-          ELSE 0
-        END) "heartCount",
-        SUM(CASE
-          WHEN ir.reaction = 'Laugh' AND tf.timeframe = 'AllTime' THEN 1
-          WHEN ir.reaction = 'Laugh' AND tf.timeframe = 'Year' AND ir."createdAt" > (NOW() - interval '365 days') THEN 1
-          WHEN ir.reaction = 'Laugh' AND tf.timeframe = 'Month' AND ir."createdAt" > (NOW() - interval '30 days') THEN 1
-          WHEN ir.reaction = 'Laugh' AND tf.timeframe = 'Week' AND ir."createdAt" > (NOW() - interval '7 days') THEN 1
-          WHEN ir.reaction = 'Laugh' AND tf.timeframe = 'Day' AND ir."createdAt" > (NOW() - interval '1 days') THEN 1
-          ELSE 0
-        END) "laughCount",
-        SUM(CASE
-          WHEN ir.reaction = 'Cry' AND tf.timeframe = 'AllTime' THEN 1
-          WHEN ir.reaction = 'Cry' AND tf.timeframe = 'Year' AND ir."createdAt" > (NOW() - interval '365 days') THEN 1
-          WHEN ir.reaction = 'Cry' AND tf.timeframe = 'Month' AND ir."createdAt" > (NOW() - interval '30 days') THEN 1
-          WHEN ir.reaction = 'Cry' AND tf.timeframe = 'Week' AND ir."createdAt" > (NOW() - interval '7 days') THEN 1
-          WHEN ir.reaction = 'Cry' AND tf.timeframe = 'Day' AND ir."createdAt" > (NOW() - interval '1 days') THEN 1
-          ELSE 0
-        END) "cryCount"
-      FROM "ImageReaction" ir
-      JOIN "Image" i ON i.id = ir."imageId" -- ensure the image exists
+        ${snippets.reactionTimeframes()}
+      FROM "ImageReaction" r
+      JOIN "Image" i ON i.id = r."imageId" -- ensure the image exists
       CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-      WHERE ir."imageId" IN (${Prisma.join(ids)})
-      GROUP BY ir."imageId", tf.timeframe
+      WHERE r."imageId" IN (${ids})
+      GROUP BY r."imageId", tf.timeframe
       ON CONFLICT ("imageId", timeframe) DO UPDATE
-        SET "heartCount" = EXCLUDED."heartCount", "likeCount" = EXCLUDED."likeCount", "dislikeCount" = EXCLUDED."dislikeCount", "laughCount" = EXCLUDED."laughCount", "cryCount" = EXCLUDED."cryCount", "updatedAt" = NOW()
-    `);
-    jobContext.on('cancel', query.cancel);
-    await query.result();
+        SET ${snippets.reactionMetricUpserts}, "updatedAt" = NOW()
+    `;
     log('getReactionTasks', i + 1, 'of', tasks.length, 'done');
   });
 
   return tasks;
 }
 
-async function getCommentTasks({ pg, lastUpdate, jobContext, ...ctx }: ImageMetricContext) {
-  const affectedQuery = await pg.cancellableQuery<{ id: number }>(Prisma.sql`
+async function getCommentTasks(ctx: MetricProcessorRunContext) {
+  const affected = await getAffected(ctx)`
     -- get recent image comments
     SELECT t."imageId" as id
     FROM "Thread" t
     JOIN "CommentV2" c ON c."threadId" = t.id
-    WHERE t."imageId" IS NOT NULL AND c."createdAt" > ${lastUpdate}
+    WHERE t."imageId" IS NOT NULL AND c."createdAt" > '${ctx.lastUpdate}'
+  `;
 
-    UNION
-
-    SELECT
-      "id"
-    FROM "MetricUpdateQueue"
-    WHERE type = 'Image'
-  `);
-  jobContext.on('cancel', affectedQuery.cancel);
-  const affected = await affectedQuery.result();
-  const ids = [...new Set(affected.map((x) => x.id))];
-  ctx.addAffected(ids);
-
-  const tasks = chunk(ids, 1000).map((ids, i) => async () => {
-    jobContext.checkIfCanceled();
+  const tasks = chunk(affected, 1000).map((ids, i) => async () => {
+    ctx.jobContext.checkIfCanceled();
     log('getCommentTasks', i + 1, 'of', tasks.length);
-    const query = await pg.cancellableQuery(Prisma.sql`
+    await executeRefresh(ctx)`
       -- update image comment metrics
       INSERT INTO "ImageMetric" ("imageId", timeframe, "commentCount")
       SELECT
         t."imageId",
         tf.timeframe,
-        SUM(CASE
-          WHEN tf.timeframe = 'AllTime' THEN 1
-          WHEN tf.timeframe = 'Year' AND c."createdAt" > (NOW() - interval '365 days') THEN 1
-          WHEN tf.timeframe = 'Month' AND c."createdAt" > (NOW() - interval '30 days') THEN 1
-          WHEN tf.timeframe = 'Week' AND c."createdAt" > (NOW() - interval '7 days') THEN 1
-          WHEN tf.timeframe = 'Day' AND c."createdAt" > (NOW() - interval '1 days') THEN 1
-          ELSE 0
-        END)
+        ${snippets.timeframeSum('c."createdAt"')}
       FROM "Thread" t
       JOIN "Image" i ON i.id = t."imageId" -- ensure the image exists
       JOIN "CommentV2" c ON c."threadId" = t.id
       CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-      WHERE t."imageId" IN (${Prisma.join(ids)})
+      WHERE t."imageId" IN (${ids})
       GROUP BY t."imageId", tf.timeframe
       ON CONFLICT ("imageId", timeframe) DO UPDATE
         SET "commentCount" = EXCLUDED."commentCount", "updatedAt" = NOW()
-    `);
-    jobContext.on('cancel', query.cancel);
-    await query.result();
+    `;
     log('getCommentTasks', i + 1, 'of', tasks.length, 'done');
   });
 
   return tasks;
 }
 
-async function getCollectionTasks({ pg, lastUpdate, jobContext, ...ctx }: ImageMetricContext) {
-  const affectedQuery = await pg.cancellableQuery<{ id: number }>(Prisma.sql`
+async function getCollectionTasks(ctx: MetricProcessorRunContext) {
+  const affected = await getAffected(ctx)`
     -- get recent image collections
     SELECT "imageId" as id
     FROM "CollectionItem"
-    WHERE "imageId" IS NOT NULL AND "createdAt" > ${lastUpdate}
+    WHERE "imageId" IS NOT NULL AND "createdAt" > '${ctx.lastUpdate}'
+  `;
 
-    UNION
-
-    SELECT
-      "id"
-    FROM "MetricUpdateQueue"
-    WHERE type = 'Image'
-  `);
-  jobContext.on('cancel', affectedQuery.cancel);
-  const affected = await affectedQuery.result();
-  const ids = [...new Set(affected.map((x) => x.id))];
-  ctx.addAffected(ids);
-
-  const tasks = chunk(ids, 1000).map((ids, i) => async () => {
-    jobContext.checkIfCanceled();
+  const tasks = chunk(affected, 1000).map((ids, i) => async () => {
+    ctx.jobContext.checkIfCanceled();
     log('getCollectionTasks', i + 1, 'of', tasks.length);
-    const query = await pg.cancellableQuery(Prisma.sql`
+    await executeRefresh(ctx)`
       -- update image collection metrics
       INSERT INTO "ImageMetric" ("imageId", timeframe, "collectedCount")
       SELECT
         "imageId",
         tf.timeframe,
-        SUM(CASE
-          WHEN tf.timeframe = 'AllTime' THEN 1
-          WHEN tf.timeframe = 'Year' AND ci."createdAt" > (NOW() - interval '365 days') THEN 1
-          WHEN tf.timeframe = 'Month' AND ci."createdAt" > (NOW() - interval '30 days') THEN 1
-          WHEN tf.timeframe = 'Week' AND ci."createdAt" > (NOW() - interval '7 days') THEN 1
-          WHEN tf.timeframe = 'Day' AND ci."createdAt" > (NOW() - interval '1 days') THEN 1
-          ELSE 0
-        END)
+        ${snippets.timeframeSum('ci."createdAt"')}
       FROM "CollectionItem" ci
       JOIN "Image" i ON i.id = ci."imageId" -- ensure the image exists
       CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-      WHERE ci."imageId" IN (${Prisma.join(ids)})
+      WHERE ci."imageId" IN (${ids})
       GROUP BY ci."imageId", tf.timeframe
       ON CONFLICT ("imageId", timeframe) DO UPDATE
         SET "collectedCount" = EXCLUDED."collectedCount", "updatedAt" = NOW()
-    `);
-    jobContext.on('cancel', query.cancel);
-    await query.result();
+    `;
     log('getCollectionTasks', i + 1, 'of', tasks.length, 'done');
   });
 
   return tasks;
 }
 
-async function getBuzzTasks({ pg, lastUpdate, jobContext, ...ctx }: ImageMetricContext) {
-  const affectedQuery = await pg.cancellableQuery<{ id: number }>(Prisma.sql`
+async function getBuzzTasks(ctx: MetricProcessorRunContext) {
+  const affected = await getAffected(ctx)`
     -- get recent image tips
     SELECT "entityId" as id
     FROM "BuzzTip"
-    WHERE "entityType" = 'Image' AND "createdAt" > ${lastUpdate}
+    WHERE "entityType" = 'Image' AND "createdAt" > '${ctx.lastUpdate}'
+  `;
 
-    UNION
-
-    SELECT
-      "id"
-    FROM "MetricUpdateQueue"
-    WHERE type = 'Image'
-  `);
-  jobContext.on('cancel', affectedQuery.cancel);
-  const affected = await affectedQuery.result();
-  const ids = [...new Set(affected.map((x) => x.id))];
-  ctx.addAffected(ids);
-
-  const tasks = chunk(ids, 1000).map((ids, i) => async () => {
-    jobContext.checkIfCanceled();
+  const tasks = chunk(affected, 1000).map((ids, i) => async () => {
+    ctx.jobContext.checkIfCanceled();
     log('getBuzzTasks', i + 1, 'of', tasks.length);
-    const query = await pg.cancellableQuery(Prisma.sql`
+    await executeRefresh(ctx)`
       -- update image tip metrics
       INSERT INTO "ImageMetric" ("imageId", timeframe, "tippedCount", "tippedAmountCount")
       SELECT
         "entityId",
         tf.timeframe,
-        SUM(CASE
-          WHEN tf.timeframe = 'AllTime' THEN 1
-          WHEN tf.timeframe = 'Year' AND bt."updatedAt" > (NOW() - interval '365 days') THEN 1
-          WHEN tf.timeframe = 'Month' AND bt."updatedAt" > (NOW() - interval '30 days') THEN 1
-          WHEN tf.timeframe = 'Week' AND bt."updatedAt" > (NOW() - interval '7 days') THEN 1
-          WHEN tf.timeframe = 'Day' AND bt."updatedAt" > (NOW() - interval '1 days') THEN 1
-          ELSE 0
-        END) "tippedCount",
-        SUM(CASE
-          WHEN tf.timeframe = 'AllTime' THEN "amount"
-          WHEN tf.timeframe = 'Year' AND bt."updatedAt" > (NOW() - interval '365 days') THEN "amount"
-          WHEN tf.timeframe = 'Month' AND bt."updatedAt" > (NOW() - interval '30 days') THEN "amount"
-          WHEN tf.timeframe = 'Week' AND bt."updatedAt" > (NOW() - interval '7 days') THEN "amount"
-          WHEN tf.timeframe = 'Day' AND bt."updatedAt" > (NOW() - interval '1 days') THEN "amount"
-          ELSE 0
-        END) "tippedAmountCount"
+        ${snippets.timeframeSum('bt."updatedAt"')} "tippedCount",
+        ${snippets.timeframeSum('bt."updatedAt"', 'amount')} "tippedAmountCount"
       FROM "BuzzTip" bt
       JOIN "Image" i ON i.id = bt."entityId" -- ensure the image exists
       CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-      WHERE "entityId" IN (${Prisma.join(ids)}) AND "entityType" = 'Image'
+      WHERE "entityId" IN (${ids}) AND "entityType" = 'Image'
       GROUP BY "entityId", tf.timeframe
       ON CONFLICT ("imageId", timeframe) DO UPDATE
         SET "tippedCount" = EXCLUDED."tippedCount", "tippedAmountCount" = EXCLUDED."tippedAmountCount", "updatedAt" = NOW()
-    `);
-    jobContext.on('cancel', query.cancel);
-    await query.result();
+    `;
     log('getBuzzTasks', i + 1, 'of', tasks.length, 'done');
   });
 
   return tasks;
 }
 
-async function getViewTasks({ ch, pg, lastUpdate, jobContext, ...ctx }: ImageMetricContext) {
-  const clickhouseSince = dayjs(lastUpdate).toISOString();
-  const imageViews = await ch.query({
-    query: `
-        WITH targets AS (
-          SELECT
-            entityId
-          FROM views
-          WHERE entityType = 'Image'
-          AND time >= parseDateTimeBestEffortOrNull('${clickhouseSince}')
-        )
-        SELECT
-          entityId AS imageId,
-          sumIf(views, createdDate = current_date()) day,
-          sumIf(views, createdDate >= subtractDays(current_date(), 7)) week,
-          sumIf(views, createdDate >= subtractDays(current_date(), 30)) month,
-          sumIf(views, createdDate >= subtractYears(current_date(), 1)) year,
-          sum(views) all_time
-        FROM daily_views
-        WHERE entityId IN (select entityId FROM targets)
-          AND entityType = 'Image'
-        GROUP BY imageId;
-      `,
-    format: 'JSONEachRow',
-  });
+type ImageMetricView = {
+  imageId: number;
+  day: number;
+  week: number;
+  month: number;
+  year: number;
+  all_time: number;
+};
+async function getViewTasks(ctx: MetricProcessorRunContext) {
+  const clickhouseSince = dayjs(ctx.lastUpdate).toISOString();
+  const viewed = await ctx.ch.$query<ImageMetricView>`
+    WITH targets AS (
+      SELECT
+        entityId
+      FROM views
+      WHERE entityType = 'Image'
+      AND time >= parseDateTimeBestEffortOrNull('${clickhouseSince}')
+    )
+    SELECT
+      entityId AS imageId,
+      sumIf(views, createdDate = current_date()) day,
+      sumIf(views, createdDate >= subtractDays(current_date(), 7)) week,
+      sumIf(views, createdDate >= subtractDays(current_date(), 30)) month,
+      sumIf(views, createdDate >= subtractYears(current_date(), 1)) year,
+      sum(views) all_time
+    FROM daily_views
+    WHERE entityId IN (select entityId FROM targets)
+      AND entityType = 'Image'
+    GROUP BY imageId;
+  `;
+  ctx.addAffected(viewed.map((x) => x.imageId));
 
-  const viewedImages = (await imageViews?.json()) as [
-    {
-      imageId: number;
-      day: number;
-      week: number;
-      month: number;
-      year: number;
-      all_time: number;
-    }
-  ];
-  ctx.addAffected(viewedImages.map((x) => x.imageId));
-
-  const tasks = chunk(viewedImages, 1000).map((batch, i) => async () => {
-    jobContext.checkIfCanceled();
+  const tasks = chunk(viewed, 1000).map((batch, i) => async () => {
+    ctx.jobContext.checkIfCanceled();
     log('getViewTasks', i + 1, 'of', tasks.length);
     try {
       const batchJson = JSON.stringify(batch);
-      const updateChunkQuery = await pg.cancellableQuery(Prisma.sql`
+      await executeRefresh(ctx)`
+        -- update image view metrics
         INSERT INTO "ImageMetric" ("imageId", timeframe, "viewCount")
         SELECT
-          imageId,
+          "imageId",
           timeframe,
           views
-        FROM
-        (
+        FROM (
             SELECT
-                CAST(mvs::json->>'imageId' AS INT) AS imageId,
+                CAST(mvs::json->>'imageId' AS INT) AS "imageId",
                 tf.timeframe,
                 CAST(
                   CASE
@@ -393,20 +255,18 @@ async function getViewTasks({ ch, pg, lastUpdate, jobContext, ...ctx }: ImageMet
                     WHEN tf.timeframe = 'AllTime' THEN mvs::json->>'all_time'
                   END
                 AS int) as views
-            FROM json_array_elements(${batchJson}::json) mvs
+            FROM json_array_elements('${batchJson}'::json) mvs
             CROSS JOIN (
                 SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
             ) tf
         ) im
-        JOIN "Image" i ON i.id = im.imageId -- ensure the image exists
+        JOIN "Image" i ON i.id = im."imageId" -- ensure the image exists
         WHERE im.views IS NOT NULL
-        AND im.imageId IN (SELECT id FROM "Image")
+        AND im."imageId" IN (SELECT id FROM "Image")
         ON CONFLICT ("imageId", timeframe) DO UPDATE
           SET "viewCount" = EXCLUDED."viewCount",
               "updatedAt" = NOW();
-      `);
-      jobContext.on('cancel', updateChunkQuery.cancel);
-      await updateChunkQuery.result();
+      `;
     } catch (err) {
       throw err;
     }

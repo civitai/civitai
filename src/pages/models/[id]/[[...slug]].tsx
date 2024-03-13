@@ -537,9 +537,9 @@ export default function ModelDetailsV2({
           <Announcements sx={{ marginBottom: 5 }} />
           <Stack spacing="xs">
             <Stack spacing={4}>
-              <Group align="center" sx={{ justifyContent: 'space-between' }} noWrap>
+              <Group align="flex-start" sx={{ justifyContent: 'space-between' }} noWrap>
                 <Group className={classes.titleWrapper} align="center">
-                  <Title className={classes.title} order={1}>
+                  <Title className={classes.title} order={1} lineClamp={2}>
                     {model?.name}
                   </Title>
                   <LoginRedirect reason="favorite-model">
@@ -1091,7 +1091,7 @@ const useStyles = createStyles((theme) => ({
   title: {
     wordBreak: 'break-word',
     [containerQuery.smallerThan('md')]: {
-      fontSize: theme.fontSizes.xs * 2.4, // 24px
+      fontSize: 24,
       width: '100%',
       paddingBottom: 0,
     },

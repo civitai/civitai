@@ -172,6 +172,11 @@ function MyApp(props: CustomAppProps) {
                   label: { cursor: 'pointer' },
                 },
               },
+              Menu: {
+                styles: {
+                  itemLabel: { display: 'flex' },
+                },
+              },
             },
             colors: {
               accent: [
