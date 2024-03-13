@@ -1,12 +1,12 @@
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 
 async function getBucketNames(key: string) {
-  const currentBucket = await redis.hGet(REDIS_KEYS.SEARCH_INDEX.BUCKETS, key);
+  const currentBucket = await redis.hGet(REDIS_KEYS.QUEUES.BUCKETS, key);
   return currentBucket?.split(',') ?? [];
 }
 
-function getNewBucketName(key: string) {
-  return `${REDIS_KEYS.SEARCH_INDEX.BUCKETS}:${key}:${Date.now()}`;
+function getNewBucket(key: string) {
+  return `${REDIS_KEYS.QUEUES.BUCKETS}:${key}:${Date.now()}`;
 }
 
 export async function addToQueue(key: string, ids: number | number[] | Set<number>) {
@@ -15,7 +15,11 @@ export async function addToQueue(key: string, ids: number | number[] | Set<numbe
     else ids = [ids];
   }
   const currentBuckets = await getBucketNames(key);
-  const targetBucket = currentBuckets[0] ?? getNewBucketName(key);
+  let targetBucket = currentBuckets[0];
+  if (!targetBucket) {
+    targetBucket = getNewBucket(key);
+    await redis.hSet(REDIS_KEYS.QUEUES.BUCKETS, key, targetBucket);
+  }
   const content = ids.map((id) => id.toString());
   await redis.sAdd(targetBucket, content);
 }
@@ -25,8 +29,8 @@ export async function checkoutQueue(key: string) {
   const currentBuckets = await getBucketNames(key);
 
   // Append new bucket
-  const newBucket = getNewBucketName(key);
-  await redis.hSet(REDIS_KEYS.SEARCH_INDEX.BUCKETS, key, [newBucket, ...currentBuckets].join(','));
+  const newBucket = getNewBucket(key);
+  await redis.hSet(REDIS_KEYS.QUEUES.BUCKETS, key, [newBucket, ...currentBuckets].join(','));
 
   // Fetch the content of the current buckets
   const content = new Set<number>();
@@ -43,10 +47,10 @@ export async function checkoutQueue(key: string) {
       // Remove the reference to the processed buckets
       const existingBuckets = await getBucketNames(key);
       const newBuckets = existingBuckets.filter((bucket) => !currentBuckets.includes(bucket));
-      await redis.hSet(REDIS_KEYS.SEARCH_INDEX.BUCKETS, key, newBuckets.join(','));
+      await redis.hSet(REDIS_KEYS.QUEUES.BUCKETS, key, newBuckets.join(','));
 
       // Remove the processed buckets
-      await redis.del(currentBuckets);
+      if (currentBuckets.length > 0) await redis.del(currentBuckets);
     },
   };
 }

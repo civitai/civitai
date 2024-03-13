@@ -6,12 +6,16 @@ const metricSets = {
   users: [metrics.userMetrics],
   images: [metrics.imageMetrics],
   bounties: [metrics.bountyEntryMetrics, metrics.bountyMetrics],
-  clubs: [metrics.clubPostMetrics, metrics.clubMetrics],
+  clubs: [
+    // metrics.clubPostMetrics, metrics.clubMetrics // disable clubs
+  ],
   posts: [metrics.postMetrics],
   tags: [metrics.tagMetrics],
   collections: [metrics.collectionMetrics],
   articles: [metrics.articleMetrics],
-  other: [metrics.answerMetrics, metrics.questionMetrics],
+  other: [
+    // metrics.answerMetrics, metrics.questionMetrics // disable questions and answers
+  ],
 };
 
 export const metricJobs = Object.entries(metricSets).map(([name, metrics]) =>

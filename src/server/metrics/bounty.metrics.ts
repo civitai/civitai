@@ -1,231 +1,43 @@
-import { createMetricProcessor } from '~/server/metrics/base.metrics';
-import { Prisma } from '@prisma/client';
+import { chunk } from 'lodash-es';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { createMetricProcessor, MetricProcessorRunContext } from '~/server/metrics/base.metrics';
+import { executeRefresh, getAffected, snippets } from '~/server/metrics/metric-helpers';
 import { bountiesSearchIndex } from '~/server/search-index';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { createLogger } from '~/utils/logging';
+
+const log = createLogger('metrics:bounty');
 
 export const bountyMetrics = createMetricProcessor({
   name: 'Bounty',
-  async update({ db, lastUpdate }) {
-    const recentEngagementSubquery = Prisma.sql`
-    -- Get all engagements that have happened since then that affect metrics
-    WITH recent_engagements AS
-    (
-      SELECT
-        "bountyId" AS id
-      FROM "BountyEngagement"
-      WHERE ("createdAt" > ${lastUpdate})
+  async update(ctx) {
+    // Get the metric tasks
+    //---------------------------------------
+    const taskBatches = await Promise.all([
+      getEngagementTasks(ctx),
+      getCommentTasks(ctx),
+      getBenefactorTasks(ctx),
+      getEntryTasks(ctx),
+    ]);
+    log('imageMetrics update', taskBatches.flat().length, 'tasks');
+    for (const tasks of taskBatches) await limitConcurrency(tasks, 5);
 
-      UNION
-
-      SELECT
-        "bountyId" AS id
-      FROM "BountyEntry"
-      WHERE ("createdAt" > ${lastUpdate})
-
-      UNION
-
-      SELECT
-        "bountyId" AS id
-      FROM "BountyBenefactor"
-      WHERE ("createdAt" > ${lastUpdate})
-
-      UNION
-
-      SELECT t."bountyId" as id
-      FROM "Thread" t
-      JOIN "CommentV2" c ON c."threadId" = t.id
-      WHERE t."bountyId" IS NOT NULL AND c."createdAt" > ${lastUpdate}
-
-      UNION
-
-      SELECT
-        "id"
-      FROM "Bounty"
-      WHERE ("createdAt" > ${lastUpdate})
-
-      UNION
-
-      SELECT
-        "id"
-      FROM "MetricUpdateQueue"
-      WHERE type = 'Bounty'
-    )
-    `;
-
-    await db.$executeRaw`
-      ${recentEngagementSubquery},
-      -- Get all affected
-      affected AS
-      (
-          SELECT DISTINCT
-              r.id
-          FROM recent_engagements r
-          JOIN "Bounty" b ON b.id = r.id
-          WHERE r.id IS NOT NULL
-      )
-      -- upsert metrics for all affected
-      -- perform a one-pass table scan producing all metrics for all affected users
-      INSERT INTO "BountyMetric" ("bountyId", timeframe, "favoriteCount", "trackCount", "entryCount", "benefactorCount", "unitAmountCount", "commentCount")
-      SELECT
-        m.id,
-        tf.timeframe,
-        CASE
-          WHEN tf.timeframe = 'AllTime' THEN favorite_count
-          WHEN tf.timeframe = 'Year' THEN year_favorite_count
-          WHEN tf.timeframe = 'Month' THEN month_favorite_count
-          WHEN tf.timeframe = 'Week' THEN week_favorite_count
-          WHEN tf.timeframe = 'Day' THEN day_favorite_count
-        END AS favorite_count,
-        CASE
-          WHEN tf.timeframe = 'AllTime' THEN track_count
-          WHEN tf.timeframe = 'Year' THEN year_track_count
-          WHEN tf.timeframe = 'Month' THEN month_track_count
-          WHEN tf.timeframe = 'Week' THEN week_track_count
-          WHEN tf.timeframe = 'Day' THEN day_track_count
-        END AS track_count,
-        CASE
-          WHEN tf.timeframe = 'AllTime' THEN entry_count
-          WHEN tf.timeframe = 'Year' THEN year_entry_count
-          WHEN tf.timeframe = 'Month' THEN month_entry_count
-          WHEN tf.timeframe = 'Week' THEN week_entry_count
-          WHEN tf.timeframe = 'Day' THEN day_entry_count
-        END AS entry_count,
-        CASE
-          WHEN tf.timeframe = 'AllTime' THEN benefactor_count
-          WHEN tf.timeframe = 'Year' THEN year_benefactor_count
-          WHEN tf.timeframe = 'Month' THEN month_benefactor_count
-          WHEN tf.timeframe = 'Week' THEN week_benefactor_count
-          WHEN tf.timeframe = 'Day' THEN day_benefactor_count
-        END AS benefactor_count,
-        CASE
-          WHEN tf.timeframe = 'AllTime' THEN unit_amount_count
-          WHEN tf.timeframe = 'Year' THEN year_unit_amount_count
-          WHEN tf.timeframe = 'Month' THEN month_unit_amount_count
-          WHEN tf.timeframe = 'Week' THEN week_unit_amount_count
-          WHEN tf.timeframe = 'Day' THEN day_unit_amount_count
-        END AS unit_amount_count,
-        CASE
-          WHEN tf.timeframe = 'AllTime' THEN comment_count
-          WHEN tf.timeframe = 'Year' THEN year_comment_count
-          WHEN tf.timeframe = 'Month' THEN month_comment_count
-          WHEN tf.timeframe = 'Week' THEN week_comment_count
-          WHEN tf.timeframe = 'Day' THEN day_comment_count
-        END AS comment_count
-      FROM
-      (
-        SELECT
-          a.id,
-          COALESCE(be.favorite_count, 0) AS favorite_count,
-          COALESCE(be.year_favorite_count, 0) AS year_favorite_count,
-          COALESCE(be.month_favorite_count, 0) AS month_favorite_count,
-          COALESCE(be.week_favorite_count, 0) AS week_favorite_count,
-          COALESCE(be.day_favorite_count, 0) AS day_favorite_count,
-          COALESCE(be.track_count, 0) AS track_count,
-          COALESCE(be.year_track_count, 0) AS year_track_count,
-          COALESCE(be.month_track_count, 0) AS month_track_count,
-          COALESCE(be.week_track_count, 0) AS week_track_count,
-          COALESCE(be.day_track_count, 0) AS day_track_count,
-          COALESCE(bentry.entry_count, 0) AS entry_count,
-          COALESCE(bentry.year_entry_count, 0) AS year_entry_count,
-          COALESCE(bentry.month_entry_count, 0) AS month_entry_count,
-          COALESCE(bentry.week_entry_count, 0) AS week_entry_count,
-          COALESCE(bentry.day_entry_count, 0) AS day_entry_count,
-          COALESCE(bf.benefactor_count, 0) AS benefactor_count,
-          COALESCE(bf.year_benefactor_count, 0) AS year_benefactor_count,
-          COALESCE(bf.month_benefactor_count, 0) AS month_benefactor_count,
-          COALESCE(bf.week_benefactor_count, 0) AS week_benefactor_count,
-          COALESCE(bf.day_benefactor_count, 0) AS day_benefactor_count,
-          COALESCE(bf.unit_amount_count, 0) AS unit_amount_count,
-          COALESCE(bf.year_unit_amount_count, 0) AS year_unit_amount_count,
-          COALESCE(bf.month_unit_amount_count, 0) AS month_unit_amount_count,
-          COALESCE(bf.week_unit_amount_count, 0) AS week_unit_amount_count,
-          COALESCE(bf.day_unit_amount_count, 0) AS day_unit_amount_count,
-          COALESCE(c.comment_count, 0) AS comment_count,
-          COALESCE(c.year_comment_count, 0) AS year_comment_count,
-          COALESCE(c.month_comment_count, 0) AS month_comment_count,
-          COALESCE(c.week_comment_count, 0) AS week_comment_count,
-          COALESCE(c.day_comment_count, 0) AS day_comment_count
-        FROM affected a
-        LEFT JOIN (
-          SELECT
-            ic."bountyId" AS id,
-            COUNT(*) AS comment_count,
-            SUM(IIF(v."createdAt" >= (NOW() - interval '365 days'), 1, 0)) AS year_comment_count,
-            SUM(IIF(v."createdAt" >= (NOW() - interval '30 days'), 1, 0)) AS month_comment_count,
-            SUM(IIF(v."createdAt" >= (NOW() - interval '7 days'), 1, 0)) AS week_comment_count,
-            SUM(IIF(v."createdAt" >= (NOW() - interval '1 days'), 1, 0)) AS day_comment_count
-          FROM "Thread" ic
-          JOIN "CommentV2" v ON ic."id" = v."threadId"
-          WHERE ic."bountyId" IS NOT NULL
-          GROUP BY ic."bountyId"
-        ) c ON a.id = c.id
-        LEFT JOIN (
-          SELECT
-              be."bountyId",
-              SUM(IIF(be.type = 'Favorite'::"BountyEngagementType", 1, 0)) favorite_count,
-              SUM(IIF(be.type = 'Favorite'::"BountyEngagementType" AND be."createdAt" > now() - INTERVAL '1 year', 1, 0)) year_favorite_count,
-              SUM(IIF(be.type = 'Favorite'::"BountyEngagementType" AND be."createdAt" > now() - INTERVAL '1 month', 1, 0)) month_favorite_count,
-              SUM(IIF(be.type = 'Favorite'::"BountyEngagementType" AND be."createdAt" > now() - INTERVAL '1 week', 1, 0)) week_favorite_count,
-              SUM(IIF(be.type = 'Favorite'::"BountyEngagementType" AND be."createdAt" > now() - INTERVAL '1 day', 1, 0)) day_favorite_count,
-              SUM(IIF(be.type = 'Track'::"BountyEngagementType", 1, 0)) track_count,
-              SUM(IIF(be.type = 'Track'::"BountyEngagementType" AND be."createdAt" > now() - INTERVAL '1 year', 1, 0)) year_track_count,
-              SUM(IIF(be.type = 'Track'::"BountyEngagementType" AND be."createdAt" > now() - INTERVAL '1 month', 1, 0)) month_track_count,
-              SUM(IIF(be.type = 'Track'::"BountyEngagementType" AND be."createdAt" > now() - INTERVAL '1 week', 1, 0)) week_track_count,
-              SUM(IIF(be.type = 'Track'::"BountyEngagementType" AND be."createdAt" > now() - INTERVAL '1 day', 1, 0)) day_track_count
-          FROM "BountyEngagement" be
-          GROUP BY be."bountyId"
-        ) be ON be."bountyId" = a.id
-        LEFT JOIN (
-          SELECT
-              bentry."bountyId",
-              COUNT(*) entry_count,
-              SUM(IIF(bentry."createdAt" > now() - INTERVAL '1 year', 1, 0)) year_entry_count,
-              SUM(IIF(bentry."createdAt" > now() - INTERVAL '1 month', 1, 0)) month_entry_count,
-              SUM(IIF(bentry."createdAt" > now() - INTERVAL '1 week', 1, 0)) week_entry_count,
-              SUM(IIF(bentry."createdAt" > now() - INTERVAL '1 day', 1, 0)) day_entry_count
-          FROM "BountyEntry" bentry
-          GROUP BY bentry."bountyId"
-        ) bentry ON bentry."bountyId" = a.id
-        LEFT JOIN (
-          SELECT
-              bf."bountyId",
-              COUNT(*) benefactor_count,
-              SUM(IIF(bf."createdAt" > now() - INTERVAL '1 year', 1, 0)) year_benefactor_count,
-              SUM(IIF(bf."createdAt" > now() - INTERVAL '1 month', 1, 0)) month_benefactor_count,
-              SUM(IIF(bf."createdAt" > now() - INTERVAL '1 week', 1, 0)) week_benefactor_count,
-              SUM(IIF(bf."createdAt" > now() - INTERVAL '1 day', 1, 0)) day_benefactor_count,
-              SUM(bf."unitAmount") unit_amount_count,
-              SUM(IIF(bf."createdAt" > now() - INTERVAL '1 year', bf."unitAmount", 0)) year_unit_amount_count,
-              SUM(IIF(bf."createdAt" > now() - INTERVAL '1 month', bf."unitAmount", 0)) month_unit_amount_count,
-              SUM(IIF(bf."createdAt" > now() - INTERVAL '1 week', bf."unitAmount", 0)) week_unit_amount_count,
-              SUM(IIF(bf."createdAt" > now() - INTERVAL '1 day', bf."unitAmount", 0)) day_unit_amount_count
-          FROM "BountyBenefactor" bf
-          GROUP BY bf."bountyId"
-        ) bf ON bf."bountyId" = a.id
-      ) m
-      CROSS JOIN (
-        SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
-      ) tf
-      ON CONFLICT ("bountyId", timeframe) DO UPDATE
-        SET "favoriteCount" = EXCLUDED."favoriteCount", "trackCount" = EXCLUDED."trackCount", "entryCount" = EXCLUDED."entryCount",  "benefactorCount" = EXCLUDED."benefactorCount", "unitAmountCount" = EXCLUDED."unitAmountCount", "commentCount" = EXCLUDED."commentCount";
-    `;
-
-    const affected = await db.$queryRaw<{ id: number }[]>`
-      ${recentEngagementSubquery}
-      SELECT DISTINCT
-          r.id
-      FROM recent_engagements r
-      JOIN "Bounty" b ON b.id = r.id
-      WHERE r.id IS NOT NULL
-    `;
-
+    // Update the search index
+    //---------------------------------------
+    log('update search index');
     await bountiesSearchIndex.queueUpdate(
-      affected.map(({ id }) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+      [...ctx.affected].map((id) => ({
+        id,
+        action: SearchIndexUpdateQueueAction.Update,
+      }))
     );
   },
-  async clearDay({ db }) {
-    await db.$executeRaw`
-      UPDATE "BountyMetric" SET "favoriteCount" = 0, "trackCount" = 0, "entryCount" = 0, "benefactorCount" = 0, "unitAmountCount" = 0, "commentCount" = 0  WHERE timeframe = 'Day';
+  async clearDay(ctx) {
+    await executeRefresh(ctx)`
+      UPDATE "BountyMetric"
+        SET "favoriteCount" = 0, "trackCount" = 0, "entryCount" = 0, "benefactorCount" = 0, "unitAmountCount" = 0, "commentCount" = 0
+      WHERE timeframe = 'Day
+        AND "updatedAt" > date_trunc('day', now() - interval '1 day');
     `;
   },
   rank: {
@@ -234,3 +46,134 @@ export const bountyMetrics = createMetricProcessor({
     refreshInterval: 5 * 60 * 1000,
   },
 });
+
+async function getEngagementTasks(ctx: MetricProcessorRunContext) {
+  const affected = await getAffected(ctx)`
+    -- get recent bounty engagements
+    SELECT
+      "bountyId"
+    FROM "BountyEngagement"
+    WHERE "createdAt" > '${ctx.lastUpdate}'
+  `;
+
+  const tasks = chunk(affected, 1000).map((ids, i) => async () => {
+    ctx.jobContext.checkIfCanceled();
+    log('getEngagementTasks', i + 1, 'of', tasks.length);
+    await executeRefresh(ctx)`
+      -- update bounty engagement metrics
+      INSERT INTO "BountyMetric" ("bountyId", timeframe, "favoriteCount", "trackCount")
+      SELECT
+        "bountyId",
+        tf.timeframe,
+        ${snippets.timeframeSum('e."createdAt"', '1', `e.type = 'Favorite'`)} "favoriteCount",
+        ${snippets.timeframeSum('e."createdAt"', '1', `e.type = 'Track'`)} "trackCount"
+      FROM "BountyEngagement" e
+      JOIN "Bounty" b ON a.id = bt."entityId" -- ensure the bounty exists
+      CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
+      WHERE "bountyId" IN (${ids})
+      GROUP BY "bountyId", tf.timeframe
+      ON CONFLICT ("bountyId", timeframe) DO UPDATE
+        SET "favoriteCount" = EXCLUDED."favoriteCount", "trackCount" = EXCLUDED."trackCount", "updatedAt" = NOW()
+    `;
+    log('getEngagementTasks', i + 1, 'of', tasks.length, 'done');
+  });
+
+  return tasks;
+}
+
+async function getCommentTasks(ctx: MetricProcessorRunContext) {
+  const affected = await getAffected(ctx)`
+    -- get recent bounty comments
+    SELECT t."bountyId" as id
+    FROM "Thread" t
+    JOIN "CommentV2" c ON c."threadId" = t.id
+    WHERE t."bountyId" IS NOT NULL AND c."createdAt" > '${ctx.lastUpdate}'
+  `;
+
+  const tasks = chunk(affected, 1000).map((ids, i) => async () => {
+    ctx.jobContext.checkIfCanceled();
+    log('getCommentTasks', i + 1, 'of', tasks.length);
+    await executeRefresh(ctx)`
+      -- update bounty comment metrics
+      INSERT INTO "BountyMetric" ("bountyId", timeframe, "commentCount")
+      SELECT
+        t."bountyId",
+        tf.timeframe,
+        ${snippets.timeframeSum('c."createdAt"')}
+      FROM "Thread" t
+      JOIN "Bounty" b ON b.id = t."bountyId" -- ensure the bounty exists
+      JOIN "CommentV2" c ON c."threadId" = t.id
+      CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
+      WHERE t."bountyId" IN (${ids})
+      GROUP BY t."bountyId", tf.timeframe
+      ON CONFLICT ("bountyId", timeframe) DO UPDATE
+        SET "commentCount" = EXCLUDED."commentCount", "updatedAt" = NOW()
+    `;
+    log('getCommentTasks', i + 1, 'of', tasks.length, 'done');
+  });
+
+  return tasks;
+}
+
+async function getBenefactorTasks(ctx: MetricProcessorRunContext) {
+  const affected = await getAffected(ctx)`
+    -- get recent bounty benefactors
+    SELECT "bountyId" as id
+    FROM "BountyBenefactor"
+    WHERE "createdAt" > '${ctx.lastUpdate}'
+  `;
+
+  const tasks = chunk(affected, 1000).map((ids, i) => async () => {
+    ctx.jobContext.checkIfCanceled();
+    log('getBenefactorTasks', i + 1, 'of', tasks.length);
+    await executeRefresh(ctx)`
+      -- update bounty benefactor metrics
+      INSERT INTO "BountyMetric" ("bountyId", timeframe, "benefactorCount", "unitAmountCount")
+      SELECT
+        "bountyId",
+        tf.timeframe,
+        ${snippets.timeframeSum('"createdAt"')} as "benefactorCount",
+        ${snippets.timeframeSum('"createdAt"', '"unitAmount"')} as "unitAmountCount",
+      FROM "BountyBenefactor"
+      CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
+      WHERE "bountyId" IN (${ids})
+      GROUP BY "bountyId", tf.timeframe
+      ON CONFLICT ("bountyId", timeframe) DO UPDATE
+        SET "benefactorCount" = EXCLUDED."benefactorCount", "unitAmountCount" = EXCLUDED."unitAmountCount", "updatedAt" = NOW()
+    `;
+    log('getBenefactorTasks', i + 1, 'of', tasks.length, 'done');
+  });
+
+  return tasks;
+}
+
+async function getEntryTasks(ctx: MetricProcessorRunContext) {
+  const affected = await getAffected(ctx)`
+    -- get recent bounty entries
+    SELECT "bountyId" as id
+    FROM "BountyEntry"
+    WHERE "createdAt" > '${ctx.lastUpdate}'
+  `;
+
+  const tasks = chunk(affected, 1000).map((ids, i) => async () => {
+    ctx.jobContext.checkIfCanceled();
+    log('getEntryTasks', i + 1, 'of', tasks.length);
+    await executeRefresh(ctx)`
+      -- update bounty entry metrics
+      INSERT INTO "BountyMetric" ("bountyId", timeframe, "entryCount")
+      SELECT
+        "bountyId",
+        tf.timeframe,
+        ${snippets.timeframeSum('"createdAt"')} as "entryCount"
+      FROM "BountyEntry"
+      CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
+      WHERE "bountyId" IN (${ids})
+      GROUP BY "bountyId", tf.timeframe
+      ON CONFLICT ("bountyId", timeframe) DO UPDATE
+        SET "entryCount" = EXCLUDED."entryCount", "updatedAt" = NOW()
+    `;
+    log('getEntryTasks', i + 1, 'of', tasks.length, 'done');
+  });
+
+  return tasks;
+}
