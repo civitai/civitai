@@ -694,9 +694,9 @@ export default function CivitaiVault() {
                           </Stack>
                         </td>
                         <td>
-                          {item.status === VaultItemStatus.Stored && (
-                            <VaultItemDownload vaultItem={item} />
-                          )}
+                          {/* {item.status === VaultItemStatus.Stored && ( */}
+                          <VaultItemDownload vaultItem={item} />
+                          {/* )} */}
                         </td>
                       </tr>
                     );

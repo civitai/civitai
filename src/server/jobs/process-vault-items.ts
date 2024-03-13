@@ -44,7 +44,6 @@ export const processVaultItems = createJob('process-vault-items', '*/10 * * * *'
           },
         },
       ],
-      // TODO: Deleting is showing down instead of side.
     },
   });
 

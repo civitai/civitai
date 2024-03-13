@@ -1,15 +1,29 @@
 import React from 'react';
 import { convert } from 'html-to-text';
-import { Document, Page, Text, View, StyleSheet } from '@react-pdf/renderer';
+import { Document, Page, Text, View, StyleSheet, Font } from '@react-pdf/renderer';
 import { getDisplayName } from '~/utils/string-helpers';
 import { formatDate } from '~/utils/date-helpers';
+import { env } from '~/env/server.mjs';
+
+Font.register({
+  family: 'Montserrat',
+  fonts: [
+    {
+      src: `${env.NEXT_PUBLIC_BASE_URL}/fonts/Montserrat-Regular.ttf`,
+    },
+    {
+      src: `${env.NEXT_PUBLIC_BASE_URL}/fonts/Montserrat-Bold.ttf`,
+      fontWeight: 'bold',
+    },
+  ],
+});
 
 // Create styles
 const styles = StyleSheet.create({
   header: {
     fontSize: 24,
     marginBottom: 10,
-    fontWeight: 800,
+    fontWeight: 'bold',
     paddingBottom: 4,
     borderBottom: '2px solid #cccccc',
   },
@@ -23,6 +37,7 @@ const styles = StyleSheet.create({
     borderBottom: '1px solid #cccccc',
   },
   page: {
+    fontFamily: 'Montserrat',
     flexDirection: 'column',
     backgroundColor: '#E4E4E4',
     fontSize: 12,
@@ -31,11 +46,14 @@ const styles = StyleSheet.create({
     margin: 10,
     padding: 10,
     marginBottom: 5,
+    fontFamily: 'Montserrat',
   },
 });
 
 // Create Document Component
 export const ModelVersionDetailsPdfTemplate = ({ modelVersion }: { modelVersion: MixedObject }) => {
+  // console.log(resolve('./fonts/Montserrat-Regular.ttf'));
+
   const modelVersionSettings = (modelVersion.settings ?? {}) as MixedObject;
   const tableRows = [
     {
@@ -95,7 +113,7 @@ export const ModelVersionDetailsPdfTemplate = ({ modelVersion }: { modelVersion:
           <View style={styles.list}>
             {tableRows.map((v) => (
               <View key={v.header} style={styles.listItem}>
-                <Text style={{ maxWidth: '50%' }}>{v.header}</Text>
+                <Text style={{ maxWidth: '50%', fontWeight: 'bold' }}>{v.header}</Text>
                 <Text style={{ maxWidth: '50%', textAlign: 'right' }}>{v.value}</Text>
               </View>
             ))}
