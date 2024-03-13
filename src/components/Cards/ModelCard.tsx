@@ -162,6 +162,7 @@ export function ModelCard({ data, forceInView }: Props) {
     contextMenuItems.unshift(
       <Menu.Item
         component="a"
+        key="lookup-model"
         target="_blank"
         icon={<IconInfoCircle size={14} stroke={1.5} />}
         href={`${env.NEXT_PUBLIC_MODEL_LOOKUP_URL}${data.id}`}

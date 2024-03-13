@@ -168,8 +168,11 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
         old
           ? {
               ...old,
-              // Using any just to make ts happy
-              modelVersions: [{ ...(result as any), files: [], posts: [] }, ...old.modelVersions],
+              modelVersions: [
+                // Using any just to make ts happy
+                { ...(result as any), files: [], posts: [], recommendedResources: [], hashes: [] },
+                ...old.modelVersions,
+              ],
             }
           : old
       );

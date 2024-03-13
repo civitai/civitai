@@ -69,6 +69,9 @@ export namespace Generation {
     modelName: string;
     modelType: ModelType;
     baseModel: string;
+    strength?: number;
+    minStrength?: number;
+    maxStrength?: number;
 
     // navigation props
     covered?: boolean;

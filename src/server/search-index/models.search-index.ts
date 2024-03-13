@@ -24,6 +24,7 @@ import { ModelFileMetadata } from '~/server/schema/model-file.schema';
 import { withRetries } from '~/server/utils/errorHandling';
 import { getModelVersionsForSearchIndex } from '../selectors/modelVersion.selector';
 import { getUnavailableResources } from '../services/generation/generation.service';
+import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import { SearchIndexUpdate } from '~/server/search-index/SearchIndexUpdate';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 
@@ -330,14 +331,18 @@ const onFetchItemsToIndex = async ({
             category: category?.tag,
             version: {
               ...version,
+              settings: version.settings as RecommendedSettingsSchema,
               hashes: version.hashes.map((hash) => hash.hash),
             },
-            versions: modelVersions.map(({ generationCoverage, files, hashes, ...x }) => ({
-              ...x,
-              hashes: hashes.map((hash) => hash.hash),
-              canGenerate:
-                generationCoverage?.covered && unavailableGenResources.indexOf(x.id) === -1,
-            })),
+            versions: modelVersions.map(
+              ({ generationCoverage, files, hashes, settings, ...x }) => ({
+                ...x,
+                hashes: hashes.map((hash) => hash.hash),
+                canGenerate:
+                  generationCoverage?.covered && unavailableGenResources.indexOf(x.id) === -1,
+                settings: settings as RecommendedSettingsSchema,
+              })
+            ),
             triggerWords: [
               ...new Set(modelVersions.flatMap((modelVersion) => modelVersion.trainedWords)),
             ],

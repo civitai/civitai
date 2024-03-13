@@ -134,15 +134,15 @@ export function ModelVersionDetails({
   });
   const hashes = primaryFile?.hashes ?? [];
 
-  const filesCount = version.files.length;
+  const filesCount = version.files?.length;
   const hasFiles = filesCount > 0;
-  const filesVisible = version.files.filter(
+  const filesVisible = version.files?.filter(
     (f) => f.visibility === ModelFileVisibility.Public || model.user.id === user?.id
   );
   const filesVisibleCount = filesVisible.length;
   const hasVisibleFiles = filesVisibleCount > 0;
 
-  const displayCivitaiLink = civitaiLinked && version.hashes.length > 0;
+  const displayCivitaiLink = civitaiLinked && !!version.hashes && version.hashes?.length > 0;
   const hasPendingClaimReport = model.reportStats && model.reportStats.ownershipProcessing > 0;
 
   const { data: resourceCovered } = trpc.generation.checkResourcesCoverage.useQuery(
@@ -156,7 +156,7 @@ export function ModelVersionDetails({
   const requestReviewMutation = trpc.model.requestReview.useMutation();
   const requestVersionReviewMutation = trpc.modelVersion.requestReview.useMutation();
 
-  const { currentUserReview, loading: loadingUserReview } = useQueryUserResourceReview({
+  const { currentUserReview } = useQueryUserResourceReview({
     modelId: model.id,
     modelVersionId: version.id,
   });
@@ -401,7 +401,7 @@ export function ModelVersionDetails({
   );
   const primaryFileDetails = primaryFile && getFileDetails(primaryFile);
 
-  const downloadMenuItems = version.files.map((file) =>
+  const downloadMenuItems = version.files?.map((file) =>
     !archived && hasAccess ? (
       <Menu.Item
         key={file.id}
