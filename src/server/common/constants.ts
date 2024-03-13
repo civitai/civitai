@@ -190,7 +190,7 @@ export const constants = {
       notified: 5,
       muted: 8,
     },
-    maxConcurrentRequests: 4,
+    maxConcurrentRequests: 10,
   },
   tagVoting: {
     voteDuration: 1000 * 60 * 60 * 24,
@@ -451,7 +451,7 @@ export const generation = {
   maxValues: {
     seed: 4294967295,
     steps: 50,
-    quantity: 4,
+    quantity: 8,
     clipSkip: 10,
   },
 } as const;
