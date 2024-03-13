@@ -99,6 +99,7 @@ import {
   getUnavailableResources,
 } from '../services/generation/generation.service';
 import { BountyDetailsSchema } from '../schema/bounty.schema';
+import { removeEmpty } from '~/utils/object-helpers';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
@@ -553,26 +554,60 @@ export const getModelsWithVersionsHandler = async ({
       count: rawResults.count,
       items: rawResults.items.map(({ modelVersions, ...model }) => ({
         ...model,
-        modelVersions: modelVersions.map(({ metrics, files, ...modelVersion }) => {
-          const vaeFile = vaeFiles.filter((x) => x.modelVersionId === modelVersion.vaeId);
-          files.push(...vaeFile);
-          return {
-            ...modelVersion,
+        modelVersions: modelVersions.map(
+          ({
+            metrics,
             files,
-            stats: {
-              downloadCount: metrics[0]?.downloadCount ?? 0,
-              ratingCount: metrics[0]?.ratingCount ?? 0,
-              rating: Number(metrics[0]?.rating?.toFixed(2) ?? 0),
-              thumbsUpCount: metrics[0]?.thumbsUpCount ?? 0,
-              thumbsDownCount: metrics[0]?.thumbsDownCount ?? 0,
-            },
-            images: images
-              .filter((image) => image.modelVersionId === modelVersion.id)
-              .map(({ modelVersionId, name, userId, ...image }) => ({
-                ...image,
-              })),
-          };
-        }),
+            trainingDetails,
+            trainingStatus,
+            vaeId,
+            earlyAccessTimeFrame,
+            modelId,
+            ...version
+          }) => {
+            const vaeFile = vaeFiles.filter((x) => x.modelVersionId === vaeId);
+            files.push(...vaeFile);
+
+            let earlyAccessDeadline = getEarlyAccessDeadline({
+              versionCreatedAt: version.createdAt,
+              publishedAt: version.publishedAt,
+              earlyAccessTimeframe: earlyAccessTimeFrame,
+            });
+            if (earlyAccessDeadline && new Date() > earlyAccessDeadline)
+              earlyAccessDeadline = undefined;
+
+            return removeEmpty({
+              ...version,
+              files: files.map(({ metadata: metadataRaw, ...file }) => {
+                const metadata = metadataRaw as FileMetadata | undefined;
+
+                return {
+                  ...file,
+                  metadata: removeEmpty({
+                    format: metadata?.format,
+                    size: metadata?.size,
+                    fp: metadata?.fp,
+                  }),
+                };
+              }),
+              earlyAccessDeadline,
+              stats: {
+                downloadCount: metrics[0]?.downloadCount ?? 0,
+                ratingCount: metrics[0]?.ratingCount ?? 0,
+                rating: Number(metrics[0]?.rating?.toFixed(2) ?? 0),
+                thumbsUpCount: metrics[0]?.thumbsUpCount ?? 0,
+                thumbsDownCount: metrics[0]?.thumbsDownCount ?? 0,
+              },
+              images: images
+                .filter((image) => image.modelVersionId === version.id)
+                .map(
+                  ({ modelVersionId, name, userId, sizeKB, availability, metadata, ...image }) => ({
+                    ...image,
+                  })
+                ),
+            });
+          }
+        ),
         stats: getStatsForModel(model.id),
       })),
     };
