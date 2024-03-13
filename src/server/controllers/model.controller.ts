@@ -579,18 +579,18 @@ export const getModelsWithVersionsHandler = async ({
             if (earlyAccessDeadline && new Date() > earlyAccessDeadline)
               earlyAccessDeadline = undefined;
 
-            return removeEmpty({
+            return {
               ...version,
               files: files.map(({ metadata: metadataRaw, ...file }) => {
                 const metadata = metadataRaw as FileMetadata | undefined;
 
                 return {
                   ...file,
-                  metadata: removeEmpty({
+                  metadata: {
                     format: metadata?.format,
                     size: metadata?.size,
                     fp: metadata?.fp,
-                  }),
+                  },
                 };
               }),
               earlyAccessDeadline,
@@ -608,7 +608,7 @@ export const getModelsWithVersionsHandler = async ({
                     ...image,
                   })
                 ),
-            });
+            };
           }
         ),
         stats: getStatsForModel(model.id),
