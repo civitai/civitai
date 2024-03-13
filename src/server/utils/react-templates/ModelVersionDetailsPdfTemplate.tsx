@@ -52,8 +52,6 @@ const styles = StyleSheet.create({
 
 // Create Document Component
 export const ModelVersionDetailsPdfTemplate = ({ modelVersion }: { modelVersion: MixedObject }) => {
-  // console.log(resolve('./fonts/Montserrat-Regular.ttf'));
-
   const modelVersionSettings = (modelVersion.settings ?? {}) as MixedObject;
   const tableRows = [
     {
