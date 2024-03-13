@@ -305,8 +305,9 @@ function ResourceSelectCard({
     });
   };
 
-  const isSDXL = baseModelSets.SDXL.includes(data.version?.baseModel as BaseModel);
-  const isPony = data.version?.baseModel === 'Pony';
+  const selectedVersion = data.versions.find((x) => x.id === selected);
+  const isSDXL = baseModelSets.SDXL.includes(selectedVersion?.baseModel as BaseModel);
+  const isPony = selectedVersion?.baseModel === 'Pony';
   const isNew = data.publishedAt && data.publishedAt > aDayAgo;
   const isUpdated =
     data.lastVersionAt &&
