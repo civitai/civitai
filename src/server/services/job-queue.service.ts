@@ -17,7 +17,42 @@ export async function enqueueJobs(
             `(${entityId}, ${entityType}::"EntityType", ${type}::"JobQueueType")`
         )
         .join(', ')}
-      ON CONFLICT ("entityId", "entityType", "type") DO NOTHING;
+      ON CONFLICT DO NOTHING;
     `);
   }
+}
+
+export function reduceJobQueueToIds(jobs: { entityId: number; entityType: EntityType }[]) {
+  return jobs.reduce<{
+    imageIds: number[];
+    postIds: number[];
+    articleIds: number[];
+    bountyIds: number[];
+    bountyEntryIds: number[];
+    collectionIds: number[];
+    modelIds: number[];
+    modelVersionIds: number[];
+  }>(
+    (acc, { entityType, entityId }) => {
+      if (entityType === EntityType.Image) acc.imageIds.push(entityId);
+      if (entityType === EntityType.Post) acc.postIds.push(entityId);
+      if (entityType === EntityType.Article) acc.articleIds.push(entityId);
+      if (entityType === EntityType.Bounty) acc.bountyIds.push(entityId);
+      if (entityType === EntityType.BountyEntry) acc.bountyEntryIds.push(entityId);
+      if (entityType === EntityType.Collection) acc.collectionIds.push(entityId);
+      if (entityType === EntityType.Model) acc.modelIds.push(entityId);
+      if (entityType === EntityType.ModelVersion) acc.modelVersionIds.push(entityId);
+      return acc;
+    },
+    {
+      imageIds: [],
+      postIds: [],
+      articleIds: [],
+      bountyIds: [],
+      bountyEntryIds: [],
+      collectionIds: [],
+      modelIds: [],
+      modelVersionIds: [],
+    }
+  );
 }

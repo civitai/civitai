@@ -449,7 +449,7 @@ export default function CivitaiVault() {
 
   return (
     <>
-      <Meta title="Civitai Vault" deIndex="noindex, nofollow" />
+      <Meta title="Civitai Vault" deIndex />
       <Container fluid>
         <Stack mb="xl">
           <Group position="apart" align="flex-end">

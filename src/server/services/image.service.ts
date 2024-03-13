@@ -85,7 +85,7 @@ export const deleteImageById = async ({
 }: GetByIdInput & { updatePost?: boolean }) => {
   updatePost ??= true;
   try {
-    const image = await dbRead.image.findUnique({
+    const image = await dbWrite.image.delete({
       where: { id },
       select: { url: true, postId: true, nsfwLevel: true, userId: true },
     });

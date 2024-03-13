@@ -1,9 +1,16 @@
-import { Prisma } from '@prisma/client';
-import { ImageConnectionType } from '~/server/common/enums';
+import { Prisma, SearchIndexUpdateQueueAction } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { isDefined } from '~/utils/type-guards';
+import { uniq } from 'lodash-es';
+import {
+  articlesSearchIndex,
+  bountiesSearchIndex,
+  collectionsSearchIndex,
+  modelsSearchIndex,
+} from '~/server/search-index';
+import { ImageConnectionType } from '~/server/common/enums';
 
-export async function getImageConnectedEntities(imageIds: number[]) {
+async function getImageConnectedEntities(imageIds: number[]) {
   const images = await dbRead.image.findMany({
     where: { id: { in: imageIds } },
     select: { postId: true },
@@ -34,7 +41,7 @@ export async function getImageConnectedEntities(imageIds: number[]) {
   };
 }
 
-export async function getPostConnectedEntities(postIds: number[]) {
+async function getPostConnectedEntities(postIds: number[]) {
   const posts = await dbRead.post.findMany({
     where: { id: { in: postIds } },
     select: { modelVersionId: true },
@@ -50,8 +57,171 @@ export async function getPostConnectedEntities(postIds: number[]) {
   };
 }
 
+async function getModelVersionConnectedEntities(modelVersionIds: number[]) {
+  const modelVersions = await dbRead.modelVersion.findMany({
+    where: { id: { in: modelVersionIds } },
+    select: { modelId: true },
+  });
+
+  return {
+    modelIds: modelVersions.map((x) => x.modelId),
+  };
+}
+
+async function getModelConnectedEntities(modelIds: number[]) {
+  const collectionItems = await dbRead.collectionItem.findMany({
+    where: { modelId: { in: modelIds } },
+    select: { collectionId: true },
+  });
+
+  return {
+    collectionIds: collectionItems.map((x) => x.collectionId),
+  };
+}
+
+async function getArticleConnectedEntities(articleIds: number[]) {
+  const collectionItems = await dbRead.collectionItem.findMany({
+    where: { articleId: { in: articleIds } },
+    select: { collectionId: true },
+  });
+
+  return {
+    collectionIds: collectionItems.map((x) => x.collectionId),
+  };
+}
+
+export async function getNsfwLevelRelatedEntities(source: {
+  imageIds?: number[];
+  postIds?: number[];
+  articleIds?: number[];
+  bountyIds?: number[];
+  bountyEntryIds?: number[];
+  collectionIds?: number[];
+  modelIds?: number[];
+  modelVersionIds?: number[];
+}) {
+  let postIds: number[] = [];
+  let articleIds: number[] = [];
+  let bountyIds: number[] = [];
+  let bountyEntryIds: number[] = [];
+  let collectionIds: number[] = [];
+  let modelIds: number[] = [];
+  let modelVersionIds: number[] = [];
+
+  function mergeRelated(
+    data: Partial<{
+      postIds: number[];
+      articleIds: number[];
+      bountyIds: number[];
+      bountyEntryIds: number[];
+      collectionIds: number[];
+      modelIds: number[];
+      modelVersionIds: number[];
+    }>
+  ) {
+    if (data.postIds) postIds = uniq(postIds.concat(data.postIds));
+    if (data.articleIds) articleIds = uniq(articleIds.concat(data.articleIds));
+    if (data.bountyIds) bountyIds = uniq(bountyIds.concat(data.bountyIds));
+    if (data.bountyEntryIds) bountyEntryIds = uniq(bountyEntryIds.concat(data.bountyEntryIds));
+    if (data.collectionIds) collectionIds = uniq(collectionIds.concat(data.collectionIds));
+    if (data.modelIds) modelIds = uniq(modelIds.concat(data.modelIds));
+    if (data.modelVersionIds) modelVersionIds = uniq(modelVersionIds.concat(data.modelVersionIds));
+  }
+
+  if (source.imageIds?.length) {
+    const imageRelations = await getImageConnectedEntities(source.imageIds);
+    mergeRelated(imageRelations);
+  }
+
+  if (source.postIds?.length || postIds.length) {
+    const postRelations = await getPostConnectedEntities([...(source.postIds ?? []), ...postIds]);
+    mergeRelated(postRelations);
+  }
+
+  if (source.articleIds?.length || articleIds.length) {
+    const articleRelations = await getArticleConnectedEntities([
+      ...(source.articleIds ?? []),
+      ...articleIds,
+    ]);
+    mergeRelated(articleRelations);
+  }
+
+  if (source.modelVersionIds?.length || modelVersionIds.length) {
+    const modelVersionRelations = await getModelVersionConnectedEntities([
+      ...(source.modelVersionIds ?? []),
+      ...modelVersionIds,
+    ]);
+    mergeRelated(modelVersionRelations);
+  }
+
+  if (source.modelIds?.length || modelIds.length) {
+    const modelRelations = await getModelConnectedEntities([
+      ...(source.modelIds ?? []),
+      ...modelIds,
+    ]);
+    mergeRelated(modelRelations);
+  }
+
+  return {
+    postIds,
+    articleIds,
+    bountyIds,
+    bountyEntryIds,
+    collectionIds,
+    modelIds,
+    modelVersionIds,
+  };
+}
+
+const batchSize = 1000;
+function batcher(ids: number[], fn: (ids: number[]) => Promise<void>) {
+  return async () => {
+    if (!ids.length) return;
+    for (let i = 0; i < ids.length; i += batchSize) {
+      await fn(ids.slice(i, batchSize));
+    }
+  };
+}
+
+export async function updateNsfwLevels({
+  postIds,
+  articleIds,
+  bountyIds,
+  bountyEntryIds,
+  collectionIds,
+  modelIds,
+  modelVersionIds,
+}: {
+  postIds: number[];
+  articleIds: number[];
+  bountyIds: number[];
+  bountyEntryIds: number[];
+  collectionIds: number[];
+  modelIds: number[];
+  modelVersionIds: number[];
+}) {
+  const updatePosts = batcher(postIds, updatePostNsfwLevels);
+  const updateArticles = batcher(articleIds, updateArticleNsfwLevels);
+  const updateBounties = batcher(bountyIds, updateBountyNsfwLevels);
+  const updateBountyEntries = batcher(bountyEntryIds, updateBountyEntryNsfwLevels);
+  const updateModelVersions = batcher(modelVersionIds, updateModelVersionNsfwLevels);
+  const updateModels = batcher(modelIds, updateModelNsfwLevels);
+  const updateCollections = batcher(collectionIds, updateCollectionsNsfwLevels);
+
+  const nsfwLevelChangeBatches = [
+    [updatePosts, updateArticles, updateBounties, updateBountyEntries],
+    [updateModelVersions],
+    [updateModels],
+    [updateCollections],
+  ];
+
+  for (const batch of nsfwLevelChangeBatches) {
+    await Promise.all(batch.map((fn) => fn()));
+  }
+}
+
 export async function updatePostNsfwLevels(postIds: number[]) {
-  const posts = await dbWrite.$queryRaw<{ id: number }[]>(Prisma.sql`
+  await dbWrite.$queryRaw(Prisma.sql`
     WITH level AS (
       SELECT DISTINCT ON (p.id) p.id, bit_or(i."nsfwLevel") "nsfwLevel"
       FROM "Post" p
@@ -62,13 +232,12 @@ export async function updatePostNsfwLevels(postIds: number[]) {
     UPDATE "Post" p
     SET "nsfwLevel" = level."nsfwLevel"
     FROM level
-    WHERE level.id = p.id AND level."nsfwLevel" != p."nsfwLevel"
-    RETURNING id;
+    WHERE level.id = p.id AND level."nsfwLevel" != p."nsfwLevel";
   `);
 }
 
 export async function updateArticleNsfwLevels(articleIds: number[]) {
-  await dbWrite.$queryRaw<{ id: number }[]>(Prisma.sql`
+  const articles = await dbWrite.$queryRaw<{ id: number }[]>(Prisma.sql`
     WITH level AS (
       SELECT DISTINCT ON (a.id) a.id, bit_or(i."nsfwLevel") "nsfwLevel"
       FROM "Article" a
@@ -80,13 +249,15 @@ export async function updateArticleNsfwLevels(articleIds: number[]) {
     SET "nsfwLevel" = level."nsfwLevel"
     FROM level
     WHERE level.id = a.id AND level."nsfwLevel" != a."nsfwLevel"
-    RETURNING id;
+    RETURNING a.id;
   `);
+  await articlesSearchIndex.queueUpdate(
+    articles.map(({ id }) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+  );
 }
 
 export async function updateBountyNsfwLevels(bountyIds: number[]) {
-  // TODO.nsfwLevel - if bounty.nsfw then set bounty.NsfwLevel to NsfwLevel.XXX
-  await dbWrite.$queryRaw<{ id: number }[]>(Prisma.sql`
+  const bounties = await dbWrite.$queryRaw<{ id: number }[]>(Prisma.sql`
     WITH level AS (
       SELECT DISTINCT ON ("entityId")
         "entityId",
@@ -100,8 +271,11 @@ export async function updateBountyNsfwLevels(bountyIds: number[]) {
     UPDATE "Bounty" b SET "nsfwLevel" = level."nsfwLevel"
     FROM level
     WHERE level."entityId" = b.id AND level."nsfwLevel" != b."nsfwLevel"
-    RETURNING id;
+    RETURNING b.id;
   `);
+  await bountiesSearchIndex.queueUpdate(
+    bounties.map(({ id }) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+  );
 }
 
 export async function updateBountyEntryNsfwLevels(bountyEntryIds: number[]) {
@@ -119,30 +293,32 @@ export async function updateBountyEntryNsfwLevels(bountyEntryIds: number[]) {
     UPDATE "BountyEntry" b SET "nsfwLevel" = level."nsfwLevel"
     FROM level
     WHERE level."entityId" = b.id AND level."nsfwLevel" != b."nsfwLevel"
-    RETURNING id;
+    RETURNING b.id;
   `);
 }
 
 export async function updateCollectionsNsfwLevels(collectionIds: number[]) {
-  await dbWrite.$queryRaw<{ id: number }[]>(Prisma.sql`
+  const collections = await dbWrite.$queryRaw<{ id: number }[]>(Prisma.sql`
     UPDATE "Collection" c
     SET "nsfwLevel" = (
       SELECT COALESCE(bit_or(COALESCE(i."nsfwLevel", p."nsfwLevel", m."nsfwLevel", a."nsfwLevel",0)), 0)
       FROM "CollectionItem" ci
       LEFT JOIN "Image" i on i.id = ci."imageId" AND c.type = 'Image'
-      LEFT JOIN "Post" p on p.id = ci."postId" AND c.type = 'Post'
-      LEFT JOIN "Model" m on m.id = ci."modelId" AND c.type = 'Model'
-      LEFT JOIN "Article" a on a.id = ci."articleId" AND c.type = 'Article'
+      LEFT JOIN "Post" p on p.id = ci."postId" AND c.type = 'Post' AND p."publishedAt" IS NOT NULL
+      LEFT JOIN "Model" m on m.id = ci."modelId" AND c.type = 'Model' AND m."status" = 'Published'
+      LEFT JOIN "Article" a on a.id = ci."articleId" AND c.type = 'Article' AND a."publishedAt" IS NOT NULL
       WHERE ci."collectionId" = c.id
     )
     WHERE c.id = ANY(ARRAY[${collectionIds}]::Int[]) AND level."nsfwLevel" != c."nsfwLevel"
-    RETURNING id;
+    RETURNING c.id;
   `);
+  await collectionsSearchIndex.queueUpdate(
+    collections.map(({ id }) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+  );
 }
 
 export async function updateModelNsfwLevels(modelIds: number[]) {
-  // TODO.nsfwLevel - if model.nsfw then set model.NsfwLevel to NsfwLevel.XXX
-  await dbWrite.$queryRaw<{ id: number }[]>(Prisma.sql`
+  const models = await dbWrite.$queryRaw<{ id: number }[]>(Prisma.sql`
     WITH level AS (
       SELECT DISTINCT ON ("modelId")
         mv."modelId" as "id",
@@ -157,8 +333,11 @@ export async function updateModelNsfwLevels(modelIds: number[]) {
       "nsfwLevel" = level."nsfwLevel"
     FROM level
     WHERE level.id = m.id AND level."nsfwLevel" != m."nsfwLevel"
-    RETURNING id;
+    RETURNING m.id;
   `);
+  await modelsSearchIndex.queueUpdate(
+    models.map(({ id }) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+  );
 }
 
 export async function updateModelVersionNsfwLevels(modelVersionIds: number[]) {
@@ -188,6 +367,6 @@ export async function updateModelVersionNsfwLevels(modelVersionIds: number[]) {
     SET "nsfwLevel" = level."nsfwLevel"
     FROM level
     WHERE level.id = mv.id AND level."nsfwLevel" != mv."nsfwLevel"
-    RETURNING id;
+    RETURNING mv.id;
   `);
 }
