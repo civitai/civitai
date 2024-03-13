@@ -77,7 +77,6 @@ import {
   SetAssociatedResourcesInput,
   SetModelsCategoryInput,
 } from './../schema/model.schema';
-import { ModelVersionMeta } from '~/server/schema/model-version.schema';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
@@ -87,14 +86,10 @@ export const getModel = async <TSelect extends Prisma.ModelSelect>({
   user?: SessionUser;
   select: TSelect;
 }) => {
-  const OR: Prisma.Enumerable<Prisma.ModelWhereInput> = [{ status: ModelStatus.Published }];
-  // if (user?.id) OR.push({ userId: user.id, deletedAt: null });
-
   const db = await getDbWithoutLag('model', id);
   const result = await db.model.findFirst({
     where: {
       id,
-      // OR: !user?.isModerator ? OR : undefined,
     },
     select,
   });
@@ -1019,7 +1014,10 @@ export const getModelVersionsMicro = async ({
   excludeUnpublished: excludeDrafts,
 }: GetModelVersionsSchema) => {
   const versions = await dbRead.modelVersion.findMany({
-    where: { modelId: id, status: excludeDrafts ? ModelStatus.Published : undefined },
+    where: {
+      modelId: id,
+      status: excludeDrafts ? ModelStatus.Published : undefined,
+    },
     orderBy: { index: 'asc' },
     select: {
       id: true,

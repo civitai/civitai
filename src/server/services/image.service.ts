@@ -3,7 +3,6 @@ import {
   ImageGenerationProcess,
   ImageIngestionStatus,
   MediaType,
-  NsfwLevel as NsfwLevelOld,
   Prisma,
   ReportReason,
   ReportStatus,

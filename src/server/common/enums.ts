@@ -223,14 +223,3 @@ export enum ImageConnectionType {
   Bounty = 'Bounty',
   BountyEntry = 'BountyEntry',
 }
-
-export enum EntityType {
-  Image = 'Image',
-  Post = 'Post',
-  Article = 'Article',
-  Bounty = 'Bounty',
-  BountyEntry = 'BountyEntry',
-  ModelVersion = 'ModelVersion',
-  Model = 'Model',
-  Collection = 'Collection',
-}

@@ -1071,7 +1071,6 @@ model Post {
   modelVersion   ModelVersion? @relation(fields: [modelVersionId], references: [id], onDelete: SetNull)
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
-  deletedAt      DateTime?
   publishedAt    DateTime?
   metadata       Json?
   tosViolation   Boolean       @default(false)
@@ -1152,7 +1151,6 @@ model Image {
   userId            Int
   createdAt         DateTime                @default(now())
   updatedAt         DateTime                @updatedAt
-  deletedAt         DateTime?
   meta              Json? // image generation params
   hash              String?
   height            Int?
@@ -1978,7 +1976,6 @@ model Article {
   id            Int          @id @default(autoincrement())
   createdAt     DateTime?    @default(now())
   updatedAt     DateTime?    @updatedAt
-  deletedAt     DateTime?
   nsfw          Boolean      @default(false)
   tosViolation  Boolean      @default(false)
   metadata      Json?
@@ -2798,20 +2795,31 @@ model UserPurchasedRewards {
   code                String
 }
 
-model NsfwLevelUpdateQueue {
-  entityType String
-  entityId   Int
-  createdAt  DateTime @default(now())
-
-  @@id([entityType, entityId])
+enum EntityType {
+  Image
+  Post
+  Article
+  Bounty
+  BountyEntry
+  ModelVersion
+  Model
+  Collection
 }
 
-model DeleteQueue {
-  entityType String
-  entityId   Int
-  createdAt  DateTime @default(now())
+enum JobQueueType {
+  CleanUp
+  UpdateMetrics
+  UpdateNsfwLevel
+  UpdateSearchIndex
+}
 
-  @@id([entityType, entityId])
+model JobQueue {
+  type       JobQueueType
+  entityType EntityType
+  entityId   Int
+  createdAt  DateTime     @default(now())
+
+  @@id([entityType, entityId, type])
 }
 
 /// @view

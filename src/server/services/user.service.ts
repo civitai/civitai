@@ -60,12 +60,11 @@ import { ProfileImage, profileImageSelect } from '../selectors/image.selector';
 import { bustCachedArray, cachedObject } from '~/server/utils/cache-helpers';
 import { constants } from '~/server/common/constants';
 import { REDIS_KEYS } from '~/server/redis/client';
-import { baseS3Client } from '~/utils/s3-client';
-import { isDefined } from '~/utils/type-guards';
 import { removeEmpty } from '~/utils/object-helpers';
 import { purchasableRewardDetails } from '~/server/selectors/purchasableReward.selector';
 import { getNsfwLeveLDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
 import { HiddenModels } from '~/server/services/user-preferences.service';
+import { deleteImageById } from '~/server/services/image.service';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
 export const getUserCreator = async ({
@@ -657,19 +656,8 @@ export const removeAllContent = async ({ id }: { id: number }) => {
   // remove images from s3 buckets before deleting them
   try {
     for (const image of images) {
-      const { items } = await baseS3Client.listObjects({
-        bucket: env.S3_IMAGE_CACHE_BUCKET,
-        prefix: image.url,
-      });
-      await baseS3Client.deleteManyObjects({
-        bucket: env.S3_IMAGE_CACHE_BUCKET,
-        keys: items.map((x) => x.Key).filter(isDefined),
-      });
+      await deleteImageById({ id: image.id });
     }
-    await baseS3Client.deleteManyObjects({
-      bucket: env.S3_IMAGE_UPLOAD_BUCKET,
-      keys: images.map((x) => x.url),
-    });
   } catch (e) {}
   await dbWrite.image.deleteMany({ where: { userId: id } });
 

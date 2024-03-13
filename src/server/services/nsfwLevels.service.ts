@@ -1,33 +1,57 @@
 import { Prisma } from '@prisma/client';
-import { EntityType } from '~/server/common/enums';
+import { ImageConnectionType } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { chunk } from 'lodash-es';
-import { isProd } from '~/env/other';
+import { isDefined } from '~/utils/type-guards';
 
-export async function queueNsfwLevelUpdate({
-  entityType,
-  ids,
-}: {
-  entityType: EntityType;
-  ids?: number[];
-}) {
-  if (!ids?.length) return;
+export async function getImageConnectedEntities(imageIds: number[]) {
+  const images = await dbRead.image.findMany({
+    where: { id: { in: imageIds } },
+    select: { postId: true },
+  });
+  const connections = await dbRead.imageConnection.findMany({
+    where: { imageId: { in: imageIds } },
+    select: { entityType: true, entityId: true },
+  });
+  const articles = await dbRead.article.findMany({
+    where: { coverId: { in: imageIds } },
+    select: { id: true },
+  });
+  const collectionItems = await dbRead.collectionItem.findMany({
+    where: { imageId: { in: imageIds } },
+    select: { collectionId: true },
+  });
 
-  if (!isProd)
-    console.log(`enqueue nsfwLevel update :: ${entityType} :: called with ${ids.length} items`);
+  return {
+    postIds: images.map((x) => x.postId).filter(isDefined),
+    articleIds: articles.map((x) => x.id),
+    bountyIds: connections
+      .filter((x) => x.entityType === ImageConnectionType.Bounty)
+      .map((x) => x.entityId),
+    bountyEntryIds: connections
+      .filter((x) => x.entityType === ImageConnectionType.BountyEntry)
+      .map((x) => x.entityId),
+    collectionIds: collectionItems.map((x) => x.collectionId),
+  };
+}
 
-  const batches = chunk(ids, 500);
-  for (const batch of batches) {
-    await dbWrite.$executeRawUnsafe(`
-        INSERT INTO "NsfwLevelUpdateQueue" ("entityId", "entityType")
-        VALUES ${batch.map((entityId) => `(${entityId}, '${entityType}')`).join(', ')}
-        ON CONFLICT ("entityId", "entityType") DO NOTHING;
-    `);
-  }
+export async function getPostConnectedEntities(postIds: number[]) {
+  const posts = await dbRead.post.findMany({
+    where: { id: { in: postIds } },
+    select: { modelVersionId: true },
+  });
+  const collectionItems = await dbRead.collectionItem.findMany({
+    where: { postId: { in: postIds } },
+    select: { collectionId: true },
+  });
+
+  return {
+    modelVersionIds: posts.map((x) => x.modelVersionId).filter(isDefined),
+    collectionIds: collectionItems.map((x) => x.collectionId),
+  };
 }
 
 export async function updatePostNsfwLevels(postIds: number[]) {
-  await dbWrite.$queryRaw(Prisma.sql`
+  const posts = await dbWrite.$queryRaw<{ id: number }[]>(Prisma.sql`
     WITH level AS (
       SELECT DISTINCT ON (p.id) p.id, bit_or(i."nsfwLevel") "nsfwLevel"
       FROM "Post" p
@@ -38,12 +62,13 @@ export async function updatePostNsfwLevels(postIds: number[]) {
     UPDATE "Post" p
     SET "nsfwLevel" = level."nsfwLevel"
     FROM level
-    WHERE level.id = p.id;
+    WHERE level.id = p.id AND level."nsfwLevel" != p."nsfwLevel"
+    RETURNING id;
   `);
 }
 
 export async function updateArticleNsfwLevels(articleIds: number[]) {
-  await dbWrite.$queryRaw(Prisma.sql`
+  await dbWrite.$queryRaw<{ id: number }[]>(Prisma.sql`
     WITH level AS (
       SELECT DISTINCT ON (a.id) a.id, bit_or(i."nsfwLevel") "nsfwLevel"
       FROM "Article" a
@@ -54,13 +79,14 @@ export async function updateArticleNsfwLevels(articleIds: number[]) {
     UPDATE "Article" a
     SET "nsfwLevel" = level."nsfwLevel"
     FROM level
-    WHERE level.id = a.id;
+    WHERE level.id = a.id AND level."nsfwLevel" != a."nsfwLevel"
+    RETURNING id;
   `);
 }
 
 export async function updateBountyNsfwLevels(bountyIds: number[]) {
   // TODO.nsfwLevel - if bounty.nsfw then set bounty.NsfwLevel to NsfwLevel.XXX
-  await dbWrite.$queryRaw(Prisma.sql`
+  await dbWrite.$queryRaw<{ id: number }[]>(Prisma.sql`
     WITH level AS (
       SELECT DISTINCT ON ("entityId")
         "entityId",
@@ -73,12 +99,13 @@ export async function updateBountyNsfwLevels(bountyIds: number[]) {
     )
     UPDATE "Bounty" b SET "nsfwLevel" = level."nsfwLevel"
     FROM level
-    WHERE level."entityId" = b.id;
+    WHERE level."entityId" = b.id AND level."nsfwLevel" != b."nsfwLevel"
+    RETURNING id;
   `);
 }
 
 export async function updateBountyEntryNsfwLevels(bountyEntryIds: number[]) {
-  await dbWrite.$queryRaw(Prisma.sql`
+  await dbWrite.$queryRaw<{ id: number }[]>(Prisma.sql`
     WITH level AS (
       SELECT DISTINCT ON ("entityId")
         "entityId",
@@ -91,12 +118,13 @@ export async function updateBountyEntryNsfwLevels(bountyEntryIds: number[]) {
     )
     UPDATE "BountyEntry" b SET "nsfwLevel" = level."nsfwLevel"
     FROM level
-    WHERE level."entityId" = b.id;
+    WHERE level."entityId" = b.id AND level."nsfwLevel" != b."nsfwLevel"
+    RETURNING id;
   `);
 }
 
 export async function updateCollectionsNsfwLevels(collectionIds: number[]) {
-  await dbWrite.$queryRaw(Prisma.sql`
+  await dbWrite.$queryRaw<{ id: number }[]>(Prisma.sql`
     UPDATE "Collection" c
     SET "nsfwLevel" = (
       SELECT COALESCE(bit_or(COALESCE(i."nsfwLevel", p."nsfwLevel", m."nsfwLevel", a."nsfwLevel",0)), 0)
@@ -107,13 +135,14 @@ export async function updateCollectionsNsfwLevels(collectionIds: number[]) {
       LEFT JOIN "Article" a on a.id = ci."articleId" AND c.type = 'Article'
       WHERE ci."collectionId" = c.id
     )
-    WHERE c.id = ANY(ARRAY[${collectionIds}]::Int[])
+    WHERE c.id = ANY(ARRAY[${collectionIds}]::Int[]) AND level."nsfwLevel" != c."nsfwLevel"
+    RETURNING id;
   `);
 }
 
 export async function updateModelNsfwLevels(modelIds: number[]) {
   // TODO.nsfwLevel - if model.nsfw then set model.NsfwLevel to NsfwLevel.XXX
-  await dbWrite.$queryRaw(Prisma.sql`
+  await dbWrite.$queryRaw<{ id: number }[]>(Prisma.sql`
     WITH level AS (
       SELECT DISTINCT ON ("modelId")
         mv."modelId" as "id",
@@ -127,12 +156,13 @@ export async function updateModelNsfwLevels(modelIds: number[]) {
     SET
       "nsfwLevel" = level."nsfwLevel"
     FROM level
-    WHERE level.id = m.id;
+    WHERE level.id = m.id AND level."nsfwLevel" != m."nsfwLevel"
+    RETURNING id;
   `);
 }
 
 export async function updateModelVersionNsfwLevels(modelVersionIds: number[]) {
-  await dbWrite.$queryRaw(Prisma.sql`
+  await dbWrite.$queryRaw<{ id: number }[]>(Prisma.sql`
     WITH level as (
       SELECT
         mv.id,
@@ -157,6 +187,7 @@ export async function updateModelVersionNsfwLevels(modelVersionIds: number[]) {
     UPDATE "ModelVersion" mv
     SET "nsfwLevel" = level."nsfwLevel"
     FROM level
-    WHERE level.id = mv.id;
+    WHERE level.id = mv.id AND level."nsfwLevel" != mv."nsfwLevel"
+    RETURNING id;
   `);
 }
