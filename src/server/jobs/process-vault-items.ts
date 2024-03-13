@@ -132,15 +132,15 @@ export const processVaultItems = createJob('process-vault-items', '*/10 * * * *'
       );
 
       // If everything above went out smoothly, the user can now download the files from the vault.
-      // await dbWrite.vaultItem.update({
-      //   where: { id: vaultItem.id },
-      //   data: {
-      //     // Update with the actual zip size:
-      //     imagesSizeKb: imagesZip.size / 1024,
-      //     detailsSizeKb: pdfFile.size / 1024,
-      //     status: VaultItemStatus.Stored,
-      //   },
-      // });
+      await dbWrite.vaultItem.update({
+        where: { id: vaultItem.id },
+        data: {
+          // Update with the actual zip size:
+          imagesSizeKb: imagesZip.size / 1024,
+          detailsSizeKb: pdfFile.size / 1024,
+          status: VaultItemStatus.Stored,
+        },
+      });
     } catch (e) {
       const error = e as Error;
       await logErrors({

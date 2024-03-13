@@ -83,7 +83,8 @@ export const getServerSideProps = createServerSideProps({
       where: { userId: session.user.id },
     });
 
-    if (!hasUsedVault)
+    // If it has never used vault and it's NOT a subscriber, redirect to pricing page
+    if (!hasUsedVault && !session.user.subscriptionId)
       return {
         redirect: {
           destination: '/pricing',
@@ -693,9 +694,9 @@ export default function CivitaiVault() {
                           </Stack>
                         </td>
                         <td>
-                          {/* {item.status === VaultItemStatus.Stored && ( */}
-                          <VaultItemDownload vaultItem={item} />
-                          {/* )} */}
+                          {item.status === VaultItemStatus.Stored && (
+                            <VaultItemDownload vaultItem={item} />
+                          )}
                         </td>
                       </tr>
                     );
