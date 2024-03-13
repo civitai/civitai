@@ -495,7 +495,7 @@ export const generationConfig = {
   SDXL: {
     additionalResourceTypes: [
       { type: ModelType.LORA, baseModelSet: 'SDXL' },
-      { type: ModelType.LoCon, baseModelSet: 'SDXL', baseModels: ['SD 1.5'] },
+      { type: ModelType.LoCon, baseModelSet: 'SDXL' },
       { type: ModelType.TextualInversion, baseModelSet: 'SDXL', baseModels: ['SD 1.5'] },
     ] as ResourceFilter[],
     aspectRatios: [
