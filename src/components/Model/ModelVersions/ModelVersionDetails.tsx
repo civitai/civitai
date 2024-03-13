@@ -26,6 +26,10 @@ import {
   IconLicense,
   IconMessageCircle2,
   IconShare3,
+  IconCloudCheck,
+  IconCloudUp,
+  IconCloudLock,
+  IconLoader,
   IconHeart,
   IconPhotoPlus,
 } from '@tabler/icons-react';
@@ -91,6 +95,7 @@ import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { Adunit } from '~/components/Ads/AdUnit';
 import { adsRegistry } from '~/components/Ads/adsRegistry';
 import { useLocalStorage } from '@mantine/hooks';
+import { ToggleVaultButton } from '~/components/Vault/ToggleVaultButton';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useQueryUserResourceReview } from '~/components/ResourceReview/resourceReview.utils';
 import { ModelVersionReview } from '~/components/Model/ModelVersions/ModelVersionReview';
@@ -409,9 +414,7 @@ export function ModelVersionDetails({
         })}
         download
       >
-        {`${startCase(file.type)}${
-          ['Model', 'Pruned Model'].includes(file.type) ? ' ' + file.metadata.format ?? '' : ''
-        } (${formatKBytes(file.sizeKB)})`}
+        {getFileDisplayName({ file, modelType: model.type })} ({formatKBytes(file.sizeKB)})
       </Menu.Item>
     ) : (
       <Menu.Item key={file.id} py={4} icon={<VerifiedText file={file} iconOnly />} disabled>
@@ -638,6 +641,7 @@ export function ModelVersionDetails({
                     </ShareButton>
                   </div>
                 </Tooltip>
+
                 {onFavoriteClick && (
                   <Tooltip label={isFavorite ? 'Unlike' : 'Like'} position="top" withArrow>
                     <div>
@@ -655,6 +659,33 @@ export function ModelVersionDetails({
                     </div>
                   </Tooltip>
                 )}
+                <ToggleVaultButton modelVersionId={version.id}>
+                  {({ isLoading, isInVault, toggleVaultItem }) => (
+                    <Tooltip
+                      label={isInVault ? 'Remove from Vault' : 'Add To Vault'}
+                      position="top"
+                      withArrow
+                    >
+                      <div>
+                        <Button
+                          sx={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
+                          color={isInVault ? 'green' : 'gray'}
+                          onClick={toggleVaultItem}
+                          disabled={isLoading}
+                          variant={isInVault ? 'light' : undefined}
+                        >
+                          {isLoading ? (
+                            <Loader size="xs" />
+                          ) : isInVault ? (
+                            <IconCloudCheck />
+                          ) : (
+                            <IconCloudLock />
+                          )}
+                        </Button>
+                      </div>
+                    </Tooltip>
+                  )}
+                </ToggleVaultButton>
               </Group>
               {primaryFileDetails}
             </Stack>
@@ -867,7 +898,7 @@ export function ModelVersionDetails({
                 </Stack>
               </Accordion.Panel>
             </Accordion.Item>
-            {version.recommendedResources.length > 0 && (
+            {version.recommendedResources && version.recommendedResources.length > 0 && (
               <Accordion.Item value="recommended-resources">
                 <Accordion.Control>Recommended Resources</Accordion.Control>
                 <Accordion.Panel>

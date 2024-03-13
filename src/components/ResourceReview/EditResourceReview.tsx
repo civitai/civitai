@@ -7,7 +7,6 @@ import { z } from 'zod';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { Form, InputRTE, useForm } from '~/libs/form';
-import { abbreviateNumber } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 
 type EditResourceReviewProps = {
@@ -156,67 +155,69 @@ export function EditResourceReview({
         ) : (
           <Text>{name}</Text>
         )}
-        {id && (
-          <>
-            <Card.Section>
-              <Divider />
-            </Card.Section>
-            <Stack>
-              {!editDetail ? (
-                <Text variant="link" onClick={toggleEditDetail} size="sm">
-                  <Group spacing={4} sx={{ cursor: 'pointer' }}>
-                    <IconChevronDown size={16} />{' '}
-                    <span>{!details ? 'Add' : 'Edit'} Review Comments</span>
-                  </Group>
-                </Text>
-              ) : (
-                <Form form={form} onSubmit={handleSubmit}>
-                  <Stack spacing={4}>
-                    <InputRTE
-                      name="details"
-                      includeControls={['formatting', 'link']}
-                      editorSize="sm"
-                      placeholder={`What did you think of ${modelName ?? 'this resource'}?`}
-                      styles={{
-                        content: {
-                          minHeight: 50,
-                          maxHeight: 500,
-                          padding: 0,
-                          fontSize: 12,
+        <Card.Section>
+          <Divider />
+        </Card.Section>
+        {id ? (
+          <Stack>
+            {!editDetail ? (
+              <Text variant="link" onClick={toggleEditDetail} size="sm">
+                <Group spacing={4} sx={{ cursor: 'pointer' }}>
+                  <IconChevronDown size={16} />{' '}
+                  <span>{!details ? 'Add' : 'Edit'} Review Comments</span>
+                </Group>
+              </Text>
+            ) : (
+              <Form form={form} onSubmit={handleSubmit}>
+                <Stack spacing={4}>
+                  <InputRTE
+                    name="details"
+                    includeControls={['formatting', 'link']}
+                    editorSize="sm"
+                    placeholder={`What did you think of ${modelName ?? 'this resource'}?`}
+                    styles={{
+                      content: {
+                        minHeight: 50,
+                        maxHeight: 500,
+                        padding: 0,
+                        fontSize: 12,
 
-                          '.ProseMirror': {
-                            padding: `6px 10px`,
-                            minHeight: 22,
-                            cursor: 'text',
-                          },
-                          '.ProseMirror p.is-editor-empty:first-of-type::before': {
-                            fontSize: 12,
-                          },
+                        '.ProseMirror': {
+                          padding: `6px 10px`,
+                          minHeight: 22,
+                          cursor: 'text',
                         },
+                        '.ProseMirror p.is-editor-empty:first-of-type::before': {
+                          fontSize: 12,
+                        },
+                      },
+                    }}
+                    hideToolbar
+                    autoFocus
+                  />
+                  <Group grow spacing={4}>
+                    <Button
+                      size="xs"
+                      variant="default"
+                      onClick={() => {
+                        toggleEditDetail();
+                        onCancel?.();
                       }}
-                      hideToolbar
-                      autoFocus
-                    />
-                    <Group grow spacing={4}>
-                      <Button
-                        size="xs"
-                        variant="default"
-                        onClick={() => {
-                          toggleEditDetail();
-                          onCancel?.();
-                        }}
-                      >
-                        Cancel
-                      </Button>
-                      <Button size="xs" type="submit" loading={isLoading} disabled={!isDirty}>
-                        Save
-                      </Button>
-                    </Group>
-                  </Stack>
-                </Form>
-              )}
-            </Stack>
-          </>
+                    >
+                      Cancel
+                    </Button>
+                    <Button size="xs" type="submit" loading={isLoading} disabled={!isDirty}>
+                      Save
+                    </Button>
+                  </Group>
+                </Stack>
+              </Form>
+            )}
+          </Stack>
+        ) : (
+          <Text size="sm" color="dimmed">
+            What did you think of this resource?
+          </Text>
         )}
       </Stack>
     </Card>

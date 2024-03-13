@@ -80,6 +80,7 @@ const featureFlags = createFeatureFlags({
   chat: ['user'],
   creatorsProgram: ['mod', 'granted'],
   buzzWithdrawalTransfer: ['granted'],
+  vault: ['mod'],
 });
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
 

@@ -171,13 +171,13 @@ export type RatingTotalsModel = {
   up: number;
   down: number;
 };
+type GetRatingTotalsRow = { rating: number; recommended: boolean | null; count: number };
 export const getRatingTotals = async ({ modelVersionId, modelId }: GetRatingTotalsInput) => {
-  const AND: Prisma.Sql[] = [Prisma.sql`rr."modelId" = ${modelId}`];
+  const AND: Prisma.Sql[] = [];
   if (modelVersionId) AND.push(Prisma.sql`rr."modelVersionId" = ${modelVersionId}`);
+  else AND.push(Prisma.sql`rr."modelId" = ${modelId}`);
 
-  const result = await dbRead.$queryRaw<
-    { rating: number; recommended: boolean | null; count: number }[]
-  >`
+  const result = await dbRead.$queryRaw<GetRatingTotalsRow[]>`
     SELECT
       rr.rating,
       rr.recommended,
@@ -264,12 +264,9 @@ type ResourceReviewRow = {
   commentCount: number;
 };
 export const getPagedResourceReviews = async (input: GetResourceReviewPagedInput) => {
-  const { limit, page, modelId, modelVersionId, username } = input;
+  const { limit, page, modelVersionId, username } = input;
   const skip = limit * (page - 1);
-  const AND = [
-    Prisma.sql`rr."modelId" = ${modelId}`,
-    Prisma.sql`rr."modelVersionId" = ${modelVersionId}`,
-  ];
+  const AND = [Prisma.sql`rr."modelVersionId" = ${modelVersionId}`];
   if (username) AND.push(Prisma.sql`u.username = ${username}`);
 
   const [{ count }] = await dbRead.$queryRaw<{ count: number }[]>`

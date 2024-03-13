@@ -25,7 +25,7 @@ export function NotificationList({ items, textSize = 'sm', truncate = true, onIt
 
   return (
     <SimpleGrid cols={1} spacing={0}>
-      {items.map((notification, index) => {
+      {items.map((notification) => {
         const notificationDetails = notification.details as MixedObject;
         const details = getNotificationMessage({
           type: notification.type,
@@ -130,7 +130,7 @@ const useStyles = createStyles((theme) => ({
     borderTop: `1px solid ${
       theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
     }`,
-    '&:first-child': {
+    '&:first-of-type': {
       borderTop: 'none',
     },
     padding: theme.spacing.sm,

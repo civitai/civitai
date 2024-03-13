@@ -13,7 +13,7 @@ export function ModelVersionReview({ modelId, versionId, thumbsDownCount, thumbs
   return (
     <Group position="left" align="flex-start" spacing={4}>
       <Tooltip
-        label={`${Math.round(positiveRating * 100)}% of the reviews are positive`}
+        label={`${Math.round(positiveRating * 100)}% of reviews are positive`}
         openDelay={500}
         color="gray"
       >

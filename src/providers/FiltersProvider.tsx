@@ -43,6 +43,7 @@ const modelFilterSchema = z.object({
   fromPlatform: z.boolean().optional(),
   followed: z.boolean().optional(),
   archived: z.boolean().optional(),
+  hidden: z.boolean().optional(),
   fileFormats: z.enum(constants.modelFileFormats).array().optional(),
   pending: z.boolean().optional(),
 });

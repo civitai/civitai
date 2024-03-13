@@ -223,3 +223,10 @@ export enum ImageConnectionType {
   Bounty = 'Bounty',
   BountyEntry = 'BountyEntry',
 }
+
+export enum VaultSort {
+  RecentlyAdded = 'Recently Added',
+  RecentlyCreated = 'Recently Created',
+  ModelName = 'Model Name',
+  ModelSize = 'Model Size',
+}

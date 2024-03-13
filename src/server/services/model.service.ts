@@ -30,6 +30,7 @@ import {
   ModelMeta,
   ModelUpsertInput,
   PublishModelSchema,
+  ToggleCheckpointCoverageInput,
   ToggleModelLockInput,
   UnpublishModelSchema,
 } from '~/server/schema/model.schema';
@@ -1758,3 +1759,36 @@ export const getGalleryHiddenPreferences = async ({
 
   return { hiddenTags, hiddenUsers, hiddenImages: images ?? [] };
 };
+
+export async function getCheckpointGenerationCoverage(versionIds: number[]) {
+  if (versionIds.length === 0) {
+    return [];
+  }
+
+  const coveredResources = await dbRead.$queryRaw<{ version_id: number }[]>`
+    SELECT version_id FROM "CoveredCheckpointDetails"
+    WHERE version_id IN (${Prisma.join(versionIds)});
+  `;
+
+  return coveredResources.map((x) => x.version_id);
+}
+
+export async function toggleCheckpointCoverage({ id, versionId }: ToggleCheckpointCoverageInput) {
+  await dbWrite.$executeRaw`
+    INSERT INTO "CoveredCheckpoint" ("model_id", "version_id")
+    VALUES (${id}, ${versionId})
+    ON CONFLICT DO NOTHING;
+  `;
+
+  await dbWrite.$executeRaw`
+    REFRESH MATERIALIZED VIEW "CoveredCheckpointDetails";
+  `;
+
+  const affectedVersionIds = await dbWrite.$queryRaw<{ version_id: number }[]>`
+    SELECT version_id FROM "CoveredCheckpointDetails"
+    JOIN "ModelVersion" mv ON mv.id = version_id
+    WHERE mv."modelId" = id;
+  `;
+
+  return affectedVersionIds.map((x) => x.version_id);
+}

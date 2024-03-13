@@ -247,6 +247,7 @@ export default function Home() {
                         status: undefined,
                         checkpointType: undefined,
                         baseModels: undefined,
+                        hidden: undefined,
                       }}
                     />
                   </IsClient>

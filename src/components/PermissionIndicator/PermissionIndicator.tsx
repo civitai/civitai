@@ -13,22 +13,13 @@ import {
 } from '@tabler/icons-react';
 import React from 'react';
 
-const canSellImagesPermissions = ['Image', 'Rent', 'RentCivit', 'Sell'] as const;
-const canRentCivitPermissions = ['RentCivit', 'Rent', 'Sell'] as const;
-const canRentPermissions = ['Rent', 'Sell'] as const;
-const canSellPermissions = ['Sell'] as const;
-
 export const PermissionIndicator = ({ permissions, size = 20, spacing = 2, ...props }: Props) => {
   const { allowNoCredit, allowCommercialUse, allowDerivatives, allowDifferentLicense } =
     permissions;
-  const canSellImages = canSellImagesPermissions.some((permission) =>
-    allowCommercialUse.includes(permission)
-  );
-  const canRentCivit = canRentCivitPermissions.some((permission) =>
-    allowCommercialUse.includes(permission)
-  );
-  const canRent = canRentPermissions.some((permission) => allowCommercialUse.includes(permission));
-  const canSell = canSellPermissions.some((permission) => allowCommercialUse.includes(permission));
+  const canSellImages = allowCommercialUse.includes(CommercialUse.Image);
+  const canRentCivit = allowCommercialUse.includes(CommercialUse.RentCivit);
+  const canRent = allowCommercialUse.includes(CommercialUse.Rent);
+  const canSell = allowCommercialUse.includes(CommercialUse.Sell);
 
   const explanation = {
     'Use the model without crediting the creator': allowNoCredit,

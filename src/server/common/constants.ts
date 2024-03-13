@@ -180,7 +180,7 @@ export const constants = {
       notified: 5,
       muted: 8,
     },
-    maxConcurrentRequests: 10,
+    maxConcurrentRequests: 4,
   },
   tagVoting: {
     voteDuration: 1000 * 60 * 60 * 24,
@@ -271,6 +271,13 @@ export const constants = {
     coverImageWidth: 180,
   },
   supportedBaseModelAddendums: ['SD 1.5', 'SDXL 1.0'],
+  vault: {
+    keys: {
+      details: ':modelVersionId/:userId/details.pdf',
+      images: ':modelVersionId/:userId/images.zip',
+      cover: ':modelVersionId/:userId/cover.jpg',
+    },
+  },
   supporterBadge: '020f374d-f165-4f45-9082-371e696a44ff',
 } as const;
 
@@ -434,7 +441,7 @@ export const generation = {
   maxValues: {
     seed: 4294967295,
     steps: 50,
-    quantity: 10,
+    quantity: 4,
     clipSkip: 10,
   },
 } as const;
@@ -478,6 +485,7 @@ export const generationConfig = {
   SDXL: {
     additionalResourceTypes: [
       { type: ModelType.LORA, baseModelSet: 'SDXL' },
+      { type: ModelType.LoCon, baseModelSet: 'SDXL', baseModels: ['SD 1.5'] },
       { type: ModelType.TextualInversion, baseModelSet: 'SDXL', baseModels: ['SD 1.5'] },
     ] as ResourceFilter[],
     aspectRatios: [
