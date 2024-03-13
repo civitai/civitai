@@ -32,6 +32,7 @@ import {
   IconLoader,
   IconHeart,
   IconPhotoPlus,
+  IconLock,
 } from '@tabler/icons-react';
 import { TRPCClientErrorBase } from '@trpc/client';
 import { DefaultErrorShape } from '@trpc/server';
@@ -414,7 +415,14 @@ export function ModelVersionDetails({
         })}
         download
       >
-        {getFileDisplayName({ file, modelType: model.type })} ({formatKBytes(file.sizeKB)})
+        {getFileDisplayName({ file, modelType: model.type })} ({formatKBytes(file.sizeKB)}){' '}
+        {file.visibility !== 'Public' && (
+          <Tooltip label="Only visible to you" position="top" withArrow>
+            <ThemeIcon color="blue" size="xs" sx={{ alignSelf: 'center' }} ml="xs">
+              <IconLock />
+            </ThemeIcon>
+          </Tooltip>
+        )}
       </Menu.Item>
     ) : (
       <Menu.Item key={file.id} py={4} icon={<VerifiedText file={file} iconOnly />} disabled>
