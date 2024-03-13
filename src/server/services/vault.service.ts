@@ -161,105 +161,10 @@ export const getModelVersionDataForVault = async ({
     include: ['tags'],
   });
 
-  const modelVersionSettings = (modelVersion.settings ?? {}) as MixedObject;
-
-  const tableRows = [
-    {
-      header: 'Type',
-      value: `${getDisplayName(modelVersion.model.type)} ${
-        modelVersion.model.checkpointType ?? ''
-      }`,
-    },
-    {
-      header: 'Uploaded',
-      value: formatDate(modelVersion.createdAt),
-    },
-    {
-      header: 'Base Model',
-      value: `${modelVersion.baseModel} ${
-        modelVersion.baseModelType && modelVersion.baseModelType === 'Standard'
-          ? ''
-          : modelVersion.baseModelType ?? ''
-      }`,
-    },
-    {
-      header: 'Training',
-      value: `
-        ${modelVersion.steps ? `<span>${modelVersion.steps.toLocaleString()} steps</span>` : ''}
-        ${modelVersion.epochs ? `<span>${modelVersion.epochs.toLocaleString()} epochs</span>` : ''}
-      `,
-      visible: !!modelVersion.steps || !!modelVersion.epochs,
-    },
-    {
-      header: 'Usage Tips',
-      value: `
-      ${
-        modelVersion.clipSkip
-          ? `<span>Clip Skip: ${modelVersion.clipSkip.toLocaleString()}</span>`
-          : ''
-      }
-      ${
-        modelVersionSettings?.strength
-          ? `<span>Strength: ${modelVersionSettings.strength}</span>`
-          : ''
-      } 
-      `,
-      visible: !!modelVersion.clipSkip || !!modelVersionSettings?.strength,
-    },
-    {
-      header: 'Trigger Words',
-      value: modelVersion.trainedWords?.join(', ') ?? '',
-      visible: !!modelVersion.trainedWords?.length,
-    },
-  ].filter((r) => r.visible === undefined || r.visible);
-
-  const detail = `
-    <style>
-      p {
-        color: black !important;
-      }
-      table {
-        width: 100%;
-        margin-bottom: 1rem;
-      }
-      table,
-      th,
-      td {
-        border: 1px solid black;
-        border-collapse: collapse;
-      }
-      th,
-      td {
-        padding: 5px;
-        text-align: left;
-      }
-    </style>
-    <h1>${modelVersion.model.name} - ${modelVersion.name}</h1>
-    <hr />
-    <h3>Details</h3>
-    <table>
-      <tbody>
-        ${tableRows
-          .map(
-            (v) => `
-          <tr>
-            <th>${v.header}</th>
-            <td>${v.value}</td>
-          </tr>
-        `
-          )
-          .join('')} 
-      </tbody> 
-    </table>
-    <h3>Description</h3>
-    ${modelVersion.description ?? modelVersion.model.description ?? '<p>N/A</p>'}
-  `;
-
   return {
     modelVersion,
     files,
     images,
-    detail,
   };
 };
 
@@ -294,7 +199,6 @@ export const addModelVersionToVault = async ({
     modelVersion,
     files: modelVersionFiles,
     images,
-    detail,
   } = await getModelVersionDataForVault({
     modelVersionId,
     filePreferences: user?.filePreferences as UserFilePreferences,
@@ -314,9 +218,7 @@ export const addModelVersionToVault = async ({
     };
   });
   const modelSizeKb = modelVersionFiles.reduce((acc, file) => acc + (file.sizeKB ?? 0), 0);
-
-  const totalKb =
-    modelSizeKb + images.reduce((acc, img) => acc + (img.sizeKB ?? 0), 0) + detail.length;
+  const totalKb = modelSizeKb; // Images and details are added later and are fairly small
 
   if (vault.usedStorageKb + totalKb > vault.storageKb) {
     throw throwBadRequestError(
@@ -338,8 +240,8 @@ export const addModelVersionToVault = async ({
       creatorName:
         modelVersion.model.user?.id === -1 ? '' : modelVersion.model.user?.username ?? '',
       creatorId: modelVersion.model.userId === -1 ? null : modelVersion.model.userId,
-      detailsSizeKb: detail.length,
-      imagesSizeKb: images.reduce((acc, img) => acc + (img.sizeKB ?? 0), 0),
+      detailsSizeKb: 0, // Updated once PDF is generated.
+      imagesSizeKb: 0, // Updated once ZIP is generated.
       modelSizeKb,
       type: modelVersion.model.type,
       category: category?.tag.name ?? '',

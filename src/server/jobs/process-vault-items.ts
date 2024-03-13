@@ -1,10 +1,10 @@
 import { Prisma, VaultItemStatus } from '@prisma/client';
-import JSZip, { file } from 'jszip';
+import JSZip from 'jszip';
 import { createJob } from './job';
 import { dbWrite } from '~/server/db/client';
 import { getModelVersionDataForVault } from '~/server/services/vault.service';
-import { htmlToPdf } from '~/server/utils/pdf-helpers';
-import { getCustomPutUrl, getGetUrlByKey } from '~/utils/s3-utils';
+import { getModelVersionDetailsPDF } from '~/server/utils/pdf-helpers';
+import { getCustomPutUrl } from '~/utils/s3-utils';
 import { env } from 'process';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { fetchBlob } from '~/utils/file-utils';
@@ -51,12 +51,12 @@ export const processVaultItems = createJob('process-vault-items', '*/10 * * * *'
   for (const vaultItem of vaultItems) {
     try {
       // Get model version info:
-      const { detail, images } = await getModelVersionDataForVault({
+      const { modelVersion, images } = await getModelVersionDataForVault({
         modelVersionId: vaultItem.modelVersionId,
       });
 
       // Now, prepare the PDF file:
-      const pdfFile = await htmlToPdf(detail);
+      const pdfFile = await getModelVersionDetailsPDF(modelVersion);
       const zip = new JSZip();
 
       let coverImage: { data: Blob; filename: string } | undefined;
@@ -132,14 +132,15 @@ export const processVaultItems = createJob('process-vault-items', '*/10 * * * *'
       );
 
       // If everything above went out smoothly, the user can now download the files from the vault.
-      await dbWrite.vaultItem.update({
-        where: { id: vaultItem.id },
-        data: {
-          // Update with the actual zip size:
-          imagesSizeKb: imagesZip.size / 1024,
-          status: VaultItemStatus.Stored,
-        },
-      });
+      // await dbWrite.vaultItem.update({
+      //   where: { id: vaultItem.id },
+      //   data: {
+      //     // Update with the actual zip size:
+      //     imagesSizeKb: imagesZip.size / 1024,
+      //     detailsSizeKb: pdfFile.size / 1024,
+      //     status: VaultItemStatus.Stored,
+      //   },
+      // });
     } catch (e) {
       const error = e as Error;
       await logErrors({
