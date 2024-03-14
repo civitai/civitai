@@ -2,11 +2,15 @@ import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { ModelFileCreateInput, ModelFileUpdateInput } from '~/server/schema/model-file.schema';
+import { modelFileSelect } from '~/server/selectors/modelFile.selector';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { prepareFile } from '~/utils/file-helpers';
 
-export const getByVersionId = ({ modelVersionId }: { modelVersionId: number }) => {
-  return dbRead.modelFile.findMany({ where: { modelVersionId } });
+export const getFilesByVersionIds = ({ ids }: { ids: number[] }) => {
+  return dbRead.modelFile.findMany({
+    where: { modelVersionId: { in: ids } },
+    select: modelFileSelect,
+  });
 };
 
 export async function createFile<TSelect extends Prisma.ModelFileSelect>({

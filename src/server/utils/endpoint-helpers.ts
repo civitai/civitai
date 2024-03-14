@@ -6,6 +6,8 @@ import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { generateSecretHash } from '~/server/utils/key-generator';
 import { Session, SessionUser } from 'next-auth';
 import { AxiomAPIRequest, withAxiom } from 'next-axiom';
+import { TRPCError } from '@trpc/server';
+import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 
 export function TokenSecuredEndpoint(
   token: string,
@@ -139,4 +141,17 @@ export function ModEndpoint(
 
     await handler(req, res);
   });
+}
+
+export function handleEndpointError(res: NextApiResponse, e: unknown) {
+  if (e instanceof TRPCError) {
+    const apiError = e as TRPCError;
+    const status = getHTTPStatusCodeFromError(apiError);
+    const parsedError = JSON.parse(apiError.message);
+
+    return res.status(status).json(parsedError);
+  } else {
+    const error = e as Error;
+    return res.status(500).json({ message: 'An unexpected error occurred', error: error.message });
+  }
 }

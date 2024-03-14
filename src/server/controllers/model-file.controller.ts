@@ -9,14 +9,14 @@ import {
 import {
   createFile,
   deleteFile,
-  getByVersionId,
+  getFilesByVersionIds,
   updateFile,
 } from '~/server/services/model-file.service';
 import { handleLogError, throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 
 export const getFilesByVersionIdHandler = async ({ input }: { input: GetByIdInput }) => {
   try {
-    return await getByVersionId({ modelVersionId: input.id });
+    return await getFilesByVersionIds({ ids: [input.id] });
   } catch (error) {
     throw throwDbError(error);
   }

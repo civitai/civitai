@@ -48,7 +48,6 @@ import {
 import { modelsSearchIndex } from '~/server/search-index';
 import {
   associatedResourceSelect,
-  getAllModelsWithVersionsSelect,
   modelWithDetailsSelect,
 } from '~/server/selectors/model.selector';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
@@ -76,6 +75,7 @@ import {
   getGallerySettingsByModelId,
   toggleCheckpointCoverage,
   getCheckpointGenerationCoverage,
+  getModelsRaw,
 } from '~/server/services/model.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { getCategoryTags } from '~/server/services/system-cache';
@@ -99,7 +99,8 @@ import {
   getUnavailableResources,
 } from '../services/generation/generation.service';
 import { BountyDetailsSchema } from '../schema/bounty.schema';
-import { removeEmpty } from '~/utils/object-helpers';
+import { getFilesByVersionIds } from '~/server/services/model-file.service';
+import { groupBy } from 'lodash-es';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
@@ -508,17 +509,14 @@ export const getModelsWithVersionsHandler = async ({
   const { limit = DEFAULT_PAGE_SIZE, page, cursor, ...queryInput } = input;
   const { take, skip } = getPagination(limit, page);
   try {
-    // TODO.manuel: Make this use the getModelsRaw instead...
-    const rawResults = await getModels({
+    const { items, nextCursor } = await getModelsRaw({
       input: { ...queryInput, take, skip },
       user: ctx.user,
-      select: getAllModelsWithVersionsSelect,
-      count: true,
     });
 
-    const modelVersionIds = rawResults.items.flatMap(({ modelVersions }) =>
-      modelVersions.map(({ id }) => id)
-    );
+    if (!items.length) return { items, nextCursor };
+
+    const modelVersionIds = items.flatMap(({ modelVersions }) => modelVersions.map(({ id }) => id));
     const images = await getImagesForModelVersion({
       modelVersionIds,
       imagesPerVersion: 10,
@@ -529,14 +527,21 @@ export const getModelsWithVersionsHandler = async ({
       currentUserId: ctx.user?.id,
     });
 
-    const vaeIds = rawResults.items
+    const vaeIds = items
       .flatMap(({ modelVersions }) => modelVersions.map(({ vaeId }) => vaeId))
       .filter(isDefined);
     const vaeFiles = await getVaeFiles({ vaeIds });
 
-    const modelIds = rawResults.items.map(({ id }) => id);
+    const files = await getFilesByVersionIds({ ids: modelVersionIds });
+    const groupedFiles = groupBy(files, 'modelVersionId');
+
+    const modelIds = items.map(({ id }) => id);
     const metrics = await dbRead.modelMetric.findMany({
       where: { modelId: { in: modelIds }, timeframe: MetricTimeframe.AllTime },
+    });
+
+    const versionMetrics = await dbRead.modelVersionMetric.findMany({
+      where: { modelVersionId: { in: modelVersionIds }, timeframe: MetricTimeframe.AllTime },
     });
 
     function getStatsForModel(modelId: number) {
@@ -553,69 +558,65 @@ export const getModelsWithVersionsHandler = async ({
       };
     }
 
-    const results = {
-      count: rawResults.count,
-      items: rawResults.items.map(({ modelVersions, ...model }) => ({
-        ...model,
-        modelVersions: modelVersions.map(
-          ({
-            metrics,
-            files,
-            trainingDetails,
-            trainingStatus,
-            vaeId,
-            earlyAccessTimeFrame,
-            modelId,
-            ...version
-          }) => {
-            const vaeFile = vaeFiles.filter((x) => x.modelVersionId === vaeId);
-            files.push(...vaeFile);
+    function getStatsForVersion(versionId: number) {
+      const stats = versionMetrics.find((x) => x.modelVersionId === versionId);
+      return {
+        downloadCount: stats?.downloadCount ?? 0,
+        ratingCount: stats?.ratingCount ?? 0,
+        rating: Number(stats?.rating?.toFixed(2) ?? 0),
+        thumbsUpCount: stats?.thumbsUpCount ?? 0,
+        thumbsDownCount: stats?.thumbsDownCount ?? 0,
+        generationCount: stats?.generationCount ?? 0,
+      };
+    }
 
-            let earlyAccessDeadline = getEarlyAccessDeadline({
-              versionCreatedAt: version.createdAt,
-              publishedAt: version.publishedAt,
-              earlyAccessTimeframe: earlyAccessTimeFrame,
-            });
-            if (earlyAccessDeadline && new Date() > earlyAccessDeadline)
-              earlyAccessDeadline = undefined;
+    const results = items.map(({ modelVersions, ...model }) => ({
+      ...model,
+      modelVersions: modelVersions.map(
+        ({ trainingStatus, vaeId, earlyAccessTimeFrame, ...version }) => {
+          const stats = getStatsForVersion(version.id);
+          const vaeFile = vaeFiles.filter((x) => x.modelVersionId === vaeId);
+          const files = groupedFiles[version.id] ?? [];
+          files.push(...vaeFile);
 
-            return {
-              ...version,
-              files: files.map(({ metadata: metadataRaw, ...file }) => {
-                const metadata = metadataRaw as FileMetadata | undefined;
+          let earlyAccessDeadline = getEarlyAccessDeadline({
+            versionCreatedAt: version.createdAt,
+            publishedAt: version.publishedAt,
+            earlyAccessTimeframe: earlyAccessTimeFrame,
+          });
+          if (earlyAccessDeadline && new Date() > earlyAccessDeadline)
+            earlyAccessDeadline = undefined;
 
-                return {
-                  ...file,
-                  metadata: {
-                    format: metadata?.format,
-                    size: metadata?.size,
-                    fp: metadata?.fp,
-                  },
-                };
-              }),
-              earlyAccessDeadline,
-              stats: {
-                downloadCount: metrics[0]?.downloadCount ?? 0,
-                ratingCount: metrics[0]?.ratingCount ?? 0,
-                rating: Number(metrics[0]?.rating?.toFixed(2) ?? 0),
-                thumbsUpCount: metrics[0]?.thumbsUpCount ?? 0,
-                thumbsDownCount: metrics[0]?.thumbsDownCount ?? 0,
-              },
-              images: images
-                .filter((image) => image.modelVersionId === version.id)
-                .map(
-                  ({ modelVersionId, name, userId, sizeKB, availability, metadata, ...image }) => ({
-                    ...image,
-                  })
-                ),
-            };
-          }
-        ),
-        stats: getStatsForModel(model.id),
-      })),
-    };
+          return {
+            ...version,
+            files: files.map(({ metadata: metadataRaw, ...file }) => {
+              const metadata = metadataRaw as FileMetadata | undefined;
 
-    return getPagingData(results, take, page);
+              return {
+                ...file,
+                metadata: {
+                  format: metadata?.format,
+                  size: metadata?.size,
+                  fp: metadata?.fp,
+                },
+              };
+            }),
+            earlyAccessDeadline,
+            stats,
+            images: images
+              .filter((image) => image.modelVersionId === version.id)
+              .map(
+                ({ modelVersionId, name, userId, sizeKB, availability, metadata, ...image }) => ({
+                  ...image,
+                })
+              ),
+          };
+        }
+      ),
+      stats: getStatsForModel(model.id),
+    }));
+
+    return { items: results, nextCursor };
   } catch (error) {
     throw throwDbError(error);
   }
@@ -639,7 +640,7 @@ export const getModelWithVersionsHandler = async ({
     },
     ctx,
   });
-  if (!results.items.length) throw throwNotFoundError(`No model with id ${input.id}`);
+  if (!results.items) throw throwNotFoundError(`No model with id ${input.id}`);
 
   return results.items[0];
 };
