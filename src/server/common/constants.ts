@@ -301,14 +301,22 @@ export type BaseModelType = (typeof constants.baseModelTypes)[number];
 
 export type BaseModel = (typeof constants.baseModels)[number];
 
-export const baseModelSetTypes = ['SD1', 'SD2', 'SDXL', 'SDXLDistilled', 'SCascade'] as const;
+export const baseModelSetTypes = [
+  'SD1',
+  'SD2',
+  'SDXL',
+  'SDXLDistilled',
+  'SCascade',
+  'Pony',
+] as const;
 export type BaseModelSetType = (typeof baseModelSetTypes)[number];
 export const baseModelSets: Record<BaseModelSetType, BaseModel[]> = {
   SD1: ['SD 1.4', 'SD 1.5', 'SD 1.5 LCM'],
   SD2: ['SD 2.0', 'SD 2.0 768', 'SD 2.1', 'SD 2.1 768', 'SD 2.1 Unclip'],
-  SDXL: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM', 'Pony', 'SDXL Lightning'],
+  SDXL: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM', 'SDXL Lightning'],
   SDXLDistilled: ['SDXL Distilled'],
   SCascade: ['Stable Cascade'],
+  Pony: ['Pony'],
 };
 
 type LicenseDetails = {
@@ -517,6 +525,37 @@ export const generationConfig = {
       modelName: 'SD XL',
       modelType: 'Checkpoint',
       baseModel: 'SDXL 1.0',
+      strength: 1,
+    } as Generation.Resource,
+  },
+  Pony: {
+    additionalResourceTypes: [
+      { type: ModelType.LORA, baseModelSet: 'Pony' },
+      { type: ModelType.LoCon, baseModelSet: 'Pony' },
+      { type: ModelType.TextualInversion, baseModelSet: 'Pony', baseModels: ['SD 1.5'] },
+    ] as ResourceFilter[],
+    aspectRatios: [
+      { label: 'Square', width: 1024, height: 1024 },
+      { label: 'Landscape', width: 1216, height: 832 },
+      { label: 'Portrait', width: 832, height: 1216 },
+    ],
+    costs: {
+      // TODO.generation: Uncomment this out by next week once we start charging for SDXL generation
+      // base: 4,
+      base: 0,
+      quantity: 1,
+      steps: 40,
+      width: 1024,
+      height: 1024,
+    },
+    checkpoint: {
+      id: 290640,
+      name: 'V6 (start with this one)',
+      trainedWords: [],
+      modelId: 257749,
+      modelName: 'Pony Diffusion V6 XL',
+      modelType: 'Checkpoint',
+      baseModel: 'Pony',
       strength: 1,
     } as Generation.Resource,
   },
