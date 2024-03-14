@@ -16,6 +16,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NextLink } from '@mantine/next';
 import Lottie from 'react-lottie';
 import * as linkAnimation from '~/utils/lotties/link-animation.json';
+import { Meta } from '~/components/Meta/Meta';
 
 export default function LinkApp() {
   const { classes } = useStyles();
@@ -27,113 +28,121 @@ export default function LinkApp() {
   };
 
   return (
-    <Container>
-      <Flex
-        direction={{ base: 'column', md: 'row' }}
-        justify="space-between"
-        className={classes.heroContainer}
-      >
-        <Stack spacing={12} mb={{ base: 24, md: 0 }}>
-          <Title className={classes.heroTitle} order={1}>
-            Civitai Link App
-          </Title>
-          {!isMember ? (
-            <Text className={classes.heroText}>❤️ Civitia Link is only available to members</Text>
-          ) : null}
-        </Stack>
-        <Flex align="center">
-          <Button
-            variant="filled"
-            color="blue"
-            size="lg"
-            radius="xl"
-            fullWidth
-            component={NextLink}
-            href={buttonData.href}
-          >
-            {buttonData.text}
-          </Button>
-        </Flex>
-      </Flex>
-
-      <Flex direction="row" className={classes.gradientContainer}>
-        <Flex justify="center" className={classes.videoBorder}>
-          <Lottie options={{ animationData: linkAnimation }} />
-        </Flex>
-        <div className={classes.gradientBox} />
-      </Flex>
-
-      <Stack spacing={12} mb={40}>
-        <Title className={classes.heading} order={2}>
-          Add models to SD
-        </Title>
-        <Text className={classes.copy} order={2}>
-          Directly add any models from Civitai to your Stable Diffusion instance.
-        </Text>
-      </Stack>
-
-      {/* TODO: Update copy */}
-      <Grid gutter={40} gutterMd={80}>
-        <Grid.Col md={6}>
-          <Flex justify="center" className={classes.gradientContainer}>
-            <Image
-              src="/images/link/download.png"
-              alt="download"
-              id="download"
-              width="auto"
-              imageProps={{
-                style: { objectFit: 'cover', objectPosition: 'top', height: '100%' },
-              }}
-            />
-            <div className={classes.gradientBox} />
+    <>
+      <Meta
+        title="Link Desktop App | Civitai"
+        description="Directly download any models from Civitai to your Stable Diffusion instance."
+      />
+      <Container>
+        <Flex
+          direction={{ base: 'column', md: 'row' }}
+          justify="space-between"
+          className={classes.heroContainer}
+        >
+          <Stack spacing={12} mb={{ base: 24, md: 0 }}>
+            <Title className={classes.heroTitle} order={1}>
+              Civitai Link App
+            </Title>
+            {!isMember ? (
+              <Text className={classes.heroText}>❤️ Civitia Link is only available to members</Text>
+            ) : null}
+          </Stack>
+          <Flex align="center">
+            <Button
+              variant="filled"
+              color="blue"
+              size="lg"
+              radius="xl"
+              fullWidth
+              component={NextLink}
+              href={buttonData.href}
+              rel="nofollow noreferrer"
+            >
+              {buttonData.text}
+            </Button>
           </Flex>
-          <Title className={classes.heading} order={3}>
-            Manage files
+        </Flex>
+
+        <Flex direction="row" className={classes.gradientContainer}>
+          <Flex justify="center" className={classes.videoBorder}>
+            <Lottie options={{ animationData: linkAnimation }} />
+          </Flex>
+          <div className={classes.gradientBox} />
+        </Flex>
+
+        <Stack spacing={12} mb={40}>
+          <Title className={classes.heading} order={2}>
+            Add models to SD
           </Title>
           <Text className={classes.copy}>
             Directly add any models from Civitai to your Stable Diffusion instance.
           </Text>
-        </Grid.Col>
-        <Grid.Col md={6}>
-          <Flex justify="center" className={classes.gradientContainer}>
-            <Image
-              src="/images/link/activity.png"
-              alt="activity"
-              id="activity"
-              width="auto"
-              imageProps={{
-                style: { objectFit: 'cover', objectPosition: 'top', height: '100%' },
-              }}
-            />
-            <div className={classes.gradientBox} />
-          </Flex>
-          <Title className={classes.heading} order={3}>
-            Keep track of activities
-          </Title>
-          <Text className={classes.copy}>
-            See the history of all the models you have added to your Stable Diffusion instance.
-          </Text>
-        </Grid.Col>
-      </Grid>
+        </Stack>
 
-      {/* TODO: Add video once created */}
-      {/* <AspectRatio ratio={16 / 9} my={40}>
+        {/* TODO: Update copy */}
+        <Grid gutter={40} gutterMd={80}>
+          <Grid.Col md={6}>
+            <Flex justify="center" className={classes.gradientContainer}>
+              <Image
+                src="/images/link/download.png"
+                alt="download"
+                id="download"
+                width="auto"
+                imageProps={{
+                  style: { objectFit: 'cover', objectPosition: 'top', height: '100%' },
+                }}
+              />
+              <div className={classes.gradientBox} />
+            </Flex>
+            <Title className={classes.heading} order={3}>
+              Manage files
+            </Title>
+            <Text className={classes.copy}>
+              Directly add any models from Civitai to your Stable Diffusion instance.
+            </Text>
+          </Grid.Col>
+          <Grid.Col md={6}>
+            <Flex justify="center" className={classes.gradientContainer}>
+              <Image
+                src="/images/link/activity.png"
+                alt="activity"
+                id="activity"
+                width="auto"
+                imageProps={{
+                  style: { objectFit: 'cover', objectPosition: 'top', height: '100%' },
+                }}
+              />
+              <div className={classes.gradientBox} />
+            </Flex>
+            <Title className={classes.heading} order={3}>
+              Keep track of activities
+            </Title>
+            <Text className={classes.copy}>
+              See the history of all the models you have added to your Stable Diffusion instance.
+            </Text>
+          </Grid.Col>
+        </Grid>
+
+        {/* TODO: Add video once created */}
+        {/* <AspectRatio ratio={16 / 9} my={40}>
         <YoutubeEmbed videoId="MaSRXvM05x4" />
       </AspectRatio> */}
 
-      <Button
-        variant="filled"
-        color="blue"
-        size="lg"
-        radius="xl"
-        fullWidth
-        my={40}
-        component={NextLink}
-        href={buttonData.href}
-      >
-        {buttonData.text}
-      </Button>
-    </Container>
+        <Button
+          variant="filled"
+          color="blue"
+          size="lg"
+          radius="xl"
+          fullWidth
+          my={40}
+          component={NextLink}
+          href={buttonData.href}
+          rel="nofollow noreferrer"
+        >
+          {buttonData.text}
+        </Button>
+      </Container>
+    </>
   );
 }
 
