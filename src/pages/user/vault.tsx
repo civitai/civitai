@@ -198,7 +198,7 @@ const VaultItemsRemove = ({ vaultItems }: { vaultItems: VaultItemGetPaged[] }) =
           <Stack>
             {vaultItems.map((item) => (
               <Paper withBorder p="sm" radius="lg" key={item.id}>
-                <Group>
+                <Group noWrap>
                   {item.coverImageUrl && (
                     <Image
                       src={item.coverImageUrl}
@@ -276,7 +276,7 @@ const VaultItemsDownload = ({ vaultItems }: { vaultItems: VaultItemGetPaged[] })
       for (const file of files) {
         window.open(file, '_blank');
         // Some delay between window open to avoid popup blockers
-        // And also to avoid the myriad of tabs being opened at once
+        // And also to avoid the myriad of tabs being opened at once.
         await sleep(1500);
       }
 
@@ -289,7 +289,7 @@ const VaultItemsDownload = ({ vaultItems }: { vaultItems: VaultItemGetPaged[] })
     }
   };
 
-  const downloadablesLabels = [
+  const downloadableOptions = [
     { value: 'model', label: 'Model' },
     { value: 'details', label: 'Details' },
     { value: 'images', label: 'Images' },
@@ -304,7 +304,7 @@ const VaultItemsDownload = ({ vaultItems }: { vaultItems: VaultItemGetPaged[] })
           <Stack>
             {vaultItems.map((item) => (
               <Paper withBorder p="sm" radius="lg" key={item.id}>
-                <Group>
+                <Group noWrap>
                   {item.coverImageUrl && (
                     <Image
                       src={item.coverImageUrl}
@@ -335,7 +335,7 @@ const VaultItemsDownload = ({ vaultItems }: { vaultItems: VaultItemGetPaged[] })
             setDownloadables(values);
           }}
         >
-          {downloadablesLabels.map((item) => (
+          {downloadableOptions.map((item) => (
             <Checkbox key={item.value} value={item.value} label={item.label}>
               {item.label}
             </Checkbox>
