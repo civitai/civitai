@@ -10,37 +10,36 @@ const schema = z.object({
   modelVersionIds: commaDelimitedNumberArray(),
 });
 
-export default AuthedEndpoint(async function handler(
-  req: NextApiRequest,
-  res: NextApiResponse,
-  user: SessionUser
-) {
-  const results = schema.safeParse(req.query);
-  if (!results.success)
-    return res.status(400).json({ error: `Could not parse provided model versions array.` });
+export default AuthedEndpoint(
+  async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionUser) {
+    const results = schema.safeParse(req.query);
+    if (!results.success)
+      return res.status(400).json({ error: `Could not parse provided model versions array.` });
 
-  const modelVersionIds = results.data.modelVersionIds;
+    const modelVersionIds = results.data.modelVersionIds;
 
-  if (modelVersionIds.length === 0) {
-    return res.status(200).json([]);
-  }
+    if (modelVersionIds.length === 0) {
+      return res.status(200).json([]);
+    }
 
-  try {
-    const vaultItems = await dbRead.vaultItem.findMany({
-      where: {
-        vaultId: user.id,
-        modelVersionId: {
-          in: results.data.modelVersionIds,
+    try {
+      const vaultItems = await dbRead.vaultItem.findMany({
+        where: {
+          vaultId: user.id,
+          modelVersionId: {
+            in: results.data.modelVersionIds,
+          },
         },
-      },
-    });
-    return res.json(
-      modelVersionIds.map((v) => ({
-        modelVersionId: v,
-        vaultItem: vaultItems.find((vi) => vi.modelVersionId === v) ?? null,
-      }))
-    );
-  } catch (error) {
-    return res.status(500).json({ message: 'An unexpected error occurred', error });
-  }
-});
+      });
+      return res.json(
+        modelVersionIds.map((v) => ({
+          modelVersionId: v,
+          vaultItem: vaultItems.find((vi) => vi.modelVersionId === v) ?? null,
+        }))
+      );
+    } catch (error) {
+      return res.status(500).json({ message: 'An unexpected error occurred', error });
+    }
+  },
+  ['GET']
+);
