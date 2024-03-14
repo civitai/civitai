@@ -194,7 +194,7 @@ export function ManagePostStatus() {
 
 //   return (
 //     <Checkbox
-//       checked={false} // TODO.nsfwLevel
+//       checked={false}
 //       onChange={toggleCheckbox}
 //       disabled={isLoading}
 //       label={

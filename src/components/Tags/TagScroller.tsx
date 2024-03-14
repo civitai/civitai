@@ -4,7 +4,6 @@ import { useEffect, useState } from 'react';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 
 type TagProps = { id: number; name: string };
-// TODO.nsfwLevel - multiple: boolean
 export function TagScroller({
   data,
   value = [],

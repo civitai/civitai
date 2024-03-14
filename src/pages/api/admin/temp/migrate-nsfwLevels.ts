@@ -53,11 +53,8 @@ async function migrateImages(res: NextApiResponse) {
   const [{ max: maxImageId }] = await dbRead.$queryRaw<{ max: number }[]>(
     Prisma.sql`SELECT MAX(id) "max" FROM "Image";`
   );
-  const [{ min }] = await dbRead.$queryRaw<{ min: number }[]>(
-    Prisma.sql`SELECT MIN(id) "min" FROM "Image";`
-  );
 
-  let cursor = min ?? 0;
+  let cursor = 0;
   await limitConcurrency(() => {
     if (cursor > maxImageId || shouldStop) return null; // We've reached the end of the images
     const start = cursor;
@@ -90,15 +87,11 @@ async function migrateUsers(res: NextApiResponse) {
     shouldStop = true;
     await Promise.all(onCancel.map((cancel) => cancel()));
   });
-  // TODO.nsfwLevel - kill min
   const [{ max: maxId }] = await dbRead.$queryRaw<{ max: number }[]>(
     Prisma.sql`SELECT MAX(id) "max" FROM "User";`
   );
-  const [{ min }] = await dbRead.$queryRaw<{ min: number }[]>(
-    Prisma.sql`SELECT MIN(id) "min" FROM "User";`
-  );
 
-  let cursor = min ?? 0;
+  let cursor = 0;
   await limitConcurrency(() => {
     if (cursor > maxId || shouldStop) return null; // We've reached the end of the images
     const start = cursor;
@@ -135,11 +128,8 @@ async function migratePosts(res: NextApiResponse) {
   const [{ max: maxId }] = await dbRead.$queryRaw<{ max: number }[]>(
     Prisma.sql`SELECT MAX(id) "max" FROM "Post";`
   );
-  const [{ min }] = await dbRead.$queryRaw<{ min: number }[]>(
-    Prisma.sql`SELECT MIN(id) "min" FROM "Post";`
-  );
 
-  let cursor = min ?? 0;
+  let cursor = 0;
   await limitConcurrency(() => {
     if (cursor > maxId || shouldStop) return null; // We've reached the end of the images
 
@@ -178,11 +168,8 @@ async function migrateBounties(res: NextApiResponse) {
   const [{ max: maxId }] = await dbRead.$queryRaw<{ max: number }[]>(
     Prisma.sql`SELECT MAX(id) "max" FROM "Bounty";`
   );
-  const [{ min }] = await dbRead.$queryRaw<{ min: number }[]>(
-    Prisma.sql`SELECT MIN(id) "min" FROM "Bounty";`
-  );
 
-  let cursor = min ?? 0;
+  let cursor = 0;
   await limitConcurrency(() => {
     if (cursor > maxId || shouldStop) return null; // We've reached the end of the images
 
@@ -228,11 +215,8 @@ async function migrateBountyEntries(res: NextApiResponse) {
   const [{ max: maxId }] = await dbRead.$queryRaw<{ max: number }[]>(
     Prisma.sql`SELECT MAX(id) "max" FROM "BountyEntry";`
   );
-  const [{ min }] = await dbRead.$queryRaw<{ min: number }[]>(
-    Prisma.sql`SELECT MIN(id) "min" FROM "BountyEntry";`
-  );
 
-  let cursor = min ?? 0;
+  let cursor = 0;
   await limitConcurrency(() => {
     if (cursor > maxId || shouldStop) return null; // We've reached the end of the images
 
@@ -274,11 +258,8 @@ async function migrateModelVersions(res: NextApiResponse) {
   const [{ max: maxId }] = await dbRead.$queryRaw<{ max: number }[]>(
     Prisma.sql`SELECT MAX(id) "max" FROM "ModelVersion";`
   );
-  const [{ min }] = await dbRead.$queryRaw<{ min: number }[]>(
-    Prisma.sql`SELECT MIN(id) "min" FROM "ModelVersion";`
-  );
 
-  let cursor = min ?? 0;
+  let cursor = 0;
   await limitConcurrency(() => {
     if (cursor > maxId || shouldStop) return null; // We've reached the end of the images
 
@@ -334,11 +315,8 @@ async function migrateModels(res: NextApiResponse) {
   const [{ max: maxId }] = await dbRead.$queryRaw<{ max: number }[]>(
     Prisma.sql`SELECT MAX(id) "max" FROM "Model";`
   );
-  const [{ min }] = await dbRead.$queryRaw<{ min: number }[]>(
-    Prisma.sql`SELECT MIN(id) "min" FROM "Model";`
-  );
 
-  let cursor = min ?? 0;
+  let cursor = 0;
   await limitConcurrency(() => {
     if (cursor > maxId || shouldStop) return null; // We've reached the end of the images
 
@@ -384,11 +362,8 @@ async function migrateCollections(res: NextApiResponse) {
   const [{ max: maxId }] = await dbRead.$queryRaw<{ max: number }[]>(
     Prisma.sql`SELECT MAX(id) "max" FROM "Collection";`
   );
-  const [{ min }] = await dbRead.$queryRaw<{ min: number }[]>(
-    Prisma.sql`SELECT MIN(id) "min" FROM "Collection";`
-  );
 
-  let cursor = min ?? 0;
+  let cursor = 0;
   await limitConcurrency(() => {
     if (cursor > maxId || shouldStop) return null; // We've reached the end of the images
 
@@ -427,11 +402,8 @@ async function migrateArticles(res: NextApiResponse) {
   const [{ max: maxId }] = await dbRead.$queryRaw<{ max: number }[]>(
     Prisma.sql`SELECT MAX(id) "max" FROM "Article";`
   );
-  const [{ min }] = await dbRead.$queryRaw<{ min: number }[]>(
-    Prisma.sql`SELECT MIN(id) "min" FROM "Article";`
-  );
 
-  let cursor = min ?? 0;
+  let cursor = 0;
   await limitConcurrency(() => {
     if (cursor > maxId || shouldStop) return null; // We've reached the end of the images
 
