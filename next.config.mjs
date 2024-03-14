@@ -1,5 +1,6 @@
 // @ts-check
 import { withAxiom } from "next-axiom";
+import packageJson from './package.json';
 
 /**
  * Don't be scared of the generics here.
@@ -14,6 +15,9 @@ function defineNextConfig(config) {
 }
 
 export default defineNextConfig(withAxiom({
+  env: {
+    NEXT_PUBLIC_VERSION: packageJson.version,
+  },
   reactStrictMode: true,
   productionBrowserSourceMaps: true,
   // Next.js i18n docs: https://nextjs.org/docs/advanced-features/i18n-routing
