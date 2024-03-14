@@ -39,7 +39,12 @@ import {
   IconSearch,
 } from '@tabler/icons-react';
 import { useEffect, useMemo, useState } from 'react';
-import { useMutateVault, useQueryVault } from '~/components/Vault/vault.util';
+import JSZip from 'jszip';
+import {
+  getVaultItemDownloadUrls,
+  useMutateVault,
+  useQueryVault,
+} from '~/components/Vault/vault.util';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { formatKBytes } from '~/utils/number-helpers';
@@ -67,6 +72,9 @@ import { getVaultState } from '~/utils/vault';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { Meta } from '~/components/Meta/Meta';
+import { isDefined } from '~/utils/type-guards';
+import { saveAs } from 'file-saver';
+import { sleep } from '~/server/utils/concurrency-helpers';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -236,6 +244,121 @@ const VaultItemsRemove = ({ vaultItems }: { vaultItems: VaultItemGetPaged[] }) =
             Confirm delete
           </Button>
         </Group>
+      </Stack>
+    </Modal>
+  );
+};
+
+const VaultItemsDownload = ({ vaultItems }: { vaultItems: VaultItemGetPaged[] }) => {
+  const dialog = useDialogContext();
+  const handleClose = dialog.onClose;
+  const [downloadables, setDownloadables] = useState(['details', 'images', 'model']);
+  const [downloading, setDownloading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleDownload = async () => {
+    if (downloading) return;
+    setDownloading(true);
+    setError(null);
+
+    try {
+      const files = vaultItems
+        .map((item) => {
+          const { details, images, models } = getVaultItemDownloadUrls(item);
+          return [
+            downloadables.includes('details') ? details : null,
+            downloadables.includes('images') ? images : null,
+            downloadables.includes('model') ? models : null,
+          ].filter(isDefined);
+        })
+        .flat();
+
+      for (const file of files) {
+        window.open(file, '_blank');
+        // Some delay between window open to avoid popup blockers
+        // And also to avoid the myriad of tabs being opened at once
+        await sleep(1500);
+      }
+
+      setDownloading(false);
+      handleClose();
+    } catch (error) {
+      console.error(error);
+      setError('An error occurred while downloading the files. Please try again later.');
+      setDownloading(false);
+    }
+  };
+
+  const downloadablesLabels = [
+    { value: 'model', label: 'Model' },
+    { value: 'details', label: 'Details' },
+    { value: 'images', label: 'Images' },
+  ];
+
+  return (
+    <Modal {...dialog} size="md" withCloseButton title={`Deleting ${vaultItems.length} models`}>
+      <Stack>
+        <Text size="sm">Models deleted from your Vault cannot be retrieved.</Text>
+
+        <ScrollArea.Autosize maxHeight={500}>
+          <Stack>
+            {vaultItems.map((item) => (
+              <Paper withBorder p="sm" radius="lg" key={item.id}>
+                <Group>
+                  {item.coverImageUrl && (
+                    <Image
+                      src={item.coverImageUrl}
+                      alt="Model Image"
+                      radius="sm"
+                      width={50}
+                      height={50}
+                    />
+                  )}
+                  <Stack spacing={0}>
+                    <Text>{item.modelName}</Text>
+                    <Text color="dimmed" size="sm">
+                      {item.versionName}
+                    </Text>
+                  </Stack>
+                </Group>
+              </Paper>
+            ))}
+          </Stack>
+        </ScrollArea.Autosize>
+
+        <Checkbox.Group
+          value={downloadables}
+          orientation="horizontal"
+          label="Select what items to download"
+          description="You can download the model, details, and images of the selected models. Only the main model file will be downloaded when doing a multi-download."
+          onChange={(values) => {
+            setDownloadables(values);
+          }}
+        >
+          {downloadablesLabels.map((item) => (
+            <Checkbox key={item.value} value={item.value} label={item.label}>
+              {item.label}
+            </Checkbox>
+          ))}
+        </Checkbox.Group>
+
+        <Divider mx="-lg" />
+        {error && (
+          <Text size="sm" color="red">
+            {error}
+          </Text>
+        )}
+        <Button
+          ml="auto"
+          disabled={downloadables.length === 0 || downloading}
+          onClick={handleDownload}
+          loading={downloading}
+          color="blue"
+          fullWidth
+          radius="xl"
+        >
+          Download
+        </Button>
       </Stack>
     </Modal>
   );
@@ -544,6 +667,23 @@ export default function CivitaiVault() {
                   >
                     Add notes
                   </Button>
+                  {selectedItems.length > 0 &&
+                    selectedItems.every((i) => i.status === VaultItemStatus.Stored) && (
+                      <Button
+                        disabled={selectedItems.length === 0}
+                        radius="xl"
+                        onClick={() => {
+                          dialogStore.trigger({
+                            component: VaultItemsDownload,
+                            props: {
+                              vaultItems: selectedItems,
+                            },
+                          });
+                        }}
+                      >
+                        Download
+                      </Button>
+                    )}
                   <Button
                     disabled={selectedItems.length === 0}
                     radius="xl"
