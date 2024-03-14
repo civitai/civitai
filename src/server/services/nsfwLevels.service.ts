@@ -1,7 +1,7 @@
-import { Prisma, SearchIndexUpdateQueueAction } from '@prisma/client';
+import { CollectionItemStatus, Prisma, SearchIndexUpdateQueueAction } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { isDefined } from '~/utils/type-guards';
-import { uniq } from 'lodash-es';
+import { chunk, uniq } from 'lodash-es';
 import {
   articlesSearchIndex,
   bountiesSearchIndex,
@@ -9,24 +9,28 @@ import {
   modelsSearchIndex,
 } from '~/server/search-index';
 import { ImageConnectionType, NsfwLevel } from '~/server/common/enums';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 
 async function getImageConnectedEntities(imageIds: number[]) {
-  const images = await dbRead.image.findMany({
-    where: { id: { in: imageIds } },
-    select: { postId: true },
-  });
-  const connections = await dbRead.imageConnection.findMany({
-    where: { imageId: { in: imageIds } },
-    select: { entityType: true, entityId: true },
-  });
-  const articles = await dbRead.article.findMany({
-    where: { coverId: { in: imageIds } },
-    select: { id: true },
-  });
-  const collectionItems = await dbRead.collectionItem.findMany({
-    where: { imageId: { in: imageIds } },
-    select: { collectionId: true },
-  });
+  // these dbReads could be run concurrently
+  const [images, connections, articles, collectionItems] = await Promise.all([
+    dbRead.image.findMany({
+      where: { id: { in: imageIds } },
+      select: { postId: true },
+    }),
+    dbRead.imageConnection.findMany({
+      where: { imageId: { in: imageIds } },
+      select: { entityType: true, entityId: true },
+    }),
+    dbRead.article.findMany({
+      where: { coverId: { in: imageIds } },
+      select: { id: true },
+    }),
+    dbRead.collectionItem.findMany({
+      where: { imageId: { in: imageIds } },
+      select: { collectionId: true },
+    }),
+  ]);
 
   return {
     postIds: images.map((x) => x.postId).filter(isDefined),
@@ -42,14 +46,17 @@ async function getImageConnectedEntities(imageIds: number[]) {
 }
 
 async function getPostConnectedEntities(postIds: number[]) {
-  const posts = await dbRead.post.findMany({
-    where: { id: { in: postIds } },
-    select: { modelVersionId: true },
-  });
-  const collectionItems = await dbRead.collectionItem.findMany({
-    where: { postId: { in: postIds } },
-    select: { collectionId: true },
-  });
+  const [posts, collectionItems] = await Promise.all([
+    dbRead.post.findMany({
+      where: { id: { in: postIds } },
+      select: { modelVersionId: true },
+    }),
+    dbRead.collectionItem.findMany({
+      where: { postId: { in: postIds } },
+      select: { collectionId: true },
+    }),
+    ,
+  ]);
 
   return {
     modelVersionIds: posts.map((x) => x.modelVersionId).filter(isDefined),
@@ -175,12 +182,9 @@ export async function getNsfwLevelRelatedEntities(source: {
 
 const batchSize = 1000;
 function batcher(ids: number[], fn: (ids: number[]) => Promise<void>) {
-  return async () => {
-    if (!ids.length) return;
-    for (let i = 0; i < ids.length; i += batchSize) {
-      await fn(ids.slice(i, batchSize));
-    }
-  };
+  return chunk(ids, batchSize).map((chunk) => async () => {
+    if (chunk.length) await fn(chunk);
+  });
 }
 
 export async function updateNsfwLevels({
@@ -216,7 +220,8 @@ export async function updateNsfwLevels({
   ];
 
   for (const batch of nsfwLevelChangeBatches) {
-    await Promise.all(batch.map((fn) => fn()));
+    const tasks = batch.flat();
+    await limitConcurrency(tasks, 5);
   }
 }
 
@@ -226,7 +231,7 @@ export async function updatePostNsfwLevels(postIds: number[]) {
       SELECT DISTINCT ON (p.id) p.id, bit_or(i."nsfwLevel") "nsfwLevel"
       FROM "Post" p
       JOIN "Image" i ON i."postId" = p.id
-      WHERE p.id = ANY(ARRAY[${postIds}]::Int[])
+      WHERE p.id IN (${Prisma.join(postIds)})
       GROUP BY p.id
     )
     UPDATE "Post" p
@@ -242,7 +247,7 @@ export async function updateArticleNsfwLevels(articleIds: number[]) {
       SELECT DISTINCT ON (a.id) a.id, bit_or(i."nsfwLevel") "nsfwLevel"
       FROM "Article" a
       JOIN "Image" i ON a."coverId" = i.id
-      WHERE a.id = ANY(ARRAY[${articleIds}]::Int[])
+      WHERE a.id IN (${Prisma.join(articleIds)})
       GROUP BY a.id
     )
     UPDATE "Article" a
@@ -270,7 +275,7 @@ export async function updateBountyNsfwLevels(bountyIds: number[]) {
       FROM "ImageConnection" ic
       JOIN "Image" i ON i.id = ic."imageId"
       JOIN "Bounty" b on b.id = ic."entityId" AND ic."entityType" = 'Bounty'
-      WHERE ic."entityType" = 'Bounty' AND ic."entityId" = ANY(ARRAY[${bountyIds}]::Int[])
+      WHERE ic."entityType" = 'Bounty' AND ic."entityId" IN (${Prisma.join(bountyIds)})
       GROUP BY 1
     )
     UPDATE "Bounty" b SET "nsfwLevel" = (
@@ -297,7 +302,7 @@ export async function updateBountyEntryNsfwLevels(bountyEntryIds: number[]) {
       FROM "ImageConnection" ic
       JOIN "Image" i ON i.id = ic."imageId"
       JOIN "BountyEntry" b on b.id = "entityId" AND ic."entityType" = 'BountyEntry'
-      WHERE ic."entityType" = 'BountyEntry' AND ic."entityId" = ANY(ARRAY[${bountyEntryIds}]::Int[])
+      WHERE ic."entityType" = 'BountyEntry' AND ic."entityId" IN (${Prisma.join(bountyEntryIds)})
       GROUP BY 1
     )
     UPDATE "BountyEntry" b SET "nsfwLevel" = level."nsfwLevel"
@@ -317,9 +322,11 @@ export async function updateCollectionsNsfwLevels(collectionIds: number[]) {
       LEFT JOIN "Post" p on p.id = ci."postId" AND c.type = 'Post' AND p."publishedAt" IS NOT NULL
       LEFT JOIN "Model" m on m.id = ci."modelId" AND c.type = 'Model' AND m."status" = 'Published'
       LEFT JOIN "Article" a on a.id = ci."articleId" AND c.type = 'Article' AND a."publishedAt" IS NOT NULL
-      WHERE ci."collectionId" = c.id
+      WHERE ci."collectionId" = c.id AND ci.status = ${
+        CollectionItemStatus.ACCEPTED
+      }::"CollectionItemStatus"
     )
-    WHERE c.id = ANY(ARRAY[${collectionIds}]::Int[]) AND level."nsfwLevel" != c."nsfwLevel"
+    WHERE c.id IN (${Prisma.join(collectionIds)}) AND level."nsfwLevel" != c."nsfwLevel"
     RETURNING c.id;
   `);
   await collectionsSearchIndex.queueUpdate(
@@ -335,7 +342,7 @@ export async function updateModelNsfwLevels(modelIds: number[]) {
         bit_or(mv."nsfwLevel") "nsfwLevel"
       FROM "ModelVersion" mv
       JOIN "Model" m on m.id = mv."modelId"
-      WHERE m.id = ANY(ARRAY[${modelIds}]::Int[])
+      WHERE m.id IN (${Prisma.join(modelIds)})
       GROUP BY mv.id
     )
     UPDATE "Model" m
@@ -378,7 +385,7 @@ export async function updateModelVersionNsfwLevels(modelVersionIds: number[]) {
         END AS "nsfwLevel"
       FROM "ModelVersion" mv
       JOIN "Model" m ON mv."modelId" = m.id
-      WHERE mv.id = ANY(ARRAY[${modelVersionIds}]::Int[])
+      WHERE mv.id IN (${Prisma.join(modelVersionIds)})
     )
     UPDATE "ModelVersion" mv
     SET "nsfwLevel" = level."nsfwLevel"

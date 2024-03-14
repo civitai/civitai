@@ -91,7 +91,7 @@ export const useQueryImages = (
     data: flatData,
     showHidden: !!filters.hidden,
     disabled: !applyHiddenPreferences,
-    isLoading: rest.isRefetching,
+    isRefetching: rest.isRefetching,
   });
 
   return {

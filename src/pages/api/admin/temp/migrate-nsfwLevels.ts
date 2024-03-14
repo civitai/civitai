@@ -1,4 +1,4 @@
-import { ImageIngestionStatus, Prisma } from '@prisma/client';
+import { CollectionItemStatus, ImageIngestionStatus, Prisma } from '@prisma/client';
 import { NextApiResponse } from 'next';
 import { NsfwLevel } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
@@ -6,9 +6,21 @@ import { pgDbWrite } from '~/server/db/pgDb';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { invalidateAllSessions } from '~/server/utils/session-helpers';
+import z from 'zod';
+
+// TODO.nsfwLevel - follow pattern from migrate-likes so that we can run this in prod and pickup where we left off
+const schema = z.object({
+  cursor: z.coerce.number().min(0).optional().default(0),
+  concurrency: z.coerce.number().min(1).max(50).optional().default(10),
+  maxCursor: z.coerce.number().min(0).optional(),
+  batchSize: z.coerce.number().min(0).optional().default(100),
+  after: z.coerce.date().optional(),
+  before: z.coerce.date().optional(),
+});
 
 const BATCH_SIZE = 500;
 const CONCURRENCY_LIMIT = 50;
+// TODO.Briant - add abstraction for handling migrations - db-helpers.ts (lot of repeated patterns here)
 export default WebhookEndpoint(async (req, res) => {
   const migrations = [
     [migrateImages, migrateUsers],
@@ -18,14 +30,14 @@ export default WebhookEndpoint(async (req, res) => {
     [migrateCollections],
   ];
 
-  console.time('run migrations');
   let counter = 0;
+  console.time('MIGRATION_TIMER');
   for (const steps of migrations) {
     await Promise.all(steps.map((step) => step(res)));
     counter++;
     console.log(`end ${counter}`);
   }
-  console.timeEnd('run migrations');
+  console.timeEnd('MIGRATION_TIMER');
 
   res.status(200).json({ finished: true });
 });
@@ -78,6 +90,7 @@ async function migrateUsers(res: NextApiResponse) {
     shouldStop = true;
     await Promise.all(onCancel.map((cancel) => cancel()));
   });
+  // TODO.nsfwLevel - kill min
   const [{ max: maxId }] = await dbRead.$queryRaw<{ max: number }[]>(
     Prisma.sql`SELECT MAX(id) "max" FROM "User";`
   );
@@ -146,7 +159,7 @@ async function migratePosts(res: NextApiResponse) {
         UPDATE "Post" p
         SET "nsfwLevel" = level."nsfwLevel"
         FROM level
-        WHERE level.id = p.id;
+        WHERE level.id = p.id AND level."nsfwLevel" != p."nsfwLevel";
       `);
       onCancel.push(cancel);
       await result();
@@ -393,7 +406,7 @@ async function migrateCollections(res: NextApiResponse) {
             LEFT JOIN "Post" p on p.id = ci."postId" AND c.type = 'Post' AND p."publishedAt" IS NOT NULL
             LEFT JOIN "Model" m on m.id = ci."modelId" AND c.type = 'Model' AND m."status" = 'Published'
             LEFT JOIN "Article" a on a.id = ci."articleId" AND c.type = 'Article' AND a."publishedAt" IS NOT NULL
-            WHERE ci."collectionId" = c.id
+            WHERE ci."collectionId" = c.id AND ci.status = ${CollectionItemStatus.ACCEPTED}::"CollectionItemStatus"
           )
           WHERE c.id BETWEEN ${start} AND ${end};
       `);

@@ -14,3 +14,12 @@ export async function preventReplicationLag(type: LaggingType, id?: number) {
   if (env.REPLICATION_LAG_DELAY <= 0 || !id) return;
   await redis.set(`lag-helper:${type}:${id}`, 'true', { EX: env.REPLICATION_LAG_DELAY });
 }
+
+// type DataProcessorOptions = {
+//   rangeFetcher: (runContext: any) => AsyncIterable<any>;
+//   processor: (data: any, runContext: any) => Promise<void>;
+//   batchSize: number;
+//   concurrency: number;
+//   runContext: { on: (event: 'close' )}
+// };
+// export async function dataProcessor({ rangeFetcher, processor, batchSize, concurrency, runContext }, )

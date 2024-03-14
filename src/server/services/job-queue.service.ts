@@ -22,37 +22,30 @@ export async function enqueueJobs(
   }
 }
 
+const jobQueueMap = {
+  [EntityType.Image]: 'imageIds',
+  [EntityType.Post]: 'postIds',
+  [EntityType.Article]: 'articleIds',
+  [EntityType.Bounty]: 'bountyIds',
+  [EntityType.BountyEntry]: 'bountyEntryIds',
+  [EntityType.Collection]: 'collectionIds',
+  [EntityType.Model]: 'modelIds',
+  [EntityType.ModelVersion]: 'modelVersionIds',
+} as const;
+type JobQueueMap = typeof jobQueueMap;
+type JobQueueIds = {
+  [K in JobQueueMap[keyof JobQueueMap]]: number[];
+};
+
 export function reduceJobQueueToIds(jobs: { entityId: number; entityType: EntityType }[]) {
-  return jobs.reduce<{
-    imageIds: number[];
-    postIds: number[];
-    articleIds: number[];
-    bountyIds: number[];
-    bountyEntryIds: number[];
-    collectionIds: number[];
-    modelIds: number[];
-    modelVersionIds: number[];
-  }>(
-    (acc, { entityType, entityId }) => {
-      if (entityType === EntityType.Image) acc.imageIds.push(entityId);
-      if (entityType === EntityType.Post) acc.postIds.push(entityId);
-      if (entityType === EntityType.Article) acc.articleIds.push(entityId);
-      if (entityType === EntityType.Bounty) acc.bountyIds.push(entityId);
-      if (entityType === EntityType.BountyEntry) acc.bountyEntryIds.push(entityId);
-      if (entityType === EntityType.Collection) acc.collectionIds.push(entityId);
-      if (entityType === EntityType.Model) acc.modelIds.push(entityId);
-      if (entityType === EntityType.ModelVersion) acc.modelVersionIds.push(entityId);
-      return acc;
-    },
-    {
-      imageIds: [],
-      postIds: [],
-      articleIds: [],
-      bountyIds: [],
-      bountyEntryIds: [],
-      collectionIds: [],
-      modelIds: [],
-      modelVersionIds: [],
-    }
-  );
+  const jobIds: Partial<JobQueueIds> = {};
+  for (const key in jobQueueMap) {
+    jobIds[jobQueueMap[key as keyof JobQueueMap]] = [];
+  }
+  for (const job of jobs) {
+    const key = jobQueueMap[job.entityType];
+    if (!jobIds[key]) jobIds[key] = [];
+    jobIds[key]!.push(job.entityId);
+  }
+  return jobIds as JobQueueIds;
 }

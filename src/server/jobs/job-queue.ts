@@ -8,6 +8,7 @@ import {
 import { reduceJobQueueToIds } from '~/server/services/job-queue.service';
 import { uniq, chunk } from 'lodash-es';
 import { imagesSearchIndex } from '~/server/search-index';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 
 const updateNsfwLevelJob = createJob('update-nsfw-levels', '*/1 * * * *', async (e) => {
   // const [lastRun, setLastRun] = await getJobDate('update-nsfw-levels');
@@ -60,33 +61,26 @@ const handleJobQueueCleanup = createJob('job-queue-cleanup', '*/1 * * * *', asyn
   const relatedEntities = await getNsfwLevelRelatedEntities(jobQueueIds);
 
   //handle cleanup
-  const cleanupImages = async () => {
-    const batches = chunk(jobQueueIds.imageIds, batchSize);
-    for (const ids of batches) {
+  const cleanupImages = () =>
+    chunk(jobQueueIds.imageIds, batchSize).map((ids) => async () => {
       await dbWrite.imageConnection.deleteMany({ where: { imageId: { in: ids } } });
       await dbWrite.collectionItem.deleteMany({ where: { imageId: { in: ids } } });
-    }
-  };
-  const cleanupPosts = async () => {
-    const batches = chunk(jobQueueIds.postIds, batchSize);
-    for (const ids of batches) {
+    });
+  const cleanupPosts = () =>
+    chunk(jobQueueIds.postIds, batchSize).map((ids) => async () => {
       await dbWrite.collectionItem.deleteMany({ where: { postId: { in: ids } } });
-    }
-  };
-  const cleanupArticles = async () => {
-    const batches = chunk(jobQueueIds.articleIds, batchSize);
-    for (const ids of batches) {
+    });
+  const cleanupArticles = () =>
+    chunk(jobQueueIds.articleIds, batchSize).map((ids) => async () => {
       await dbWrite.collectionItem.deleteMany({ where: { articleId: { in: ids } } });
-    }
-  };
-  const cleanupModels = async () => {
-    const batches = chunk(jobQueueIds.modelIds, batchSize);
-    for (const ids of batches) {
+    });
+  const cleanupModels = () =>
+    chunk(jobQueueIds.modelIds, batchSize).map((ids) => async () => {
       await dbWrite.collectionItem.deleteMany({ where: { modelId: { in: ids } } });
-    }
-  };
+    });
 
-  await Promise.all([cleanupImages(), cleanupPosts(), cleanupArticles(), cleanupModels()]);
+  const tasks = [cleanupImages(), cleanupPosts(), cleanupArticles(), cleanupModels()].flat();
+  await limitConcurrency(tasks, 5);
 
   await updateNsfwLevels(relatedEntities);
 

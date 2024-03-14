@@ -3,7 +3,7 @@ import { useQueryHiddenPreferences } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { HiddenTag } from '~/server/services/user-preferences.service';
 
-type HiddenPreferencesState = {
+export type HiddenPreferencesState = {
   hiddenUsers: Map<number, boolean>;
   hiddenTags: Map<number, boolean>;
   hiddenModels: Map<number, boolean>;
