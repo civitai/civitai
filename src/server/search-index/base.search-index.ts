@@ -1,6 +1,7 @@
 import { getJobDate, JobContext } from '~/server/jobs/job';
 import { dbWrite, dbRead } from '~/server/db/client';
-import { PrismaClient, SearchIndexUpdateQueueAction } from '@prisma/client';
+import { PrismaClient } from '@prisma/client';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { getOrCreateIndex, swapIndex } from '~/server/meilisearch/util';
 import { chunk } from 'lodash-es';
 import { SearchIndexUpdate } from '~/server/search-index/SearchIndexUpdate';
@@ -46,11 +47,6 @@ export function createSearchIndexUpdateProcessor({
       // Should  help avoid missed items during the run
       // of the index.
       await setLastUpdate(now);
-
-      // Clear update queue
-      await dbWrite.searchIndexUpdateQueue.deleteMany({
-        where: { type: indexName, createdAt: { lt: now } },
-      });
     },
     /**
      * Resets an entire index by using its swap counterpart.
@@ -70,9 +66,7 @@ export function createSearchIndexUpdateProcessor({
       await swapIndex({ indexName, swapIndexName });
 
       // Clear update queue since our index should be brand new:
-      await dbWrite.searchIndexUpdateQueue.deleteMany({
-        where: { type: indexName, createdAt: { lt: new Date() } },
-      });
+      await SearchIndexUpdate.clearQueue(indexName);
     },
     async updateSync(
       items: Array<{ id: number; action?: SearchIndexUpdateQueueAction }>,

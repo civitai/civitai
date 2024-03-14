@@ -50,11 +50,9 @@ import { openGenQualityFeedbackModal } from '../Modals/GenerationQualityFeedback
 export function GeneratedImage({
   image,
   request,
-  fullCoverage = false,
 }: {
   image: Generation.Image;
   request: Generation.Request;
-  fullCoverage?: boolean;
 }) {
   const { classes } = useStyles();
   const user = useCurrentUser();
@@ -129,7 +127,7 @@ export function GeneratedImage({
 
   const imageRef = useRef<HTMLImageElement>(null);
   const isLandscape = request.params.width > request.params.height;
-  const removedForSafety = image.removedForSafety && image.available && !fullCoverage;
+  const removedForSafety = image.removedForSafety && image.available;
 
   const badFeedbackSelected = selectedFeedback === GENERATION_QUALITY.BAD;
   const goodFeedbackSelected = selectedFeedback === GENERATION_QUALITY.GOOD;

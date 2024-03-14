@@ -1,11 +1,12 @@
 import { ClickHouseClient } from '@clickhouse/client';
 import { PrismaClient } from '@prisma/client';
 import dayjs from 'dayjs';
-import { clickhouse } from '~/server/clickhouse/client';
+import { clickhouse, CustomClickHouseClient } from '~/server/clickhouse/client';
 import { dbWrite } from '~/server/db/client';
 import { AugmentedPool, pgDbWrite } from '~/server/db/pgDb';
 import { getJobDate, JobContext } from '~/server/jobs/job';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
+import { addToQueue, checkoutQueue } from '~/server/redis/queues';
 
 const DEFAULT_UPDATE_INTERVAL = 60 * 1000;
 const DEFAULT_RANK_REFRESH_INTERVAL = 60 * 60 * 1000;
@@ -28,28 +29,41 @@ export function createMetricProcessor({
     async update(jobContext: JobContext) {
       if (!clickhouse) return;
       const [lastUpdate, setLastUpdate] = await getJobDate(`metric:${name.toLowerCase()}`);
-      const ctx = { db: dbWrite, ch: clickhouse, pg: pgDbWrite, lastUpdate, jobContext };
+      const ctx: MetricProcessorRunContext = {
+        db: dbWrite,
+        ch: clickhouse,
+        pg: pgDbWrite,
+        lastUpdate,
+        jobContext,
+        queue: [],
+        affected: new Set(),
+        addAffected: (id) => {
+          if (Array.isArray(id)) id.forEach((x) => ctx.affected.add(x));
+          else ctx.affected.add(id);
+        },
+      };
 
       // Clear if first run of the day
       const isFirstOfDay = lastUpdate.getDate() !== new Date().getDate();
       if (isFirstOfDay) await clearDay?.(ctx);
 
       // Check if update is needed
-      const shouldUpdate = lastUpdate.getTime() + updateInterval < Date.now();
+      const shouldUpdate = true;
+      // const shouldUpdate = lastUpdate.getTime() + updateInterval < Date.now();
       const metricUpdateAllowed =
         ((await redis.hGet(REDIS_KEYS.SYSTEM.FEATURES, `metric:${name.toLowerCase()}`)) ??
           'true') === 'true';
       if (!shouldUpdate || !metricUpdateAllowed) return;
 
       // Run update
+      const queue = await checkoutQueue('metric-update:' + name);
+      ctx.queue = queue.content;
       ctx.lastUpdate = dayjs(lastUpdate).subtract(2, 'minute').toDate(); // Expand window to allow clickhouse tracker to catch up
       await update(ctx);
       await setLastUpdate();
 
       // Clear update queue
-      await dbWrite.metricUpdateQueue.deleteMany({
-        where: { type: name, createdAt: { lt: new Date() } },
-      });
+      await queue.commit();
     },
     async refreshRank(jobContext: JobContext) {
       if (!rank || !clickhouse) return;
@@ -64,7 +78,13 @@ export function createMetricProcessor({
       if (!shouldUpdateRank || !rankUpdateAllowed) return;
 
       // Run rank refresh
-      const ctx = { db: dbWrite, pg: pgDbWrite, ch: clickhouse, lastUpdate, jobContext };
+      const ctx: RankProcessorRunContext = {
+        db: dbWrite,
+        pg: pgDbWrite,
+        ch: clickhouse,
+        lastUpdate,
+        jobContext,
+      };
       if ('refresh' in rank) await rank.refresh(ctx);
       else await recreateRankTable(rank.table, rank.primaryKey, rank.indexes);
 
@@ -72,12 +92,7 @@ export function createMetricProcessor({
     },
     queueUpdate: async (ids: number | number[]) => {
       if (!Array.isArray(ids)) ids = [ids];
-
-      await dbWrite.$executeRawUnsafe(`
-        INSERT INTO "MetricUpdateQueue" ("type", "id")
-        VALUES ${ids.map((id) => `('${name}', ${id})`).join(',')}
-        ON CONFLICT ("type", "id") DO UPDATE SET "createdAt" = NOW()
-      `);
+      await addToQueue('metric-update:' + name.toLowerCase(), ids);
     },
   };
 }
@@ -114,12 +129,23 @@ async function recreateRankTable(rankTable: string, primaryKey: string, indexes:
   ]);
 }
 
-export type MetricProcessorRunContext = {
+export type RankProcessorRunContext = {
   db: PrismaClient;
   pg: AugmentedPool;
   ch: ClickHouseClient;
   lastUpdate: Date;
   jobContext: JobContext;
+};
+
+export type MetricProcessorRunContext = {
+  db: PrismaClient;
+  pg: AugmentedPool;
+  ch: CustomClickHouseClient;
+  lastUpdate: Date;
+  jobContext: JobContext;
+  queue: number[];
+  addAffected: (id: number | number[]) => void;
+  affected: Set<number>;
 };
 
 type MetricRankOptions =
@@ -130,7 +156,8 @@ type MetricRankOptions =
       refreshInterval?: number;
     }
   | {
-      refresh: MetricContextProcessor;
+      refresh: RankContextProcessor;
       refreshInterval?: number;
     };
 type MetricContextProcessor = (context: MetricProcessorRunContext) => Promise<void>;
+type RankContextProcessor = (context: RankProcessorRunContext) => Promise<void>;

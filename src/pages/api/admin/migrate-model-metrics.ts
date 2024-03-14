@@ -1,5 +1,6 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
+import { clickhouse } from '~/server/clickhouse/client';
 import { pgDbWrite } from '~/server/db/pgDb';
 import { limitConcurrency, Task } from '~/server/utils/concurrency-helpers';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
@@ -12,9 +13,10 @@ const schema = z.object({
 });
 
 const taskGenerators: ((ctx: MigrationContext) => Task)[] = [
-  versionThumbsMetrics,
-  modelThumbsMetrics,
-  modelCollectMetrics,
+  // versionThumbsMetrics,
+  // modelThumbsMetrics,
+  // modelCollectMetrics,
+  modelGenerationMetrics,
 ];
 
 export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {
@@ -175,5 +177,100 @@ function modelCollectMetrics(ctx: MigrationContext) {
     ctx.cancelFns.push(query.cancel);
     await query.result();
     console.timeEnd('Migrate model collects ' + ctx.start + '-' + ctx.end);
+  };
+}
+
+type GenerationMetrics = {
+  modelVersionId: number;
+  day: number;
+  week: number;
+  month: number;
+  year: number;
+  all_time: number;
+};
+function modelGenerationMetrics(ctx: MigrationContext) {
+  return async () => {
+    if (ctx.stop || !clickhouse) return;
+    const getVersionsQuery = await pgDbWrite.cancellableQuery<{ id: number }>(`
+      SELECT id
+      FROM "ModelVersion"
+      WHERE "modelId" BETWEEN ${ctx.start} AND ${ctx.end}
+    `);
+    ctx.cancelFns.push(getVersionsQuery.cancel);
+    const versions = await getVersionsQuery.result();
+    const versionIds = versions.map((v) => v.id);
+
+    console.log('Update model generation metrics ' + ctx.start + '-' + ctx.end);
+    console.time('Fetch version generation metrics ' + ctx.start + '-' + ctx.end);
+    const metrics = await clickhouse.$query<GenerationMetrics>`
+      SELECT
+          modelVersionId,
+          sumIf(count, createdDate = current_date()) day,
+          sumIf(count, createdDate >= subtractDays(current_date(), 7)) week,
+          sumIf(count, createdDate >= subtractMonths(current_date(), 1)) month,
+          sumIf(count, createdDate >= subtractYears(current_date(), 1)) year,
+          sum(count) all_time
+      FROM daily_resource_generation_counts
+      WHERE modelVersionId IN (${versionIds.join(',')})
+      GROUP BY modelVersionId
+    `;
+    const metricsJson = JSON.stringify(metrics);
+    console.timeEnd('Fetch version generation metrics ' + ctx.start + '-' + ctx.end);
+
+    console.time('Update version generation metrics ' + ctx.start + '-' + ctx.end);
+    const versionQuery = await pgDbWrite.cancellableQuery(`
+      -- Update model generation metrics
+      INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "generationCount")
+      SELECT
+          mvm.modelVersionId, mvm.timeframe, mvm.generations
+      FROM
+      (
+          SELECT
+              CAST(mvs::json->>'modelVersionId' AS INT) AS modelVersionId,
+              tf.timeframe,
+              CAST(
+                CASE
+                  WHEN tf.timeframe = 'Day' THEN mvs::json->>'day'
+                  WHEN tf.timeframe = 'Week' THEN mvs::json->>'week'
+                  WHEN tf.timeframe = 'Month' THEN mvs::json->>'month'
+                  WHEN tf.timeframe = 'Year' THEN mvs::json->>'year'
+                  WHEN tf.timeframe = 'AllTime' THEN mvs::json->>'all_time'
+                END
+              AS int) as generations
+          FROM json_array_elements('${metricsJson}'::json) mvs
+          CROSS JOIN (
+              SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
+          ) tf
+      ) mvm
+      WHERE
+        mvm.generations IS NOT NULL
+        AND mvm.modelVersionId IN (SELECT id FROM "ModelVersion") -- Exists
+      ON CONFLICT ("modelVersionId", timeframe) DO UPDATE
+        SET "generationCount" = EXCLUDED."generationCount", "updatedAt" = now();
+    `);
+    ctx.cancelFns.push(versionQuery.cancel);
+    await versionQuery.result();
+    console.timeEnd('Update version generation metrics ' + ctx.start + '-' + ctx.end);
+
+    console.time('Update model generation metrics ' + ctx.start + '-' + ctx.end);
+    const modelQuery = await pgDbWrite.cancellableQuery(`
+      -- Update model generation metrics
+      INSERT INTO "ModelMetric" ("modelId", timeframe, "generationCount", "updatedAt")
+      SELECT
+        mv."modelId",
+        mvm.timeframe,
+        SUM(mvm."generationCount") "generationCount",
+        NOW() "updatedAt"
+      FROM "ModelVersionMetric" mvm
+      JOIN "ModelVersion" mv ON mvm."modelVersionId" = mv.id
+      WHERE mv."modelId" BETWEEN ${ctx.start} AND ${ctx.end}
+      GROUP BY mv."modelId", mvm.timeframe
+      ON CONFLICT ("modelId", timeframe) DO UPDATE SET
+        "generationCount" = EXCLUDED."generationCount",
+        "updatedAt" = EXCLUDED."updatedAt";
+    `);
+    ctx.cancelFns.push(modelQuery.cancel);
+    await modelQuery.result();
+    console.timeEnd('Update model generation metrics ' + ctx.start + '-' + ctx.end);
   };
 }

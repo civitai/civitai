@@ -142,9 +142,11 @@ export const useUpdateResourceReview = () => {
       // Update model engagements
       const previousEngaged = queryUtils.user.getEngagedModels.getData() ?? {
         Recommended: [] as number[],
+        Notify: [] as number[],
       };
-      const shouldRemove =
-        !request.recommended || (previousEngaged.Recommended?.includes(modelId) ?? false);
+      const alreadyNotified = previousEngaged.Notify?.indexOf(modelId) ?? -1;
+      const alreadyReviewed = previousEngaged.Recommended?.indexOf(modelId) ?? -1;
+      const shouldRemove = !request.recommended || alreadyReviewed > -1;
       // Remove from recommended list
       queryUtils.user.getEngagedModels.setData(undefined, (old) => {
         if (!old) return;
@@ -160,7 +162,7 @@ export const useUpdateResourceReview = () => {
 
         if (request.recommended === true) {
           old.rank.thumbsUpCountAllTime += 1;
-          old.rank.collectedCountAllTime += 1;
+          if (alreadyNotified === -1) old.rank.collectedCountAllTime += 1;
           if (old.rank.thumbsDownCountAllTime > 0) old.rank.thumbsDownCountAllTime -= 1;
 
           if (modelVersionId) {
@@ -233,7 +235,6 @@ export const useDeleteResourceReview = () => {
 
         if (recommended && old.rank.thumbsUpCountAllTime > 0) {
           old.rank.thumbsUpCountAllTime -= 1;
-          old.rank.collectedCountAllTime -= 1;
 
           if (modelVersionId) {
             old.modelVersions = old.modelVersions.map((version) => {
@@ -331,7 +332,7 @@ export function useToggleFavoriteMutation() {
         if (!old) return;
         if (setTo && alreadyReviewed === -1) {
           old.rank.thumbsUpCountAllTime += 1;
-          old.rank.collectedCountAllTime += 1;
+          if (alreadyNotified === -1) old.rank.collectedCountAllTime += 1;
         } else if (!setTo && alreadyReviewed !== -1) {
           old.rank.thumbsUpCountAllTime -= 1;
           // We don't want to remove from collected on favorite toggle

@@ -3,11 +3,12 @@ import { trpc } from '~/utils/trpc';
 import { GetUserNotificationsSchema } from '~/server/schema/notification.schema';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { notificationCategoryTypes } from '~/server/notifications/utils.notifications';
-import { useQueryClient } from '@tanstack/react-query';
+import { InfiniteData, useQueryClient } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';
 import { NotificationCategory } from '@prisma/client';
 import { getDisplayName } from '~/utils/string-helpers';
+import { NotificationGetAll } from '~/types/router';
 
 const categoryNameMap: Partial<Record<NotificationCategory, string>> = {
   [NotificationCategory.Comment]: 'Comments',
@@ -73,10 +74,11 @@ export const useMarkReadNotification = () => {
 
       // Mark as read in notification feed
       const queryKey = getQueryKey(trpc.notification.getAllByUser);
-      queryClient.setQueriesData(
+      queryClient.setQueriesData<InfiniteData<NotificationGetAll>>(
         { queryKey, exact: false },
-        produce((old: any) => {
-          console.log(Object.keys(old), id);
+        produce((old) => {
+          if (!old) return;
+
           for (const page of old?.pages ?? []) {
             if (all) {
               for (const item of page.items) {
@@ -84,7 +86,7 @@ export const useMarkReadNotification = () => {
                 if (categoryMatch) item.read = true;
               }
             } else if (id) {
-              const item = page.items?.find((x: any) => x.id == id);
+              const item = page.items?.find((x) => x.id == id);
               if (item) item.read = true;
             }
           }

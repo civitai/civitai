@@ -48,6 +48,7 @@ export const generationRouter = router({
         return await createGenerationRequest({
           ...input,
           userId: ctx.user.id,
+          userTier: ctx.user.tier,
           isModerator: ctx.user.isModerator,
         });
       } catch (e) {

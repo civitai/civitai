@@ -38,11 +38,11 @@ export const useMutateStripe = () => {
   };
 };
 
-export const useUserPaymentMethods = () => {
+export const useUserPaymentMethods = (data: { enabled?: boolean } = { enabled: true }) => {
   const currentUser = useCurrentUser();
   const { data: userPaymentMethods = [], ...rest } = trpc.user.getPaymentMethods.useQuery(
     undefined,
-    { enabled: !!currentUser }
+    { enabled: !!currentUser && data?.enabled }
   );
 
   return {

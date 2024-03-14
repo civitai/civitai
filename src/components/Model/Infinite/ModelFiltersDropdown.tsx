@@ -15,12 +15,11 @@ import {
 } from '@mantine/core';
 import { CheckpointType, ModelStatus, ModelType, MetricTimeframe } from '@prisma/client';
 import { IconChevronDown, IconFilter } from '@tabler/icons-react';
-import { useRouter } from 'next/router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { PeriodFilter } from '~/components/Filters';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { ModelQueryParams, useModelQueryParams } from '~/components/Model/model.utils';
-import { useCurrentUser, useIsSameUser } from '~/hooks/useCurrentUser';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ModelFilterSchema, useFiltersContext } from '~/providers/FiltersProvider';
 import { BaseModel, constants } from '~/server/common/constants';
@@ -75,6 +74,7 @@ export function ModelFiltersDropdown(props: Props) {
         fromPlatform: false,
         followed: false,
         archived: false,
+        hidden: false,
         period: MetricTimeframe.AllTime,
       }),
     [setFilters]
@@ -116,16 +116,19 @@ export function DumbModelFiltersDropdown({
   setFilters: (filters: Partial<ModelFilterSchema>) => void;
 }) {
   const currentUser = useCurrentUser();
-  const router = useRouter();
   const { classes, cx, theme } = useStyles();
   const flags = useFeatureFlags();
   const mobile = useIsMobile();
-  const { set: setQueryFilters, period = MetricTimeframe.AllTime } = useModelQueryParams();
+  const {
+    set: setQueryFilters,
+    period = MetricTimeframe.AllTime,
+    hidden = undefined,
+  } = useModelQueryParams();
 
   const [opened, setOpened] = useState(false);
 
   const localMode = filterMode === 'local';
-  const mergedFilters = localMode ? filters : { ...filters, period };
+  const mergedFilters = localMode ? filters : { ...filters, period, hidden };
   const showCheckpointType =
     !mergedFilters.types?.length || mergedFilters.types.includes('Checkpoint');
 
@@ -139,6 +142,7 @@ export function DumbModelFiltersDropdown({
     (mergedFilters.fromPlatform ? 1 : 0) +
     (mergedFilters.followed ? 1 : 0) +
     (mergedFilters.archived ? 1 : 0) +
+    (mergedFilters.hidden ? 1 : 0) +
     (mergedFilters.fileFormats?.length ?? 0) +
     (mergedFilters.period && mergedFilters.period !== MetricTimeframe.AllTime ? 1 : 0);
 
@@ -151,6 +155,8 @@ export function DumbModelFiltersDropdown({
       earlyAccess: false,
       supportsGeneration: false,
       followed: false,
+      hidden: undefined,
+      archived: undefined,
       fileFormats: undefined,
       period: MetricTimeframe.AllTime,
     };
@@ -331,15 +337,24 @@ export function DumbModelFiltersDropdown({
 
       <Stack spacing={0}>
         <Divider label="Modifiers" labelProps={{ weight: 'bold', size: 'sm' }} mb={4} />
-        <Group>
+        <Group spacing={8}>
           {currentUser && isFeed && (
-            <Chip
-              checked={mergedFilters.followed}
-              onChange={(checked) => setFilters({ followed: checked })}
-              {...chipProps}
-            >
-              Followed Only
-            </Chip>
+            <>
+              <Chip
+                checked={mergedFilters.followed}
+                onChange={(checked) => setFilters({ followed: checked })}
+                {...chipProps}
+              >
+                Followed Only
+              </Chip>
+              <Chip
+                checked={mergedFilters.hidden}
+                onChange={(checked) => setFilters({ hidden: checked })}
+                {...chipProps}
+              >
+                Hidden
+              </Chip>
+            </>
           )}
           <Chip
             checked={mergedFilters.archived}

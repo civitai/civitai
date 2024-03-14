@@ -15,11 +15,11 @@ const schema = z.object({
 });
 
 const taskGenerators: ((ctx: MigrationContext) => Task)[] = [
-  likesToCollections,
-  likesToCollectionItems,
+  // likesToCollections,
+  // likesToCollectionItems,
   // likesToNotifications,
-  // likesToNotificationsUpdate,
-  likesToReviews,
+  likesToNotificationsUpdate,
+  // likesToReviews,
 ];
 
 async function getReplicationLag(limit = 1024 ** 2 * 100) {

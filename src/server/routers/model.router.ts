@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { env } from '~/env/server.mjs';
 import { BrowsingMode } from '~/server/common/enums';
 import {
+  addCheckpointCoverageHandler,
   changeModelModifierHandler,
   declineReviewHandler,
   deleteModelHandler,
@@ -14,13 +15,13 @@ import {
   getModelGallerySettingsHandler,
   getModelHandler,
   getModelReportDetailsHandler,
-  getModelsInfiniteHandler,
-  getModelsPagedSimpleHandler,
-  getModelsWithVersionsHandler,
   getModelTemplateFieldsHandler,
   getModelTemplateFromBountyHandler,
   getModelVersionsHandler,
   getModelWithVersionsHandler,
+  getModelsInfiniteHandler,
+  getModelsPagedSimpleHandler,
+  getModelsWithVersionsHandler,
   getMyDraftModelsHandler,
   getMyTrainingModelsHandler,
   getSimpleModelsInfiniteHandler,
@@ -37,26 +38,27 @@ import { dbRead } from '~/server/db/client';
 import { cacheIt, edgeCacheIt } from '~/server/middleware.trpc';
 import { getAllQuerySchema, getByIdSchema } from '~/server/schema/base.schema';
 import {
+  GetAllModelsOutput,
+  ModelInput,
   changeModelModifierSchema,
   declineReviewSchema,
   deleteModelSchema,
   findResourcesToAssociateSchema,
-  GetAllModelsOutput,
   getAllModelsSchema,
   getAssociatedResourcesSchema,
   getDownloadSchema,
-  getModelsWithCategoriesSchema,
   getModelVersionsSchema,
+  getModelsWithCategoriesSchema,
+  getSimpleModelsInfiniteSchema,
   modelByHashesInput,
-  ModelInput,
   modelUpsertSchema,
   publishModelSchema,
   reorderModelVersionsSchema,
   setAssociatedResourcesSchema,
   setModelsCategorySchema,
+  toggleCheckpointCoverageSchema,
   toggleModelLockSchema,
   unpublishModelSchema,
-  getSimpleModelsInfiniteSchema,
   updateGallerySettingsSchema,
 } from '~/server/schema/model.schema';
 import {
@@ -255,4 +257,7 @@ export const modelRouter = router({
     .input(updateGallerySettingsSchema)
     .use(isOwnerOrModerator)
     .mutation(updateGallerySettingsHandler),
+  toggleCheckpointCoverage: moderatorProcedure
+    .input(toggleCheckpointCoverageSchema)
+    .mutation(addCheckpointCoverageHandler),
 });

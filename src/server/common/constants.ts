@@ -190,7 +190,6 @@ export const constants = {
       notified: 5,
       muted: 8,
     },
-    maxConcurrentRequests: 10,
   },
   tagVoting: {
     voteDuration: 1000 * 60 * 60 * 24,
@@ -281,6 +280,13 @@ export const constants = {
     coverImageWidth: 180,
   },
   supportedBaseModelAddendums: ['SD 1.5', 'SDXL 1.0'],
+  vault: {
+    keys: {
+      details: ':modelVersionId/:userId/details.pdf',
+      images: ':modelVersionId/:userId/images.zip',
+      cover: ':modelVersionId/:userId/cover.jpg',
+    },
+  },
   supporterBadge: '020f374d-f165-4f45-9082-371e696a44ff',
 } as const;
 
@@ -443,8 +449,6 @@ export const generation = {
   },
   maxValues: {
     seed: 4294967295,
-    steps: 50,
-    quantity: 10,
     clipSkip: 10,
   },
 } as const;
@@ -488,6 +492,7 @@ export const generationConfig = {
   SDXL: {
     additionalResourceTypes: [
       { type: ModelType.LORA, baseModelSet: 'SDXL' },
+      { type: ModelType.LoCon, baseModelSet: 'SDXL' },
       { type: ModelType.TextualInversion, baseModelSet: 'SDXL', baseModels: ['SD 1.5'] },
     ] as ResourceFilter[],
     aspectRatios: [
@@ -524,7 +529,7 @@ export const getGenerationConfig = (baseModel?: string) => {
   return key && generationConfig[key] ? generationConfig[key] : generationConfig['SD1'];
 };
 
-export const MODELS_SEARCH_INDEX = 'models_v6';
+export const MODELS_SEARCH_INDEX = 'models_v7';
 export const IMAGES_SEARCH_INDEX = 'images_v3';
 export const ARTICLES_SEARCH_INDEX = 'articles_v3';
 export const USERS_SEARCH_INDEX = 'users_v2';

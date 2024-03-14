@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { Pool, QueryResult, QueryResultRow, types } from 'pg';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server.mjs';
+import { createLogger } from '~/utils/logging';
 
 type CancellableResult<R extends QueryResultRow = any> = {
   query: Promise<QueryResult<R>>;
@@ -21,6 +22,8 @@ declare global {
   var globalPgWrite: AugmentedPool | undefined;
 }
 
+const log = createLogger('pgDb', 'blue');
+
 function getClient({ readonly }: { readonly: boolean } = { readonly: false }) {
   console.log('Creating PG client');
   const connectionStringUrl = new URL(readonly ? env.DATABASE_REPLICA_URL : env.DATABASE_URL);
@@ -32,6 +35,8 @@ function getClient({ readonly }: { readonly: boolean } = { readonly: false }) {
     connectionTimeoutMillis: env.DATABASE_CONNECTION_TIMEOUT,
     max: env.DATABASE_POOL_MAX,
     idleTimeoutMillis: env.DATABASE_POOL_IDLE_TIMEOUT,
+    statement_timeout: readonly ? env.DATABASE_READ_TIMEOUT : env.DATABASE_WRITE_TIMEOUT,
+    application_name: `node-pg${env.PODNAME ? '-' + env.PODNAME : ''}`,
   }) as AugmentedPool;
 
   pool.cancellableQuery = async function <R extends QueryResultRow = any>(
@@ -43,10 +48,11 @@ function getClient({ readonly }: { readonly: boolean } = { readonly: false }) {
 
     // Fix dates
     if (typeof sql === 'object') {
-      for (const i in sql.values) {
-        if (sql.values[i] instanceof Date) sql.values[i] = (sql.values[i] as Date).toISOString();
-      }
+      for (const i in sql.values) sql.values[i] = formatSqlType(sql.values[i]);
     }
+
+    // Logging
+    log(readonly ? 'read' : 'write', sql);
 
     let done = false;
     const query = connection.query<R>(sql);
@@ -71,6 +77,25 @@ function getClient({ readonly }: { readonly: boolean } = { readonly: false }) {
   };
 
   return pool;
+}
+
+function formatSqlType(value: any): string {
+  if (value instanceof Date) return value.toISOString();
+  if (typeof value === 'object') {
+    if (Array.isArray(value)) {
+      return value.map(formatSqlType).join(',');
+    }
+    if (value === null) return 'null';
+    return JSON.stringify(value);
+  }
+  return value;
+}
+
+export function templateHandler<T>(fn: (value: string) => Promise<T> | T) {
+  return function (sql: TemplateStringsArray, ...values: any[]) {
+    const sqlString = sql.reduce((acc, part, i) => acc + part + formatSqlType(values[i] ?? ''), '');
+    return fn(sqlString);
+  };
 }
 
 // Fix Dates

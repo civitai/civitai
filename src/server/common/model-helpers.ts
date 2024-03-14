@@ -12,7 +12,7 @@ export const createModelFileDownloadUrl = ({
   versionId: number;
   type?: ModelFileType | string;
   primary?: boolean;
-  meta?: FileMetadata;
+  meta?: BasicFileMetadata;
 }) => {
   const { format, size, fp } = meta || {};
   const queryString = QS.stringify({

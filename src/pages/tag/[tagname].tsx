@@ -69,7 +69,6 @@ export default function TagPage({
             <Group position="apart">
               <SortFilter type="models" value={sort} onChange={(x) => set({ sort: x as any })} />
               <Group spacing="xs">
-                <PeriodFilter type="models" value={period} onChange={(x) => set({ period: x })} />
                 <ModelFiltersDropdown />
               </Group>
             </Group>

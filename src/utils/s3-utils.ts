@@ -217,6 +217,23 @@ export async function getGetUrl(
   return { url, bucket, key: parsedKey };
 }
 
+export async function getGetUrlByKey(
+  key: string,
+  { s3, expiresIn = DOWNLOAD_EXPIRATION, fileName, bucket }: GetObjectOptions = {}
+) {
+  if (!s3) s3 = getS3Client();
+
+  if (!bucket) bucket = env.S3_UPLOAD_BUCKET;
+  const command: GetObjectCommandInput = {
+    Bucket: bucket,
+    Key: key,
+  };
+  if (fileName) command.ResponseContentDisposition = `attachment; filename="${fileName}"`;
+
+  const url = await getSignedUrl(s3, new GetObjectCommand(command), { expiresIn });
+  return { url, bucket, key };
+}
+
 export async function checkFileExists(key: string, s3: S3Client | null = null) {
   if (!s3) s3 = getS3Client();
 

@@ -110,3 +110,5 @@ export type ChatCreateChat = ChatRouter['createChat'];
 export type PurchasableRewardGetById = RouterOutput['purchasableReward']['getById'];
 export type PurchasableRewardGetPaged =
   RouterOutput['purchasableReward']['getPaged']['items'][number];
+
+export type VaultItemGetPaged = RouterOutput['vault']['getItemsPaged']['items'][number];

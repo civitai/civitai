@@ -1,7 +1,7 @@
-import { SearchIndexUpdateQueueAction } from '@prisma/client';
 import { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 import { MODELS_SEARCH_INDEX, USERS_SEARCH_INDEX } from '~/server/common/constants';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { inJobContext } from '~/server/jobs/job';
 import { modelsSearchIndex, usersSearchIndex } from '~/server/search-index';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
@@ -28,7 +28,7 @@ export default ModEndpoint(async function updateIndexSync(
       throw new Error('No ids provided');
     }
 
-    inJobContext(res, async (jobContext) => {
+    await inJobContext(res, async (jobContext) => {
       switch (input.index) {
         case USERS_SEARCH_INDEX:
           await usersSearchIndex.updateSync(data, jobContext);

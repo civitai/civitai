@@ -248,6 +248,8 @@ model User {
   builds                     BuildGuide[]
   createdRewards             PurchasableReward[]
   purchasedRewards           UserPurchasedRewards[]
+  vault                      Vault?
+  vaultItems                 VaultItem[]
 }
 
 enum OnboardingStep {
@@ -343,6 +345,7 @@ model UserMetric {
   reviewCount       Int             @default(0)
   answerCount       Int             @default(0)
   answerAcceptCount Int             @default(0)
+  updatedAt         DateTime        @default(now())
 
   @@id([userId, timeframe])
 }
@@ -765,6 +768,7 @@ model ModelMetric {
   generationCount   Int             @default(0)
   thumbsUpCount     Int             @default(0)
   thumbsDownCount   Int             @default(0)
+  updatedAt         DateTime        @default(now())
 
   @@id([modelId, timeframe])
 }
@@ -785,6 +789,7 @@ model ModelVersionMetric {
   generationCount   Int             @default(0)
   thumbsUpCount     Int             @default(0)
   thumbsDownCount   Int             @default(0)
+  updatedAt         DateTime        @default(now())
 
   @@id([modelVersionId, timeframe])
 }
@@ -1109,6 +1114,7 @@ model PostMetric {
   heartCount     Int             @default(0)
   commentCount   Int             @default(0)
   collectedCount Int             @default(0)
+  updatedAt      DateTime        @default(now())
 
   @@id([postId, timeframe])
 }
@@ -1260,6 +1266,7 @@ model ImageMetric {
   tippedCount       Int             @default(0)
   tippedAmountCount Int             @default(0)
   viewCount         Int             @default(0)
+  updatedAt         DateTime        @default(now())
 
   @@id([imageId, timeframe])
 }
@@ -1271,6 +1278,7 @@ model CollectionMetric {
   followerCount    Int             @default(0)
   itemCount        Int             @default(0)
   contributorCount Int             @default(0)
+  updatedAt        DateTime        @default(now())
 
   @@id([collectionId, timeframe])
 }
@@ -1492,6 +1500,7 @@ model TagMetric {
   articleCount  Int             @default(0)
   hiddenCount   Int             @default(0)
   followerCount Int             @default(0)
+  updatedAt     DateTime        @default(now())
 
   @@id([tagId, timeframe])
 }
@@ -1718,14 +1727,6 @@ model AnswerVote {
   createdAt DateTime @default(now())
 
   @@id([answerId, userId])
-}
-
-model MetricUpdateQueue {
-  type      String
-  id        Int
-  createdAt DateTime @default(now())
-
-  @@id([type, id])
 }
 
 model AnswerMetric {
@@ -2040,6 +2041,7 @@ model ArticleMetric {
   collectedCount    Int             @default(0)
   tippedCount       Int             @default(0)
   tippedAmountCount Int             @default(0)
+  updatedAt         DateTime        @default(now())
 
   @@id([articleId, timeframe])
 }
@@ -2109,20 +2111,6 @@ model GenerationServiceProvider {
   schedulers GenerationSchedulers[]
 
   @@id([name])
-}
-
-enum SearchIndexUpdateQueueAction {
-  Update
-  Delete
-}
-
-model SearchIndexUpdateQueue {
-  type      String
-  id        Int
-  createdAt DateTime                     @default(now())
-  action    SearchIndexUpdateQueueAction @default(Update)
-
-  @@id([type, id, action])
 }
 
 enum CollectionWriteConfiguration {
@@ -2436,6 +2424,7 @@ model BountyMetric {
   benefactorCount Int             @default(0)
   unitAmountCount Int             @default(0)
   commentCount    Int             @default(0)
+  updatedAt       DateTime        @default(now())
 
   @@id([bountyId, timeframe])
 }
@@ -2452,6 +2441,7 @@ model BountyEntryMetric {
   unitAmountCount   Int             @default(0)
   tippedCount       Int             @default(0)
   tippedAmountCount Int             @default(0)
+  updatedAt         DateTime        @default(now())
 
   @@id([bountyEntryId, timeframe])
 }
@@ -2784,6 +2774,56 @@ model UserPurchasedRewards {
   // We should store the product name & details in the meta at the time or purchase in case the reward is later on deleted - will be a good safeguard
   meta                Json               @default("{}")
   code                String
+}
+
+enum VaultItemStatus {
+  Pending
+  Stored
+  Failed
+}
+
+model VaultItem {
+  id             Int             @id @default(autoincrement())
+  vaultId        Int
+  vault          Vault           @relation(fields: [vaultId], references: [userId], onDelete: Cascade)
+  status         VaultItemStatus @default(Pending)
+  // We'll store some file details here as a JSON array of objects
+  files          Json            @default("[]")
+  // These are not FKs because they will tie to the downloadable file even after the model/version is deleted
+  modelVersionId Int
+  modelId        Int
+  modelName      String
+  versionName    String
+  creatorId      Int?
+  creator        User?           @relation(fields: [creatorId], references: [id], onDelete: SetNull)
+  creatorName    String
+  type           ModelType
+  baseModel      String
+  category       String
+  createdAt      DateTime        @default(now())
+  addedAt        DateTime        @default(now())
+  refreshedAt    DateTime?
+  modelSizeKb    Int
+  detailsSizeKb  Int
+  imagesSizeKb   Int
+  notes          String?
+  meta           Json            @default("{}")
+
+  @@index([vaultId], type: Hash)
+  @@index([modelVersionId], type: Hash)
+}
+
+model Vault {
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  storageKb Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  meta      Json     @default("{}")
+
+  items VaultItem[]
+
+  @@id([userId])
 }
 
 /// @view

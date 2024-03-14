@@ -7,12 +7,11 @@ import {
   ModelType,
   ModelUploadType,
   Prisma,
-  SearchIndexUpdateQueueAction,
 } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { CommandResourcesAdd, ResourceType } from '~/components/CivitaiLink/shared-types';
 import { BaseModel, BaseModelType, ModelFileType, constants } from '~/server/common/constants';
-import { ModelSort } from '~/server/common/enums';
+import { ModelSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { Context } from '~/server/createContext';
 
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -39,6 +38,7 @@ import {
   ModelUpsertInput,
   PublishModelSchema,
   ReorderModelVersionsSchema,
+  ToggleCheckpointCoverageInput,
   ToggleModelLockInput,
   UnpublishModelSchema,
   UpdateGallerySettingsInput,
@@ -74,6 +74,8 @@ import {
   updateModelEarlyAccessDeadline,
   upsertModel,
   getGallerySettingsByModelId,
+  toggleCheckpointCoverage,
+  getCheckpointGenerationCoverage,
 } from '~/server/services/model.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { getCategoryTags } from '~/server/services/system-cache';
@@ -92,8 +94,12 @@ import { getDownloadUrl } from '~/utils/delivery-worker';
 import { isDefined } from '~/utils/type-guards';
 import { redis } from '../redis/client';
 import { modelHashSelect } from './../selectors/modelHash.selector';
-import { getUnavailableResources } from '../services/generation/generation.service';
+import {
+  deleteResourceDataCache,
+  getUnavailableResources,
+} from '../services/generation/generation.service';
 import { BountyDetailsSchema } from '../schema/bounty.schema';
+import { removeEmpty } from '~/utils/object-helpers';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
@@ -121,6 +127,8 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
       select: { id: true, modelVersionId: true },
       orderBy: { id: 'asc' },
     });
+    const coveredCheckpoints =
+      model.type === 'Checkpoint' ? await getCheckpointGenerationCoverage(modelVersionIds) : null;
 
     // recommended VAEs
     const vaeIds = filteredVersions.map((x) => x.vaeId).filter(isDefined);
@@ -134,6 +142,7 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
     const unavailableGenResources = await getUnavailableResources();
 
     const metrics = model.metrics[0];
+    const canManage = ctx.user?.id === model.user.id || ctx.user?.isModerator;
 
     return {
       ...model,
@@ -183,18 +192,21 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
         const canGenerate =
           !!version.generationCoverage?.covered &&
           unavailableGenResources.indexOf(version.id) === -1;
+        const hasCheckpointCoverage = coveredCheckpoints?.includes(version.id) ?? false;
 
         // sort version files by file type, 'Model' type goes first
         const vaeFile = vaeFiles.filter((x) => x.modelVersionId === version.vaeId);
         version.files.push(...vaeFile);
-        const files = version.files.sort((a, b) => {
-          const aType = a.type as ModelFileType;
-          const bType = b.type as ModelFileType;
+        const files = version.files
+          .filter((x) => x.visibility === 'Public' || canManage)
+          .sort((a, b) => {
+            const aType = a.type as ModelFileType;
+            const bType = b.type as ModelFileType;
 
-          if (constants.modelFileOrder[aType] < constants.modelFileOrder[bType]) return -1;
-          else if (constants.modelFileOrder[aType] > constants.modelFileOrder[bType]) return 1;
-          else return 0;
-        });
+            if (constants.modelFileOrder[aType] < constants.modelFileOrder[bType]) return -1;
+            else if (constants.modelFileOrder[aType] > constants.modelFileOrder[bType]) return 1;
+            else return 0;
+          });
 
         const hashes = version.files
           .filter((file) =>
@@ -223,6 +235,7 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
           earlyAccessDeadline,
           canDownload,
           canGenerate,
+          hasCheckpointCoverage,
           files: files as Array<
             Omit<(typeof files)[number], 'metadata'> & { metadata: FileMetadata }
           >,
@@ -544,26 +557,60 @@ export const getModelsWithVersionsHandler = async ({
       count: rawResults.count,
       items: rawResults.items.map(({ modelVersions, ...model }) => ({
         ...model,
-        modelVersions: modelVersions.map(({ metrics, files, ...modelVersion }) => {
-          const vaeFile = vaeFiles.filter((x) => x.modelVersionId === modelVersion.vaeId);
-          files.push(...vaeFile);
-          return {
-            ...modelVersion,
+        modelVersions: modelVersions.map(
+          ({
+            metrics,
             files,
-            stats: {
-              downloadCount: metrics[0]?.downloadCount ?? 0,
-              ratingCount: metrics[0]?.ratingCount ?? 0,
-              rating: Number(metrics[0]?.rating?.toFixed(2) ?? 0),
-              thumbsUpCount: metrics[0]?.thumbsUpCount ?? 0,
-              thumbsDownCount: metrics[0]?.thumbsDownCount ?? 0,
-            },
-            images: images
-              .filter((image) => image.modelVersionId === modelVersion.id)
-              .map(({ modelVersionId, name, userId, ...image }) => ({
-                ...image,
-              })),
-          };
-        }),
+            trainingDetails,
+            trainingStatus,
+            vaeId,
+            earlyAccessTimeFrame,
+            modelId,
+            ...version
+          }) => {
+            const vaeFile = vaeFiles.filter((x) => x.modelVersionId === vaeId);
+            files.push(...vaeFile);
+
+            let earlyAccessDeadline = getEarlyAccessDeadline({
+              versionCreatedAt: version.createdAt,
+              publishedAt: version.publishedAt,
+              earlyAccessTimeframe: earlyAccessTimeFrame,
+            });
+            if (earlyAccessDeadline && new Date() > earlyAccessDeadline)
+              earlyAccessDeadline = undefined;
+
+            return {
+              ...version,
+              files: files.map(({ metadata: metadataRaw, ...file }) => {
+                const metadata = metadataRaw as FileMetadata | undefined;
+
+                return {
+                  ...file,
+                  metadata: {
+                    format: metadata?.format,
+                    size: metadata?.size,
+                    fp: metadata?.fp,
+                  },
+                };
+              }),
+              earlyAccessDeadline,
+              stats: {
+                downloadCount: metrics[0]?.downloadCount ?? 0,
+                ratingCount: metrics[0]?.ratingCount ?? 0,
+                rating: Number(metrics[0]?.rating?.toFixed(2) ?? 0),
+                thumbsUpCount: metrics[0]?.thumbsUpCount ?? 0,
+                thumbsDownCount: metrics[0]?.thumbsDownCount ?? 0,
+              },
+              images: images
+                .filter((image) => image.modelVersionId === version.id)
+                .map(
+                  ({ modelVersionId, name, userId, sizeKB, availability, metadata, ...image }) => ({
+                    ...image,
+                  })
+                ),
+            };
+          }
+        ),
         stats: getStatsForModel(model.id),
       })),
     };
@@ -1473,3 +1520,22 @@ export const updateGallerySettingsHandler = async ({
     throw throwDbError(error);
   }
 };
+
+export async function addCheckpointCoverageHandler({
+  input,
+}: {
+  input: ToggleCheckpointCoverageInput;
+}) {
+  try {
+    const affectedVersionIds = await toggleCheckpointCoverage(input);
+    if (affectedVersionIds) await deleteResourceDataCache(affectedVersionIds);
+
+    await modelsSearchIndex.queueUpdate([
+      { id: input.id, action: SearchIndexUpdateQueueAction.Update },
+    ]);
+
+    return affectedVersionIds;
+  } catch (error) {
+    throw throwDbError(error);
+  }
+}

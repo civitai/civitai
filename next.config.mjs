@@ -61,6 +61,13 @@ export default defineNextConfig(withAxiom({
       });
     }
 
+    headers.push({
+      source: '/:path*',
+      headers: [
+        { key: 'X-Frame-Options', value: 'DENY' },
+      ],
+    })
+
     return headers;
   },
   poweredByHeader: false,

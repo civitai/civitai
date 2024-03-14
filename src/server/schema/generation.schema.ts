@@ -1,6 +1,7 @@
 import { ModelType } from '@prisma/client';
 import { z } from 'zod';
 import { BaseModel, constants, generation } from '~/server/common/constants';
+import { userTierSchema } from '~/server/schema/user.schema';
 import { GenerationRequestStatus } from '~/server/services/generation/generation.types';
 import { auditPrompt } from '~/utils/metadata/audit';
 import { imageSchema } from './image.schema';
@@ -47,7 +48,7 @@ export const generationResourceSchema = z.object({
   strength: z.number().optional(),
   minStrength: z.number().optional(),
   maxStrength: z.number().optional(),
-  image: imageSchema.omit({ meta: true }).optional(),
+  image: imageSchema.pick({ url: true }).optional(),
 
   // navigation props
   covered: z.boolean().optional(),
@@ -129,13 +130,54 @@ const sharedGenerationParamsSchema = z.object({
       message: 'invalid sampler',
     }),
   seed: z.coerce.number().min(-1).max(generation.maxValues.seed).default(-1),
-  steps: z.coerce.number().min(10).max(generation.maxValues.steps),
+  steps: z.coerce.number().min(10).max(100),
   clipSkip: z.coerce.number().default(1),
-  quantity: z.coerce.number().max(generation.maxValues.quantity),
+  quantity: z.coerce.number().min(1).max(20),
   nsfw: z.boolean().optional(),
   baseModel: z.string().optional(),
   aspectRatio: z.string(),
 });
+
+const generationLimitsSchema = z.object({
+  quantity: z.number(),
+  queue: z.number(),
+  steps: z.number(),
+  resources: z.number(),
+});
+export type GenerationLimits = z.infer<typeof generationLimitsSchema>;
+const defaultsByTier: Record<string, GenerationLimits> = {
+  free: {
+    quantity: 4,
+    queue: 4,
+    steps: 40,
+    resources: 9,
+  },
+  founder: {
+    quantity: 10,
+    queue: 10,
+    steps: 60,
+    resources: 12,
+  },
+};
+
+export const generationStatusSchema = z.object({
+  available: z.boolean().default(true),
+  message: z.string().nullish(),
+  minorFallback: z.boolean().default(true),
+  sfwEmbed: z.boolean().default(true),
+  limits: z
+    .record(userTierSchema, generationLimitsSchema.partial())
+    .default(defaultsByTier)
+    .transform((limits) => {
+      // Merge each tier with its defaults
+      const mergedLimits = { ...defaultsByTier };
+      for (const tier of userTierSchema.options) {
+        mergedLimits[tier] = { ...mergedLimits[tier], ...limits[tier] };
+      }
+      return mergedLimits;
+    }),
+});
+export type GenerationStatus = z.infer<typeof generationStatusSchema>;
 
 export const generationFormShapeSchema = baseGenerationParamsSchema.extend({
   model: generationResourceSchema,

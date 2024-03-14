@@ -23,7 +23,7 @@ export const ModelURN = ({ baseModel, type, modelId, modelVersionId, full = fals
   const urnType = typeUrnMap[type];
   const urnEcosystem = useMemo(() => {
     return (
-      Object.entries(baseModelSets).find(([value]) => value.includes(baseModel))?.[0] ?? 'sd1'
+      Object.entries(baseModelSets).find(([, value]) => value.includes(baseModel))?.[0] ?? 'sd1'
     ).toLowerCase();
   }, [baseModel]);
   if (!urnType) return null;

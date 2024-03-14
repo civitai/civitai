@@ -19,7 +19,8 @@ import {
   imagesSearchIndex,
   modelsSearchIndex,
 } from '../search-index';
-import { Availability, SearchIndexUpdateQueueAction } from '@prisma/client';
+import { Availability } from '@prisma/client';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead } from '../db/client';
 
 export const getEntityAccessHandler = async ({

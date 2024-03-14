@@ -7,7 +7,6 @@ import {
   ModelType,
   ModelUploadType,
   Prisma,
-  SearchIndexUpdateQueueAction,
   TagTarget,
 } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
@@ -17,7 +16,7 @@ import { SessionUser } from 'next-auth';
 
 import { env } from '~/env/server.mjs';
 import { BaseModel, BaseModelType, CacheTTL } from '~/server/common/constants';
-import { BrowsingMode, ModelSort } from '~/server/common/enums';
+import { BrowsingMode, ModelSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
@@ -32,6 +31,7 @@ import {
   ModelMeta,
   ModelUpsertInput,
   PublishModelSchema,
+  ToggleCheckpointCoverageInput,
   ToggleModelLockInput,
   UnpublishModelSchema,
 } from '~/server/schema/model.schema';
@@ -1745,3 +1745,36 @@ export const getGalleryHiddenPreferences = async ({
 
   return { hiddenTags, hiddenUsers, hiddenImages: images ?? [] };
 };
+
+export async function getCheckpointGenerationCoverage(versionIds: number[]) {
+  if (versionIds.length === 0) {
+    return [];
+  }
+
+  const coveredResources = await dbRead.$queryRaw<{ version_id: number }[]>`
+    SELECT version_id FROM "CoveredCheckpointDetails"
+    WHERE version_id IN (${Prisma.join(versionIds)});
+  `;
+
+  return coveredResources.map((x) => x.version_id);
+}
+
+export async function toggleCheckpointCoverage({ id, versionId }: ToggleCheckpointCoverageInput) {
+  await dbWrite.$executeRaw`
+    INSERT INTO "CoveredCheckpoint" ("model_id", "version_id")
+    VALUES (${id}, ${versionId})
+    ON CONFLICT DO NOTHING;
+  `;
+
+  await dbWrite.$executeRaw`
+    REFRESH MATERIALIZED VIEW "CoveredCheckpointDetails";
+  `;
+
+  const affectedVersionIds = await dbWrite.$queryRaw<{ version_id: number }[]>`
+    SELECT version_id FROM "CoveredCheckpointDetails"
+    JOIN "ModelVersion" mv ON mv.id = version_id
+    WHERE mv."modelId" = id;
+  `;
+
+  return affectedVersionIds.map((x) => x.version_id);
+}

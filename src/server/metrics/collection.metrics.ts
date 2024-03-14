@@ -1,146 +1,39 @@
-import { createMetricProcessor } from '~/server/metrics/base.metrics';
-import { Prisma, SearchIndexUpdateQueueAction } from '@prisma/client';
+import { chunk } from 'lodash-es';
+import { createMetricProcessor, MetricProcessorRunContext } from '~/server/metrics/base.metrics';
+import { executeRefresh, getAffected, snippets } from '~/server/metrics/metric-helpers';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { collectionsSearchIndex } from '~/server/search-index';
-// import { collectionSearchIndex } from '~/server/search-index';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { createLogger } from '~/utils/logging';
+
+const log = createLogger('metrics:collection');
 
 export const collectionMetrics = createMetricProcessor({
   name: 'Collection',
-  async update({ pg, lastUpdate, jobContext }) {
-    const query = await pg.cancellableQuery<{ id: number }>(Prisma.sql`
-      -- Get all engagements that have happened since then that affect metrics
-      WITH recent_engagements AS
-      (
-        SELECT
-          "collectionId" AS id
-        FROM "CollectionItem"
-        WHERE ("createdAt" > ${lastUpdate})
+  async update(ctx) {
+    // Get the metric tasks
+    //---------------------------------------
+    const taskBatches = await Promise.all([getItemTasks(ctx), getContributorTasks(ctx)]);
+    log('CollectionMetric update', taskBatches.flat().length, 'tasks');
+    for (const tasks of taskBatches) await limitConcurrency(tasks, 5);
 
-        UNION
-
-        SELECT
-          "collectionId" AS id
-        FROM "CollectionContributor"
-        WHERE ("createdAt" > ${lastUpdate})
-
-        UNION
-
-        SELECT
-          "id"
-        FROM "Collection"
-        WHERE ("createdAt" > ${lastUpdate})
-
-        UNION
-
-        SELECT
-          "id"
-        FROM "MetricUpdateQueue"
-        WHERE type = 'Collection'
-      ),
-      -- Get all affected
-      affected AS
-      (
-          SELECT DISTINCT
-              r.id
-          FROM recent_engagements r
-          JOIN "Collection" c ON c.id = r.id
-          WHERE r.id IS NOT NULL
-      )
-
-      -- upsert metrics for all affected
-      -- perform a one-pass table scan producing all metrics for all affected users
-      INSERT INTO "CollectionMetric" ("collectionId", timeframe, "followerCount", "itemCount", "contributorCount")
-      SELECT
-        m.id,
-        tf.timeframe,
-        CASE
-          WHEN tf.timeframe = 'AllTime' THEN follower_count
-          WHEN tf.timeframe = 'Year' THEN year_follower_count
-          WHEN tf.timeframe = 'Month' THEN month_follower_count
-          WHEN tf.timeframe = 'Week' THEN week_follower_count
-          WHEN tf.timeframe = 'Day' THEN day_follower_count
-        END AS follower_count,
-        CASE
-          WHEN tf.timeframe = 'AllTime' THEN item_count
-          WHEN tf.timeframe = 'Year' THEN year_item_count
-          WHEN tf.timeframe = 'Month' THEN month_item_count
-          WHEN tf.timeframe = 'Week' THEN week_item_count
-          WHEN tf.timeframe = 'Day' THEN day_item_count
-        END AS item_count,
-        CASE
-          WHEN tf.timeframe = 'AllTime' THEN contributor_count
-          WHEN tf.timeframe = 'Year' THEN year_contributor_count
-          WHEN tf.timeframe = 'Month' THEN month_contributor_count
-          WHEN tf.timeframe = 'Week' THEN week_contributor_count
-          WHEN tf.timeframe = 'Day' THEN day_contributor_count
-        END AS contributor_count
-      FROM
-      (
-        SELECT
-          a.id,
-          COALESCE(cc.follower_count, 0) AS follower_count,
-          COALESCE(cc.year_follower_count, 0) AS year_follower_count,
-          COALESCE(cc.month_follower_count, 0) AS month_follower_count,
-          COALESCE(cc.week_follower_count, 0) AS week_follower_count,
-          COALESCE(cc.day_follower_count, 0) AS day_follower_count,
-          COALESCE(i.item_count, 0) AS item_count,
-          COALESCE(i.year_item_count, 0) AS year_item_count,
-          COALESCE(i.month_item_count, 0) AS month_item_count,
-          COALESCE(i.week_item_count, 0) AS week_item_count,
-          COALESCE(i.day_item_count, 0) AS day_item_count,
-          COALESCE(cc.contributor_count, 0) AS contributor_count,
-          COALESCE(cc.year_contributor_count, 0) AS year_contributor_count,
-          COALESCE(cc.month_contributor_count, 0) AS month_contributor_count,
-          COALESCE(cc.week_contributor_count, 0) AS week_contributor_count,
-          COALESCE(cc.day_contributor_count, 0) AS day_contributor_count
-        FROM affected a
-        LEFT JOIN (
-          SELECT
-              cc."collectionId",
-              SUM(IIF('VIEW' = ANY(cc.permissions), 1, 0)) follower_count,
-              SUM(IIF('VIEW' = ANY(cc.permissions) AND cc."createdAt" > now() - INTERVAL '1 year', 1, 0)) year_follower_count,
-              SUM(IIF('VIEW' = ANY(cc.permissions) AND cc."createdAt" > now() - INTERVAL '1 month', 1, 0)) month_follower_count,
-              SUM(IIF('VIEW' = ANY(cc.permissions) AND cc."createdAt" > now() - INTERVAL '1 week', 1, 0)) week_follower_count,
-              SUM(IIF('VIEW' = ANY(cc.permissions) AND cc."createdAt" > now() - INTERVAL '1 day', 1, 0)) day_follower_count,
-              SUM(IIF(('ADD' = ANY(cc.permissions) OR 'ADD_REVIEW' = ANY(cc.permissions)), 1, 0)) contributor_count,
-              SUM(IIF(('ADD' = ANY(cc.permissions) OR 'ADD_REVIEW' = ANY(cc.permissions)) AND cc."createdAt" > now() - INTERVAL '1 year', 1, 0)) year_contributor_count,
-              SUM(IIF(('ADD' = ANY(cc.permissions) OR 'ADD_REVIEW' = ANY(cc.permissions)) AND cc."createdAt" > now() - INTERVAL '1 month', 1, 0)) month_contributor_count,
-              SUM(IIF(('ADD' = ANY(cc.permissions) OR 'ADD_REVIEW' = ANY(cc.permissions)) AND cc."createdAt" > now() - INTERVAL '1 week', 1, 0)) week_contributor_count,
-              SUM(IIF(('ADD' = ANY(cc.permissions) OR 'ADD_REVIEW' = ANY(cc.permissions)) AND cc."createdAt" > now() - INTERVAL '1 day', 1, 0)) day_contributor_count
-          FROM "CollectionContributor" cc
-          GROUP BY cc."collectionId"
-        ) cc ON cc."collectionId" = a.id
-        LEFT JOIN (
-          SELECT
-            i."collectionId",
-            COUNT(*) item_count,
-            SUM(IIF(i."createdAt" > now() - INTERVAL '1 year', 1, 0)) year_item_count,
-            SUM(IIF(i."createdAt" > now() - INTERVAL '1 month', 1, 0)) month_item_count,
-            SUM(IIF(i."createdAt" > now() - INTERVAL '1 week', 1, 0)) week_item_count,
-            SUM(IIF(i."createdAt" > now() - INTERVAL '1 day', 1, 0)) day_item_count
-          FROM "CollectionItem" i
-          GROUP BY i."collectionId"
-        ) i ON i."collectionId" = a.id
-      ) m
-      CROSS JOIN (
-        SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
-      ) tf
-      ON CONFLICT ("collectionId", timeframe) DO UPDATE
-        SET "followerCount" = EXCLUDED."followerCount", "itemCount" = EXCLUDED."itemCount", "contributorCount" = EXCLUDED."contributorCount", "createdAt" = now()
-      RETURNING "collectionId" as id;
-    `);
-    jobContext.on('cancel', query.cancel);
-    const affected = await query.result();
-
+    // Update the search index
+    //---------------------------------------
+    log('update search index');
     await collectionsSearchIndex.queueUpdate(
-      affected.map(({ id }) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+      [...ctx.affected].map((id) => ({
+        id,
+        action: SearchIndexUpdateQueueAction.Update,
+      }))
     );
   },
-  async clearDay({ pg, jobContext }) {
-    const query = await pg.cancellableQuery(Prisma.sql`
-      UPDATE "CollectionMetric" SET "followerCount" = 0, "itemCount" = 0, "contributorCount" = 0 WHERE timeframe = 'Day' AND "createdAt" > date_trunc('day', now() - interval '1 day');
-    `);
-    jobContext.on('cancel', query.cancel);
-    await query.result();
+  async clearDay(ctx) {
+    await executeRefresh(ctx)`
+      UPDATE "CollectionMetric"
+        SET "followerCount" = 0, "itemCount" = 0, "contributorCount" = 0
+      WHERE timeframe = 'Day'
+        AND "createdAt" > date_trunc('day', now() - interval '1 day');
+    `;
   },
   rank: {
     table: 'CollectionRank',
@@ -148,3 +41,74 @@ export const collectionMetrics = createMetricProcessor({
     refreshInterval: 5 * 60 * 1000,
   },
 });
+
+async function getContributorTasks(ctx: MetricProcessorRunContext) {
+  const affected = await getAffected(ctx)`
+    -- get recent collection contributors
+    SELECT "collectionId" as id
+    FROM "CollectionContributor"
+    WHERE "createdAt" > '${ctx.lastUpdate}'
+  `;
+
+  const tasks = chunk(affected, 1000).map((ids, i) => async () => {
+    ctx.jobContext.checkIfCanceled();
+    log('getContributorTasks', i + 1, 'of', tasks.length);
+    await executeRefresh(ctx)`
+      -- update collection contributor metrics
+      INSERT INTO "CollectionMetric" ("collectionId", timeframe, "followerCount", "contributorCount")
+      SELECT
+        "collectionId",
+        tf.timeframe,
+        ${snippets.timeframeSum(
+          '"createdAt"',
+          '1',
+          `'VIEW' = ANY(permissions)`
+        )} as "followerCount",
+        ${snippets.timeframeSum(
+          '"createdAt"',
+          '1',
+          `'ADD' = ANY(permissions)`
+        )} as "contributorCount"
+      FROM "CollectionContributor"
+      CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
+      WHERE "collectionId" IN (${ids})
+      GROUP BY "collectionId", tf.timeframe
+      ON CONFLICT ("collectionId", timeframe) DO UPDATE
+        SET "followerCount" = EXCLUDED."followerCount", "contributorCount" = EXCLUDED."contributorCount", "updatedAt" = NOW()
+    `;
+    log('getContributorTasks', i + 1, 'of', tasks.length, 'done');
+  });
+
+  return tasks;
+}
+
+async function getItemTasks(ctx: MetricProcessorRunContext) {
+  const affected = await getAffected(ctx)`
+    -- get recent collection items
+    SELECT "collectionId" as id
+    FROM "CollectionItem"
+    WHERE "createdAt" > '${ctx.lastUpdate}'
+  `;
+
+  const tasks = chunk(affected, 1000).map((ids, i) => async () => {
+    ctx.jobContext.checkIfCanceled();
+    log('getItemTasks', i + 1, 'of', tasks.length);
+    await executeRefresh(ctx)`
+      -- update collection item metrics
+      INSERT INTO "CollectionMetric" ("collectionId", timeframe, "itemCount")
+      SELECT
+        "collectionId",
+        tf.timeframe,
+        ${snippets.timeframeSum('"createdAt"')} as "itemCount"
+      FROM "CollectionItem"
+      CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
+      WHERE "collectionId" IN (${ids})
+      GROUP BY "collectionId", tf.timeframe
+      ON CONFLICT ("collectionId", timeframe) DO UPDATE
+        SET "itemCount" = EXCLUDED."itemCount", "updatedAt" = NOW()
+    `;
+    log('getItemTasks', i + 1, 'of', tasks.length, 'done');
+  });
+
+  return tasks;
+}

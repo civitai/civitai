@@ -232,8 +232,6 @@ const { openModal, Modal } = createContextModal<Props>({
       error: recaptchaError,
     } = useRecaptchaToken(RECAPTCHA_ACTIONS.STRIPE_TRANSACTION);
 
-    const { isLoading: isLoadingPaymentMethods } = useUserPaymentMethods();
-
     const { data, isLoading, isFetching, error } = trpc.stripe.getPaymentIntent.useQuery(
       {
         unitAmount,
@@ -249,6 +247,10 @@ const { openModal, Modal } = createContextModal<Props>({
         trpc: { context: { skipBatch: true } },
       }
     );
+
+    const { isLoading: isLoadingPaymentMethods } = useUserPaymentMethods({
+      enabled: !!data?.clientSecret,
+    });
 
     const clientSecret = data?.clientSecret;
     const paymentMethodTypes = data?.paymentMethodTypes;

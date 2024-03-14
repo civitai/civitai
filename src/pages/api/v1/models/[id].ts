@@ -13,6 +13,7 @@ import { appRouter } from '~/server/routers';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { getBaseUrl } from '~/server/utils/url-helpers';
+import { removeEmpty } from '~/utils/object-helpers';
 
 const hashesAsObject = (hashes: { type: ModelHashType; hash: string }[]) =>
   hashes.reduce((acc, { type, hash }) => ({ ...acc, [type]: hash }), {});
@@ -46,7 +47,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
         .filter((x) => x.status === 'Published')
         .map(({ images, files, ...version }) => {
           const castedFiles = files as Array<
-            Omit<(typeof files)[number], 'metadata'> & { metadata: FileMetadata }
+            Omit<(typeof files)[number], 'metadata'> & { metadata: BasicFileMetadata }
           >;
           const primaryFile = getPrimaryFile(castedFiles);
           if (!primaryFile) return null;
@@ -54,17 +55,18 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
           const includeDownloadUrl = model.mode !== ModelModifier.Archived;
           const includeImages = model.mode !== ModelModifier.TakenDown;
 
-          return {
+          return removeEmpty({
             ...version,
             files: includeDownloadUrl
-              ? castedFiles.map(({ hashes, ...file }) => ({
+              ? castedFiles.map(({ hashes, metadata, ...file }) => ({
                   ...file,
+                  metadata: removeEmpty(metadata),
                   name: getDownloadFilename({ model, modelVersion: version, file }),
                   hashes: hashesAsObject(hashes),
                   downloadUrl: `${baseUrl}${createModelFileDownloadUrl({
                     versionId: version.id,
                     type: file.type,
-                    meta: file.metadata,
+                    meta: metadata,
                     primary: primaryFile.id === file.id,
                   })}`,
                   primary: primaryFile.id === file.id ? true : undefined,
@@ -84,7 +86,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
                   primary: true,
                 })}`
               : undefined,
-          };
+          });
         })
         .filter((x) => x),
     });

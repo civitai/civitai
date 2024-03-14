@@ -58,7 +58,7 @@ export default MixedAuthEndpoint(async function handler(
           .filter((x) => x.status === 'Published')
           .map(({ images, files, ...version }) => {
             let castedFiles = files as Array<
-              Omit<(typeof files)[number], 'metadata'> & { metadata: FileMetadata }
+              Omit<(typeof files)[number], 'metadata'> & { metadata: BasicFileMetadata }
             >;
             const primaryFile = getPrimaryFile(castedFiles, preferredFormat);
             if (!primaryFile) return null;
