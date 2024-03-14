@@ -354,7 +354,6 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
               >
                 <Paper
                   px="sm"
-                  bg="dark.6"
                   sx={(theme) => ({
                     borderBottomLeftRadius: showFillForm ? 0 : undefined,
                     borderBottomRightRadius: showFillForm ? 0 : undefined,
@@ -362,6 +361,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                       ? theme.colors.red[theme.fn.primaryShade()]
                       : undefined,
                     marginBottom: errors.prompt ? 5 : undefined,
+                    background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : undefined,
 
                     // Apply focus styles if textarea is focused
                     '&:has(textarea:focus)': {

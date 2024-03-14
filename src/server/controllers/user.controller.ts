@@ -205,8 +205,8 @@ export const checkUserNotificationsHandler = async ({ ctx }: { ctx: DeepNonNulla
     const reduced = unreadCount.reduce(
       (acc, { category, count }) => {
         const key = category.toLowerCase() as Lowercase<NotificationCategory>;
-        acc[key] = count;
-        acc['all'] += count;
+        acc[key] = Number(count);
+        acc['all'] += Number(count);
         return acc;
       },
       { all: 0 } as Record<Lowercase<NotificationCategory> | 'all', number>
