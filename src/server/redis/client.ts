@@ -73,6 +73,7 @@ export const REDIS_KEYS = {
     PERMISSIONS: 'system:permissions',
     TAGS_NEEDING_REVIEW: 'system:tags-needing-review',
     HOME_EXCLUDED_TAGS: 'system:home-excluded-tags',
+    NOTIFICATION_COUNTS: 'system:notification-counts',
   },
   QUEUES: {
     BUCKETS: 'queues:buckets',
