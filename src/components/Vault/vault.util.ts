@@ -1,3 +1,4 @@
+import { env } from '~/env/client.mjs';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
   GetPaginatedVaultItemsSchema,
@@ -5,6 +6,7 @@ import {
   VaultItemsRemoveModelVersionsSchema,
   VaultItemsUpdateNotesSchema,
 } from '~/server/schema/vault.schema';
+import { VaultItemGetPaged } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -107,4 +109,12 @@ export const useQueryVaultItems = (
   }
 
   return { items: [], pagination: null, ...rest };
+};
+
+export const getVaultItemDownloadUrls = (vaultItem: VaultItemGetPaged) => {
+  return {
+    models: `${env.NEXT_PUBLIC_BASE_URL}/api/download/vault/${vaultItem.id}?type=model`,
+    images: `${env.NEXT_PUBLIC_BASE_URL}/api/download/vault/${vaultItem.id}?type=images`,
+    details: `${env.NEXT_PUBLIC_BASE_URL}/api/download/vault/${vaultItem.id}?type=details`,
+  };
 };
