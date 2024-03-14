@@ -8,7 +8,7 @@ import {
   collectionsSearchIndex,
   modelsSearchIndex,
 } from '~/server/search-index';
-import { ImageConnectionType } from '~/server/common/enums';
+import { ImageConnectionType, NsfwLevel } from '~/server/common/enums';
 
 async function getImageConnectedEntities(imageIds: number[]) {
   const images = await dbRead.image.findMany({
@@ -246,7 +246,12 @@ export async function updateArticleNsfwLevels(articleIds: number[]) {
       GROUP BY a.id
     )
     UPDATE "Article" a
-    SET "nsfwLevel" = level."nsfwLevel"
+    SET "nsfwLevel" = (
+      CASE
+        WHEN a."userNsfwLevel" > a."nsfwLevel" THEN a."userNsfwLevel"
+        ELSE level."nsfwLevel"
+      END
+    )
     FROM level
     WHERE level.id = a.id AND level."nsfwLevel" != a."nsfwLevel"
     RETURNING a.id;
@@ -268,7 +273,12 @@ export async function updateBountyNsfwLevels(bountyIds: number[]) {
       WHERE ic."entityType" = 'Bounty' AND ic."entityId" = ANY(ARRAY[${bountyIds}]::Int[])
       GROUP BY 1
     )
-    UPDATE "Bounty" b SET "nsfwLevel" = level."nsfwLevel"
+    UPDATE "Bounty" b SET "nsfwLevel" = (
+      CASE
+        WHEN b.nsfw = TRUE THEN ${NsfwLevel.XXX}
+        ELSE level."nsfwLevel"
+      END
+    )
     FROM level
     WHERE level."entityId" = b.id AND level."nsfwLevel" != b."nsfwLevel"
     RETURNING b.id;
@@ -329,8 +339,12 @@ export async function updateModelNsfwLevels(modelIds: number[]) {
       GROUP BY mv.id
     )
     UPDATE "Model" m
-    SET
-      "nsfwLevel" = level."nsfwLevel"
+    SET "nsfwLevel" = (
+      CASE
+        WHEN m.nsfw = TRUE THEN ${NsfwLevel.XXX}
+        ELSE level."nsfwLevel"
+      END
+    )
     FROM level
     WHERE level.id = m.id AND level."nsfwLevel" != m."nsfwLevel"
     RETURNING m.id;
@@ -345,20 +359,23 @@ export async function updateModelVersionNsfwLevels(modelVersionIds: number[]) {
     WITH level as (
       SELECT
         mv.id,
-        (
-          SELECT COALESCE(bit_or(i."nsfwLevel"), 0) "nsfwLevel"
-          FROM (
-            SELECT
-              i."nsfwLevel"
-            FROM "Post" p
-            JOIN "Image" i ON i."postId" = p.id
-            WHERE p."modelVersionId" = mv.id
-            AND p."userId" = m."userId"
-            AND p."publishedAt" IS NOT NULL AND i."nsfwLevel" != 0
-            ORDER BY p."id", i."index"
-            LIMIT 20
-          ) AS i
-        ) AS "nsfwLevel"
+        CASE
+          WHEN m.nsfw = TRUE THEN 16
+          ELSE (
+            SELECT COALESCE(bit_or(i."nsfwLevel"), 0) "nsfwLevel"
+            FROM (
+              SELECT
+                i."nsfwLevel"
+              FROM "Post" p
+              JOIN "Image" i ON i."postId" = p.id
+              WHERE p."modelVersionId" = mv.id
+              AND p."userId" = m."userId"
+              AND p."publishedAt" IS NOT NULL AND i."nsfwLevel" != 0
+              ORDER BY p."id", i."index"
+              LIMIT 20
+            ) AS i
+          )
+        END AS "nsfwLevel"
       FROM "ModelVersion" mv
       JOIN "Model" m ON mv."modelId" = m.id
       WHERE mv.id = ANY(ARRAY[${modelVersionIds}]::Int[])

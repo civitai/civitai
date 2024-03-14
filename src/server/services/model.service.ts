@@ -522,18 +522,17 @@ export const getModelsRaw = async ({
     modelVersionWhere.push(Prisma.sql`cm."modelVersionId" = mv."id"`);
   }
 
+  const browsingLevelQuery = Prisma.sql`(mv."nsfwLevel" & ${browsingLevel}) != 0`;
   if (pending && (isModerator || userId)) {
     if (isModerator) {
-      modelVersionWhere.push(
-        Prisma.sql`((mv."nsfwLevel" & ${browsingLevel}) != 0 OR mv."nsfwLevel" = 0)`
-      );
+      modelVersionWhere.push(Prisma.sql`${browsingLevelQuery} OR mv."nsfwLevel" = 0`);
     } else if (userId) {
       modelVersionWhere.push(
-        Prisma.sql`((mv."nsfwLevel" & ${browsingLevel}) != 0 OR (mv."nsfwLevel" = 0 AND m."userId" = ${userId}))`
+        Prisma.sql`${browsingLevelQuery} OR (mv."nsfwLevel" = 0 AND m."userId" = ${userId})`
       );
     }
   } else {
-    modelVersionWhere.push(Prisma.sql`(mv."nsfwLevel" & ${browsingLevel}) != 0`);
+    modelVersionWhere.push(browsingLevelQuery);
   }
 
   const modelQuery = Prisma.sql`
@@ -998,6 +997,7 @@ export const getModelsWithImagesAndModelVersions = async ({
             rating: rank?.[`rating${input.period}`] ?? 0,
           },
           version,
+          // !important - for feed queries, when `model.nsfw === true`, we set all image `nsfwLevel` values to `NsfwLevel.XXX`
           images: model.nsfw
             ? versionImages.map((x) => ({ ...x, nsfwLevel: NsfwLevel.XXX }))
             : versionImages,

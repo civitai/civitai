@@ -45,9 +45,6 @@ export function useApplyHiddenPreferences<
                 const isOwner = userId === currentUser?.id;
                 if ((isOwner || isModerator) && model.nsfwLevel === 0) return true;
                 if (!Flags.intersects(model.nsfwLevel, browsingLevel)) return false;
-                // if (model.nsfw) {
-                //   if (!Flags.hasFlag(browsingLevel, NsfwLevel.XXX)) return false;
-                // }
                 if (userId && hiddenUsers.get(userId)) return false;
                 if (hiddenModels.get(model.id) && !showHidden) return false;
                 for (const tag of model.tags ?? []) if (hiddenTags.get(tag)) return false;

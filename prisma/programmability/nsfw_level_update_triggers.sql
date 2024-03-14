@@ -91,7 +91,7 @@ END;
 $model_nsfw_level$ LANGUAGE plpgsql;
 ---
 CREATE OR REPLACE TRIGGER model_nsfw_level_change
-AFTER UPDATE OF "status" OR DELETE ON "Model"
+AFTER UPDATE OF "status", "nsfw" OR DELETE ON "Model"
 FOR EACH ROW
 EXECUTE FUNCTION update_model_nsfw_level();
 
@@ -110,7 +110,7 @@ END;
 $article_nsfw_level$ LANGUAGE plpgsql;
 ---
 CREATE OR REPLACE TRIGGER article_nsfw_level_change
-AFTER UPDATE OF "publishedAt" OR DELETE ON "Article"
+AFTER UPDATE OF "publishedAt", "userNsfwLevel" OR DELETE ON "Article"
 FOR EACH ROW
 EXECUTE FUNCTION update_article_nsfw_level();
 
@@ -132,3 +132,18 @@ CREATE OR REPLACE TRIGGER collection_nsfw_level_change
 AFTER UPDATE OR DELETE ON "CollectionItem"
 FOR EACH ROW
 EXECUTE FUNCTION update_collection_nsfw_level();
+
+
+-- BOUNTY TRIGGER
+CREATE OR REPLACE FUNCTION update_bounty_nsfw_level()
+RETURNS TRIGGER AS $bounty_nsfw_level$
+BEGIN
+  PERFORM create_job_queue_record(NEW."id", 'Bounty', 'UpdateNsfwLevel');
+  RETURN NULL;
+END;
+$bounty_nsfw_level$ LANGUAGE plpgsql;
+---
+CREATE OR REPLACE TRIGGER bounty_nsfw_level_change
+AFTER UPDATE OF "nsfw" ON "Bounty"
+FOR EACH ROW
+EXECUTE FUNCTION update_bounty_nsfw_level();

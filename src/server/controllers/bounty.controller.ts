@@ -119,6 +119,7 @@ export const getInfiniteBountiesHandler = async ({
             images: itemImages.map((image) => ({
               ...image,
               tagIds: image.tags.map((x) => x.id),
+              // !important - for feed queries, when `bounty.nsfw === true`, we set all image `nsfwLevel` values to `NsfwLevel.XXX`
               nsfwLevel: item.nsfw ? NsfwLevel.XXX : image.nsfwLefel,
             })),
             tags: tags.map(({ tagId }) => tagId),

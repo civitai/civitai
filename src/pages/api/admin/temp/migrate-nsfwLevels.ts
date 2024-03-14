@@ -1,5 +1,6 @@
 import { ImageIngestionStatus, Prisma } from '@prisma/client';
 import { NextApiResponse } from 'next';
+import { NsfwLevel } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import { pgDbWrite } from '~/server/db/pgDb';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
@@ -184,13 +185,18 @@ async function migrateBounties(res: NextApiResponse) {
             bit_or(i."nsfwLevel") "nsfwLevel"
           FROM "ImageConnection" ic
           JOIN "Image" i ON i.id = ic."imageId"
-          JOIN "Bounty" b on b.id = "entityId" AND ic."entityType" = 'Bounty'
+          JOIN "Bounty" b on b.id = ic."entityId" AND ic."entityType" = 'Bounty'
           WHERE ic."entityType" = 'Bounty' AND ic."entityId" BETWEEN ${start} AND ${end}
           GROUP BY 1
         )
-        UPDATE "Bounty" b SET "nsfwLevel" = level."nsfwLevel"
+        UPDATE "Bounty" b SET "nsfwLevel" = (
+          CASE
+            WHEN b.nsfw = TRUE THEN ${NsfwLevel.XXX}
+            ELSE level."nsfwLevel"
+          END
+        )
         FROM level
-        WHERE level."entityId" = b.id;
+        WHERE level."entityId" = b.id AND level."nsfwLevel" != b."nsfwLevel";
       `);
       onCancel.push(cancel);
       await result();
@@ -272,21 +278,23 @@ async function migrateModelVersions(res: NextApiResponse) {
         WITH level as (
           SELECT
             mv.id,
-            (
-              SELECT
-                COALESCE(bit_or(i."nsfwLevel"), 0) "nsfwLevel"
-              FROM (
-                SELECT
-                  i."nsfwLevel"
-                FROM "Post" p
-                JOIN "Image" i ON i."postId" = p.id
-                WHERE p."modelVersionId" = mv.id
-                AND p."userId" = m."userId"
-                AND p."publishedAt" IS NOT NULL AND i."nsfwLevel" != 0
-                ORDER BY p."id", i."index"
-                LIMIT 20
-              ) AS i
-            ) AS "nsfwLevel"
+            CASE
+              WHEN m.nsfw = TRUE THEN ${NsfwLevel.XXX}
+              ELSE (
+                SELECT COALESCE(bit_or(i."nsfwLevel"), 0) "nsfwLevel"
+                FROM (
+                  SELECT
+                    i."nsfwLevel"
+                  FROM "Post" p
+                  JOIN "Image" i ON i."postId" = p.id
+                  WHERE p."modelVersionId" = mv.id
+                  AND p."userId" = m."userId"
+                  AND p."publishedAt" IS NOT NULL AND i."nsfwLevel" != 0
+                  ORDER BY p."id", i."index"
+                  LIMIT 20
+                ) AS i
+              )
+            END AS "nsfwLevel"
           FROM "ModelVersion" mv
           JOIN "Model" m ON mv."modelId" = m.id
           WHERE mv.id BETWEEN ${start} AND ${end}
@@ -294,7 +302,7 @@ async function migrateModelVersions(res: NextApiResponse) {
         UPDATE "ModelVersion" mv
         SET "nsfwLevel" = level."nsfwLevel"
         FROM level
-        WHERE level.id = mv.id;
+        WHERE level.id = mv.id AND level."nsfwLevel" != mv."nsfwLevel";
       `);
       onCancel.push(cancel);
       await result();
@@ -337,10 +345,14 @@ async function migrateModels(res: NextApiResponse) {
           GROUP BY mv.id
         )
         UPDATE "Model" m
-        SET
-          "nsfwLevel" = level."nsfwLevel"
+        SET "nsfwLevel" = (
+          CASE
+            WHEN m.nsfw = TRUE THEN ${NsfwLevel.XXX}
+            ELSE level."nsfwLevel"
+          END
+        )
         FROM level
-        WHERE level.id = m.id;
+        WHERE level.id = m.id AND level."nsfwLevel" != m."nsfwLevel";
       `);
       onCancel.push(cancel);
       await result();
@@ -424,9 +436,14 @@ async function migrateArticles(res: NextApiResponse) {
           GROUP BY a.id
         )
         UPDATE "Article" a
-        SET "nsfwLevel" = level."nsfwLevel"
+        SET "nsfwLevel" = (
+          CASE
+            WHEN a."userNsfwLevel" > a."nsfwLevel" THEN a."userNsfwLevel"
+            ELSE level."nsfwLevel"
+          END
+        )
         FROM level
-        WHERE level.id = a.id;
+        WHERE level.id = a.id AND level."nsfwLevel" != a."nsfwLevel";
       `);
       onCancel.push(cancel);
       await result();
