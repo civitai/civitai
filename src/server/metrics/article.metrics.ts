@@ -188,7 +188,7 @@ async function getEngagementTasks(ctx: MetricProcessorRunContext) {
   const affected = await getAffected(ctx)`
     -- get recent article engagements
     SELECT
-      "articleId"
+      "articleId" as id
     FROM "ArticleEngagement"
     WHERE "createdAt" > '${ctx.lastUpdate}'
   `;

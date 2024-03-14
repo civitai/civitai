@@ -36,7 +36,7 @@ export const bountyMetrics = createMetricProcessor({
     await executeRefresh(ctx)`
       UPDATE "BountyMetric"
         SET "favoriteCount" = 0, "trackCount" = 0, "entryCount" = 0, "benefactorCount" = 0, "unitAmountCount" = 0, "commentCount" = 0
-      WHERE timeframe = 'Day
+      WHERE timeframe = 'Day'
         AND "updatedAt" > date_trunc('day', now() - interval '1 day');
     `;
   },
@@ -51,7 +51,7 @@ async function getEngagementTasks(ctx: MetricProcessorRunContext) {
   const affected = await getAffected(ctx)`
     -- get recent bounty engagements
     SELECT
-      "bountyId"
+      "bountyId" as id
     FROM "BountyEngagement"
     WHERE "createdAt" > '${ctx.lastUpdate}'
   `;
@@ -68,7 +68,7 @@ async function getEngagementTasks(ctx: MetricProcessorRunContext) {
         ${snippets.timeframeSum('e."createdAt"', '1', `e.type = 'Favorite'`)} "favoriteCount",
         ${snippets.timeframeSum('e."createdAt"', '1', `e.type = 'Track'`)} "trackCount"
       FROM "BountyEngagement" e
-      JOIN "Bounty" b ON a.id = bt."entityId" -- ensure the bounty exists
+      JOIN "Bounty" b ON b.id = e."bountyId" -- ensure the bounty exists
       CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
       WHERE "bountyId" IN (${ids})
       GROUP BY "bountyId", tf.timeframe
@@ -133,7 +133,7 @@ async function getBenefactorTasks(ctx: MetricProcessorRunContext) {
         "bountyId",
         tf.timeframe,
         ${snippets.timeframeSum('"createdAt"')} as "benefactorCount",
-        ${snippets.timeframeSum('"createdAt"', '"unitAmount"')} as "unitAmountCount",
+        ${snippets.timeframeSum('"createdAt"', '"unitAmount"')} as "unitAmountCount"
       FROM "BountyBenefactor"
       CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
       WHERE "bountyId" IN (${ids})
