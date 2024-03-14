@@ -1537,10 +1537,22 @@ export const getImagesForPosts = async ({
       i.hash,
       i.type,
       i.metadata,
-      i.meta,
       i."createdAt",
       i."generationProcess",
       i."postId",
+      ${Prisma.raw(`
+        jsonb_build_object(
+          'prompt', i.meta->>'prompt',
+          'negativePrompt', i.meta->>'negativePrompt',
+          'cfgScale', i.meta->>'cfgScale',
+          'steps', i.meta->>'steps',
+          'sampler', i.meta->>'sampler',
+          'seed', i.meta->>'seed',
+          'hashes', i.meta->>'hashes',
+          'clipSkip', i.meta->>'clipSkip',
+          'Clip skip', i.meta->>'Clip skip'
+        ) as "meta",
+      `)}
       COALESCE(im."cryCount", 0) "cryCount",
       COALESCE(im."laughCount", 0) "laughCount",
       COALESCE(im."likeCount", 0) "likeCount",

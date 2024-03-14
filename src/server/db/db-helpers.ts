@@ -20,6 +20,12 @@ export async function preventReplicationLag(type: LaggingType, id?: number) {
 //   processor: (data: any, runContext: any) => Promise<void>;
 //   batchSize: number;
 //   concurrency: number;
-//   runContext: { on: (event: 'close' )}
+//   runContext: { on: (event: 'close', listener: () => void) => void };
 // };
-// export async function dataProcessor({ rangeFetcher, processor, batchSize, concurrency, runContext }, )
+// export async function dataProcessor({
+//   rangeFetcher,
+//   processor,
+//   batchSize,
+//   concurrency,
+//   runContext,
+// }) {}

@@ -54,6 +54,7 @@ export function HiddenTagsSection() {
           }}
           withinPortal
           variant="unstyled"
+          zIndex={400}
         />
       </Card.Section>
       <Card.Section inheritPadding py="md">

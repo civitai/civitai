@@ -25,15 +25,15 @@ export default function PostsPage() {
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/posts`, rel: 'canonical' }]}
       />
       <Stack spacing="xs">
-        <Announcements
-          sx={(theme) => ({
-            marginBottom: -35,
-            [containerQuery.smallerThan('md')]: {
-              marginBottom: -5,
-            },
-          })}
-        />
         <IsClient>
+          <Announcements
+            sx={(theme) => ({
+              marginBottom: -35,
+              [containerQuery.smallerThan('md')]: {
+                marginBottom: -5,
+              },
+            })}
+          />
           <PostCategories />
           <PostsInfinite filters={query} showEof showAds />
         </IsClient>

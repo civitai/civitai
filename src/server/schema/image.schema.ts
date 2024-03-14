@@ -39,19 +39,9 @@ export const imageGenerationSchema = z.object({
   steps: stringToNumber,
   sampler: undefinedString,
   seed: stringToNumber,
-  'Clip skip': z.coerce.number().optional(),
-  clipSkip: z.coerce.number().optional(),
-  // resources: z
-  //   .object({
-  //     name: z.string().optional(),
-  //     type: z.string().optional(),
-  //     weight: z.number().optional(),
-  //     hash: z.string().optional(),
-  //   })
-  //   .passthrough()
-  //   .array()
-  //   .optional(),
   hashes: z.record(z.string()).optional(),
+  clipSkip: z.coerce.number().optional(),
+  'Clip skip': z.coerce.number().optional(),
   comfy: z.union([z.string().optional(), comfyMetaSchema.optional()]).optional(), // stored as stringified JSON
 });
 

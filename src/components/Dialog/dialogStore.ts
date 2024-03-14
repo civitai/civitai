@@ -7,6 +7,7 @@ interface DialogSettings<TProps extends Record<string, unknown> = any> {
   component: React.ComponentType<TProps>;
   props?: TProps;
   type?: 'dialog' | 'routed-dialog';
+  target?: string | HTMLElement;
   options?: {
     transitionDuration?: number;
     onClose?: () => void;
@@ -35,6 +36,7 @@ export const useDialogStore = create<DialogStore>()(
         options: args.options,
         id: args.id ?? Date.now(),
         type: args.type ?? 'dialog',
+        target: args.target,
       };
       set((state) => {
         const exists = state.dialogs.findIndex((x) => x.id === dialog.id) > -1;

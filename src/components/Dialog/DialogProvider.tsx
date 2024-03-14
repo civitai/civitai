@@ -6,6 +6,7 @@ type DialogState = {
   opened: boolean;
   onClose: () => void;
   zIndex: number;
+  target?: string | HTMLElement;
 };
 
 const DialogContext = createContext<DialogState>({
@@ -31,7 +32,7 @@ const DialogProviderInner = ({ dialog, index }: { dialog: Dialog; index: number 
   }, []);
 
   return (
-    <DialogContext.Provider value={{ opened, onClose, zIndex: 200 + index }}>
+    <DialogContext.Provider value={{ opened, onClose, zIndex: 200 + index, target: dialog.target }}>
       <Dialog {...dialog.props} />
     </DialogContext.Provider>
   );
