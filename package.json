@@ -1,12 +1,16 @@
 {
   "name": "model-share",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "scripts": {
     "start": "next start",
     "dev": "next dev",
     "boost": "next-boost",
-    "release": "git checkout release && git pull && git rebase main && git push && git checkout main",
+    "release:base": "git checkout release && git pull && git rebase main && git push && git checkout main",
+    "release:major": "npm version major && npm run release:base",
+    "release:minor": "npm version minor && npm run release:base",
+    "release:patch": "npm version patch && npm run release:base",
+    "release": "npm run release:patch",
     "yolo": "npm run release",
     "build": "next build",
     "postbuild": "next-sitemap",
