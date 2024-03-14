@@ -27,14 +27,16 @@ export default function LinkApp() {
   };
 
   return (
-    <Container size="md">
+    <Container>
       <Flex
         direction={{ base: 'column', md: 'row' }}
         justify="space-between"
         className={classes.heroContainer}
       >
         <Stack spacing={12} mb={{ base: 24, md: 0 }}>
-          <Title className={classes.heroTitle}>Civitai Link App</Title>
+          <Title className={classes.heroTitle} order={1}>
+            Civitai Link App
+          </Title>
           {!isMember ? (
             <Text className={classes.heroText}>❤️ Civitia Link is only available to members</Text>
           ) : null}
@@ -62,8 +64,10 @@ export default function LinkApp() {
       </Flex>
 
       <Stack spacing={12} mb={40}>
-        <Title className={classes.heading}>Add models to SD</Title>
-        <Text className={classes.copy}>
+        <Title className={classes.heading} order={2}>
+          Add models to SD
+        </Title>
+        <Text className={classes.copy} order={2}>
           Directly add any models from Civitai to your Stable Diffusion instance.
         </Text>
       </Stack>
@@ -83,7 +87,9 @@ export default function LinkApp() {
             />
             <div className={classes.gradientBox} />
           </Flex>
-          <Title className={classes.heading}>Manage files</Title>
+          <Title className={classes.heading} order={3}>
+            Manage files
+          </Title>
           <Text className={classes.copy}>
             Directly add any models from Civitai to your Stable Diffusion instance.
           </Text>
@@ -101,7 +107,9 @@ export default function LinkApp() {
             />
             <div className={classes.gradientBox} />
           </Flex>
-          <Title className={classes.heading}>Keep track of activities</Title>
+          <Title className={classes.heading} order={3}>
+            Keep track of activities
+          </Title>
           <Text className={classes.copy}>
             See the history of all the models you have added to your Stable Diffusion instance.
           </Text>
@@ -119,11 +127,11 @@ export default function LinkApp() {
         size="lg"
         radius="xl"
         fullWidth
-        mb={40}
+        my={40}
         component={NextLink}
         href={buttonData.href}
       >
-        Become a member
+        {buttonData.text}
       </Button>
     </Container>
   );
