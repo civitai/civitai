@@ -1,6 +1,5 @@
 import produce from 'immer';
 import { ToggleHiddenSchemaOutput } from '~/server/schema/user-preferences.schema';
-import { invalidateModeratedContentDebounced } from '~/utils/query-invalidation-utils';
 import { trpc } from '~/utils/trpc';
 
 const kindMap = {
@@ -41,7 +40,6 @@ export const useToggleHiddenPreferences = () => {
             }
           })
       );
-      invalidateModeratedContentDebounced(queryUtils, kind === 'tag' ? ['tag'] : undefined); // TODO - remove this once frontend filtering is finished
     },
     onError: (_error, _variables, context) => {
       queryUtils.hiddenPreferences.getHidden.setData(undefined, context?.previous);

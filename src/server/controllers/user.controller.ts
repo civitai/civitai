@@ -3,6 +3,7 @@ import {
   ModelEngagementType,
   ModelVersionEngagementType,
   NotificationCategory,
+  SearchIndexUpdateQueueAction,
 } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { orderBy } from 'lodash-es';
@@ -103,6 +104,7 @@ import { isDefined } from '~/utils/type-guards';
 import { OnboardingSteps } from '~/server/common/enums';
 import { Flags } from '~/shared/utils';
 import { getResourceReviewsByUserId } from '~/server/services/resourceReview.service';
+import { usersSearchIndex } from '~/server/search-index';
 
 export const getAllUsersHandler = async ({
   input,
@@ -364,6 +366,8 @@ export const updateUserHandler = async ({
           : undefined,
       },
     });
+
+    await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
 
     // Delete old profilePic and ingest new one
     if (user.profilePictureId && profilePicture && user.profilePictureId !== profilePicture.id) {

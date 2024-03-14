@@ -234,7 +234,6 @@ export const updateUserById = async ({
   }
 
   const user = await dbWrite.user.update({ where: { id }, data });
-  await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
 
   return user;
 };

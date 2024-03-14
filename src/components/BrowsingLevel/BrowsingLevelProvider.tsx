@@ -18,7 +18,6 @@ import { trpc } from '~/utils/trpc';
 import { useDebouncer } from '~/utils/debouncer';
 import { useSession } from 'next-auth/react';
 import { useDebouncedValue, useDidUpdate } from '@mantine/hooks';
-import { invalidateModeratedContent } from '~/utils/query-invalidation-utils';
 
 type StoreState = {
   showNsfw: boolean;
@@ -71,13 +70,12 @@ function updateCookieValues({ browsingLevel, blurNsfw, showNsfw, disableHidden }
 }
 
 export function BrowsingModeProvider({ children }: { children: React.ReactNode }) {
-  const queryUtils = trpc.useContext();
   const { status, data } = useSession();
   const isAuthed = status === 'authenticated';
   const currentUser = data?.user;
   const debouncer = useDebouncer(1000);
   const cookies = useCookies();
-  const { mutate } = trpc.user.update.useMutation();
+  const { mutate } = trpc.user.updateBrowsingMode.useMutation();
   const [store, setStore] = useState(createBrowsingModeStore(getStoreInitialValues()));
 
   function getStoreInitialValues() {
@@ -110,13 +108,10 @@ export function BrowsingModeProvider({ children }: { children: React.ReactNode }
 
   useEffect(() => {
     if (store && isAuthed) {
-      return store.subscribe((state) => {
+      return store.subscribe((state, prevState) => {
         updateCookieValues(state);
-        if (currentUser)
-          debouncer(() => {
-            mutate({ id: currentUser.id, ...state });
-            invalidateModeratedContent(queryUtils);
-          });
+        const disableHiddenChanged = state.disableHidden !== prevState.disableHidden;
+        if (currentUser && !disableHiddenChanged) debouncer(() => mutate({ ...state }));
       });
     }
   }, [store, isAuthed]);

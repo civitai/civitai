@@ -96,6 +96,12 @@ export const userUpdateSchema = z.object({
 });
 export type UserUpdateInput = z.input<typeof userUpdateSchema>;
 
+export const updateBrowsingModeSchema = z.object({
+  showNsfw: z.boolean().optional(),
+  blurNsfw: z.boolean().optional(),
+  browsingLevel: z.number().optional(),
+});
+
 export const toggleFavoriteInput = z.object({
   modelId: z.number(),
   modelVersionId: z.number().optional(),

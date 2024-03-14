@@ -63,7 +63,6 @@ import { sortDomainLinks } from '~/utils/domain-link';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import { invalidateModeratedContent } from '~/utils/query-invalidation-utils';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -77,11 +76,7 @@ export const UserContextMenu = ({ username }: { username: string }) => {
   const isMod = currentUser && currentUser.isModerator;
   const isSameUser =
     !!currentUser && postgresSlugify(currentUser.username) === postgresSlugify(username);
-  const removeContentMutation = trpc.user.removeAllContent.useMutation({
-    onSuccess() {
-      invalidateModeratedContent(queryUtils);
-    },
-  });
+  const removeContentMutation = trpc.user.removeAllContent.useMutation();
   const deleteAccountMutation = trpc.user.delete.useMutation({
     onSuccess() {
       showSuccessNotification({

@@ -32,14 +32,8 @@ export function BrowsingModeMenu() {
   const blurNsfw = currentUser?.blurNsfw;
   const disableHidden = currentUser?.disableHidden;
 
-  // const [showDecorations, setShowDecorations] = useLocalStorage({
-  //   key: 'showDecorations',
-  //   defaultValue: true,
-  // });
-
   return (
     <Stack spacing="md">
-      {/* <Divider label="Browsing Mode" labelProps={{ weight: 'bold' }} mb={-4} /> */}
       <Group position="apart">
         <Group align="center" spacing={4}>
           <IconEyeExclamation />
@@ -63,16 +57,6 @@ export function BrowsingModeMenu() {
         onChange={(e) => toggleDisableHidden(!e.target.checked)}
         label="Apply hidden tags filter"
       />
-      {/* <Group spacing="xs">
-        <Text size="xs" weight={500}>
-          Event Cosmetics
-        </Text>
-        <Switch
-          ml="auto"
-          checked={showDecorations}
-          onChange={() => setShowDecorations((show) => !show)}
-        />
-      </Group> */}
     </Stack>
   );
 }
