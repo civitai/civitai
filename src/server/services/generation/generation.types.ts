@@ -25,14 +25,6 @@ export namespace Generation {
     resources: Resource[];
   };
 
-  export type Status = {
-    message?: string;
-    available: boolean;
-    fullCoverageModels?: Partial<Record<BaseModelSetType, { id: number; name: string }[]>>;
-    minorFallback: boolean;
-    sfwEmbed: boolean;
-  };
-
   export type Params = {
     prompt: string;
     negativePrompt?: string;

@@ -61,6 +61,7 @@ export const REDIS_KEYS = {
     RESOURCE_DATA: 'generation:resource-data',
     COUNT: 'generation:count',
     LIMITS: 'generation:limits',
+    STATUS: 'generation:status',
   },
   SYSTEM: {
     FEATURES: 'system:features',

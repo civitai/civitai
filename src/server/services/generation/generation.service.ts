@@ -3,6 +3,8 @@ import {
   BulkDeleteGeneratedImagesInput,
   CheckResourcesCoverageSchema,
   CreateGenerationRequestInput,
+  GenerationStatus,
+  generationStatusSchema,
   GetGenerationDataInput,
   GetGenerationRequestsOutput,
   GetGenerationResourcesInput,
@@ -58,6 +60,7 @@ import { createLimiter } from '~/server/utils/rate-limiting';
 import { clickhouse } from '~/server/clickhouse/client';
 import dayjs from 'dayjs';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { UserTier } from '~/server/schema/user.schema';
 
 export function parseModelVersionId(assetId: string) {
   const pattern = /^@civitai\/(\d+)$/;
@@ -434,10 +437,15 @@ const generationLimiter = createLimiter({
 
 export const createGenerationRequest = async ({
   userId,
+  userTier,
   isModerator,
   resources,
   params: { nsfw, negativePrompt, ...params },
-}: CreateGenerationRequestInput & { userId: number; isModerator?: boolean }) => {
+}: CreateGenerationRequestInput & {
+  userId: number;
+  userTier?: UserTier;
+  isModerator?: boolean;
+}) => {
   // Handle generator disabled
   const status = await getGenerationStatus();
   if (!status.available && !isModerator)
@@ -453,13 +461,21 @@ export const createGenerationRequest = async ({
     throw throwRateLimitError(message);
   }
 
+  // Handle the request limits
+  const limits = status.limits[userTier ?? 'free'];
+  if (params.quantity > limits.quantity)
+    throw throwBadRequestError('You have exceeded the quantity limit.');
+  if (params.steps > limits.steps) throw throwBadRequestError('You have exceeded the steps limit.');
+  if (resources.length > limits.resources)
+    throw throwBadRequestError('You have exceeded the resources limit.');
+
   // This is disabled for now, because it performs so poorly...
   // const requests = await getGenerationRequests({
   //   userId,
   //   status: [GenerationRequestStatus.Pending, GenerationRequestStatus.Processing],
-  //   take: constants.imageGeneration.maxConcurrentRequests + 1,
+  //   take: limits.queue + 1,
   // });
-  // if (requests.items.length >= constants.imageGeneration.maxConcurrentRequests)
+  // if (requests.items.length >= limits.queue)
   //   throw throwRateLimitError(
   //     'You have too many pending generation requests. Try again when some are completed.'
   //   );
@@ -700,14 +716,11 @@ export async function checkResourcesCoverage({ id }: CheckResourcesCoverageSchem
 }
 
 export async function getGenerationStatus() {
-  const status = JSON.parse(
-    (await redis.hGet(REDIS_KEYS.SYSTEM.FEATURES, 'generation:status')) ?? '{}'
-  ) as any;
-  status.available ??= true;
-  status.sfwEmbed ??= true;
-  status.minorFallback ??= true;
+  const status = generationStatusSchema.parse(
+    JSON.parse((await redis.hGet(REDIS_KEYS.SYSTEM.FEATURES, REDIS_KEYS.GENERATION.STATUS)) ?? '{}')
+  );
 
-  return status as Generation.Status;
+  return status as GenerationStatus;
 }
 
 export const getGenerationData = async (
