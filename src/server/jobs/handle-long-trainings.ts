@@ -166,12 +166,19 @@ async function handleJob({
   }
 
   async function hasEpochs() {
-    const [{ epochs }] = await dbWrite.$queryRaw<{ epochs: number | null }[]>`
-      SELECT jsonb_array_length(metadata -> 'trainingResults' -> 'epochs') epochs
-      FROM "ModelFile"
-      WHERE id = ${modelFileId};
+    const [{ requested, last }] = await dbWrite.$queryRaw<
+      {
+        requested: number | null;
+        last: number | null;
+      }[]
+    >`
+      SELECT (mv."trainingDetails" -> 'params' ->> 'maxTrainEpochs')::int                 requested,
+             (mf.metadata -> 'trainingResults' -> 'epochs' -> -1 ->> 'epoch_number')::int last
+      FROM "ModelFile" mf
+             JOIN "ModelVersion" mv on mf."modelVersionId" = mv.id
+      WHERE mf.id = ${modelFileId};
     `;
-    return epochs !== null;
+    return requested === last && !!requested;
   }
 
   async function updateStatus(status: TrainingStatus) {

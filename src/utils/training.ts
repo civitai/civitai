@@ -1,4 +1,9 @@
-import { TrainingDetailsBaseModel } from '~/server/schema/model-version.schema';
+import {
+  TrainingDetailsBaseModel,
+  TrainingDetailsBaseModelList,
+} from '~/server/schema/model-version.schema';
+
+const baseModelCoeff = 0;
 
 const etaCoefficients = {
   models: {
@@ -23,19 +28,25 @@ export const calcEta = (
   dim: number,
   alpha: number,
   steps: number,
-  model: TrainingDetailsBaseModel | undefined
+  model: TrainingDetailsBaseModel | null
 ) => {
-  if (!model || !(model in etaCoefficients.models)) return;
+  if (!model) return;
+
+  const modelCoeff =
+    model in etaCoefficients.models
+      ? etaCoefficients.models[model as TrainingDetailsBaseModelList]
+      : baseModelCoeff;
 
   return Math.max(
     minEta,
-    etaCoefficients.models[model] +
+    modelCoeff +
       etaCoefficients.alpha * alpha +
       etaCoefficients.dim * dim +
       etaCoefficients.steps * steps
   );
 };
 
+// TODO base cost for custom
 export const calcBuzzFromEta = (eta: number) => {
   return Math.round(Math.max(baseBuzzTake, eta * dollarsPerMinute * dollarsToBuzz));
 };

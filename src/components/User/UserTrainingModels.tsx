@@ -87,6 +87,7 @@ type TrainingFileData = {
 type ModalData = {
   id?: number;
   file?: TrainingFileData;
+  baseModel?: string;
   params?: TrainingDetailsParams;
   eta?: string;
 };
@@ -125,11 +126,11 @@ const trainingStatusFields: Record<TrainingStatus, { color: MantineColor; descri
 
 const modelsLimit = 10;
 
-const minsWait = 10;
+export const trainingMinsWait = 10;
 
 export default function UserTrainingModels() {
   const { classes, cx } = useStyles();
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const router = useRouter();
 
   const [page, setPage] = useState(1);
@@ -272,7 +273,9 @@ export default function UserTrainingModels() {
                 // mins wait here might need to only be calced if the last history entry is "Submitted"
                 const eta =
                   !!startTime && !!etaMins
-                    ? new Date(new Date(startTime).getTime() + (minsWait + etaMins) * 60 * 1000)
+                    ? new Date(
+                        new Date(startTime).getTime() + (trainingMinsWait + etaMins) * 60 * 1000
+                      )
                     : undefined;
                 const etaStr = isProcessing
                   ? !!eta
@@ -430,6 +433,7 @@ export default function UserTrainingModels() {
                             setModalData({
                               id: thisModelVersion.id,
                               file: thisFile as TrainingFileData,
+                              baseModel: thisTrainingDetails?.baseModel,
                               params: thisTrainingDetails?.params,
                               eta: etaStr,
                             });
@@ -535,6 +539,11 @@ export default function UserTrainingModels() {
             {
               label: 'Captions',
               value: modalData.file?.metadata?.numCaptions || 0,
+            },
+            // TODO make the base model prettier when custom
+            {
+              label: 'Base Model',
+              value: modalData.baseModel ?? 'Unknown',
             },
             {
               label: 'Privacy',

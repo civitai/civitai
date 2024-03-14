@@ -1,7 +1,21 @@
-import { Accordion, Anchor, Button, Group, Input, Paper, Stack, Text, Title } from '@mantine/core';
+import {
+  Accordion,
+  Anchor,
+  Badge,
+  Button,
+  createStyles,
+  Group,
+  Input,
+  Paper,
+  SegmentedControl,
+  Stack,
+  Text,
+  Title,
+  useMantineTheme,
+} from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { showNotification } from '@mantine/notifications';
-import { Currency, TrainingStatus } from '@prisma/client';
+import { Currency, ModelType, TrainingStatus } from '@prisma/client';
 import { useRouter } from 'next/router';
 import React, { useEffect, useState } from 'react';
 import { z } from 'zod';
@@ -12,45 +26,49 @@ import { CivitaiTooltip } from '~/components/CivitaiWrapped/CivitaiTooltip';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
+import InputResourceSelect from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
 import { goBack } from '~/components/Resource/Forms/Training/TrainingCommon';
+import { trainingMinsWait } from '~/components/User/UserTrainingModels';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import {
-  Form,
-  InputCheckbox,
-  InputNumber,
-  InputSegmentedControl,
-  InputSelect,
-  InputText,
-  useForm,
-} from '~/libs/form';
+import { Form, InputCheckbox, InputNumber, InputSelect, InputText, useForm } from '~/libs/form';
 import { BaseModel } from '~/server/common/constants';
+import { generationResourceSchema } from '~/server/schema/generation.schema';
 import {
   ModelVersionUpsertInput,
   TrainingDetailsBaseModel,
-  trainingDetailsBaseModels,
+  TrainingDetailsBaseModel15,
+  TrainingDetailsBaseModelXL,
   TrainingDetailsObj,
   TrainingDetailsParams,
   trainingDetailsParams,
 } from '~/server/schema/model-version.schema';
+import { Generation } from '~/server/services/generation/generation.types';
 import { TrainingModelData } from '~/types/router';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { calcBuzzFromEta, calcEta } from '~/utils/training';
 import { trpc } from '~/utils/trpc';
+import { isDefined } from '~/utils/type-guards';
 
 const baseModelDescriptions: {
-  [key in TrainingDetailsBaseModel]: { label: string; description: string };
+  [key in TrainingDetailsBaseModel]: { label: string; type: string; description: string };
 } = {
-  sd_1_5: { label: 'Standard (SD 1.5)', description: 'Useful for all purposes.' },
-  anime: { label: 'Anime (SD 1.5)', description: 'Results will have an anime aesthetic.' },
+  sd_1_5: { label: 'Standard', type: '15', description: 'Useful for all purposes.' },
+  anime: { label: 'Anime', type: '15', description: 'Results will have an anime aesthetic.' },
   semi: {
-    label: 'Semi-realistic (SD 1.5)',
+    label: 'Semi-realistic',
+    type: '15',
     description: 'Results will be a blend of anime and realism.',
   },
-  realistic: { label: 'Realistic (SD 1.5)', description: 'Results will be extremely realistic.' },
-  sdxl: { label: 'Standard (SDXL)', description: 'Useful for all purposes, and uses SDXL.' },
+  realistic: {
+    label: 'Realistic',
+    type: '15',
+    description: 'Results will be extremely realistic.',
+  },
+  sdxl: { label: 'Standard', type: 'XL', description: 'Useful for all purposes, and uses SDXL.' },
   pony: {
-    label: 'Pony (SDXL)',
+    label: 'Pony',
+    type: 'XL',
     description: 'Results tailored to visuals of various anthro, feral, or humanoid species.',
   },
 };
@@ -130,6 +148,18 @@ const getPrecision = (n: any) => {
     p++;
   }
   return p;
+};
+
+const minsToHours = (n: number) => {
+  if (!n) return 'Unknown';
+
+  const hours = Math.floor(n / 60);
+  const minutes = Math.floor(n % 60);
+
+  const h = hours > 0 ? `${hours} hour${hours === 1 ? '' : 's'}, ` : '';
+  const m = `${minutes} min${minutes === 1 ? '' : 's'}`;
+
+  return `${h}${m}`;
 };
 
 export const trainingSettings: TrainingSettingsType[] = [
@@ -282,6 +312,7 @@ export const trainingSettings: TrainingSettingsType[] = [
     min: 0,
     max: 1,
     step: 0.00001,
+    overrides: { anime: { default: 0.0001 } },
   },
   {
     name: 'lrScheduler',
@@ -340,7 +371,7 @@ export const trainingSettings: TrainingSettingsType[] = [
     min: 1,
     max: 128,
     step: 1,
-    overrides: { sdxl: { max: 256 }, pony: { max: 256 } },
+    overrides: { sdxl: { max: 256 }, pony: { max: 256 }, anime: { default: 16 } },
   },
   {
     name: 'networkAlpha',
@@ -360,7 +391,7 @@ export const trainingSettings: TrainingSettingsType[] = [
     min: 1,
     max: 128,
     step: 1,
-    overrides: { sdxl: { max: 256 }, pony: { max: 256, default: 32 } },
+    overrides: { sdxl: { max: 256 }, pony: { max: 256, default: 32 }, anime: { default: 8 } },
   },
   {
     name: 'noiseOffset',
@@ -401,6 +432,22 @@ export const trainingSettings: TrainingSettingsType[] = [
   },
 ];
 
+const useStyles = createStyles((theme) => ({
+  segControl: {
+    root: {
+      border: `1px solid ${
+        theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[4]
+      }`,
+      background: 'none',
+      flexWrap: 'wrap',
+    },
+    label: {
+      paddingLeft: theme.spacing.sm,
+      paddingRight: theme.spacing.sm,
+    },
+  },
+}));
+
 export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModelData> }) => {
   const thisModelVersion = model.modelVersions[0];
   const thisTrainingDetails = thisModelVersion.trainingDetails as TrainingDetailsObj | undefined;
@@ -408,12 +455,16 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   const thisMetadata = thisFile?.metadata as FileMetadata | null;
 
   const [openedSections, setOpenedSections] = useState<string[]>([]);
-  const [formBaseModel, setDisplayBaseModel] = useState<TrainingDetailsBaseModel | undefined>(
-    thisTrainingDetails?.baseModel ?? undefined
-  );
+  const [formBaseModel, setFormBaseModel] = useState<TrainingDetailsBaseModel | null>(null);
+  const [baseModel15, setBaseModel15] = useState<TrainingDetailsBaseModel15 | null>(null);
+  const [baseModelXL, setBaseModelXL] = useState<TrainingDetailsBaseModelXL | null>(null);
+  const [etaMins, setEtaMins] = useState<number | undefined>(undefined);
   const [buzzCost, setBuzzCost] = useState<number | undefined>(undefined);
-  const router = useRouter();
   const [awaitInvalidate, setAwaitInvalidate] = useState<boolean>(false);
+
+  const { classes } = useStyles();
+  const theme = useMantineTheme();
+  const router = useRouter();
   const queryUtils = trpc.useUtils();
   const currentUser = useCurrentUser();
   const { balance } = useBuzz();
@@ -437,19 +488,14 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   const thisStep = 3;
 
   const schema = trainingDetailsParams.extend({
-    baseModel: z.enum(trainingDetailsBaseModels, {
-      errorMap: () => ({ message: 'A base model must be chosen.' }),
-    }),
+    customModelSelect: generationResourceSchema.optional(),
     samplePrompt1: z.string(),
     samplePrompt2: z.string(),
     samplePrompt3: z.string(),
   });
 
   // @ts-ignore ignoring because the reducer will use default functions in the next step in place of actual values
-  const defaultValues: Omit<z.infer<typeof schema>, 'baseModel'> & {
-    baseModel: TrainingDetailsBaseModel | undefined;
-  } = {
-    baseModel: thisTrainingDetails?.baseModel ?? undefined,
+  const defaultValues: z.infer<typeof schema> = {
     samplePrompt1: thisTrainingDetails?.samplePrompts?.[0] ?? '',
     samplePrompt2: thisTrainingDetails?.samplePrompts?.[1] ?? '',
     samplePrompt3: thisTrainingDetails?.samplePrompts?.[2] ?? '',
@@ -530,6 +576,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     const [networkDim, networkAlpha, targetSteps] = watchFieldsBuzz;
     const eta = calcEta(networkDim, networkAlpha, targetSteps, formBaseModel);
     const price = eta !== undefined ? calcBuzzFromEta(eta) : eta;
+    setEtaMins(eta);
     setBuzzCost(price);
   }, [watchFieldsBuzz, formBaseModel]);
 
@@ -545,8 +592,6 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [watchFieldOptimizer]);
-
-  const { errors } = form.formState;
 
   // TODO [bw] this should be a new route for modelVersion.update instead
   const upsertVersionMutation = trpc.modelVersion.upsert.useMutation({
@@ -573,6 +618,14 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   const userTrainingDashboardURL = `/user/${currentUser?.username}/models?section=training`;
 
   const handleSubmit = ({ ...rest }: z.infer<typeof schema>) => {
+    if (!formBaseModel) {
+      showErrorNotification({
+        error: new Error('A base model must be chosen.'),
+        autoClose: false,
+      });
+      return;
+    }
+
     // TODO [bw] we should probably disallow people to get to the training wizard at all when it's not pending
     if (thisModelVersion.trainingStatus !== TrainingStatus.Pending) {
       showNotification({
@@ -643,17 +696,31 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   };
 
   const handleConfirm = (data: z.infer<typeof schema>) => {
+    if (!formBaseModel) {
+      showErrorNotification({
+        error: new Error('A base model must be chosen.'),
+        autoClose: false,
+      });
+      return;
+    }
+
     setAwaitInvalidate(true);
 
-    const { baseModel, samplePrompt1, samplePrompt2, samplePrompt3, optimizerArgs, ...paramData } =
-      data;
+    const {
+      samplePrompt1,
+      samplePrompt2,
+      samplePrompt3,
+      customModelSelect, //unsent
+      optimizerArgs, //unsent
+      ...paramData
+    } = data;
 
     const baseModelConvert: BaseModel =
-      baseModel === 'sd_1_5'
+      formBaseModel === 'sd_1_5'
         ? 'SD 1.5'
-        : baseModel === 'sdxl'
+        : formBaseModel === 'sdxl'
         ? 'SDXL 1.0'
-        : baseModel === 'pony'
+        : formBaseModel === 'pony'
         ? 'Pony'
         : 'Other';
 
@@ -675,7 +742,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
       trainingStatus: TrainingStatus.Submitted,
       trainingDetails: {
         ...((thisModelVersion.trainingDetails as TrainingDetailsObj) || {}),
-        baseModel: baseModel,
+        baseModel: formBaseModel,
         samplePrompts: [samplePrompt1, samplePrompt2, samplePrompt3],
         params: paramData,
       },
@@ -822,199 +889,287 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
             for more info.
           </Text>
         </Stack>
-        {/* TODO when using custom, split this into rows of 1.5, xl, and custom */}
-        <Input.Wrapper
-          label="Select a base model to train your model on"
-          withAsterisk
-          error={errors.baseModel?.message}
-        >
-          <InputSegmentedControl
-            name="baseModel"
-            data={Object.entries(baseModelDescriptions).map(([k, v]) => {
-              return {
-                label: v.label,
-                value: k,
-              };
-            })}
-            onChange={(value) => setDisplayBaseModel(value as TrainingDetailsBaseModel)}
-            color="blue"
-            size="xs"
-            styles={(theme) => ({
-              root: {
-                border: `1px solid ${
-                  theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[4]
-                }`,
-                background: 'none',
-                marginTop: theme.spacing.xs * 0.5, // 5px
-                flexWrap: 'wrap',
-              },
-            })}
-            fullWidth
-          />
+        <Input.Wrapper label="Select a base model to train your model on" withAsterisk>
+          <Paper mt={8} p="sm" withBorder>
+            <Stack spacing="xs">
+              <Group>
+                <Badge color="violet" size="lg" radius="xs" w={85}>
+                  SD 1.5
+                </Badge>
+                <SegmentedControl
+                  data={Object.entries(baseModelDescriptions)
+                    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+                    .filter(([_k, v]) => v.type === '15')
+                    .map(([k, v]) => {
+                      return {
+                        label: v.label,
+                        value: k,
+                      };
+                    })}
+                  // nb: this type is not accurate, but null is the only way to clear out SegmentedControl
+                  value={baseModel15 as TrainingDetailsBaseModel15}
+                  onChange={(value) => {
+                    setBaseModel15(value as TrainingDetailsBaseModel15);
+                    setBaseModelXL(null);
+                    form.setValue('customModelSelect', undefined);
+                    setFormBaseModel(value as TrainingDetailsBaseModel);
+                  }}
+                  color="blue"
+                  size="xs"
+                  className={classes.segControl}
+                  transitionDuration={0}
+                />
+              </Group>
+              <Group>
+                <Badge color="grape" size="lg" radius="xs" w={85}>
+                  SDXL
+                </Badge>
+                <SegmentedControl
+                  data={Object.entries(baseModelDescriptions)
+                    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+                    .filter(([_k, v]) => v.type === 'XL')
+                    .map(([k, v]) => {
+                      return {
+                        label: v.label,
+                        value: k,
+                      };
+                    })}
+                  value={baseModelXL as TrainingDetailsBaseModelXL}
+                  onChange={(value) => {
+                    setBaseModel15(null);
+                    setBaseModelXL(value as TrainingDetailsBaseModelXL);
+                    form.setValue('customModelSelect', undefined);
+                    setFormBaseModel(value as TrainingDetailsBaseModel);
+                  }}
+                  color="blue"
+                  size="xs"
+                  className={classes.segControl}
+                  transitionDuration={0}
+                />
+              </Group>
+
+              <Group>
+                <Badge color="cyan" size="lg" radius="xs" w={85}>
+                  Custom
+                </Badge>
+                <InputResourceSelect
+                  name="customModelSelect"
+                  buttonLabel="Select custom model"
+                  buttonProps={{
+                    size: 'md',
+                    compact: true,
+                    styles: { label: { fontSize: 12 } },
+                  }}
+                  options={{
+                    canGenerate: true,
+                    resources: [
+                      {
+                        type: ModelType.Checkpoint,
+                      },
+                    ],
+                  }}
+                  allowRemove={true}
+                  onChange={(val) => {
+                    const gVal = val as Generation.Resource;
+                    const mId = gVal?.modelId;
+                    const mvId = gVal?.id;
+                    const cLink =
+                      isDefined(mId) && isDefined(mvId) ? `civitai:${mId}@${mvId}` : null;
+                    setBaseModel15(null);
+                    setBaseModelXL(null);
+                    setFormBaseModel(cLink);
+                  }}
+                />
+              </Group>
+            </Stack>
+          </Paper>
         </Input.Wrapper>
         {formBaseModel && (
-          <Paper p="sm" withBorder style={{ marginTop: '-17px' }}>
-            <Text size="sm">
-              {baseModelDescriptions[formBaseModel]?.description || 'No description.'}
-            </Text>
-          </Paper>
-        )}
+          <>
+            <Paper p="sm" withBorder style={{ marginTop: '-17px' }}>
+              <Text size="sm">
+                {formBaseModel.startsWith('civitai:')
+                  ? 'Custom model selected.'
+                  : baseModelDescriptions[formBaseModel]?.description ?? 'No description.'}
+              </Text>
+            </Paper>
 
-        {formBaseModel && (
-          <Title mt="md" order={5}>
-            Advanced Settings
-          </Title>
-        )}
+            <Title mt="md" order={5}>
+              Advanced Settings
+            </Title>
 
-        {formBaseModel && (
-          <Accordion
-            variant="separated"
-            multiple
-            mt="md"
-            onChange={setOpenedSections}
-            styles={(theme) => ({
-              content: { padding: 0 },
-              item: {
-                overflow: 'hidden',
-                borderColor:
-                  theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3],
-                boxShadow: theme.shadows.sm,
-              },
-              control: {
-                padding: theme.spacing.sm,
-              },
-            })}
-          >
-            <Accordion.Item value="custom-prompts">
-              <Accordion.Control>
-                <Stack spacing={4}>
-                  Sample Image Prompts
-                  {openedSections.includes('custom-prompts') && (
-                    <Text size="xs" color="dimmed">
-                      Set your own prompts for any of the 3 sample images we generate for each
-                      epoch.
-                    </Text>
-                  )}
-                </Stack>
-              </Accordion.Control>
-              <Accordion.Panel>
-                <Stack p="sm">
-                  <InputText
-                    name="samplePrompt1"
-                    label="Image #1"
-                    placeholder="Automatically set"
-                  />
-                  <InputText
-                    name="samplePrompt2"
-                    label="Image #2"
-                    placeholder="Automatically set"
-                  />
-                  <InputText
-                    name="samplePrompt3"
-                    label="Image #3"
-                    placeholder="Automatically set"
-                  />
-                </Stack>
-              </Accordion.Panel>
-            </Accordion.Item>
-            <Accordion.Item value="training-settings">
-              <Accordion.Control>
-                <Stack spacing={4}>
-                  Training Parameters
-                  {openedSections.includes('training-settings') && (
-                    <Text size="xs" color="dimmed">
-                      Hover over each setting for more information.
-                      <br />
-                      Default settings are based on your chosen model. Altering these settings may
-                      cause undesirable results.
-                    </Text>
-                  )}
-                </Stack>
-              </Accordion.Control>
-              <Accordion.Panel>
-                <DescriptionTable
-                  labelWidth="200px"
-                  items={trainingSettings.map((ts) => {
-                    let inp: React.ReactNode;
+            <Accordion
+              variant="separated"
+              multiple
+              mt="md"
+              onChange={setOpenedSections}
+              styles={(theme) => ({
+                content: { padding: 0 },
+                item: {
+                  overflow: 'hidden',
+                  borderColor:
+                    theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3],
+                  boxShadow: theme.shadows.sm,
+                },
+                control: {
+                  padding: theme.spacing.sm,
+                },
+              })}
+            >
+              <Accordion.Item value="custom-prompts">
+                <Accordion.Control>
+                  <Stack spacing={4}>
+                    Sample Image Prompts
+                    {openedSections.includes('custom-prompts') && (
+                      <Text size="xs" color="dimmed">
+                        Set your own prompts for any of the 3 sample images we generate for each
+                        epoch.
+                      </Text>
+                    )}
+                  </Stack>
+                </Accordion.Control>
+                <Accordion.Panel>
+                  <Stack p="sm">
+                    <InputText
+                      name="samplePrompt1"
+                      label="Image #1"
+                      placeholder="Automatically set"
+                    />
+                    <InputText
+                      name="samplePrompt2"
+                      label="Image #2"
+                      placeholder="Automatically set"
+                    />
+                    <InputText
+                      name="samplePrompt3"
+                      label="Image #3"
+                      placeholder="Automatically set"
+                    />
+                  </Stack>
+                </Accordion.Panel>
+              </Accordion.Item>
+              <Accordion.Item value="training-settings">
+                <Accordion.Control>
+                  <Stack spacing={4}>
+                    Training Parameters
+                    {openedSections.includes('training-settings') && (
+                      <Text size="xs" color="dimmed">
+                        Hover over each setting for more information.
+                        <br />
+                        Default settings are based on your chosen model (custom models may not be
+                        optimized).
+                        <br />
+                        Altering these settings may cause undesirable results.
+                      </Text>
+                    )}
+                  </Stack>
+                </Accordion.Control>
+                <Accordion.Panel>
+                  <DescriptionTable
+                    labelWidth="200px"
+                    items={trainingSettings.map((ts) => {
+                      let inp: React.ReactNode;
 
-                    if (ts.type === 'int' || ts.type === 'number') {
-                      const override = ts.overrides?.[formBaseModel];
+                      if (ts.type === 'int' || ts.type === 'number') {
+                        const override = ts.overrides?.[formBaseModel];
 
-                      inp = (
-                        <InputNumber
-                          name={ts.name}
-                          min={override?.min ?? ts.min}
-                          max={override?.max ?? ts.max}
-                          precision={
-                            ts.type === 'number'
-                              ? getPrecision(ts.step ?? ts.default) || 4
-                              : undefined
-                          }
-                          step={ts.step}
-                          sx={{ flexGrow: 1 }}
-                          disabled={ts.disabled === true}
-                          format="default"
-                        />
-                      );
-                    } else if (ts.type === 'select') {
-                      let options = ts.options;
-                      // TODO if we fix the bitsandbytes issue, we can disable this
-                      if (
-                        ts.name === 'optimizerType' &&
-                        (formBaseModel === 'sdxl' || formBaseModel === 'pony')
-                      ) {
-                        options = options.filter((o) => o !== 'AdamW8Bit');
+                        inp = (
+                          <InputNumber
+                            name={ts.name}
+                            min={override?.min ?? ts.min}
+                            max={override?.max ?? ts.max}
+                            precision={
+                              ts.type === 'number'
+                                ? getPrecision(ts.step ?? ts.default) || 4
+                                : undefined
+                            }
+                            step={ts.step}
+                            sx={{ flexGrow: 1 }}
+                            disabled={ts.disabled === true}
+                            format="default"
+                          />
+                        );
+                      } else if (ts.type === 'select') {
+                        let options = ts.options;
+                        // TODO if we fix the bitsandbytes issue, we can disable this
+                        if (
+                          ts.name === 'optimizerType' &&
+                          (formBaseModel === 'sdxl' || formBaseModel === 'pony')
+                        ) {
+                          options = options.filter((o) => o !== 'AdamW8Bit');
+                        }
+                        if (ts.name === 'lrScheduler' && watchFieldOptimizer === 'Prodigy') {
+                          options = options.filter((o) => o !== 'cosine_with_restarts');
+                        }
+
+                        inp = (
+                          <InputSelect
+                            name={ts.name}
+                            data={options}
+                            disabled={ts.disabled === true}
+                          />
+                        );
+                      } else if (ts.type === 'bool') {
+                        inp = (
+                          <InputCheckbox py={8} name={ts.name} disabled={ts.disabled === true} />
+                        );
+                      } else if (ts.type === 'string') {
+                        inp = (
+                          <InputText
+                            name={ts.name}
+                            disabled={ts.disabled === true}
+                            clearable={ts.disabled !== true}
+                          />
+                        );
                       }
-                      if (ts.name === 'lrScheduler' && watchFieldOptimizer === 'Prodigy') {
-                        options = options.filter((o) => o !== 'cosine_with_restarts');
-                      }
 
-                      inp = (
-                        <InputSelect
-                          name={ts.name}
-                          data={options}
-                          disabled={ts.disabled === true}
-                        />
-                      );
-                    } else if (ts.type === 'bool') {
-                      inp = <InputCheckbox py={8} name={ts.name} disabled={ts.disabled === true} />;
-                    } else if (ts.type === 'string') {
-                      inp = (
-                        <InputText
-                          name={ts.name}
-                          disabled={ts.disabled === true}
-                          clearable={ts.disabled !== true}
-                        />
-                      );
-                    }
-
-                    return {
-                      label: ts.hint ? (
-                        <CivitaiTooltip
-                          position="top"
-                          // transition="slide-up"
-                          variant="roundedOpaque"
-                          withArrow
-                          multiline
-                          label={ts.hint}
-                        >
-                          <Text inline style={{ cursor: 'help' }}>
-                            {ts.label}
-                          </Text>
-                        </CivitaiTooltip>
-                      ) : (
-                        ts.label
-                      ),
-                      value: inp,
-                    };
-                  })}
-                />
-              </Accordion.Panel>
-            </Accordion.Item>
-          </Accordion>
+                      return {
+                        label: ts.hint ? (
+                          <CivitaiTooltip
+                            position="top"
+                            // transition="slide-up"
+                            variant="roundedOpaque"
+                            withArrow
+                            multiline
+                            label={ts.hint}
+                          >
+                            <Text inline style={{ cursor: 'help' }}>
+                              {ts.label}
+                            </Text>
+                          </CivitaiTooltip>
+                        ) : (
+                          ts.label
+                        ),
+                        value: inp,
+                      };
+                    })}
+                  />
+                </Accordion.Panel>
+              </Accordion.Item>
+            </Accordion>
+            <Paper
+              shadow="xs"
+              radius="sm"
+              mt="lg"
+              w="fit-content"
+              px="md"
+              py="xs"
+              style={{
+                backgroundColor:
+                  theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
+                alignSelf: 'flex-end',
+              }}
+            >
+              <Group spacing="sm">
+                <Badge>ETA</Badge>
+                <Text>
+                  {!isDefined(etaMins) ? 'Unknown' : minsToHours(etaMins + trainingMinsWait)}
+                </Text>
+              </Group>
+            </Paper>
+          </>
         )}
       </Stack>
-      {/* TODO maybe show eta here */}
       <Group mt="xl" position="right">
         <Button variant="default" onClick={() => goBack(model.id, thisStep)}>
           Back
