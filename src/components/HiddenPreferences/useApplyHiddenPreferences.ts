@@ -27,7 +27,7 @@ export function useApplyHiddenPreferences<
   const [previous, setPrevious] = useState<any[]>([]);
   const browsingLevel = useBrowsingLevelDebounced();
 
-  const { hiddenModels, hiddenImages, hiddenTags, hiddenUsers, hiddenLoading } =
+  const { hiddenModels, hiddenImages, hiddenTags, hiddenUsers, hiddenLoading, moderatedTags } =
     useHiddenPreferencesContext();
 
   const items = useMemo(
@@ -190,16 +190,27 @@ export function useApplyHiddenPreferences<
                 return filteredImages.length ? { ...post, images: filteredImages } : null;
               })
               .filter(isDefined);
+          case 'tags': {
+            const moderatedTagIds = moderatedTags
+              .filter((x) => !!x.nsfwLevel && Flags.intersects(x.nsfwLevel, browsingLevel))
+              .map((x) => x.id);
+            return value.filter((tag) => {
+              if (hiddenTags.get(tag.id)) return false;
+              if (
+                !!tag.nsfwLevel &&
+                tag.nsfwLevel > NsfwLevel.PG13 &&
+                !moderatedTagIds.includes(tag.id)
+              )
+                return false;
+              return true;
+            });
+          }
           default:
             throw new Error('unhandled hidden user preferences filter type');
         }
       }
 
-      // console.time('useApplyHiddenFilters');
       const filtered = filterPreferences();
-      // console.timeEnd('useApplyHiddenFilters');
-      // console.log({ data, filtered });
-
       return filtered;
     },
     // eslint-disable-next-line
@@ -311,6 +322,11 @@ type BasePost = {
   }[];
 };
 
+type BaseTag = {
+  id: number;
+  nsfwLevel?: number;
+};
+
 export type BaseDataTypeMap = {
   images: BaseImage[];
   models: BaseModel[];
@@ -319,4 +335,5 @@ export type BaseDataTypeMap = {
   collections: BaseCollection[];
   bounties: BaseBounty[];
   posts: BasePost[];
+  tags: BaseTag[];
 };

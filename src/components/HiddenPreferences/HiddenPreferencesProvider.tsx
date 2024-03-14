@@ -1,6 +1,7 @@
 import { useContext, createContext, ReactNode, useMemo, useDeferredValue, useEffect } from 'react';
 import { useQueryHiddenPreferences } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { HiddenTag } from '~/server/services/user-preferences.service';
 
 type HiddenPreferencesState = {
   hiddenUsers: Map<number, boolean>;
@@ -8,6 +9,7 @@ type HiddenPreferencesState = {
   hiddenModels: Map<number, boolean>;
   hiddenImages: Map<number, boolean>;
   hiddenLoading: boolean;
+  moderatedTags: HiddenTag[];
 };
 
 const HiddenPreferencesContext = createContext<HiddenPreferencesState | null>(null);
@@ -28,6 +30,8 @@ export const HiddenPreferencesProvider = ({ children }: { children: ReactNode })
       data.hiddenTags.filter((x) => !disableHidden && x.hidden).map((x) => [x.id, true])
     );
 
+    const moderatedTags = data.hiddenTags.filter((x) => !!x.nsfwLevel);
+
     const images = new Map(
       data.hiddenImages.filter((x) => !x.tagId || tags.get(x.tagId)).map((x) => [x.id, true])
     );
@@ -38,6 +42,7 @@ export const HiddenPreferencesProvider = ({ children }: { children: ReactNode })
       hiddenTags: tags,
       hiddenImages: images,
       hiddenLoading: isLoading,
+      moderatedTags,
     };
   }, [data, isLoading, disableHidden]);
 

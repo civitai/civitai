@@ -1,15 +1,16 @@
-import { ActionIcon, Box, Button, createStyles, Group, ScrollArea } from '@mantine/core';
+import { ActionIcon, Box, Button, createStyles, Group } from '@mantine/core';
 import { IconChevronLeft, IconChevronRight } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 
 type TagProps = { id: number; name: string };
+// TODO.nsfwLevel - multiple: boolean
 export function TagScroller({
   data,
   value = [],
   onChange,
 }: {
-  data: TagProps[];
+  data?: TagProps[];
   value?: number[];
   onChange?: (value: number[]) => void;
 }) {
@@ -54,7 +55,7 @@ export function TagScroller({
     };
   }, [node]);
 
-  if (!data.length) return null;
+  if (!data?.length) return null;
 
   return (
     <div className={classes.tagsContainer}>
