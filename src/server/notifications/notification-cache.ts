@@ -102,6 +102,7 @@ async function incrementUser(userId: number, category: NotificationCategory, by 
 
 async function decrementUser(userId: number, category: NotificationCategory, by = 1) {
   if (!hasUser(userId)) return;
+  logToAxiom({ type: 'decrementUser', userId, category }, 'webhooks').catch();
   await incrementUser(userId, category, -by);
   await slideExpiration(userId);
 }
