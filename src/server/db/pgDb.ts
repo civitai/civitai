@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { Pool, QueryResult, QueryResultRow, types } from 'pg';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server.mjs';
+import { createLogger } from '~/utils/logging';
 
 type CancellableResult<R extends QueryResultRow = any> = {
   query: Promise<QueryResult<R>>;
@@ -20,6 +21,8 @@ declare global {
   // eslint-disable-next-line no-var, vars-on-top
   var globalPgWrite: AugmentedPool | undefined;
 }
+
+const log = createLogger('pgDb', 'blue');
 
 function getClient({ readonly }: { readonly: boolean } = { readonly: false }) {
   console.log('Creating PG client');
@@ -47,6 +50,9 @@ function getClient({ readonly }: { readonly: boolean } = { readonly: false }) {
     if (typeof sql === 'object') {
       for (const i in sql.values) sql.values[i] = formatSqlType(sql.values[i]);
     }
+
+    // Logging
+    log(readonly ? 'read' : 'write', sql);
 
     let done = false;
     const query = connection.query<R>(sql);

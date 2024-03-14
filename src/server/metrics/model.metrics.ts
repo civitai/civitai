@@ -9,6 +9,7 @@ import { templateHandler } from '~/server/db/pgDb';
 import { executeRefresh, snippets } from '~/server/metrics/metric-helpers';
 
 const log = createLogger('metrics:model');
+const BATCH_SIZE = 1000;
 
 type ModelMetricContext = MetricProcessorRunContext & {
   queuedModelVersions: number[];
@@ -82,7 +83,7 @@ function getAffected(ctx: ModelMetricContext, type: 'Model' | 'ModelVersion') {
   });
 }
 
-type ModelVersionDownload = {
+type VersionTimeframeRow = {
   modelVersionId: number;
   day: number;
   week: number;
@@ -99,10 +100,10 @@ async function getDownloadTasks(ctx: ModelMetricContext) {
   `;
   const affected = downloaded.map((x) => x.modelVersionId);
 
-  const tasks = chunk(affected, 1000).map((ids, i) => async () => {
+  const tasks = chunk(affected, BATCH_SIZE).map((ids, i) => async () => {
     ctx.jobContext.checkIfCanceled();
     log('getDownloadTasks', i + 1, 'of', tasks.length);
-    const downloads = await ctx.ch.$query<ModelVersionDownload>`
+    const downloads = await ctx.ch.$query<VersionTimeframeRow>`
       SELECT
         modelVersionId,
         uniqMergeIf(users_state, createdDate = current_date()) day,
@@ -111,7 +112,7 @@ async function getDownloadTasks(ctx: ModelMetricContext) {
         uniqMergeIf(users_state, createdDate >= subtractYears(current_date(),1)) year,
         uniqMerge(users_state) all_time
       FROM daily_downloads_unique
-      WHERE modelVersionId IN (${affected})
+      WHERE modelVersionId IN (${ids})
       GROUP BY modelVersionId;
     `;
 
@@ -164,10 +165,10 @@ async function getGenerationTasks(ctx: ModelMetricContext) {
   `;
   const affected = generated.map((x) => x.modelVersionId);
 
-  const tasks = chunk(affected, 1000).map((ids, i) => async () => {
+  const tasks = chunk(affected, BATCH_SIZE).map((ids, i) => async () => {
     ctx.jobContext.checkIfCanceled();
     log('getGenerationTasks', i + 1, 'of', tasks.length);
-    const generations = await ctx.ch.$query<{ modelVersionId: number; count: number }>`
+    const generations = await ctx.ch.$query<VersionTimeframeRow>`
       SELECT
           modelVersionId,
           sumIf(count, createdDate = current_date()) day,
@@ -228,7 +229,7 @@ async function getImageTasks(ctx: ModelMetricContext) {
     WHERE p."publishedAt" BETWEEN '${ctx.lastUpdate}' AND now();
   `;
 
-  const tasks = chunk(affected, 1000).map((ids, i) => async () => {
+  const tasks = chunk(affected, BATCH_SIZE).map((ids, i) => async () => {
     ctx.jobContext.checkIfCanceled();
     log('getImageTasks', i + 1, 'of', tasks.length);
     await executeRefresh(ctx)`
@@ -269,7 +270,7 @@ async function getVersionRatingTasks(ctx: ModelMetricContext) {
     WHERE "createdAt" > '${ctx.lastUpdate}' OR "updatedAt" > '${ctx.lastUpdate}'
   `;
 
-  const tasks = chunk(affected, 1000).map((ids, i) => async () => {
+  const tasks = chunk(affected, BATCH_SIZE).map((ids, i) => async () => {
     ctx.jobContext.checkIfCanceled();
     log('getRatingTasks', i + 1, 'of', tasks.length);
     await executeRefresh(ctx)`
@@ -307,7 +308,7 @@ async function getModelRatingTasks(ctx: ModelMetricContext) {
     WHERE "createdAt" > '${ctx.lastUpdate}' OR "updatedAt" > '${ctx.lastUpdate}'
   `;
 
-  const tasks = chunk(affected, 1000).map((ids, i) => async () => {
+  const tasks = chunk(affected, BATCH_SIZE).map((ids, i) => async () => {
     ctx.jobContext.checkIfCanceled();
     log('getRatingTasks', i + 1, 'of', tasks.length);
     await executeRefresh(ctx)`
@@ -347,7 +348,7 @@ async function getCommentTasks(ctx: ModelMetricContext) {
   const affected = [...new Set([...commentEvents.map((x) => x.modelId), ...ctx.queue])];
   ctx.addAffected(affected);
 
-  const tasks = chunk(affected, 1000).map((ids, i) => async () => {
+  const tasks = chunk(affected, BATCH_SIZE).map((ids, i) => async () => {
     ctx.jobContext.checkIfCanceled();
     log('getCommentTasks', i + 1, 'of', tasks.length);
     await executeRefresh(ctx)`
@@ -361,7 +362,7 @@ async function getCommentTasks(ctx: ModelMetricContext) {
       CROSS JOIN ( SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe ) tf
       WHERE c."tosViolation" = false
         AND c."modelId" IN (${ids})
-      GROUP BY mv.id, tf.timeframe
+      GROUP BY c."modelId", tf.timeframe
       ON CONFLICT ("modelId", timeframe) DO UPDATE
         SET "commentCount" = EXCLUDED."commentCount", "updatedAt" = now();
     `;
@@ -379,7 +380,7 @@ async function getCollectionTasks(ctx: ModelMetricContext) {
     WHERE "modelId" IS NOT NULL AND "createdAt" > '${ctx.lastUpdate}'
   `;
 
-  const tasks = chunk(affected, 1000).map((ids, i) => async () => {
+  const tasks = chunk(affected, BATCH_SIZE).map((ids, i) => async () => {
     ctx.jobContext.checkIfCanceled();
     log('getCollectionTasks', i + 1, 'of', tasks.length);
     await executeRefresh(ctx)`
@@ -411,7 +412,7 @@ async function getBuzzTasks(ctx: ModelMetricContext) {
       AND ("createdAt" > '${ctx.lastUpdate}' OR "updatedAt" > '${ctx.lastUpdate}')
   `;
 
-  const tasks = chunk(affected, 1000).map((ids, i) => async () => {
+  const tasks = chunk(affected, BATCH_SIZE).map((ids, i) => async () => {
     ctx.jobContext.checkIfCanceled();
     log('getBuzzTasks', i + 1, 'of', tasks.length);
     await executeRefresh(ctx)`
@@ -444,7 +445,7 @@ async function getVersionAggregationTasks(ctx: ModelMetricContext) {
     WHERE mvm."updatedAt" > '${ctx.lastUpdate}'
   `;
 
-  const tasks = chunk(affected, 1000).map((ids, i) => async () => {
+  const tasks = chunk(affected, BATCH_SIZE).map((ids, i) => async () => {
     ctx.jobContext.checkIfCanceled();
     log('getModelTasks', i + 1, 'of', tasks.length);
     await executeRefresh(ctx)`

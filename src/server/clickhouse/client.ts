@@ -13,6 +13,7 @@ import requestIp from 'request-ip';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server.mjs';
 import { ProhibitedSources } from '~/server/schema/user.schema';
+import { createLogger } from '~/utils/logging';
 import { getServerAuthSession } from '../utils/get-server-auth-session';
 
 export type CustomClickHouseClient = ClickHouseClient & {
@@ -26,6 +27,8 @@ declare global {
   // eslint-disable-next-line no-var, vars-on-top
   var globalClickhouse: CustomClickHouseClient | undefined;
 }
+
+const log = createLogger('clickhouse', 'blue');
 
 function getClickHouse() {
   console.log('Creating ClickHouse client');
@@ -46,6 +49,8 @@ function getClickHouse() {
     if (typeof query !== 'string') {
       query = query.reduce((acc, part, i) => acc + part + formatSqlType(values[i] ?? ''), '');
     }
+
+    log('$query', query);
 
     const response = await client.query({
       query,
