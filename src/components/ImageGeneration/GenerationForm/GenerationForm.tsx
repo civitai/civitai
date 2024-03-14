@@ -65,7 +65,13 @@ import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import InputResourceSelect from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
 import { PersistentAccordion } from '~/components/PersistentAccordion/PersistantAccordion';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { IconAlertTriangle, IconArrowAutofitDown, IconCheck, IconCopy } from '@tabler/icons-react';
+import {
+  IconAlertTriangle,
+  IconAlertTriangleFilled,
+  IconArrowAutofitDown,
+  IconCheck,
+  IconCopy,
+} from '@tabler/icons-react';
 import InputResourceSelectMultiple from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
@@ -633,7 +639,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
           </Card> */}
           </Stack>
         </ScrollArea>
-        <Stack spacing={4} px="md" pt="xs" pb={3}>
+        <Stack spacing={4} px="md" pt="xs" pb={3} className={classes.generationArea}>
           {promptWarning && (
             <div>
               <Alert color="red" title="Prohibited Prompt">
@@ -689,6 +695,19 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
             </Alert>
           ) : status.available && !promptWarning ? (
             <>
+              {isFreeTier && limits.quantity < 8 && (
+                <Group spacing="xs" noWrap mb={4} align="center">
+                  <Text size="xs" color="yellow" lh={1}>
+                    <IconAlertTriangleFilled size={20} />
+                  </Text>
+                  <Text size="xs" lh={1.2} color="yellow">
+                    {`Generator under high load. Image limits have been temporarily reduced for free users. `}
+                    <Text lh={1.2} component={NextLink} href="/pricing" td="underline">
+                      Remove limits
+                    </Text>
+                  </Text>
+                </Group>
+              )}
               <Group spacing="xs" className={classes.generateButtonContainer} noWrap>
                 <Card withBorder className={classes.generateButtonQuantity} p={0}>
                   <Stack spacing={0}>
@@ -863,6 +882,11 @@ export const GenerationForm = (args: { onSuccess?: () => void }) => {
 
 const useStyles = createStyles((theme) => ({
   generationContainer: {},
+  generationArea: {
+    borderTop: `1px solid ${
+      theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[2]
+    }`,
+  },
   generateButtonContainer: {
     width: '100%',
     justifyContent: 'stretch',
