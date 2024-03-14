@@ -4,9 +4,10 @@ import { SessionUser } from 'next-auth';
 import { z } from 'zod';
 import { dbRead } from '~/server/db/client';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
+import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
 
 const schema = z.object({
-  modelVersionIds: z.array(z.coerce.number()),
+  modelVersionIds: commaDelimitedNumberArray(),
 });
 
 export default AuthedEndpoint(async function handler(

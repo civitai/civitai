@@ -10,7 +10,7 @@ export default AuthedEndpoint(async function handler(
   user: SessionUser
 ) {
   try {
-    const vault = getOrCreateVault({ userId: user.id });
+    const vault = await getOrCreateVault({ userId: user.id });
     res.json({
       vault,
     });
