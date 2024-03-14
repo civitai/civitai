@@ -57,7 +57,7 @@ export function PostDetail({ postId }: { postId: number }) {
     flatData: unfilteredImages,
     images,
     isLoading: imagesLoading,
-  } = useQueryImages({ postId, pending: true });
+  } = useQueryImages({ postId, pending: true, browsingLevel: undefined });
   const { data: postResources = [] } = trpc.post.getResources.useQuery({ id: postId });
 
   const meta = (

@@ -119,7 +119,7 @@ import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
   useSession: true,
-  resolver: async ({ ssg, ctx, browsingLevel }) => {
+  resolver: async ({ ssg, ctx }) => {
     const params = (ctx.params ?? {}) as {
       id: string;
       slug: string[];
@@ -145,8 +145,8 @@ export const getServerSideProps = createServerSideProps({
           period: 'AllTime',
           sort: ImageSort.MostReactions,
           limit: CAROUSEL_LIMIT,
-          browsingLevel,
           pending: true,
+          browsingLevel: undefined,
         });
 
       if (modelVersionIdParsed) {

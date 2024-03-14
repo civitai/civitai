@@ -167,16 +167,18 @@ export const getPostsInfinite = async ({
     else AND.push(Prisma.sql`p."publishedAt" IS NOT NULL`);
   }
 
-  if (pending && (isModerator || userId)) {
-    if (isModerator) {
-      AND.push(Prisma.sql`((p."nsfwLevel" & ${browsingLevel}) != 0 OR p."nsfwLevel" = 0)`);
-    } else if (userId) {
-      AND.push(
-        Prisma.sql`((p."nsfwLevel" & ${browsingLevel}) != 0 OR (p."nsfwLevel" = 0 AND p."userId" = ${userId}))`
-      );
+  if (browsingLevel) {
+    if (pending && (isModerator || userId)) {
+      if (isModerator) {
+        AND.push(Prisma.sql`((p."nsfwLevel" & ${browsingLevel}) != 0 OR p."nsfwLevel" = 0)`);
+      } else if (userId) {
+        AND.push(
+          Prisma.sql`((p."nsfwLevel" & ${browsingLevel}) != 0 OR (p."nsfwLevel" = 0 AND p."userId" = ${userId}))`
+        );
+      }
+    } else {
+      AND.push(Prisma.sql`(p."nsfwLevel" & ${browsingLevel}) != 0`);
     }
-  } else {
-    AND.push(Prisma.sql`(p."nsfwLevel" & ${browsingLevel}) != 0`);
   }
 
   if (ids) AND.push(Prisma.sql`p.id IN (${Prisma.join(ids)})`);

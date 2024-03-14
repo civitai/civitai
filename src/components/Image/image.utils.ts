@@ -77,7 +77,7 @@ export const useQueryImages = (
   filters ??= {};
   const browsingLevel = useBrowsingLevelDebounced();
   const { data, isLoading, ...rest } = trpc.image.getInfinite.useInfiniteQuery(
-    { ...filters, browsingLevel },
+    { browsingLevel, ...filters },
     {
       getNextPageParam: (lastPage) => lastPage.nextCursor,
       trpc: { context: { skipBatch: true } },

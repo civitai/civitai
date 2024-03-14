@@ -165,16 +165,18 @@ export const getArticles = async ({
       AND.push(Prisma.sql`a.id IN (${Prisma.join(ids, ',')})`);
     }
 
-    if (pending && (isModerator || userId)) {
-      if (isModerator) {
-        AND.push(Prisma.sql`((a."nsfwLevel" & ${browsingLevel}) != 0 OR a."nsfwLevel" = 0)`);
-      } else if (userId) {
-        AND.push(
-          Prisma.sql`((a."nsfwLevel" & ${browsingLevel}) != 0 OR (a."nsfwLevel" = 0 AND a."userId" = ${userId}))`
-        );
+    if (browsingLevel) {
+      if (pending && (isModerator || userId)) {
+        if (isModerator) {
+          AND.push(Prisma.sql`((a."nsfwLevel" & ${browsingLevel}) != 0 OR a."nsfwLevel" = 0)`);
+        } else if (userId) {
+          AND.push(
+            Prisma.sql`((a."nsfwLevel" & ${browsingLevel}) != 0 OR (a."nsfwLevel" = 0 AND a."userId" = ${userId}))`
+          );
+        }
+      } else {
+        AND.push(Prisma.sql`(a."nsfwLevel" & ${browsingLevel}) != 0`);
       }
-    } else {
-      AND.push(Prisma.sql`(a."nsfwLevel" & ${browsingLevel}) != 0`);
     }
 
     if (username) {
