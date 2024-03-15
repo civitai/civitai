@@ -13,6 +13,7 @@ export const modelFileSelect = Prisma.validator<Prisma.ModelFileSelect>()({
   virusScanResult: true,
   virusScanMessage: true,
   scannedAt: true,
+  modelVersionId: true,
   hashes: {
     select: {
       type: true,
