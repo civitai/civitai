@@ -35,6 +35,11 @@ export const goBack = (modelId: number | undefined, step: number) => {
     });
 };
 
+export const isTrainingCustomModel = (m: string | null) => {
+  if (!m) return false;
+  return m.startsWith('civitai:');
+};
+
 export const useTrainingSignals = () => {
   const queryClient = useQueryClient();
   const queryUtils = trpc.useUtils();

@@ -31,15 +31,22 @@ export const recipeSchema = z.object({
   multiplier: z.number(),
 });
 
-export const trainingDetailsBaseModels = [
-  'sd_1_5',
-  'sdxl',
-  'anime',
-  'semi',
-  'realistic',
-  'pony',
+const trainingDetailsBaseModels15 = ['sd_1_5', 'anime', 'semi', 'realistic'] as const;
+const trainingDetailsBaseModelsXL = ['sdxl', 'pony'] as const;
+const trainingDetailsBaseModelCustom = z
+  .string()
+  .refine((value) => /^civitai:\d+@\d+$/.test(value ?? ''));
+export type TrainingDetailsBaseModel15 = (typeof trainingDetailsBaseModels15)[number];
+export type TrainingDetailsBaseModelXL = (typeof trainingDetailsBaseModelsXL)[number];
+export type TrainingDetailsBaseModelCustom = z.infer<typeof trainingDetailsBaseModelCustom>;
+const trainingDetailsBaseModels = [
+  ...trainingDetailsBaseModels15,
+  ...trainingDetailsBaseModelsXL,
 ] as const;
-export type TrainingDetailsBaseModel = (typeof trainingDetailsBaseModels)[number];
+export type TrainingDetailsBaseModelList = (typeof trainingDetailsBaseModels)[number];
+export type TrainingDetailsBaseModel =
+  | TrainingDetailsBaseModelList
+  | TrainingDetailsBaseModelCustom;
 
 export type TrainingDetailsParams = z.infer<typeof trainingDetailsParams>;
 export const trainingDetailsParams = z.object({
@@ -74,7 +81,9 @@ export const trainingDetailsParams = z.object({
 
 export type TrainingDetailsObj = z.infer<typeof trainingDetailsObj>;
 export const trainingDetailsObj = z.object({
-  baseModel: z.enum(trainingDetailsBaseModels).optional(), // nb: this is not optional when submitting
+  baseModel: z
+    .union([z.enum(trainingDetailsBaseModels), trainingDetailsBaseModelCustom])
+    .optional(), // nb: this is not optional when submitting
   type: z.enum(constants.trainingModelTypes),
   // triggerWord: z.string().optional(),
   params: trainingDetailsParams.optional(),

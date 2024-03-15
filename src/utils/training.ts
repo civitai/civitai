@@ -1,5 +1,9 @@
-import { TrainingDetailsBaseModel } from '~/server/schema/model-version.schema';
+import {
+  TrainingDetailsBaseModel,
+  TrainingDetailsBaseModelList,
+} from '~/server/schema/model-version.schema';
 
+const baseModelCoeff = 0;
 const etaCoefficients = {
   models: {
     sdxl: 19.42979334,
@@ -14,28 +18,40 @@ const etaCoefficients = {
   steps: 0.014458002,
 };
 
+const stepsCoeff = 2;
+const stepsExp = 1.17;
+
 const dollarsPerMinute = 0.44 / 60;
 const dollarsToBuzz = 1000;
+
 const baseBuzzTake = 500;
+const baseBuzzCustomTake = 500;
+
 const minEta = 1;
 
 export const calcEta = (
   dim: number,
   alpha: number,
   steps: number,
-  model: TrainingDetailsBaseModel | undefined
+  model: TrainingDetailsBaseModel | null
 ) => {
-  if (!model || !(model in etaCoefficients.models)) return;
+  if (!model) return;
+
+  const modelCoeff =
+    model in etaCoefficients.models
+      ? etaCoefficients.models[model as TrainingDetailsBaseModelList]
+      : baseModelCoeff;
 
   return Math.max(
     minEta,
-    etaCoefficients.models[model] +
+    modelCoeff +
       etaCoefficients.alpha * alpha +
       etaCoefficients.dim * dim +
-      etaCoefficients.steps * steps
+      (etaCoefficients.steps * stepsCoeff * steps) ** stepsExp
   );
 };
 
-export const calcBuzzFromEta = (eta: number) => {
-  return Math.round(Math.max(baseBuzzTake, eta * dollarsPerMinute * dollarsToBuzz));
+export const calcBuzzFromEta = (eta: number, isCustom: boolean) => {
+  const custCost = isCustom ? baseBuzzCustomTake : 0;
+  return Math.round(Math.max(baseBuzzTake + custCost, eta * dollarsPerMinute * dollarsToBuzz));
 };

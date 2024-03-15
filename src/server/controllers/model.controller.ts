@@ -11,7 +11,7 @@ import {
 import { TRPCError } from '@trpc/server';
 import { CommandResourcesAdd, ResourceType } from '~/components/CivitaiLink/shared-types';
 import { BaseModel, BaseModelType, ModelFileType, constants } from '~/server/common/constants';
-import { ModelSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { Context } from '~/server/createContext';
 
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -48,7 +48,6 @@ import {
 import { modelsSearchIndex } from '~/server/search-index';
 import {
   associatedResourceSelect,
-  getAllModelsWithVersionsSelect,
   modelWithDetailsSelect,
 } from '~/server/selectors/model.selector';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
@@ -99,7 +98,6 @@ import {
   getUnavailableResources,
 } from '../services/generation/generation.service';
 import { BountyDetailsSchema } from '../schema/bounty.schema';
-import { removeEmpty } from '~/utils/object-helpers';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
@@ -495,153 +493,6 @@ export const deleteModelHandler = async ({
     if (error instanceof TRPCError) throw error;
     else throwDbError(error);
   }
-};
-
-/** WEBHOOKS CONTROLLERS */
-export const getModelsWithVersionsHandler = async ({
-  input,
-  ctx,
-}: {
-  input: GetAllModelsOutput & { ids?: number[] };
-  ctx: Context;
-}) => {
-  const { limit = DEFAULT_PAGE_SIZE, page, cursor, ...queryInput } = input;
-  const { take, skip } = getPagination(limit, page);
-  try {
-    // TODO.manuel: Make this use the getModelsRaw instead...
-    const rawResults = await getModels({
-      input: { ...queryInput, take, skip },
-      user: ctx.user,
-      select: getAllModelsWithVersionsSelect,
-      count: true,
-    });
-
-    const modelVersionIds = rawResults.items.flatMap(({ modelVersions }) =>
-      modelVersions.map(({ id }) => id)
-    );
-    const images = await getImagesForModelVersion({
-      modelVersionIds,
-      imagesPerVersion: 10,
-      include: [],
-      excludedTagIds: input.excludedImageTagIds,
-      excludedIds: await getHiddenImagesForUser({ userId: ctx.user?.id }),
-      excludedUserIds: input.excludedUserIds,
-      currentUserId: ctx.user?.id,
-    });
-
-    const vaeIds = rawResults.items
-      .flatMap(({ modelVersions }) => modelVersions.map(({ vaeId }) => vaeId))
-      .filter(isDefined);
-    const vaeFiles = await getVaeFiles({ vaeIds });
-
-    const modelIds = rawResults.items.map(({ id }) => id);
-    const metrics = await dbRead.modelMetric.findMany({
-      where: { modelId: { in: modelIds }, timeframe: MetricTimeframe.AllTime },
-    });
-
-    function getStatsForModel(modelId: number) {
-      const stats = metrics.find((x) => x.modelId === modelId);
-      return {
-        downloadCount: stats?.downloadCount ?? 0,
-        favoriteCount: stats?.favoriteCount ?? 0,
-        thumbsUpCount: stats?.thumbsUpCount ?? 0,
-        thumbsDownCount: stats?.thumbsDownCount ?? 0,
-        commentCount: stats?.commentCount ?? 0,
-        ratingCount: stats?.ratingCount ?? 0,
-        rating: Number(stats?.rating?.toFixed(2) ?? 0),
-        tippedAmountCount: stats?.tippedAmountCount ?? 0,
-      };
-    }
-
-    const results = {
-      count: rawResults.count,
-      items: rawResults.items.map(({ modelVersions, ...model }) => ({
-        ...model,
-        modelVersions: modelVersions.map(
-          ({
-            metrics,
-            files,
-            trainingDetails,
-            trainingStatus,
-            vaeId,
-            earlyAccessTimeFrame,
-            modelId,
-            ...version
-          }) => {
-            const vaeFile = vaeFiles.filter((x) => x.modelVersionId === vaeId);
-            files.push(...vaeFile);
-
-            let earlyAccessDeadline = getEarlyAccessDeadline({
-              versionCreatedAt: version.createdAt,
-              publishedAt: version.publishedAt,
-              earlyAccessTimeframe: earlyAccessTimeFrame,
-            });
-            if (earlyAccessDeadline && new Date() > earlyAccessDeadline)
-              earlyAccessDeadline = undefined;
-
-            return {
-              ...version,
-              files: files.map(({ metadata: metadataRaw, ...file }) => {
-                const metadata = metadataRaw as FileMetadata | undefined;
-
-                return {
-                  ...file,
-                  metadata: {
-                    format: metadata?.format,
-                    size: metadata?.size,
-                    fp: metadata?.fp,
-                  },
-                };
-              }),
-              earlyAccessDeadline,
-              stats: {
-                downloadCount: metrics[0]?.downloadCount ?? 0,
-                ratingCount: metrics[0]?.ratingCount ?? 0,
-                rating: Number(metrics[0]?.rating?.toFixed(2) ?? 0),
-                thumbsUpCount: metrics[0]?.thumbsUpCount ?? 0,
-                thumbsDownCount: metrics[0]?.thumbsDownCount ?? 0,
-              },
-              images: images
-                .filter((image) => image.modelVersionId === version.id)
-                .map(
-                  ({ modelVersionId, name, userId, sizeKB, availability, metadata, ...image }) => ({
-                    ...image,
-                  })
-                ),
-            };
-          }
-        ),
-        stats: getStatsForModel(model.id),
-      })),
-    };
-
-    return getPagingData(results, take, page);
-  } catch (error) {
-    throw throwDbError(error);
-  }
-};
-
-export const getModelWithVersionsHandler = async ({
-  input,
-  ctx,
-}: {
-  input: GetByIdInput;
-  ctx: Context;
-}) => {
-  const results = await getModelsWithVersionsHandler({
-    input: {
-      ids: [input.id],
-      sort: ModelSort.HighestRated,
-      favorites: false,
-      hidden: false,
-      period: 'AllTime',
-      periodMode: 'published',
-    },
-    ctx,
-  });
-  if (!results.items.length) throw throwNotFoundError(`No model with id ${input.id}`);
-
-  return results.items[0];
 };
 
 // TODO - TEMP HACK for reporting modal
