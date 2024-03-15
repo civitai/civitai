@@ -51,7 +51,6 @@ import { Adunit } from '~/components/Ads/AdUnit';
 import { adsRegistry } from '~/components/Ads/adsRegistry';
 import { QS } from '~/utils/qs';
 import { ImageFiltersDropdown } from '~/components/Image/Filters/ImageFiltersDropdown';
-import { MediaType } from '@prisma/client';
 
 type ModelVersionsProps = { id: number; name: string; modelId: number };
 type ImagesAsPostsInfiniteState = {
@@ -108,7 +107,7 @@ export default function ImagesAsPostsInfinite({
     modelId: model.id,
     username,
     hidden: showHidden, // override global hidden filter
-    types: [MediaType.image, MediaType.video], // override global types image filter
+    // types: [MediaType.image, MediaType.video], // override global types image filter
   });
 
   const { data, isLoading, fetchNextPage, hasNextPage, isRefetching } =

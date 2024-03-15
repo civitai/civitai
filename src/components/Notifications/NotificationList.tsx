@@ -37,7 +37,7 @@ export function NotificationList({ items, textSize = 'sm', truncate = true, onIt
         const milestoneNotification = notification.type.includes('milestone');
 
         const handleClick = (e: MouseEvent<HTMLAnchorElement>) => {
-          if (!notification.read) onItemClick(notification);
+          if (!notification.read) onItemClick(notification, false);
           e.preventDefault();
           if (!details.url) return;
           if (details.target === '_blank') return window.open(details.url, '_blank');
@@ -63,12 +63,20 @@ export function NotificationList({ items, textSize = 'sm', truncate = true, onIt
           }
         };
 
+        const handleMiddleClick = (e: MouseEvent<HTMLAnchorElement>) => {
+          if (e.button === 1) {
+            if (!notification.read) onItemClick(notification, true);
+            e.preventDefault();
+          }
+        };
+
         return (
           <Paper
             component="a"
             href={details.url ?? ''}
             key={notification.id}
             onClick={handleClick}
+            onMouseDown={handleMiddleClick}
             radius={0}
             data-unread={!notification.read}
             className={classes.listItem}
@@ -119,7 +127,7 @@ export function NotificationList({ items, textSize = 'sm', truncate = true, onIt
 
 type Props = {
   items: NotificationGetAll['items'];
-  onItemClick: (notification: NotificationGetAll['items'][number]) => void;
+  onItemClick: (notification: NotificationGetAll['items'][number], keepOpened: boolean) => void;
   textSize?: MantineSize;
   truncate?: boolean;
 };

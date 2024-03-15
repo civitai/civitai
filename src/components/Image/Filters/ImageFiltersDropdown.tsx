@@ -156,25 +156,21 @@ export function ImageFiltersDropdown({
         )}
       </Stack>
       <Stack spacing="md">
-        {filterType === 'images' && (
-          <>
-            <Divider label="Media type" labelProps={{ weight: 'bold', size: 'sm' }} />
-            <Chip.Group
-              spacing={8}
-              value={mergedFilters.types ?? []}
-              onChange={(types: MediaType[]) =>
-                onChange ? onChange({ types }) : setFilters({ types })
-              }
-              multiple
-            >
-              {availableMediaTypes.map((type, index) => (
-                <Chip {...chipProps} key={index} value={type}>
-                  {getDisplayName(type)}
-                </Chip>
-              ))}
-            </Chip.Group>
-          </>
-        )}
+        <Divider label="Media type" labelProps={{ weight: 'bold', size: 'sm' }} />
+        <Chip.Group
+          spacing={8}
+          value={mergedFilters.types ?? []}
+          onChange={(types: MediaType[]) =>
+            onChange ? onChange({ types }) : setFilters({ types })
+          }
+          multiple
+        >
+          {availableMediaTypes.map((type, index) => (
+            <Chip {...chipProps} key={index} value={type}>
+              {getDisplayName(type)}
+            </Chip>
+          ))}
+        </Chip.Group>
         <Divider label="Modifiers" labelProps={{ weight: 'bold', size: 'sm' }} />
         <Group spacing={8}>
           <Chip
