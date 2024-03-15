@@ -44,7 +44,7 @@ export default function LinkApp() {
               Civitai Link App
             </Title>
             {!isMember ? (
-              <Text className={classes.heroText}>❤️ Civitia Link is only available to members</Text>
+              <Text className={classes.heroText}>❤️ Civitai Link is only available to members</Text>
             ) : null}
           </Stack>
           <Flex align="center">
