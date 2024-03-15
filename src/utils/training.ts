@@ -4,7 +4,6 @@ import {
 } from '~/server/schema/model-version.schema';
 
 const baseModelCoeff = 0;
-
 const etaCoefficients = {
   models: {
     sdxl: 19.42979334,
@@ -19,10 +18,15 @@ const etaCoefficients = {
   steps: 0.014458002,
 };
 
+const stepsCoeff = 2;
+const stepsExp = 1.17;
+
 const dollarsPerMinute = 0.44 / 60;
 const dollarsToBuzz = 1000;
+
 const baseBuzzTake = 500;
 const baseBuzzCustomTake = 500;
+
 const minEta = 1;
 
 export const calcEta = (
@@ -43,7 +47,7 @@ export const calcEta = (
     modelCoeff +
       etaCoefficients.alpha * alpha +
       etaCoefficients.dim * dim +
-      etaCoefficients.steps * steps
+      (etaCoefficients.steps * stepsCoeff * steps) ** stepsExp
   );
 };
 

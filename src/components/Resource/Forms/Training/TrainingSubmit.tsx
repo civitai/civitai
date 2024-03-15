@@ -3,6 +3,7 @@ import {
   Anchor,
   Badge,
   Button,
+  Card,
   createStyles,
   Group,
   Input,
@@ -11,12 +12,13 @@ import {
   Stack,
   Text,
   Title,
+  Tooltip,
   useMantineTheme,
 } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { showNotification } from '@mantine/notifications';
 import { Currency, ModelType, TrainingStatus } from '@prisma/client';
-import { IconAlertCircle } from '@tabler/icons-react';
+import { IconAlertCircle, IconAlertTriangle } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React, { useEffect, useState } from 'react';
 import { z } from 'zod';
@@ -893,118 +895,123 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           </Text>
         </Stack>
         <Input.Wrapper label="Select a base model to train your model on" withAsterisk>
-          <Paper mt={8} p="sm" withBorder>
-            <Stack spacing="xs">
-              <Group>
-                <Badge color="violet" size="lg" radius="xs" w={85}>
-                  SD 1.5
-                </Badge>
-                <SegmentedControl
-                  data={Object.entries(baseModelDescriptions)
-                    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-                    .filter(([_k, v]) => v.type === '15')
-                    .map(([k, v]) => {
-                      return {
-                        label: v.label,
-                        value: k,
-                      };
-                    })}
-                  // nb: this type is not accurate, but null is the only way to clear out SegmentedControl
-                  value={baseModel15 as TrainingDetailsBaseModel15}
-                  onChange={(value) => {
-                    setBaseModel15(value as TrainingDetailsBaseModel15);
-                    setBaseModelXL(null);
-                    form.setValue('customModelSelect', undefined);
-                    setFormBaseModel(value as TrainingDetailsBaseModel);
-                  }}
-                  color="blue"
-                  size="xs"
-                  className={classes.segControl}
-                  transitionDuration={0}
-                />
-              </Group>
-              <Group>
-                <Badge color="grape" size="lg" radius="xs" w={85}>
-                  SDXL
-                </Badge>
-                <SegmentedControl
-                  data={Object.entries(baseModelDescriptions)
-                    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-                    .filter(([_k, v]) => v.type === 'XL')
-                    .map(([k, v]) => {
-                      return {
-                        label: v.label,
-                        value: k,
-                      };
-                    })}
-                  value={baseModelXL as TrainingDetailsBaseModelXL}
-                  onChange={(value) => {
-                    setBaseModel15(null);
-                    setBaseModelXL(value as TrainingDetailsBaseModelXL);
-                    form.setValue('customModelSelect', undefined);
-                    setFormBaseModel(value as TrainingDetailsBaseModel);
-                  }}
-                  color="blue"
-                  size="xs"
-                  className={classes.segControl}
-                  transitionDuration={0}
-                />
-              </Group>
+          <Card withBorder mt={8} p="sm">
+            <Card.Section inheritPadding withBorder py="sm">
+              <Stack spacing="xs">
+                <Group>
+                  <Badge color="violet" size="lg" radius="xs" w={85}>
+                    SD 1.5
+                  </Badge>
+                  <SegmentedControl
+                    data={Object.entries(baseModelDescriptions)
+                      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+                      .filter(([_k, v]) => v.type === '15')
+                      .map(([k, v]) => {
+                        return {
+                          label: v.label,
+                          value: k,
+                        };
+                      })}
+                    // nb: this type is not accurate, but null is the only way to clear out SegmentedControl
+                    value={baseModel15 as TrainingDetailsBaseModel15}
+                    onChange={(value) => {
+                      setBaseModel15(value as TrainingDetailsBaseModel15);
+                      setBaseModelXL(null);
+                      form.setValue('customModelSelect', undefined);
+                      setFormBaseModel(value as TrainingDetailsBaseModel);
+                    }}
+                    color="blue"
+                    size="xs"
+                    className={classes.segControl}
+                    transitionDuration={0}
+                  />
+                </Group>
 
-              <Group>
-                <Badge color="cyan" size="lg" radius="xs" w={85}>
-                  Custom
-                </Badge>
-                <InputResourceSelect
-                  name="customModelSelect"
-                  buttonLabel="Select custom model"
-                  buttonProps={{
-                    size: 'md',
-                    compact: true,
-                    styles: { label: { fontSize: 12 } },
-                  }}
-                  options={{
-                    canGenerate: true,
-                    resources: [
-                      {
-                        type: ModelType.Checkpoint,
-                      },
-                    ],
-                  }}
-                  allowRemove={true}
-                  onChange={(val) => {
-                    const gVal = val as Generation.Resource;
-                    const mId = gVal?.modelId;
-                    const mvId = gVal?.id;
-                    const cLink =
-                      isDefined(mId) && isDefined(mvId) ? `civitai:${mId}@${mvId}` : null;
-                    setBaseModel15(null);
-                    setBaseModelXL(null);
-                    setFormBaseModel(cLink);
-                  }}
-                />
-              </Group>
-            </Stack>
-          </Paper>
+                <Group>
+                  <Badge color="grape" size="lg" radius="xs" w={85}>
+                    SDXL
+                  </Badge>
+                  <SegmentedControl
+                    data={Object.entries(baseModelDescriptions)
+                      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+                      .filter(([_k, v]) => v.type === 'XL')
+                      .map(([k, v]) => {
+                        return {
+                          label: v.label,
+                          value: k,
+                        };
+                      })}
+                    value={baseModelXL as TrainingDetailsBaseModelXL}
+                    onChange={(value) => {
+                      setBaseModel15(null);
+                      setBaseModelXL(value as TrainingDetailsBaseModelXL);
+                      form.setValue('customModelSelect', undefined);
+                      setFormBaseModel(value as TrainingDetailsBaseModel);
+                    }}
+                    color="blue"
+                    size="xs"
+                    className={classes.segControl}
+                    transitionDuration={0}
+                  />
+                </Group>
+
+                <Group>
+                  <Badge color="cyan" size="lg" radius="xs" w={85}>
+                    Custom
+                  </Badge>
+                  <InputResourceSelect
+                    name="customModelSelect"
+                    buttonLabel="Select custom model"
+                    buttonProps={{
+                      size: 'md',
+                      compact: true,
+                      styles: { label: { fontSize: 12 } },
+                    }}
+                    options={{
+                      canGenerate: true,
+                      resources: [
+                        {
+                          type: ModelType.Checkpoint,
+                        },
+                      ],
+                    }}
+                    allowRemove={true}
+                    onChange={(val) => {
+                      const gVal = val as Generation.Resource;
+                      const mId = gVal?.modelId;
+                      const mvId = gVal?.id;
+                      const cLink =
+                        isDefined(mId) && isDefined(mvId) ? `civitai:${mId}@${mvId}` : null;
+                      setBaseModel15(null);
+                      setBaseModelXL(null);
+                      setFormBaseModel(cLink);
+                    }}
+                  />
+                </Group>
+              </Stack>
+            </Card.Section>
+            {formBaseModel && (
+              <Card.Section inheritPadding py="sm">
+                <Stack>
+                  <Text size="sm">
+                    {isTrainingCustomModel(formBaseModel)
+                      ? 'Custom model selected.'
+                      : baseModelDescriptions[formBaseModel]?.description ?? 'No description.'}
+                  </Text>
+                  {isTrainingCustomModel(formBaseModel) && (
+                    <AlertWithIcon icon={<IconAlertCircle />} iconColor="default" p="xs">
+                      Note: custom models may see a higher failure rate than normal, and cost more
+                      Buzz.
+                    </AlertWithIcon>
+                  )}
+                </Stack>
+              </Card.Section>
+            )}
+          </Card>
         </Input.Wrapper>
+
         {formBaseModel && (
           <>
-            <Paper p="sm" withBorder style={{ marginTop: '-17px' }}>
-              <Stack>
-                <Text size="sm">
-                  {isTrainingCustomModel(formBaseModel)
-                    ? 'Custom model selected.'
-                    : baseModelDescriptions[formBaseModel]?.description ?? 'No description.'}
-                </Text>
-                {isTrainingCustomModel(formBaseModel) && (
-                  <AlertWithIcon icon={<IconAlertCircle />} iconColor="default" p="xs">
-                    Note: custom models may see a higher failure rate than normal, and cost more
-                    Buzz.
-                  </AlertWithIcon>
-                )}
-              </Stack>
-            </Paper>
-
             <Title mt="md" order={5}>
               Advanced Settings
             </Title>
@@ -1062,16 +1069,46 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
               <Accordion.Item value="training-settings">
                 <Accordion.Control>
                   <Stack spacing={4}>
-                    Training Parameters
+                    <Group spacing="sm">
+                      <Text>Training Parameters</Text>
+                      {isTrainingCustomModel(formBaseModel) && (
+                        <Tooltip
+                          label="Custom models will likely require parameter adjustments. Please carefully check these before submitting."
+                          maw={300}
+                          multiline
+                          withArrow
+                          styles={(theme) => ({
+                            tooltip: {
+                              border: `1px solid ${
+                                theme.colorScheme === 'dark'
+                                  ? theme.colors.dark[4]
+                                  : theme.colors.gray[3]
+                              }`,
+                            },
+                            arrow: {
+                              borderRight: `1px solid ${
+                                theme.colorScheme === 'dark'
+                                  ? theme.colors.dark[4]
+                                  : theme.colors.gray[3]
+                              }`,
+                              borderBottom: `1px solid ${
+                                theme.colorScheme === 'dark'
+                                  ? theme.colors.dark[4]
+                                  : theme.colors.gray[3]
+                              }`,
+                            },
+                          })}
+                        >
+                          <IconAlertTriangle color="orange" size={16} />
+                        </Tooltip>
+                      )}
+                    </Group>
                     {openedSections.includes('training-settings') && (
                       <Text size="xs" color="dimmed">
                         Hover over each setting for more information.
                         <br />
                         Default settings are based on your chosen model. Altering these settings may
                         cause undesirable results.
-                        <br />
-                        Custom models are not guaranteed to work, and you may need to fiddle with
-                        the settings.
                       </Text>
                     )}
                   </Stack>
