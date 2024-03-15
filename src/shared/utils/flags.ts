@@ -12,8 +12,13 @@ export abstract class Flags {
     return (instance | flag) === instance;
   }
 
-  static intersects(instance: number, flag: number) {
-    return (instance & flag) !== 0;
+  /** given two bitwise instances, returns a bitwise value representing the shared bits between the two instances */
+  static intersection(instance1: number, instance2: number) {
+    return instance1 & instance2;
+  }
+
+  static intersects(instance1: number, instance2: number) {
+    return (instance1 & instance2) !== 0;
   }
 
   static addFlag(instance: number, flag: number) {

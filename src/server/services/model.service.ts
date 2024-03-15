@@ -78,6 +78,7 @@ import {
   SetAssociatedResourcesInput,
   SetModelsCategoryInput,
 } from './../schema/model.schema';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
@@ -1742,7 +1743,7 @@ export const getGalleryHiddenPreferences = async ({
 }: {
   settings: ModelGallerySettingsSchema;
 }) => {
-  const { tags, users, images } = settings;
+  const { tags, users, images, level } = settings;
   const hiddenTags =
     tags && tags.length
       ? await dbRead.tag.findMany({
@@ -1759,7 +1760,12 @@ export const getGalleryHiddenPreferences = async ({
         })
       : [];
 
-  return { hiddenTags, hiddenUsers, hiddenImages: images ?? [] };
+  return {
+    hiddenTags,
+    hiddenUsers,
+    hiddenImages: images ?? [],
+    level: level ?? allBrowsingLevelsFlag,
+  };
 };
 
 export async function getCheckpointGenerationCoverage(versionIds: number[]) {

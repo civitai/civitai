@@ -9,7 +9,7 @@ import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useImagesAsPostsInfiniteContext } from '~/components/Image/AsPosts/ImagesAsPostsInfinite';
-import { useModelGallerySettings } from '~/components/Image/AsPosts/gallery.utils';
+import { useToggleGallerySettings } from '~/components/Image/AsPosts/gallery.utils';
 import { OnsiteIndicator } from '~/components/Image/Indicators/OnsiteIndicator';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
@@ -52,9 +52,9 @@ export function ImagesAsPostsCard({
   const [embla, setEmbla] = useState<Embla | null>(null);
   const [slidesInView, setSlidesInView] = useState<number[]>([]);
 
-  const { hiddenImages, toggleGallerySettings } = useModelGallerySettings({
-    modelId: model.id,
-  });
+  const { data: gallerySettings } = trpc.model.getGallerySettings.useQuery({ id: model.id });
+  const toggleGallerySettings = useToggleGallerySettings({ modelId: model.id });
+
   const handleUpdateGallerySettings = async (imageId: number) => {
     if (showModerationOptions && model) {
       await toggleGallerySettings({
@@ -83,7 +83,9 @@ export function ImagesAsPostsCard({
 
   const moderationOptions = (imageId: number) => {
     if (!showModerationOptions) return null;
-    const alreadyHidden = hiddenImages.get(imageId);
+    const alreadyHidden = gallerySettings
+      ? gallerySettings.hiddenImages.indexOf(imageId) > -1
+      : false;
 
     return (
       <>

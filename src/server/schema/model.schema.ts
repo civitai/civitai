@@ -139,6 +139,7 @@ export const modelGallerySettingsSchema = z.object({
   users: z.number().array().optional(),
   tags: z.number().array().optional(),
   images: z.number().array().optional(),
+  level: z.number().optional(),
 });
 
 export type ModelGallerySettingsInput = z.infer<typeof modelGallerySettingsInput>;
@@ -146,6 +147,7 @@ export const modelGallerySettingsInput = z.object({
   hiddenUsers: z.object({ id: z.number(), username: z.string().nullable() }).array(),
   hiddenTags: z.object({ id: z.number(), name: z.string() }).array(),
   hiddenImages: z.number().array(),
+  level: z.number().optional(),
 });
 
 export type ModelUpsertInput = z.infer<typeof modelUpsertSchema>;

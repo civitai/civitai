@@ -10,6 +10,84 @@ import { NsfwLevel } from '~/server/common/enums';
 import { Flags } from '~/shared/utils';
 import { isDefined, paired } from '~/utils/type-guards';
 
+export function useApplyHiddenPreferences<
+  T extends keyof BaseDataTypeMap,
+  TData extends BaseDataTypeMap[T]
+>({
+  type,
+  data,
+  showHidden,
+  disabled,
+  isRefetching,
+  hiddenImages,
+  hiddenUsers,
+  hiddenTags,
+  browsingLevel: browsingLevelOverride,
+}: {
+  type: T;
+  data?: TData;
+  showHidden?: boolean;
+  disabled?: boolean;
+  isRefetching?: boolean;
+  hiddenImages?: number[];
+  hiddenUsers?: number[];
+  hiddenTags?: number[];
+  browsingLevel?: number;
+}) {
+  const currentUser = useCurrentUser();
+  const [previous, setPrevious] = useState<any[]>([]);
+  const systemBrowsingLevel = useBrowsingLevelDebounced();
+  const browsingLevel = browsingLevelOverride ?? systemBrowsingLevel;
+
+  const hiddenPreferences = useHiddenPreferencesContext();
+
+  const items = useMemo(
+    () => {
+      if (hiddenImages)
+        hiddenPreferences.hiddenImages = new Map([
+          ...hiddenPreferences.hiddenImages,
+          ...hiddenImages.map((id): [number, boolean] => [id, true]),
+        ]);
+      if (hiddenUsers)
+        hiddenPreferences.hiddenUsers = new Map([
+          ...hiddenPreferences.hiddenUsers,
+          ...hiddenUsers.map((id): [number, boolean] => [id, true]),
+        ]);
+      if (hiddenTags)
+        hiddenPreferences.hiddenTags = new Map([
+          ...hiddenPreferences.hiddenTags,
+          ...hiddenTags.map((id): [number, boolean] => [id, true]),
+        ]);
+      return filterPreferences({
+        type,
+        data,
+        showHidden,
+        disabled,
+        browsingLevel,
+        hiddenPreferences,
+        currentUser,
+      });
+    },
+    // eslint-disable-next-line
+  [
+      data,
+      hiddenPreferences,
+      disabled,
+      browsingLevel,
+    ]
+  );
+
+  useEffect(() => setPrevious(items), [data]);
+
+  const hiddenCount = !!data?.length ? data.length - items.length : 0;
+
+  return {
+    loadingPreferences: hiddenPreferences.hiddenLoading,
+    items: (isRefetching ? previous : items) as TData,
+    hiddenCount,
+  };
+}
+
 type FilterPreferencesProps<TKey, TData> = {
   type: TKey;
   data?: TData;
@@ -203,59 +281,6 @@ function filterPreferences<
     default:
       throw new Error('unhandled hidden user preferences filter type');
   }
-}
-
-export function useApplyHiddenPreferences<
-  T extends keyof BaseDataTypeMap,
-  TData extends BaseDataTypeMap[T]
->({
-  type,
-  data,
-  showHidden,
-  disabled,
-  isRefetching,
-}: {
-  type: T;
-  data?: TData;
-  showHidden?: boolean;
-  disabled?: boolean;
-  isRefetching?: boolean;
-}) {
-  const currentUser = useCurrentUser();
-  const [previous, setPrevious] = useState<any[]>([]);
-  const browsingLevel = useBrowsingLevelDebounced();
-
-  const hiddenPreferences = useHiddenPreferencesContext();
-
-  const items = useMemo(
-    () =>
-      filterPreferences({
-        type,
-        data,
-        showHidden,
-        disabled,
-        browsingLevel,
-        hiddenPreferences,
-        currentUser,
-      }),
-    // eslint-disable-next-line
-  [
-      data,
-      hiddenPreferences,
-      disabled,
-      browsingLevel,
-    ]
-  );
-
-  useEffect(() => setPrevious(items), [data]);
-
-  const hiddenCount = !!data?.length ? data.length - items.length : 0;
-
-  return {
-    loadingPreferences: hiddenPreferences.hiddenLoading,
-    items: (isRefetching ? previous : items) as TData,
-    hiddenCount,
-  };
 }
 
 type BaseImage = {
