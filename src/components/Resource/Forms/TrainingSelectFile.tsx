@@ -15,7 +15,6 @@ import {
 import { TrainingStatus } from '@prisma/client';
 import { IconFileDownload, IconSend } from '@tabler/icons-react';
 import { saveAs } from 'file-saver';
-import JSZip from 'jszip';
 import { useRouter } from 'next/router';
 import React, { useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -295,21 +294,15 @@ export default function TrainingSelectFile({
     if (noEpochs) return;
 
     setDownloading(true);
-    const zip = new JSZip();
 
     await Promise.all(
       epochs.map(async (epochData) => {
         const epochBlob = await fetch(epochData.model_url).then((res) => res.blob());
-        zip.file(
-          epochData.model_url.split('/').pop() ?? `${epochData.epoch_number}.safetensors`,
-          epochBlob
-        );
+        saveAs(epochBlob, `${model.name}_epoch_${epochData.epoch_number}.safetensors`);
       })
     );
-    zip.generateAsync({ type: 'blob' }).then(async (content) => {
-      saveAs(content, `${model.name}_epochs.zip`);
-      setDownloading(false);
-    });
+
+    setDownloading(false);
   };
 
   return (
