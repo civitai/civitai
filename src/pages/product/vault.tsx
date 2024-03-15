@@ -1,22 +1,21 @@
 import {
-  Container,
-  Title,
-  Text,
-  Button,
-  Stack,
-  Group,
-  createStyles,
-  Image,
   Box,
+  Button,
+  Container,
+  createStyles,
+  Group,
+  Image,
+  Stack,
+  Text,
   ThemeIcon,
+  Title,
 } from '@mantine/core';
-import { useRouter } from 'next/router';
-import { containerQuery } from '~/utils/mantine-css-helpers';
-import { Meta } from '~/components/Meta/Meta';
 import { NextLink } from '@mantine/next';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { IconCloudPlus, IconDownload, IconMapSearch } from '@tabler/icons-react';
+import { Meta } from '~/components/Meta/Meta';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 export default function CivitaiVault() {
   const { classes, cx } = useStyles();
@@ -39,9 +38,15 @@ export default function CivitaiVault() {
           <Group position="apart">
             <Stack spacing={12}>
               <Title className={classes.heroTitle}>Civitai Vault</Title>
-              <Text className={classes.heroText} sx={{ lineHeight: 1.25 }}>
-                ❤️ Civitai Vault is only available to members
-              </Text>
+              {isMember ? (
+                <Text className={classes.heroText} sx={{ lineHeight: 1.25 }}>
+                  Keep Your Favorite Models Forever
+                </Text>
+              ) : (
+                <Text className={classes.heroText} sx={{ lineHeight: 1.25 }}>
+                  ❤️ Civitai Vault is only available to members
+                </Text>
+              )}
             </Stack>
             <Button
               variant="filled"
@@ -67,11 +72,10 @@ export default function CivitaiVault() {
           </Box>
           <Stack spacing={12}>
             <Title className={classes.heading3} order={3}>
-              Save models. Download anytime. Forever
+              Keep Your Favorite Models Forever
             </Title>
             <Text>
-              Vault is a place for all your models. You can download them even after the creator
-              deleted them from Civitai
+              {`Civitai Vault is your secure, cloud-based storage solution for your most cherished AI models. Even if a creator removes a model, it remains safely stored in your personal vault. Free up valuable disk space and have peace of mind knowing your models are always accessible.`}
             </Text>
           </Stack>
           <Stack spacing={60}>
@@ -82,11 +86,11 @@ export default function CivitaiVault() {
 
               <Stack spacing={0}>
                 <Title className={classes.heading4} order={4}>
-                  Save Models
+                  Effortlessly Save Models
                 </Title>
                 <Text>
-                  Save any models you like to your vault. You get different vault sizes based on
-                  your membership tier.
+                  Seamlessly save any model to your vault. Your storage capacity is determined by
+                  your membership tier, ensuring you have ample space for your collection.
                 </Text>
               </Stack>
             </Group>
@@ -97,9 +101,13 @@ export default function CivitaiVault() {
 
               <Stack spacing={0}>
                 <Title className={classes.heading4} order={4}>
-                  Search, filter, add notes
+                  Intuitive Organization Tools
                 </Title>
-                <Text>Have lots of models? Easily find them with searchm, filters, and notes!</Text>
+                <Text>
+                  Managing a vast library of models is a breeze with our powerful search
+                  functionality, customizable filters, and the ability to add personal notes.
+                  Quickly find the perfect model for your needs.
+                </Text>
               </Stack>
             </Group>
             <Group noWrap>
@@ -109,11 +117,25 @@ export default function CivitaiVault() {
 
               <Stack spacing={0}>
                 <Title className={classes.heading4} order={4}>
-                  Download when you need
+                  Download on Demand
                 </Title>
-                <Text>Whenever you need!</Text>
+                <Text>
+                  Access and download your stored models whenever you require them, from any device,
+                  at any time. Your creativity knows no bounds with Civitai Vault.
+                </Text>
               </Stack>
             </Group>
+            {isMember ? (
+              <Text ta="center" size="lg" fs="italic">
+                Upgrade your membership to expand your Civitai Vault storage capacity and unlock
+                additional features.
+              </Text>
+            ) : (
+              <Text ta="center" size="lg" fs="italic">
+                Civitai Vault is only available to members. Become a member to access Civitai Vault
+                and enjoy a host of other benefits.
+              </Text>
+            )}
           </Stack>
           <Button
             variant="filled"
