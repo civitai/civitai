@@ -15,7 +15,7 @@ export default AuthedEndpoint(
       const isTrpcError = error instanceof TRPCError;
       if (isTrpcError) {
         const trpcError = error as TRPCError;
-        if (trpcError.cause?.name === 'MEMBERSHIP_REQUIRED') {
+        if (trpcError.cause?.message === 'MEMBERSHIP_REQUIRED') {
           res.status(200).json({ vault: null });
           return;
         }
