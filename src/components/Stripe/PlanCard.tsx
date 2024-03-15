@@ -145,7 +145,7 @@ export const getPlanDetails: (metadata: ProductMetadata) => PlanMeta[] = (
                 variant="link"
                 td="underline"
                 component="a"
-                href="/pricing/vault"
+                href="/product/vault"
                 target="_blank"
               >
                 Vault size: ${formatKBytes(metadata.vaultSizeKb)}

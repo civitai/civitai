@@ -34,7 +34,7 @@ export default function CivitaiVault() {
         title="Civitai Vault | Store your favorite models forever"
         description="Civitai Vault is a place to store your favorite models forever. Even if a model is removed from the site, you can still access it here."
       />
-      <Container size="lg" mb="lg">
+      <Container size="md" mb="lg">
         <Stack spacing={40}>
           <Group position="apart">
             <Stack spacing={12}>
