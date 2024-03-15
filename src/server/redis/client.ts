@@ -76,6 +76,9 @@ export const REDIS_KEYS = {
     HOME_EXCLUDED_TAGS: 'system:home-excluded-tags',
     NOTIFICATION_COUNTS: 'system:notification-counts',
   },
+  CACHES: {
+    FILES_FOR_MODEL_VERSION: 'caches:files-for-model-version',
+  },
   QUEUES: {
     BUCKETS: 'queues:buckets',
   },

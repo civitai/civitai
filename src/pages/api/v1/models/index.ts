@@ -91,10 +91,12 @@ export default MixedAuthEndpoint(async function handler(
       items: items.map(({ modelVersions, tagsOnModels, user, ...model }) => ({
         ...model,
         mode: model.mode == null ? undefined : model.mode,
-        creator: {
-          username: user.username,
-          image: user.image ? getEdgeUrl(user.image, { width: 96, name: user.username }) : null,
-        },
+        creator: user
+          ? {
+              username: user.username,
+              image: user.image ? getEdgeUrl(user.image, { width: 96, name: user.username }) : null,
+            }
+          : undefined,
         tags: tagsOnModels.map(({ name }) => name),
         modelVersions: modelVersions
           .filter((x) => x.status === 'Published')

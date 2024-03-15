@@ -45,10 +45,12 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
     res.status(200).json({
       ...model,
       mode: model.mode == null ? undefined : model.mode,
-      creator: {
-        username: user.username,
-        image: user.image ? getEdgeUrl(user.image, { width: 96, name: user.username }) : null,
-      },
+      creator: user
+        ? {
+            username: user.username,
+            image: user.image ? getEdgeUrl(user.image, { width: 96, name: user.username }) : null,
+          }
+        : undefined,
       tags: tagsOnModels.map(({ name }) => name),
       modelVersions: modelVersions
         .filter((x) => x.status === 'Published')

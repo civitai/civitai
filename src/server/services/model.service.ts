@@ -77,8 +77,7 @@ import {
   SetAssociatedResourcesInput,
   SetModelsCategoryInput,
 } from './../schema/model.schema';
-import { getHiddenImagesForUser } from '~/server/services/user-cache.service';
-import { getFilesByVersionIds } from '~/server/services/model-file.service';
+import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
@@ -138,7 +137,7 @@ type ModelRaw = {
   hashes: {
     hash: string;
   }[];
-  modelVersion: {
+  modelVersions: {
     id: number;
     name: string;
     earlyAccessTimeFrame: number;
@@ -153,7 +152,7 @@ type ModelRaw = {
     generationCoverage: {
       covered: boolean;
     };
-  };
+  }[];
   user: {
     id: number;
     username: string | null;
@@ -172,7 +171,6 @@ export const getModelsRaw = async ({
     skip?: number;
   };
   include?: Array<'details'>;
-  // TODO: Likely we wanna remove session user all in all.
   user?: { id: number; isModerator?: boolean; username?: string };
 }) => {
   const {
@@ -508,13 +506,6 @@ export const getModelsRaw = async ({
   }
 
   const queryWith = WITH.length > 0 ? Prisma.sql`WITH ${Prisma.join(WITH, ', ')}` : Prisma.sql``;
-  const queryFrom = Prisma.sql`
-    FROM "Model" m
-    JOIN "ModelMetric" mm ON mm."modelId" = m."id" AND mm."timeframe" = ${period}::"MetricTimeframe"
-    LEFT JOIN "User" u ON m."userId" = u.id
-    ${clubId ? Prisma.sql`JOIN "clubModels" cm ON cm."modelId" = m."id"` : Prisma.sql``}
-    WHERE ${Prisma.join(AND, ' AND ')}
-  `;
 
   const modelVersionWhere: Prisma.Sql[] = [];
 
@@ -539,20 +530,25 @@ export const getModelsRaw = async ({
   }
 
   const includeDetails = !!include?.includes('details');
+  function ifDetails(sql: TemplateStringsArray) {
+    return includeDetails ? Prisma.raw(sql[0]) : Prisma.empty;
+  }
 
   const modelQuery = Prisma.sql`
     ${queryWith}
     SELECT
       m."id",
       m."name",
-      ${includeDetails ? Prisma.raw('m."description",') : Prisma.empty}
+      ${ifDetails`
+        m."description",
+        m."poi",
+        m."allowNoCredit",
+        m."allowCommercialUse",
+        m."allowDerivatives",
+        m."allowDifferentLicense",
+      `}
       m."type",
-      ${includeDetails ? Prisma.raw('m."poi",') : Prisma.empty}
       m."nsfw",
-      ${includeDetails ? Prisma.raw('m."allowNoCredit",') : Prisma.empty}
-      ${includeDetails ? Prisma.raw('m."allowCommercialUse",') : Prisma.empty}
-      ${includeDetails ? Prisma.raw('m."allowDerivatives",') : Prisma.empty}
-      ${includeDetails ? Prisma.raw('m."allowDifferentLicense",') : Prisma.empty}
       m."status",
       m."createdAt",
       m."lastVersionAt",
@@ -560,18 +556,16 @@ export const getModelsRaw = async ({
       m."locked",
       m."earlyAccessDeadline",
       m."mode",
-      ${Prisma.raw(`
-        jsonb_build_object(
-          'downloadCount', mm."downloadCount",
-          'thumbsUpCount', mm."thumbsUpCount",
-          'thumbsDownCount', mm."thumbsDownCount",
-          'commentCount', mm."commentCount",
-          'ratingCount', mm."ratingCount",
-          'rating', mm."rating",
-          'collectedCount', mm."collectedCount",
-          'tippedAmountCount', mm."tippedAmountCount"
-        ) as "rank",
-      `)}
+      jsonb_build_object(
+        'downloadCount', mm."downloadCount",
+        'thumbsUpCount', mm."thumbsUpCount",
+        'thumbsDownCount', mm."thumbsDownCount",
+        'commentCount', mm."commentCount",
+        'ratingCount', mm."ratingCount",
+        'rating', mm."rating",
+        'collectedCount', mm."collectedCount",
+        'tippedAmountCount', mm."tippedAmountCount"
+      ) as "rank",
       (
         SELECT COALESCE(jsonb_agg(jsonb_build_object(
           'tagId', "tagId",
@@ -592,33 +586,39 @@ export const getModelsRaw = async ({
       ) as "hashes",
       (
         SELECT
-         jsonb_build_object(
-           'id', mv."id",
-           'name', mv."name",
-           ${includeDetails ? Prisma.raw(`'description', mv."description",`) : Prisma.empty}
-           'earlyAccessTimeFrame', mv."earlyAccessTimeFrame",
-           'baseModel', mv."baseModel",
-           'baseModelType', mv."baseModelType",
-           'createdAt', mv."createdAt",
-           'trainingStatus', mv."trainingStatus",
-           ${includeDetails ? Prisma.raw(`'trainedWords', mv."trainedWords",`) : Prisma.empty}
-           ${includeDetails ? Prisma.raw(`'vaeId', mv."vaeId",`) : Prisma.empty}
-           'publishedAt', mv."publishedAt",
-           'status', mv."status",
-           'generationCoverage', jsonb_build_object(
-             'covered', COALESCE(gc."covered", false)
-            )
-         ) as "modelVersion"
-       FROM "ModelVersion" mv
-	     LEFT JOIN "GenerationCoverage" gc ON gc."modelVersionId" = mv."id"
-	     WHERE mv."modelId" = m."id"
-         ${
-           modelVersionWhere.length > 0
-             ? Prisma.sql`AND ${Prisma.join(modelVersionWhere, ' AND ')}`
-             : Prisma.sql``
-         }
-		   ORDER BY mv."index" ASC LIMIT 1
-      ) as "modelVersion",
+          jsonb_agg(data)
+        FROM (
+          SELECT jsonb_build_object(
+            'id', mv."id",
+            'name', mv."name",
+            ${ifDetails`
+             'description', mv."description",
+             'trainedWords', mv."trainedWords",
+             'vaeId', mv."vaeId",
+            `}
+            'earlyAccessTimeFrame', mv."earlyAccessTimeFrame",
+            'baseModel', mv."baseModel",
+            'baseModelType', mv."baseModelType",
+            'createdAt', mv."createdAt",
+            'trainingStatus', mv."trainingStatus",
+            'publishedAt', mv."publishedAt",
+            'status', mv."status",
+            'generationCoverage', jsonb_build_object(
+              'covered', COALESCE(gc."covered", false)
+             )
+          ) as data
+          FROM "ModelVersion" mv
+          LEFT JOIN "GenerationCoverage" gc ON gc."modelVersionId" = mv."id"
+          WHERE mv."modelId" = m."id"
+          ${
+            modelVersionWhere.length > 0
+              ? Prisma.sql`AND ${Prisma.join(modelVersionWhere, ' AND ')}`
+              : Prisma.sql``
+          }
+          ORDER BY mv.index ASC
+          ${Prisma.raw(includeDetails ? '' : 'LIMIT 1')}
+        ) as t
+      ) as "modelVersions",
 	    jsonb_build_object(
         'id', u."id",
         'username', u."username",
@@ -626,7 +626,11 @@ export const getModelsRaw = async ({
         'image', u."image"
       ) as "user",
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} as "cursorId"
-    ${queryFrom}
+    FROM "Model" m
+    JOIN "ModelMetric" mm ON mm."modelId" = m."id" AND mm."timeframe" = ${period}::"MetricTimeframe"
+    LEFT JOIN "User" u ON m."userId" = u.id
+    ${clubId ? Prisma.sql`JOIN "clubModels" cm ON cm."modelId" = m."id"` : Prisma.sql``}
+    WHERE ${Prisma.join(AND, ' AND ')}
     ORDER BY ${Prisma.raw(orderBy)}
     LIMIT ${(take ?? 100) + 1}
   `;
@@ -649,7 +653,7 @@ export const getModelsRaw = async ({
   }
 
   return {
-    items: models.map(({ rank, modelVersion, cursorId, ...model }) => ({
+    items: models.map(({ rank, modelVersions, cursorId, ...model }) => ({
       ...model,
       rank: {
         [`downloadCount${input.period}`]: rank.downloadCount,
@@ -661,7 +665,7 @@ export const getModelsRaw = async ({
         [`collectedCount${input.period}`]: rank.collectedCount,
         [`tippedAmountCount${input.period}`]: rank.tippedAmountCount,
       },
-      modelVersions: [modelVersion].filter(isDefined),
+      modelVersions: (modelVersions ?? []).filter(isDefined),
       user: {
         ...model.user,
         profilePicture: profilePictures?.[model.user.id] ?? null,
@@ -1832,23 +1836,24 @@ export async function getModelsWithVersions({
   });
 
   const modelVersionIds = items.flatMap(({ modelVersions }) => modelVersions.map(({ id }) => id));
-  const images = await getImagesForModelVersion({
-    modelVersionIds,
-    imagesPerVersion: 10,
-    include: [],
-    excludedTagIds: input.excludedImageTagIds,
-    excludedIds: await getHiddenImagesForUser({ userId: user?.id }),
-    excludedUserIds: input.excludedUserIds,
-    currentUserId: user?.id,
-  });
+  // Let's swap to the new cache based method for now...
+  const images = await getImagesForModelVersionCache(modelVersionIds);
+  // const images = await getImagesForModelVersion({
+  //   modelVersionIds,
+  //   imagesPerVersion: 10,
+  //   include: [],
+  //   excludedTagIds: input.excludedImageTagIds,
+  //   excludedIds: await getHiddenImagesForUser({ userId: user?.id }),
+  //   excludedUserIds: input.excludedUserIds,
+  //   currentUserId: user?.id,
+  // });
 
   const vaeIds = items
     .flatMap(({ modelVersions }) => modelVersions.map(({ vaeId }) => vaeId))
     .filter(isDefined);
   const vaeFiles = await getVaeFiles({ vaeIds });
 
-  const files = await getFilesByVersionIds({ ids: modelVersionIds });
-  const groupedFiles = groupBy(files, 'modelVersionId');
+  const groupedFiles = await getFilesForModelVersionCache(modelVersionIds);
 
   const modelIds = items.map(({ id }) => id);
   const metrics = await dbRead.modelMetric.findMany({
@@ -1863,12 +1868,12 @@ export async function getModelsWithVersions({
     const stats = metrics.find((x) => x.modelId === modelId);
     return {
       downloadCount: stats?.downloadCount ?? 0,
-      favoriteCount: stats?.favoriteCount ?? 0,
+      favoriteCount: 0,
       thumbsUpCount: stats?.thumbsUpCount ?? 0,
       thumbsDownCount: stats?.thumbsDownCount ?? 0,
       commentCount: stats?.commentCount ?? 0,
-      ratingCount: stats?.ratingCount ?? 0,
-      rating: Number(stats?.rating?.toFixed(2) ?? 0),
+      ratingCount: 0,
+      rating: 0,
       tippedAmountCount: stats?.tippedAmountCount ?? 0,
     };
   }
@@ -1894,15 +1899,18 @@ export async function getModelsWithVersions({
         status,
         locked,
         publishedAt,
+        createdAt,
         lastVersionAt,
+        user,
         ...model
       }) => ({
         ...model,
+        user: user.username === 'civitai' ? undefined : user,
         modelVersions: modelVersions.map(
           ({ trainingStatus, vaeId, earlyAccessTimeFrame, generationCoverage, ...version }) => {
             const stats = getStatsForVersion(version.id);
             const vaeFile = vaeFiles.filter((x) => x.modelVersionId === vaeId);
-            const files = groupedFiles[version.id] ?? [];
+            const files = groupedFiles[version.id].files ?? [];
             files.push(...vaeFile);
 
             let earlyAccessDeadline = getEarlyAccessDeadline({
@@ -1929,13 +1937,27 @@ export async function getModelsWithVersions({
               }),
               earlyAccessDeadline,
               stats,
-              images: images
-                .filter((image) => image.modelVersionId === version.id)
-                .map(
-                  ({ modelVersionId, name, userId, sizeKB, availability, metadata, ...image }) => ({
-                    ...image,
-                  })
-                ),
+              // images: images
+              //   .filter((image) => image.modelVersionId === version.id)
+              //   .map(
+              //     ({ modelVersionId, name, userId, sizeKB, availability, metadata, ...image }) => ({
+              //       ...image,
+              //     })
+              //   ),
+              images: (images[version.id]?.images ?? []).map(
+                ({
+                  modelVersionId,
+                  name,
+                  userId,
+                  sizeKB,
+                  availability,
+                  metadata,
+                  tags,
+                  ...image
+                }) => ({
+                  ...image,
+                })
+              ),
             };
           }
         ),
