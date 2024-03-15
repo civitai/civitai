@@ -1,4 +1,5 @@
 import type { DefaultSession } from 'next-auth';
+import { UserTier } from '~/server/schema/user.schema';
 
 interface ExtendedUser {
   id: number;
@@ -14,7 +15,7 @@ interface ExtendedUser {
   isModerator?: boolean;
   customerId?: string; // could be fetched
   subscriptionId?: string; // could be fetched
-  tier?: string;
+  tier?: UserTier;
   muted?: boolean;
   bannedAt?: Date;
   autoplayGifs?: boolean; // client only - could be cookie setting

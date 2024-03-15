@@ -1,10 +1,10 @@
 import { Prisma, VaultItemStatus } from '@prisma/client';
-import JSZip, { file } from 'jszip';
-import { createJob } from './job';
+import JSZip from 'jszip';
+import { createJob, getJobDate } from './job';
 import { dbWrite } from '~/server/db/client';
 import { getModelVersionDataForVault } from '~/server/services/vault.service';
-import { htmlToPdf } from '~/server/utils/pdf-helpers';
-import { getCustomPutUrl, getGetUrlByKey } from '~/utils/s3-utils';
+import { getModelVersionDetailsPDF } from '~/server/utils/pdf-helpers';
+import { getCustomPutUrl } from '~/utils/s3-utils';
 import { env } from 'process';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { fetchBlob } from '~/utils/file-utils';
@@ -21,6 +21,8 @@ const logErrors = (data: MixedObject) => {
 };
 
 export const processVaultItems = createJob('process-vault-items', '*/10 * * * *', async () => {
+  const [, setLastRun] = await getJobDate('process-vault-items');
+
   if (!env.S3_VAULT_BUCKET) {
     throw new Error('S3_VAULT_BUCKET is not defined');
   }
@@ -44,19 +46,18 @@ export const processVaultItems = createJob('process-vault-items', '*/10 * * * *'
           },
         },
       ],
-      // TODO: Deleting is showing down instead of side.
     },
   });
 
   for (const vaultItem of vaultItems) {
     try {
       // Get model version info:
-      const { detail, images } = await getModelVersionDataForVault({
+      const { modelVersion, images } = await getModelVersionDataForVault({
         modelVersionId: vaultItem.modelVersionId,
       });
 
       // Now, prepare the PDF file:
-      const pdfFile = await htmlToPdf(detail);
+      const pdfFile = await getModelVersionDetailsPDF(modelVersion);
       const zip = new JSZip();
 
       let coverImage: { data: Blob; filename: string } | undefined;
@@ -137,6 +138,7 @@ export const processVaultItems = createJob('process-vault-items', '*/10 * * * *'
         data: {
           // Update with the actual zip size:
           imagesSizeKb: imagesZip.size / 1024,
+          detailsSizeKb: pdfFile.size / 1024,
           status: VaultItemStatus.Stored,
         },
       });
@@ -165,4 +167,6 @@ export const processVaultItems = createJob('process-vault-items', '*/10 * * * *'
       continue;
     }
   }
+
+  await setLastRun();
 });

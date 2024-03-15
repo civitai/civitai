@@ -27,7 +27,7 @@ import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
-import { PeriodFilter, SortFilter } from '~/components/Filters';
+import { SortFilter } from '~/components/Filters';
 import { ImagesAsPostsCard } from '~/components/Image/AsPosts/ImagesAsPostsCard';
 import { useImageFilters } from '~/components/Image/image.utils';
 import { InViewLoader } from '~/components/InView/InViewLoader';
@@ -50,6 +50,8 @@ import { adsRegistry } from '~/components/Ads/adsRegistry';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { Flags } from '~/shared/utils';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { QS } from '~/utils/qs';
+import { ImageFiltersDropdown } from '~/components/Image/Filters/ImageFiltersDropdown';
 
 type ModelVersionsProps = { id: number; name: string; modelId: number };
 type ImagesAsPostsInfiniteState = {
@@ -93,8 +95,8 @@ export default function ImagesAsPostsInfinite({
   const currentUser = useCurrentUser();
   const router = useRouter();
   const isMobile = useContainerSmallerThan('sm');
-  // const globalFilters = useImageFilters();
-  const [limit] = useState(isMobile ? LIMIT / 2 : LIMIT);
+  const limit = isMobile ? LIMIT / 2 : LIMIT;
+
   const [showHidden, setShowHidden] = useState(false);
 
   const imageFilters = useImageFilters('modelImages');
@@ -105,7 +107,7 @@ export default function ImagesAsPostsInfinite({
     modelId: model.id,
     username,
     hidden: showHidden, // override global hidden filter
-    types: undefined, // override global types image filter
+    // types: [MediaType.image, MediaType.video], // override global types image filter
   });
 
   const browsingLevel = useBrowsingLevelDebounced();
@@ -137,14 +139,22 @@ export default function ImagesAsPostsInfinite({
     browsingLevel: intersection,
   });
 
+  const handleAddPostClick = (opts?: { reviewing?: boolean }) => {
+    const queryString = QS.stringify({
+      modelId: model.id,
+      modelVersionId: selectedVersionId,
+      returnUrl: router.asPath,
+      reviewing: opts?.reviewing,
+    });
+
+    router.push(`/posts/create?${queryString}`);
+  };
+
   useEffect(() => {
     if (!gallerySettings?.hiddenImages.length) setShowHidden(false);
   }, [gallerySettings?.hiddenImages]);
 
   const isMuted = currentUser?.muted ?? false;
-  const addPostLink = `/posts/create?modelId=${model.id}${
-    selectedVersionId ? `&modelVersionId=${selectedVersionId}` : ''
-  }&returnUrl=${router.asPath}`;
   const { excludeCrossPosts } = imageFilters;
   const hasModerationPreferences =
     !!gallerySettings?.hiddenImages.length ||
@@ -178,52 +188,74 @@ export default function ImagesAsPostsInfinite({
                 <Title order={2}>Gallery</Title>
                 {!isMuted && (
                   <Group>
-                    <LoginRedirect reason="create-review">
-                      <Link href={addPostLink}>
-                        <Button variant="outline" size="xs" leftIcon={<IconPlus size={16} />}>
-                          Add Post
-                        </Button>
-                      </Link>
+                    <LoginRedirect reason="post-images">
+                      <Button
+                        variant="outline"
+                        size="xs"
+                        leftIcon={<IconPlus size={16} />}
+                        onClick={() => handleAddPostClick()}
+                      >
+                        Add Post
+                      </Button>
                     </LoginRedirect>
                     {canReview && (
                       <LoginRedirect reason="create-review">
-                        <Link href={addPostLink + '&reviewing=true'}>
-                          <Button leftIcon={<IconStar size={16} />} variant="outline" size="xs">
-                            Add Review
-                          </Button>
-                        </Link>
+                        <Button
+                          leftIcon={<IconStar size={16} />}
+                          variant="outline"
+                          size="xs"
+                          onClick={() => handleAddPostClick({ reviewing: true })}
+                        >
+                          Add Review
+                        </Button>
                       </LoginRedirect>
                     )}
                   </Group>
                 )}
-                {showModerationOptions && (
-                  <Group ml="auto" spacing={8}>
-                    {!!gallerySettings?.hiddenImages.length && (
-                      <ButtonTooltip label={`${showHidden ? 'Hide' : 'Show'} hidden images`}>
+                <Group ml="auto" spacing={8}>
+                  <SortFilter type="modelImages" variant="button" />
+                  <ImageFiltersDropdown size="sm" filterType="modelImages" compact />
+                  <ButtonTooltip label={`${excludeCrossPosts ? 'Show' : 'Hide'} Cross-posts`}>
+                    <ActionIcon
+                      radius="xl"
+                      variant={excludeCrossPosts ? 'light' : 'filled'}
+                      color={excludeCrossPosts ? 'red' : undefined}
+                      onClick={() => setFilters({ excludeCrossPosts: !excludeCrossPosts })}
+                    >
+                      <IconArrowsCross size={16} />
+                    </ActionIcon>
+                  </ButtonTooltip>
+                  {showModerationOptions && (
+                    <>
+                      {!!gallerySettings?.hiddenImages.length && (
+                        <ButtonTooltip label={`${showHidden ? 'Hide' : 'Show'} hidden images`}>
+                          <ActionIcon
+                            variant="light"
+                            radius="xl"
+                            color="red"
+                            onClick={() => setShowHidden((h) => !h)}
+                          >
+                            {showHidden ? <IconEye size={16} /> : <IconEyeOff size={16} />}
+                          </ActionIcon>
+                        </ButtonTooltip>
+                      )}
+                      <ButtonTooltip label="Gallery Moderation Preferences">
                         <ActionIcon
-                          variant="outline"
-                          color="red"
-                          onClick={() => setShowHidden((h) => !h)}
+                          variant="filled"
+                          radius="xl"
+                          onClick={() =>
+                            dialogStore.trigger({
+                              component: GalleryModerationModal,
+                              props: { modelId: model.id },
+                            })
+                          }
                         >
-                          {showHidden ? <IconEye size={16} /> : <IconEyeOff size={16} />}
+                          <IconSettings size={16} />
                         </ActionIcon>
                       </ButtonTooltip>
-                    )}
-                    <ButtonTooltip label="Gallery Moderation Preferences">
-                      <ActionIcon
-                        variant="outline"
-                        onClick={() =>
-                          dialogStore.trigger({
-                            component: GalleryModerationModal,
-                            props: { modelId: model.id },
-                          })
-                        }
-                      >
-                        <IconSettings size={16} />
-                      </ActionIcon>
-                    </ButtonTooltip>
-                  </Group>
-                )}
+                    </>
+                  )}
+                </Group>
               </Group>
               {showPOIWarning && (
                 <Text size="sm" color="dimmed" lh={1.1}>
@@ -244,22 +276,6 @@ export default function ImagesAsPostsInfinite({
                   </Text>
                 </Text>
               )}
-              <Group position="apart" spacing={0}>
-                <SortFilter type="modelImages" />
-                <Group spacing={4}>
-                  <PeriodFilter type="modelImages" />
-                  <ButtonTooltip label={`${excludeCrossPosts ? 'Show' : 'Hide'} Cross-posts`}>
-                    <ActionIcon
-                      variant={excludeCrossPosts ? 'light' : 'transparent'}
-                      color={excludeCrossPosts ? 'red' : undefined}
-                      onClick={() => setFilters({ excludeCrossPosts: !excludeCrossPosts })}
-                    >
-                      <IconArrowsCross size={20} />
-                    </ActionIcon>
-                  </ButtonTooltip>
-                  {/* <ImageFiltersDropdown /> */}
-                </Group>
-              </Group>
               {hasModerationPreferences ? (
                 <Text size="xs" color="dimmed" mt="-md">
                   Some images have been hidden based on moderation preferences set by the creator,{' '}

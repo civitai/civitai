@@ -93,6 +93,8 @@ export default RateLimitedEndpoint(
 
     if (!vaultItem) return onError(404, 'Vault item not found');
 
+    const fileName = `${vaultItem.modelName}-${vaultItem.versionName}`;
+
     switch (input.type) {
       case 'model': {
         const files = (vaultItem.files ?? []) as VaultItemFilesSchema;
@@ -105,14 +107,20 @@ export default RateLimitedEndpoint(
         const key = constants.vault.keys.images
           .replace(':modelVersionId', vaultItem.modelVersionId.toString())
           .replace(':userId', session?.user.id.toString());
-        const { url } = await getGetUrlByKey(key, { bucket: env.S3_VAULT_BUCKET });
+        const { url } = await getGetUrlByKey(key, {
+          bucket: env.S3_VAULT_BUCKET,
+          fileName: `${fileName}-images.zip`,
+        });
         return res.redirect(url);
       }
       case 'details': {
         const key = constants.vault.keys.details
           .replace(':modelVersionId', vaultItem.modelVersionId.toString())
           .replace(':userId', session?.user.id.toString());
-        const { url } = await getGetUrlByKey(key, { bucket: env.S3_VAULT_BUCKET });
+        const { url } = await getGetUrlByKey(key, {
+          bucket: env.S3_VAULT_BUCKET,
+          fileName: `${fileName}-details.pdf`,
+        });
         return res.redirect(url);
       }
       default: {

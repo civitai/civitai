@@ -6,22 +6,29 @@ import {
   ReportStatus,
   ReviewReactions,
 } from '@prisma/client';
+import dayjs from 'dayjs';
 import { NextApiRequest, NextApiResponse } from 'next';
 import requestIp from 'request-ip';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server.mjs';
 import { ProhibitedSources } from '~/server/schema/user.schema';
+import { createLogger } from '~/utils/logging';
 import { getServerAuthSession } from '../utils/get-server-auth-session';
 import { NsfwLevelDeprecated } from '~/shared/constants/browsingLevel.constants';
 
-type CustomClickHouseClient = ClickHouseClient & {
-  $query: <T extends object>(query: string) => Promise<T[]>;
+export type CustomClickHouseClient = ClickHouseClient & {
+  $query: <T extends object>(
+    query: TemplateStringsArray | string,
+    ...values: any[]
+  ) => Promise<T[]>;
 };
 
 declare global {
   // eslint-disable-next-line no-var, vars-on-top
   var globalClickhouse: CustomClickHouseClient | undefined;
 }
+
+const log = createLogger('clickhouse', 'blue');
 
 function getClickHouse() {
   console.log('Creating ClickHouse client');
@@ -35,7 +42,16 @@ function getClickHouse() {
     },
   }) as CustomClickHouseClient;
 
-  client.$query = async function <T extends object>(query: string) {
+  client.$query = async function <T extends object>(
+    query: TemplateStringsArray | string,
+    ...values: any[]
+  ) {
+    if (typeof query !== 'string') {
+      query = query.reduce((acc, part, i) => acc + part + formatSqlType(values[i] ?? ''), '');
+    }
+
+    log('$query', query);
+
     const response = await client.query({
       query,
       format: 'JSONEachRow',
@@ -55,6 +71,16 @@ if (shouldConnect) {
     if (!global.globalClickhouse) global.globalClickhouse = getClickHouse();
     clickhouse = global.globalClickhouse;
   }
+}
+
+function formatSqlType(value: any): string {
+  if (value instanceof Date) return dayjs(value).toISOString();
+  if (typeof value === 'object') {
+    if (Array.isArray(value)) return value.map(formatSqlType).join(',');
+    if (value === null) return 'null';
+    return JSON.stringify(value);
+  }
+  return value;
 }
 
 export type ViewType =

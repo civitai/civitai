@@ -1,13 +1,7 @@
-import {
-  Prisma,
-  SearchIndexUpdateQueueAction,
-  TagSource,
-  TagTarget,
-  TagType,
-} from '@prisma/client';
+import { Prisma, TagSource, TagTarget, TagType } from '@prisma/client';
 import { TagVotableEntityType, VotableTagModel } from '~/libs/tags';
 import { constants } from '~/server/common/constants';
-import { TagSort } from '~/server/common/enums';
+import { TagSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 
 import { dbRead, dbWrite } from '~/server/db/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';

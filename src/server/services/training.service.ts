@@ -1,4 +1,5 @@
 import { TrainingStatus } from '@prisma/client';
+import { isTrainingCustomModel } from '~/components/Resource/Forms/Training/TrainingCommon';
 import { trainingSettings } from '~/components/Resource/Forms/Training/TrainingSubmit';
 import { env } from '~/env/server.mjs';
 import { constants } from '~/server/common/constants';
@@ -29,7 +30,7 @@ import { Orchestrator } from '../http/orchestrator/orchestrator.types';
 const modelMap: { [key in TrainingDetailsBaseModel]: string } = {
   sdxl: 'civitai:101055@128078',
   sd_1_5: 'SD_1_5',
-  anime: 'civitai:9409@90854',
+  anime: 'civitai:84586@89927',
   realistic: 'civitai:81458@132760',
   semi: 'civitai:4384@128713',
   pony: 'civitai:257749@290640',
@@ -61,7 +62,6 @@ async function getSubmittedAt(modelVersionId: number, userId: number) {
     for (const { status, time } of modelFile.metadata.trainingResults.history) {
       if (status === TrainingStatus.Submitted) {
         return new Date(time);
-        break;
       }
     }
   }
@@ -69,8 +69,23 @@ async function getSubmittedAt(modelVersionId: number, userId: number) {
   return modelFile.updatedAt;
 }
 
+async function isSafeTensor(modelVersionId: number) {
+  // it's possible we need to modify this if a model somehow has pickle and safetensor
+  const [data] = await dbWrite.$queryRaw<{ fmt: string }[]>`
+    SELECT mf.metadata ->> 'format' as fmt
+    FROM "ModelVersion" mv
+           JOIN "ModelFile" mf ON mf."modelVersionId" = mv.id AND mf.type = 'Model'
+           JOIN "Model" m ON m.id = mv."modelId"
+    WHERE mv.id = ${modelVersionId}
+    LIMIT 1
+  `;
+
+  return data?.fmt === 'SafeTensor';
+}
+
 const assetUrlRegex =
   /\/v\d\/consumer\/jobs\/(?<jobId>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/assets\/(?<assetName>\S+)$/i;
+const modelAIRRegex = /^civitai:(?<custModelId>\d+)@(?<custModelVersionId>\d+)$/i;
 
 type MoveAssetRow = {
   metadata: FileMetadata | null;
@@ -165,6 +180,7 @@ export const createTrainingRequest = async ({
   const trainingParams = modelVersion.trainingDetails.params;
   if (!trainingParams) throw throwBadRequestError('Missing training params');
   const baseModel = modelVersion.trainingDetails.baseModel;
+  if (!baseModel) throw throwBadRequestError('Missing base model');
   const samplePrompts = modelVersion.trainingDetails.samplePrompts;
 
   for (const [key, value] of Object.entries(trainingParams)) {
@@ -172,7 +188,7 @@ export const createTrainingRequest = async ({
     if (!setting) continue;
     // TODO [bw] we should be doing more checking here (like validating this through zod), but this will handle the bad cases for now
     if (setting.type === 'int' || setting.type === 'number') {
-      const override = baseModel ? setting.overrides?.[baseModel] : undefined;
+      const override = setting.overrides?.[baseModel];
       const overrideSetting = override ?? setting;
       if (
         (overrideSetting.min && value < overrideSetting.min) ||
@@ -195,7 +211,7 @@ export const createTrainingRequest = async ({
       trainingParams.targetSteps,
       baseModel
     );
-    const price = eta !== undefined ? calcBuzzFromEta(eta) : eta;
+    const price = eta !== undefined ? calcBuzzFromEta(eta, isTrainingCustomModel(baseModel)) : eta;
     if (price === undefined) {
       throw throwBadRequestError(
         'Could not compute Buzz price for training - please check your parameters.'
@@ -206,6 +222,19 @@ export const createTrainingRequest = async ({
       throw throwInsufficientFundsError(
         `You don't have enough Buzz to perform this action (required: ${price})`
       );
+    }
+
+    if (!(baseModel in modelMap)) {
+      const mMatch = baseModel.match(modelAIRRegex);
+      if (!mMatch || !mMatch.groups)
+        throw throwBadRequestError('Invalid structure for custom model');
+      const { custModelVersionId } = mMatch.groups;
+      const isST = await isSafeTensor(Number(custModelVersionId));
+      if (!isST) {
+        throw throwBadRequestError(
+          'Custom model does not have a SafeTensor file. Please choose another model.'
+        );
+      }
     }
 
     // nb: going to hold off on externalTransactionId for now
@@ -227,7 +256,7 @@ export const createTrainingRequest = async ({
     // priority: 10,
     callbackUrl: `${env.GENERATION_CALLBACK_HOST}/api/webhooks/resource-training?token=${env.WEBHOOK_TOKEN}`,
     properties: { userId, transactionId, modelFileId: modelVersion.fileId },
-    model: modelMap[baseModel!],
+    model: baseModel in modelMap ? modelMap[baseModel] : baseModel,
     trainingData: trainingUrl,
     retries: constants.maxTrainingRetries,
     params: {

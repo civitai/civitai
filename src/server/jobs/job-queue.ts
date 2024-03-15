@@ -1,6 +1,6 @@
 import { dbRead, dbWrite } from '~/server/db/client';
 import { createJob } from './job';
-import { JobQueueType, SearchIndexUpdateQueueAction } from '@prisma/client';
+import { JobQueueType } from '@prisma/client';
 import {
   getNsfwLevelRelatedEntities,
   updateNsfwLevels,
@@ -9,6 +9,7 @@ import { reduceJobQueueToIds } from '~/server/services/job-queue.service';
 import { uniq, chunk } from 'lodash-es';
 import { imagesSearchIndex } from '~/server/search-index';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 
 const updateNsfwLevelJob = createJob('update-nsfw-levels', '*/1 * * * *', async (e) => {
   // const [lastRun, setLastRun] = await getJobDate('update-nsfw-levels');

@@ -7,12 +7,11 @@ import {
   ModelType,
   ModelUploadType,
   Prisma,
-  SearchIndexUpdateQueueAction,
 } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { CommandResourcesAdd, ResourceType } from '~/components/CivitaiLink/shared-types';
 import { BaseModel, BaseModelType, ModelFileType, constants } from '~/server/common/constants';
-import { ModelSort } from '~/server/common/enums';
+import { ModelSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { Context } from '~/server/createContext';
 
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -147,6 +146,7 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
     const unavailableGenResources = await getUnavailableResources();
 
     const metrics = model.metrics[0];
+    const canManage = ctx.user?.id === model.user.id || ctx.user?.isModerator;
 
     return {
       ...model,
@@ -201,14 +201,16 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
         // sort version files by file type, 'Model' type goes first
         const vaeFile = vaeFiles.filter((x) => x.modelVersionId === version.vaeId);
         version.files.push(...vaeFile);
-        const files = version.files.sort((a, b) => {
-          const aType = a.type as ModelFileType;
-          const bType = b.type as ModelFileType;
+        const files = version.files
+          .filter((x) => x.visibility === 'Public' || canManage)
+          .sort((a, b) => {
+            const aType = a.type as ModelFileType;
+            const bType = b.type as ModelFileType;
 
-          if (constants.modelFileOrder[aType] < constants.modelFileOrder[bType]) return -1;
-          else if (constants.modelFileOrder[aType] > constants.modelFileOrder[bType]) return 1;
-          else return 0;
-        });
+            if (constants.modelFileOrder[aType] < constants.modelFileOrder[bType]) return -1;
+            else if (constants.modelFileOrder[aType] > constants.modelFileOrder[bType]) return 1;
+            else return 0;
+          });
 
         const hashes = version.files
           .filter((file) =>

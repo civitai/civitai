@@ -17,6 +17,7 @@ export default AuthedEndpoint(
           const createResult = await createGenerationRequest({
             ...createInput,
             userId: user.id,
+            userTier: user.tier,
             isModerator: user.isModerator,
           });
           return res.status(200).json(createResult);

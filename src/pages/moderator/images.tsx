@@ -163,7 +163,7 @@ export default function Images() {
               alignSelf: 'flex-end',
               marginRight: 6,
               position: 'sticky',
-              top: 0,
+              top: 'var(--mantine-header-height,0)',
               marginBottom: -80,
               zIndex: 10,
             }}
@@ -456,7 +456,7 @@ function ModerationControls({
   filters: any;
   view: ImageReviewType;
 }) {
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const viewingReported = view === 'reported';
   const selected = useStore((state) => Object.keys(state.selected).map(Number));
   const selectMany = useStore((state) => state.selectMany);

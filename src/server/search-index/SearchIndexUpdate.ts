@@ -1,33 +1,35 @@
-import { SearchIndexUpdateQueueAction } from '@prisma/client';
 import { chunk } from 'lodash-es';
 import { dbWrite } from '~/server/db/client';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { addToQueue, checkoutQueue } from '~/server/redis/queues';
 
-export abstract class SearchIndexUpdate {
-  static async queueUpdate({
-    indexName,
-    items,
-  }: {
-    indexName: string;
-    items: Array<{ id: number; action?: SearchIndexUpdateQueueAction }>;
-  }) {
-    if (!items.length) return;
-
-    console.log(
-      `createSearchIndexUpdateProcessor :: ${indexName} :: queueUpdate :: Called with ${items.length} items`
-    );
-
-    const batches = chunk(items, 500);
-    for (const batch of batches) {
-      await dbWrite.$executeRawUnsafe(`
-        INSERT INTO "SearchIndexUpdateQueue" ("type", "id", "action")
-        VALUES ${batch
-          .map(
-            ({ id, action }) =>
-              `('${indexName}', ${id}, '${action ?? SearchIndexUpdateQueueAction.Update}')`
-          )
-          .join(', ')}
-        ON CONFLICT ("type", "id", "action") DO NOTHING;
-    `);
-    }
+async function queueUpdate({
+  indexName,
+  items,
+}: {
+  indexName: string;
+  items: Array<{ id: number; action?: SearchIndexUpdateQueueAction }>;
+}) {
+  for (const type of Object.keys(SearchIndexUpdateQueueAction)) {
+    const typeItems = items.filter((i) => i.action === type).map(({ id }) => id);
+    if (!typeItems.length) continue;
+    await addToQueue(`${indexName}:${type}`, typeItems);
   }
 }
+
+async function getQueue(indexName: string, action: SearchIndexUpdateQueueAction) {
+  return await checkoutQueue(`${indexName}:${action}`);
+}
+
+async function clearQueue(indexName: string) {
+  for (const type of Object.keys(SearchIndexUpdateQueueAction)) {
+    const queue = await checkoutQueue(`${indexName}:${type}`);
+    await queue.commit();
+  }
+}
+
+export const SearchIndexUpdate = {
+  queueUpdate,
+  getQueue,
+  clearQueue,
+};

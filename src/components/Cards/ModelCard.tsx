@@ -162,6 +162,7 @@ export function ModelCard({ data, forceInView }: Props) {
     contextMenuItems.unshift(
       <Menu.Item
         component="a"
+        key="lookup-model"
         target="_blank"
         icon={<IconInfoCircle size={14} stroke={1.5} />}
         href={`${env.NEXT_PUBLIC_MODEL_LOOKUP_URL}${data.id}`}
@@ -182,7 +183,9 @@ export function ModelCard({ data, forceInView }: Props) {
     data.publishedAt &&
     data.lastVersionAt > aDayAgo &&
     data.lastVersionAt.getTime() - data.publishedAt.getTime() > constants.timeCutOffs.updatedModel;
-  const isSDXL = baseModelSets.SDXL.includes(data.version?.baseModel as BaseModel);
+  const isSDXL = [...baseModelSets.SDXL, ...baseModelSets.Pony].includes(
+    data.version?.baseModel as BaseModel
+  );
   const isPony = data.version?.baseModel === 'Pony';
   const isArchived = data.mode === ModelModifier.Archived;
   const onSite = !!data.version.trainingStatus;

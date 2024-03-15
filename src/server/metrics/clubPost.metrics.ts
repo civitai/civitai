@@ -4,6 +4,9 @@ import { Prisma } from '@prisma/client';
 export const clubPostMetrics = createMetricProcessor({
   name: 'ClubPost',
   async update({ db, lastUpdate }) {
+    return;
+    // Disabled for now
+
     const recentEngagementSubquery = Prisma.sql`
     -- Get all engagements that have happened since then that affect metrics
     WITH recent_engagements AS
@@ -52,28 +55,28 @@ export const clubPostMetrics = createMetricProcessor({
           WHEN tf.timeframe = 'Month' THEN month_like_count
           WHEN tf.timeframe = 'Week' THEN week_like_count
           WHEN tf.timeframe = 'Day' THEN day_like_count
-        END AS like_count, 
+        END AS like_count,
         CASE
           WHEN tf.timeframe = 'AllTime' THEN dislike_count
           WHEN tf.timeframe = 'Year' THEN year_dislike_count
           WHEN tf.timeframe = 'Month' THEN month_dislike_count
           WHEN tf.timeframe = 'Week' THEN week_dislike_count
           WHEN tf.timeframe = 'Day' THEN day_dislike_count
-        END AS dislike_count, 
+        END AS dislike_count,
         CASE
           WHEN tf.timeframe = 'AllTime' THEN laugh_count
           WHEN tf.timeframe = 'Year' THEN year_laugh_count
           WHEN tf.timeframe = 'Month' THEN month_laugh_count
           WHEN tf.timeframe = 'Week' THEN week_laugh_count
           WHEN tf.timeframe = 'Day' THEN day_laugh_count
-        END AS laugh_count, 
+        END AS laugh_count,
         CASE
           WHEN tf.timeframe = 'AllTime' THEN cry_count
           WHEN tf.timeframe = 'Year' THEN year_cry_count
           WHEN tf.timeframe = 'Month' THEN month_cry_count
           WHEN tf.timeframe = 'Week' THEN week_cry_count
           WHEN tf.timeframe = 'Day' THEN day_cry_count
-        END AS cry_count, 
+        END AS cry_count,
         CASE
           WHEN tf.timeframe = 'AllTime' THEN heart_count
           WHEN tf.timeframe = 'Year' THEN year_heart_count

@@ -1,4 +1,4 @@
-import { CollectionItemStatus, Prisma, SearchIndexUpdateQueueAction } from '@prisma/client';
+import { CollectionItemStatus, Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { isDefined } from '~/utils/type-guards';
 import { chunk, uniq } from 'lodash-es';
@@ -8,7 +8,11 @@ import {
   collectionsSearchIndex,
   modelsSearchIndex,
 } from '~/server/search-index';
-import { ImageConnectionType, NsfwLevel } from '~/server/common/enums';
+import {
+  ImageConnectionType,
+  NsfwLevel,
+  SearchIndexUpdateQueueAction,
+} from '~/server/common/enums';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 
 async function getImageConnectedEntities(imageIds: number[]) {

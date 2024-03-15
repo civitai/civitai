@@ -7,7 +7,6 @@ import {
   ReportReason,
   ReportStatus,
   ReviewReactions,
-  SearchIndexUpdateQueueAction,
 } from '@prisma/client';
 
 import { TRPCError } from '@trpc/server';
@@ -29,6 +28,7 @@ import {
   ImageUploadProps,
   UpdateImageInput,
 } from '~/server/schema/image.schema';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { articlesSearchIndex, imagesSearchIndex } from '~/server/search-index';
 import { ImageV2Model } from '~/server/selectors/imagev2.selector';
 import { imageTagCompositeSelect, simpleTagSelect } from '~/server/selectors/tag.selector';

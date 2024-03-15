@@ -3,11 +3,17 @@ import { NotificationCategory, Prisma } from '@prisma/client';
 import { dbWrite, dbRead } from '~/server/db/client';
 import { populateNotificationDetails } from '~/server/notifications/detail-fetchers';
 import {
+  NotificationAddedRow,
+  notificationCache,
+  NotificationCategoryArray,
+} from '~/server/notifications/notification-cache';
+import {
   GetUserNotificationsSchema,
   MarkReadNotificationInput,
   ToggleNotificationSettingInput,
 } from '~/server/schema/notification.schema';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
+import { v4 as uuid } from 'uuid';
 
 type NotificationsRaw = {
   id: string;
@@ -60,6 +66,9 @@ export async function getUserNotificationCount({
   unread: boolean;
   category?: NotificationCategory;
 }) {
+  const cachedCount = await notificationCache.getUser(userId);
+  if (cachedCount) return cachedCount;
+
   const AND = [Prisma.sql`"userId" = ${userId}`];
   if (unread)
     AND.push(
@@ -69,7 +78,7 @@ export async function getUserNotificationCount({
 
   if (category) AND.push(Prisma.sql`category = ${category}::"NotificationCategory"`);
 
-  const result = await dbRead.$queryRaw<{ category: NotificationCategory; count: number }[]>`
+  const result = await dbRead.$queryRaw<NotificationCategoryArray>`
     SELECT
       category,
       COUNT(*) as count
@@ -77,8 +86,8 @@ export async function getUserNotificationCount({
     WHERE ${Prisma.join(AND, ' AND ')}
     GROUP BY category
   `;
-
-  return result.map(({ category, count }) => ({ category, count: Number(count) }));
+  await notificationCache.setUser(userId, result);
+  return result;
 }
 
 export const createUserNotificationSetting = async ({
@@ -93,7 +102,7 @@ export const createUserNotificationSetting = async ({
   `;
 };
 
-export const markNotificationsRead = ({
+export const markNotificationsRead = async ({
   id,
   userId,
   all = false,
@@ -105,22 +114,37 @@ export const markNotificationsRead = ({
       Prisma.sql`"id" NOT IN (SELECT "id" FROM "NotificationViewed" WHERE "userId" = ${userId})`,
     ];
     if (category) AND.push(Prisma.sql`"category" = ${category}::"NotificationCategory"`);
-    return dbWrite.$executeRaw`
+    await dbWrite.$executeRaw`
       INSERT INTO "NotificationViewed" ("id", "userId")
       SELECT "id", ${userId}
       FROM "Notification"
       WHERE ${Prisma.join(AND, ' AND ')}
     `;
+
+    // Update cache
+    if (category) await notificationCache.clearCategory(userId, category);
+    else await notificationCache.bustUser(userId);
   } else {
-    return dbWrite.$executeRaw`
+    const [change] = await dbWrite.$queryRaw<{ id: string }[]>`
       INSERT INTO "NotificationViewed" ("id", "userId")
       VALUES (${id}, ${userId})
       ON CONFLICT ("id") DO NOTHING
+      RETURNING "id"
     `;
+
+    // Update cache if the notification was marked read
+    if (change) {
+      const notification = await dbRead.notification.findFirst({
+        where: { id },
+        select: { category: true },
+      });
+      if (notification?.category)
+        await notificationCache.decrementUser(userId, notification.category);
+    }
   }
 };
 
-export const deleteUserNotificationSetting = ({
+export const deleteUserNotificationSetting = async ({
   type,
   userId,
 }: ToggleNotificationSettingInput & { userId: number }) => {
@@ -134,19 +158,19 @@ export const createNotification = async (data: Prisma.NotificationCreateArgs['da
   // If the user has this notification type disabled, don't create a notification.
   if (!!userNotificationSettings?.disabledAt) return;
 
-  if (data.id) {
-    return dbWrite.$executeRaw`
-      INSERT INTO "Notification" ("id", "userId", "type", "details", "category")
-      VALUES (
-        ${data.id},
-        ${data.userId},
-        ${data.type},
-        ${JSON.stringify(data.details)}::jsonb,
-        ${data.category}::"NotificationCategory"
-      )
-      ON CONFLICT ("id") DO NOTHING
-    `;
-  }
+  if (!data.id) data.id = uuid();
+  const [change] = await dbWrite.$queryRaw<NotificationAddedRow[]>`
+    INSERT INTO "Notification" ("id", "userId", "type", "details", "category")
+    VALUES (
+      ${data.id},
+      ${data.userId},
+      ${data.type},
+      ${JSON.stringify(data.details)}::jsonb,
+      ${data.category}::"NotificationCategory"
+    )
+    ON CONFLICT ("id") DO NOTHING
+    RETURNING "userId", category
+  `;
 
-  return dbWrite.notification.create({ data });
+  if (change) await notificationCache.incrementUser(change.userId, change.category);
 };

@@ -13,7 +13,11 @@ import { isDefined } from '~/utils/type-guards';
 import { calculateGenerationBill } from '~/server/common/generation';
 import { RunType } from '~/store/generation.store';
 import { uniqBy } from 'lodash';
-import { GenerateFormModel, SendFeedbackInput } from '~/server/schema/generation.schema';
+import {
+  GenerateFormModel,
+  generationStatusSchema,
+  SendFeedbackInput,
+} from '~/server/schema/generation.schema';
 import React, { useMemo, useCallback } from 'react';
 import { trpc } from '~/utils/trpc';
 import { Generation } from '~/server/services/generation/generation.types';
@@ -42,17 +46,12 @@ export const useDerivedGenerationState = () => {
   });
   const { unstableResources: allUnstableResources } = useUnsupportedResources();
 
-  const { baseModel, isFullCoverageModel } = useGenerationFormStore(
+  const { baseModel } = useGenerationFormStore(
     useCallback(
       ({ model }) => {
         const baseModel = model?.baseModel ? getBaseModelSetKey(model.baseModel) : undefined;
-        const isFullCoverageModel =
-          baseModel && status?.fullCoverageModels
-            ? status?.fullCoverageModels[baseModel]?.some(({ id }) => id === model?.id)
-            : false;
         return {
           baseModel,
-          isFullCoverageModel,
         };
       },
       [status]
@@ -98,22 +97,19 @@ export const useDerivedGenerationState = () => {
     samplerCfgOffset,
     isSDXL: baseModel === 'SDXL',
     isLCM,
-    isFullCoverageModel,
     unstableResources,
   };
 };
 
+const defaultGenerationStatus = generationStatusSchema.parse({});
 export const useGenerationStatus = () => {
   const { data: status, isLoading } = trpc.generation.getStatus.useQuery(undefined, {
     cacheTime: 60,
     trpc: { context: { skipBatch: true } },
   });
 
-  return {
-    available: isLoading || status?.available,
-    message: status?.message,
-    fullCoverageModels: status?.fullCoverageModels ?? {},
-  };
+  if (isLoading) return defaultGenerationStatus;
+  return status ?? defaultGenerationStatus;
 };
 
 export const useUnsupportedResources = () => {

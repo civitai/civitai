@@ -3,7 +3,6 @@ import {
   ModelEngagementType,
   ModelVersionEngagementType,
   NotificationCategory,
-  SearchIndexUpdateQueueAction,
 } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { orderBy } from 'lodash-es';
@@ -101,7 +100,7 @@ import { getUserNotificationCount } from '~/server/services/notification.service
 import { createRecaptchaAssesment } from '../recaptcha/client';
 import { FeatureAccess, toggleableFeatures } from '../services/feature-flags.service';
 import { isDefined } from '~/utils/type-guards';
-import { OnboardingSteps } from '~/server/common/enums';
+import { OnboardingSteps, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { Flags } from '~/shared/utils';
 import { getResourceReviewsByUserId } from '~/server/services/resourceReview.service';
 import { usersSearchIndex } from '~/server/search-index';
@@ -205,8 +204,8 @@ export const checkUserNotificationsHandler = async ({ ctx }: { ctx: DeepNonNulla
     const reduced = unreadCount.reduce(
       (acc, { category, count }) => {
         const key = category.toLowerCase() as Lowercase<NotificationCategory>;
-        acc[key] = count;
-        acc['all'] += count;
+        acc[key] = Number(count);
+        acc['all'] += Number(count);
         return acc;
       },
       { all: 0 } as Record<Lowercase<NotificationCategory> | 'all', number>

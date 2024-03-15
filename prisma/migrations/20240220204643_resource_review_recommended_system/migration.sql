@@ -14,9 +14,10 @@ ALTER TABLE "ModelVersionMetric"
 
 -- Update Resource Reviews
 ALTER TABLE "ResourceReview" ADD COLUMN     "recommended" BOOLEAN NOT NULL DEFAULT true;
-UPDATE "ResourceReview" SET "recommended" = false WHERE rating < 3;
+-- UPDATE "ResourceReview" SET "recommended" = false WHERE rating < 3;
 
 -- Update metrics
+/*
 INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "thumbsUpCount", "thumbsDownCount")
 SELECT
   mv.id,
@@ -57,8 +58,10 @@ JOIN "ModelVersion" mv ON rr."modelVersionId" = mv."id" -- confirm that model ve
 CROSS JOIN ( SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe ) tf
 GROUP BY mv.id, tf.timeframe
 ON CONFLICT ("modelVersionId", timeframe) DO UPDATE SET "thumbsUpCount" = EXCLUDED."thumbsUpCount", "thumbsDownCount" = EXCLUDED."thumbsDownCount", "updatedAt" = now();
+*/
 
 -- Add missing model metrics
+ALTER TABLE "ModelMetric" ADD COLUMN "updatedAt" TIMESTAMP DEFAULT now();
 INSERT INTO "ModelMetric" ("modelId", timeframe, "updatedAt")
 SELECT
   id,

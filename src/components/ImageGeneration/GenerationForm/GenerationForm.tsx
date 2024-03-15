@@ -65,7 +65,13 @@ import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import InputResourceSelect from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
 import { PersistentAccordion } from '~/components/PersistentAccordion/PersistantAccordion';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { IconAlertTriangle, IconArrowAutofitDown, IconCheck, IconCopy } from '@tabler/icons-react';
+import {
+  IconAlertTriangle,
+  IconAlertTriangleFilled,
+  IconArrowAutofitDown,
+  IconCheck,
+  IconCopy,
+} from '@tabler/icons-react';
 import InputResourceSelectMultiple from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
@@ -104,6 +110,8 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
 
   const status = useGenerationStatus();
   if (currentUser?.isModerator) status.available = true; // Always have generation available for mods
+  const isFreeTier = !currentUser?.tier || currentUser.tier === 'free';
+  const limits = status.limits[currentUser?.tier ?? 'free'];
 
   useEffect(() => {
     form.reset({
@@ -239,8 +247,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
 
   const { requests } = useGetGenerationRequests();
   const pendingProcessingCount = usePollGenerationRequests(requests);
-  const reachedRequestLimit =
-    pendingProcessingCount >= constants.imageGeneration.maxConcurrentRequests;
+  const reachedRequestLimit = pendingProcessingCount >= limits.queue;
   const disableGenerateButton = reachedRequestLimit;
 
   // Manually handle error display for prompt box
@@ -313,7 +320,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                 <Accordion.Panel>
                   <InputResourceSelectMultiple
                     name="resources"
-                    limit={9}
+                    limit={limits.resources}
                     buttonLabel="Add additional resource"
                     options={{
                       canGenerate: true,
@@ -338,320 +345,293 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                 </List>
               </Alert>
             )}
-            <Card {...sharedCardProps}>
-              <Stack>
-                <Stack spacing={0}>
-                  <Input.Wrapper
-                    label={
-                      <Group mb={5} spacing={4} noWrap>
-                        <Input.Label required>Prompt</Input.Label>
-                        <InfoPopover size="xs" iconProps={{ size: 14 }}>
-                          Type out what you&apos;d like to generate in the positive field, add
-                          aspects you&apos;d like to avoid in the negative prompt
-                        </InfoPopover>
-                      </Group>
-                    }
-                    error={errors.prompt?.message}
-                  >
-                    <Paper
-                      px="sm"
-                      bg="transparent"
-                      sx={(theme) => ({
-                        borderBottomLeftRadius: showFillForm ? 0 : undefined,
-                        borderBottomRightRadius: showFillForm ? 0 : undefined,
-                        borderColor: errors.prompt
-                          ? theme.colors.red[theme.fn.primaryShade()]
-                          : undefined,
-                        marginBottom: errors.prompt ? 5 : undefined,
+            <Stack spacing={0}>
+              <Input.Wrapper
+                label={
+                  <Group mb={5} spacing={4} noWrap>
+                    <Input.Label required>Prompt</Input.Label>
+                    <InfoPopover size="xs" iconProps={{ size: 14 }}>
+                      Type out what you&apos;d like to generate in the prompt, add aspects
+                      you&apos;d like to avoid in the negative prompt
+                    </InfoPopover>
+                  </Group>
+                }
+                error={errors.prompt?.message}
+              >
+                <Paper
+                  px="sm"
+                  sx={(theme) => ({
+                    borderBottomLeftRadius: showFillForm ? 0 : undefined,
+                    borderBottomRightRadius: showFillForm ? 0 : undefined,
+                    borderColor: errors.prompt
+                      ? theme.colors.red[theme.fn.primaryShade()]
+                      : undefined,
+                    marginBottom: errors.prompt ? 5 : undefined,
+                    background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : undefined,
 
-                        // Apply focus styles if textarea is focused
-                        '&:has(textarea:focus)': {
-                          ...theme.focusRingStyles.inputStyles(theme),
-                        },
-                      })}
-                      withBorder
-                    >
-                      <InputTextArea
-                        name="prompt"
-                        placeholder="Your prompt goes here..."
-                        autosize
-                        unstyled
-                        styles={(theme) => ({
-                          input: {
-                            background: 'transparent',
-                            width: '100%',
-                            resize: 'none',
-                            border: 'none',
-                            padding: '0',
-                            outline: 'none',
-                            fontFamily: theme.fontFamily,
-                            fontSize: theme.fontSizes.sm,
-                            lineHeight: theme.lineHeight,
-                            overflow: 'hidden',
-                            color: theme.colorScheme === 'dark' ? theme.colors.dark[0] : undefined,
-                          },
-                          // Prevents input from displaying form error
-                          error: { display: 'none' },
-                          wrapper: { margin: 0 },
-                        })}
-                        onPaste={(event) => {
-                          const text = event.clipboardData.getData('text/plain');
-                          if (text) setShowFillForm(text.includes('Steps:'));
-                        }}
-                        onKeyDown={promptKeyHandler}
-                      />
-                      {trainedWords.length > 0 ? (
-                        <Stack spacing={8} mb="xs">
-                          <Divider />
-                          <Text color="dimmed" size="xs" weight={590}>
-                            Trigger words
-                          </Text>
-                          <Group spacing={4}>
-                            <TrainedWords
-                              type="LORA"
-                              trainedWords={trainedWords}
-                              badgeProps={{ style: { textTransform: 'none' } }}
-                            />
-                            <CopyButton value={trainedWords.join(', ')}>
-                              {({ copied, copy }) => (
-                                <Button
-                                  variant="subtle"
-                                  size="xs"
-                                  color={copied ? 'green' : 'blue.5'}
-                                  onClick={copy}
-                                  compact
-                                >
-                                  {copied ? (
-                                    <Group spacing={4}>
-                                      Copied <IconCheck size={14} />
-                                    </Group>
-                                  ) : (
-                                    <Group spacing={4}>
-                                      Copy all <IconCopy size={14} />
-                                    </Group>
-                                  )}
-                                </Button>
-                              )}
-                            </CopyButton>
-                          </Group>
-                        </Stack>
-                      ) : null}
-                    </Paper>
-                  </Input.Wrapper>
-                  {showFillForm && (
-                    <Button
-                      variant="light"
-                      onClick={handleParsePrompt}
-                      leftIcon={<IconArrowAutofitDown size={16} />}
-                      sx={{ borderTopLeftRadius: 0, borderTopRightRadius: 0 }}
-                      fullWidth
-                    >
-                      Apply Parameters
-                    </Button>
-                  )}
-                </Stack>
-
-                <InputTextArea
-                  name="negativePrompt"
-                  label="Negative Prompt"
-                  onKeyDown={promptKeyHandler}
-                  autosize
-                />
-                <InputSwitch name="nsfw" label="Mature content" labelPosition="left" />
-              </Stack>
-            </Card>
-            <Card {...sharedCardProps} style={{ overflow: 'visible' }}>
-              <Stack>
-                <Stack spacing={0}>
-                  <Input.Label>Aspect Ratio</Input.Label>
-                  <InputSegmentedControl
-                    name="aspectRatio"
-                    data={getAspectRatioControls(baseModel)}
-                  />
-                </Stack>
-                <PersistentAccordion
-                  storeKey="generation-form-advanced"
-                  variant="filled"
-                  styles={(theme) => ({
-                    content: {
-                      padding: 0,
-                    },
-                    item: {
-                      overflow: 'hidden',
-                      border: 'none',
-                      background: 'transparent',
-                    },
-                    control: {
-                      padding: 0,
-                      paddingBottom: theme.spacing.xs,
+                    // Apply focus styles if textarea is focused
+                    '&:has(textarea:focus)': {
+                      ...theme.focusRingStyles.inputStyles(theme),
                     },
                   })}
+                  withBorder
                 >
-                  <Accordion.Item value="advanced">
-                    <Accordion.Control>
-                      <Divider
-                        label="Advanced"
-                        labelPosition="left"
-                        labelProps={{ size: 'sm', weight: 500 }}
+                  <InputTextArea
+                    name="prompt"
+                    placeholder="Your prompt goes here..."
+                    autosize
+                    unstyled
+                    styles={(theme) => ({
+                      input: {
+                        background: 'transparent',
+                        width: '100%',
+                        resize: 'none',
+                        border: 'none',
+                        padding: '0',
+                        outline: 'none',
+                        fontFamily: theme.fontFamily,
+                        fontSize: theme.fontSizes.sm,
+                        lineHeight: theme.lineHeight,
+                        overflow: 'hidden',
+                        color: theme.colorScheme === 'dark' ? theme.colors.dark[0] : undefined,
+                      },
+                      // Prevents input from displaying form error
+                      error: { display: 'none' },
+                      wrapper: { margin: 0 },
+                    })}
+                    onPaste={(event) => {
+                      const text = event.clipboardData.getData('text/plain');
+                      if (text) setShowFillForm(text.includes('Steps:'));
+                    }}
+                    onKeyDown={promptKeyHandler}
+                  />
+                  {trainedWords.length > 0 ? (
+                    <Stack spacing={8} mb="xs">
+                      <Divider />
+                      <Text color="dimmed" size="xs" weight={590}>
+                        Trigger words
+                      </Text>
+                      <Group spacing={4}>
+                        <TrainedWords
+                          type="LORA"
+                          trainedWords={trainedWords}
+                          badgeProps={{ style: { textTransform: 'none' } }}
+                        />
+                        <CopyButton value={trainedWords.join(', ')}>
+                          {({ copied, copy }) => (
+                            <Button
+                              variant="subtle"
+                              size="xs"
+                              color={copied ? 'green' : 'blue.5'}
+                              onClick={copy}
+                              compact
+                            >
+                              {copied ? (
+                                <Group spacing={4}>
+                                  Copied <IconCheck size={14} />
+                                </Group>
+                              ) : (
+                                <Group spacing={4}>
+                                  Copy all <IconCopy size={14} />
+                                </Group>
+                              )}
+                            </Button>
+                          )}
+                        </CopyButton>
+                      </Group>
+                    </Stack>
+                  ) : null}
+                </Paper>
+              </Input.Wrapper>
+              {showFillForm && (
+                <Button
+                  variant="light"
+                  onClick={handleParsePrompt}
+                  leftIcon={<IconArrowAutofitDown size={16} />}
+                  sx={{ borderTopLeftRadius: 0, borderTopRightRadius: 0 }}
+                  fullWidth
+                >
+                  Apply Parameters
+                </Button>
+              )}
+            </Stack>
+
+            <InputTextArea
+              name="negativePrompt"
+              label="Negative Prompt"
+              onKeyDown={promptKeyHandler}
+              autosize
+            />
+            <Stack spacing={2}>
+              <Input.Label>Aspect Ratio</Input.Label>
+              <InputSegmentedControl name="aspectRatio" data={getAspectRatioControls(baseModel)} />
+            </Stack>
+            <InputSwitch name="nsfw" label="Mature content" labelPosition="left" />
+
+            <PersistentAccordion
+              storeKey="generation-form-advanced"
+              variant="contained"
+              classNames={{
+                item: classes.accordionItem,
+                control: classes.accordionControl,
+                content: classes.accordionContent,
+              }}
+            >
+              <Accordion.Item value="advanced">
+                <Accordion.Control>
+                  <Text size="sm" weight={590}>
+                    Advanced
+                  </Text>
+                </Accordion.Control>
+                <Accordion.Panel>
+                  <Stack>
+                    <InputNumberSlider
+                      name="cfgScale"
+                      label={
+                        <Group spacing={4} noWrap>
+                          <Input.Label>CFG Scale</Input.Label>
+                          <InfoPopover size="xs" iconProps={{ size: 14 }}>
+                            Controls how closely the image generation follows the text prompt.{' '}
+                            <Anchor
+                              href="https://wiki.civitai.com/wiki/Classifier_Free_Guidance"
+                              target="_blank"
+                              rel="nofollow noreferrer"
+                              span
+                            >
+                              Learn more
+                            </Anchor>
+                            .
+                          </InfoPopover>
+                        </Group>
+                      }
+                      min={1}
+                      max={isSDXL ? 10 : 30}
+                      step={0.5}
+                      precision={1}
+                      sliderProps={sharedSliderProps}
+                      numberProps={sharedNumberProps}
+                      presets={[
+                        { label: 'Creative', value: '4' },
+                        { label: 'Balanced', value: '7' },
+                        { label: 'Precise', value: '10' },
+                      ]}
+                      reverse
+                    />
+                    <InputSelect
+                      name="sampler"
+                      label={
+                        <Group spacing={4} noWrap>
+                          <Input.Label>Sampler</Input.Label>
+                          <InfoPopover size="xs" iconProps={{ size: 14 }}>
+                            Each will produce a slightly (or significantly) different image result.{' '}
+                            <Anchor
+                              href="https://wiki.civitai.com/wiki/Sampler"
+                              target="_blank"
+                              rel="nofollow noreferrer"
+                              span
+                            >
+                              Learn more
+                            </Anchor>
+                            .
+                          </InfoPopover>
+                        </Group>
+                      }
+                      data={isLCM ? generation.lcmSamplers : generation.samplers}
+                      presets={
+                        isLCM
+                          ? []
+                          : [
+                              { label: 'Fast', value: 'Euler a' },
+                              { label: 'Popular', value: 'DPM++ 2M Karras' },
+                            ]
+                      }
+                    />
+                    <InputNumberSlider
+                      name="steps"
+                      label={
+                        <Group spacing={4} noWrap>
+                          <Input.Label>Steps</Input.Label>
+                          <InfoPopover size="xs" iconProps={{ size: 14 }}>
+                            The number of iterations spent generating an image.{' '}
+                            <Anchor
+                              href="https://wiki.civitai.com/wiki/Sampling_Steps"
+                              target="_blank"
+                              rel="nofollow noreferrer"
+                              span
+                            >
+                              Learn more
+                            </Anchor>
+                            .
+                          </InfoPopover>
+                        </Group>
+                      }
+                      min={isLCM ? 3 : 10}
+                      max={isLCM ? 12 : limits.steps}
+                      sliderProps={sharedSliderProps}
+                      numberProps={sharedNumberProps}
+                      presets={
+                        isLCM
+                          ? []
+                          : [
+                              {
+                                label: 'Fast',
+                                value: Number(10 + samplerCfgOffset).toString(),
+                              },
+                              {
+                                label: 'Balanced',
+                                value: Number(20 + samplerCfgOffset).toString(),
+                              },
+                              {
+                                label: 'High',
+                                value: Number(30 + samplerCfgOffset).toString(),
+                              },
+                            ]
+                      }
+                      reverse
+                    />
+                    <InputSeed name="seed" label="Seed" min={1} max={generation.maxValues.seed} />
+                    {!isSDXL && (
+                      <InputNumberSlider
+                        name="clipSkip"
+                        label="Clip Skip"
+                        min={1}
+                        max={generation.maxValues.clipSkip}
+                        sliderProps={{
+                          ...sharedSliderProps,
+                          marks: clipSkipMarks,
+                        }}
+                        numberProps={sharedNumberProps}
                       />
-                    </Accordion.Control>
-                    <Accordion.Panel>
-                      <Stack>
-                        <InputNumberSlider
-                          name="cfgScale"
-                          label={
-                            <Group spacing={4} noWrap>
-                              <Input.Label>CFG Scale</Input.Label>
-                              <InfoPopover size="xs" iconProps={{ size: 14 }}>
-                                Controls how closely the image generation follows the text prompt.{' '}
-                                <Anchor
-                                  href="https://wiki.civitai.com/wiki/Classifier_Free_Guidance"
-                                  target="_blank"
-                                  rel="nofollow noreferrer"
-                                  span
-                                >
-                                  Learn more
-                                </Anchor>
-                                .
-                              </InfoPopover>
-                            </Group>
-                          }
-                          min={1}
-                          max={isSDXL ? 10 : 30}
-                          step={0.5}
-                          precision={1}
-                          sliderProps={sharedSliderProps}
-                          numberProps={sharedNumberProps}
-                          presets={[
-                            { label: 'Creative', value: '4' },
-                            { label: 'Balanced', value: '7' },
-                            { label: 'Precise', value: '10' },
-                          ]}
-                          reverse
-                        />
-                        <InputSelect
-                          name="sampler"
-                          label={
-                            <Group spacing={4} noWrap>
-                              <Input.Label>Sampler</Input.Label>
-                              <InfoPopover size="xs" iconProps={{ size: 14 }}>
-                                Each will produce a slightly (or significantly) different image
-                                result.{' '}
-                                <Anchor
-                                  href="https://wiki.civitai.com/wiki/Sampler"
-                                  target="_blank"
-                                  rel="nofollow noreferrer"
-                                  span
-                                >
-                                  Learn more
-                                </Anchor>
-                                .
-                              </InfoPopover>
-                            </Group>
-                          }
-                          data={isLCM ? generation.lcmSamplers : generation.samplers}
-                          presets={
-                            isLCM
-                              ? []
-                              : [
-                                  { label: 'Fast', value: 'Euler a' },
-                                  { label: 'Popular', value: 'DPM++ 2M Karras' },
-                                ]
-                          }
-                        />
-                        <InputNumberSlider
-                          name="steps"
-                          label={
-                            <Group spacing={4} noWrap>
-                              <Input.Label>Steps</Input.Label>
-                              <InfoPopover size="xs" iconProps={{ size: 14 }}>
-                                The number of iterations spent generating an image.{' '}
-                                <Anchor
-                                  href="https://wiki.civitai.com/wiki/Sampling_Steps"
-                                  target="_blank"
-                                  rel="nofollow noreferrer"
-                                  span
-                                >
-                                  Learn more
-                                </Anchor>
-                                .
-                              </InfoPopover>
-                            </Group>
-                          }
-                          min={isLCM ? 3 : 10}
-                          max={isLCM ? 12 : generation.maxValues.steps}
-                          sliderProps={sharedSliderProps}
-                          numberProps={sharedNumberProps}
-                          presets={
-                            isLCM
-                              ? []
-                              : [
-                                  {
-                                    label: 'Fast',
-                                    value: Number(10 + samplerCfgOffset).toString(),
-                                  },
-                                  {
-                                    label: 'Balanced',
-                                    value: Number(20 + samplerCfgOffset).toString(),
-                                  },
-                                  {
-                                    label: 'High',
-                                    value: Number(30 + samplerCfgOffset).toString(),
-                                  },
-                                ]
-                          }
-                          reverse
-                        />
-                        <InputSeed
-                          name="seed"
-                          label="Seed"
-                          min={1}
-                          max={generation.maxValues.seed}
-                        />
-                        {!isSDXL && (
-                          <InputNumberSlider
-                            name="clipSkip"
-                            label="Clip Skip"
-                            min={1}
-                            max={generation.maxValues.clipSkip}
-                            sliderProps={{
-                              ...sharedSliderProps,
-                              marks: clipSkipMarks,
-                            }}
-                            numberProps={sharedNumberProps}
-                          />
-                        )}
-                        <InputResourceSelect
-                          name="vae"
-                          label={
-                            <Group spacing={4} noWrap>
-                              <Input.Label>{getDisplayName(ModelType.VAE)}</Input.Label>
-                              <InfoPopover size="xs" iconProps={{ size: 14 }}>
-                                These provide additional color and detail improvements.{' '}
-                                <Anchor
-                                  href="https://wiki.civitai.com/wiki/Variational_Autoencoder"
-                                  target="_blank"
-                                  rel="nofollow noreferrer"
-                                  span
-                                >
-                                  Learn more
-                                </Anchor>
-                                .
-                              </InfoPopover>
-                            </Group>
-                          }
-                          buttonLabel="Add VAE"
-                          options={{
-                            canGenerate: true,
-                            resources: [{ type: ModelType.VAE, baseModelSet: baseModel }],
-                          }}
-                        />
-                      </Stack>
-                    </Accordion.Panel>
-                  </Accordion.Item>
-                </PersistentAccordion>
-              </Stack>
-            </Card>
+                    )}
+                    <InputResourceSelect
+                      name="vae"
+                      label={
+                        <Group spacing={4} noWrap>
+                          <Input.Label>{getDisplayName(ModelType.VAE)}</Input.Label>
+                          <InfoPopover size="xs" iconProps={{ size: 14 }}>
+                            These provide additional color and detail improvements.{' '}
+                            <Anchor
+                              href="https://wiki.civitai.com/wiki/Variational_Autoencoder"
+                              target="_blank"
+                              rel="nofollow noreferrer"
+                              span
+                            >
+                              Learn more
+                            </Anchor>
+                            .
+                          </InfoPopover>
+                        </Group>
+                      }
+                      buttonLabel="Add VAE"
+                      options={{
+                        canGenerate: true,
+                        resources: [{ type: ModelType.VAE, baseModelSet: baseModel }],
+                      }}
+                    />
+                  </Stack>
+                </Accordion.Panel>
+              </Accordion.Item>
+            </PersistentAccordion>
             {/* <Card {...sharedCardProps}>
           <Stack>
             <Text>TODO.hires</Text>
@@ -659,7 +639,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
           </Card> */}
           </Stack>
         </ScrollArea>
-        <Stack spacing={4} px="md" pt="xs" pb={3}>
+        <Stack spacing={4} px="md" pt="xs" pb={3} className={classes.generationArea}>
           {promptWarning && (
             <div>
               <Alert color="red" title="Prohibited Prompt">
@@ -715,6 +695,19 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
             </Alert>
           ) : status.available && !promptWarning ? (
             <>
+              {isFreeTier && limits.quantity < 8 && (
+                <Group spacing="xs" noWrap mb={4} align="center">
+                  <Text size="xs" color="yellow" lh={1}>
+                    <IconAlertTriangleFilled size={20} />
+                  </Text>
+                  <Text size="xs" lh={1.2} color="yellow">
+                    {`Generator under high load. Image limits have been temporarily reduced for free users. `}
+                    <Text lh={1.2} component={NextLink} href="/pricing" td="underline">
+                      Remove limits
+                    </Text>
+                  </Text>
+                </Group>
+              )}
               <Group spacing="xs" className={classes.generateButtonContainer} noWrap>
                 <Card withBorder className={classes.generateButtonQuantity} p={0}>
                   <Stack spacing={0}>
@@ -730,7 +723,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                     <InputNumber
                       name="quantity"
                       min={1}
-                      max={generation.maxValues.quantity}
+                      max={limits.quantity}
                       className={classes.generateButtonQuantityInput}
                     />
                   </Stack>
@@ -782,10 +775,17 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
               </Group>
               <Text size="xs" color="dimmed">
                 {reachedRequestLimit
-                  ? 'You have reached the request limit. Please wait until your current requests are finished.'
-                  : `You can queue ${
-                      constants.imageGeneration.maxConcurrentRequests - pendingProcessingCount
-                    } more jobs`}
+                  ? 'You have reached the request limit. Please wait until your current requests are finished. '
+                  : `You can queue ${limits.queue - pendingProcessingCount} more jobs. `}
+                {isFreeTier && (
+                  <Text component="span">
+                    Want more?{' '}
+                    <Text component={NextLink} href="/pricing" variant="link" td="underline">
+                      Become a Member
+                    </Text>
+                    😍
+                  </Text>
+                )}
               </Text>
             </>
           ) : null}
@@ -882,6 +882,11 @@ export const GenerationForm = (args: { onSuccess?: () => void }) => {
 
 const useStyles = createStyles((theme) => ({
   generationContainer: {},
+  generationArea: {
+    borderTop: `1px solid ${
+      theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[2]
+    }`,
+  },
   generateButtonContainer: {
     width: '100%',
     justifyContent: 'stretch',
@@ -936,6 +941,8 @@ const useStyles = createStyles((theme) => ({
     alignItems: 'center',
   },
   accordionItem: {
+    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : 'transparent',
+
     '&:first-of-type': {
       borderTopLeftRadius: '8px',
       borderTopRightRadius: '8px',
@@ -952,7 +959,10 @@ const useStyles = createStyles((theme) => ({
   },
   accordionControl: {
     padding: '8px 8px 8px 12px',
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : 'transparent',
+
+    '&:hover': {
+      background: 'transparent',
+    },
 
     '&[data-active]': {
       borderRadius: '0 !important',

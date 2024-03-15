@@ -1,14 +1,7 @@
 import { client, updateDocs } from '~/server/meilisearch/client';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { modelHashSelect } from '~/server/selectors/modelHash.selector';
-import {
-  Availability,
-  MetricTimeframe,
-  ModelStatus,
-  Prisma,
-  PrismaClient,
-  SearchIndexUpdateQueueAction,
-} from '@prisma/client';
+import { Availability, MetricTimeframe, ModelStatus, Prisma, PrismaClient } from '@prisma/client';
 import { isEqual } from 'lodash';
 import { MODELS_SEARCH_INDEX, ModelFileType } from '~/server/common/constants';
 import { getOrCreateIndex, onSearchIndexDocumentsCleanup } from '~/server/meilisearch/util';
@@ -25,6 +18,9 @@ import { withRetries } from '~/server/utils/errorHandling';
 import { getModelVersionsForSearchIndex } from '../selectors/modelVersion.selector';
 import { getUnavailableResources } from '../services/generation/generation.service';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
+import { SearchIndexUpdate } from '~/server/search-index/SearchIndexUpdate';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 
 const RATING_BAYESIAN_M = 3.5;
 const RATING_BAYESIAN_C = 10;
@@ -330,14 +326,18 @@ const onFetchItemsToIndex = async ({
             category: category?.tag,
             version: {
               ...version,
+              settings: version.settings as RecommendedSettingsSchema,
               hashes: version.hashes.map((hash) => hash.hash),
             },
-            versions: modelVersions.map(({ generationCoverage, files, hashes, ...x }) => ({
-              ...x,
-              hashes: hashes.map((hash) => hash.hash),
-              canGenerate:
-                generationCoverage?.covered && unavailableGenResources.indexOf(x.id) === -1,
-            })),
+            versions: modelVersions.map(
+              ({ generationCoverage, files, hashes, settings, ...x }) => ({
+                ...x,
+                hashes: hashes.map((hash) => hash.hash),
+                canGenerate:
+                  generationCoverage?.covered && unavailableGenResources.indexOf(x.id) === -1,
+                settings: settings as RecommendedSettingsSchema,
+              })
+            ),
             triggerWords: [
               ...new Set(modelVersions.flatMap((modelVersion) => modelVersion.trainedWords)),
             ],
@@ -406,20 +406,15 @@ const onFetchItemsToIndex = async ({
 };
 
 const onUpdateQueueProcess = async ({ db, indexName }: { db: PrismaClient; indexName: string }) => {
-  const queuedItems = await db.searchIndexUpdateQueue.findMany({
-    select: {
-      id: true,
-    },
-    where: { type: INDEX_ID, action: SearchIndexUpdateQueueAction.Update },
-  });
+  const queue = await SearchIndexUpdate.getQueue(indexName, SearchIndexUpdateQueueAction.Update);
 
   console.log(
     'onUpdateQueueProcess :: A total of ',
-    queuedItems.length,
+    queue.content.length,
     ' have been updated and will be re-indexed'
   );
 
-  const batchCount = Math.ceil(queuedItems.length / READ_BATCH_SIZE);
+  const batchCount = Math.ceil(queue.content.length / READ_BATCH_SIZE);
 
   const itemsToIndex: Awaited<ReturnType<typeof onFetchItemsToIndex>> = {
     indexReadyRecords: [],
@@ -427,23 +422,22 @@ const onUpdateQueueProcess = async ({ db, indexName }: { db: PrismaClient; index
   };
 
   for (let batchNumber = 0; batchNumber < batchCount; batchNumber++) {
-    const batch = queuedItems.slice(
+    const batch = queue.content.slice(
       batchNumber * READ_BATCH_SIZE,
       batchNumber * READ_BATCH_SIZE + READ_BATCH_SIZE
     );
 
-    const itemIds = batch.map(({ id }) => id);
-
     const { indexReadyRecords, indexRecordsWithImages } = await onFetchItemsToIndex({
       db,
       indexName,
-      whereOr: [{ id: { in: itemIds } }],
+      whereOr: [{ id: { in: batch } }],
     });
 
     itemsToIndex.indexReadyRecords.push(...indexReadyRecords);
     itemsToIndex.indexRecordsWithImages.push(...indexRecordsWithImages);
   }
 
+  await queue.commit();
   return itemsToIndex;
 };
 

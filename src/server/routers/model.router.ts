@@ -17,10 +17,8 @@ import {
   getModelTemplateFieldsHandler,
   getModelTemplateFromBountyHandler,
   getModelVersionsHandler,
-  getModelWithVersionsHandler,
   getModelsInfiniteHandler,
   getModelsPagedSimpleHandler,
-  getModelsWithVersionsHandler,
   getMyDraftModelsHandler,
   getMyTrainingModelsHandler,
   getSimpleModelsInfiniteHandler,
@@ -145,11 +143,6 @@ export const modelRouter = router({
   getAllInfiniteSimple: guardedProcedure
     .input(getSimpleModelsInfiniteSchema)
     .query(getSimpleModelsInfiniteHandler),
-  getAllWithVersions: publicProcedure
-    .input(getAllModelsSchema.extend({ cursor: z.never().optional() }))
-    .use(applyUserPreferences)
-    .query(getModelsWithVersionsHandler),
-  getByIdWithVersions: publicProcedure.input(getByIdSchema).query(getModelWithVersionsHandler),
   getVersions: publicProcedure.input(getModelVersionsSchema).query(getModelVersionsHandler),
   getMyDraftModels: protectedProcedure.input(getAllQuerySchema).query(getMyDraftModelsHandler),
   getMyTrainingModels: protectedProcedure

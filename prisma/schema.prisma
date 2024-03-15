@@ -341,6 +341,7 @@ model UserMetric {
   reviewCount       Int             @default(0)
   answerCount       Int             @default(0)
   answerAcceptCount Int             @default(0)
+  updatedAt         DateTime        @default(now())
 
   @@id([userId, timeframe])
 }
@@ -765,7 +766,7 @@ model ModelMetric {
   generationCount   Int             @default(0)
   thumbsUpCount     Int             @default(0)
   thumbsDownCount   Int             @default(0)
-  updatedAt         DateTime        @updatedAt
+  updatedAt         DateTime        @default(now())
 
   @@id([modelId, timeframe])
 }
@@ -786,7 +787,7 @@ model ModelVersionMetric {
   generationCount   Int             @default(0)
   thumbsUpCount     Int             @default(0)
   thumbsDownCount   Int             @default(0)
-  updatedAt         DateTime        @updatedAt
+  updatedAt         DateTime        @default(now())
 
   @@id([modelVersionId, timeframe])
 }
@@ -1112,6 +1113,7 @@ model PostMetric {
   heartCount     Int             @default(0)
   commentCount   Int             @default(0)
   collectedCount Int             @default(0)
+  updatedAt      DateTime        @default(now())
 
   @@id([postId, timeframe])
 }
@@ -1264,6 +1266,7 @@ model ImageMetric {
   tippedCount       Int             @default(0)
   tippedAmountCount Int             @default(0)
   viewCount         Int             @default(0)
+  updatedAt         DateTime        @default(now())
 
   @@id([imageId, timeframe])
 }
@@ -1275,6 +1278,7 @@ model CollectionMetric {
   followerCount    Int             @default(0)
   itemCount        Int             @default(0)
   contributorCount Int             @default(0)
+  updatedAt        DateTime        @default(now())
 
   @@id([collectionId, timeframe])
 }
@@ -1497,6 +1501,7 @@ model TagMetric {
   articleCount  Int             @default(0)
   hiddenCount   Int             @default(0)
   followerCount Int             @default(0)
+  updatedAt     DateTime        @default(now())
 
   @@id([tagId, timeframe])
 }
@@ -1723,14 +1728,6 @@ model AnswerVote {
   createdAt DateTime @default(now())
 
   @@id([answerId, userId])
-}
-
-model MetricUpdateQueue {
-  type      String
-  id        Int
-  createdAt DateTime @default(now())
-
-  @@id([type, id])
 }
 
 model AnswerMetric {
@@ -2048,6 +2045,7 @@ model ArticleMetric {
   collectedCount    Int             @default(0)
   tippedCount       Int             @default(0)
   tippedAmountCount Int             @default(0)
+  updatedAt         DateTime        @default(now())
 
   @@id([articleId, timeframe])
 }
@@ -2117,20 +2115,6 @@ model GenerationServiceProvider {
   schedulers GenerationSchedulers[]
 
   @@id([name])
-}
-
-enum SearchIndexUpdateQueueAction {
-  Update
-  Delete
-}
-
-model SearchIndexUpdateQueue {
-  type      String
-  id        Int
-  createdAt DateTime                     @default(now())
-  action    SearchIndexUpdateQueueAction @default(Update)
-
-  @@id([type, id, action])
 }
 
 enum CollectionWriteConfiguration {
@@ -2447,6 +2431,7 @@ model BountyMetric {
   benefactorCount Int             @default(0)
   unitAmountCount Int             @default(0)
   commentCount    Int             @default(0)
+  updatedAt       DateTime        @default(now())
 
   @@id([bountyId, timeframe])
 }
@@ -2463,6 +2448,7 @@ model BountyEntryMetric {
   unitAmountCount   Int             @default(0)
   tippedCount       Int             @default(0)
   tippedAmountCount Int             @default(0)
+  updatedAt         DateTime        @default(now())
 
   @@id([bountyEntryId, timeframe])
 }

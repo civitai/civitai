@@ -40,7 +40,7 @@ export const getModelVersionApiSelect = Prisma.validator<Prisma.ModelVersionSele
     select: { name: true, type: true, nsfw: true, poi: true, mode: true },
   },
 });
-const modelVersionApi = Prisma.validator<Prisma.ModelVersionArgs>()({
+const modelVersionApi = Prisma.validator<Prisma.ModelVersionDefaultArgs>()({
   select: getModelVersionApiSelect,
 });
 export type ModelVersionApiReturn = Prisma.ModelVersionGetPayload<typeof modelVersionApi>;
@@ -54,6 +54,7 @@ export const getModelVersionsForSearchIndex = Prisma.validator<Prisma.ModelVersi
   trainedWords: true,
   baseModel: true,
   baseModelType: true,
+  settings: true,
   files: { select: { metadata: true }, where: { type: 'Model' } },
   hashes: {
     select: modelHashSelect,

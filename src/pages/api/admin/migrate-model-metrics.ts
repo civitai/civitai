@@ -202,7 +202,7 @@ function modelGenerationMetrics(ctx: MigrationContext) {
 
     console.log('Update model generation metrics ' + ctx.start + '-' + ctx.end);
     console.time('Fetch version generation metrics ' + ctx.start + '-' + ctx.end);
-    const metrics = await clickhouse.$query<GenerationMetrics>(`
+    const metrics = await clickhouse.$query<GenerationMetrics>`
       SELECT
           modelVersionId,
           sumIf(count, createdDate = current_date()) day,
@@ -213,7 +213,7 @@ function modelGenerationMetrics(ctx: MigrationContext) {
       FROM daily_resource_generation_counts
       WHERE modelVersionId IN (${versionIds.join(',')})
       GROUP BY modelVersionId
-    `);
+    `;
     const metricsJson = JSON.stringify(metrics);
     console.timeEnd('Fetch version generation metrics ' + ctx.start + '-' + ctx.end);
 
