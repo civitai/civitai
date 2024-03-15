@@ -288,6 +288,11 @@ export const constants = {
     },
   },
   supporterBadge: '020f374d-f165-4f45-9082-371e696a44ff',
+  badges: {
+    bronze: '020f374d-f165-4f45-9082-371e696a44ff',
+    silver: '020f374d-f165-4f45-9082-371e696a44ff',
+    gold: '5844e919-31e3-4dd7-a3c3-f5affdc7af7a',
+  },
 } as const;
 
 export const zipModelFileTypes: ModelFileFormat[] = ['Core ML', 'Diffusers', 'ONNX'];

@@ -73,5 +73,12 @@ export type ProductMetadata = z.infer<typeof productMetadataSchema>;
 export const productMetadataSchema = z
   .object({
     vaultSizeKb: z.coerce.number().positive().optional(),
+    badge: z.string().optional(),
+    monthlyBuzz: z.coerce.number().positive().optional(),
+    animatedBadge: z
+      .string()
+      .transform((val) => val === 'true')
+      .optional(),
+    tier: z.enum(['bronze', 'silver', 'gold']),
   })
   .passthrough();

@@ -95,9 +95,7 @@ export function SubscriptionCard() {
             <Text size="md" weight={500}>
               Your Membership Includes
             </Text>
-            <PlanBenefitList
-              benefits={getPlanDetails(data?.product?.metadata as ProductMetadata)[0].benefits}
-            />
+            <PlanBenefitList benefits={getPlanDetails(data?.product).benefits} />
           </Stack>
         )}
       </Stack>

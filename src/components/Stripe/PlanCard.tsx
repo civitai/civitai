@@ -9,7 +9,13 @@ import {
   Select,
   Button,
 } from '@mantine/core';
-import { IconAdCircleOff, IconBolt, IconChevronDown, IconCloud } from '@tabler/icons-react';
+import {
+  IconAdCircleOff,
+  IconBolt,
+  IconChevronDown,
+  IconCloud,
+  IconVideo,
+} from '@tabler/icons-react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { benefitIconSize, BenefitItem, PlanBenefitList } from '~/components/Stripe/PlanBenefitList';
 import { CurrencyBadge } from '../Currency/CurrencyBadge';
@@ -30,10 +36,13 @@ type PlanCardProps = {
 };
 
 export function PlanCard({ product, subscription }: PlanCardProps) {
+  const isActivePlan = subscription?.product?.id === product.id;
   const { classes } = useStyles();
   const meta = (product.metadata ?? {}) as ProductMetadata;
-  const { benefits, image } = getPlanDetails(meta).find((x) => x.name === product.name) ?? {};
-  const defaultPriceId = subscription?.price.id ?? product.defaultPriceId;
+  const { benefits, image } = getPlanDetails(product) ?? {};
+  const defaultPriceId = isActivePlan
+    ? subscription?.price.id ?? product.defaultPriceId
+    : product.defaultPriceId;
   const [priceId, setPriceId] = useState<string | null>(defaultPriceId);
   const price = product.prices.find((p) => p.id === priceId) ?? product.prices[0];
   const canSubscribe = (!subscription || !!subscription.canceledAt) && priceId;
@@ -102,52 +111,59 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
   );
 }
 
-export const getPlanDetails: (metadata: ProductMetadata) => PlanMeta[] = (
-  metadata: ProductMetadata = {}
-) => [
-  {
-    name: 'Supporter Tier',
-    image: constants.supporterBadge,
+export const getPlanDetails: (product: StripePlan) => PlanMeta = (product: StripePlan) => {
+  const metadata = (product.metadata ?? {}) as ProductMetadata;
+  const planMeta = {
+    name: product?.name ?? 'Supporter Tier',
+    image: metadata?.badge ?? constants.badges[metadata.tier] ?? constants.supporterBadge,
     benefits: [
-      { content: 'Ad-free Browsing', icon: <IconAdCircleOff size={benefitIconSize} /> },
+      { content: 'Ad free browsing', icon: <IconAdCircleOff size={benefitIconSize} /> },
+      { content: 'Civitai Link' },
+      { content: 'Civitai Archive' },
+      { content: 'Unique Supporter Badge each month' },
+      { content: 'Can equip special cosmetics' },
+      { content: 'Exclusive Discord channels' },
+      { content: 'Early access content' },
       { content: 'Early access to new features' },
-      {
-        content: (
-          <Text
-            variant="link"
-            td="underline"
-            component="a"
-            href="https://www.youtube.com/watch?v=MaSRXvM05x4"
-            target="_blank"
-          >
-            One-click model loading
-          </Text>
-        ),
-      },
-      { content: 'Monthly Supporter Badge' },
-      { content: 'Unique nameplate color' },
-      { content: 'Unique Discord role' },
       {
         icon: <IconBolt size={benefitIconSize} />,
         iconColor: 'yellow',
         content: (
           <Text>
             <Text span>
-              <CurrencyBadge currency={Currency.BUZZ} unitAmount={5000} /> each month
+              <CurrencyBadge currency={Currency.BUZZ} unitAmount={metadata?.monthlyBuzz ?? 5000} />{' '}
+              each month
             </Text>
           </Text>
         ),
       },
       metadata.vaultSizeKb
         ? {
-            content: `Vault size: ${formatKBytes(metadata.vaultSizeKb)}`,
+            content: `Vault size: ${formatKBytes(metadata.vaultSizeKb, 0)}`,
             icon: <IconCloud />,
-            iconColor: 'blue',
+            iconColor: 'yellow',
+          }
+        : undefined,
+      metadata.animatedBadge
+        ? {
+            content: (
+              <Text>
+                Unique{' '}
+                <Text component="span" weight="bold">
+                  Animated
+                </Text>{' '}
+                Supported Badge each month
+              </Text>
+            ),
+            icon: <IconVideo />,
+            iconColor: 'yellow',
           }
         : undefined,
     ].filter(isDefined),
-  },
-];
+  };
+
+  return planMeta;
+};
 
 type PlanMeta = {
   name: string;
