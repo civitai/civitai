@@ -55,6 +55,7 @@ const useStyles = createStyles<string, { columnWidth?: number; columnGap?: numbe
       gridAutoRows: 0,
       overflowX: 'visible',
       paddingBottom: 4,
+      alignItems: 'center',
 
       [containerQuery.smallerThan('sm')]: {
         marginRight: -theme.spacing.md,
