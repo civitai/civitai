@@ -16,9 +16,11 @@ import {
 import { openConfirmModal } from '@mantine/modals';
 import { showNotification } from '@mantine/notifications';
 import { Currency, ModelType, TrainingStatus } from '@prisma/client';
+import { IconAlertCircle } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React, { useEffect, useState } from 'react';
 import { z } from 'zod';
+import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { useBuzz } from '~/components/Buzz/useBuzz';
@@ -27,7 +29,7 @@ import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import InputResourceSelect from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
-import { goBack } from '~/components/Resource/Forms/Training/TrainingCommon';
+import { goBack, isTrainingCustomModel } from '~/components/Resource/Forms/Training/TrainingCommon';
 import { trainingMinsWait } from '~/components/User/UserTrainingModels';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Form, InputCheckbox, InputNumber, InputSelect, InputText, useForm } from '~/libs/form';
@@ -575,7 +577,8 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   useEffect(() => {
     const [networkDim, networkAlpha, targetSteps] = watchFieldsBuzz;
     const eta = calcEta(networkDim, networkAlpha, targetSteps, formBaseModel);
-    const price = eta !== undefined ? calcBuzzFromEta(eta) : eta;
+    const price =
+      eta !== undefined ? calcBuzzFromEta(eta, isTrainingCustomModel(formBaseModel)) : eta;
     setEtaMins(eta);
     setBuzzCost(price);
   }, [watchFieldsBuzz, formBaseModel]);
@@ -987,11 +990,19 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         {formBaseModel && (
           <>
             <Paper p="sm" withBorder style={{ marginTop: '-17px' }}>
-              <Text size="sm">
-                {formBaseModel.startsWith('civitai:')
-                  ? 'Custom model selected.'
-                  : baseModelDescriptions[formBaseModel]?.description ?? 'No description.'}
-              </Text>
+              <Stack>
+                <Text size="sm">
+                  {isTrainingCustomModel(formBaseModel)
+                    ? 'Custom model selected.'
+                    : baseModelDescriptions[formBaseModel]?.description ?? 'No description.'}
+                </Text>
+                {isTrainingCustomModel(formBaseModel) && (
+                  <AlertWithIcon icon={<IconAlertCircle />} iconColor="default" p="xs">
+                    Note: custom models may see a higher failure rate than normal, and cost more
+                    Buzz.
+                  </AlertWithIcon>
+                )}
+              </Stack>
             </Paper>
 
             <Title mt="md" order={5}>
@@ -1056,10 +1067,11 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                       <Text size="xs" color="dimmed">
                         Hover over each setting for more information.
                         <br />
-                        Default settings are based on your chosen model (custom models may not be
-                        optimized).
+                        Default settings are based on your chosen model. Altering these settings may
+                        cause undesirable results.
                         <br />
-                        Altering these settings may cause undesirable results.
+                        Custom models are not guaranteed to work, and you may need to fiddle with
+                        the settings.
                       </Text>
                     )}
                   </Stack>

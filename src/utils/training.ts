@@ -22,6 +22,7 @@ const etaCoefficients = {
 const dollarsPerMinute = 0.44 / 60;
 const dollarsToBuzz = 1000;
 const baseBuzzTake = 500;
+const baseBuzzCustomTake = 500;
 const minEta = 1;
 
 export const calcEta = (
@@ -46,7 +47,7 @@ export const calcEta = (
   );
 };
 
-// TODO base cost for custom
-export const calcBuzzFromEta = (eta: number) => {
-  return Math.round(Math.max(baseBuzzTake, eta * dollarsPerMinute * dollarsToBuzz));
+export const calcBuzzFromEta = (eta: number, isCustom: boolean) => {
+  const custCost = isCustom ? baseBuzzCustomTake : 0;
+  return Math.round(Math.max(baseBuzzTake + custCost, eta * dollarsPerMinute * dollarsToBuzz));
 };

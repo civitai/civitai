@@ -1,4 +1,5 @@
 import { TrainingStatus } from '@prisma/client';
+import { isTrainingCustomModel } from '~/components/Resource/Forms/Training/TrainingCommon';
 import { trainingSettings } from '~/components/Resource/Forms/Training/TrainingSubmit';
 import { env } from '~/env/server.mjs';
 import { constants } from '~/server/common/constants';
@@ -69,6 +70,7 @@ async function getSubmittedAt(modelVersionId: number, userId: number) {
 }
 
 async function isSafeTensor(modelVersionId: number) {
+  // it's possible we need to modify this if a model somehow has pickle and safetensor
   const [data] = await dbWrite.$queryRaw<{ fmt: string }[]>`
     SELECT mf.metadata ->> 'format' as fmt
     FROM "ModelVersion" mv
@@ -209,7 +211,7 @@ export const createTrainingRequest = async ({
       trainingParams.targetSteps,
       baseModel
     );
-    const price = eta !== undefined ? calcBuzzFromEta(eta) : eta;
+    const price = eta !== undefined ? calcBuzzFromEta(eta, isTrainingCustomModel(baseModel)) : eta;
     if (price === undefined) {
       throw throwBadRequestError(
         'Could not compute Buzz price for training - please check your parameters.'
