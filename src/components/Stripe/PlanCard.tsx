@@ -140,8 +140,21 @@ export const getPlanDetails: (metadata: ProductMetadata) => PlanMeta[] = (
       },
       metadata.vaultSizeKb
         ? {
-            content: `Vault size: ${formatKBytes(metadata.vaultSizeKb)}`,
-            icon: <IconCloud />,
+            content: (
+              <Text>
+                {formatKBytes(metadata.vaultSizeKb)}{' '}
+                <Text
+                  variant="link"
+                  td="underline"
+                  component="a"
+                  href="/product/vault"
+                  target="_blank"
+                >
+                  Civitai Vault storage
+                </Text>
+              </Text>
+            ),
+            icon: <IconCloud size={benefitIconSize} />,
             iconColor: 'blue',
           }
         : undefined,
