@@ -54,7 +54,7 @@ export function BrowsingModeMenu() {
 
   return (
     <div id="browsing-mode">
-      <Stack spacing="md" className="min-w-96">
+      <Stack spacing="md" className="sm:min-w-96">
         <Group position="apart">
           <Group align="center" spacing={4}>
             <IconEyeExclamation />

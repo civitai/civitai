@@ -122,6 +122,7 @@ function MyApp(props: CustomAppProps) {
               Modal: {
                 styles: {
                   modal: { maxWidth: '100%' },
+                  inner: { paddingLeft: 0, paddingRight: 0 },
                 },
                 // defaultProps: {
                 //   target:
