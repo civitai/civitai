@@ -99,8 +99,8 @@ export function BrowsingModeMenu() {
 function HiddenTagsModal() {
   const dialog = useDialogContext();
   return (
-    <Modal {...dialog} size={1000}>
-      <HiddenTagsSection />
+    <Modal {...dialog} title="Hidden Tags">
+      <HiddenTagsSection withTitle={false} />
     </Modal>
   );
 }

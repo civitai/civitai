@@ -7,7 +7,7 @@ import { useHiddenPreferencesData, useToggleHiddenPreferences } from '~/hooks/hi
 
 import { trpc } from '~/utils/trpc';
 
-export function HiddenTagsSection() {
+export function HiddenTagsSection({ withTitle = true }: { withTitle?: boolean }) {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [search, setSearch] = useState('');
   const [debouncedSearch] = useDebouncedValue(search, 300);
@@ -36,9 +36,11 @@ export function HiddenTagsSection() {
 
   return (
     <Card withBorder>
-      <Card.Section withBorder inheritPadding py="xs">
-        <Text weight={500}>Hidden Tags</Text>
-      </Card.Section>
+      {withTitle && (
+        <Card.Section withBorder inheritPadding py="xs">
+          <Text weight={500}>Hidden Tags</Text>
+        </Card.Section>
+      )}
       <Card.Section withBorder sx={{ marginTop: -1 }}>
         <Autocomplete
           name="tag"
