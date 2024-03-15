@@ -1,6 +1,6 @@
 // @ts-check
 import { withAxiom } from "next-axiom";
-import packageJson from './package.json';
+import packageJson from './package.json' assert { type: 'json' };
 
 /**
  * Don't be scared of the generics here.
@@ -16,7 +16,7 @@ function defineNextConfig(config) {
 
 export default defineNextConfig(withAxiom({
   env: {
-    NEXT_PUBLIC_VERSION: packageJson.version,
+    version: packageJson.version,
   },
   reactStrictMode: true,
   productionBrowserSourceMaps: true,

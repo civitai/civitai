@@ -3,6 +3,9 @@ import { SessionUser } from 'next-auth';
 import superjson from 'superjson';
 import { FeatureAccess, getFeatureFlags } from '~/server/services/feature-flags.service';
 import type { Context } from './createContext';
+import { REDIS_KEYS, redis } from '~/server/redis/client';
+import semver from 'semver';
+import { NextApiRequest } from 'next';
 
 const t = initTRPC.context<Context>().create({
   transformer: superjson,
@@ -26,7 +29,41 @@ const isAcceptableOrigin = t.middleware(({ ctx: { user, acceptableOrigin }, next
   return next({ ctx: { user, acceptableOrigin } });
 });
 
-export const publicProcedure = t.procedure.use(isAcceptableOrigin);
+async function needsUpdate(req: NextApiRequest) {
+  const type = req.headers['x-client'] as string;
+  const version = req.headers['x-client-version'] as string;
+  const date = req.headers['x-client-date'] as string;
+
+  if (type !== 'web') return false;
+  const client = await redis.hGetAll(REDIS_KEYS.CLIENT);
+  if (client.version) {
+    if (!version || version === 'unknown') return true;
+    return semver.lt(version, client.version);
+  }
+  if (client.date) {
+    if (!date) return true;
+    return new Date(Number(date)) < new Date(client.date);
+  }
+  return false;
+}
+
+export const enforceClientVersion = t.middleware(async ({ next, ctx }) => {
+  // if (await needsUpdate(ctx.req)) {
+  //   throw new TRPCError({
+  //     code: 'PRECONDITION_FAILED',
+  //     message: 'Update required',
+  //     cause: 'Please refresh your browser to get the latest version of the app',
+  //   });
+  // }
+  const result = await next();
+  if (await needsUpdate(ctx.req)) {
+    ctx.res?.setHeader('x-update-required', 'true');
+    ctx.cache.edgeTTL = 0;
+  }
+  return result;
+});
+
+export const publicProcedure = t.procedure.use(isAcceptableOrigin).use(enforceClientVersion);
 
 /**
  * Reusable middleware to ensure
