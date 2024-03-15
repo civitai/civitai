@@ -101,7 +101,7 @@ function TwitchStream({ url }: { url: string }) {
 
   return (
     // HACK: Needed to prevent the Twitch embed from being removed from the DOM. See: https://stackoverflow.com/questions/54880669/react-domexception-failed-to-execute-removechild-on-node-the-node-to-be-re
-    <div>
+    <div style={{ height: '100%' }}>
       <Box id={id} w="100%" h="100%" />
     </div>
   );
