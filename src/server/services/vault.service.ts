@@ -75,17 +75,12 @@ export const getOrCreateVault = async ({ userId }: { userId: number }) => {
       new Error('MEMBERSHIP_REQUIRED')
     );
 
-  const tier: string | undefined = (subscription.product.metadata as any)[env.STRIPE_METADATA_KEY];
   type SubscriptionMetadata = {
     vaultSizeKb?: string;
   };
   const { vaultSizeKb: vaultSizeKbString }: SubscriptionMetadata =
     (subscription.product.metadata as SubscriptionMetadata) ?? {};
   const vaultSizeKb = parseInt(vaultSizeKbString ?? '', 10);
-
-  if (!tier) {
-    throw throwBadRequestError('User does not have a membership.');
-  }
 
   if (!vaultSizeKb) {
     throw throwBadRequestError(

@@ -393,6 +393,7 @@ const baseModelToOrchestration: Record<BaseModelSetType, string | undefined> = {
   SDXL: 'SDXL',
   SDXLDistilled: 'SDXL_Distilled',
   SCascade: 'SCascade',
+  Pony: 'SDXL',
 };
 
 async function checkResourcesAccess(
@@ -491,7 +492,7 @@ export const createGenerationRequest = async ({
   if (!access)
     throw throwAuthorizationError('You do not have access to some of the selected resources');
 
-  const isSDXL = params.baseModel === 'SDXL';
+  const isSDXL = params.baseModel === 'SDXL' || params.baseModel === 'Pony';
   const checkpoint = resources.find((x) => x.modelType === ModelType.Checkpoint);
   if (!checkpoint)
     throw throwBadRequestError('A checkpoint is required to make a generation request');

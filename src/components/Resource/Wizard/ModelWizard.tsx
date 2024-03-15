@@ -22,6 +22,7 @@ import { ModelUpsertForm } from '~/components/Resource/Forms/ModelUpsertForm';
 import { ModelVersionUpsertForm } from '~/components/Resource/Forms/ModelVersionUpsertForm';
 import { PostUpsertForm } from '~/components/Resource/Forms/PostUpsertForm';
 import TrainingSelectFile from '~/components/Resource/Forms/TrainingSelectFile';
+import { useIsChangingLocation } from '~/components/RouterTransition/RouterTransition';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useS3UploadStore } from '~/store/s3-upload.store';
 import { ModelById } from '~/types/router';
@@ -29,7 +30,6 @@ import { QS } from '~/utils/qs';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
 import { TemplateSelect } from './TemplateSelect';
-import { useIsChangingLocation } from '~/components/RouterTransition/RouterTransition';
 
 export type ModelWithTags = Omit<ModelById, 'tagsOnModels'> & {
   tagsOnModels: Array<{ isCategory: boolean; id: number; name: string }>;
@@ -295,6 +295,7 @@ function getWizardUrl({
 }
 
 const MAX_STEPS = 4;
+
 export function ModelWizard() {
   const currentUser = useCurrentUser();
   const router = useRouter();
@@ -351,6 +352,8 @@ export function ModelWizard() {
   useEffect(() => {
     // redirect to correct step if missing values
     if (!isNew) {
+      if (!model) return;
+
       // don't redirect for Trained type
       if (showTraining) return;
 
