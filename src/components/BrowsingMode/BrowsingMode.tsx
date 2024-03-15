@@ -62,7 +62,7 @@ export function BrowsingModeMenu() {
           </Group>
           <Switch checked={showNsfw} onChange={(e) => toggleShowNsfw(e.target.checked)} />
         </Group>
-        <Divider />
+        {/* <Divider /> */}
         {showNsfw && (
           <Stack spacing="lg">
             <BrowsingLevelsGrouped />
