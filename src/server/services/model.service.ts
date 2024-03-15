@@ -1910,7 +1910,7 @@ export async function getModelsWithVersions({
           ({ trainingStatus, vaeId, earlyAccessTimeFrame, generationCoverage, ...version }) => {
             const stats = getStatsForVersion(version.id);
             const vaeFile = vaeFiles.filter((x) => x.modelVersionId === vaeId);
-            const files = groupedFiles[version.id].files ?? [];
+            const files = groupedFiles[version.id]?.files ?? [];
             files.push(...vaeFile);
 
             let earlyAccessDeadline = getEarlyAccessDeadline({
