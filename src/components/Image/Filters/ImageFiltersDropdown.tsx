@@ -60,7 +60,13 @@ const useStyles = createStyles((theme) => ({
   indicatorIndicator: { lineHeight: 1.6 },
 }));
 
-export function ImageFiltersDropdown({ query, onChange, isFeed, ...buttonProps }: Props) {
+export function ImageFiltersDropdown({
+  query,
+  onChange,
+  isFeed,
+  filterType = 'images',
+  ...buttonProps
+}: Props) {
   const { classes, theme, cx } = useStyles();
   const mobile = useIsMobile();
   const isClient = useIsClient();
@@ -69,8 +75,8 @@ export function ImageFiltersDropdown({ query, onChange, isFeed, ...buttonProps }
   const [opened, setOpened] = useState(false);
 
   const { filters, setFilters } = useFiltersContext((state) => ({
-    filters: state.images,
-    setFilters: state.setImageFilters,
+    filters: state[filterType],
+    setFilters: filterType === 'images' ? state.setImageFilters : state.setModelImageFilters,
   }));
 
   const mergedFilters = query || filters;
@@ -80,6 +86,7 @@ export function ImageFiltersDropdown({ query, onChange, isFeed, ...buttonProps }
     (mergedFilters.withMeta ? 1 : 0) +
     (mergedFilters.hidden ? 1 : 0) +
     (mergedFilters.followed ? 1 : 0) +
+    (mergedFilters.fromPlatform ? 1 : 0) +
     (mergedFilters.period && mergedFilters.period !== MetricTimeframe.AllTime ? 1 : 0);
 
   const clearFilters = useCallback(() => {
@@ -88,6 +95,7 @@ export function ImageFiltersDropdown({ query, onChange, isFeed, ...buttonProps }
       withMeta: false,
       hidden: false,
       followed: false,
+      fromPlatform: false,
       period: MetricTimeframe.AllTime,
     };
 
@@ -138,33 +146,37 @@ export function ImageFiltersDropdown({ query, onChange, isFeed, ...buttonProps }
         <Divider label="Time period" labelProps={{ weight: 'bold', size: 'sm' }} />
         {query?.period && onChange ? (
           <PeriodFilter
-            type="images"
+            type={filterType}
             variant="chips"
             value={query.period}
             onChange={(period) => onChange({ period })}
           />
         ) : (
-          <PeriodFilter type="images" variant="chips" />
+          <PeriodFilter type={filterType} variant="chips" />
         )}
       </Stack>
       <Stack spacing="md">
-        <Divider label="Media type" labelProps={{ weight: 'bold', size: 'sm' }} />
-        <Chip.Group
-          spacing={8}
-          value={mergedFilters.types ?? []}
-          onChange={(types: MediaType[]) =>
-            onChange ? onChange({ types }) : setFilters({ types })
-          }
-          multiple
-        >
-          {availableMediaTypes.map((type, index) => (
-            <Chip {...chipProps} key={index} value={type}>
-              {getDisplayName(type)}
-            </Chip>
-          ))}
-        </Chip.Group>
+        {filterType === 'images' && (
+          <>
+            <Divider label="Media type" labelProps={{ weight: 'bold', size: 'sm' }} />
+            <Chip.Group
+              spacing={8}
+              value={mergedFilters.types ?? []}
+              onChange={(types: MediaType[]) =>
+                onChange ? onChange({ types }) : setFilters({ types })
+              }
+              multiple
+            >
+              {availableMediaTypes.map((type, index) => (
+                <Chip {...chipProps} key={index} value={type}>
+                  {getDisplayName(type)}
+                </Chip>
+              ))}
+            </Chip.Group>
+          </>
+        )}
         <Divider label="Modifiers" labelProps={{ weight: 'bold', size: 'sm' }} />
-        <Group>
+        <Group spacing={8}>
           <Chip
             {...chipProps}
             checked={mergedFilters.withMeta}
@@ -266,4 +278,5 @@ type Props = Omit<ButtonProps, 'onClick' | 'children' | 'rightIcon'> & {
   query?: Partial<GetInfiniteImagesInput>;
   onChange?: (params: Partial<GetInfiniteImagesInput>) => void;
   isFeed?: boolean;
+  filterType?: 'images' | 'modelImages';
 };
