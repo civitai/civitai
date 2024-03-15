@@ -23,6 +23,8 @@ import { ProductMetadata } from '~/server/schema/stripe.schema';
 import { isDefined } from '~/utils/type-guards';
 import { formatKBytes } from '~/utils/number-helpers';
 import { constants } from '~/server/common/constants';
+import { FeatureAccess } from '~/server/services/feature-flags.service';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 type PlanCardProps = {
   product: StripePlan;
@@ -32,7 +34,9 @@ type PlanCardProps = {
 export function PlanCard({ product, subscription }: PlanCardProps) {
   const { classes } = useStyles();
   const meta = (product.metadata ?? {}) as ProductMetadata;
-  const { benefits, image } = getPlanDetails(meta).find((x) => x.name === product.name) ?? {};
+  const features = useFeatureFlags();
+  const { benefits, image } =
+    getPlanDetails(features, meta).find((x) => x.name === product.name) ?? {};
   const defaultPriceId = subscription?.price.id ?? product.defaultPriceId;
   const [priceId, setPriceId] = useState<string | null>(defaultPriceId);
   const price = product.prices.find((p) => p.id === priceId) ?? product.prices[0];
@@ -102,7 +106,8 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
   );
 }
 
-export const getPlanDetails: (metadata: ProductMetadata) => PlanMeta[] = (
+export const getPlanDetails: (features: FeatureAccess, metadata: ProductMetadata) => PlanMeta[] = (
+  features,
   metadata: ProductMetadata = {}
 ) => [
   {
@@ -138,7 +143,7 @@ export const getPlanDetails: (metadata: ProductMetadata) => PlanMeta[] = (
           </Text>
         ),
       },
-      metadata.vaultSizeKb
+      metadata.vaultSizeKb && features.vault
         ? {
             content: (
               <Text>

@@ -11,7 +11,7 @@ import {
   Title,
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
-import { IconCloudPlus, IconDownload, IconMapSearch } from '@tabler/icons-react';
+import { IconCloudPlus, IconDownload, IconMapSearch, IconRadar2 } from '@tabler/icons-react';
 import { Meta } from '~/components/Meta/Meta';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
@@ -125,6 +125,25 @@ export default function CivitaiVault() {
                 </Text>
               </Stack>
             </Group>
+            <Group noWrap>
+              <ThemeIcon size={72} variant="light" color="blue" radius={1000}>
+                <IconRadar2 size={40} />
+              </ThemeIcon>
+
+              <Stack spacing={0}>
+                <Title className={classes.heading4} order={4}>
+                  Automatic Updates{' '}
+                  <Text color="dimmed" component="span" size="xs">
+                    Coming Soon
+                  </Text>
+                </Title>
+                <Text>
+                  Stay up-to-date with the latest versions of your favorite models. Civitai Vault
+                  automatically checks for updates and notifies you when new versions are available,
+                  ensuring you always have access to the most advanced iterations.
+                </Text>
+              </Stack>
+            </Group>
             {isMember ? (
               <Text ta="center" size="lg" fs="italic">
                 Upgrade your membership to expand your Civitai Vault storage capacity and unlock
@@ -149,6 +168,16 @@ export default function CivitaiVault() {
           >
             {buttonData.text}
           </Button>
+          <Stack spacing={0}>
+            <Text
+              size="xs"
+              color="dimmed"
+            >{`*Upon cancellation of your membership, you will have 7 days to download things from your Vault after which they will remain in your Vault for 23 more days, but you will be unable to download them.`}</Text>
+            <Text
+              size="xs"
+              color="dimmed"
+            >{`**Models that are removed from the site for Terms of Service violations will also be removed from your Vault.`}</Text>
+          </Stack>
         </Stack>
       </Container>
     </>
