@@ -1003,7 +1003,15 @@ export const getModelsWithImagesAndModelVersions = async ({
       .map(({ hashes, modelVersions, rank, tagsOnModels, ...model }) => {
         const [version] = modelVersions;
         if (!version) return null;
-        const versionImages = images[version.id]?.images ?? [];
+        const versionImages =
+          images[version.id]?.images.filter(({ id, tags }) => {
+            if (input.excludedImageIds?.includes(id)) return false;
+            if (tags && input.excludedImageTagIds) {
+              for (const tagId of tags)
+                if (input.excludedImageTagIds?.includes(tagId)) return false;
+            }
+            return true;
+          }) ?? [];
         const showImageless =
           (user?.isModerator || model.user.id === user?.id) && (input.user || input.username);
         if (!versionImages.length && !showImageless) return null;
