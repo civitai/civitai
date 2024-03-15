@@ -140,7 +140,17 @@ export const getPlanDetails: (metadata: ProductMetadata) => PlanMeta[] = (
       },
       metadata.vaultSizeKb
         ? {
-            content: `Vault size: ${formatKBytes(metadata.vaultSizeKb)}`,
+            content: (
+              <Text
+                variant="link"
+                td="underline"
+                component="a"
+                href="/pricing/vault"
+                target="_blank"
+              >
+                Vault size: ${formatKBytes(metadata.vaultSizeKb)}
+              </Text>
+            ),
             icon: <IconCloud />,
             iconColor: 'blue',
           }
