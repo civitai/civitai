@@ -452,7 +452,7 @@ export const createGenerationRequest = async ({
     throw throwBadRequestError('Generation is currently disabled');
 
   // Handle rate limiting
-  if (await generationLimiter.hasExceededLimit(userId.toString())) {
+  if (await generationLimiter.hasExceededLimit(userId.toString(), userTier ?? 'free')) {
     const limitHitTime = await generationLimiter.getLimitHitTime(userId.toString());
     let message = 'You have exceeded the generation limit.';
     if (!limitHitTime) message += ' Please try again later.';
@@ -463,9 +463,8 @@ export const createGenerationRequest = async ({
 
   // Handle the request limits
   const limits = status.limits[userTier ?? 'free'];
-  if (params.quantity > limits.quantity)
-    throw throwBadRequestError('You have exceeded the quantity limit.');
-  if (params.steps > limits.steps) throw throwBadRequestError('You have exceeded the steps limit.');
+  if (params.quantity > limits.quantity) params.quantity = limits.quantity;
+  if (params.steps > limits.steps) params.steps = limits.steps;
   if (resources.length > limits.resources)
     throw throwBadRequestError('You have exceeded the resources limit.');
 

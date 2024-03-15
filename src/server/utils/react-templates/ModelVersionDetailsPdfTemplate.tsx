@@ -18,6 +18,8 @@ Font.register({
   ],
 });
 
+Font.registerHyphenationCallback((word) => [word]);
+
 // Create styles
 const styles = StyleSheet.create({
   header: {

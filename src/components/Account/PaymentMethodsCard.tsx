@@ -187,7 +187,9 @@ export function PaymentMethodsCard() {
               </Group>
             </Accordion.Control>
             <Accordion.Panel>
-              <StripePaymentMethodSetup redirectUrl={'/user/account#payment-methods'} />
+              {!isLoadingPaymentMethods && (
+                <StripePaymentMethodSetup redirectUrl={'/user/account#payment-methods'} />
+              )}
             </Accordion.Panel>
           </Accordion.Item>
         </Accordion>

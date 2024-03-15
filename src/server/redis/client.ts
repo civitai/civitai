@@ -63,6 +63,7 @@ export const REDIS_KEYS = {
     LIMITS: 'generation:limits',
     STATUS: 'generation:status',
   },
+  CLIENT: 'client',
   SYSTEM: {
     FEATURES: 'system:features',
     MODERATION_TAGS: 'system:moderation-tags-2',
