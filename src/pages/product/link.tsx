@@ -30,7 +30,7 @@ export default function LinkApp() {
   return (
     <>
       <Meta
-        title="Link Desktop App | Civitai"
+        title="Civitai Link | One-click install Stable Diffusion models"
         description="Directly download any models from Civitai to your Stable Diffusion instance."
       />
       <Container>
@@ -128,19 +128,20 @@ export default function LinkApp() {
         <YoutubeEmbed videoId="MaSRXvM05x4" />
       </AspectRatio> */}
 
-        <Button
-          variant="filled"
-          color="blue"
-          size="lg"
-          radius="xl"
-          fullWidth
-          my={40}
-          component={NextLink}
-          href={buttonData.href}
-          rel="nofollow noreferrer"
-        >
-          {buttonData.text}
-        </Button>
+        <Flex justify="center" w="100%">
+          <Button
+            variant="filled"
+            color="blue"
+            size="lg"
+            radius="xl"
+            my={40}
+            component={NextLink}
+            href={buttonData.href}
+            rel="nofollow noreferrer"
+          >
+            {buttonData.text}
+          </Button>
+        </Flex>
       </Container>
     </>
   );
