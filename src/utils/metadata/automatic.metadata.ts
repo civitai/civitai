@@ -34,6 +34,37 @@ const excludedKeys = [
   'denoise',
   'other',
 ];
+function parseDetailsLine(line: string | undefined): Record<string, any> {
+  const result: Record<string, any> = {};
+  if (!line) return result;
+  let currentKey = '';
+  let currentValue = '';
+  let insideQuotes = false;
+
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+
+    if (char === '"') {
+      if (insideQuotes) {
+        result[currentKey] = parseDetailsLine(currentValue.trim());
+        currentKey = '';
+      }
+      insideQuotes = !insideQuotes;
+    } else if (char === ':' && !insideQuotes) {
+      currentKey = getSDKey(currentValue.trim());
+      currentValue = '';
+    } else if (char === ',' && !insideQuotes) {
+      if (currentKey) result[currentKey] = currentValue.trim();
+      currentKey = '';
+      currentValue = '';
+    } else {
+      currentValue += char;
+    }
+  }
+  if (currentKey) result[currentKey] = currentValue.trim();
+
+  return result;
+}
 // #endregion
 
 export const automaticMetadataProcessor = createMetadataProcessor({
@@ -61,6 +92,7 @@ export const automaticMetadataProcessor = createMetadataProcessor({
   parse(exif) {
     const metadata: ImageMetaProps = {};
     const generationDetails = exif.generationDetails as string;
+    console.log('gd', generationDetails);
     if (!generationDetails) return metadata;
     const metaLines = generationDetails.split('\n').filter((line) => {
       // filter out empty lines and any lines that start with a key we want to strip
@@ -91,17 +123,11 @@ export const automaticMetadataProcessor = createMetadataProcessor({
     }
 
     // Extract fine details
-    let currentKey = '';
-    const parts = detailsLine?.split(':') ?? [];
-    for (const part of parts) {
-      const priorValueEnd = part.lastIndexOf(',');
-      if (metadata[currentKey]) continue;
-      if (parts[parts.length - 1] === part) {
-        metadata[currentKey] = part.trim().replace(',', '');
-      } else if (priorValueEnd !== -1) {
-        metadata[currentKey] = part.slice(0, priorValueEnd).trim();
-        currentKey = getSDKey(part.slice(priorValueEnd + 1));
-      } else currentKey = getSDKey(part);
+    const details = parseDetailsLine(detailsLine);
+    for (const [k, v] of Object.entries(details)) {
+      const key = automaticSDKeyMap.get(k) ?? k;
+      if (excludedKeys.includes(key)) continue;
+      metadata[key] = v;
     }
 
     // Extract prompts
@@ -120,6 +146,26 @@ export const automaticMetadataProcessor = createMetadataProcessor({
       weight: parseFloat(weight),
     }));
 
+    // Extract Lora hashes
+    if (metadata['Lora hashes']) {
+      if (!metadata.hashes) metadata.hashes = {};
+      for (const [name, hash] of Object.entries(metadata['Lora hashes'])) {
+        metadata.hashes[`lora:${name}`] = hash;
+        const resource = resources.find((r) => r.name === name);
+        if (resource) resource.hash = hash;
+        else resources.push({ type: 'lora', name, hash });
+      }
+      delete metadata['Lora hashes'];
+    }
+
+    // Extract VAE
+    if (metadata['VAE hash']) {
+      if (!metadata.hashes) metadata.hashes = {};
+      metadata.hashes['vae'] = metadata['VAE hash'] as string;
+      delete metadata['VAE hash'];
+    }
+
+    // Extract Model hash
     if (metadata['Model'] && metadata['Model hash']) {
       if (!metadata.hashes) metadata.hashes = {};
       if (!metadata.hashes['model']) metadata.hashes['model'] = metadata['Model hash'] as string;
@@ -131,6 +177,7 @@ export const automaticMetadataProcessor = createMetadataProcessor({
       });
     }
 
+    // Extract hypernetwork details
     if (metadata['Hypernet'] && metadata['Hypernet strength'])
       resources.push({
         type: 'hypernet',

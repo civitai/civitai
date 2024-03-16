@@ -283,6 +283,30 @@ export function AppHeader({
         rel: 'nofollow',
       },
       {
+        href: '/posts/create',
+        visible: !isMuted,
+        redirectReason: 'post-images',
+        label: (
+          <Group align="center" spacing="xs">
+            <IconPhotoUp stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
+            Post images
+          </Group>
+        ),
+        rel: 'nofollow',
+      },
+      {
+        href: '/posts/create?video',
+        visible: !isMuted,
+        redirectReason: 'post-images',
+        label: (
+          <Group align="center" spacing="xs">
+            <IconVideoPlus stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
+            Post videos
+          </Group>
+        ),
+        rel: 'nofollow',
+      },
+      {
         href: '/models/create',
         visible: !isMuted,
         redirectReason: 'upload-model',
@@ -305,30 +329,6 @@ export function AppHeader({
               Train a LoRA
             </Text>
             <CurrencyIcon currency={Currency.BUZZ} size={16} />
-          </Group>
-        ),
-        rel: 'nofollow',
-      },
-      {
-        href: '/posts/create',
-        visible: !isMuted,
-        redirectReason: 'post-images',
-        label: (
-          <Group align="center" spacing="xs">
-            <IconPhotoUp stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
-            Post images
-          </Group>
-        ),
-        rel: 'nofollow',
-      },
-      {
-        href: '/posts/create?video',
-        visible: !isMuted,
-        redirectReason: 'post-images',
-        label: (
-          <Group align="center" spacing="xs">
-            <IconVideoPlus stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
-            Post videos
           </Group>
         ),
         rel: 'nofollow',
