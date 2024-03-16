@@ -1,15 +1,19 @@
 import { TrainingStatus } from '@prisma/client';
-import { isTrainingCustomModel } from '~/components/Resource/Forms/Training/TrainingCommon';
-import { trainingSettings } from '~/components/Resource/Forms/Training/TrainingSubmit';
+import { isTrainingCustomModel } from '~/components/Training/Form/TrainingCommon';
+import { trainingSettings } from '~/components/Training/Form/TrainingSubmit';
 import { env } from '~/env/server.mjs';
 import { constants } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
+import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { TrainingDetailsBaseModel, TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import {
   AutoTagInput,
   CreateTrainingRequestInput,
+  defaultTrainingCost,
   MoveAssetInput,
+  TrainingServiceStatus,
+  trainingServiceStatusSchema,
 } from '~/server/schema/training.schema';
 import {
   createBuzzTransaction,
@@ -152,12 +156,27 @@ export const deleteAssets = async (jobId: string, submittedAt?: Date) => {
   return response.data?.jobs?.[0]?.result;
 };
 
+export async function getTrainingServiceStatus() {
+  const result = trainingServiceStatusSchema.safeParse(
+    JSON.parse((await redis.hGet(REDIS_KEYS.SYSTEM.FEATURES, REDIS_KEYS.TRAINING.STATUS)) ?? '{}')
+  );
+  if (!result.success) return { available: true, cost: defaultTrainingCost };
+
+  return result.data as TrainingServiceStatus;
+}
+
 export const createTrainingRequest = async ({
   userId,
   modelVersionId,
+  isModerator,
 }: CreateTrainingRequestInput & {
   userId?: number;
+  isModerator?: boolean;
 }) => {
+  const status = await getTrainingServiceStatus();
+  if (!status.available && !isModerator)
+    throw throwBadRequestError('Training is currently disabled');
+
   const modelVersions = await dbWrite.$queryRaw<TrainingRequest[]>`
     SELECT mv."trainingDetails",
            m.name      "modelName",
@@ -205,13 +224,20 @@ export const createTrainingRequest = async ({
   let transactionId = modelVersion.fileMetadata?.trainingResults?.transactionId;
   if (!transactionId) {
     // And if so, charge them
-    const eta = calcEta(
-      trainingParams.networkDim,
-      trainingParams.networkAlpha,
-      trainingParams.targetSteps,
-      baseModel
-    );
-    const price = eta !== undefined ? calcBuzzFromEta(eta, isTrainingCustomModel(baseModel)) : eta;
+    const eta = calcEta({
+      ...trainingParams,
+      baseModel,
+      cost: status.cost,
+    });
+    const isCustom = isTrainingCustomModel(baseModel);
+    const price =
+      eta !== undefined
+        ? calcBuzzFromEta({
+            eta,
+            isCustom,
+            cost: status.cost,
+          })
+        : eta;
     if (price === undefined) {
       throw throwBadRequestError(
         'Could not compute Buzz price for training - please check your parameters.'

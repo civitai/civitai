@@ -101,15 +101,15 @@ export const useDerivedGenerationState = () => {
   };
 };
 
-const defaultGenerationStatus = generationStatusSchema.parse({});
+const defaultServiceStatus = generationStatusSchema.parse({});
 export const useGenerationStatus = () => {
   const { data: status, isLoading } = trpc.generation.getStatus.useQuery(undefined, {
     cacheTime: 60,
     trpc: { context: { skipBatch: true } },
   });
 
-  if (isLoading) return defaultGenerationStatus;
-  return status ?? defaultGenerationStatus;
+  if (isLoading) return defaultServiceStatus;
+  return status ?? defaultServiceStatus;
 };
 
 export const useUnsupportedResources = () => {

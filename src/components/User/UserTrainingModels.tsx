@@ -38,6 +38,7 @@ import React, { useState } from 'react';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { DownloadButton } from '~/components/Model/ModelVersions/DownloadButton';
 import { NoContent } from '~/components/NoContent/NoContent';
+import { useTrainingServiceStatus } from '~/components/Training/training.utils';
 import { constants } from '~/server/common/constants';
 import {
   createModelFileDownloadUrl,
@@ -138,6 +139,7 @@ export default function UserTrainingModels() {
   const [opened, { open, close }] = useDisclosure(false);
   const [modalData, setModalData] = useState<ModalData>({});
 
+  const status = useTrainingServiceStatus();
   const { data, isLoading } = trpc.model.getMyTrainingModels.useQuery({ page, limit: modelsLimit });
   const { items, ...pagination } = data || {
     items: [],
@@ -268,7 +270,13 @@ export default function UserTrainingModels() {
                 // would love to use .every(isDefined) here but TS isn't smart enough
                 const etaMins =
                   !!networkDim && !!networkAlpha && !!targetSteps && !!baseModel
-                    ? calcEta(networkDim, networkAlpha, targetSteps, baseModel)
+                    ? calcEta({
+                        networkDim,
+                        networkAlpha,
+                        targetSteps,
+                        baseModel,
+                        cost: status.cost,
+                      })
                     : undefined;
                 // mins wait here might need to only be calced if the last history entry is "Submitted"
                 const eta =

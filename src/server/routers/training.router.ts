@@ -9,6 +9,7 @@ import {
   autoTagHandler,
   createTrainingRequest,
   moveAsset,
+  getTrainingServiceStatus,
 } from '~/server/services/training.service';
 import {
   guardedProcedure,
@@ -17,6 +18,8 @@ import {
   publicProcedure,
   router,
 } from '~/server/trpc';
+import { edgeCacheIt } from '~/server/middleware.trpc';
+import { CacheTTL } from '~/server/common/constants';
 
 export const trainingRouter = router({
   createRequest: guardedProcedure
@@ -32,4 +35,8 @@ export const trainingRouter = router({
     .input(autoTagInput)
     .use(isFlagProtected('imageTraining'))
     .mutation(({ input, ctx }) => autoTagHandler({ ...input, userId: ctx.user.id })),
+  getStatus: publicProcedure
+    .use(isFlagProtected('imageTraining'))
+    .use(edgeCacheIt({ ttl: CacheTTL.xs }))
+    .query(() => getTrainingServiceStatus()),
 });
