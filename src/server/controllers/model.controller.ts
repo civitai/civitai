@@ -280,7 +280,6 @@ export const getModelsInfiniteHandler = async ({
     let loopCount = 0;
     let isPrivate = false;
     let nextCursor: string | bigint | undefined;
-    console.log(input.excludedImageTagIds);
     const results: Awaited<ReturnType<typeof getModelsWithImagesAndModelVersions>>['items'] = [];
     while (results.length <= (input.limit ?? 100) && loopCount < 3) {
       const result = await getModelsWithImagesAndModelVersions({
