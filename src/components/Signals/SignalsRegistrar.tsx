@@ -5,7 +5,7 @@ import { useImageGenStatusUpdate } from '~/components/ImageGeneration/utils/gene
 import {
   useOrchestratorUpdateSignal,
   useTrainingSignals,
-} from '~/components/Resource/Forms/Training/TrainingCommon';
+} from '~/components/Training/Form/TrainingCommon';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { SignalMessages } from '~/server/common/enums';
 import { imageStore } from '~/store/image.store';

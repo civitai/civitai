@@ -63,6 +63,9 @@ export const REDIS_KEYS = {
     LIMITS: 'generation:limits',
     STATUS: 'generation:status',
   },
+  TRAINING: {
+    STATUS: 'training:status',
+  },
   CLIENT: 'client',
   SYSTEM: {
     FEATURES: 'system:features',

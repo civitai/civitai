@@ -89,7 +89,7 @@ export function EditPostReviews() {
               id="leave-review-alert"
               color="blue"
               title="What did you think of the resources you used?"
-              content="Take a moment to rate the resources you used in this post by clicking the stars below and optionally leaving a comment about the resource."
+              content="Take a moment to rate the resources you used in this post by clicking the thumbs below and optionally leaving a comment about the resource."
             />
           )}
           <Stack>
