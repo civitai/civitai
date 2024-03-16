@@ -998,11 +998,9 @@ export const getModelsWithImagesAndModelVersions = async ({
     .flatMap((m) => m.modelVersions)
     .map((m) => m.id);
 
-  console.time('getImagesForModelVersionCache');
   const modelVersionImages = !!modelVersionIds.length
     ? await getImagesForModelVersionCache(modelVersionIds)
     : {};
-  console.timeEnd('getImagesForModelVersionCache');
 
   const unavailableGenResources = await getUnavailableResources();
   const result = {

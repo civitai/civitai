@@ -136,13 +136,13 @@ RETURNS TRIGGER AS $collection_nsfw_level$
 BEGIN
   IF (TG_OP = 'DELETE') THEN
     -- When a collection item is deleted, schedule update of collection nsfw level
-    PERFORM create_job_queue_record(OLD.id, 'Collection', 'UpdateNsfwLevel');
+    PERFORM create_job_queue_record(OLD."collectionId", 'Collection', 'UpdateNsfwLevel');
   -- On collection item publish, schedule update of collection nsfw level
   ELSIF (TG_OP = 'UPDATE' AND OLD.status != 'ACCEPTED' AND NEW.status = 'ACCEPTED') THEN
-    PERFORM create_job_queue_record(OLD."id", 'Collection', 'UpdateNsfwLevel');
+    PERFORM create_job_queue_record(OLD."collectionId", 'Collection', 'UpdateNsfwLevel');
   -- When a collection item is added, schedule update of collection nsfw level
   ELSIF (TG_OP = 'INSERT' AND NEW.status = 'ACCEPTED') THEN
-    PERFORM create_job_queue_record(OLD."id", 'Collection', 'UpdateNsfwLevel');
+    PERFORM create_job_queue_record(NEW."collectionId", 'Collection', 'UpdateNsfwLevel');
   END IF;
   RETURN NULL;
 END;

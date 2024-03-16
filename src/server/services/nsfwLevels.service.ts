@@ -187,7 +187,7 @@ export async function getNsfwLevelRelatedEntities(source: {
 const batchSize = 1000;
 function batcher(ids: number[], fn: (ids: number[]) => Promise<void>) {
   return chunk(ids, batchSize).map((chunk) => async () => {
-    if (chunk.length) await fn(chunk);
+    if (chunk.length > 0) await fn(chunk);
   });
 }
 
@@ -330,7 +330,7 @@ export async function updateCollectionsNsfwLevels(collectionIds: number[]) {
         CollectionItemStatus.ACCEPTED
       }::"CollectionItemStatus"
     )
-    WHERE c.id IN (${Prisma.join(collectionIds)}) AND level."nsfwLevel" != c."nsfwLevel"
+    WHERE c.id IN (${Prisma.join(collectionIds)})
     RETURNING c.id;
   `);
   await collectionsSearchIndex.queueUpdate(
