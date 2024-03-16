@@ -274,7 +274,6 @@ export const getModelsInfiniteHandler = async ({
     let loopCount = 0;
     let isPrivate = false;
     let nextCursor: string | bigint | undefined;
-    console.log(input.excludedImageTagIds);
     const results: Awaited<ReturnType<typeof getModelsWithImagesAndModelVersions>>['items'] = [];
     while (results.length <= (input.limit ?? 100) && loopCount < 3) {
       const result = await getModelsWithImagesAndModelVersions({
@@ -283,6 +282,8 @@ export const getModelsInfiniteHandler = async ({
       });
       if (result.isPrivate) isPrivate = true;
       results.push(...result.items);
+      if (!result.nextCursor) break;
+
       input.cursor = result.nextCursor;
       nextCursor = result.nextCursor;
       loopCount++;
