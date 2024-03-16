@@ -98,6 +98,10 @@ async function setUser(userId: number, counts: NotificationCategoryArray) {
 async function incrementUser(userId: number, category: NotificationCategory, by = 1) {
   const key = getUserKey(userId);
   await redis.hIncrBy(key, category, by);
+  if (by < 0) {
+    const value = await redis.hGet(key, category);
+    if (Number(value) <= 0) await redis.hDel(key, category);
+  }
 }
 
 async function decrementUser(userId: number, category: NotificationCategory, by = 1) {
