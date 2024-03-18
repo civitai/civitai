@@ -117,9 +117,6 @@ export function ExistingChat() {
   const theme = useMantineTheme();
 
   const lastReadRef = useRef<HTMLDivElement>(null);
-  const [chatMsg, setChatMsg] = useState<string>('');
-  const [debouncedChatMsg] = useDebouncedValue(chatMsg, 2000);
-  const [isSending, setIsSending] = useState(false);
   const [typingStatus, setTypingStatus] = useState<TypingStatus>({});
   const [typingText, setTypingText] = useState<string | null>(null);
   const [isJoining, setIsJoining] = useState(false);
@@ -142,14 +139,23 @@ export function ExistingChat() {
 
   const { data: allChatData, isLoading: allChatLoading } = trpc.chat.getAllByUser.useQuery();
 
-  const thisChat = allChatData?.find((c) => c.id === state.existingChatId);
-  const myMember = thisChat?.chatMembers.find((cm) => cm.userId === currentUser?.id);
-  const otherMembers = thisChat?.chatMembers.filter((cm) => cm.userId !== currentUser?.id);
-  // const lastViewed = myMember?.lastViewedMessageId;
-  const modSender = thisChat?.chatMembers.find(
-    (cm) => cm.isOwner === true && cm.user.isModerator === true
+  const thisChat = useMemo(
+    () => allChatData?.find((c) => c.id === state.existingChatId),
+    [allChatData, state.existingChatId]
   );
-  const isMuted = currentUser?.muted && !modSender;
+  const myMember = useMemo(
+    () => thisChat?.chatMembers.find((cm) => cm.userId === currentUser?.id),
+    [thisChat, currentUser]
+  );
+  const otherMembers = useMemo(
+    () => thisChat?.chatMembers.filter((cm) => cm.userId !== currentUser?.id),
+    [thisChat, currentUser]
+  );
+  // const lastViewed = myMember?.lastViewedMessageId;
+  const modSender = useMemo(
+    () => thisChat?.chatMembers.find((cm) => cm.isOwner === true && cm.user.isModerator === true),
+    [thisChat]
+  );
 
   const { mutateAsync: changeLastViewed } = trpc.chat.modifyUser.useMutation({
     onMutate(data) {
@@ -259,73 +265,6 @@ export function ExistingChat() {
     });
   };
 
-  const { mutate } = trpc.chat.createMessage.useMutation({
-    // TODO onMutate for optimistic
-    onSuccess(data) {
-      setIsSending(false);
-      setChatMsg('');
-      setReplyId(undefined);
-
-      if (!currentUser) return;
-
-      const newEntry = {
-        [currentUser.username]: false,
-      };
-      const { newTotalStatus, isTypingText } = getTypingStatus(newEntry);
-
-      setTypingStatus(newTotalStatus);
-      setTypingText(isTypingText);
-
-      queryUtils.chat.getInfiniteMessages.setInfiniteData(
-        { chatId: data.chatId },
-        produce((old) => {
-          if (!old) return old;
-
-          const lastPage = old.pages[old.pages.length - 1];
-
-          lastPage.items.push(data);
-        })
-      );
-
-      queryUtils.chat.getAllByUser.setData(
-        undefined,
-        produce((old) => {
-          if (!old) return old;
-
-          const thisChat = old.find((o) => o.id === data.chatId);
-          if (!thisChat) return old;
-          thisChat.messages = [
-            {
-              content: data.content,
-              createdAt: new Date(data.createdAt),
-            },
-          ];
-        })
-      );
-    },
-    onError(error) {
-      setIsSending(false);
-      showErrorNotification({
-        title: 'Failed to send message.',
-        error: new Error(error.message),
-        autoClose: false,
-      });
-    },
-    onSettled() {
-      throttledTyping.cancel();
-
-      if (!currentUser || isMuted) return;
-
-      doIsTyping({
-        chatId: state.existingChatId!,
-        userId: currentUser.id,
-        isTyping: false,
-      }).catch();
-    },
-  });
-
-  const { mutateAsync: doIsTyping } = trpc.chat.isTyping.useMutation();
-
   const allChats = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data]);
 
   useEffect(() => {
@@ -354,7 +293,6 @@ export function ExistingChat() {
   useEffect(() => {
     setTypingStatus({});
     setTypingText(null);
-    setChatMsg('');
     setReplyId(undefined);
   }, [state.existingChatId]);
 
@@ -406,63 +344,6 @@ export function ExistingChat() {
       worker?.off(SignalMessages.ChatTypingStatus, handleIsTyping);
     };
   }, [connected, worker, handleIsTyping]);
-
-  useEffect(() => {
-    if (!currentUser || isMuted) return;
-
-    doIsTyping({
-      chatId: state.existingChatId!,
-      userId: currentUser.id,
-      isTyping: false,
-    }).catch();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debouncedChatMsg]);
-
-  const throttledTyping = useMemo(
-    () =>
-      throttle(
-        () => {
-          if (!currentUser || isMuted) return;
-
-          doIsTyping({
-            chatId: state.existingChatId!,
-            userId: currentUser.id,
-            isTyping: true,
-          }).catch();
-        },
-        2000,
-        { leading: true, trailing: true }
-      ),
-    [currentUser, doIsTyping, isMuted, state.existingChatId]
-  );
-
-  const handleChatTyping = (value: string) => {
-    setChatMsg(value);
-    if (!currentUser) return;
-
-    // only send signal if they're not erasing the chat
-    if (value.length) {
-      throttledTyping();
-    }
-  };
-
-  const sendMessage = () => {
-    if (isSending) return;
-
-    // TODO can probably handle this earlier to disable from sending blank messages
-    const strippedMessage = chatMsg.trim();
-    if (!strippedMessage.length) {
-      setChatMsg('');
-      return;
-    }
-
-    setIsSending(true);
-    mutate({
-      chatId: state.existingChatId!,
-      content: strippedMessage,
-      referenceMessageId: replyId,
-    });
-  };
 
   const goBack = () => {
     setState((prev) => ({ ...prev, existingChatId: undefined }));
@@ -609,36 +490,14 @@ export function ExistingChat() {
                   <Divider />
                 </>
               )}
-              <Group spacing={0}>
-                <Textarea
-                  sx={{ flexGrow: 1 }}
-                  disabled={isMuted}
-                  placeholder={isMuted ? 'Your account has been muted' : 'Send message'}
-                  autosize
-                  minRows={1}
-                  maxRows={4}
-                  value={chatMsg}
-                  onChange={(event) => handleChatTyping(event.currentTarget.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      if (!e.shiftKey) {
-                        e.preventDefault();
-                        sendMessage();
-                      }
-                    }
-                  }}
-                  classNames={{ input: classes.chatInput }} // should test this border more with active highlighting
-                />
-                <ActionIcon
-                  h="100%"
-                  w={60}
-                  onClick={sendMessage}
-                  disabled={isSending || !chatMsg.length || isMuted}
-                  sx={{ borderRadius: 0 }}
-                >
-                  {isSending ? <Loader /> : <IconSend />}
-                </ActionIcon>
-              </Group>
+              <ChatInputBox
+                isModSender={!!modSender}
+                replyId={replyId}
+                setReplyId={setReplyId}
+                getTypingStatus={getTypingStatus}
+                setTypingStatus={setTypingStatus}
+                setTypingText={setTypingText}
+              />
             </>
           ) : (
             <Center p="sm">
@@ -694,6 +553,198 @@ export function ExistingChat() {
         </Center>
       )}
     </Stack>
+  );
+}
+
+function ChatInputBox({
+  isModSender,
+  replyId,
+  setReplyId,
+  getTypingStatus,
+  setTypingStatus,
+  setTypingText,
+}: {
+  isModSender: boolean;
+  replyId: number | undefined;
+  setReplyId: React.Dispatch<React.SetStateAction<number | undefined>>;
+  getTypingStatus: (newEntry: { [p: string]: boolean }) => {
+    newTotalStatus: { [p: string]: boolean };
+    isTypingText: string | null;
+  };
+  setTypingStatus: React.Dispatch<React.SetStateAction<TypingStatus>>;
+  setTypingText: React.Dispatch<React.SetStateAction<string | null>>;
+}) {
+  const currentUser = useCurrentUser();
+  const { classes } = useStyles();
+  const { state } = useChatContext();
+  const queryUtils = trpc.useUtils();
+
+  const [isSending, setIsSending] = useState(false);
+  const [chatMsg, setChatMsg] = useState<string>('');
+  const [debouncedChatMsg] = useDebouncedValue(chatMsg, 2000);
+
+  const isMuted = currentUser?.muted && !isModSender;
+
+  const { mutateAsync: doIsTyping } = trpc.chat.isTyping.useMutation();
+  // const doIsTyping = async (x) => {};
+
+  const throttledTyping = useMemo(
+    () =>
+      throttle(
+        () => {
+          if (!currentUser || isMuted) return;
+
+          doIsTyping({
+            chatId: state.existingChatId!,
+            userId: currentUser.id,
+            isTyping: true,
+          }).catch();
+        },
+        2000,
+        { leading: true, trailing: true }
+      ),
+    [currentUser, doIsTyping, isMuted, state.existingChatId]
+  );
+
+  const { mutate } = trpc.chat.createMessage.useMutation({
+    // TODO onMutate for optimistic
+    onSuccess(data) {
+      setIsSending(false);
+      setChatMsg('');
+      setReplyId(undefined);
+
+      if (!currentUser) return;
+
+      const newEntry = {
+        [currentUser.username]: false,
+      };
+      const { newTotalStatus, isTypingText } = getTypingStatus(newEntry);
+
+      setTypingStatus(newTotalStatus);
+      setTypingText(isTypingText);
+
+      queryUtils.chat.getInfiniteMessages.setInfiniteData(
+        { chatId: data.chatId },
+        produce((old) => {
+          if (!old) return old;
+
+          const lastPage = old.pages[old.pages.length - 1];
+
+          lastPage.items.push(data);
+        })
+      );
+
+      queryUtils.chat.getAllByUser.setData(
+        undefined,
+        produce((old) => {
+          if (!old) return old;
+
+          const thisChat = old.find((o) => o.id === data.chatId);
+          if (!thisChat) return old;
+          thisChat.messages = [
+            {
+              content: data.content,
+              createdAt: new Date(data.createdAt),
+            },
+          ];
+        })
+      );
+    },
+    onError(error) {
+      setIsSending(false);
+      showErrorNotification({
+        title: 'Failed to send message.',
+        error: new Error(error.message),
+        autoClose: false,
+      });
+    },
+    onSettled() {
+      throttledTyping.cancel();
+
+      if (!currentUser || isMuted) return;
+
+      doIsTyping({
+        chatId: state.existingChatId!,
+        userId: currentUser.id,
+        isTyping: false,
+      }).catch();
+    },
+  });
+
+  const handleChatTyping = (value: string) => {
+    setChatMsg(value);
+    if (!currentUser) return;
+
+    // only send signal if they're not erasing the chat
+    if (value.length) {
+      throttledTyping();
+    }
+  };
+
+  const sendMessage = () => {
+    if (isSending) return;
+
+    // TODO can probably handle this earlier to disable from sending blank messages
+    const strippedMessage = chatMsg.trim();
+    if (!strippedMessage.length) {
+      setChatMsg('');
+      return;
+    }
+
+    setIsSending(true);
+    mutate({
+      chatId: state.existingChatId!,
+      content: strippedMessage,
+      referenceMessageId: replyId,
+    });
+  };
+
+  useEffect(() => {
+    if (!currentUser || isMuted) return;
+
+    doIsTyping({
+      chatId: state.existingChatId!,
+      userId: currentUser.id,
+      isTyping: false,
+    }).catch();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debouncedChatMsg]);
+
+  useEffect(() => {
+    setChatMsg('');
+  }, [state.existingChatId]);
+
+  return (
+    <Group spacing={0}>
+      <Textarea
+        sx={{ flexGrow: 1 }}
+        disabled={isMuted}
+        placeholder={isMuted ? 'Your account has been muted' : 'Send message'}
+        autosize
+        minRows={1}
+        maxRows={4}
+        value={chatMsg}
+        onChange={(event) => handleChatTyping(event.currentTarget.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            if (!e.shiftKey) {
+              e.preventDefault();
+              sendMessage();
+            }
+          }
+        }}
+        classNames={{ input: classes.chatInput }} // should test this border more with active highlighting
+      />
+      <ActionIcon
+        h="100%"
+        w={60}
+        onClick={sendMessage}
+        disabled={isSending || !chatMsg.length || isMuted}
+        sx={{ borderRadius: 0 }}
+      >
+        {isSending ? <Loader /> : <IconSend />}
+      </ActionIcon>
+    </Group>
   );
 }
 
