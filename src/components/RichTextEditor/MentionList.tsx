@@ -71,18 +71,20 @@ export const MentionList = forwardRef<MentionListRef, Props>((props, ref) => {
   return (
     <Paper radius="md" withBorder>
       <Stack spacing={0}>
-        {items.map((item, index) => (
-          <Button
-            key={index}
-            variant={index === selectedIndex ? 'light' : 'subtle'}
-            onClick={() => selectItem(index)}
-            radius={0}
-            styles={{ inner: { justifyContent: 'flex-start' } }}
-          >
-            {item.label}
-          </Button>
-        ))}
-        {((isLoading && debouncedQuery) || isRefetching) && (
+        {items.length > 0
+          ? items.map((item, index) => (
+              <Button
+                key={index}
+                variant={index === selectedIndex ? 'light' : 'subtle'}
+                onClick={() => selectItem(index)}
+                radius={0}
+                styles={{ inner: { justifyContent: 'flex-start' } }}
+              >
+                {item.label}
+              </Button>
+            ))
+          : null}
+        {(isLoading && debouncedQuery) || isRefetching ? (
           <Center p="sm">
             <Group spacing="sm" noWrap>
               <Loader size="sm" />
@@ -91,7 +93,13 @@ export const MentionList = forwardRef<MentionListRef, Props>((props, ref) => {
               </Text>
             </Group>
           </Center>
-        )}
+        ) : items.length === 0 ? (
+          <Center p="sm">
+            <Text size="sm" color="dimmed">
+              No results
+            </Text>
+          </Center>
+        ) : null}
       </Stack>
     </Paper>
   );
