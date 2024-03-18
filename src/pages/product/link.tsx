@@ -84,7 +84,7 @@ export default function LinkApp() {
           <Grid.Col md={6}>
             <Flex justify="center" className={classes.gradientContainer}>
               <Image
-                src="/images/link/download.png"
+                src="/images/link/glance.png"
                 alt="download"
                 id="download"
                 width="auto"
@@ -101,7 +101,7 @@ export default function LinkApp() {
           <Grid.Col md={6}>
             <Flex justify="center" className={classes.gradientContainer}>
               <Image
-                src="/images/link/activity.png"
+                src="/images/link/pair.png"
                 alt="activity"
                 id="activity"
                 width="auto"
