@@ -20,18 +20,35 @@ export type DeliveryWorkerStatus = {
 
 export async function getDownloadUrl(fileUrl: string, fileName?: string) {
   const { key } = parseKey(fileUrl);
+  // Some of our old file keys should not be decoded.
+  const keys = [decodeURIComponent(key), key];
 
-  const body = JSON.stringify({
-    key: decodeURIComponent(key),
-    fileName: fileName ? decodeURIComponent(fileName) : undefined,
-  });
-  const response = await fetch(deliveryWorkerEndpoint, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body,
-  });
+  let i = 0;
+  let response: Response = new Response();
 
-  if (!response.ok) throw new Error(response.statusText);
+  // We will test with all key configurations we can:
+  while (i < keys.length) {
+    const body = JSON.stringify({
+      key: keys[i],
+      fileName: fileName ? decodeURIComponent(fileName) : undefined,
+    });
+
+    response = await fetch(deliveryWorkerEndpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+    });
+
+    i++;
+
+    if (response.ok) {
+      break;
+    }
+  }
+
+  if (!response.ok) {
+    throw new Error(response.statusText);
+  }
   const result = await response.json();
   return result as DownloadInfo;
 }

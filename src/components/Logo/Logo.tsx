@@ -21,6 +21,10 @@ const gradients = {
     inner: ['#081692', '#1E043C'],
     outer: ['#1284F7', '#0A20C9'],
   },
+  stpatty: {
+    inner: ['#135F20', '#020709'],
+    outer: ['#53C42B', '#1D962F'],
+  },
 };
 
 export function Logo({ ...props }: LogoProps) {
@@ -40,6 +44,7 @@ export function Logo({ ...props }: LogoProps) {
 
     // New Year
     if (month === 11 && day >= 26) return 'newyear';
+    if (month === 2 && day >= 14 && day <= 17) return 'stpatty';
 
     return null;
   }, [showHoliday]);
@@ -287,6 +292,14 @@ const useStyles = createStyles((theme, _, getRef) => ({
   },
 
   newyear: {},
+  stpatty: {
+    [`.${getRef('ai')}`]: {
+      fill: theme.colors.green[8],
+    },
+    [`.${getRef('accent')}`]: {
+      fill: theme.colors.green[8],
+    },
+  },
 }));
 
 const flyOver = keyframes({

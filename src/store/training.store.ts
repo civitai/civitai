@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
-import { AutoTagSchemaType } from '~/components/Resource/Forms/Training/TrainingAutoTagModal';
+import { AutoTagSchemaType } from '~/components/Training/Form/TrainingAutoTagModal';
 
 export type ImageDataType = {
   url: string;

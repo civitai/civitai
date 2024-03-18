@@ -1,6 +1,6 @@
 import { Center } from '@mantine/core';
 import { NotFound } from '~/components/AppLayout/NotFound';
-import TrainWizard from '~/components/Resource/Wizard/TrainWizard';
+import TrainWizard from '~/components/Training/Wizard/TrainWizard';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 

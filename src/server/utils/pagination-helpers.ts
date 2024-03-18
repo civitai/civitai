@@ -143,3 +143,27 @@ export function getCursor(sortString: string, cursor: string | number | bigint |
     prop,
   };
 }
+
+export function getNextPage({
+  req,
+  currentPage,
+  nextCursor,
+}: {
+  req: NextApiRequest;
+  nextCursor?: string | bigint | Date;
+  currentPage?: number;
+}) {
+  const baseUrl = new URL(
+    req.url ?? '/',
+    isProd ? `https://${req.headers.host}` : 'http://localhost:3000'
+  );
+
+  const hasNextPage = !!nextCursor;
+  if (!hasNextPage) return { baseUrl, nextPage: undefined };
+
+  const queryParams: MixedObject = { ...req.query };
+  if (currentPage) queryParams.page = currentPage + 1;
+  else queryParams.cursor = nextCursor instanceof Date ? nextCursor.toISOString() : nextCursor;
+
+  return { baseUrl, nextPage: `${baseUrl.origin}${baseUrl.pathname}?${QS.stringify(queryParams)}` };
+}

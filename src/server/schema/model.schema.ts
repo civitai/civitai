@@ -9,8 +9,11 @@ import {
   ModelType,
   ModelUploadType,
 } from '@prisma/client';
+import dayjs from 'dayjs';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
+import CustomParseFormat from 'dayjs/plugin/customParseFormat';
+dayjs.extend(CustomParseFormat);
 
 import { BrowsingMode, ModelSort } from '~/server/common/enums';
 import { UnpublishReason, unpublishReasons } from '~/server/common/moderation-helpers';
@@ -45,7 +48,14 @@ export const userPreferencesForModelsSchema = z.object({
 export const getAllModelsSchema = licensingSchema.merge(userPreferencesForModelsSchema).extend({
   limit: z.preprocess((val) => Number(val), z.number().min(0).max(100)).optional(),
   page: z.preprocess((val) => Number(val), z.number().min(1)).optional(),
-  cursor: z.union([z.bigint(), z.number(), z.string(), z.date()]).optional(),
+  cursor: z
+    .union([z.bigint(), z.number(), z.string(), z.date()])
+    .transform((val) =>
+      typeof val === 'string' && dayjs(val, 'YYYY-MM-DDTHH:mm:ss.SSS[Z]', true).isValid()
+        ? new Date(val)
+        : val
+    )
+    .optional(),
   query: z.string().optional(),
   tag: z.string().optional(),
   tagname: z.string().optional(),

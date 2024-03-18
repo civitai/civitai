@@ -261,10 +261,7 @@ export default function Home() {
                     <ModelsInfinite
                       showAds
                       filters={{
-                        excludedImageTagIds: [
-                          ...homeExcludedTags.map((tag) => tag.id),
-                          ...moderatedTagIds,
-                        ],
+                        excludedImageTagIds: [...homeExcludedTags.map((tag) => tag.id)],
                         excludedTagIds: homeExcludedTags.map((tag) => tag.id),
                         // Required to override localStorage filters
                         period: MetricTimeframe.Week,

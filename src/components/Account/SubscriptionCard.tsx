@@ -9,12 +9,14 @@ import { ManageSubscriptionButton } from '~/components/Stripe/ManageSubscription
 import { PlanBenefitList } from '~/components/Stripe/PlanBenefitList';
 import { getPlanDetails } from '~/components/Stripe/PlanCard';
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ProductMetadata } from '~/server/schema/stripe.schema';
 import { getStripeCurrencyDisplay } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 export function SubscriptionCard() {
   const { data, isLoading } = trpc.stripe.getUserSubscription.useQuery();
+  const features = useFeatureFlags();
 
   const details: DescriptionTableProps['items'] = [];
   let displayStatus = '';
@@ -96,7 +98,9 @@ export function SubscriptionCard() {
               Your Membership Includes
             </Text>
             <PlanBenefitList
-              benefits={getPlanDetails(data?.product?.metadata as ProductMetadata)[0].benefits}
+              benefits={
+                getPlanDetails(features, data?.product?.metadata as ProductMetadata)[0].benefits
+              }
             />
           </Stack>
         )}

@@ -42,7 +42,7 @@ export const useUserPaymentMethods = (data: { enabled?: boolean } = { enabled: t
   const currentUser = useCurrentUser();
   const { data: userPaymentMethods = [], ...rest } = trpc.user.getPaymentMethods.useQuery(
     undefined,
-    { enabled: !!currentUser && data?.enabled }
+    { enabled: !!currentUser && data?.enabled, trpc: { context: { skipBatch: true } } }
   );
 
   return {

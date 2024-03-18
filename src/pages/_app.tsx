@@ -47,6 +47,7 @@ import { StripeSetupSuccessProvider } from '~/providers/StripeProvider';
 import { TosProvider } from '~/providers/TosProvider';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
+import { UpdateRequiredWatcher } from '~/components/UpdateRequiredWatcher/UpdateRequiredWatcher';
 import { RegisterCatchNavigation } from '~/store/catch-navigation.store';
 import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 import { trpc } from '~/utils/trpc';
@@ -223,6 +224,7 @@ function MyApp(props: CustomAppProps) {
               <ClientHistoryStore />
               <RegisterCatchNavigation />
               <RouterTransition />
+              <UpdateRequiredWatcher />
               <SessionProvider
                 session={session}
                 refetchOnWindowFocus={false}

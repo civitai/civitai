@@ -63,6 +63,10 @@ export const REDIS_KEYS = {
     LIMITS: 'generation:limits',
     STATUS: 'generation:status',
   },
+  TRAINING: {
+    STATUS: 'training:status',
+  },
+  CLIENT: 'client',
   SYSTEM: {
     FEATURES: 'system:features',
     MODERATION_TAGS: 'system:moderation-tags-2',
@@ -74,6 +78,9 @@ export const REDIS_KEYS = {
     TAGS_NEEDING_REVIEW: 'system:tags-needing-review',
     HOME_EXCLUDED_TAGS: 'system:home-excluded-tags',
     NOTIFICATION_COUNTS: 'system:notification-counts',
+  },
+  CACHES: {
+    FILES_FOR_MODEL_VERSION: 'caches:files-for-model-version',
   },
   QUEUES: {
     BUCKETS: 'queues:buckets',
