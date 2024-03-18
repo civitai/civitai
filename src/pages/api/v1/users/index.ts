@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { publicApiContext } from '~/server/createContext';
 
 import { appRouter } from '~/server/routers';
-import { GetAllUsersInput, getAllUsersInput } from '~/server/schema/user.schema';
+import { getAllUsersInput } from '~/server/schema/user.schema';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 
 const schema = getAllUsersInput.extend({

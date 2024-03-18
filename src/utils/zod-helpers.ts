@@ -68,17 +68,16 @@ export function stringDate() {
 
 /** Converts the string `true` to a boolean of true and everything else to false */
 export function booleanString() {
-  return z.preprocess(
-    (value) =>
-      typeof value === 'string'
-        ? value === 'true'
-        : typeof value === 'number'
-        ? value === 1
-        : typeof value === 'boolean'
-        ? value
-        : undefined,
-    z.boolean()
-  );
+  return z.preprocess((value) => {
+    console.log({ value });
+    return typeof value === 'string'
+      ? value === 'true' || value === ''
+      : typeof value === 'number'
+      ? value === 1
+      : typeof value === 'boolean'
+      ? value
+      : undefined;
+  }, z.boolean());
 }
 
 export function sanitizedNullableString(options: santizeHtmlOptions) {

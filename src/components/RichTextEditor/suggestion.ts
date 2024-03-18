@@ -3,35 +3,17 @@ import { SuggestionOptions } from '@tiptap/suggestion';
 import tippy, { Instance as TippyInstance } from 'tippy.js';
 
 import { MentionListRef, MentionList } from '~/components/RichTextEditor/MentionList';
-import { UsersGetAll } from '~/types/router';
-import { QS } from '~/utils/qs';
 
 type Options = { defaultSuggestions?: Array<{ id: number; label: string }> };
-const results: Record<string, { id: number; label: string }[]> = {};
 
 export function getSuggestions(options?: Options) {
   const { defaultSuggestions = [] } = options || {};
-  const suggestion: Omit<SuggestionOptions, 'editor'> = {
-    items: async ({ query }) => {
-      if (query.length <= 1) return defaultSuggestions;
 
-      const queryString = QS.stringify({ query });
-      if (results[queryString]) return results[queryString];
-      try {
-        const response = await fetch(`/api/v1/users?${queryString}`);
-        const { items } = (await response.json()) as { items: UsersGetAll };
-        if (!items) {
-          results[queryString] = [];
-          return defaultSuggestions;
-        }
-        const mapped = items.map(({ id, username }) => ({ id, label: username }));
-        results[queryString] = mapped;
-        return mapped;
-      } catch (error) {
-        console.error(error);
-        return [];
-      }
-    },
+  const suggestion: Omit<SuggestionOptions, 'editor'> = {
+    items: ({ query }) =>
+      defaultSuggestions
+        .filter((suggestion) => suggestion.label.toLowerCase().startsWith(query.toLowerCase()))
+        .slice(0, 5),
     render: () => {
       let component: ReactRenderer<MentionListRef> | undefined;
       let popup: TippyInstance[] | undefined;
