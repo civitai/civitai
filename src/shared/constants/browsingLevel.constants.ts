@@ -96,3 +96,12 @@ const nsfwLevelReverseMapDeprecated = {
 export const getNsfwLeveLDeprecatedReverseMapping = (level: number) => {
   return nsfwLevelReverseMapDeprecated[level as NsfwLevel] ?? NsfwLevelDeprecated.None;
 };
+
+export const browsingLevelTagColors = {
+  [NsfwLevel.PG]: { color: 'gray', shade: 5 },
+  [NsfwLevel.PG13]: { color: 'yellow', shade: 5 },
+  [NsfwLevel.R]: { color: 'red', shade: 9 },
+  [NsfwLevel.X]: { color: 'red', shade: 9 },
+  [NsfwLevel.XXX]: { color: 'red', shade: 9 },
+  [NsfwLevel.Blocked]: { color: 'red', shade: 9 },
+} as const;

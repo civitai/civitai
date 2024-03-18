@@ -21,7 +21,7 @@ const migrationTypes = z.enum([
   'collections',
 ]);
 const schema = z.object({
-  concurrency: z.coerce.number().min(1).max(50).optional().default(50),
+  concurrency: z.coerce.number().min(1).max(50).optional().default(25),
   batchSize: z.coerce.number().min(0).optional().default(500),
   start: z.coerce.number().min(0).optional().default(0),
   end: z.coerce.number().min(0).optional(),
@@ -103,7 +103,6 @@ async function migrateImages(req: NextApiRequest, res: NextApiResponse) {
       return { ...context, end: max };
     },
     processor: async ({ start, end, cancelFns }) => {
-      console.log(`Updating ${params.type} ${start} - ${end}`);
       const { cancel, result } = await pgDbWrite.cancellableQuery(Prisma.sql`
         UPDATE "Image" i
         SET "nsfwLevel" = (
@@ -117,6 +116,7 @@ async function migrateImages(req: NextApiRequest, res: NextApiResponse) {
       `);
       cancelFns.push(cancel);
       await result();
+      console.log(`Updated ${params.type} ${start} - ${end}`);
     },
   });
 }
@@ -133,7 +133,6 @@ async function migrateUsers(req: NextApiRequest, res: NextApiResponse) {
       return { ...context, end: max };
     },
     processor: async ({ start, end, cancelFns }) => {
-      console.log(`Updating ${params.type} ${start} - ${end}`);
       const { cancel, result } = await pgDbWrite.cancellableQuery(Prisma.sql`
         UPDATE "User" SET
           "browsingLevel" = 1,
@@ -146,6 +145,7 @@ async function migrateUsers(req: NextApiRequest, res: NextApiResponse) {
       `);
       cancelFns.push(cancel);
       await result();
+      console.log(`Updated ${params.type} ${start} - ${end}`);
     },
   });
 
@@ -164,7 +164,6 @@ async function migratePosts(req: NextApiRequest, res: NextApiResponse) {
       return { ...context, end: max };
     },
     processor: async ({ start, end, cancelFns }) => {
-      console.log(`Updating ${params.type} ${start} - ${end}`);
       const { cancel, result } = await pgDbWrite.cancellableQuery(Prisma.sql`
         WITH level AS (
           SELECT DISTINCT ON (p.id) p.id, bit_or(i."nsfwLevel") "nsfwLevel"
@@ -180,6 +179,7 @@ async function migratePosts(req: NextApiRequest, res: NextApiResponse) {
       `);
       cancelFns.push(cancel);
       await result();
+      console.log(`Updated ${params.type} ${start} - ${end}`);
     },
   });
 }
@@ -196,7 +196,6 @@ async function migrateBounties(req: NextApiRequest, res: NextApiResponse) {
       return { ...context, end: max };
     },
     processor: async ({ start, end, cancelFns }) => {
-      console.log(`Updating ${params.type} ${start} - ${end}`);
       const { cancel, result } = await pgDbWrite.cancellableQuery(Prisma.sql`
         WITH level AS (
           SELECT DISTINCT ON ("entityId")
@@ -219,6 +218,7 @@ async function migrateBounties(req: NextApiRequest, res: NextApiResponse) {
       `);
       cancelFns.push(cancel);
       await result();
+      console.log(`Updated ${params.type} ${start} - ${end}`);
     },
   });
 }
@@ -235,7 +235,6 @@ async function migrateBountyEntries(req: NextApiRequest, res: NextApiResponse) {
       return { ...context, end: max };
     },
     processor: async ({ start, end, cancelFns }) => {
-      console.log(`Updating ${params.type} ${start} - ${end}`);
       const { cancel, result } = await pgDbWrite.cancellableQuery(Prisma.sql`
         WITH level AS (
           SELECT DISTINCT ON ("entityId")
@@ -253,6 +252,7 @@ async function migrateBountyEntries(req: NextApiRequest, res: NextApiResponse) {
       `);
       cancelFns.push(cancel);
       await result();
+      console.log(`Updated ${params.type} ${start} - ${end}`);
     },
   });
 }
@@ -269,7 +269,6 @@ async function migrateModelVersions(req: NextApiRequest, res: NextApiResponse) {
       return { ...context, end: max };
     },
     processor: async ({ start, end, cancelFns }) => {
-      console.log(`Updating ${params.type} ${start} - ${end}`);
       const { cancel, result } = await pgDbWrite.cancellableQuery(Prisma.sql`
         WITH level as (
           SELECT
@@ -302,6 +301,7 @@ async function migrateModelVersions(req: NextApiRequest, res: NextApiResponse) {
       `);
       cancelFns.push(cancel);
       await result();
+      console.log(`Updated ${params.type} ${start} - ${end}`);
     },
   });
 }
@@ -318,7 +318,6 @@ async function migrateModels(req: NextApiRequest, res: NextApiResponse) {
       return { ...context, end: max };
     },
     processor: async ({ start, end, cancelFns }) => {
-      console.log(`Updating ${params.type} ${start} - ${end}`);
       const { cancel, result } = await pgDbWrite.cancellableQuery(Prisma.sql`
         WITH level AS (
           SELECT DISTINCT ON ("modelId")
@@ -341,6 +340,7 @@ async function migrateModels(req: NextApiRequest, res: NextApiResponse) {
       `);
       cancelFns.push(cancel);
       await result();
+      console.log(`Updated ${params.type} ${start} - ${end}`);
     },
   });
 }
@@ -357,7 +357,6 @@ async function migrateCollections(req: NextApiRequest, res: NextApiResponse) {
       return { ...context, end: max };
     },
     processor: async ({ start, end, cancelFns }) => {
-      console.log(`Updating ${params.type} ${start} - ${end}`);
       const { cancel, result } = await pgDbWrite.cancellableQuery(Prisma.sql`
           UPDATE "Collection" c
           SET "nsfwLevel" = (
@@ -373,6 +372,7 @@ async function migrateCollections(req: NextApiRequest, res: NextApiResponse) {
       `);
       cancelFns.push(cancel);
       await result();
+      console.log(`Updated ${params.type} ${start} - ${end}`);
     },
   });
 }
@@ -389,7 +389,6 @@ async function migrateArticles(req: NextApiRequest, res: NextApiResponse) {
       return { ...context, end: max };
     },
     processor: async ({ start, end, cancelFns }) => {
-      console.log(`Updating ${params.type} ${start} - ${end}`);
       const { cancel, result } = await pgDbWrite.cancellableQuery(Prisma.sql`
       WITH level AS (
         SELECT DISTINCT ON (a.id) a.id, bit_or(i."nsfwLevel") "nsfwLevel"
@@ -410,6 +409,7 @@ async function migrateArticles(req: NextApiRequest, res: NextApiResponse) {
     `);
       cancelFns.push(cancel);
       await result();
+      console.log(`Updated ${params.type} ${start} - ${end}`);
     },
   });
 }
