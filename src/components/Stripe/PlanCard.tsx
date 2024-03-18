@@ -9,7 +9,13 @@ import {
   Select,
   Button,
 } from '@mantine/core';
-import { IconAdCircleOff, IconBolt, IconChevronDown, IconCloud } from '@tabler/icons-react';
+import {
+  IconAdCircleOff,
+  IconBolt,
+  IconChevronDown,
+  IconCloud,
+  IconPhotoPlus,
+} from '@tabler/icons-react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { benefitIconSize, BenefitItem, PlanBenefitList } from '~/components/Stripe/PlanBenefitList';
 import { CurrencyBadge } from '../Currency/CurrencyBadge';
@@ -133,15 +139,9 @@ export const getPlanDetails: (features: FeatureAccess, metadata: ProductMetadata
       { content: 'Unique nameplate color' },
       { content: 'Unique Discord role' },
       {
-        icon: <IconBolt size={benefitIconSize} />,
-        iconColor: 'yellow',
-        content: (
-          <Text>
-            <Text span>
-              <CurrencyBadge currency={Currency.BUZZ} unitAmount={5000} /> each month
-            </Text>
-          </Text>
-        ),
+        icon: <IconPhotoPlus size={benefitIconSize} />,
+        iconColor: 'blue',
+        content: <Text>{metadata.generationLimit ?? 3}x more generations per day</Text>,
       },
       metadata.vaultSizeKb && features.vault
         ? {
@@ -163,6 +163,18 @@ export const getPlanDetails: (features: FeatureAccess, metadata: ProductMetadata
             iconColor: 'blue',
           }
         : undefined,
+      {
+        icon: <IconBolt size={benefitIconSize} />,
+        iconColor: 'yellow',
+        content: (
+          <Text>
+            <Text span>
+              <CurrencyBadge currency={Currency.BUZZ} unitAmount={metadata.buzz ?? 5000} /> each
+              month
+            </Text>
+          </Text>
+        ),
+      },
     ].filter(isDefined),
   },
 ];

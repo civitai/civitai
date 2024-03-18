@@ -73,5 +73,7 @@ export type ProductMetadata = z.infer<typeof productMetadataSchema>;
 export const productMetadataSchema = z
   .object({
     vaultSizeKb: z.coerce.number().positive().optional(),
+    buzz: z.coerce.number().positive().optional(),
+    generationLimit: z.coerce.number().positive().optional(),
   })
   .passthrough();
