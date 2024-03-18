@@ -83,10 +83,13 @@ async function getUser(userId: number) {
   const key = `${REDIS_KEYS.SYSTEM.NOTIFICATION_COUNTS}:${userId}`;
   const counts = await redis.hGetAll(key);
   if (!Object.keys(counts).length) return undefined;
-  return Object.entries(counts).map(([category, count]) => ({
-    category: category as NotificationCategory,
-    count: Number(count),
-  })) as NotificationCategoryArray;
+  return Object.entries(counts).map(([category, count]) => {
+    const castedCount = Number(count);
+    return {
+      category: category as NotificationCategory,
+      count: castedCount > 0 ? castedCount : 0,
+    };
+  }) as NotificationCategoryArray;
 }
 
 async function setUser(userId: number, counts: NotificationCategoryArray) {
