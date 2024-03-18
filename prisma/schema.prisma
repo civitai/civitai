@@ -492,6 +492,7 @@ model Model {
   gallerySettings     Json            @default("{\"users\": [], \"tags\": [], \"images\": []}")
   availability        Availability    @default(Public)
   nsfwLevel           Int             @default(0)
+  lockedProperties    String[]        @default([])
 
   // Licensing
   allowNoCredit         Boolean         @default(true)
@@ -1314,7 +1315,7 @@ model Tag {
   target     TagTarget[]
   type       TagType     @default(UserGenerated)
   nsfw       NsfwLevel   @default(None)
-  nsfwLevel  Int         @default(1) // TODO.nsfwLevel - default 0?
+  nsfwLevel  Int         @default(1)
   unlisted   Boolean     @default(false)
   unfeatured Boolean     @default(false)
   isCategory Boolean     @default(false)

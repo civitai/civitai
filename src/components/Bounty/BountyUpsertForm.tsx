@@ -33,7 +33,6 @@ import React, { useState } from 'react';
 
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { BackButton, NavigateBack } from '~/components/BackButton/BackButton';
-import { matureLabel } from '~/components/Post/Edit/EditPostControls';
 import { useFormStorage } from '~/hooks/useFormStorage';
 import {
   Form,
@@ -77,9 +76,6 @@ import { containerQuery } from '~/utils/mantine-css-helpers';
 import { FeatureIntroductionHelpButton } from '~/components/FeatureIntroduction/FeatureIntroduction';
 import { ContentPolicyLink } from '../ContentPolicyLink/ContentPolicyLink';
 import { InfoPopover } from '../InfoPopover/InfoPopover';
-import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
-import { Flags } from '~/shared/utils';
-import { NsfwLevel } from '~/server/common/enums';
 
 const tooltipProps: Partial<TooltipProps> = {
   maw: 300,

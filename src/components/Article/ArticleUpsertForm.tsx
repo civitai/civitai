@@ -22,7 +22,7 @@ import React, { useState } from 'react';
 import { z } from 'zod';
 
 import { BackButton } from '~/components/BackButton/BackButton';
-import { hiddenLabel, matureLabel } from '~/components/Post/Edit/EditPostControls';
+import { hiddenLabel } from '~/components/Post/Edit/EditPostControls';
 import { useFormStorage } from '~/hooks/useFormStorage';
 import {
   Form,
@@ -49,6 +49,7 @@ import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { constants } from '~/server/common/constants';
 import { imageSchema } from '~/server/schema/image.schema';
 import { browsingLevelLabels, browsingLevels } from '~/shared/constants/browsingLevel.constants';
+import { openBrowsingLevelGuide } from '~/components/BrowsingLevel/openBrowsingLevelGuide';
 
 const schema = upsertArticleInput.omit({ coverImage: true, userNsfwLevel: true }).extend({
   categoryId: z.number().min(0, 'Please select a valid category'),
@@ -222,11 +223,14 @@ export function ArticleUpsertForm({ article }: Props) {
               label={
                 <Group spacing={4} noWrap>
                   Maturity Level
-                  <Tooltip label={matureLabel} {...tooltipProps}>
-                    <ThemeIcon radius="xl" size="xs" color="gray">
-                      <IconQuestionMark />
-                    </ThemeIcon>
-                  </Tooltip>
+                  <ActionIcon
+                    radius="xl"
+                    size="xs"
+                    variant="outline"
+                    onClick={openBrowsingLevelGuide}
+                  >
+                    <IconQuestionMark />
+                  </ActionIcon>
                   <ContentPolicyLink size="xs" variant="text" color="dimmed" td="underline" />
                 </Group>
               }

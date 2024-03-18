@@ -35,7 +35,6 @@ import { useRouter } from 'next/router';
 import React, { useState } from 'react';
 
 import { BackButton, NavigateBack } from '~/components/BackButton/BackButton';
-import { matureLabel } from '~/components/Post/Edit/EditPostControls';
 import { useFormStorage } from '~/hooks/useFormStorage';
 import {
   Form,
@@ -52,6 +51,7 @@ import { constants } from '~/server/common/constants';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { getInitials } from '~/utils/string-helpers';
 import { ClubGetById } from '~/types/router';
+import { openBrowsingLevelGuide } from '~/components/BrowsingLevel/openBrowsingLevelGuide';
 
 const tooltipProps: Partial<TooltipProps> = {
   maw: 300,
@@ -212,11 +212,15 @@ export function ClubUpsertForm({
                   <Stack spacing={4}>
                     <Group spacing={4}>
                       <Text inline>Mature theme</Text>
-                      <Tooltip label={matureLabel} {...tooltipProps}>
-                        <ThemeIcon radius="xl" size="xs" color="gray">
-                          <IconQuestionMark />
-                        </ThemeIcon>
-                      </Tooltip>
+
+                      <ActionIcon
+                        radius="xl"
+                        size="xs"
+                        color="gray"
+                        onClick={openBrowsingLevelGuide}
+                      >
+                        <IconQuestionMark />
+                      </ActionIcon>
                     </Group>
                     <Text size="xs" color="dimmed">
                       This club is intended to produce mature content. A badge will be added to the

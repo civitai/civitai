@@ -132,12 +132,23 @@ function BlurToggle({
     return children(toggle);
   }
 
-  if (safe) return null;
+  if (!browsingLevel) return null;
+
+  if (safe)
+    return (
+      <Badge className={cx(classes.badge, className, 'cursor-pointer')}>
+        <Group spacing={5} noWrap>
+          <Text className={classes.text} component="span" weight="bold">
+            {browsingLevelLabels[browsingLevel]}
+          </Text>
+        </Group>
+      </Badge>
+    );
 
   return (
     <Badge
       component="button"
-      className={cx(classes.badge, className)}
+      className={cx(classes.badge, className, 'cursor-pointer')}
       {...badgeProps}
       onClick={toggle}
     >
@@ -201,7 +212,6 @@ function toggleShow({
 
 const useStyles = createStyles((theme) => ({
   badge: {
-    cursor: 'pointer',
     userSelect: 'none',
     backgroundColor: theme.fn.rgba(theme.colors.red[9], 0.6),
     color: 'white',

@@ -1,67 +1,109 @@
 import { CollectionItemStatus, ImageIngestionStatus, Prisma } from '@prisma/client';
-import { NextApiResponse } from 'next';
+import { NextApiRequest, NextApiResponse } from 'next';
 import { NsfwLevel } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import { pgDbWrite } from '~/server/db/pgDb';
-import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { invalidateAllSessions } from '~/server/utils/session-helpers';
 import z from 'zod';
+import { dataProcessor } from '~/server/db/db-helpers';
 
-// TODO.nsfwLevel - follow pattern from migrate-likes so that we can run this in prod and pickup where we left off
+type MigrationType = z.infer<typeof migrationTypes>;
+const migrationTypes = z.enum([
+  'images',
+  'users',
+  'posts',
+  'articles',
+  'bounties',
+  'bountyEntries',
+  'modelVersions',
+  'models',
+  'collections',
+]);
 const schema = z.object({
-  cursor: z.coerce.number().min(0).optional().default(0),
-  concurrency: z.coerce.number().min(1).max(50).optional().default(10),
-  maxCursor: z.coerce.number().min(0).optional(),
-  batchSize: z.coerce.number().min(0).optional().default(100),
+  concurrency: z.coerce.number().min(1).max(50).optional().default(50),
+  batchSize: z.coerce.number().min(0).optional().default(500),
+  start: z.coerce.number().min(0).optional().default(0),
+  end: z.coerce.number().min(0).optional(),
   after: z.coerce.date().optional(),
   before: z.coerce.date().optional(),
+  type: z
+    .union([migrationTypes, migrationTypes.array()])
+    .transform((val) => (Array.isArray(val) ? val : [val]))
+    .optional(),
 });
 
-const BATCH_SIZE = 500;
-const CONCURRENCY_LIMIT = 50;
-// TODO.Briant - add abstraction for handling migrations - db-helpers.ts (lot of repeated patterns here)
 export default WebhookEndpoint(async (req, res) => {
-  const migrations = [
-    [migrateImages, migrateUsers],
-    [migratePosts, migrateArticles, migrateBounties, migrateBountyEntries],
-    [migrateModelVersions],
-    [migrateModels],
-    [migrateCollections],
+  const params = schema.parse(req.query);
+  const availableMigrations: Array<{
+    type: MigrationType;
+    fn: (req: NextApiRequest, res: NextApiResponse) => Promise<void>;
+  }> = [
+    {
+      type: 'users',
+      fn: migrateUsers,
+    },
+    {
+      type: 'images',
+      fn: migrateImages,
+    },
+    {
+      type: 'posts',
+      fn: migratePosts,
+    },
+    {
+      type: 'articles',
+      fn: migrateArticles,
+    },
+    {
+      type: 'bounties',
+      fn: migrateBounties,
+    },
+    {
+      type: 'bountyEntries',
+      fn: migrateBountyEntries,
+    },
+    {
+      type: 'modelVersions',
+      fn: migrateModelVersions,
+    },
+    {
+      type: 'models',
+      fn: migrateModels,
+    },
+    {
+      type: 'collections',
+      fn: migrateCollections,
+    },
   ];
 
-  let counter = 0;
+  const migrations = params.type
+    ? availableMigrations.filter((x) => params.type?.includes(x.type))
+    : availableMigrations;
+
   console.time('MIGRATION_TIMER');
-  for (const steps of migrations) {
-    await Promise.all(steps.map((step) => step(res)));
-    counter++;
-    console.log(`end ${counter}`);
+  for (const migration of migrations) {
+    console.log(`START ${migration.type}`);
+    await migration.fn(req, res);
+    console.log(`END ${migration.type}`);
   }
   console.timeEnd('MIGRATION_TIMER');
-
   res.status(200).json({ finished: true });
 });
 
-async function migrateImages(res: NextApiResponse) {
-  const onCancel: (() => Promise<void>)[] = [];
-  let shouldStop = false;
-  res.on('close', async () => {
-    console.log('Cancelling');
-    shouldStop = true;
-    await Promise.all(onCancel.map((cancel) => cancel()));
-  });
-  const [{ max: maxImageId }] = await dbRead.$queryRaw<{ max: number }[]>(
-    Prisma.sql`SELECT MAX(id) "max" FROM "Image";`
-  );
-
-  let cursor = 0;
-  await limitConcurrency(() => {
-    if (cursor > maxImageId || shouldStop) return null; // We've reached the end of the images
-    const start = cursor;
-    cursor += BATCH_SIZE;
-    const end = cursor;
-    console.log(`Updating images ${start} - ${end}`);
-    return async () => {
+async function migrateImages(req: NextApiRequest, res: NextApiResponse) {
+  const params = schema.parse(req.query);
+  await dataProcessor({
+    params,
+    runContext: res,
+    rangeFetcher: async (context) => {
+      const [{ max }] = await dbRead.$queryRaw<{ max: number }[]>(
+        Prisma.sql`SELECT MAX(id) "max" FROM "Image";`
+      );
+      return { ...context, end: max };
+    },
+    processor: async ({ start, end, cancelFns }) => {
+      console.log(`Updating ${params.type} ${start} - ${end}`);
       const { cancel, result } = await pgDbWrite.cancellableQuery(Prisma.sql`
         UPDATE "Image" i
         SET "nsfwLevel" = (
@@ -73,32 +115,25 @@ async function migrateImages(res: NextApiResponse) {
         )
         WHERE i.id BETWEEN ${start} AND ${end} AND i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"
       `);
-      onCancel.push(cancel);
+      cancelFns.push(cancel);
       await result();
-    };
-  }, CONCURRENCY_LIMIT);
+    },
+  });
 }
 
-async function migrateUsers(res: NextApiResponse) {
-  const onCancel: (() => Promise<void>)[] = [];
-  let shouldStop = false;
-  res.on('close', async () => {
-    console.log('Cancelling');
-    shouldStop = true;
-    await Promise.all(onCancel.map((cancel) => cancel()));
-  });
-  const [{ max: maxId }] = await dbRead.$queryRaw<{ max: number }[]>(
-    Prisma.sql`SELECT MAX(id) "max" FROM "User";`
-  );
-
-  let cursor = 0;
-  await limitConcurrency(() => {
-    if (cursor > maxId || shouldStop) return null; // We've reached the end of the images
-    const start = cursor;
-    cursor += BATCH_SIZE;
-    const end = cursor;
-    console.log(`Updating users ${start} - ${end}`);
-    return async () => {
+async function migrateUsers(req: NextApiRequest, res: NextApiResponse) {
+  const params = schema.parse(req.query);
+  await dataProcessor({
+    params,
+    runContext: res,
+    rangeFetcher: async (context) => {
+      const [{ max }] = await dbRead.$queryRaw<{ max: number }[]>(
+        Prisma.sql`SELECT MAX(id) "max" FROM "User";`
+      );
+      return { ...context, end: max };
+    },
+    processor: async ({ start, end, cancelFns }) => {
+      console.log(`Updating ${params.type} ${start} - ${end}`);
       const { cancel, result } = await pgDbWrite.cancellableQuery(Prisma.sql`
         UPDATE "User" SET
           "browsingLevel" = 1,
@@ -109,35 +144,27 @@ async function migrateUsers(res: NextApiResponse) {
             )
         WHERE id BETWEEN ${start} AND ${end};
       `);
-      onCancel.push(cancel);
+      cancelFns.push(cancel);
       await result();
-    };
-  }, CONCURRENCY_LIMIT);
+    },
+  });
 
   await invalidateAllSessions();
 }
 
-async function migratePosts(res: NextApiResponse) {
-  const onCancel: (() => Promise<void>)[] = [];
-  let shouldStop = false;
-  res.on('close', async () => {
-    console.log('Cancelling');
-    shouldStop = true;
-    await Promise.all(onCancel.map((cancel) => cancel()));
-  });
-  const [{ max: maxId }] = await dbRead.$queryRaw<{ max: number }[]>(
-    Prisma.sql`SELECT MAX(id) "max" FROM "Post";`
-  );
-
-  let cursor = 0;
-  await limitConcurrency(() => {
-    if (cursor > maxId || shouldStop) return null; // We've reached the end of the images
-
-    const start = cursor;
-    cursor += BATCH_SIZE;
-    const end = cursor;
-    console.log(`Updating posts ${start} - ${end}`);
-    return async () => {
+async function migratePosts(req: NextApiRequest, res: NextApiResponse) {
+  const params = schema.parse(req.query);
+  await dataProcessor({
+    params,
+    runContext: res,
+    rangeFetcher: async (context) => {
+      const [{ max }] = await dbRead.$queryRaw<{ max: number }[]>(
+        Prisma.sql`SELECT MAX(id) "max" FROM "Post";`
+      );
+      return { ...context, end: max };
+    },
+    processor: async ({ start, end, cancelFns }) => {
+      console.log(`Updating ${params.type} ${start} - ${end}`);
       const { cancel, result } = await pgDbWrite.cancellableQuery(Prisma.sql`
         WITH level AS (
           SELECT DISTINCT ON (p.id) p.id, bit_or(i."nsfwLevel") "nsfwLevel"
@@ -151,33 +178,25 @@ async function migratePosts(res: NextApiResponse) {
         FROM level
         WHERE level.id = p.id AND level."nsfwLevel" != p."nsfwLevel";
       `);
-      onCancel.push(cancel);
+      cancelFns.push(cancel);
       await result();
-    };
-  }, CONCURRENCY_LIMIT);
+    },
+  });
 }
 
-async function migrateBounties(res: NextApiResponse) {
-  const onCancel: (() => Promise<void>)[] = [];
-  let shouldStop = false;
-  res.on('close', async () => {
-    console.log('Cancelling');
-    shouldStop = true;
-    await Promise.all(onCancel.map((cancel) => cancel()));
-  });
-  const [{ max: maxId }] = await dbRead.$queryRaw<{ max: number }[]>(
-    Prisma.sql`SELECT MAX(id) "max" FROM "Bounty";`
-  );
-
-  let cursor = 0;
-  await limitConcurrency(() => {
-    if (cursor > maxId || shouldStop) return null; // We've reached the end of the images
-
-    const start = cursor;
-    cursor += BATCH_SIZE;
-    const end = cursor;
-    console.log(`Updating bounties ${start} - ${end}`);
-    return async () => {
+async function migrateBounties(req: NextApiRequest, res: NextApiResponse) {
+  const params = schema.parse(req.query);
+  await dataProcessor({
+    params,
+    runContext: res,
+    rangeFetcher: async (context) => {
+      const [{ max }] = await dbRead.$queryRaw<{ max: number }[]>(
+        Prisma.sql`SELECT MAX(id) "max" FROM "Bounty";`
+      );
+      return { ...context, end: max };
+    },
+    processor: async ({ start, end, cancelFns }) => {
+      console.log(`Updating ${params.type} ${start} - ${end}`);
       const { cancel, result } = await pgDbWrite.cancellableQuery(Prisma.sql`
         WITH level AS (
           SELECT DISTINCT ON ("entityId")
@@ -198,33 +217,25 @@ async function migrateBounties(res: NextApiResponse) {
         FROM level
         WHERE level."entityId" = b.id AND level."nsfwLevel" != b."nsfwLevel";
       `);
-      onCancel.push(cancel);
+      cancelFns.push(cancel);
       await result();
-    };
-  }, CONCURRENCY_LIMIT);
+    },
+  });
 }
 
-async function migrateBountyEntries(res: NextApiResponse) {
-  const onCancel: (() => Promise<void>)[] = [];
-  let shouldStop = false;
-  res.on('close', async () => {
-    console.log('Cancelling');
-    shouldStop = true;
-    await Promise.all(onCancel.map((cancel) => cancel()));
-  });
-  const [{ max: maxId }] = await dbRead.$queryRaw<{ max: number }[]>(
-    Prisma.sql`SELECT MAX(id) "max" FROM "BountyEntry";`
-  );
-
-  let cursor = 0;
-  await limitConcurrency(() => {
-    if (cursor > maxId || shouldStop) return null; // We've reached the end of the images
-
-    const start = cursor;
-    cursor += BATCH_SIZE;
-    const end = cursor;
-    console.log(`Updating bounty entries ${start} - ${end}`);
-    return async () => {
+async function migrateBountyEntries(req: NextApiRequest, res: NextApiResponse) {
+  const params = schema.parse(req.query);
+  await dataProcessor({
+    params,
+    runContext: res,
+    rangeFetcher: async (context) => {
+      const [{ max }] = await dbRead.$queryRaw<{ max: number }[]>(
+        Prisma.sql`SELECT MAX(id) "max" FROM "BountyEntry";`
+      );
+      return { ...context, end: max };
+    },
+    processor: async ({ start, end, cancelFns }) => {
+      console.log(`Updating ${params.type} ${start} - ${end}`);
       const { cancel, result } = await pgDbWrite.cancellableQuery(Prisma.sql`
         WITH level AS (
           SELECT DISTINCT ON ("entityId")
@@ -240,34 +251,25 @@ async function migrateBountyEntries(res: NextApiResponse) {
         FROM level
         WHERE level."entityId" = b.id;
       `);
-      onCancel.push(cancel);
+      cancelFns.push(cancel);
       await result();
-    };
-  }, CONCURRENCY_LIMIT);
+    },
+  });
 }
 
-async function migrateModelVersions(res: NextApiResponse) {
-  const onCancel: (() => Promise<void>)[] = [];
-  let shouldStop = false;
-  res.on('close', async () => {
-    console.log('Cancelling');
-    shouldStop = true;
-    await Promise.all(onCancel.map((cancel) => cancel()));
-  });
-
-  const [{ max: maxId }] = await dbRead.$queryRaw<{ max: number }[]>(
-    Prisma.sql`SELECT MAX(id) "max" FROM "ModelVersion";`
-  );
-
-  let cursor = 0;
-  await limitConcurrency(() => {
-    if (cursor > maxId || shouldStop) return null; // We've reached the end of the images
-
-    const start = cursor;
-    cursor += BATCH_SIZE;
-    const end = cursor;
-    console.log(`Updating modelVersions ${start} - ${end}`);
-    return async () => {
+async function migrateModelVersions(req: NextApiRequest, res: NextApiResponse) {
+  const params = schema.parse(req.query);
+  await dataProcessor({
+    params,
+    runContext: res,
+    rangeFetcher: async (context) => {
+      const [{ max }] = await dbRead.$queryRaw<{ max: number }[]>(
+        Prisma.sql`SELECT MAX(id) "max" FROM "ModelVersion";`
+      );
+      return { ...context, end: max };
+    },
+    processor: async ({ start, end, cancelFns }) => {
+      console.log(`Updating ${params.type} ${start} - ${end}`);
       const { cancel, result } = await pgDbWrite.cancellableQuery(Prisma.sql`
         WITH level as (
           SELECT
@@ -298,33 +300,25 @@ async function migrateModelVersions(res: NextApiResponse) {
         FROM level
         WHERE level.id = mv.id AND level."nsfwLevel" != mv."nsfwLevel";
       `);
-      onCancel.push(cancel);
+      cancelFns.push(cancel);
       await result();
-    };
-  }, CONCURRENCY_LIMIT);
+    },
+  });
 }
 
-async function migrateModels(res: NextApiResponse) {
-  const onCancel: (() => Promise<void>)[] = [];
-  let shouldStop = false;
-  res.on('close', async () => {
-    console.log('Cancelling');
-    shouldStop = true;
-    await Promise.all(onCancel.map((cancel) => cancel()));
-  });
-  const [{ max: maxId }] = await dbRead.$queryRaw<{ max: number }[]>(
-    Prisma.sql`SELECT MAX(id) "max" FROM "Model";`
-  );
-
-  let cursor = 0;
-  await limitConcurrency(() => {
-    if (cursor > maxId || shouldStop) return null; // We've reached the end of the images
-
-    const start = cursor;
-    cursor += BATCH_SIZE;
-    const end = cursor;
-    console.log(`Updating models ${start} - ${end}`);
-    return async () => {
+async function migrateModels(req: NextApiRequest, res: NextApiResponse) {
+  const params = schema.parse(req.query);
+  await dataProcessor({
+    params,
+    runContext: res,
+    rangeFetcher: async (context) => {
+      const [{ max }] = await dbRead.$queryRaw<{ max: number }[]>(
+        Prisma.sql`SELECT MAX(id) "max" FROM "Model";`
+      );
+      return { ...context, end: max };
+    },
+    processor: async ({ start, end, cancelFns }) => {
+      console.log(`Updating ${params.type} ${start} - ${end}`);
       const { cancel, result } = await pgDbWrite.cancellableQuery(Prisma.sql`
         WITH level AS (
           SELECT DISTINCT ON ("modelId")
@@ -345,33 +339,25 @@ async function migrateModels(res: NextApiResponse) {
         FROM level
         WHERE level.id = m.id AND level."nsfwLevel" != m."nsfwLevel";
       `);
-      onCancel.push(cancel);
+      cancelFns.push(cancel);
       await result();
-    };
-  }, CONCURRENCY_LIMIT);
+    },
+  });
 }
 
-async function migrateCollections(res: NextApiResponse) {
-  const onCancel: (() => Promise<void>)[] = [];
-  let shouldStop = false;
-  res.on('close', async () => {
-    console.log('Cancelling');
-    shouldStop = true;
-    await Promise.all(onCancel.map((cancel) => cancel()));
-  });
-  const [{ max: maxId }] = await dbRead.$queryRaw<{ max: number }[]>(
-    Prisma.sql`SELECT MAX(id) "max" FROM "Collection";`
-  );
-
-  let cursor = 0;
-  await limitConcurrency(() => {
-    if (cursor > maxId || shouldStop) return null; // We've reached the end of the images
-
-    const start = cursor;
-    cursor += BATCH_SIZE;
-    const end = cursor;
-    console.log(`Updating collections ${start} - ${end}`);
-    return async () => {
+async function migrateCollections(req: NextApiRequest, res: NextApiResponse) {
+  const params = schema.parse(req.query);
+  await dataProcessor({
+    params,
+    runContext: res,
+    rangeFetcher: async (context) => {
+      const [{ max }] = await dbRead.$queryRaw<{ max: number }[]>(
+        Prisma.sql`SELECT MAX(id) "max" FROM "Collection";`
+      );
+      return { ...context, end: max };
+    },
+    processor: async ({ start, end, cancelFns }) => {
+      console.log(`Updating ${params.type} ${start} - ${end}`);
       const { cancel, result } = await pgDbWrite.cancellableQuery(Prisma.sql`
           UPDATE "Collection" c
           SET "nsfwLevel" = (
@@ -385,53 +371,45 @@ async function migrateCollections(res: NextApiResponse) {
           )
           WHERE c.id BETWEEN ${start} AND ${end};
       `);
-      onCancel.push(cancel);
+      cancelFns.push(cancel);
       await result();
-    };
-  }, CONCURRENCY_LIMIT);
+    },
+  });
 }
 
-async function migrateArticles(res: NextApiResponse) {
-  const onCancel: (() => Promise<void>)[] = [];
-  let shouldStop = false;
-  res.on('close', async () => {
-    console.log('Cancelling');
-    shouldStop = true;
-    await Promise.all(onCancel.map((cancel) => cancel()));
-  });
-  const [{ max: maxId }] = await dbRead.$queryRaw<{ max: number }[]>(
-    Prisma.sql`SELECT MAX(id) "max" FROM "Article";`
-  );
-
-  let cursor = 0;
-  await limitConcurrency(() => {
-    if (cursor > maxId || shouldStop) return null; // We've reached the end of the images
-
-    const start = cursor;
-    cursor += BATCH_SIZE;
-    const end = cursor;
-    console.log(`Updating articles ${start} - ${end}`);
-    return async () => {
+async function migrateArticles(req: NextApiRequest, res: NextApiResponse) {
+  const params = schema.parse(req.query);
+  await dataProcessor({
+    params,
+    runContext: res,
+    rangeFetcher: async (context) => {
+      const [{ max }] = await dbRead.$queryRaw<{ max: number }[]>(
+        Prisma.sql`SELECT MAX(id) "max" FROM "Article";`
+      );
+      return { ...context, end: max };
+    },
+    processor: async ({ start, end, cancelFns }) => {
+      console.log(`Updating ${params.type} ${start} - ${end}`);
       const { cancel, result } = await pgDbWrite.cancellableQuery(Prisma.sql`
-        WITH level AS (
-          SELECT DISTINCT ON (a.id) a.id, bit_or(i."nsfwLevel") "nsfwLevel"
-          FROM "Article" a
-          JOIN "Image" i ON a."coverId" = i.id
-          WHERE a.id BETWEEN ${start} AND ${end}
-          GROUP BY a.id
-        )
-        UPDATE "Article" a
-        SET "nsfwLevel" = (
-          CASE
-            WHEN a."userNsfwLevel" > a."nsfwLevel" THEN a."userNsfwLevel"
-            ELSE level."nsfwLevel"
-          END
-        )
-        FROM level
-        WHERE level.id = a.id AND level."nsfwLevel" != a."nsfwLevel";
-      `);
-      onCancel.push(cancel);
+      WITH level AS (
+        SELECT DISTINCT ON (a.id) a.id, bit_or(i."nsfwLevel") "nsfwLevel"
+        FROM "Article" a
+        JOIN "Image" i ON a."coverId" = i.id
+        WHERE a.id BETWEEN ${start} AND ${end}
+        GROUP BY a.id
+      )
+      UPDATE "Article" a
+      SET "nsfwLevel" = (
+        CASE
+          WHEN a."userNsfwLevel" > a."nsfwLevel" THEN a."userNsfwLevel"
+          ELSE level."nsfwLevel"
+        END
+      )
+      FROM level
+      WHERE level.id = a.id AND level."nsfwLevel" != a."nsfwLevel";
+    `);
+      cancelFns.push(cancel);
       await result();
-    };
-  }, CONCURRENCY_LIMIT);
+    },
+  });
 }

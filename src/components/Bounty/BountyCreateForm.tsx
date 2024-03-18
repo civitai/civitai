@@ -38,7 +38,6 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
-import { matureLabel } from '~/components/Post/Edit/EditPostControls';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { useFormStorage } from '~/hooks/useFormStorage';
 import {
@@ -68,8 +67,7 @@ import { getMinMaxDates, useMutateBounty } from './bounty.utils';
 import { DaysFromNow } from '../Dates/DaysFromNow';
 import { stripTime } from '~/utils/date-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
-import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
-import { Flags } from '~/shared/utils';
+import { openBrowsingLevelGuide } from '~/components/BrowsingLevel/openBrowsingLevelGuide';
 
 const tooltipProps: Partial<TooltipProps> = {
   maw: 300,
@@ -619,11 +617,9 @@ export function BountyCreateForm() {
                   <Stack spacing={4}>
                     <Group spacing={4}>
                       <Text inline>Mature theme</Text>
-                      <Tooltip label={matureLabel} {...tooltipProps}>
-                        <ThemeIcon radius="xl" size="xs" color="gray">
-                          <IconQuestionMark />
-                        </ThemeIcon>
-                      </Tooltip>
+                      <ActionIcon radius="xl" size="xs" onClick={openBrowsingLevelGuide}>
+                        <IconQuestionMark />
+                      </ActionIcon>
                     </Group>
                     <Text size="xs" color="dimmed">
                       This bounty is intended to produce mature content.
