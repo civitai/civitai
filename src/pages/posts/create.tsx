@@ -35,16 +35,15 @@ import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { ResourceReviewThumbActions } from '~/components/ResourceReview/ResourceReviewThumbActions';
 import { z } from 'zod';
-import { booleanString } from '~/utils/zod-helpers';
 
 const querySchema = z.object({
   modelId: z.coerce.number().optional(),
   modelVersionId: z.coerce.number().optional(),
   tag: z.coerce.number().optional(),
-  video: booleanString().optional(),
+  video: z.string().optional(),
   returnUrl: z.string().optional(),
   clubId: z.coerce.number().optional(),
-  reviewing: booleanString().optional(),
+  reviewing: z.string().optional(),
 });
 
 export default function PostCreate() {
