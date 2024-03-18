@@ -72,14 +72,54 @@ export default function LinkApp() {
 
         <Stack spacing={12} mb={40}>
           <Title className={classes.heading} order={2}>
-            Add models to SD
+            Add models to Stable Diffusion with one click
           </Title>
           <Text className={classes.copy}>
-            Directly add any models from Civitai to your Stable Diffusion instance.
+            Directly add any models from Civitai to your Stable Diffusion instance with just one
+            click.
           </Text>
         </Stack>
 
-        {/* TODO: Update copy */}
+        <Grid gutter={40} gutterMd={80}>
+          <Grid.Col md={6}>
+            <Flex justify="center" className={classes.gradientContainer}>
+              <Image
+                src="/images/link/download.png"
+                alt="download"
+                id="download"
+                width="auto"
+                imageProps={{
+                  style: { objectFit: 'cover', objectPosition: 'top', height: '100%' },
+                }}
+              />
+              <div className={classes.gradientBox} />
+            </Flex>
+            <Title className={classes.heading}>
+              See at a glance any model installed while browsing the site
+            </Title>
+          </Grid.Col>
+          <Grid.Col md={6}>
+            <Flex justify="center" className={classes.gradientContainer}>
+              <Image
+                src="/images/link/activity.png"
+                alt="activity"
+                id="activity"
+                width="auto"
+                imageProps={{
+                  style: { objectFit: 'cover', objectPosition: 'top', height: '100%' },
+                }}
+              />
+              <div className={classes.gradientBox} />
+            </Flex>
+            <Title className={classes.heading} order={3}>
+              Pair with your Vault so you can easily free up space
+            </Title>
+            <Text className={classes.copy}>
+              Models added to Vault will not be deleted even if the creator removed them from
+              Civitai.
+            </Text>
+          </Grid.Col>
+        </Grid>
         <Grid gutter={40} gutterMd={80}>
           <Grid.Col md={6}>
             <Flex justify="center" className={classes.gradientContainer}>
@@ -98,7 +138,7 @@ export default function LinkApp() {
               Manage files
             </Title>
             <Text className={classes.copy}>
-              Directly add any models from Civitai to your Stable Diffusion instance.
+              Directly add or remove any models from Civitai to your Stable Diffusion instance.
             </Text>
           </Grid.Col>
           <Grid.Col md={6}>
@@ -172,6 +212,7 @@ const useStyles = createStyles((theme) => ({
   copy: {
     fontSize: 16,
     fontWeight: 500,
+    marginTop: 8,
   },
   videoBorder: {
     borderRadius: 12,
