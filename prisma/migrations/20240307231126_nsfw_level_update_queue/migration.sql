@@ -1,5 +1,10 @@
 
 
+UPDATE "Article" a
+SET "coverId" = null
+WHERE NOT EXISTS(
+	SELECT i.id from "Image" i WHERE i.id = a."coverId"
+);
 
 -- CreateIndex
 CREATE UNIQUE INDEX "Article_coverId_key" ON "Article"("coverId");

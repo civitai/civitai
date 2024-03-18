@@ -9,7 +9,7 @@ BEGIN
         WHEN bool_or(t.nsfw = 'Mature') THEN 'Mature'::"NsfwLevel"
         WHEN bool_or(t.nsfw = 'Soft') THEN 'Soft'::"NsfwLevel"
         ELSE 'None'::"NsfwLevel"
-      END "nsfw"
+      END "nsfw",
       CASE
         WHEN bool_or(t."nsfwLevel" = 32) THEN 32
         WHEN bool_or(t."nsfwLevel" = 16) THEN 16
