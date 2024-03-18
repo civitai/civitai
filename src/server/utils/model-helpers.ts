@@ -32,6 +32,7 @@ export function getPrimaryFile<T extends FileFormatType>(
     let score = 1000;
     for (const [key, value] of Object.entries(file.metadata)) {
       const weight = preferenceWeight[key as FileMetaKey];
+      if (!weight) continue;
       if (value === preferredMetadata[key as FileMetaKey]) score += weight;
       else score -= weight;
     }

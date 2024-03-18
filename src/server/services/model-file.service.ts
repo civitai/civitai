@@ -16,6 +16,18 @@ export const getFilesByVersionIds = ({ ids }: { ids: number[] }) => {
   });
 };
 
+export function reduceToBasicFileMetadata(
+  metadataRaw: Prisma.JsonValue | BasicFileMetadata
+): BasicFileMetadata {
+  if (typeof metadataRaw !== 'object') return {};
+  const { format, size, fp } = metadataRaw as BasicFileMetadata;
+  return {
+    format,
+    size,
+    fp,
+  };
+}
+
 type CacheFilesForModelVersions = {
   modelVersionId: number;
   files: ModelFileModel[];
@@ -27,7 +39,14 @@ export async function getFilesForModelVersionCache(modelVersionIds: number[]) {
     ids: modelVersionIds,
     ttl: CacheTTL.sm,
     lookupFn: async (ids) => {
-      const files = await getFilesByVersionIds({ ids });
+      let files = await getFilesByVersionIds({ ids });
+      files =
+        files?.map(({ metadata, ...file }) => {
+          return {
+            ...file,
+            metadata: reduceToBasicFileMetadata(metadata),
+          };
+        }) ?? [];
 
       const records: Record<number, CacheFilesForModelVersions> = {};
       for (const file of files) {

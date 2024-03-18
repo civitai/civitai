@@ -2,7 +2,7 @@ import { Button, createStyles, Group, Image, Radio, Stack, Text } from '@mantine
 import { ModelStatus, ModelType, ModelUploadType, TrainingStatus } from '@prisma/client';
 import React, { useState } from 'react';
 import { z } from 'zod';
-import { goNext } from '~/components/Resource/Forms/Training/TrainingCommon';
+import { goNext } from '~/components/Training/Form/TrainingCommon';
 import { Form, InputRadioGroup, InputText, useForm } from '~/libs/form';
 import { BaseModel, constants } from '~/server/common/constants';
 import { TrainingDetailsObj } from '~/server/schema/model-version.schema';

@@ -288,6 +288,8 @@ export const getModelsInfiniteHandler = async ({
       });
       if (result.isPrivate) isPrivate = true;
       results.push(...result.items);
+      if (!result.nextCursor) break;
+
       input.cursor = result.nextCursor;
       nextCursor = result.nextCursor;
       loopCount++;

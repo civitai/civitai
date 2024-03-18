@@ -2,7 +2,7 @@ import { Badge, Button, Flex, Grid, Group, Modal, Stack, TextInput } from '@mant
 import { IconArrowNarrowRight } from '@tabler/icons-react';
 import React, { Fragment, useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
-import { getCaptionAsList } from '~/components/Resource/Forms/Training/TrainingImages';
+import { getCaptionAsList } from '~/components/Training/Form/TrainingImages';
 import type { ImageDataType } from '~/store/training.store';
 
 export const TrainingEditTagsModal = ({
