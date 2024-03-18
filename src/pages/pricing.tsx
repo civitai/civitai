@@ -73,7 +73,7 @@ export default function Pricing() {
         </Stack>
       </Container>
       <Container>
-        <Tabs variant="outline" defaultValue="subscribe">
+        <Tabs variant="pills" defaultValue="subscribe" radius="xl" color="gray">
           <Tabs.List position="center">
             <Tabs.Tab value="subscribe" icon={<IconCalendarDue size={20} />}>
               Membership
@@ -103,13 +103,6 @@ export default function Pricing() {
                     </ContainerGrid.Col>
                   ))}
                 </ContainerGrid>
-              )}
-              {!showSubscribeButton && (
-                <Center>
-                  <ManageSubscriptionButton>
-                    <Button>Manage your Membership</Button>
-                  </ManageSubscriptionButton>
-                </Center>
               )}
             </Stack>
           </Tabs.Panel>

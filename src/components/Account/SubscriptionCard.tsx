@@ -90,12 +90,12 @@ export function SubscriptionCard() {
         ) : data ? (
           <DescriptionTable items={details} />
         ) : null}
-        {displayStatus === 'active' && (
+        {displayStatus === 'active' && data && (
           <Stack>
             <Text size="md" weight={500}>
               Your Membership Includes
             </Text>
-            <PlanBenefitList benefits={getPlanDetails(data?.product).benefits} />
+            <PlanBenefitList benefits={getPlanDetails(data.product).benefits} />
           </Stack>
         )}
       </Stack>

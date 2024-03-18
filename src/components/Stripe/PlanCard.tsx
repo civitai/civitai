@@ -8,6 +8,7 @@ import {
   Group,
   Select,
   Button,
+  ButtonProps,
 } from '@mantine/core';
 import {
   IconAdCircleOff,
@@ -27,39 +28,76 @@ import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
 import { getStripeCurrencyDisplay } from '~/utils/string-helpers';
 import { ProductMetadata } from '~/server/schema/stripe.schema';
 import { isDefined } from '~/utils/type-guards';
-import { formatKBytes } from '~/utils/number-helpers';
+import { formatKBytes, numberWithCommas } from '~/utils/number-helpers';
 import { constants } from '~/server/common/constants';
+import { shortenPlanInterval } from '~/components/Stripe/stripe.utils';
+import { ManageSubscriptionButton } from '~/components/Stripe/ManageSubscriptionButton';
 
 type PlanCardProps = {
   product: StripePlan;
   subscription?: StripeSubscription | null;
 };
 
+const subscribeBtnProps: Record<string, Partial<ButtonProps>> = {
+  upgrade: {
+    color: 'blue',
+    variant: 'filled',
+  },
+  downgrade: {
+    color: 'gray',
+    variant: 'filled',
+  },
+  active: {
+    color: 'gray',
+    variant: 'outline',
+  },
+  subscribe: {
+    color: 'blue',
+    variant: 'filled',
+  },
+} as const;
+
 export function PlanCard({ product, subscription }: PlanCardProps) {
-  const isActivePlan = subscription?.product?.id === product.id;
+  const hasActiveSubscription = subscription?.status === 'active';
+  const isActivePlan = hasActiveSubscription && subscription?.product?.id === product.id;
   const { classes } = useStyles();
   const meta = (product.metadata ?? {}) as ProductMetadata;
+  const subscriptionMeta = (subscription?.product.metadata ?? {}) as ProductMetadata;
+  const isUpgrade =
+    hasActiveSubscription &&
+    constants.memberships.tierOrder.indexOf(meta.tier) >
+      constants.memberships.tierOrder.indexOf(subscriptionMeta.tier ?? '');
+  const isDowngrade =
+    hasActiveSubscription &&
+    constants.memberships.tierOrder.indexOf(meta.tier) <
+      constants.memberships.tierOrder.indexOf(subscriptionMeta.tier ?? '');
   const { benefits, image } = getPlanDetails(product) ?? {};
   const defaultPriceId = isActivePlan
     ? subscription?.price.id ?? product.defaultPriceId
     : product.defaultPriceId;
   const [priceId, setPriceId] = useState<string | null>(defaultPriceId);
   const price = product.prices.find((p) => p.id === priceId) ?? product.prices[0];
-  const canSubscribe = (!subscription || !!subscription.canceledAt) && priceId;
+  const btnProps = isActivePlan
+    ? subscribeBtnProps.active
+    : isUpgrade
+    ? subscribeBtnProps.upgrade
+    : isDowngrade
+    ? subscribeBtnProps.downgrade
+    : subscribeBtnProps.subscribe;
 
   return (
-    <Card withBorder style={{ height: '100%' }}>
+    <Card className={classes.card}>
       <Stack justify="space-between" style={{ height: '100%' }}>
         <Stack>
-          <Stack spacing={0} mb="md">
+          <Stack spacing="md" mb="md">
+            <Title className={classes.title} order={2} align="center" mb="sm">
+              {product.name}
+            </Title>
             {image && (
               <Center>
                 <EdgeMedia src={image} width={128} className={classes.image} />
               </Center>
             )}
-            <Title className={classes.title} order={2} align="center" mb="sm">
-              {product.name}
-            </Title>
             <Group position="center" spacing={4}>
               <Text className={classes.price} align="center" size={18} weight={500} lh={1}>
                 {getStripeCurrencyDisplay(price.unitAmount, price.currency)}
@@ -93,19 +131,38 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
                   },
                 })}
               />
+              <Text className={classes.price} align="center" color="dimmed">
+                / {shortenPlanInterval(price.interval)}
+              </Text>
             </Group>
-            <Text className={classes.price} align="center" color="dimmed">
-              per {price.interval}
-            </Text>
+
+            {priceId && (
+              <>
+                {isActivePlan ? (
+                  <ManageSubscriptionButton>
+                    <Button radius="xl" {...btnProps}>
+                      Manage your Membership
+                    </Button>
+                  </ManageSubscriptionButton>
+                ) : (
+                  <SubscribeButton priceId={priceId}>
+                    <Button radius="xl" {...btnProps}>
+                      {isActivePlan
+                        ? `You are ${meta?.tier}`
+                        : isUpgrade
+                        ? `Upgrade to ${meta?.tier}`
+                        : isDowngrade
+                        ? `Downgrade to ${meta?.tier}`
+                        : `Subscribe to ${meta?.tier}`}
+                    </Button>
+                  </SubscribeButton>
+                )}
+              </>
+            )}
           </Stack>
           {benefits && <PlanBenefitList benefits={benefits} />}
           {product.description && <Text>{product.description}</Text>}
         </Stack>
-        {canSubscribe && (
-          <SubscribeButton priceId={priceId}>
-            <Button>Subscribe</Button>
-          </SubscribeButton>
-        )}
       </Stack>
     </Card>
   );
@@ -115,39 +172,33 @@ export const getPlanDetails: (product: StripePlan) => PlanMeta = (product: Strip
   const metadata = (product.metadata ?? {}) as ProductMetadata;
   const planMeta = {
     name: product?.name ?? 'Supporter Tier',
-    image: metadata?.badge ?? constants.badges[metadata.tier] ?? constants.supporterBadge,
+    image:
+      metadata?.badge ?? constants.memberships.badges[metadata.tier] ?? constants.supporterBadge,
     benefits: [
-      { content: 'Ad free browsing', icon: <IconAdCircleOff size={benefitIconSize} /> },
-      { content: 'Civitai Link' },
-      { content: 'Civitai Archive' },
-      { content: 'Unique Supporter Badge each month' },
-      { content: 'Can equip special cosmetics' },
-      { content: 'Exclusive Discord channels' },
-      { content: 'Early access content' },
-      { content: 'Early access to new features' },
       {
         icon: <IconBolt size={benefitIconSize} />,
         iconColor: 'yellow',
+        iconVariant: 'light',
         content: (
           <Text>
-            <Text span>
-              <CurrencyBadge currency={Currency.BUZZ} unitAmount={metadata?.monthlyBuzz ?? 5000} />{' '}
-              each month
+            <Text span color="yellow.7">
+              {numberWithCommas(metadata?.monthlyBuzz ?? 5000)} Buzz for spending
             </Text>
           </Text>
         ),
       },
       metadata.vaultSizeKb
         ? {
-            content: `Vault size: ${formatKBytes(metadata.vaultSizeKb, 0)}`,
-            icon: <IconCloud />,
-            iconColor: 'yellow',
+            content: <Text color="green">Vault size: {formatKBytes(metadata.vaultSizeKb, 0)}</Text>,
+            icon: <IconCloud size={benefitIconSize} />,
+            iconColor: 'green',
+            iconVariant: 'light',
           }
         : undefined,
       metadata.animatedBadge
         ? {
             content: (
-              <Text>
+              <Text color="blue">
                 Unique{' '}
                 <Text component="span" weight="bold">
                   Animated
@@ -155,8 +206,9 @@ export const getPlanDetails: (product: StripePlan) => PlanMeta = (product: Strip
                 Supported Badge each month
               </Text>
             ),
-            icon: <IconVideo />,
-            iconColor: 'yellow',
+            icon: <IconVideo size={benefitIconSize} />,
+            iconColor: 'blue',
+            iconVariant: 'light',
           }
         : undefined,
     ].filter(isDefined),
@@ -172,6 +224,12 @@ type PlanMeta = {
 };
 
 const useStyles = createStyles((theme) => ({
+  card: {
+    height: '100%',
+    background: theme.colorScheme === 'dark' ? theme.colors.dark[8] : theme.colors.gray[0],
+    borderRadius: theme.radius.md,
+    padding: theme.spacing.lg,
+  },
   image: {
     [containerQuery.smallerThan('sm')]: {
       width: 96,

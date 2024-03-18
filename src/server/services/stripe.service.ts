@@ -46,6 +46,9 @@ export const getPlans = async () => {
           currency: true,
           metadata: true,
         },
+        where: {
+          active: true,
+        },
       },
     },
   });
@@ -57,7 +60,7 @@ export const getPlans = async () => {
     })
     .map((product) => {
       const prices = product.prices.map((x) => ({ ...x, unitAmount: x.unitAmount ?? 0 }));
-      const price = prices.filter((x) => x.id === product.defaultPriceId)[0];
+      const price = prices.filter((x) => x.id === product.defaultPriceId)[0] ?? prices[0];
 
       return {
         ...product,
@@ -142,15 +145,49 @@ export const createSubscribeSession = async ({
     customerId = await createCustomer(user);
   }
 
+  const products = await dbRead.product.findMany({});
+  const membershipProducts = products.filter(({ metadata }) => {
+    return !!(metadata as any)?.[env.STRIPE_METADATA_KEY];
+  });
+
   // Check to see if this user has a subscription with Stripe
   const { data: subscriptions } = await stripe.subscriptions.list({
     customer: customerId,
   });
+  const price = await stripe.prices.retrieve(priceId);
 
-  if (subscriptions.filter((x) => x.status !== 'canceled').length > 0) {
-    const { url } = await createManageSubscriptionSession({ customerId });
-    await invalidateSession(user.id);
-    return { sessionId: null, url };
+  if (!price || !membershipProducts.find((x) => x.id === (price.product as string))) {
+    throw throwNotFoundError(`The product you are trying to purchase does not exists`);
+  }
+
+  const activeSubscription = subscriptions.find((x) => x.status !== 'canceled');
+
+  if (activeSubscription) {
+    const subscriptionItem = activeSubscription.items.data.find((d) =>
+      membershipProducts.some((p) => p.id === (d.price.product as string))
+    );
+
+    if (!subscriptionItem) {
+      throw throwBadRequestError(
+        `Your subscription does not have a main plan. Please contact administration`
+      );
+    }
+
+    const isActivePrice = subscriptionItem.price.id === price.id;
+    if (!isActivePrice) {
+      const { url } = await createSubscriptionUpgradeSession({
+        customerId,
+        priceId,
+        subscriptionId: activeSubscription.id,
+        subscriptionItemId: subscriptionItem.id,
+      });
+      await invalidateSession(user.id);
+      return { sessionId: null, url };
+    } else {
+      const { url } = await createManageSubscriptionSession({ customerId });
+      await invalidateSession(user.id);
+      return { sessionId: null, url };
+    }
   }
 
   // array of items we are charging the customer
@@ -216,6 +253,40 @@ export const createManageSubscriptionSession = async ({ customerId }: { customer
   const session = await stripe.billingPortal.sessions.create({
     customer: customerId,
     return_url: `${baseUrl}/user/account`,
+  });
+
+  return { url: session.url };
+};
+
+export const createSubscriptionUpgradeSession = async ({
+  customerId,
+  subscriptionId,
+  priceId,
+  subscriptionItemId,
+}: {
+  customerId: string;
+  subscriptionId: string;
+  subscriptionItemId: string;
+  priceId: string;
+}) => {
+  const stripe = await getServerStripe();
+
+  const session = await stripe.billingPortal.sessions.create({
+    customer: customerId,
+    return_url: `${baseUrl}/user/account`,
+    flow_data: {
+      type: 'subscription_update_confirm',
+      subscription_update_confirm: {
+        subscription: subscriptionId,
+        items: [
+          {
+            id: subscriptionItemId,
+            quantity: 1,
+            price: priceId,
+          },
+        ],
+      },
+    },
   });
 
   return { url: session.url };
