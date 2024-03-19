@@ -96,7 +96,7 @@ BEGIN
     -- When a model is deleted, schedule removal of FKs (collectionItems)
     PERFORM create_job_queue_record(OLD.id, 'Model', 'CleanUp');
   -- On model publish, create a job to update the nsfw level of the related entities (collectionItems)
-  ELSIF (NEW.status = 'Published' AND OLD.status != 'Published' AND OLD."nsfwLevel" != 0) THEN
+  ELSIF ((NEW.status = 'Published' AND OLD.status != 'Published' AND OLD."nsfwLevel" != 0) OR (NEW."nsfw" != OLD."nsfw" AND NEW.status = 'Published')) THEN
     PERFORM create_job_queue_record(OLD."id", 'Model', 'UpdateNsfwLevel');
   END IF;
   RETURN NULL;
@@ -117,7 +117,7 @@ BEGIN
     -- When an article is deleted, schedule removal of FKs (collectionItems)
     PERFORM create_job_queue_record(OLD.id, 'Article', 'CleanUp');
   -- On article publish, create a job to update the nsfw level of the related entities (collectionItems)
-  ELSIF (NEW."publishedAt" IS NOT NULL AND OLD."publishedAt" IS NULL AND OLD."nsfwLevel" != 0) THEN
+  ELSIF ((NEW."publishedAt" IS NOT NULL AND OLD."publishedAt" IS NULL AND OLD."nsfwLevel" != 0) OR (NEW."userNsfwLevel" != OLD."userNsfwLevel" AND NEW."publishedAt" IS NOT NULL)) THEN
     PERFORM create_job_queue_record(OLD."id", 'Article', 'UpdateNsfwLevel');
   END IF;
   RETURN NULL;

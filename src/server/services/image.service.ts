@@ -1380,15 +1380,16 @@ export async function getImagesForModelVersionCache(modelVersionIds: number[]) {
         Prisma.sql`(p."userId" = m."userId" OR m."userId" = -1)`,
         Prisma.sql`p."modelVersionId" IN (${Prisma.join(ids)})`,
         Prisma.sql`i."needsReview" IS NULL`,
+        Prisma.sql`i."nsfwLevel" != 0`,
       ];
 
       // ensure that only scanned images make it to the main feed
       // nb: if image ingestion fails, models will not make it to any model feed (including the user published tab)
-      if (isProd) {
-        imageWhere.push(
-          Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`
-        );
-      }
+      // if (isProd) {
+      //   imageWhere.push(
+      //     Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`
+      //   );
+      // }
 
       const query = Prisma.sql`
         WITH targets AS (

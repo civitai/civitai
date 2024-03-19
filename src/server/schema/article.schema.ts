@@ -57,4 +57,5 @@ export const upsertArticleInput = z.object({
   userNsfwLevel: z.number().default(0),
   publishedAt: z.date().nullish(),
   attachments: z.array(baseFileSchema).optional(),
+  lockedProperties: z.string().array().optional(),
 });

@@ -18,7 +18,7 @@ import {
 } from '@prisma/client';
 import { IconExclamationMark } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { z } from 'zod';
 
 import {
@@ -43,6 +43,7 @@ import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 
 import { ModelById } from '~/types/router';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 const schema = modelUpsertSchema
   .extend({
@@ -72,6 +73,10 @@ const commercialUseOptions: Array<{ value: CommercialUse; label: string }> = [
 export function ModelUpsertForm({ model, children, onSubmit }: Props) {
   const router = useRouter();
   const result = querySchema.safeParse(router.query);
+  const currentUser = useCurrentUser();
+
+  const lockedPropertiesRef = useRef<string[]>(model?.lockedProperties ?? []);
+  const canEditNsfw = !currentUser?.isModerator ? !model?.lockedProperties?.includes('nsfw') : true;
 
   const defaultCategory = result.success ? result.data.category : undefined;
   const defaultValues: z.infer<typeof schema> = {
@@ -96,6 +101,7 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
     allowDifferentLicense: model?.allowDifferentLicense ?? true,
     category: model?.tagsOnModels?.find((tag) => !!tag.isCategory)?.id ?? defaultCategory,
   };
+
   const form = useForm({ schema, mode: 'onChange', defaultValues, shouldUnregister: false });
   const queryUtils = trpc.useUtils();
 
@@ -145,9 +151,24 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
       const selectedCategory = data?.items.find((cat) => cat.id === category);
       const tags =
         tagsOnModels && selectedCategory ? tagsOnModels.concat([selectedCategory]) : tagsOnModels;
-      upsertModelMutation.mutate({ ...rest, tagsOnModels: tags, templateId, bountyId });
+      upsertModelMutation.mutate({
+        ...rest,
+        nsfw: canEditNsfw ? rest?.nsfw : undefined,
+        tagsOnModels: tags,
+        templateId,
+        bountyId,
+        lockedProperties: lockedPropertiesRef.current,
+      });
     } else onSubmit(defaultValues);
   };
+
+  useEffect(() => {
+    if (currentUser?.isModerator) {
+      if (nsfw)
+        lockedPropertiesRef.current = [...new Set([...lockedPropertiesRef.current, 'nsfw'])];
+      else lockedPropertiesRef.current = lockedPropertiesRef.current.filter((x) => x !== 'nsfw');
+    }
+  }, [nsfw]);
 
   useEffect(() => {
     if (model)
@@ -337,7 +358,11 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                   label="Depicts an actual person"
                   description="For Example: Tom Cruise or Tom Cruise as Maverick"
                 />
-                <InputCheckbox name="nsfw" label="Is intended to produce sexual themes" />
+                <InputCheckbox
+                  name="nsfw"
+                  label="Is intended to produce sexual themes"
+                  disabled={!canEditNsfw}
+                />
               </Stack>
             </Paper>
             {hasPoiInNsfw && (

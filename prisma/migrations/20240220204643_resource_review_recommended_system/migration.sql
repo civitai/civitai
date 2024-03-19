@@ -61,7 +61,7 @@ ON CONFLICT ("modelVersionId", timeframe) DO UPDATE SET "thumbsUpCount" = EXCLUD
 */
 
 -- Add missing model metrics
-ALTER TABLE "ModelMetric" ADD COLUMN "updatedAt" TIMESTAMP DEFAULT now();
+ALTER TABLE "ModelMetric" ADD COLUMN IF NOT EXISTS "updatedAt" TIMESTAMP DEFAULT now();
 INSERT INTO "ModelMetric" ("modelId", timeframe, "updatedAt")
 SELECT
   id,

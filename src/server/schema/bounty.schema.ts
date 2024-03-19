@@ -79,6 +79,7 @@ export const updateBountyInputSchema = createBountyInputSchema
     ownRights: true,
     images: true,
     entryLimit: true,
+    lockedProperties: z.string().array().optional(),
   })
   .extend({
     id: z.number(),

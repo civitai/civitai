@@ -525,19 +525,17 @@ export const getModelsRaw = async ({
     modelVersionWhere.push(Prisma.sql`cm."modelVersionId" = mv."id"`);
   }
 
-  if (browsingLevel) {
-    const browsingLevelQuery = Prisma.sql`(mv."nsfwLevel" & ${browsingLevel}) != 0`;
-    if (pending && (isModerator || userId)) {
-      if (isModerator) {
-        modelVersionWhere.push(Prisma.sql`${browsingLevelQuery} OR mv."nsfwLevel" = 0`);
-      } else if (userId) {
-        modelVersionWhere.push(
-          Prisma.sql`${browsingLevelQuery} OR (mv."nsfwLevel" = 0 AND m."userId" = ${userId})`
-        );
-      }
-    } else {
-      modelVersionWhere.push(browsingLevelQuery);
+  const browsingLevelQuery = Prisma.sql`(mv."nsfwLevel" & ${browsingLevel}) != 0`;
+  if (pending && (isModerator || userId)) {
+    if (isModerator) {
+      modelVersionWhere.push(Prisma.sql`${browsingLevelQuery} OR mv."nsfwLevel" = 0`);
+    } else if (userId) {
+      modelVersionWhere.push(
+        Prisma.sql`${browsingLevelQuery} OR (mv."nsfwLevel" = 0 AND m."userId" = ${userId})`
+      );
     }
+  } else {
+    modelVersionWhere.push(browsingLevelQuery);
   }
 
   const includeDetails = !!include?.includes('details');
