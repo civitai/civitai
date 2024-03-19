@@ -42,7 +42,7 @@ export function inJobContext(res: NextApiResponse, fn: (jobContext: JobContext) 
     jobContext.status = 'canceled';
     await Promise.all(onCancel.map((x) => x()));
   });
-  fn(jobContext).finally(() => {
+  return fn(jobContext).finally(() => {
     if (jobContext.status !== 'running') return;
     jobContext.status = 'finished';
   });

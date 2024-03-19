@@ -146,12 +146,12 @@ export function NotificationBell() {
             <Paper radius="md" withBorder sx={{ overflow: 'hidden' }} component={ScrollArea}>
               <NotificationList
                 items={notifications}
-                onItemClick={(notification) => {
+                onItemClick={(notification, keepOpened) => {
                   readNotificationMutation.mutate({
                     id: notification.id,
                     category: notification.category,
                   });
-                  setOpened(false);
+                  setOpened(keepOpened);
                 }}
               />
               {hasNextPage && (

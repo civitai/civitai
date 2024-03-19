@@ -77,10 +77,7 @@ import { containerQuery } from '~/utils/mantine-css-helpers';
 import { FeatureIntroductionHelpButton } from '~/components/FeatureIntroduction/FeatureIntroduction';
 import { ContentPolicyLink } from '../ContentPolicyLink/ContentPolicyLink';
 import { InfoPopover } from '../InfoPopover/InfoPopover';
-import {
-  nsfwBrowsingLevelsFlag,
-  browsingLevelLabels,
-} from '~/shared/constants/browsingLevel.constants';
+import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils';
 import { NsfwLevel } from '~/server/common/enums';
 
@@ -106,12 +103,9 @@ const bountyEntryModeDescription: Record<BountyEntryMode, string> = {
 
 const formSchema = upsertBountyInputSchema
   .omit({ images: true })
-  .refine(
-    (data) => !(Flags.intersects(data.userNsfwLevel ?? 0, nsfwBrowsingLevelsFlag) && data.poi),
-    {
-      message: 'Mature content depicting actual people is not permitted.',
-    }
-  )
+  .refine((data) => !(data.nsfw && data.poi), {
+    message: 'Mature content depicting actual people is not permitted.',
+  })
   .refine((data) => data.startsAt < data.expiresAt, {
     message: 'Start date must be before expiration date',
     path: ['startsAt'],
@@ -227,7 +221,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
         !!bounty &&
         bounty.files.length > 0 &&
         bounty.files.every((f) => f.metadata?.ownRights === true),
-      userNsfwLevel: bounty?.userNsfwLevel ?? 0,
+      nsfw: bounty?.nsfw ?? false,
     },
     shouldUnregister: false,
   });
@@ -254,8 +248,8 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
   const mode = form.watch('mode');
   const currency = form.watch('currency');
   const unitAmount = form.watch('unitAmount');
-  const [userNsfwLevel = 0, poi] = form.watch(['userNsfwLevel', 'poi']);
-  const hasPoiInNsfw = Flags.intersects(userNsfwLevel ?? 0, nsfwBrowsingLevelsFlag) && poi;
+  const [nsfw, poi] = form.watch(['nsfw', 'poi']);
+  const hasPoiInNsfw = nsfw && poi;
   const expiresAt = form.watch('expiresAt');
   const files = form.watch('files');
 
@@ -817,32 +811,16 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                   </Stack>
                 }
               />
-              <InputFlag
-                spacing="xs"
-                name="userNsfwLevel"
-                flag="NsfwLevel"
-                label={
-                  <Group spacing={4} noWrap>
-                    <Text inline>Maturity Level</Text>
-                    <Tooltip label={matureLabel} {...tooltipProps}>
-                      <ThemeIcon radius="xl" size="xs" color="gray">
-                        <IconQuestionMark />
-                      </ThemeIcon>
-                    </Tooltip>
-                  </Group>
-                }
-                mapLabel={({ value }) => browsingLevelLabels[value as NsfwLevel]}
-              />
+              <InputSwitch name="nsfw" label="Is intended to produce sexual themes" />
+
               {hasPoiInNsfw && (
-                <>
-                  <AlertWithIcon color="red" pl={10} iconColor="red" icon={<IconExclamationMark />}>
-                    <Text>
-                      Mature content depicting actual people is not permitted. Please revise the
-                      content of this listing to ensure no actual person is depicted in an mature
-                      context out of respect for the individual.
-                    </Text>
-                  </AlertWithIcon>
-                </>
+                <AlertWithIcon color="red" pl={10} iconColor="red" icon={<IconExclamationMark />}>
+                  <Text>
+                    Mature content depicting actual people is not permitted. Please revise the
+                    content of this listing to ensure no actual person is depicted in an mature
+                    context out of respect for the individual.
+                  </Text>
+                </AlertWithIcon>
               )}
               <Text size="xs">
                 Bounty requests MUST adhere to the content rules defined in our{' '}

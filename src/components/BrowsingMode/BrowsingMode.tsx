@@ -1,7 +1,20 @@
-import { Group, Text, Stack, Switch, Popover, ActionIcon, Checkbox } from '@mantine/core';
+import {
+  Group,
+  Text,
+  Stack,
+  Switch,
+  Popover,
+  ActionIcon,
+  Checkbox,
+  Divider,
+  Modal,
+} from '@mantine/core';
 import { IconEyeExclamation, TablerIconsProps } from '@tabler/icons-react';
+import { HiddenTagsSection } from '~/components/Account/HiddenTagsSection';
 import { useBrowsingModeContext } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { BrowsingLevelsGrouped } from '~/components/BrowsingLevel/BrowsingLevelsGrouped';
+import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';
 
@@ -32,47 +45,62 @@ export function BrowsingModeMenu() {
   const blurNsfw = currentUser?.blurNsfw;
   const disableHidden = currentUser?.disableHidden;
 
-  // const [showDecorations, setShowDecorations] = useLocalStorage({
-  //   key: 'showDecorations',
-  //   defaultValue: true,
-  // });
+  const handleHiddenFiltersClick = () => {
+    dialogStore.trigger({
+      component: HiddenTagsModal,
+      target: '#browsing-mode',
+    });
+  };
 
   return (
-    <Stack spacing="md">
-      {/* <Divider label="Browsing Mode" labelProps={{ weight: 'bold' }} mb={-4} /> */}
-      <Group position="apart">
-        <Group align="center" spacing={4}>
-          <IconEyeExclamation />
-          <Text>Mature Content</Text>
+    <div id="browsing-mode">
+      <Stack spacing="md" className="sm:min-w-96">
+        <Group position="apart">
+          <Group align="center" spacing={4}>
+            <IconEyeExclamation />
+            <Text>Mature Content</Text>
+          </Group>
+          <Switch checked={showNsfw} onChange={(e) => toggleShowNsfw(e.target.checked)} />
         </Group>
-        <Switch checked={showNsfw} onChange={(e) => toggleShowNsfw(e.target.checked)} />
-      </Group>
-      {showNsfw && (
-        <>
-          <BrowsingLevelsGrouped />
-          <Checkbox
-            checked={blurNsfw}
-            onChange={(e) => toggleBlurNsfw(e.target.checked)}
-            label="Blur mature content"
-          />
-        </>
-      )}
+        {/* <Divider /> */}
+        {showNsfw && (
+          <Stack spacing="lg">
+            <BrowsingLevelsGrouped />
+            <Checkbox
+              checked={blurNsfw}
+              onChange={(e) => toggleBlurNsfw(e.target.checked)}
+              label="Blur mature content"
+              size="md"
+            />
+          </Stack>
+        )}
 
-      <Checkbox
-        checked={!disableHidden}
-        onChange={(e) => toggleDisableHidden(!e.target.checked)}
-        label="Apply hidden tags filter"
-      />
-      {/* <Group spacing="xs">
-        <Text size="xs" weight={500}>
-          Event Cosmetics
-        </Text>
-        <Switch
-          ml="auto"
-          checked={showDecorations}
-          onChange={() => setShowDecorations((show) => !show)}
-        />
-      </Group> */}
-    </Stack>
+        <Group position="apart">
+          <Checkbox
+            checked={!disableHidden}
+            onChange={(e) => toggleDisableHidden(!e.target.checked)}
+            label="Apply hidden tags filter"
+            size="md"
+          />
+          <Text
+            variant="link"
+            className="hover:cursor-pointer"
+            underline
+            onClick={handleHiddenFiltersClick}
+          >
+            My filters
+          </Text>
+        </Group>
+      </Stack>
+    </div>
+  );
+}
+
+function HiddenTagsModal() {
+  const dialog = useDialogContext();
+  return (
+    <Modal {...dialog} title="Hidden Tags">
+      <HiddenTagsSection withTitle={false} />
+    </Modal>
   );
 }

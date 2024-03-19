@@ -1,11 +1,12 @@
 import { TmpCookiesObj } from 'cookies-next/lib/types';
 import { z } from 'zod';
+import { booleanString } from '~/utils/zod-helpers';
 
 const cookiesSchema = z.object({
-  showNsfw: z.coerce.boolean().optional(),
-  blurNsfw: z.coerce.boolean().optional(),
+  showNsfw: booleanString().optional(),
+  blurNsfw: booleanString().optional(),
   browsingLevel: z.coerce.number().optional(),
-  disableHidden: z.coerce.boolean().optional(),
+  disableHidden: booleanString().optional(),
   referrals: z
     .object({
       code: z.string().optional(),

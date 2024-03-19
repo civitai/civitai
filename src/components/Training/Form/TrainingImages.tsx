@@ -1,6 +1,7 @@
 import {
   Accordion,
   ActionIcon,
+  Anchor,
   Badge,
   Button,
   Center,
@@ -44,8 +45,8 @@ import { isEqual } from 'lodash-es';
 import React, { useEffect, useState } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
-import { goBack, goNext } from '~/components/Resource/Forms/Training/TrainingCommon';
-import { TrainingEditTagsModal } from '~/components/Resource/Forms/Training/TrainingEditTagsModal';
+import { goBack, goNext } from '~/components/Training/Form/TrainingCommon';
+import { TrainingEditTagsModal } from '~/components/Training/Form/TrainingEditTagsModal';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import { UploadType } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE, ZIP_MIME_TYPE } from '~/server/common/mime-types';
@@ -615,14 +616,13 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
           <Text>
             You can add an existing dataset for your model, or create a new one here. Not sure what
             to do? Read our{' '}
-            <Text
-              component={NextLink}
-              variant="link"
+            <Anchor
+              href="https://education.civitai.com/using-civitai-the-on-site-lora-trainer"
               target="_blank"
-              href="/content/training/dataset-guidelines"
+              rel="nofollow noreferrer"
             >
               Dataset and Training Guidelines
-            </Text>{' '}
+            </Anchor>{' '}
             for more info.
           </Text>
         </div>

@@ -79,10 +79,13 @@ declare global {
     imageFormat: ImageFormat;
   };
 
-  type FileMetadata = {
+  type BasicFileMetadata = {
     format?: ModelFileFormat;
     size?: ModelFileSize;
     fp?: ModelFileFp;
+  };
+
+  type FileMetadata = BasicFileMetadata & {
     ownRights?: boolean;
     shareDataset?: boolean;
     numImages?: number;

@@ -1,13 +1,7 @@
-import {
-  Prisma,
-  SearchIndexUpdateQueueAction,
-  TagSource,
-  TagTarget,
-  TagType,
-} from '@prisma/client';
+import { Prisma, TagSource, TagTarget, TagType } from '@prisma/client';
 import { TagVotableEntityType, VotableTagModel } from '~/libs/tags';
 import { constants } from '~/server/common/constants';
-import { TagSort } from '~/server/common/enums';
+import { TagSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 
 import { dbRead, dbWrite } from '~/server/db/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
@@ -27,6 +21,7 @@ import {
   ImplicitHiddenImages,
 } from '~/server/services/user-preferences.service';
 import { clearImageTagIdsCache } from '~/server/services/image.service';
+import { removeEmpty } from '~/utils/object-helpers';
 
 export const getTagWithModelCount = ({ name }: { name: string }) => {
   return dbRead.$queryRaw<[{ id: number; name: string; count: number }]>`
@@ -85,6 +80,7 @@ export const getTags = async ({
   sort,
   withModels = false,
   includeAdminTags = false,
+  nsfwLevel,
 }: Omit<GetTagsInput, 'limit' | 'page'> & {
   take?: number;
   skip?: number;
@@ -158,11 +154,26 @@ export const getTags = async ({
       ) "isCategory"`
       : Prisma.sql``;
 
-  const tagsRaw = await dbRead.$queryRaw<{ id: number; name: string; isCategory?: boolean }[]>`
+  const isNsfwLevel = nsfwLevel
+    ? Prisma.sql`, COALESCE(
+      (
+          SELECT MAX(pt."nsfwLevel")
+          FROM "TagsOnTags" tot
+          JOIN "Tag" pt ON tot."fromTagId" = pt.id
+          WHERE tot."toTagId" = t.id
+      ),
+      t."nsfwLevel") "nsfwLevel"`
+    : Prisma.sql``;
+
+  const tagsRaw = await dbRead.$queryRaw<
+    { id: number; name: string; isCategory?: boolean; nsfwLevel?: number }[]
+  >`
     SELECT
       t."id",
-      t."name"
+      t."name",
+      t."nsfwLevel"
       ${isCategory}
+      ${isNsfwLevel}
     FROM "Tag" t
     ${Prisma.raw(orderBy.includes('r.') ? `LEFT JOIN "TagRank" r ON r."tagId" = t."id"` : '')}
     WHERE ${Prisma.join(AND, ' AND ')}
@@ -182,10 +193,12 @@ export const getTags = async ({
     }
   }
 
-  const items = tagsRaw.map((t) => ({
-    ...t,
-    models: withModels ? models[t.id] ?? [] : undefined,
-  }));
+  const items = tagsRaw.map((t) =>
+    removeEmpty({
+      ...t,
+      models: withModels ? models[t.id] ?? [] : undefined,
+    })
+  );
   const [{ count }] = await dbRead.$queryRaw<{ count: number }[]>`
     SELECT COUNT(*)::int count FROM "Tag" t
     WHERE ${Prisma.join(AND, ' AND ')}

@@ -29,7 +29,7 @@ export const periodModeSchema = z.enum(['stats', 'published']).default('publishe
 export type PeriodMode = z.infer<typeof periodModeSchema>;
 
 export const baseQuerySchema = z.object({
-  browsingLevel: z.number().min(1),
+  browsingLevel: z.number().optional(),
 });
 
 export type InfiniteQueryInput = z.infer<typeof infiniteQuerySchema>;

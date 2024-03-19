@@ -9,14 +9,14 @@ import {
 import {
   createFile,
   deleteFile,
-  getByVersionId,
+  getFilesByVersionIds,
   updateFile,
 } from '~/server/services/model-file.service';
 import { handleLogError, throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 
 export const getFilesByVersionIdHandler = async ({ input }: { input: GetByIdInput }) => {
   try {
-    return await getByVersionId({ modelVersionId: input.id });
+    return await getFilesByVersionIds({ ids: [input.id] });
   } catch (error) {
     throw throwDbError(error);
   }
@@ -106,18 +106,16 @@ export const deleteFileHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
-    const deleted = await deleteFile({
+    const modelVersionId = await deleteFile({
       id: input.id,
       userId: ctx.user.id,
       isModerator: ctx.user.isModerator,
     });
-    if (!deleted) throw throwNotFoundError(`No file with id ${input.id}`);
+    if (!modelVersionId) throw throwNotFoundError(`No file with id ${input.id}`);
 
-    ctx.track
-      .modelFile({ type: 'Delete', id: input.id, modelVersionId: deleted.modelVersionId })
-      .catch(handleLogError);
+    ctx.track.modelFile({ type: 'Delete', id: input.id, modelVersionId }).catch(handleLogError);
 
-    return deleted;
+    return { modelVersionId };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

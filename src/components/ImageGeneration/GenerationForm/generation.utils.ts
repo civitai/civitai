@@ -13,7 +13,11 @@ import { isDefined } from '~/utils/type-guards';
 import { calculateGenerationBill } from '~/server/common/generation';
 import { RunType } from '~/store/generation.store';
 import { uniqBy } from 'lodash';
-import { GenerateFormModel, SendFeedbackInput } from '~/server/schema/generation.schema';
+import {
+  GenerateFormModel,
+  generationStatusSchema,
+  SendFeedbackInput,
+} from '~/server/schema/generation.schema';
 import React, { useMemo, useCallback } from 'react';
 import { trpc } from '~/utils/trpc';
 import { Generation } from '~/server/services/generation/generation.types';
@@ -42,17 +46,12 @@ export const useDerivedGenerationState = () => {
   });
   const { unstableResources: allUnstableResources } = useUnsupportedResources();
 
-  const { baseModel, isFullCoverageModel } = useGenerationFormStore(
+  const { baseModel } = useGenerationFormStore(
     useCallback(
       ({ model }) => {
         const baseModel = model?.baseModel ? getBaseModelSetKey(model.baseModel) : undefined;
-        const isFullCoverageModel =
-          baseModel && status?.fullCoverageModels
-            ? status?.fullCoverageModels[baseModel]?.some(({ id }) => id === model?.id)
-            : false;
         return {
           baseModel,
-          isFullCoverageModel,
         };
       },
       [status]
@@ -98,22 +97,19 @@ export const useDerivedGenerationState = () => {
     samplerCfgOffset,
     isSDXL: baseModel === 'SDXL',
     isLCM,
-    isFullCoverageModel,
     unstableResources,
   };
 };
 
+const defaultServiceStatus = generationStatusSchema.parse({});
 export const useGenerationStatus = () => {
   const { data: status, isLoading } = trpc.generation.getStatus.useQuery(undefined, {
     cacheTime: 60,
     trpc: { context: { skipBatch: true } },
   });
 
-  return {
-    available: isLoading || status?.available,
-    message: status?.message,
-    fullCoverageModels: status?.fullCoverageModels ?? {},
-  };
+  if (isLoading) return defaultServiceStatus;
+  return status ?? defaultServiceStatus;
 };
 
 export const useUnsupportedResources = () => {
@@ -184,7 +180,7 @@ export const getFormData = (
       // only use generationConfig for previous and new baseModels
       const config = Object.entries(generationConfig)
         .filter(([key]) => [baseModel, newBaseModel].includes(key as BaseModelSetType))
-        .map(([key, value]) => value);
+        .map(([, value]) => value);
 
       const shouldUpdate = !config.every(({ additionalResourceTypes }) => {
         return additionalResourceTypes.some(({ type, baseModelSet, baseModels }) => {
@@ -224,7 +220,7 @@ export const getFormData = (
       .filter((x) => x.modelType !== 'Checkpoint' && x.modelType !== 'VAE')
       .filter(resourceFilter);
   } else if (type === 'remix') {
-    formData.vae = resources.filter((x) => x.modelType === 'VAE')[0];
+    formData.vae = resources.find((x) => x.modelType === 'VAE') ?? formData.vae;
     formData.resources = resources
       .filter((x) => x.modelType !== 'Checkpoint' && x.modelType !== 'VAE')
       .filter(resourceFilter);
@@ -238,7 +234,9 @@ export const getFormData = (
         params?.baseModel
       );
     if (params.sampler)
-      formData.sampler = generation.samplers.includes(params.sampler as any)
+      formData.sampler = generation.samplers.includes(
+        params.sampler as (typeof generation.samplers)[number]
+      )
         ? params.sampler
         : undefined;
   }
@@ -258,7 +256,9 @@ export const getFormData = (
   }
 
   if (type !== 'remix') formData = removeEmpty(formData);
-  formData.resources = formData.resources?.length ? uniqBy(formData.resources, 'id') : undefined;
+  formData.resources = formData.resources?.length
+    ? uniqBy(formData.resources, 'id').slice(0, 9)
+    : undefined;
 
   return {
     ...formData,
@@ -280,14 +280,14 @@ export const getClosestAspectRatio = (width?: number, height?: number, baseModel
 export const getBaseModelSetKey = (baseModel?: string) => {
   if (!baseModel) return undefined;
   return Object.entries(baseModelSets).find(
-    ([key, baseModels]) => key === baseModel || baseModels.includes(baseModel as any)
+    ([key, baseModels]) => key === baseModel || baseModels.includes(baseModel as BaseModel)
   )?.[0] as BaseModelSetType | undefined;
 };
 
 export const getBaseModelSet = (baseModel?: string) => {
   if (!baseModel) return undefined;
   return Object.entries(baseModelSets).find(
-    ([key, set]) => key === baseModel || set.includes(baseModel as any)
+    ([key, set]) => key === baseModel || set.includes(baseModel as BaseModel)
   )?.[1];
 };
 

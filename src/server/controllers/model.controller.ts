@@ -7,12 +7,11 @@ import {
   ModelType,
   ModelUploadType,
   Prisma,
-  SearchIndexUpdateQueueAction,
 } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { CommandResourcesAdd, ResourceType } from '~/components/CivitaiLink/shared-types';
 import { BaseModel, BaseModelType, ModelFileType, constants } from '~/server/common/constants';
-import { ModelSort } from '~/server/common/enums';
+import { ModelSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { Context } from '~/server/createContext';
 
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -39,6 +38,7 @@ import {
   ModelUpsertInput,
   PublishModelSchema,
   ReorderModelVersionsSchema,
+  ToggleCheckpointCoverageInput,
   ToggleModelLockInput,
   UnpublishModelSchema,
   UpdateGallerySettingsInput,
@@ -73,6 +73,8 @@ import {
   updateModelEarlyAccessDeadline,
   upsertModel,
   getGallerySettingsByModelId,
+  toggleCheckpointCoverage,
+  getCheckpointGenerationCoverage,
 } from '~/server/services/model.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { getCategoryTags } from '~/server/services/system-cache';
@@ -90,7 +92,10 @@ import { getDownloadUrl } from '~/utils/delivery-worker';
 import { isDefined } from '~/utils/type-guards';
 import { redis } from '../redis/client';
 import { modelHashSelect } from './../selectors/modelHash.selector';
-import { getUnavailableResources } from '../services/generation/generation.service';
+import {
+  deleteResourceDataCache,
+  getUnavailableResources,
+} from '../services/generation/generation.service';
 import { BountyDetailsSchema } from '../schema/bounty.schema';
 import {
   allBrowsingLevelsFlag,
@@ -126,6 +131,8 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
       select: { id: true, modelVersionId: true },
       orderBy: { id: 'asc' },
     });
+    const coveredCheckpoints =
+      model.type === 'Checkpoint' ? await getCheckpointGenerationCoverage(modelVersionIds) : null;
 
     // recommended VAEs
     const vaeIds = filteredVersions.map((x) => x.vaeId).filter(isDefined);
@@ -139,6 +146,7 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
     const unavailableGenResources = await getUnavailableResources();
 
     const metrics = model.metrics[0];
+    const canManage = ctx.user?.id === model.user.id || ctx.user?.isModerator;
 
     return {
       ...model,
@@ -188,18 +196,21 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
         const canGenerate =
           !!version.generationCoverage?.covered &&
           unavailableGenResources.indexOf(version.id) === -1;
+        const hasCheckpointCoverage = coveredCheckpoints?.includes(version.id) ?? false;
 
         // sort version files by file type, 'Model' type goes first
         const vaeFile = vaeFiles.filter((x) => x.modelVersionId === version.vaeId);
         version.files.push(...vaeFile);
-        const files = version.files.sort((a, b) => {
-          const aType = a.type as ModelFileType;
-          const bType = b.type as ModelFileType;
+        const files = version.files
+          .filter((x) => x.visibility === 'Public' || canManage)
+          .sort((a, b) => {
+            const aType = a.type as ModelFileType;
+            const bType = b.type as ModelFileType;
 
-          if (constants.modelFileOrder[aType] < constants.modelFileOrder[bType]) return -1;
-          else if (constants.modelFileOrder[aType] > constants.modelFileOrder[bType]) return 1;
-          else return 0;
-        });
+            if (constants.modelFileOrder[aType] < constants.modelFileOrder[bType]) return -1;
+            else if (constants.modelFileOrder[aType] > constants.modelFileOrder[bType]) return 1;
+            else return 0;
+          });
 
         const hashes = version.files
           .filter((file) =>
@@ -228,6 +239,7 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
           earlyAccessDeadline,
           canDownload,
           canGenerate,
+          hasCheckpointCoverage,
           files: files as Array<
             Omit<(typeof files)[number], 'metadata'> & { metadata: FileMetadata }
           >,
@@ -265,12 +277,25 @@ export const getModelsInfiniteHandler = async ({
   ctx: Context;
 }) => {
   try {
-    const { isPrivate, ...results } = await getModelsWithImagesAndModelVersions({
-      input,
-      user: ctx.user,
-    });
+    let loopCount = 0;
+    let isPrivate = false;
+    let nextCursor: string | bigint | undefined;
+    const results: Awaited<ReturnType<typeof getModelsWithImagesAndModelVersions>>['items'] = [];
+    while (results.length <= (input.limit ?? 100) && loopCount < 3) {
+      const result = await getModelsWithImagesAndModelVersions({
+        input,
+        user: ctx.user,
+      });
+      if (result.isPrivate) isPrivate = true;
+      results.push(...result.items);
+      if (!result.nextCursor) break;
+
+      input.cursor = result.nextCursor;
+      nextCursor = result.nextCursor;
+      loopCount++;
+    }
     if (isPrivate) ctx.cache.canCache = false;
-    return results;
+    return { items: results, nextCursor };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -339,9 +364,9 @@ export const upsertModelHandler = async ({
 }) => {
   try {
     const { id: userId } = ctx.user;
-    const { userNsfwLevel, poi } = input;
+    const { nsfw, poi } = input;
 
-    if (userNsfwLevel && isNsfwBrowsingLevel(userNsfwLevel) && poi)
+    if (nsfw && poi)
       throw throwBadRequestError('Mature content depicting actual people is not permitted.');
 
     // Check tags for multiple categories
@@ -1343,7 +1368,7 @@ export async function getModelTemplateFieldsHandler({
         allowDerivatives: true,
         allowDifferentLicense: true,
         allowNoCredit: true,
-        userNsfwLevel: true,
+        nsfw: true,
         poi: true,
         tagsOnModels: {
           select: {
@@ -1425,7 +1450,7 @@ export async function getModelTemplateFromBountyHandler({
     const files = await getFilesByEntity({ id: awardedEntry.id, type: 'BountyEntry' });
 
     return {
-      userNsfwLevel: bounty.userNsfwLevel,
+      nsfw: bounty.nsfw,
       poi: bounty.poi,
       name: bounty.name,
       description: bounty.description,
@@ -1474,6 +1499,7 @@ export const updateGallerySettingsHandler = async ({
           images: gallerySettings.hiddenImages,
           users: gallerySettings.hiddenUsers.map(({ id }) => id),
           tags: gallerySettings.hiddenTags.map(({ id }) => id),
+          level: gallerySettings.level,
         }
       : null;
     const updatedModel = await updateModelById({
@@ -1488,3 +1514,22 @@ export const updateGallerySettingsHandler = async ({
     throw throwDbError(error);
   }
 };
+
+export async function addCheckpointCoverageHandler({
+  input,
+}: {
+  input: ToggleCheckpointCoverageInput;
+}) {
+  try {
+    const affectedVersionIds = await toggleCheckpointCoverage(input);
+    if (affectedVersionIds) await deleteResourceDataCache(affectedVersionIds);
+
+    await modelsSearchIndex.queueUpdate([
+      { id: input.id, action: SearchIndexUpdateQueueAction.Update },
+    ]);
+
+    return affectedVersionIds;
+  } catch (error) {
+    throw throwDbError(error);
+  }
+}

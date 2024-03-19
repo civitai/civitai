@@ -40,9 +40,14 @@ export default WebhookEndpoint(async (req, res) => {
           GROUP BY a.id
         )
         UPDATE "Article" a
-        SET "nsfwLevel" = level."nsfwLevel"
+        SET "nsfwLevel" = (
+          CASE
+            WHEN a."userNsfwLevel" > a."nsfwLevel" THEN a."userNsfwLevel"
+            ELSE level."nsfwLevel"
+          END
+        )
         FROM level
-        WHERE level.id = a.id;
+        WHERE level.id = a.id AND level."nsfwLevel" != a."nsfwLevel";
       `);
       onCancel.push(cancel);
       await result();

@@ -1,10 +1,5 @@
-import {
-  ModelStatus,
-  ModelVersionEngagementType,
-  Prisma,
-  SearchIndexUpdateQueueAction,
-  CommercialUse,
-} from '@prisma/client';
+import { ModelStatus, ModelVersionEngagementType, Prisma, CommercialUse } from '@prisma/client';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { TRPCError } from '@trpc/server';
 import { SessionUser } from 'next-auth';
 import { BaseModel, baseModelSets, constants } from '~/server/common/constants';
@@ -547,7 +542,7 @@ export const earlyAccessModelVersionsOnTimeframe = async ({
     WHERE mv."status" = 'Published'
       AND mv."earlyAccessTimeFrame" > 0
       AND m."userId" = ${userId}
-      AND GREATEST(mv."createdAt", mv."publishedAt") 
+      AND GREATEST(mv."createdAt", mv."publishedAt")
         + (mv."earlyAccessTimeFrame" || ' day')::INTERVAL
         >= ${dayjs().subtract(timeframe, 'day').toDate()};
   `;
@@ -577,7 +572,7 @@ export const modelVersionGeneratedImagesOnTimeframe = async ({
         mv.name as "modelVersionName"
       FROM "ModelVersion" mv
       JOIN "Model" m ON mv."modelId" = m.id
-      WHERE mv."status" = 'Published' 
+      WHERE mv."status" = 'Published'
         AND m."userId" = ${userId}
     `;
 
@@ -591,19 +586,19 @@ export const modelVersionGeneratedImagesOnTimeframe = async ({
   const generationData = await clickhouse
     .query({
       query: `
-          SELECT 
+          SELECT
               resourceId as modelVersionId,
               createdAt,
               SUM(1) as generations
           FROM (
-              SELECT 
+              SELECT
                   arrayJoin(resourcesUsed) as resourceId,
-                  createdAt::date as createdAt 
+                  createdAt::date as createdAt
               FROM orchestration.textToImageJobs
               WHERE createdAt >= parseDateTimeBestEffortOrNull('${date}')
           )
           WHERE resourceId IN (${modelVersions.map((x) => x.id).join(',')})
-          GROUP BY resourceId, createdAt 
+          GROUP BY resourceId, createdAt
           ORDER BY createdAt DESC, generations DESC;
     `,
       format: 'JSONEachRow',

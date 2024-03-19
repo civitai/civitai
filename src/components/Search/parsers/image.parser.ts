@@ -57,14 +57,14 @@ export const imagesInstantSearchRoutingParser: InstantSearchRoutingParser = {
   routeToState: (routeState: ImageUiState) => {
     const images: ImageSearchParams = (routeState[IMAGES_SEARCH_INDEX] || {}) as ImageSearchParams;
     const refinementList: Record<string, string[]> = removeEmpty({
-      generationTool: images.generationTool,
-      aspectRatio: images.aspectRatio,
-      baseModel: images.baseModel,
-      'tags.name': images.tags,
-      'user.username': images.users,
+      generationTool: images.generationTool as string[],
+      aspectRatio: images.aspectRatio as string[],
+      baseModel: images.baseModel as string[],
+      'tags.name': images.tags as string[],
+      'user.username': images.users as string[],
     });
     const range = removeEmpty({
-      createdAtUnix: images.createdAt,
+      createdAtUnix: images.createdAt as string,
     });
 
     const { query, sortBy, imageId } = images;

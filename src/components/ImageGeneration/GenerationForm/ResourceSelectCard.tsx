@@ -89,6 +89,7 @@ function CheckpointInfo({ resource, onRemove, onSwap }: Props) {
 function ResourceInfo({ resource, onRemove, onUpdate }: Props) {
   const hasStrength =
     resource.modelType === ModelType.LORA || resource.modelType === ModelType.LoCon;
+  const isSameMinMaxStrength = resource.minStrength === resource.maxStrength;
   const unavailable = resource.covered === false;
 
   return (
@@ -129,8 +130,8 @@ function ResourceInfo({ resource, onRemove, onUpdate }: Props) {
             <NumberSlider
               value={resource.strength}
               onChange={(strength) => onUpdate({ ...resource, strength })}
-              min={resource.minStrength ?? -1}
-              max={resource.maxStrength ?? 2}
+              min={!isSameMinMaxStrength ? resource.minStrength ?? -1 : -1}
+              max={!isSameMinMaxStrength ? resource.maxStrength ?? 2 : 2}
               step={0.05}
               sx={{ flex: 1 }}
               reverse

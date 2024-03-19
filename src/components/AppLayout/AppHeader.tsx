@@ -53,6 +53,7 @@ import {
   IconVideoPlus,
   IconWriting,
   IconClubs,
+  IconCloudLock,
 } from '@tabler/icons-react';
 import { signOut } from 'next-auth/react';
 import Link from 'next/link';
@@ -282,6 +283,30 @@ export function AppHeader({
         rel: 'nofollow',
       },
       {
+        href: '/posts/create',
+        visible: !isMuted,
+        redirectReason: 'post-images',
+        label: (
+          <Group align="center" spacing="xs">
+            <IconPhotoUp stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
+            Post images
+          </Group>
+        ),
+        rel: 'nofollow',
+      },
+      {
+        href: '/posts/create?video',
+        visible: !isMuted,
+        redirectReason: 'post-images',
+        label: (
+          <Group align="center" spacing="xs">
+            <IconVideoPlus stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
+            Post videos
+          </Group>
+        ),
+        rel: 'nofollow',
+      },
+      {
         href: '/models/create',
         visible: !isMuted,
         redirectReason: 'upload-model',
@@ -304,30 +329,6 @@ export function AppHeader({
               Train a LoRA
             </Text>
             <CurrencyIcon currency={Currency.BUZZ} size={16} />
-          </Group>
-        ),
-        rel: 'nofollow',
-      },
-      {
-        href: '/posts/create',
-        visible: !isMuted,
-        redirectReason: 'post-images',
-        label: (
-          <Group align="center" spacing="xs">
-            <IconPhotoUp stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
-            Post images
-          </Group>
-        ),
-        rel: 'nofollow',
-      },
-      {
-        href: '/posts/create?video',
-        visible: !isMuted,
-        redirectReason: 'post-images',
-        label: (
-          <Group align="center" spacing="xs">
-            <IconVideoPlus stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
-            Post videos
           </Group>
         ),
         rel: 'nofollow',
@@ -457,6 +458,16 @@ export function AppHeader({
         ),
       },
       {
+        href: '/user/vault',
+        visible: !!currentUser && features.vault,
+        label: (
+          <Group align="center" spacing="xs">
+            <IconCloudLock stroke={1.5} color={theme.colors.yellow[7]} />
+            My vault
+          </Group>
+        ),
+      },
+      {
         href: '',
         label: <Divider my={4} />,
       },
@@ -466,16 +477,6 @@ export function AppHeader({
           <Group align="center" spacing="xs">
             <IconCrown stroke={1.5} color={theme.colors.yellow[theme.fn.primaryShade()]} />
             Leaderboard
-          </Group>
-        ),
-      },
-      {
-        href: '/models?hidden=true',
-        visible: !!currentUser,
-        label: (
-          <Group align="center" spacing="xs">
-            <IconCircleDashed stroke={1.5} color={theme.colors.yellow[theme.fn.primaryShade()]} />
-            Hidden models
           </Group>
         ),
       },
@@ -939,15 +940,18 @@ export function AppHeader({
                     // ref={ref}
                   >
                     {/* Calculate maxHeight based off total viewport height minus header + footer + static menu options inside dropdown sizes */}
-                    <ScrollArea.Autosize maxHeight={'calc(100dvh - 269px)'}>
+                    <ScrollArea.Autosize maxHeight={'calc(100dvh - 135px)'}>
                       <BuzzMenuItem mx={0} mt={0} textSize="sm" withAbbreviation={false} />
                       {burgerMenuItems}
+                      {currentUser && (
+                        <>
+                          <Divider />
+                          <Box px="md" pt="md">
+                            <BrowsingModeMenu />
+                          </Box>
+                        </>
+                      )}
                     </ScrollArea.Autosize>
-                    {currentUser && (
-                      <Box px="md">
-                        <BrowsingModeMenu />
-                      </Box>
-                    )}
 
                     <Group p="md" position="apart" grow>
                       <ActionIcon
@@ -969,7 +973,7 @@ export function AppHeader({
                       </ActionIcon>
                       {currentUser && (
                         <>
-                          {currentUser?.showNsfw && (
+                          {/* {currentUser?.showNsfw && (
                             <BlurToggle iconProps={{ stroke: 1.5 }}>
                               {({ icon, toggle }) => (
                                 <ActionIcon variant="default" size="lg" onClick={() => toggle()}>
@@ -977,7 +981,7 @@ export function AppHeader({
                                 </ActionIcon>
                               )}
                             </BlurToggle>
-                          )}
+                          )} */}
                           <Link href="/user/account">
                             <ActionIcon
                               variant="default"

@@ -43,6 +43,7 @@ const modelFilterSchema = z.object({
   fromPlatform: z.boolean().optional(),
   followed: z.boolean().optional(),
   archived: z.boolean().optional(),
+  hidden: z.boolean().optional(),
   fileFormats: z.enum(constants.modelFileFormats).array().optional(),
   pending: z.boolean().optional(),
 });
@@ -71,6 +72,7 @@ const imageFilterSchema = z.object({
 const modelImageFilterSchema = imageFilterSchema.extend({
   sort: z.nativeEnum(ImageSort).default(ImageSort.Newest), // Default sort for model images should be newest
   period: z.nativeEnum(MetricTimeframe).default(MetricTimeframe.AllTime), //Default period for model details should be all time
+  types: z.array(z.nativeEnum(MediaType)).default([]),
 });
 
 type PostFilterSchema = z.infer<typeof postFilterSchema>;

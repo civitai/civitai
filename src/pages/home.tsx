@@ -239,7 +239,7 @@ export default function Home() {
                         excludedImageTagIds: [...homeExcludedTags.map((tag) => tag.id)],
                         excludedTagIds: homeExcludedTags.map((tag) => tag.id),
                         // Required to override localStorage filters
-                        period: MetricTimeframe.AllTime,
+                        period: MetricTimeframe.Week,
                         sort: ModelSort.HighestRated,
                         types: undefined,
                         collectionId: undefined,
@@ -247,6 +247,7 @@ export default function Home() {
                         status: undefined,
                         checkpointType: undefined,
                         baseModels: undefined,
+                        hidden: undefined,
                       }}
                     />
                   </IsClient>

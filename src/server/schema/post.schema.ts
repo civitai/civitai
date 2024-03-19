@@ -1,4 +1,4 @@
-import { MediaType, MetricTimeframe, NsfwLevel } from '@prisma/client';
+import { MediaType, MetricTimeframe } from '@prisma/client';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
 import { PostSort } from '~/server/common/enums';
@@ -53,7 +53,6 @@ export const postCreateSchema = z.object({
 export type PostUpdateInput = z.infer<typeof postUpdateSchema>;
 export const postUpdateSchema = z.object({
   id: z.number(),
-  userNsfwLevel: z.number().optional(),
   title: z.string().optional(),
   detail: z.string().optional(),
   publishedAt: z.date().optional(),
@@ -82,7 +81,6 @@ export const addPostImageSchema = z.object({
   hash: z.string().nullish(),
   height: z.number().nullish(),
   width: z.number().nullish(),
-  nsfw: z.nativeEnum(NsfwLevel).optional(),
   postId: z.number(),
   modelVersionId: z.number().optional(),
   index: z.number(),
@@ -105,7 +103,6 @@ export const updatePostImageSchema = z.object({
     return value;
   }, imageMetaSchema.nullish()),
   hideMeta: z.boolean().optional(),
-  nsfw: z.nativeEnum(NsfwLevel).optional(),
   // resources: z.array(imageResourceUpsertSchema),
 });
 

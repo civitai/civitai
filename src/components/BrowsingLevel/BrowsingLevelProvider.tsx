@@ -1,7 +1,13 @@
-import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import React, {
+  createContext,
+  useContext,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useState,
+} from 'react';
 import {
   BrowsingLevel,
-  getIsPublicBrowsingLevel,
   publicBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { useCookies } from '~/providers/CookiesProvider';
@@ -12,7 +18,6 @@ import { trpc } from '~/utils/trpc';
 import { useDebouncer } from '~/utils/debouncer';
 import { useSession } from 'next-auth/react';
 import { useDebouncedValue, useDidUpdate } from '@mantine/hooks';
-import { invalidateModeratedContent } from '~/utils/query-invalidation-utils';
 
 type StoreState = {
   showNsfw: boolean;
@@ -65,13 +70,12 @@ function updateCookieValues({ browsingLevel, blurNsfw, showNsfw, disableHidden }
 }
 
 export function BrowsingModeProvider({ children }: { children: React.ReactNode }) {
-  const queryUtils = trpc.useContext();
-  const { status } = useSession();
-  const { data } = useSession();
+  const { status, data } = useSession();
+  const isAuthed = status === 'authenticated';
   const currentUser = data?.user;
   const debouncer = useDebouncer(1000);
   const cookies = useCookies();
-  const { mutate } = trpc.user.update.useMutation();
+  const { mutate } = trpc.user.updateBrowsingMode.useMutation();
   const [store, setStore] = useState(createBrowsingModeStore(getStoreInitialValues()));
 
   function getStoreInitialValues() {
@@ -86,10 +90,10 @@ export function BrowsingModeProvider({ children }: { children: React.ReactNode }
   }
 
   useDidUpdate(() => {
-    if (status === 'authenticated' && currentUser) {
+    if (isAuthed) {
       setStore(createBrowsingModeStore(getStoreInitialValues()));
     }
-  }, [currentUser, status]);
+  }, [isAuthed]);
 
   // update the cookie to reflect the browsingLevel state of the current tab
   useEffect(() => {
@@ -103,17 +107,14 @@ export function BrowsingModeProvider({ children }: { children: React.ReactNode }
   }, [store]);
 
   useEffect(() => {
-    if (store && currentUser) {
-      return store.subscribe((state) => {
+    if (store && isAuthed) {
+      return store.subscribe((state, prevState) => {
         updateCookieValues(state);
-        if (currentUser)
-          debouncer(() => {
-            mutate({ id: currentUser.id, ...state });
-            invalidateModeratedContent(queryUtils);
-          });
+        const disableHiddenChanged = state.disableHidden !== prevState.disableHidden;
+        if (currentUser && !disableHiddenChanged) debouncer(() => mutate({ ...state }));
       });
     }
-  }, [store, currentUser]);
+  }, [store, isAuthed]);
 
   return <BrowsingModeCtx.Provider value={store}>{children}</BrowsingModeCtx.Provider>;
 }
@@ -138,26 +139,25 @@ export function BrowsingModeOverrideProvider({
 
 /** returns the user selected browsing level or the system default browsing level */
 function useBrowsingLevel() {
-  const { data } = useSession();
-  const currentUser = data?.user;
   const { browsingLevelOverride } = useBrowsingModeOverrideContext();
   const { useStore } = useBrowsingModeContext();
   const browsingLevel = useStore((x) => x.browsingLevel);
+  const showNsfw = useStore((x) => x.showNsfw);
   if (browsingLevelOverride) return browsingLevelOverride;
-  if (!currentUser) return publicBrowsingLevelsFlag;
+  if (!showNsfw) return publicBrowsingLevelsFlag;
   return !browsingLevel ? publicBrowsingLevelsFlag : browsingLevel;
 }
 
 export function useBrowsingLevelDebounced() {
   const browsingLevel = useBrowsingLevel();
   const [debounced] = useDebouncedValue(browsingLevel, 500);
-  return debounced ?? browsingLevel;
+  return useDeferredValue(debounced ?? browsingLevel);
 }
 
-export function useIsPublicBrowsingLevel() {
-  const level = useBrowsingLevelDebounced();
-  return getIsPublicBrowsingLevel(level);
-}
+// export function useIsPublicBrowsingLevel() {
+//   const level = useBrowsingLevelDebounced();
+//   return getIsPublicBrowsingLevel(level);
+// }
 
 export function useIsBrowsingLevelSelected(level: BrowsingLevel) {
   const { useStore } = useBrowsingModeContext();

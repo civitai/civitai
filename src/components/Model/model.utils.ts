@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
 import { ModelSort } from '~/server/common/enums';
 import { periodModeSchema } from '~/server/schema/base.schema';
-import { GetAllModelsInput } from '~/server/schema/model.schema';
+import { GetAllModelsInput, ToggleCheckpointCoverageInput } from '~/server/schema/model.schema';
 import { usernameSchema } from '~/server/schema/user.schema';
 import { showErrorNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -30,6 +30,7 @@ const modelQueryParamSchema = z
     favorites: z.coerce.boolean(),
     hidden: z.coerce.boolean(),
     archived: z.coerce.boolean(),
+    followed: z.coerce.boolean(),
     view: z.enum(['categories', 'feed']),
     section: z.enum(['published', 'draft', 'training']),
     collectionId: z.coerce.number(),
@@ -122,8 +123,39 @@ export const useQueryModels = (
     type: 'models',
     data: flatData,
     showHidden: !!_filters.hidden,
-    isLoading: rest.isRefetching,
+    isRefetching: rest.isRefetching,
   });
 
   return { data, models: items, isLoading: isLoading || loadingPreferences, ...rest };
+};
+
+export const useToggleCheckpointCoverageMutation = () => {
+  const queryUtils = trpc.useUtils();
+
+  const toggleMutation = trpc.model.toggleCheckpointCoverage.useMutation({
+    onSuccess: (_, { id, versionId }) => {
+      queryUtils.model.getById.setData({ id }, (old) => {
+        if (!old) return old;
+
+        return {
+          ...old,
+          modelVersions: old.modelVersions.map((v) =>
+            v.id === versionId ? { ...v, hasCheckpointCoverage: !v.hasCheckpointCoverage } : v
+          ),
+        };
+      });
+    },
+    onError: (error) => {
+      showErrorNotification({
+        title: 'Failed to toggle checkpoint coverage',
+        error: new Error(error.message),
+      });
+    },
+  });
+
+  const handleToggle = (data: ToggleCheckpointCoverageInput) => {
+    return toggleMutation.mutateAsync(data);
+  };
+
+  return { ...toggleMutation, toggle: handleToggle };
 };

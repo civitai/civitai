@@ -1,41 +1,44 @@
+import { constants } from '~/server/common/constants';
 import { TrainingDetailsBaseModel } from '~/server/schema/model-version.schema';
+import { TrainingCost } from '~/server/schema/training.schema';
 
-const etaCoefficients = {
-  models: {
-    sdxl: 19.42979334,
-    pony: 19.42979334,
-    sd_1_5: -25.38624804,
-    anime: -23.84022578,
-    semi: -20.56343578,
-    realistic: -50.28902011,
-  },
-  alpha: -0.649960841,
-  dim: 0.792224422,
-  steps: 0.014458002,
+// Default costs have moved to `training.schema.ts`
+// Costs are now overridable via redis `system:features` hset `training:status` key.
+export const calcEta = ({
+  networkDim: dim,
+  networkAlpha: alpha,
+  targetSteps: steps,
+  baseModel: model,
+  cost,
+}: {
+  networkDim: number;
+  networkAlpha: number;
+  targetSteps: number;
+  baseModel: TrainingDetailsBaseModel | null;
+  cost: TrainingCost;
+}) => {
+  if (!model) return;
+
+  const modelCoeff = cost.etaCoefficients.models[model] ?? cost.baseModelCoeff;
+  const computedEta =
+    modelCoeff +
+    cost.etaCoefficients.alpha * alpha +
+    cost.etaCoefficients.dim * dim +
+    (cost.etaCoefficients.steps * cost.stepsCoeff * steps) ** cost.stepsExp;
+  return Math.max(cost.minEta, computedEta);
 };
 
-const dollarsPerMinute = 0.17 / 30;
-const dollarsToBuzz = 1000;
-const baseBuzzTake = 500;
-const minEta = 1;
-
-export const calcEta = (
-  dim: number,
-  alpha: number,
-  steps: number,
-  model: TrainingDetailsBaseModel | undefined
-) => {
-  if (!model || !(model in etaCoefficients.models)) return;
-
-  return Math.max(
-    minEta,
-    etaCoefficients.models[model] +
-      etaCoefficients.alpha * alpha +
-      etaCoefficients.dim * dim +
-      etaCoefficients.steps * steps
-  );
-};
-
-export const calcBuzzFromEta = (eta: number) => {
-  return Math.round(Math.max(baseBuzzTake, eta * dollarsPerMinute * dollarsToBuzz));
+export const calcBuzzFromEta = ({
+  eta,
+  isCustom,
+  cost,
+}: {
+  eta: number;
+  isCustom: boolean;
+  cost: TrainingCost;
+}) => {
+  const computedCost = eta * (cost.hourlyCost / 60) * constants.buzz.buzzDollarRatio;
+  let buzz = Math.max(cost.baseBuzz, computedCost);
+  if (isCustom) buzz += cost.customModelBuzz;
+  return Math.round(buzz);
 };

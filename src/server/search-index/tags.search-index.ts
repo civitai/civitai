@@ -9,13 +9,10 @@ import {
   createSearchIndexUpdateProcessor,
   SearchIndexRunContext,
 } from '~/server/search-index/base.search-index';
-import {
-  MetricTimeframe,
-  Prisma,
-  PrismaClient,
-  SearchIndexUpdateQueueAction,
-} from '@prisma/client';
+import { MetricTimeframe, Prisma, PrismaClient } from '@prisma/client';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { isDefined } from '~/utils/type-guards';
+import { SearchIndexUpdate } from '~/server/search-index/SearchIndexUpdate';
 
 const READ_BATCH_SIZE = 1000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 100;
@@ -164,40 +161,34 @@ const onFetchItemsToIndex = async ({
 };
 
 const onUpdateQueueProcess = async ({ db, indexName }: { db: PrismaClient; indexName: string }) => {
-  const queuedItems = await db.searchIndexUpdateQueue.findMany({
-    select: {
-      id: true,
-    },
-    where: { type: INDEX_ID, action: SearchIndexUpdateQueueAction.Update },
-  });
+  const queue = await SearchIndexUpdate.getQueue(indexName, SearchIndexUpdateQueueAction.Update);
 
   console.log(
     'onUpdateQueueProcess :: A total of ',
-    queuedItems.length,
+    queue.content.length,
     ' have been updated and will be re-indexed'
   );
 
-  const batchCount = Math.ceil(queuedItems.length / READ_BATCH_SIZE);
+  const batchCount = Math.ceil(queue.content.length / READ_BATCH_SIZE);
 
   const itemsToIndex: TagSearchIndexRecord[] = [];
 
   for (let batchNumber = 0; batchNumber < batchCount; batchNumber++) {
-    const batch = queuedItems.slice(
+    const batch = queue.content.slice(
       batchNumber * READ_BATCH_SIZE,
       batchNumber * READ_BATCH_SIZE + READ_BATCH_SIZE
     );
 
-    const itemIds = batch.map(({ id }) => id);
-
     const newItems = await onFetchItemsToIndex({
       db,
       indexName,
-      whereOr: [{ id: { in: itemIds } }],
+      whereOr: [{ id: { in: batch } }],
     });
 
     itemsToIndex.push(...newItems);
   }
 
+  await queue.commit();
   return itemsToIndex;
 };
 

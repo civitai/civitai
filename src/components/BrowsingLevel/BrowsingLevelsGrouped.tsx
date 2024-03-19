@@ -46,6 +46,19 @@ const useStyles = createStyles((theme, _params, getRef) => ({
 
       [`& .${getRef('iconWrapper')}`]: {
         color: theme.white,
+        display: 'none',
+
+        [`@media (min-width: ${theme.breakpoints.xs}px)`]: {
+          display: 'inline-block',
+        },
+      },
+    },
+    paddingLeft: 10,
+    paddingRight: 10,
+    [`@media (min-width: ${theme.breakpoints.xs}px)`]: {
+      '&': {
+        paddingLeft: 20,
+        paddingRight: 20,
       },
     },
   },

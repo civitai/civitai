@@ -263,7 +263,7 @@ export function getDownloadFilename({
   file,
 }: {
   model: { name: string; type: ModelType };
-  modelVersion: { name: string; trainedWords: string[] };
+  modelVersion: { name: string; trainedWords?: string[] };
   file: { name: string; type: ModelFileType | string };
 }) {
   let fileName = file.name;
@@ -283,7 +283,7 @@ export function getDownloadFilename({
   if (fileType === 'Training Data') {
     fileName = `${modelName}_${versionName}_trainingData.zip`;
   } else if (model.type === ModelType.TextualInversion) {
-    const trainedWord = modelVersion.trainedWords[0];
+    const trainedWord = modelVersion.trainedWords?.[0];
     let fileSuffix = '';
     if (fileType === 'Negative') fileSuffix = '-neg';
 

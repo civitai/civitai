@@ -11,7 +11,7 @@ import { hashifyObject, slugit } from '~/utils/string-helpers';
 export const applyUserPreferences = middleware(async ({ input, ctx, next }) => {
   const _input = input as UserPreferencesInput | undefined;
   if (_input !== undefined && typeof _input === 'object' && !Array.isArray(_input)) {
-    _input.browsingLevel ??= ctx.browsingLevel;
+    // _input.browsingLevel ??= ctx.browsingLevel;
 
     const { hiddenImages, hiddenTags, hiddenModels, hiddenUsers } = await getAllHiddenForUser({
       userId: ctx.user?.id,

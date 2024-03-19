@@ -85,7 +85,7 @@ import { getDisplayName, removeTags, splitUppercase, slugit } from '~/utils/stri
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
 import useIsClient from '~/hooks/useIsClient';
-import { ImageSort } from '~/server/common/enums';
+import { ImageSort, ModelType } from '~/server/common/enums';
 import { useQueryImages } from '~/components/Image/image.utils';
 import { CAROUSEL_LIMIT } from '~/server/common/constants';
 import { ToggleLockModel } from '~/components/Model/Actions/ToggleLockModel';
@@ -119,7 +119,7 @@ import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
   useSession: true,
-  resolver: async ({ ssg, ctx, browsingLevel }) => {
+  resolver: async ({ ssg, ctx }) => {
     const params = (ctx.params ?? {}) as {
       id: string;
       slug: string[];
@@ -145,8 +145,8 @@ export const getServerSideProps = createServerSideProps({
           period: 'AllTime',
           sort: ImageSort.MostReactions,
           limit: CAROUSEL_LIMIT,
-          browsingLevel,
           pending: true,
+          browsingLevel: undefined,
         });
 
       if (modelVersionIdParsed) {
@@ -530,9 +530,9 @@ export default function ModelDetailsV2({
           <Announcements sx={{ marginBottom: 5 }} />
           <Stack spacing="xs">
             <Stack spacing={4}>
-              <Group align="center" sx={{ justifyContent: 'space-between' }} noWrap>
+              <Group align="flex-start" sx={{ justifyContent: 'space-between' }} noWrap>
                 <Group className={classes.titleWrapper} align="center">
-                  <Title className={classes.title} order={1}>
+                  <Title className={classes.title} order={1} lineClamp={2}>
                     {model?.name}
                   </Title>
                   <LoginRedirect reason="favorite-model">
@@ -954,6 +954,7 @@ export default function ModelDetailsV2({
               }}
               onDeleteClick={handleDeleteVersion}
               showExtraIcons={isOwner || isModerator}
+              showToggleCoverage={model.type === ModelType.Checkpoint}
             />
           </Group>
           {!!selectedVersion && (
@@ -1083,7 +1084,7 @@ const useStyles = createStyles((theme) => ({
   title: {
     wordBreak: 'break-word',
     [containerQuery.smallerThan('md')]: {
-      fontSize: theme.fontSizes.xs * 2.4, // 24px
+      fontSize: 24,
       width: '100%',
       paddingBottom: 0,
     },

@@ -23,7 +23,7 @@ import {
   IconUserMinus,
   IconUserOff,
 } from '@tabler/icons-react';
-import Router from 'next/router';
+import Router, { useRouter } from 'next/router';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { openContext } from '~/providers/CustomModalsProvider';
@@ -69,6 +69,7 @@ export function ImageContextMenu({
   className,
   ...actionIconProps
 }: ImageContextMenuProps & ActionIconProps & { iconSize?: number }) {
+  const router = useRouter();
   const currentUser = useCurrentUser();
   const props = {
     image,
@@ -104,7 +105,12 @@ export function ImageContextMenu({
           e.stopPropagation();
         }}
       >
-        <ImageMenuItems {...props} isModerator={isModerator} isOwner={isOwner} />
+        <ImageMenuItems
+          {...props}
+          isModerator={isModerator}
+          isOwner={isOwner}
+          disableDelete={router.pathname.includes('/collections')}
+        />
       </Menu.Dropdown>
     </Menu>
   );
@@ -120,8 +126,17 @@ export function ImageContextMenu({
   return ContextMenu;
 }
 
-function ImageMenuItems(props: ImageContextMenuProps & { isOwner: boolean; isModerator: boolean }) {
-  const { image, context = 'image', additionalMenuItems, isOwner, isModerator } = props;
+function ImageMenuItems(
+  props: ImageContextMenuProps & { isOwner: boolean; isModerator: boolean; disableDelete?: boolean }
+) {
+  const {
+    image,
+    context = 'image',
+    additionalMenuItems,
+    isOwner,
+    isModerator,
+    disableDelete,
+  } = props;
   const features = useFeatureFlags();
   const { id: imageId, postId, user, userId } = image;
   const _userId = user?.id ?? userId;
@@ -179,7 +194,7 @@ function ImageMenuItems(props: ImageContextMenuProps & { isOwner: boolean; isMod
         </>
       )}
       {/* OWNER */}
-      {(isOwner || isModerator) && (
+      {!disableDelete && (isOwner || isModerator) && (
         <>
           {postId && (
             <Menu.Item

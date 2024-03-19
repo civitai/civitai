@@ -95,10 +95,9 @@ const formSchema = createBountyInputSchema
   .omit({
     images: true,
   })
-  .refine(
-    (data) => !(Flags.intersects(data.userNsfwLevel ?? 0, nsfwBrowsingLevelsFlag) && data.poi),
-    { message: 'Mature content depicting actual people is not permitted.' }
-  )
+  .refine((data) => !(data.nsfw && data.poi), {
+    message: 'Mature content depicting actual people is not permitted.',
+  })
   .refine((data) => data.startsAt < data.expiresAt, {
     message: 'Start date must be before expiration date',
     path: ['startsAt'],
@@ -206,7 +205,7 @@ export function BountyCreateForm() {
       expiresAt: dayjs().add(7, 'day').endOf('day').toDate(),
       startsAt: new Date(),
       details: { baseModel: 'SD 1.5' },
-      userNsfwLevel: 0,
+      nsfw: false,
     },
     shouldUnregister: false,
   });
@@ -233,8 +232,8 @@ export function BountyCreateForm() {
   const mode = form.watch('mode');
   const currency = form.watch('currency');
   const unitAmount = form.watch('unitAmount');
-  const [userNsfwLevel = 0, poi] = form.watch(['userNsfwLevel', 'poi']);
-  const hasPoiInNsfw = Flags.intersects(userNsfwLevel, nsfwBrowsingLevelsFlag) && poi;
+  const [nsfw, poi] = form.watch(['nsfw', 'poi']);
+  const hasPoiInNsfw = nsfw && poi;
   const files = form.watch('files');
   const expiresAt = form.watch('expiresAt');
   const requireBaseModelSelection = [

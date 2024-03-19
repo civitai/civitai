@@ -1,16 +1,27 @@
-import { ImageIngestionStatus, Prisma } from '@prisma/client';
+import { CollectionItemStatus, ImageIngestionStatus, Prisma } from '@prisma/client';
 import { NextApiResponse } from 'next';
+import { NsfwLevel } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import { pgDbWrite } from '~/server/db/pgDb';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { invalidateAllSessions } from '~/server/utils/session-helpers';
+import z from 'zod';
+
+// TODO.nsfwLevel - follow pattern from migrate-likes so that we can run this in prod and pickup where we left off
+const schema = z.object({
+  cursor: z.coerce.number().min(0).optional().default(0),
+  concurrency: z.coerce.number().min(1).max(50).optional().default(10),
+  maxCursor: z.coerce.number().min(0).optional(),
+  batchSize: z.coerce.number().min(0).optional().default(100),
+  after: z.coerce.date().optional(),
+  before: z.coerce.date().optional(),
+});
 
 const BATCH_SIZE = 500;
 const CONCURRENCY_LIMIT = 50;
+// TODO.Briant - add abstraction for handling migrations - db-helpers.ts (lot of repeated patterns here)
 export default WebhookEndpoint(async (req, res) => {
-  // TODO.nsfwLevel
-
   const migrations = [
     [migrateImages, migrateUsers],
     [migratePosts, migrateArticles, migrateBounties, migrateBountyEntries],
@@ -20,11 +31,13 @@ export default WebhookEndpoint(async (req, res) => {
   ];
 
   let counter = 0;
+  console.time('MIGRATION_TIMER');
   for (const steps of migrations) {
     await Promise.all(steps.map((step) => step(res)));
     counter++;
     console.log(`end ${counter}`);
   }
+  console.timeEnd('MIGRATION_TIMER');
 
   res.status(200).json({ finished: true });
 });
@@ -40,11 +53,8 @@ async function migrateImages(res: NextApiResponse) {
   const [{ max: maxImageId }] = await dbRead.$queryRaw<{ max: number }[]>(
     Prisma.sql`SELECT MAX(id) "max" FROM "Image";`
   );
-  const [{ min }] = await dbRead.$queryRaw<{ min: number }[]>(
-    Prisma.sql`SELECT MIN(id) "min" FROM "Image";`
-  );
 
-  let cursor = min ?? 0;
+  let cursor = 0;
   await limitConcurrency(() => {
     if (cursor > maxImageId || shouldStop) return null; // We've reached the end of the images
     const start = cursor;
@@ -80,11 +90,8 @@ async function migrateUsers(res: NextApiResponse) {
   const [{ max: maxId }] = await dbRead.$queryRaw<{ max: number }[]>(
     Prisma.sql`SELECT MAX(id) "max" FROM "User";`
   );
-  const [{ min }] = await dbRead.$queryRaw<{ min: number }[]>(
-    Prisma.sql`SELECT MIN(id) "min" FROM "User";`
-  );
 
-  let cursor = min ?? 0;
+  let cursor = 0;
   await limitConcurrency(() => {
     if (cursor > maxId || shouldStop) return null; // We've reached the end of the images
     const start = cursor;
@@ -121,11 +128,8 @@ async function migratePosts(res: NextApiResponse) {
   const [{ max: maxId }] = await dbRead.$queryRaw<{ max: number }[]>(
     Prisma.sql`SELECT MAX(id) "max" FROM "Post";`
   );
-  const [{ min }] = await dbRead.$queryRaw<{ min: number }[]>(
-    Prisma.sql`SELECT MIN(id) "min" FROM "Post";`
-  );
 
-  let cursor = min ?? 0;
+  let cursor = 0;
   await limitConcurrency(() => {
     if (cursor > maxId || shouldStop) return null; // We've reached the end of the images
 
@@ -145,7 +149,7 @@ async function migratePosts(res: NextApiResponse) {
         UPDATE "Post" p
         SET "nsfwLevel" = level."nsfwLevel"
         FROM level
-        WHERE level.id = p.id;
+        WHERE level.id = p.id AND level."nsfwLevel" != p."nsfwLevel";
       `);
       onCancel.push(cancel);
       await result();
@@ -164,11 +168,8 @@ async function migrateBounties(res: NextApiResponse) {
   const [{ max: maxId }] = await dbRead.$queryRaw<{ max: number }[]>(
     Prisma.sql`SELECT MAX(id) "max" FROM "Bounty";`
   );
-  const [{ min }] = await dbRead.$queryRaw<{ min: number }[]>(
-    Prisma.sql`SELECT MIN(id) "min" FROM "Bounty";`
-  );
 
-  let cursor = min ?? 0;
+  let cursor = 0;
   await limitConcurrency(() => {
     if (cursor > maxId || shouldStop) return null; // We've reached the end of the images
 
@@ -184,13 +185,18 @@ async function migrateBounties(res: NextApiResponse) {
             bit_or(i."nsfwLevel") "nsfwLevel"
           FROM "ImageConnection" ic
           JOIN "Image" i ON i.id = ic."imageId"
-          JOIN "Bounty" b on b.id = "entityId" AND "entityType" = 'Bounty'
-          WHERE "entityType" = 'Bounty' AND "entityId" BETWEEN ${start} AND ${end}
+          JOIN "Bounty" b on b.id = ic."entityId" AND ic."entityType" = 'Bounty'
+          WHERE ic."entityType" = 'Bounty' AND ic."entityId" BETWEEN ${start} AND ${end}
           GROUP BY 1
         )
-        UPDATE "Bounty" b SET "nsfwLevel" = level."nsfwLevel"
+        UPDATE "Bounty" b SET "nsfwLevel" = (
+          CASE
+            WHEN b.nsfw = TRUE THEN ${NsfwLevel.XXX}
+            ELSE level."nsfwLevel"
+          END
+        )
         FROM level
-        WHERE level."entityId" = b.id;
+        WHERE level."entityId" = b.id AND level."nsfwLevel" != b."nsfwLevel";
       `);
       onCancel.push(cancel);
       await result();
@@ -209,11 +215,8 @@ async function migrateBountyEntries(res: NextApiResponse) {
   const [{ max: maxId }] = await dbRead.$queryRaw<{ max: number }[]>(
     Prisma.sql`SELECT MAX(id) "max" FROM "BountyEntry";`
   );
-  const [{ min }] = await dbRead.$queryRaw<{ min: number }[]>(
-    Prisma.sql`SELECT MIN(id) "min" FROM "BountyEntry";`
-  );
 
-  let cursor = min ?? 0;
+  let cursor = 0;
   await limitConcurrency(() => {
     if (cursor > maxId || shouldStop) return null; // We've reached the end of the images
 
@@ -229,8 +232,8 @@ async function migrateBountyEntries(res: NextApiResponse) {
             bit_or(i."nsfwLevel") "nsfwLevel"
           FROM "ImageConnection" ic
           JOIN "Image" i ON i.id = ic."imageId"
-          JOIN "BountyEntry" b on b.id = "entityId" AND "entityType" = 'BountyEntry'
-          WHERE "entityType" = 'BountyEntry' AND "entityId" BETWEEN ${start} AND ${end}
+          JOIN "BountyEntry" b on b.id = "entityId" AND ic."entityType" = 'BountyEntry'
+          WHERE ic."entityType" = 'BountyEntry' AND ic."entityId" BETWEEN ${start} AND ${end}
           GROUP BY 1
         )
         UPDATE "BountyEntry" b SET "nsfwLevel" = level."nsfwLevel"
@@ -255,11 +258,8 @@ async function migrateModelVersions(res: NextApiResponse) {
   const [{ max: maxId }] = await dbRead.$queryRaw<{ max: number }[]>(
     Prisma.sql`SELECT MAX(id) "max" FROM "ModelVersion";`
   );
-  const [{ min }] = await dbRead.$queryRaw<{ min: number }[]>(
-    Prisma.sql`SELECT MIN(id) "min" FROM "ModelVersion";`
-  );
 
-  let cursor = min ?? 0;
+  let cursor = 0;
   await limitConcurrency(() => {
     if (cursor > maxId || shouldStop) return null; // We've reached the end of the images
 
@@ -272,21 +272,23 @@ async function migrateModelVersions(res: NextApiResponse) {
         WITH level as (
           SELECT
             mv.id,
-            (
-              SELECT
-                COALESCE(bit_or(i."nsfwLevel"), 0) "nsfwLevel"
-              FROM (
-                SELECT
-                  i."nsfwLevel"
-                FROM "Post" p
-                JOIN "Image" i ON i."postId" = p.id
-                WHERE p."modelVersionId" = mv.id
-                AND p."userId" = m."userId"
-                AND p."publishedAt" IS NOT NULL AND i."nsfwLevel" != 0
-                ORDER BY p."id", i."index"
-                LIMIT 20
-              ) AS i
-            ) AS "nsfwLevel"
+            CASE
+              WHEN m.nsfw = TRUE THEN ${NsfwLevel.XXX}
+              ELSE (
+                SELECT COALESCE(bit_or(i."nsfwLevel"), 0) "nsfwLevel"
+                FROM (
+                  SELECT
+                    i."nsfwLevel"
+                  FROM "Post" p
+                  JOIN "Image" i ON i."postId" = p.id
+                  WHERE p."modelVersionId" = mv.id
+                  AND p."userId" = m."userId"
+                  AND p."publishedAt" IS NOT NULL AND i."nsfwLevel" != 0
+                  ORDER BY p."id", i."index"
+                  LIMIT 20
+                ) AS i
+              )
+            END AS "nsfwLevel"
           FROM "ModelVersion" mv
           JOIN "Model" m ON mv."modelId" = m.id
           WHERE mv.id BETWEEN ${start} AND ${end}
@@ -294,7 +296,7 @@ async function migrateModelVersions(res: NextApiResponse) {
         UPDATE "ModelVersion" mv
         SET "nsfwLevel" = level."nsfwLevel"
         FROM level
-        WHERE level.id = mv.id;
+        WHERE level.id = mv.id AND level."nsfwLevel" != mv."nsfwLevel";
       `);
       onCancel.push(cancel);
       await result();
@@ -313,11 +315,8 @@ async function migrateModels(res: NextApiResponse) {
   const [{ max: maxId }] = await dbRead.$queryRaw<{ max: number }[]>(
     Prisma.sql`SELECT MAX(id) "max" FROM "Model";`
   );
-  const [{ min }] = await dbRead.$queryRaw<{ min: number }[]>(
-    Prisma.sql`SELECT MIN(id) "min" FROM "Model";`
-  );
 
-  let cursor = min ?? 0;
+  let cursor = 0;
   await limitConcurrency(() => {
     if (cursor > maxId || shouldStop) return null; // We've reached the end of the images
 
@@ -337,10 +336,14 @@ async function migrateModels(res: NextApiResponse) {
           GROUP BY mv.id
         )
         UPDATE "Model" m
-        SET
-          "nsfwLevel" = level."nsfwLevel"
+        SET "nsfwLevel" = (
+          CASE
+            WHEN m.nsfw = TRUE THEN ${NsfwLevel.XXX}
+            ELSE level."nsfwLevel"
+          END
+        )
         FROM level
-        WHERE level.id = m.id;
+        WHERE level.id = m.id AND level."nsfwLevel" != m."nsfwLevel";
       `);
       onCancel.push(cancel);
       await result();
@@ -359,11 +362,8 @@ async function migrateCollections(res: NextApiResponse) {
   const [{ max: maxId }] = await dbRead.$queryRaw<{ max: number }[]>(
     Prisma.sql`SELECT MAX(id) "max" FROM "Collection";`
   );
-  const [{ min }] = await dbRead.$queryRaw<{ min: number }[]>(
-    Prisma.sql`SELECT MIN(id) "min" FROM "Collection";`
-  );
 
-  let cursor = min ?? 0;
+  let cursor = 0;
   await limitConcurrency(() => {
     if (cursor > maxId || shouldStop) return null; // We've reached the end of the images
 
@@ -378,10 +378,10 @@ async function migrateCollections(res: NextApiResponse) {
             SELECT COALESCE(bit_or(COALESCE(i."nsfwLevel", p."nsfwLevel", m."nsfwLevel", a."nsfwLevel",0)), 0)
             FROM "CollectionItem" ci
             LEFT JOIN "Image" i on i.id = ci."imageId" AND c.type = 'Image'
-            LEFT JOIN "Post" p on p.id = ci."postId" AND c.type = 'Post'
-            LEFT JOIN "Model" m on m.id = ci."modelId" AND c.type = 'Model'
-            LEFT JOIN "Article" a on a.id = ci."articleId" AND c.type = 'Article'
-            WHERE ci."collectionId" = c.id
+            LEFT JOIN "Post" p on p.id = ci."postId" AND c.type = 'Post' AND p."publishedAt" IS NOT NULL
+            LEFT JOIN "Model" m on m.id = ci."modelId" AND c.type = 'Model' AND m."status" = 'Published'
+            LEFT JOIN "Article" a on a.id = ci."articleId" AND c.type = 'Article' AND a."publishedAt" IS NOT NULL
+            WHERE ci."collectionId" = c.id AND ci.status = ${CollectionItemStatus.ACCEPTED}::"CollectionItemStatus"
           )
           WHERE c.id BETWEEN ${start} AND ${end};
       `);
@@ -402,11 +402,8 @@ async function migrateArticles(res: NextApiResponse) {
   const [{ max: maxId }] = await dbRead.$queryRaw<{ max: number }[]>(
     Prisma.sql`SELECT MAX(id) "max" FROM "Article";`
   );
-  const [{ min }] = await dbRead.$queryRaw<{ min: number }[]>(
-    Prisma.sql`SELECT MIN(id) "min" FROM "Article";`
-  );
 
-  let cursor = min ?? 0;
+  let cursor = 0;
   await limitConcurrency(() => {
     if (cursor > maxId || shouldStop) return null; // We've reached the end of the images
 
@@ -424,9 +421,14 @@ async function migrateArticles(res: NextApiResponse) {
           GROUP BY a.id
         )
         UPDATE "Article" a
-        SET "nsfwLevel" = level."nsfwLevel"
+        SET "nsfwLevel" = (
+          CASE
+            WHEN a."userNsfwLevel" > a."nsfwLevel" THEN a."userNsfwLevel"
+            ELSE level."nsfwLevel"
+          END
+        )
         FROM level
-        WHERE level.id = a.id;
+        WHERE level.id = a.id AND level."nsfwLevel" != a."nsfwLevel";
       `);
       onCancel.push(cancel);
       await result();

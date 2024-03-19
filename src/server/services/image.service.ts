@@ -3,12 +3,10 @@ import {
   ImageGenerationProcess,
   ImageIngestionStatus,
   MediaType,
-  NsfwLevel as NsfwLevelOld,
   Prisma,
   ReportReason,
   ReportStatus,
   ReviewReactions,
-  SearchIndexUpdateQueueAction,
 } from '@prisma/client';
 
 import { TRPCError } from '@trpc/server';
@@ -30,6 +28,7 @@ import {
   ImageUploadProps,
   UpdateImageInput,
 } from '~/server/schema/image.schema';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { articlesSearchIndex, imagesSearchIndex } from '~/server/search-index';
 import { ImageV2Model } from '~/server/selectors/imagev2.selector';
 import { imageTagCompositeSelect, simpleTagSelect } from '~/server/selectors/tag.selector';
@@ -86,7 +85,7 @@ export const deleteImageById = async ({
 }: GetByIdInput & { updatePost?: boolean }) => {
   updatePost ??= true;
   try {
-    const image = await dbRead.image.findUnique({
+    const image = await dbWrite.image.delete({
       where: { id },
       select: { url: true, postId: true, nsfwLevel: true, userId: true },
     });
@@ -768,7 +767,7 @@ export const getAllImages = async ({
     );
   }
 
-  if (pending) {
+  if (pending && (isModerator || userId) && browsingLevel) {
     if (isModerator) {
       AND.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`);
     } else if (userId) {
@@ -779,7 +778,11 @@ export const getAllImages = async ({
     }
   } else {
     AND.push(Prisma.sql`i."needsReview" IS NULL`);
-    AND.push(Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`);
+    AND.push(
+      browsingLevel
+        ? Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`
+        : Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`
+    );
   }
 
   // TODO: Adjust ImageMetric
@@ -1224,6 +1227,7 @@ type ImagesForModelVersions = {
   metadata: Prisma.JsonValue;
   tags?: number[];
   availability: Availability;
+  sizeKB?: number;
 };
 
 export const getImagesForModelVersion = async ({
@@ -1290,8 +1294,8 @@ export const getImagesForModelVersion = async ({
     imageWhere.push(Prisma.sql`i."userId" NOT IN (${Prisma.join(excludedUserIds)})`);
   }
 
-  if (pending) {
-    if (isModerator && browsingLevel) {
+  if (pending && (isModerator || userId) && browsingLevel) {
+    if (isModerator) {
       imageWhere.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`);
     } else if (userId) {
       imageWhere.push(Prisma.sql`(i."needsReview" IS NULL OR i."userId" = ${userId})`);
@@ -1301,7 +1305,11 @@ export const getImagesForModelVersion = async ({
     }
   } else {
     imageWhere.push(Prisma.sql`i."needsReview" IS NULL`);
-    imageWhere.push(Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`);
+    imageWhere.push(
+      browsingLevel
+        ? Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`
+        : Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`
+    );
   }
 
   const query = Prisma.sql`
@@ -1334,7 +1342,8 @@ export const getImagesForModelVersion = async ({
       i.type,
       i.metadata,
       t."modelVersionId",
-      p."availability"
+      p."availability",
+      i."sizeKB"
       ${Prisma.raw(include.includes('meta') ? ', i.meta' : '')}
     FROM targets t
     JOIN "Image" i ON i.id = t.id
@@ -1473,8 +1482,8 @@ export const getImagesForPosts = async ({
   //     imageWhere.push(Prisma.sql`i."id" NOT IN (${Prisma.join(excludedIds)})`);
   // }
 
-  if (pending) {
-    if (isModerator && browsingLevel) {
+  if (pending && (isModerator || userId) && browsingLevel) {
+    if (isModerator) {
       imageWhere.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`);
     } else if (userId) {
       imageWhere.push(Prisma.sql`(i."needsReview" IS NULL OR i."userId" = ${userId})`);
@@ -1484,7 +1493,11 @@ export const getImagesForPosts = async ({
     }
   } else {
     imageWhere.push(Prisma.sql`i."needsReview" IS NULL`);
-    imageWhere.push(Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`);
+    imageWhere.push(
+      browsingLevel
+        ? Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`
+        : Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`
+    );
   }
 
   const images = await dbRead.$queryRaw<
@@ -1524,10 +1537,22 @@ export const getImagesForPosts = async ({
       i.hash,
       i.type,
       i.metadata,
-      i.meta,
       i."createdAt",
       i."generationProcess",
       i."postId",
+      ${Prisma.raw(`
+        jsonb_build_object(
+          'prompt', i.meta->>'prompt',
+          'negativePrompt', i.meta->>'negativePrompt',
+          'cfgScale', i.meta->>'cfgScale',
+          'steps', i.meta->>'steps',
+          'sampler', i.meta->>'sampler',
+          'seed', i.meta->>'seed',
+          'hashes', i.meta->>'hashes',
+          'clipSkip', i.meta->>'clipSkip',
+          'Clip skip', i.meta->>'Clip skip'
+        ) as "meta",
+      `)}
       COALESCE(im."cryCount", 0) "cryCount",
       COALESCE(im."laughCount", 0) "laughCount",
       COALESCE(im."likeCount", 0) "likeCount",

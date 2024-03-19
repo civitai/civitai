@@ -20,6 +20,9 @@ import {
   numericString,
 } from '~/utils/zod-helpers';
 
+export const userTierSchema = z.enum(['free', 'founder']);
+export type UserTier = z.infer<typeof userTierSchema>;
+
 export const userPageQuerySchema = z
   .object({
     username: z.string(),
@@ -95,6 +98,12 @@ export const userUpdateSchema = z.object({
   landingPage: z.string().optional(),
 });
 export type UserUpdateInput = z.input<typeof userUpdateSchema>;
+
+export const updateBrowsingModeSchema = z.object({
+  showNsfw: z.boolean().optional(),
+  blurNsfw: z.boolean().optional(),
+  browsingLevel: z.number().optional(),
+});
 
 export const toggleFavoriteInput = z.object({
   modelId: z.number(),

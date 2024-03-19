@@ -5,43 +5,56 @@ import { isPromise } from 'util/types';
 import { clickhouse } from '~/server/clickhouse/client';
 import { pgDbWrite } from '~/server/db/pgDb';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import {
+  withNotificationCounter,
+  NotificationAddedRow,
+} from '~/server/notifications/notification-cache';
 
 const log = createLogger('send-notifications', 'blue');
 
-export const sendNotificationsJob = createJob('send-notifications', '*/1 * * * *', async (e) => {
-  try {
-    const [lastRun, setLastRun] = await getJobDate('last-sent-notifications');
+export const sendNotificationsJob = createJob('send-notifications', '*/1 * * * *', (e) =>
+  withNotificationCounter(
+    async (counter) => {
+      const [lastRun, setLastRun] = await getJobDate('last-sent-notifications');
 
-    // Run batches
-    for (const batch of notificationBatches) {
-      e.checkIfCanceled();
-      const promises = batch.map(({ prepareQuery, key, category }) => async () => {
+      // Run batches
+      for (const batch of notificationBatches) {
         e.checkIfCanceled();
-        log('sending', key, 'notifications');
-        const [lastSent, setLastSent] = await getJobDate('last-sent-notification-' + key, lastRun);
-        let query = prepareQuery?.({
-          lastSent: lastSent.toISOString(),
-          clickhouse,
-          category: category ?? 'Other',
+        const promises = batch.map(({ prepareQuery, key, category }) => async () => {
+          e.checkIfCanceled();
+          log('sending', key, 'notifications');
+          const [lastSent, setLastSent] = await getJobDate(
+            'last-sent-notification-' + key,
+            lastRun
+          );
+          let query = prepareQuery?.({
+            lastSent: lastSent.toISOString(),
+            clickhouse,
+            category: category ?? 'Other',
+          });
+          if (query) {
+            const start = Date.now();
+            if (isPromise(query)) query = await query;
+            query = query.replace(/;\s*$/, '') + ' RETURNING category, "userId"';
+
+            const request = await pgDbWrite.cancellableQuery<NotificationAddedRow>(query);
+            e.on('cancel', request.cancel);
+            const additions = await request.result();
+            counter.add(additions);
+
+            await setLastSent();
+            log('sent', key, 'notifications in', (Date.now() - start) / 1000, 's');
+          }
         });
-        if (query) {
-          const start = Date.now();
-          if (isPromise(query)) query = await query;
+        await limitConcurrency(promises, 4);
+      }
+      log('sent notifications');
 
-          const request = await pgDbWrite.cancellableQuery(query);
-          e.on('cancel', request.cancel);
-          await request.result();
-          await setLastSent();
-          log('sent', key, 'notifications in', (Date.now() - start) / 1000, 's');
-        }
-      });
-      await limitConcurrency(promises, 4);
+      await setLastRun();
+    },
+    (e) => {
+      log('failed to send notifications');
+      throw e;
     }
-    log('sent notifications');
-
-    await setLastRun();
-  } catch (e) {
-    log('failed to send notifications');
-    throw e;
-  }
-});
+  )
+);

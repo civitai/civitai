@@ -9,8 +9,11 @@ import {
   ModelType,
   ModelUploadType,
 } from '@prisma/client';
+import dayjs from 'dayjs';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
+import CustomParseFormat from 'dayjs/plugin/customParseFormat';
+dayjs.extend(CustomParseFormat);
 
 import { ModelSort } from '~/server/common/enums';
 import { UnpublishReason, unpublishReasons } from '~/server/common/moderation-helpers';
@@ -41,7 +44,14 @@ export const getAllModelsSchema = baseQuerySchema
   .extend({
     limit: z.preprocess((val) => Number(val), z.number().min(0).max(100)).optional(),
     page: z.preprocess((val) => Number(val), z.number().min(1)).optional(),
-    cursor: z.union([z.bigint(), z.number(), z.string(), z.date()]).optional(),
+    cursor: z
+      .union([z.bigint(), z.number(), z.string(), z.date()])
+      .transform((val) =>
+        typeof val === 'string' && dayjs(val, 'YYYY-MM-DDTHH:mm:ss.SSS[Z]', true).isValid()
+          ? new Date(val)
+          : val
+      )
+      .optional(),
     query: z.string().optional(),
     tag: z.string().optional(),
     tagname: z.string().optional(),
@@ -139,6 +149,7 @@ export const modelGallerySettingsSchema = z.object({
   users: z.number().array().optional(),
   tags: z.number().array().optional(),
   images: z.number().array().optional(),
+  level: z.number().optional(),
 });
 
 export type ModelGallerySettingsInput = z.infer<typeof modelGallerySettingsInput>;
@@ -146,6 +157,7 @@ export const modelGallerySettingsInput = z.object({
   hiddenUsers: z.object({ id: z.number(), username: z.string().nullable() }).array(),
   hiddenTags: z.object({ id: z.number(), name: z.string() }).array(),
   hiddenImages: z.number().array(),
+  level: z.number().optional(),
 });
 
 export type ModelUpsertInput = z.infer<typeof modelUpsertSchema>;
@@ -162,7 +174,7 @@ export const modelUpsertSchema = licensingSchema.extend({
   locked: z.boolean().optional(),
   templateId: z.number().optional(),
   bountyId: z.number().optional(),
-  userNsfwLevel: z.number().optional(),
+  nsfw: z.boolean().optional(),
 });
 
 export type UpdateGallerySettingsInput = z.infer<typeof updateGallerySettingsSchema>;
@@ -293,4 +305,10 @@ export type GetSimpleModelsInfiniteSchema = z.infer<typeof getSimpleModelsInfini
 export const getSimpleModelsInfiniteSchema = infiniteQuerySchema.extend({
   query: z.string().trim().optional(),
   userId: z.number(),
+});
+
+export type ToggleCheckpointCoverageInput = z.infer<typeof toggleCheckpointCoverageSchema>;
+export const toggleCheckpointCoverageSchema = z.object({
+  id: z.number(),
+  versionId: z.number().nullish(),
 });

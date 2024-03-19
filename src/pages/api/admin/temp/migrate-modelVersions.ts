@@ -1,10 +1,11 @@
 import { Prisma } from '@prisma/client';
+import { NsfwLevel } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { pgDbWrite } from '~/server/db/pgDb';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
-const batchSize = 10000;
+const batchSize = 500;
 export default WebhookEndpoint(async (req, res) => {
   const onCancel: (() => Promise<void>)[] = [];
   let shouldStop = false;
@@ -22,7 +23,6 @@ export default WebhookEndpoint(async (req, res) => {
   );
 
   let cursor = min ?? 0;
-  console.log(cursor > maxId);
   await limitConcurrency(() => {
     if (cursor > maxId || shouldStop) return null; // We've reached the end of the images
 
@@ -35,21 +35,23 @@ export default WebhookEndpoint(async (req, res) => {
         WITH level as (
           SELECT
             mv.id,
-            (
-              SELECT
-                COALESCE(bit_or(i."nsfwLevel"), 0) "nsfwLevel"
-              FROM (
-                SELECT
-                  i."nsfwLevel"
-                FROM "Post" p
-                JOIN "Image" i ON i."postId" = p.id
-                WHERE p."modelVersionId" = mv.id
-                AND p."userId" = m."userId"
-                AND p."publishedAt" IS NOT NULL AND i."nsfwLevel" != 0
-                ORDER BY p."id", i."index"
-                LIMIT 20
-              ) AS i
-            ) AS "nsfwLevel"
+            CASE
+              WHEN m.nsfw = TRUE THEN ${NsfwLevel.XXX}
+              ELSE (
+                SELECT COALESCE(bit_or(i."nsfwLevel"), 0) "nsfwLevel"
+                FROM (
+                  SELECT
+                    i."nsfwLevel"
+                  FROM "Post" p
+                  JOIN "Image" i ON i."postId" = p.id
+                  WHERE p."modelVersionId" = mv.id
+                  AND p."userId" = m."userId"
+                  AND p."publishedAt" IS NOT NULL AND i."nsfwLevel" != 0
+                  ORDER BY p."id", i."index"
+                  LIMIT 20
+                ) AS i
+              )
+            END AS "nsfwLevel"
           FROM "ModelVersion" mv
           JOIN "Model" m ON mv."modelId" = m.id
           WHERE mv.id BETWEEN ${start} AND ${end}
@@ -57,12 +59,12 @@ export default WebhookEndpoint(async (req, res) => {
         UPDATE "ModelVersion" mv
         SET "nsfwLevel" = level."nsfwLevel"
         FROM level
-        WHERE level.id = mv.id;
+        WHERE level.id = mv.id AND level."nsfwLevel" != mv."nsfwLevel";
       `);
       onCancel.push(cancel);
       await result();
     };
-  }, 10);
+  }, 50);
 
   console.log('end');
   res.status(200).json({ finished: true });

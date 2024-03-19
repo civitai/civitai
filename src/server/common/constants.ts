@@ -180,7 +180,6 @@ export const constants = {
       notified: 5,
       muted: 8,
     },
-    maxConcurrentRequests: 10,
   },
   tagVoting: {
     voteDuration: 1000 * 60 * 60 * 24,
@@ -271,6 +270,13 @@ export const constants = {
     coverImageWidth: 180,
   },
   supportedBaseModelAddendums: ['SD 1.5', 'SDXL 1.0'],
+  vault: {
+    keys: {
+      details: ':modelVersionId/:userId/details.pdf',
+      images: ':modelVersionId/:userId/images.zip',
+      cover: ':modelVersionId/:userId/cover.jpg',
+    },
+  },
   supporterBadge: '020f374d-f165-4f45-9082-371e696a44ff',
 } as const;
 
@@ -285,14 +291,22 @@ export type BaseModelType = (typeof constants.baseModelTypes)[number];
 
 export type BaseModel = (typeof constants.baseModels)[number];
 
-export const baseModelSetTypes = ['SD1', 'SD2', 'SDXL', 'SDXLDistilled', 'SCascade'] as const;
+export const baseModelSetTypes = [
+  'SD1',
+  'SD2',
+  'SDXL',
+  'SDXLDistilled',
+  'SCascade',
+  'Pony',
+] as const;
 export type BaseModelSetType = (typeof baseModelSetTypes)[number];
 export const baseModelSets: Record<BaseModelSetType, BaseModel[]> = {
   SD1: ['SD 1.4', 'SD 1.5', 'SD 1.5 LCM'],
   SD2: ['SD 2.0', 'SD 2.0 768', 'SD 2.1', 'SD 2.1 768', 'SD 2.1 Unclip'],
-  SDXL: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM', 'Pony', 'SDXL Lightning'],
+  SDXL: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM', 'SDXL Lightning'],
   SDXLDistilled: ['SDXL Distilled'],
   SCascade: ['Stable Cascade'],
+  Pony: ['Pony'],
 };
 
 type LicenseDetails = {
@@ -433,8 +447,6 @@ export const generation = {
   },
   maxValues: {
     seed: 4294967295,
-    steps: 50,
-    quantity: 10,
     clipSkip: 10,
   },
 } as const;
@@ -478,6 +490,7 @@ export const generationConfig = {
   SDXL: {
     additionalResourceTypes: [
       { type: ModelType.LORA, baseModelSet: 'SDXL' },
+      { type: ModelType.LoCon, baseModelSet: 'SDXL' },
       { type: ModelType.TextualInversion, baseModelSet: 'SDXL', baseModels: ['SD 1.5'] },
     ] as ResourceFilter[],
     aspectRatios: [
@@ -505,6 +518,45 @@ export const generationConfig = {
       strength: 1,
     } as Generation.Resource,
   },
+  Pony: {
+    additionalResourceTypes: [
+      {
+        type: ModelType.LORA,
+        baseModelSet: 'Pony',
+        baseModels: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
+      },
+      {
+        type: ModelType.LoCon,
+        baseModelSet: 'Pony',
+        baseModels: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
+      },
+      { type: ModelType.TextualInversion, baseModelSet: 'Pony', baseModels: ['SD 1.5'] },
+    ] as ResourceFilter[],
+    aspectRatios: [
+      { label: 'Square', width: 1024, height: 1024 },
+      { label: 'Landscape', width: 1216, height: 832 },
+      { label: 'Portrait', width: 832, height: 1216 },
+    ],
+    costs: {
+      // TODO.generation: Uncomment this out by next week once we start charging for SDXL generation
+      // base: 4,
+      base: 0,
+      quantity: 1,
+      steps: 40,
+      width: 1024,
+      height: 1024,
+    },
+    checkpoint: {
+      id: 290640,
+      name: 'V6 (start with this one)',
+      trainedWords: [],
+      modelId: 257749,
+      modelName: 'Pony Diffusion V6 XL',
+      modelType: 'Checkpoint',
+      baseModel: 'Pony',
+      strength: 1,
+    } as Generation.Resource,
+  },
 };
 
 export type GenerationBaseModel = keyof typeof generationConfig;
@@ -515,7 +567,7 @@ export const getGenerationConfig = (baseModel?: string) => {
 };
 
 
-export const MODELS_SEARCH_INDEX = 'models_v7';
+export const MODELS_SEARCH_INDEX = 'models_v8';
 export const IMAGES_SEARCH_INDEX = 'images_v4';
 export const ARTICLES_SEARCH_INDEX = 'articles_v4';
 export const USERS_SEARCH_INDEX = 'users_v2';

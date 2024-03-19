@@ -117,16 +117,7 @@ export function QueueItem({ request }: Props) {
   };
 
   const { prompt, ...details } = request.params;
-  const baseModelSetKey = getBaseModelSetKey(details.baseModel ?? 'SD1');
-
   const removedForSafety = request.images?.some((x) => x.removedForSafety && x.available);
-  let fullCoverageModels =
-    baseModelSetKey && generationStatus.fullCoverageModels
-      ? generationStatus.fullCoverageModels[baseModelSetKey]
-      : undefined;
-  if (!request.alternativesAvailable) fullCoverageModels = undefined;
-  const isFullCoverageModel =
-    fullCoverageModels?.some((x) => x.id === request.resources[0]?.id) ?? false;
 
   const hasUnstableResources = request.resources.some((x) => unstableResources.includes(x.id));
   const overwriteStatusLabel =
@@ -234,35 +225,6 @@ export function QueueItem({ request }: Props) {
           </Group>
         </Group>
       </Card.Section>
-      {removedForSafety && !!fullCoverageModels?.length && !isFullCoverageModel && (
-        <Card.Section>
-          <Alert color="yellow">
-            <Stack spacing="xs">
-              <Text>
-                <strong>Blocked by Provider?</strong>{' '}
-                {`We're currently adding new providers. Select an
-              option below to swap to one of the current Full Coverage models.`}
-              </Text>
-              <Group spacing="xs">
-                {fullCoverageModels.map(({ id, name }) => (
-                  <Button
-                    key={id}
-                    onClick={() => generationPanel.open({ type: 'modelVersion', id })}
-                    size="xs"
-                    color="yellow"
-                    variant="light"
-                    compact
-                    rightIcon={<IconPlayerPlayFilled size={14} />}
-                    styles={{ rightIcon: { marginLeft: 2 } }}
-                  >
-                    {name}
-                  </Button>
-                ))}
-              </Group>
-            </Stack>
-          </Alert>
-        </Card.Section>
-      )}
       <Stack py="xs" spacing={8} className={classes.container}>
         <ContentClamp maxHeight={36} labelSize="xs">
           <Text lh={1.3} sx={{ wordBreak: 'break-all' }}>
@@ -273,12 +235,7 @@ export function QueueItem({ request }: Props) {
         {!!request.images?.length && (
           <div className={classes.grid}>
             {request.images.map((image) => (
-              <GeneratedImage
-                key={image.id}
-                image={image}
-                request={request}
-                fullCoverage={isFullCoverageModel}
-              />
+              <GeneratedImage key={image.id} image={image} request={request} />
             ))}
           </div>
         )}

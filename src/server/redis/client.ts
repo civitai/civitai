@@ -61,7 +61,12 @@ export const REDIS_KEYS = {
     RESOURCE_DATA: 'generation:resource-data',
     COUNT: 'generation:count',
     LIMITS: 'generation:limits',
+    STATUS: 'generation:status',
   },
+  TRAINING: {
+    STATUS: 'training:status',
+  },
+  CLIENT: 'client',
   SYSTEM: {
     FEATURES: 'system:features',
     MODERATED_TAGS: 'system:moderated_tags',
@@ -70,6 +75,13 @@ export const REDIS_KEYS = {
     PERMISSIONS: 'system:permissions',
     TAGS_NEEDING_REVIEW: 'system:tags-needing-review',
     HOME_EXCLUDED_TAGS: 'system:home-excluded-tags',
+    NOTIFICATION_COUNTS: 'system:notification-counts',
+  },
+  CACHES: {
+    FILES_FOR_MODEL_VERSION: 'caches:files-for-model-version',
+  },
+  QUEUES: {
+    BUCKETS: 'queues:buckets',
   },
   LIVE_NOW: 'live-now',
 } as const;

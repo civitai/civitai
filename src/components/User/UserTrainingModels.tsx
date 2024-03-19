@@ -38,6 +38,7 @@ import React, { useState } from 'react';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { DownloadButton } from '~/components/Model/ModelVersions/DownloadButton';
 import { NoContent } from '~/components/NoContent/NoContent';
+import { useTrainingServiceStatus } from '~/components/Training/training.utils';
 import { constants } from '~/server/common/constants';
 import {
   createModelFileDownloadUrl,
@@ -87,6 +88,7 @@ type TrainingFileData = {
 type ModalData = {
   id?: number;
   file?: TrainingFileData;
+  baseModel?: string;
   params?: TrainingDetailsParams;
   eta?: string;
 };
@@ -125,11 +127,11 @@ const trainingStatusFields: Record<TrainingStatus, { color: MantineColor; descri
 
 const modelsLimit = 10;
 
-const minsWait = 10;
+export const trainingMinsWait = 10;
 
 export default function UserTrainingModels() {
   const { classes, cx } = useStyles();
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const router = useRouter();
 
   const [page, setPage] = useState(1);
@@ -137,6 +139,7 @@ export default function UserTrainingModels() {
   const [opened, { open, close }] = useDisclosure(false);
   const [modalData, setModalData] = useState<ModalData>({});
 
+  const status = useTrainingServiceStatus();
   const { data, isLoading } = trpc.model.getMyTrainingModels.useQuery({ page, limit: modelsLimit });
   const { items, ...pagination } = data || {
     items: [],
@@ -267,12 +270,20 @@ export default function UserTrainingModels() {
                 // would love to use .every(isDefined) here but TS isn't smart enough
                 const etaMins =
                   !!networkDim && !!networkAlpha && !!targetSteps && !!baseModel
-                    ? calcEta(networkDim, networkAlpha, targetSteps, baseModel)
+                    ? calcEta({
+                        networkDim,
+                        networkAlpha,
+                        targetSteps,
+                        baseModel,
+                        cost: status.cost,
+                      })
                     : undefined;
                 // mins wait here might need to only be calced if the last history entry is "Submitted"
                 const eta =
                   !!startTime && !!etaMins
-                    ? new Date(new Date(startTime).getTime() + (minsWait + etaMins) * 60 * 1000)
+                    ? new Date(
+                        new Date(startTime).getTime() + (trainingMinsWait + etaMins) * 60 * 1000
+                      )
                     : undefined;
                 const etaStr = isProcessing
                   ? !!eta
@@ -430,6 +441,7 @@ export default function UserTrainingModels() {
                             setModalData({
                               id: thisModelVersion.id,
                               file: thisFile as TrainingFileData,
+                              baseModel: thisTrainingDetails?.baseModel,
                               params: thisTrainingDetails?.params,
                               eta: etaStr,
                             });
@@ -535,6 +547,11 @@ export default function UserTrainingModels() {
             {
               label: 'Captions',
               value: modalData.file?.metadata?.numCaptions || 0,
+            },
+            // TODO make the base model prettier when custom
+            {
+              label: 'Base Model',
+              value: modalData.baseModel ?? 'Unknown',
             },
             {
               label: 'Privacy',

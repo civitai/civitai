@@ -15,6 +15,7 @@ const exclude = [
   '/user/notifications',
   '/user/transactions',
   '/user/buzz-dashboard',
+  '/user/vault',
 ];
 
 const disallow = exclude.filter((path) => !path.includes('sitemap.xml'));

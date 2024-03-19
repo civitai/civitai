@@ -8,7 +8,7 @@ import { useRouter } from 'next/router';
 
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
-import { hiddenLabel, ManagePostMaturity } from '~/components/Post/Edit/EditPostControls';
+import { hiddenLabel } from '~/components/Post/Edit/EditPostControls';
 import { EditPostImages } from '~/components/Post/Edit/EditPostImages';
 import { useEditPostContext } from '~/components/Post/Edit/EditPostProvider';
 import { EditPostReviews } from '~/components/Post/Edit/EditPostReviews';
@@ -79,7 +79,6 @@ export function PostUpsertForm({ modelVersionId, modelId }: Props) {
         <Stack spacing={50}>
           <Stack>
             <PublishButton modelId={modelId} modelVersionId={modelVersionId} />
-            <ManagePostMaturity />
             <EditPostTags />
           </Stack>
           <ReorderImagesButton />

@@ -5,7 +5,8 @@ import {
   createSearchIndexUpdateProcessor,
   SearchIndexRunContext,
 } from '~/server/search-index/base.search-index';
-import { Availability, Prisma, PrismaClient, SearchIndexUpdateQueueAction } from '@prisma/client';
+import { Availability, Prisma, PrismaClient } from '@prisma/client';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { articleDetailSelect } from '~/server/selectors/article.selector';
 import { ARTICLES_SEARCH_INDEX } from '~/server/common/constants';
 import { isDefined } from '~/utils/type-guards';
@@ -189,15 +190,16 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
   let offset = 0;
   const articlesTasks: EnqueuedTask[] = [];
 
-  const queuedItems = await db.searchIndexUpdateQueue.findMany({
-    select: {
-      id: true,
-    },
-    where: {
-      type: INDEX_ID,
-    },
-  });
+  const queuedUpdates = await SearchIndexUpdate.getQueue(
+    indexName,
+    SearchIndexUpdateQueueAction.Update
+  );
+  const queuedDeletes = await SearchIndexUpdate.getQueue(
+    indexName,
+    SearchIndexUpdateQueueAction.Delete
+  );
 
+  const toQueue = new Set<number>();
   while (true) {
     console.log(
       `onIndexUpdate :: fetching starting for ${indexName} range:`,
@@ -223,17 +225,14 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
             },
             {
               id: {
-                in: queuedItems.map(({ id }) => id),
+                in: [...queuedUpdates.content, ...queuedDeletes.content],
               },
             },
           ],
     });
 
     if (toRequeue.length) {
-      SearchIndexUpdate.queueUpdate({
-        indexName,
-        items: toRequeue.map((x) => ({ id: x.id, action: SearchIndexUpdateQueueAction.Update })),
-      });
+      for (const item of toRequeue) toQueue.add(item.id);
     }
 
     console.log(
@@ -253,6 +252,15 @@ const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunCon
 
     offset += indexReadyRecords.length;
   }
+
+  // Queue requeued items
+  await SearchIndexUpdate.queueUpdate({
+    indexName,
+    items: [...toQueue].map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update })),
+  });
+
+  // Commit all queued updates and deletes
+  await Promise.all([queuedUpdates.commit, queuedDeletes.commit]);
 
   console.log('onIndexUpdate :: index update complete');
 };

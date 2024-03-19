@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { NsfwLevel } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { pgDbWrite } from '~/server/db/pgDb';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
@@ -42,10 +43,14 @@ export default WebhookEndpoint(async (req, res) => {
           GROUP BY mv.id
         )
         UPDATE "Model" m
-        SET
-          "nsfwLevel" = level."nsfwLevel"
+        SET "nsfwLevel" = (
+          CASE
+            WHEN m.nsfw = TRUE THEN ${NsfwLevel.XXX}
+            ELSE level."nsfwLevel"
+          END
+        )
         FROM level
-        WHERE level.id = m.id;
+        WHERE level.id = m.id AND level."nsfwLevel" != m."nsfwLevel";
       `);
       onCancel.push(cancel);
       await result();

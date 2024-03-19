@@ -130,6 +130,7 @@ export function ModelCarousel({
     sort: ImageSort.MostReactions,
     limit,
     pending: true,
+    browsingLevel: undefined,
   });
 
   if (isLoading)

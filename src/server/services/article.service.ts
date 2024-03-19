@@ -5,9 +5,9 @@ import {
   CosmeticType,
   MetricTimeframe,
   Prisma,
-  SearchIndexUpdateQueueAction,
   TagTarget,
 } from '@prisma/client';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { TRPCError } from '@trpc/server';
 import { ManipulateType } from 'dayjs';
 import { truncate } from 'lodash-es';
@@ -47,6 +47,7 @@ type ArticleRaw = {
   coverId?: number | null;
   title: string;
   publishedAt: Date | null;
+  userNsfwLevel: number;
   nsfwLevel: number;
   availability: Availability;
   userId: number | null;
@@ -164,16 +165,18 @@ export const getArticles = async ({
       AND.push(Prisma.sql`a.id IN (${Prisma.join(ids, ',')})`);
     }
 
-    if (pending) {
-      if (isModerator) {
-        AND.push(Prisma.sql`((a."nsfwLevel" & ${browsingLevel}) != 0 OR a."nsfwLevel" = 0)`);
-      } else if (userId) {
-        AND.push(
-          Prisma.sql`((a."nsfwLevel" & ${browsingLevel}) != 0 OR (a."nsfwLevel" = 0 AND a."userId" = ${userId}))`
-        );
+    if (browsingLevel) {
+      if (pending && (isModerator || userId)) {
+        if (isModerator) {
+          AND.push(Prisma.sql`((a."nsfwLevel" & ${browsingLevel}) != 0 OR a."nsfwLevel" = 0)`);
+        } else if (userId) {
+          AND.push(
+            Prisma.sql`((a."nsfwLevel" & ${browsingLevel}) != 0 OR (a."nsfwLevel" = 0 AND a."userId" = ${userId}))`
+          );
+        }
+      } else {
+        AND.push(Prisma.sql`(a."nsfwLevel" & ${browsingLevel}) != 0`);
       }
-    } else {
-      AND.push(Prisma.sql`(a."nsfwLevel" & ${browsingLevel}) != 0`);
     }
 
     if (username) {
@@ -341,6 +344,7 @@ export const getArticles = async ({
         a.title,
         a."publishedAt",
         a."nsfwLevel",
+        a."userNsfwLevel",
         a."userId",
         a."createdAt",
         a."updatedAt",
@@ -457,6 +461,11 @@ export const getArticles = async ({
           coverImage: coverImage
             ? {
                 ...coverImage,
+                // !important - when article `userNsfwLevel` equals article `nsfwLevel`, it's possible that the article `userNsfwLevel` is higher than the cover image `nsfwLevel`. In this case, we update the image to the higher `nsfwLevel` so that it will still pass through front end filters
+                nsfwLevel:
+                  article.nsfwLevel === article.userNsfwLevel
+                    ? article.nsfwLevel
+                    : coverImage.nsfwLevel,
                 meta: coverImage.meta as ImageMetaProps,
                 metadata: coverImage.metadata as any,
                 tags: coverImage?.tags.flatMap((x) => x.tag.id),

@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { NsfwLevel } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { pgDbWrite } from '~/server/db/pgDb';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
@@ -38,13 +39,18 @@ export default WebhookEndpoint(async (req, res) => {
             bit_or(i."nsfwLevel") "nsfwLevel"
           FROM "ImageConnection" ic
           JOIN "Image" i ON i.id = ic."imageId"
-          JOIN "Bounty" b on b.id = "entityId" AND "entityType" = 'Bounty'
-          WHERE "entityType" = 'Bounty' AND "entityId" BETWEEN ${start} AND ${end}
+          JOIN "Bounty" b on b.id = "entityId" AND ic."entityType" = 'Bounty'
+          WHERE ic."entityType" = 'Bounty' AND ic."entityId" BETWEEN ${start} AND ${end}
           GROUP BY 1
         )
-        UPDATE "Bounty" b SET "nsfwLevel" = level."nsfwLevel"
+        UPDATE "Bounty" b SET "nsfwLevel" = (
+          CASE
+            WHEN b.nsfw = TRUE THEN ${NsfwLevel.XXX}
+            ELSE level."nsfwLevel"
+          END
+        )
         FROM level
-        WHERE level."entityId" = b.id;
+        WHERE level."entityId" = b.id AND level."nsfwLevel" != b."nsfwLevel";
       `);
       onCancel.push(cancel);
       await result();

@@ -6,24 +6,18 @@ import { getDisplayName } from '~/utils/string-helpers';
 type FileFormatType = {
   // eslint-disable-next-line @typescript-eslint/ban-types
   type: ModelFileType | (string & {});
-  metadata: FileMetadata;
+  metadata: BasicFileMetadata;
 };
 
 export const defaultFilePreferences: Omit<FileFormatType, 'type'> = {
   metadata: { format: 'SafeTensor', size: 'pruned', fp: 'fp16' },
 };
 
-type FileMetaKey = keyof FileMetadata;
+type FileMetaKey = keyof BasicFileMetadata;
 const preferenceWeight: Record<FileMetaKey, number> = {
   format: 100,
   size: 10,
   fp: 1,
-  ownRights: 0,
-  shareDataset: 0,
-  numImages: 0,
-  numCaptions: 0,
-  selectedEpochUrl: 0,
-  trainingResults: 0,
 };
 
 export function getPrimaryFile<T extends FileFormatType>(
@@ -38,6 +32,7 @@ export function getPrimaryFile<T extends FileFormatType>(
     let score = 1000;
     for (const [key, value] of Object.entries(file.metadata)) {
       const weight = preferenceWeight[key as FileMetaKey];
+      if (!weight) continue;
       if (value === preferredMetadata[key as FileMetaKey]) score += weight;
       else score -= weight;
     }

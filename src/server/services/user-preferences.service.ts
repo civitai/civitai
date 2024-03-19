@@ -179,7 +179,7 @@ export interface HiddenPreferenceBase {
   hidden?: boolean;
 }
 
-interface HiddenTag extends HiddenPreferenceBase {
+export interface HiddenTag extends HiddenPreferenceBase {
   id: number;
   name: string;
   /** the presence of nsfwLevel indicates that this is a moderated tag*/

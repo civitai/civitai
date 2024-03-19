@@ -43,6 +43,9 @@ import { cacheCleanup } from '~/server/jobs/cache-cleanup';
 import { applyTagRules } from '~/server/jobs/apply-tag-rules';
 import { processCreatorProgramEarlyAccessRewards } from '~/server/jobs/process-creator-program-early-access-rewards';
 import { processCreatorProgramImageGenerationRewards } from '~/server/jobs/process-creator-program-image-generation-rewards';
+import { processVaultItems } from '~/server/jobs/process-vault-items';
+import { clearVaultItems } from '~/server/jobs/clear-vault-items';
+import { jobQueueJobs } from '~/server/jobs/job-queue';
 
 export const jobs: Job[] = [
   scanFilesJob,
@@ -84,6 +87,9 @@ export const jobs: Job[] = [
   applyTagRules,
   processCreatorProgramEarlyAccessRewards,
   processCreatorProgramImageGenerationRewards,
+  processVaultItems,
+  clearVaultItems,
+  ...jobQueueJobs,
 ];
 
 const log = createLogger('jobs', 'green');

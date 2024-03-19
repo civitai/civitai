@@ -2,7 +2,8 @@ import { createJob, getJobDate } from './job';
 import { dbWrite } from '~/server/db/client';
 import { constants } from '~/server/common/constants';
 import { imagesSearchIndex } from '~/server/search-index';
-import { Prisma, SearchIndexUpdateQueueAction } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { chunk, uniqBy } from 'lodash-es';
 import { updateImageTagIdsForImages } from '~/server/services/image.service';
 

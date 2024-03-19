@@ -13,14 +13,15 @@ import {
   MediaType,
   Prisma,
   PrismaClient,
-  SearchIndexUpdateQueueAction,
 } from '@prisma/client';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { BOUNTIES_SEARCH_INDEX } from '~/server/common/constants';
 import { isDefined } from '~/utils/type-guards';
 import { dbRead } from '~/server/db/client';
 import { ImageMetadata } from '~/server/schema/media.schema';
 import { ImageModelWithIngestion, profileImageSelect } from '../selectors/image.selector';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { SearchIndexUpdate } from '~/server/search-index/SearchIndexUpdate';
 
 const READ_BATCH_SIZE = 250; // 10 items per bounty are fetched for images. Careful with this number
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 1000;
@@ -392,40 +393,34 @@ const onFetchItemsToIndex = async ({
 };
 
 const onUpdateQueueProcess = async ({ db, indexName }: { db: PrismaClient; indexName: string }) => {
-  const queuedItems = await db.searchIndexUpdateQueue.findMany({
-    select: {
-      id: true,
-    },
-    where: { type: INDEX_ID, action: SearchIndexUpdateQueueAction.Update },
-  });
+  const queue = await SearchIndexUpdate.getQueue(indexName, SearchIndexUpdateQueueAction.Update);
 
   console.log(
     'onUpdateQueueProcess :: A total of ',
-    queuedItems.length,
+    queue.content.length,
     ' have been updated and will be re-indexed'
   );
 
-  const batchCount = Math.ceil(queuedItems.length / READ_BATCH_SIZE);
+  const batchCount = Math.ceil(queue.content.length / READ_BATCH_SIZE);
 
   const itemsToIndex: BountySearchIndexRecord[] = [];
 
   for (let batchNumber = 0; batchNumber < batchCount; batchNumber++) {
-    const batch = queuedItems.slice(
+    const batch = queue.content.slice(
       batchNumber * READ_BATCH_SIZE,
       batchNumber * READ_BATCH_SIZE + READ_BATCH_SIZE
     );
 
-    const itemIds = batch.map(({ id }) => id);
-
     const newItems = await onFetchItemsToIndex({
       db,
       indexName,
-      whereOr: [Prisma.sql`b.id IN (${Prisma.join(itemIds)})`],
+      whereOr: [Prisma.sql`b.id IN (${Prisma.join(batch)})`],
     });
 
     itemsToIndex.push(...newItems);
   }
 
+  await queue.commit();
   return itemsToIndex;
 };
 const onIndexUpdate = async ({ db, lastUpdatedAt, indexName }: SearchIndexRunContext) => {

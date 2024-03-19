@@ -20,7 +20,6 @@ import {
   InputSwitch,
   InputText,
   useForm,
-  InputFlag,
 } from '~/libs/form';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
@@ -43,8 +42,6 @@ import { ModelUpsertInput } from '~/server/schema/model.schema';
 import { isEarlyAccess } from '~/server/utils/early-access-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import { NsfwLevel } from '~/server/common/enums';
-import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
 
 const schema = modelVersionUpsertSchema2
   .extend({
@@ -93,7 +90,7 @@ const querySchema = z.object({
 export function ModelVersionUpsertForm({ model, version, children, onSubmit }: Props) {
   const features = useFeatureFlags();
   const router = useRouter();
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
 
   const acceptsTrainedWords = [
     'Checkpoint',
@@ -144,7 +141,6 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
     monetization: version?.monetization ?? null,
     requireAuth: version?.requireAuth ?? true,
     recommendedResources: version?.recommendedResources ?? [],
-    userNsfwLevel: version?.userNsfwLevel ?? model?.userNsfwLevel ?? 0,
   };
 
   const form = useForm({ schema, defaultValues, shouldUnregister: false, mode: 'onChange' });
@@ -162,6 +158,25 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
   const canMonetize = !model?.poi;
 
   const upsertVersionMutation = trpc.modelVersion.upsert.useMutation({
+    onSuccess(result) {
+      // Set data as soon as we get a response
+      queryUtils.modelVersion.getById.setData({ id: result.id }, (old) =>
+        // Using any just to make ts happy
+        old ? { ...old, ...(result as any), files: [], posts: [] } : old
+      );
+      queryUtils.model.getById.setData({ id: result.modelId }, (old) =>
+        old
+          ? {
+              ...old,
+              modelVersions: [
+                // Using any just to make ts happy
+                { ...(result as any), files: [], posts: [], recommendedResources: [], hashes: [] },
+                ...old.modelVersions,
+              ],
+            }
+          : old
+      );
+    },
     onError(error) {
       showErrorNotification({
         error: new Error(error.message),
@@ -198,6 +213,9 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
         templateId,
         bountyId,
       });
+
+      // Reset dirty state, but keep the values
+      form.reset({}, { keepValues: true });
 
       await queryUtils.modelVersion.getById.invalidate();
       if (model) await queryUtils.model.getById.invalidate({ id: model.id });
@@ -592,21 +610,6 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                   download the asset files.
                 </>
               }
-            />
-
-            <InputFlag
-              spacing="xs"
-              name="userNsfwLevel"
-              flag="NsfwLevel"
-              label={<Text size="sm">This version generates content that is:</Text>}
-              mapLabel={({ value, label }) => (
-                <Text>
-                  <Text weight={600} span>
-                    {browsingLevelLabels[value as NsfwLevel]}:
-                  </Text>{' '}
-                  {label}
-                </Text>
-              )}
             />
           </Stack>
         </Stack>

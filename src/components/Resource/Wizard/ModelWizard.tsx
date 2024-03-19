@@ -22,6 +22,7 @@ import { ModelUpsertForm } from '~/components/Resource/Forms/ModelUpsertForm';
 import { ModelVersionUpsertForm } from '~/components/Resource/Forms/ModelVersionUpsertForm';
 import { PostUpsertForm } from '~/components/Resource/Forms/PostUpsertForm';
 import TrainingSelectFile from '~/components/Resource/Forms/TrainingSelectFile';
+import { useIsChangingLocation } from '~/components/RouterTransition/RouterTransition';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useS3UploadStore } from '~/store/s3-upload.store';
 import { ModelById } from '~/types/router';
@@ -293,6 +294,8 @@ function getWizardUrl({
   return `/models/${id}/wizard?${query}`;
 }
 
+const MAX_STEPS = 4;
+
 export function ModelWizard() {
   const currentUser = useCurrentUser();
   const router = useRouter();
@@ -306,14 +309,13 @@ export function ModelWizard() {
   const isNew = router.pathname.includes('/create');
   const [state, setState] = useState<WizardState>({ step: 1 });
   const [opened, setOpened] = useState(false);
+  const isTransitioning = useIsChangingLocation();
 
   const {
     data: model,
     isInitialLoading: modelLoading,
     isError: modelError,
   } = trpc.model.getById.useQuery({ id: Number(id) }, { enabled: !!id });
-
-  const maxSteps = 4;
 
   const hasVersions = model && model.modelVersions.length > 0;
   const modelVersion = hasVersions ? model.modelVersions[0] : undefined;
@@ -326,7 +328,8 @@ export function ModelWizard() {
     );
 
   const goNext = () => {
-    if (state.step < maxSteps) {
+    if (isTransitioning) return;
+    if (state.step < MAX_STEPS) {
       // TODO does bountyId need to be here?
       router.replace(getWizardUrl({ id, step: state.step + 1, templateId, src }), undefined, {
         shallow: true,
@@ -349,6 +352,8 @@ export function ModelWizard() {
   useEffect(() => {
     // redirect to correct step if missing values
     if (!isNew) {
+      if (!model) return;
+
       // don't redirect for Trained type
       if (showTraining) return;
 
@@ -373,7 +378,7 @@ export function ModelWizard() {
     if (state.step.toString() !== router.query.step) {
       const rawStep = router.query.step;
       const step = Number(rawStep);
-      const validStep = isNumber(step) && step >= 1 && step <= maxSteps;
+      const validStep = isNumber(step) && step >= 1 && step <= MAX_STEPS;
 
       setState((current) => ({ ...current, step: validStep ? step : 1 }));
     }

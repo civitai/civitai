@@ -9,7 +9,13 @@ import {
   Select,
   Button,
 } from '@mantine/core';
-import { IconAdCircleOff, IconBolt, IconChevronDown } from '@tabler/icons-react';
+import {
+  IconAdCircleOff,
+  IconBolt,
+  IconChevronDown,
+  IconCloud,
+  IconPhotoPlus,
+} from '@tabler/icons-react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { benefitIconSize, BenefitItem, PlanBenefitList } from '~/components/Stripe/PlanBenefitList';
 import { CurrencyBadge } from '../Currency/CurrencyBadge';
@@ -19,7 +25,12 @@ import type { StripePlan, StripeSubscription } from '~/server/services/stripe.se
 import { useState } from 'react';
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
 import { getStripeCurrencyDisplay } from '~/utils/string-helpers';
+import { ProductMetadata } from '~/server/schema/stripe.schema';
+import { isDefined } from '~/utils/type-guards';
+import { formatKBytes } from '~/utils/number-helpers';
 import { constants } from '~/server/common/constants';
+import { FeatureAccess } from '~/server/services/feature-flags.service';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 type PlanCardProps = {
   product: StripePlan;
@@ -28,7 +39,10 @@ type PlanCardProps = {
 
 export function PlanCard({ product, subscription }: PlanCardProps) {
   const { classes } = useStyles();
-  const { benefits, image } = planDetails.find((x) => x.name === product.name) ?? {};
+  const meta = (product.metadata ?? {}) as ProductMetadata;
+  const features = useFeatureFlags();
+  const { benefits, image } =
+    getPlanDetails(features, meta).find((x) => x.name === product.name) ?? {};
   const defaultPriceId = subscription?.price.id ?? product.defaultPriceId;
   const [priceId, setPriceId] = useState<string | null>(defaultPriceId);
   const price = product.prices.find((p) => p.id === priceId) ?? product.prices[0];
@@ -98,7 +112,10 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
   );
 }
 
-export const planDetails: PlanMeta[] = [
+export const getPlanDetails: (features: FeatureAccess, metadata: ProductMetadata) => PlanMeta[] = (
+  features,
+  metadata: ProductMetadata = {}
+) => [
   {
     name: 'Supporter Tier',
     image: constants.supporterBadge,
@@ -122,17 +139,43 @@ export const planDetails: PlanMeta[] = [
       { content: 'Unique nameplate color' },
       { content: 'Unique Discord role' },
       {
+        icon: <IconPhotoPlus size={benefitIconSize} />,
+        iconColor: 'blue',
+        content: <Text>{metadata.generationLimit ?? 3}x more generations per day</Text>,
+      },
+      metadata.vaultSizeKb && features.vault
+        ? {
+            content: (
+              <Text>
+                {formatKBytes(metadata.vaultSizeKb)}{' '}
+                <Text
+                  variant="link"
+                  td="underline"
+                  component="a"
+                  href="/product/vault"
+                  target="_blank"
+                >
+                  Civitai Vault storage
+                </Text>
+              </Text>
+            ),
+            icon: <IconCloud size={benefitIconSize} />,
+            iconColor: 'blue',
+          }
+        : undefined,
+      {
         icon: <IconBolt size={benefitIconSize} />,
         iconColor: 'yellow',
         content: (
           <Text>
             <Text span>
-              <CurrencyBadge currency={Currency.BUZZ} unitAmount={5000} /> each month
+              <CurrencyBadge currency={Currency.BUZZ} unitAmount={metadata.buzz ?? 5000} /> each
+              month
             </Text>
           </Text>
         ),
       },
-    ],
+    ].filter(isDefined),
   },
 ];
 

@@ -104,7 +104,7 @@ export function ImageMeta({
     { enabled: flags.imageGeneration && !!resourceId, trpc: { context: { skipBatch: true } } }
   );
 
-  const canCreate = flags.imageGeneration && !!resourceCoverage;
+  const canCreate = flags.imageGeneration && !!resourceCoverage && !!meta.prompt;
 
   return (
     <Stack spacing="xs">

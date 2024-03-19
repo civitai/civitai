@@ -25,7 +25,6 @@ import {
   Form,
   InputCheckbox,
   InputCheckboxGroup,
-  InputFlag,
   InputRTE,
   InputSegmentedControl,
   InputSelect,
@@ -33,7 +32,7 @@ import {
   InputText,
   useForm,
 } from '~/libs/form';
-import { NsfwLevel, TagSort } from '~/server/common/enums';
+import { TagSort } from '~/server/common/enums';
 import { ModelUpsertInput, modelUpsertSchema } from '~/server/schema/model.schema';
 import { showErrorNotification } from '~/utils/notifications';
 import { parseNumericString } from '~/utils/query-string-helpers';
@@ -42,12 +41,8 @@ import { trpc } from '~/utils/trpc';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
-import {
-  browsingLevelLabels,
-  nsfwBrowsingLevelsFlag,
-} from '~/shared/constants/browsingLevel.constants';
+
 import { ModelById } from '~/types/router';
-import { Flags } from '~/shared/utils';
 
 const schema = modelUpsertSchema
   .extend({
@@ -58,10 +53,9 @@ const schema = modelUpsertSchema
     message: 'Please select the checkpoint type',
     path: ['checkpointType'],
   })
-  .refine(
-    (data) => !(Flags.intersects(data.userNsfwLevel ?? 0, nsfwBrowsingLevelsFlag) && data.poi),
-    { message: 'Mature content depicting actual people is not permitted.' }
-  );
+  .refine((data) => !(data.nsfw && data.poi), {
+    message: 'Mature content depicting actual people is not permitted.',
+  });
 const querySchema = z.object({
   category: z.preprocess(parseNumericString, z.number().optional()),
   templateId: z.coerce.number().optional(),
@@ -90,7 +84,7 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
     checkpointType: model?.checkpointType,
     uploadType: model?.uploadType ?? 'Created',
     poi: model?.poi ?? false,
-    userNsfwLevel: model?.userNsfwLevel ?? 0,
+    nsfw: model?.nsfw ?? false,
     allowCommercialUse: model?.allowCommercialUse ?? [
       CommercialUse.Image,
       CommercialUse.RentCivit,
@@ -106,8 +100,8 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
   const queryUtils = trpc.useUtils();
 
   const [type, allowDerivatives] = form.watch(['type', 'allowDerivatives']);
-  const [userNsfwLevel = 0, poi] = form.watch(['userNsfwLevel', 'poi']);
-  const hasPoiInNsfw = Flags.intersects(userNsfwLevel, nsfwBrowsingLevelsFlag) && poi;
+  const [nsfw, poi] = form.watch(['nsfw', 'poi']);
+  const hasPoiInNsfw = nsfw && poi;
   const { isDirty, errors } = form.formState;
 
   const { data, isLoading: loadingCategories } = trpc.tag.getAll.useQuery({
@@ -133,6 +127,8 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
 
   const upsertModelMutation = trpc.model.upsert.useMutation({
     onSuccess: async (data, payload) => {
+      // Reset dirty state, but keep the values
+      form.reset({}, { keepValues: true });
       await queryUtils.model.getById.invalidate({ id: data.id });
       await queryUtils.model.getAllInfiniteSimple.invalidate();
       if (!payload.id) await queryUtils.model.getMyDraftModels.invalidate();
@@ -332,40 +328,17 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
               </ContainerGrid>
             </Paper>
             <Paper radius="md" p="xl" withBorder>
-              <ContainerGrid gutter="xs">
-                <ContainerGrid.Col xs={12} sm={6}>
-                  <InputFlag
-                    spacing="xs"
-                    name="userNsfwLevel"
-                    flag="NsfwLevel"
-                    label={
-                      <Text size="md" weight={500}>
-                        Generates content that is:
-                      </Text>
-                    }
-                    mapLabel={({ value, label }) => (
-                      <Text>
-                        <Text weight={600} span>
-                          {browsingLevelLabels[value as NsfwLevel]}:
-                        </Text>{' '}
-                        {label}
-                      </Text>
-                    )}
-                  />
-                </ContainerGrid.Col>
-                <ContainerGrid.Col xs={12} sm={6}>
-                  <Stack spacing="xs">
-                    <Text size="md" weight={500}>
-                      This resource:
-                    </Text>
-                    <InputCheckbox
-                      name="poi"
-                      label="Depicts an actual person"
-                      description="For Example: Tom Cruise or Tom Cruise as Maverick"
-                    />
-                  </Stack>
-                </ContainerGrid.Col>
-              </ContainerGrid>
+              <Stack spacing="xs">
+                <Text size="md" weight={500}>
+                  This resource:
+                </Text>
+                <InputCheckbox
+                  name="poi"
+                  label="Depicts an actual person"
+                  description="For Example: Tom Cruise or Tom Cruise as Maverick"
+                />
+                <InputCheckbox name="nsfw" label="Is intended to produce sexual themes" />
+              </Stack>
             </Paper>
             {hasPoiInNsfw && (
               <>

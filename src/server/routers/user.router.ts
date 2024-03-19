@@ -60,6 +60,7 @@ import {
   setUserSettingsInput,
   userOnboardingSchema,
   toggleFavoriteInput,
+  updateBrowsingModeSchema,
 } from '~/server/schema/user.schema';
 import {
   equipCosmetic,
@@ -70,6 +71,7 @@ import {
   getUserBookmarkedArticles,
   toggleBookmarked,
   toggleBookmarkedArticle,
+  updateUserById,
 } from '~/server/services/user.service';
 import {
   guardedProcedure,
@@ -103,6 +105,9 @@ export const userRouter = router({
     .query(getUserCosmeticsHandler),
   checkNotifications: protectedProcedure.query(checkUserNotificationsHandler),
   update: guardedProcedure.input(userUpdateSchema).mutation(updateUserHandler),
+  updateBrowsingMode: guardedProcedure
+    .input(updateBrowsingModeSchema)
+    .mutation(({ input, ctx }) => updateUserById({ id: ctx.user.id, data: input })),
   delete: protectedProcedure.input(deleteUserSchema).mutation(deleteUserHandler),
   toggleFavorite: protectedProcedure.input(toggleFavoriteInput).mutation(toggleFavoriteHandler),
   toggleNotifyModel: protectedProcedure

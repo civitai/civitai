@@ -46,6 +46,7 @@ import { PaypalProvider } from '~/providers/PaypalProvider';
 import { StripeSetupSuccessProvider } from '~/providers/StripeProvider';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
+import { UpdateRequiredWatcher } from '~/components/UpdateRequiredWatcher/UpdateRequiredWatcher';
 import { RegisterCatchNavigation } from '~/store/catch-navigation.store';
 import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 import { trpc } from '~/utils/trpc';
@@ -122,6 +123,7 @@ function MyApp(props: CustomAppProps) {
               Modal: {
                 styles: {
                   modal: { maxWidth: '100%' },
+                  inner: { paddingLeft: 0, paddingRight: 0 },
                 },
                 // defaultProps: {
                 //   target:
@@ -172,6 +174,11 @@ function MyApp(props: CustomAppProps) {
                   label: { cursor: 'pointer' },
                 },
               },
+              Menu: {
+                styles: {
+                  itemLabel: { display: 'flex' },
+                },
+              },
             },
             colors: {
               accent: [
@@ -218,6 +225,7 @@ function MyApp(props: CustomAppProps) {
               <ClientHistoryStore />
               <RegisterCatchNavigation />
               <RouterTransition />
+              <UpdateRequiredWatcher />
               <SessionProvider
                 session={session}
                 refetchOnWindowFocus={false}

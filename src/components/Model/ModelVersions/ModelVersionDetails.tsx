@@ -26,8 +26,13 @@ import {
   IconLicense,
   IconMessageCircle2,
   IconShare3,
+  IconCloudCheck,
+  IconCloudUp,
+  IconCloudLock,
+  IconLoader,
   IconHeart,
   IconPhotoPlus,
+  IconLock,
 } from '@tabler/icons-react';
 import { TRPCClientErrorBase } from '@trpc/client';
 import { DefaultErrorShape } from '@trpc/server';
@@ -91,6 +96,7 @@ import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { Adunit } from '~/components/Ads/AdUnit';
 import { adsRegistry } from '~/components/Ads/adsRegistry';
 import { useLocalStorage } from '@mantine/hooks';
+import { ToggleVaultButton } from '~/components/Vault/ToggleVaultButton';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useQueryUserResourceReview } from '~/components/ResourceReview/resourceReview.utils';
 import { ModelVersionReview } from '~/components/Model/ModelVersions/ModelVersionReview';
@@ -128,15 +134,15 @@ export function ModelVersionDetails({
   });
   const hashes = primaryFile?.hashes ?? [];
 
-  const filesCount = version.files.length;
+  const filesCount = version.files?.length;
   const hasFiles = filesCount > 0;
-  const filesVisible = version.files.filter(
+  const filesVisible = version.files?.filter(
     (f) => f.visibility === ModelFileVisibility.Public || model.user.id === user?.id
   );
   const filesVisibleCount = filesVisible.length;
   const hasVisibleFiles = filesVisibleCount > 0;
 
-  const displayCivitaiLink = civitaiLinked && version.hashes.length > 0;
+  const displayCivitaiLink = civitaiLinked && !!version.hashes && version.hashes?.length > 0;
   const hasPendingClaimReport = model.reportStats && model.reportStats.ownershipProcessing > 0;
 
   const { data: resourceCovered } = trpc.generation.checkResourcesCoverage.useQuery(
@@ -150,7 +156,7 @@ export function ModelVersionDetails({
   const requestReviewMutation = trpc.model.requestReview.useMutation();
   const requestVersionReviewMutation = trpc.modelVersion.requestReview.useMutation();
 
-  const { currentUserReview, loading: loadingUserReview } = useQueryUserResourceReview({
+  const { currentUserReview } = useQueryUserResourceReview({
     modelId: model.id,
     modelVersionId: version.id,
   });
@@ -395,7 +401,7 @@ export function ModelVersionDetails({
   );
   const primaryFileDetails = primaryFile && getFileDetails(primaryFile);
 
-  const downloadMenuItems = version.files.map((file) =>
+  const downloadMenuItems = version.files?.map((file) =>
     !archived && hasAccess ? (
       <Menu.Item
         key={file.id}
@@ -409,9 +415,14 @@ export function ModelVersionDetails({
         })}
         download
       >
-        {`${startCase(file.type)}${
-          ['Model', 'Pruned Model'].includes(file.type) ? ' ' + file.metadata.format ?? '' : ''
-        } (${formatKBytes(file.sizeKB)})`}
+        {getFileDisplayName({ file, modelType: model.type })} ({formatKBytes(file.sizeKB)}){' '}
+        {file.visibility !== 'Public' && (
+          <Tooltip label="Only visible to you" position="top" withArrow>
+            <ThemeIcon color="blue" size="xs" sx={{ alignSelf: 'center' }} ml="xs">
+              <IconLock />
+            </ThemeIcon>
+          </Tooltip>
+        )}
       </Menu.Item>
     ) : (
       <Menu.Item key={file.id} py={4} icon={<VerifiedText file={file} iconOnly />} disabled>
@@ -638,6 +649,7 @@ export function ModelVersionDetails({
                     </ShareButton>
                   </div>
                 </Tooltip>
+
                 {onFavoriteClick && (
                   <Tooltip label={isFavorite ? 'Unlike' : 'Like'} position="top" withArrow>
                     <div>
@@ -655,6 +667,33 @@ export function ModelVersionDetails({
                     </div>
                   </Tooltip>
                 )}
+                <ToggleVaultButton modelVersionId={version.id}>
+                  {({ isLoading, isInVault, toggleVaultItem }) => (
+                    <Tooltip
+                      label={isInVault ? 'Remove from Vault' : 'Add To Vault'}
+                      position="top"
+                      withArrow
+                    >
+                      <div>
+                        <Button
+                          sx={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
+                          color={isInVault ? 'green' : 'gray'}
+                          onClick={toggleVaultItem}
+                          disabled={isLoading}
+                          variant={isInVault ? 'light' : undefined}
+                        >
+                          {isLoading ? (
+                            <Loader size="xs" />
+                          ) : isInVault ? (
+                            <IconCloudCheck />
+                          ) : (
+                            <IconCloudLock />
+                          )}
+                        </Button>
+                      </div>
+                    </Tooltip>
+                  )}
+                </ToggleVaultButton>
               </Group>
               {primaryFileDetails}
             </Stack>
@@ -867,7 +906,7 @@ export function ModelVersionDetails({
                 </Stack>
               </Accordion.Panel>
             </Accordion.Item>
-            {version.recommendedResources.length > 0 && (
+            {version.recommendedResources && version.recommendedResources.length > 0 && (
               <Accordion.Item value="recommended-resources">
                 <Accordion.Control>Recommended Resources</Accordion.Control>
                 <Accordion.Panel>

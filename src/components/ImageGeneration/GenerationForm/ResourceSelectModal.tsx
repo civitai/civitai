@@ -235,13 +235,7 @@ function ResourceHitList() {
         <Text color="dimmed">{hiddenCount} models have been hidden due to your settings.</Text>
       )}
       <Box className={classes.grid}>
-        {models.map((model, index) => {
-          return (
-            <div key={model.id.toString()} id={model.id.toString()}>
-              {createRenderElement(ResourceSelectCard, index, model)}
-            </div>
-          );
-        })}
+        {models.map((model, index) => createRenderElement(ResourceSelectCard, index, model))}
       </Box>
       {hits.length > 0 && !isLastPage && (
         <InViewLoader loadFn={showMore} loadCondition={status === 'idle'}>
@@ -289,7 +283,7 @@ function ResourceSelectCard({
   const handleSelect = () => {
     const version = data.versions.find((x) => x.id === selected);
     if (!version) return;
-    const { id, name, trainedWords, baseModel } = version;
+    const { id, name, trainedWords, baseModel, settings } = version;
 
     onSelect({
       id,
@@ -301,12 +295,17 @@ function ResourceSelectCard({
       modelType: data.type,
       image: image,
       covered: data.canGenerate,
-      strength: 1, // TODO - use version recommendations or default to 1
+      strength: settings?.strength ?? 1,
+      minStrength: settings?.minStrength ?? -1,
+      maxStrength: settings?.maxStrength ?? 2,
     });
   };
 
-  const isSDXL = baseModelSets.SDXL.includes(data.version?.baseModel as BaseModel);
-  const isPony = data.version?.baseModel === 'Pony';
+  const selectedVersion = data.versions.find((x) => x.id === selected);
+  const isSDXL = [...baseModelSets.SDXL, ...baseModelSets.Pony].includes(
+    selectedVersion?.baseModel as BaseModel
+  );
+  const isPony = selectedVersion?.baseModel === 'Pony';
   const isNew = data.publishedAt && data.publishedAt > aDayAgo;
   const isUpdated =
     data.lastVersionAt &&
@@ -371,6 +370,7 @@ function ResourceSelectCard({
     contextMenuItems.unshift(
       <Menu.Item
         component="a"
+        key="lookup-model"
         target="_blank"
         icon={<IconInfoCircle size={14} stroke={1.5} />}
         href={`${env.NEXT_PUBLIC_MODEL_LOOKUP_URL}${data.id}`}
@@ -386,7 +386,8 @@ function ResourceSelectCard({
   }
 
   return (
-    <FeedCard ref={ref}>
+    // Visually hide card if there are no versions
+    <FeedCard ref={ref} style={{ display: versions.length === 0 ? 'none' : undefined }}>
       {inView ? (
         <div className={classes.root} onClick={handleSelect}>
           {image && (
