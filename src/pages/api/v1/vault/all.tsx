@@ -9,9 +9,9 @@ export default AuthedEndpoint(
   async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionUser) {
     try {
       const input = getPaginatedVaultItemsSchema.parse(req.query);
-      const vault = await getPaginatedVaultItems({ ...input, userId: user.id });
+      const vaultItems = await getPaginatedVaultItems({ ...input, userId: user.id });
       res.json({
-        vault,
+        ...vaultItems,
       });
     } catch (error) {
       const isTrpcError = error instanceof TRPCError;
