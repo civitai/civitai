@@ -26,7 +26,7 @@ export const MentionList = forwardRef<MentionListRef, Props>((props, ref) => {
   );
 
   const selectItem = (index: number) => {
-    const item = props.items[index];
+    const item = items[index];
 
     if (item) {
       props.command({ ...item, id: `mention:${item.id}` });
@@ -34,18 +34,18 @@ export const MentionList = forwardRef<MentionListRef, Props>((props, ref) => {
   };
 
   const upHandler = () => {
-    setSelectedIndex((selectedIndex + props.items.length - 1) % props.items.length);
+    setSelectedIndex((selectedIndex + items.length - 1) % items.length);
   };
 
   const downHandler = () => {
-    setSelectedIndex((selectedIndex + 1) % props.items.length);
+    setSelectedIndex((selectedIndex + 1) % items.length);
   };
 
   const enterHandler = () => {
     selectItem(selectedIndex);
   };
 
-  useEffect(() => setSelectedIndex(0), [props.items]);
+  useEffect(() => setSelectedIndex(0), [items]);
 
   useImperativeHandle(ref, () => ({
     onKeyDown: ({ event }) => {
