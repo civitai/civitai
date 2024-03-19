@@ -1,4 +1,3 @@
-import { TRPCError } from '@trpc/server';
 import { NextApiRequest, NextApiResponse } from 'next';
 import { SessionUser } from 'next-auth';
 import { z } from 'zod';
