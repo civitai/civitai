@@ -97,13 +97,12 @@ async function migrateImages(req: NextApiRequest, res: NextApiResponse) {
     params,
     runContext: res,
     rangeFetcher: async (context) => {
-      //TODO.nsfwLevel
-      // if (params.after) {
-      //   const [{ start }] = await dbRead.$queryRaw<{ start: number }[]>(
-      //     Prisma.sql`SELECT MIN(id) "start" FROM "Image" WHERE "createdAt" > '${params.after.toISOString()}';`
-      //   );
-      //   context.start = start;
-      // }
+      if (params.after) {
+        const [{ start }] = await dbRead.$queryRaw<{ start: number }[]>(
+          Prisma.sql`SELECT MIN(id) "start" FROM "Image" WHERE "createdAt" > '${params.after.toISOString()}';`
+        );
+        context.start = start;
+      }
       const [{ max }] = await dbRead.$queryRaw<{ max: number }[]>(
         Prisma.sql`SELECT MAX(id) "max" FROM "Image";`
       );
@@ -136,6 +135,12 @@ async function migrateUsers(req: NextApiRequest, res: NextApiResponse) {
     params,
     runContext: res,
     rangeFetcher: async (context) => {
+      if (params.after) {
+        const [{ start }] = await dbRead.$queryRaw<{ start: number }[]>(
+          Prisma.sql`SELECT MIN(id) "start" FROM "User" WHERE "createdAt" > '${params.after.toISOString()}';`
+        );
+        context.start = start;
+      }
       const [{ max }] = await dbRead.$queryRaw<{ max: number }[]>(
         Prisma.sql`SELECT MAX(id) "max" FROM "User";`
       );
@@ -167,6 +172,12 @@ async function migratePosts(req: NextApiRequest, res: NextApiResponse) {
     params,
     runContext: res,
     rangeFetcher: async (context) => {
+      if (params.after) {
+        const [{ start }] = await dbRead.$queryRaw<{ start: number }[]>(
+          Prisma.sql`SELECT MIN(id) "start" FROM "Post" WHERE "createdAt" > '${params.after.toISOString()}';`
+        );
+        context.start = start;
+      }
       const [{ max }] = await dbRead.$queryRaw<{ max: number }[]>(
         Prisma.sql`SELECT MAX(id) "max" FROM "Post";`
       );
@@ -199,6 +210,12 @@ async function migrateBounties(req: NextApiRequest, res: NextApiResponse) {
     params,
     runContext: res,
     rangeFetcher: async (context) => {
+      if (params.after) {
+        const [{ start }] = await dbRead.$queryRaw<{ start: number }[]>(
+          Prisma.sql`SELECT MIN(id) "start" FROM "Bounty" WHERE "createdAt" > '${params.after.toISOString()}';`
+        );
+        context.start = start;
+      }
       const [{ max }] = await dbRead.$queryRaw<{ max: number }[]>(
         Prisma.sql`SELECT MAX(id) "max" FROM "Bounty";`
       );
@@ -238,6 +255,12 @@ async function migrateBountyEntries(req: NextApiRequest, res: NextApiResponse) {
     params,
     runContext: res,
     rangeFetcher: async (context) => {
+      if (params.after) {
+        const [{ start }] = await dbRead.$queryRaw<{ start: number }[]>(
+          Prisma.sql`SELECT MIN(id) "start" FROM "BountyEntry" WHERE "createdAt" > '${params.after.toISOString()}';`
+        );
+        context.start = start;
+      }
       const [{ max }] = await dbRead.$queryRaw<{ max: number }[]>(
         Prisma.sql`SELECT MAX(id) "max" FROM "BountyEntry";`
       );
@@ -272,6 +295,12 @@ async function migrateModelVersions(req: NextApiRequest, res: NextApiResponse) {
     params,
     runContext: res,
     rangeFetcher: async (context) => {
+      if (params.after) {
+        const [{ start }] = await dbRead.$queryRaw<{ start: number }[]>(
+          Prisma.sql`SELECT MIN(id) "start" FROM "ModelVersion" WHERE "createdAt" > '${params.after.toISOString()}';`
+        );
+        context.start = start;
+      }
       const [{ max }] = await dbRead.$queryRaw<{ max: number }[]>(
         Prisma.sql`SELECT MAX(id) "max" FROM "ModelVersion";`
       );
@@ -321,6 +350,12 @@ async function migrateModels(req: NextApiRequest, res: NextApiResponse) {
     params,
     runContext: res,
     rangeFetcher: async (context) => {
+      if (params.after) {
+        const [{ start }] = await dbRead.$queryRaw<{ start: number }[]>(
+          Prisma.sql`SELECT MIN(id) "start" FROM "Model" WHERE "createdAt" > '${params.after.toISOString()}';`
+        );
+        context.start = start;
+      }
       const [{ max }] = await dbRead.$queryRaw<{ max: number }[]>(
         Prisma.sql`SELECT MAX(id) "max" FROM "Model";`
       );
@@ -360,6 +395,12 @@ async function migrateCollections(req: NextApiRequest, res: NextApiResponse) {
     params,
     runContext: res,
     rangeFetcher: async (context) => {
+      if (params.after) {
+        const [{ start }] = await dbRead.$queryRaw<{ start: number }[]>(
+          Prisma.sql`SELECT MIN(id) "start" FROM "Collection" WHERE "createdAt" > '${params.after.toISOString()}';`
+        );
+        context.start = start;
+      }
       const [{ max }] = await dbRead.$queryRaw<{ max: number }[]>(
         Prisma.sql`SELECT MAX(id) "max" FROM "Collection";`
       );
@@ -392,6 +433,12 @@ async function migrateArticles(req: NextApiRequest, res: NextApiResponse) {
     params,
     runContext: res,
     rangeFetcher: async (context) => {
+      if (params.after) {
+        const [{ start }] = await dbRead.$queryRaw<{ start: number }[]>(
+          Prisma.sql`SELECT MIN(id) "start" FROM "Article" WHERE "createdAt" > '${params.after.toISOString()}';`
+        );
+        context.start = start;
+      }
       const [{ max }] = await dbRead.$queryRaw<{ max: number }[]>(
         Prisma.sql`SELECT MAX(id) "max" FROM "Article";`
       );
