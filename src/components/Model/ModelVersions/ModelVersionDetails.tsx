@@ -44,7 +44,7 @@ import { useRef, useState } from 'react';
 
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useCivitaiLink } from '~/components/CivitaiLink/CivitaiLinkProvider';
-import { CivitiaLinkManageButton } from '~/components/CivitaiLink/CivitiaLinkManageButton';
+import { CivitaiLinkManageButton } from '~/components/CivitaiLink/CivitaiLinkManageButton';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { CreatorCard } from '~/components/CreatorCard/CreatorCard';
 import {
@@ -575,7 +575,7 @@ export function ModelVersionDetails({
               <Group spacing="xs" style={{ alignItems: 'flex-start', flexWrap: 'nowrap' }}>
                 {displayCivitaiLink && (
                   <Stack sx={{ flex: 1 }} spacing={4}>
-                    <CivitiaLinkManageButton
+                    <CivitaiLinkManageButton
                       modelId={model.id}
                       modelVersionId={version.id}
                       modelName={model.name}
@@ -594,7 +594,7 @@ export function ModelVersionDetails({
                           {label}
                         </Button>
                       )}
-                    </CivitiaLinkManageButton>
+                    </CivitaiLinkManageButton>
                     {/* {primaryFileDetails} */}
                   </Stack>
                 )}
