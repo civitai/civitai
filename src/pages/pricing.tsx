@@ -13,11 +13,17 @@ import {
   ThemeIcon,
   Group,
   createStyles,
+  Anchor,
 } from '@mantine/core';
 import { trpc } from '~/utils/trpc';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { PlanCard } from '~/components/Stripe/PlanCard';
-import { IconCalendarDue, IconExclamationMark, IconHeartHandshake } from '@tabler/icons-react';
+import {
+  IconCalendarDue,
+  IconExclamationMark,
+  IconHeartHandshake,
+  IconInfoCircle,
+} from '@tabler/icons-react';
 import { DonateButton } from '~/components/Stripe/DonateButton';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { PlanBenefitList } from '~/components/Stripe/PlanBenefitList';
@@ -25,6 +31,7 @@ import { joinRedirectReasons, JoinRedirectReason } from '~/utils/join-helpers';
 import { useRouter } from 'next/router';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 
 export default function Pricing() {
   const router = useRouter();
@@ -40,6 +47,8 @@ export default function Pricing() {
     trpc.stripe.getUserSubscription.useQuery();
 
   const isLoading = productsLoading || subscriptionLoading;
+  const currentMembershipUnavailable =
+    !!subscription && !productsLoading && !products.find((p) => p.id === subscription.product.id);
 
   return (
     <>
@@ -76,6 +85,16 @@ export default function Pricing() {
 
           <Tabs.Panel value="subscribe" pt="md">
             <Stack>
+              {currentMembershipUnavailable && (
+                <AlertWithIcon color="yellow" iconColor="yellow" icon={<IconInfoCircle />}>
+                  <Text>
+                    We have stopped offering the membership plan you are in. You can view your
+                    current benefits and manage your membership details by clicking{' '}
+                    <Anchor href="/user/membership">here</Anchor>.
+                  </Text>
+                </AlertWithIcon>
+              )}
+
               {isLoading ? (
                 <Center p="xl">
                   <Loader />

@@ -30,6 +30,7 @@ import { constants } from '~/server/common/constants';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { CancelMembershipFeedbackModal } from '~/components/Stripe/MembershipChangePrevention';
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
+import { ManageSubscriptionButton } from '~/components/Stripe/ManageSubscriptionButton';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -138,20 +139,23 @@ export default function UserMembership() {
                           Upgrade
                         </Button>
                       )}
-                      {!subscription?.canceledAt && (
-                        <Menu position="bottom" withinPortal>
-                          <Menu.Target>
-                            <ActionIcon
-                              size={30}
-                              radius="xl"
-                              color="gray"
-                              variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                              ml="auto"
-                            >
-                              <IconDotsVertical size={16} />
-                            </ActionIcon>
-                          </Menu.Target>
-                          <Menu.Dropdown>
+                      <Menu position="bottom" withinPortal closeOnItemClick={false}>
+                        <Menu.Target>
+                          <ActionIcon
+                            size={30}
+                            radius="xl"
+                            color="gray"
+                            variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                            ml="auto"
+                          >
+                            <IconDotsVertical size={16} />
+                          </ActionIcon>
+                        </Menu.Target>
+                        <Menu.Dropdown>
+                          <ManageSubscriptionButton>
+                            <Menu.Item>Manage</Menu.Item>
+                          </ManageSubscriptionButton>
+                          {!subscription?.canceledAt && (
                             <Menu.Item
                               onClick={() => {
                                 dialogStore.trigger({
@@ -159,11 +163,11 @@ export default function UserMembership() {
                                 });
                               }}
                             >
-                              Cancel
+                              Cancel Membership
                             </Menu.Item>
-                          </Menu.Dropdown>
-                        </Menu>
-                      )}
+                          )}
+                        </Menu.Dropdown>
+                      </Menu>
                     </Group>
                   </Group>
                 </Stack>

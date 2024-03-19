@@ -21,7 +21,7 @@ import {
   numericString,
 } from '~/utils/zod-helpers';
 
-export const userTierSchema = z.enum(['free', 'founder']);
+export const userTierSchema = z.enum(['free', 'founder', 'bronze', 'silver', 'gold']);
 export type UserTier = z.infer<typeof userTierSchema>;
 
 export const userPageQuerySchema = z
