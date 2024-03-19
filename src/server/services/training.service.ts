@@ -201,6 +201,7 @@ export const createTrainingRequest = async ({
   const baseModel = modelVersion.trainingDetails.baseModel;
   if (!baseModel) throw throwBadRequestError('Missing base model');
   const samplePrompts = modelVersion.trainingDetails.samplePrompts;
+  const baseModelType = modelVersion.trainingDetails.baseModelType ?? 'sd15';
 
   for (const [key, value] of Object.entries(trainingParams)) {
     const setting = trainingSettings.find((ts) => ts.name === key);
@@ -225,24 +226,30 @@ export const createTrainingRequest = async ({
   if (!transactionId) {
     // And if so, charge them
     const eta = calcEta({
-      ...trainingParams,
-      baseModel,
       cost: status.cost,
+      baseModel: baseModelType,
+      targetSteps: trainingParams.targetSteps,
     });
-    const isCustom = isTrainingCustomModel(baseModel);
-    const price =
-      eta !== undefined
-        ? calcBuzzFromEta({
-            eta,
-            isCustom,
-            cost: status.cost,
-          })
-        : eta;
-    if (price === undefined) {
+
+    if (eta === undefined) {
       throw throwBadRequestError(
         'Could not compute Buzz price for training - please check your parameters.'
       );
     }
+
+    const isCustom = isTrainingCustomModel(baseModel);
+    const price = calcBuzzFromEta({
+      cost: status.cost,
+      eta,
+      isCustom,
+    });
+
+    if (!price || price < status.cost.baseBuzz) {
+      throw throwBadRequestError(
+        'Could not compute Buzz price for training - please check your parameters.'
+      );
+    }
+
     const account = await getUserBuzzAccount({ accountId: modelVersion.userId });
     if ((account.balance ?? 0) < price) {
       throw throwInsufficientFundsError(

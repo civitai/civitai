@@ -36,7 +36,7 @@ import { useTrainingServiceStatus } from '~/components/Training/training.utils';
 import { trainingMinsWait } from '~/components/User/UserTrainingModels';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Form, InputCheckbox, InputNumber, InputSelect, InputText, useForm } from '~/libs/form';
-import { BaseModel } from '~/server/common/constants';
+import { BaseModel, baseModelSets } from '~/server/common/constants';
 import { generationResourceSchema } from '~/server/schema/generation.schema';
 import {
   ModelVersionUpsertInput,
@@ -461,6 +461,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
 
   const [openedSections, setOpenedSections] = useState<string[]>([]);
   const [formBaseModel, setFormBaseModel] = useState<TrainingDetailsBaseModel | null>('sdxl');
+  const [formBaseModelType, setFormBaseModelType] = useState<'sd15' | 'sdxl'>('sdxl');
   const [baseModel15, setBaseModel15] = useState<TrainingDetailsBaseModel15 | null>(null);
   const [baseModelXL, setBaseModelXL] = useState<TrainingDetailsBaseModelXL | null>('sdxl');
   const [etaMins, setEtaMins] = useState<number | undefined>(undefined);
@@ -536,7 +537,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   });
 
   const watchFields = form.watch(['maxTrainEpochs', 'numRepeats', 'trainBatchSize']);
-  const watchFieldsBuzz = form.watch(['networkDim', 'networkAlpha', 'targetSteps']);
+  const watchFieldsBuzz = form.watch(['targetSteps']);
   const watchFieldOptimizer = form.watch('optimizerType');
 
   // apply default overrides for base model upon selection
@@ -579,26 +580,21 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   }, [watchFields]);
 
   useEffect(() => {
-    const [networkDim, networkAlpha, targetSteps] = watchFieldsBuzz;
+    const [targetSteps] = watchFieldsBuzz;
     const eta = calcEta({
-      networkDim,
-      networkAlpha,
-      targetSteps,
-      baseModel: formBaseModel,
       cost: status.cost,
+      baseModel: formBaseModelType,
+      targetSteps,
     });
     const isCustom = isTrainingCustomModel(formBaseModel);
-    const price =
-      eta !== undefined
-        ? calcBuzzFromEta({
-            eta,
-            isCustom,
-            cost: status.cost,
-          })
-        : eta;
+    const price = calcBuzzFromEta({
+      cost: status.cost,
+      eta,
+      isCustom,
+    });
     setEtaMins(eta);
     setBuzzCost(price);
-  }, [watchFieldsBuzz, formBaseModel, status.cost]);
+  }, [watchFieldsBuzz, formBaseModel, formBaseModelType, status.cost]);
 
   useEffect(() => {
     const newArgs = optimizerArgMap[watchFieldOptimizer] ?? '';
@@ -763,6 +759,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
       trainingDetails: {
         ...((thisModelVersion.trainingDetails as TrainingDetailsObj) || {}),
         baseModel: formBaseModel,
+        baseModelType: formBaseModelType,
         samplePrompts: [samplePrompt1, samplePrompt2, samplePrompt3],
         params: paramData,
       },
@@ -933,6 +930,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                       setBaseModel15(value as TrainingDetailsBaseModel15);
                       setBaseModelXL(null);
                       form.setValue('customModelSelect', undefined);
+                      setFormBaseModelType('sd15');
                       setFormBaseModel(value as TrainingDetailsBaseModel);
                     }}
                     color="blue"
@@ -961,6 +959,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                       setBaseModel15(null);
                       setBaseModelXL(value as TrainingDetailsBaseModelXL);
                       form.setValue('customModelSelect', undefined);
+                      setFormBaseModelType('sdxl');
                       setFormBaseModel(value as TrainingDetailsBaseModel);
                     }}
                     color="blue"
@@ -995,10 +994,21 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                       const gVal = val as Generation.Resource;
                       const mId = gVal?.modelId;
                       const mvId = gVal?.id;
+                      const mBase = gVal?.baseModel as BaseModel | undefined;
+                      const castBase =
+                        !!mBase &&
+                        [
+                          ...baseModelSets.SDXL,
+                          ...baseModelSets.SDXLDistilled,
+                          ...baseModelSets.Pony,
+                        ].includes(mBase)
+                          ? 'sdxl'
+                          : 'sd15';
                       const cLink =
                         isDefined(mId) && isDefined(mvId) ? `civitai:${mId}@${mvId}` : null;
                       setBaseModel15(null);
                       setBaseModelXL(null);
+                      setFormBaseModelType(castBase);
                       setFormBaseModel(cLink);
                     }}
                   />
@@ -1224,6 +1234,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                 alignSelf: 'flex-end',
               }}
             >
+              {/* TODO: some tooltip -> link explaining */}
               <Group spacing="sm">
                 <Badge>ETA</Badge>
                 <Text>

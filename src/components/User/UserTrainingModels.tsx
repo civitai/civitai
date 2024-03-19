@@ -264,20 +264,17 @@ export default function UserTrainingModels() {
                   thisFileMetadata?.trainingResults?.epochs?.slice(-1)[0]?.epoch_number ?? 0;
                 // const epochsPct = Math.round((numEpochs ? epochsDone / numEpochs : 0) * 10);
 
-                const baseModel = thisTrainingDetails?.baseModel;
-                const { networkDim, networkAlpha, targetSteps } = thisTrainingDetails?.params || {};
+                const baseModelType = thisTrainingDetails?.baseModelType ?? 'sd15';
+                const { targetSteps } = thisTrainingDetails?.params || {};
 
                 // would love to use .every(isDefined) here but TS isn't smart enough
-                const etaMins =
-                  !!networkDim && !!networkAlpha && !!targetSteps && !!baseModel
-                    ? calcEta({
-                        networkDim,
-                        networkAlpha,
-                        targetSteps,
-                        baseModel,
-                        cost: status.cost,
-                      })
-                    : undefined;
+                const etaMins = !!targetSteps
+                  ? calcEta({
+                      cost: status.cost,
+                      baseModel: baseModelType,
+                      targetSteps,
+                    })
+                  : undefined;
                 // mins wait here might need to only be calced if the last history entry is "Submitted"
                 const eta =
                   !!startTime && !!etaMins

@@ -84,6 +84,7 @@ export const trainingDetailsObj = z.object({
   baseModel: z
     .union([z.enum(trainingDetailsBaseModels), trainingDetailsBaseModelCustom])
     .optional(), // nb: this is not optional when submitting
+  baseModelType: z.enum(['sd15', 'sdxl']).optional(),
   type: z.enum(constants.trainingModelTypes),
   // triggerWord: z.string().optional(),
   params: trainingDetailsParams.optional(),
