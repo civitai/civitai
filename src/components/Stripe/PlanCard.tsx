@@ -36,6 +36,8 @@ import { shortenPlanInterval } from '~/components/Stripe/stripe.utils';
 import { ManageSubscriptionButton } from '~/components/Stripe/ManageSubscriptionButton';
 import { FeatureAccess } from '~/server/services/feature-flags.service';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import { DowngradeFeedbackModal } from '~/components/Stripe/DowngradeFeedbackModal';
 
 type PlanCardProps = {
   product: StripePlan;
@@ -149,6 +151,24 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
                       Manage your Membership
                     </Button>
                   </ManageSubscriptionButton>
+                ) : isDowngrade ? (
+                  <Button
+                    radius="xl"
+                    {...btnProps}
+                    onClick={() => {
+                      dialogStore.trigger({
+                        component: DowngradeFeedbackModal,
+                        props: {
+                          priceId,
+                          upcomingVaultSizeKb: meta.vaultSizeKb,
+                          fromTier: subscriptionMeta.tier,
+                          toTier: meta.tier,
+                        },
+                      });
+                    }}
+                  >
+                    Downgrade to {meta?.tier}
+                  </Button>
                 ) : (
                   <SubscribeButton priceId={priceId}>
                     <Button radius="xl" {...btnProps}>
@@ -184,9 +204,22 @@ export const getPlanDetails: (
       metadata?.badge ?? constants.memberships.badges[metadata.tier] ?? constants.supporterBadge,
     benefits: [
       {
+        icon: <IconBolt size={benefitIconSize} />,
+        iconColor: 'yellow',
+        iconVariant: 'light' as ThemeIconVariant,
+        content: (
+          <Text>
+            <Text span color="yellow.7">
+              {numberWithCommas(metadata?.monthlyBuzz ?? 3000)} Buzz for spending
+            </Text>
+          </Text>
+        ),
+      },
+      {
         icon: <IconPhotoPlus size={benefitIconSize} />,
         iconColor: 'blue',
         content: <Text>{metadata.generationLimit ?? 3}x more generations per day</Text>,
+        variant: 'light' as ThemeIconVariant,
       },
       metadata.vaultSizeKb && features.vault
         ? {
@@ -204,25 +237,6 @@ export const getPlanDetails: (
                 </Text>
               </Text>
             ),
-            icon: <IconCloud size={benefitIconSize} />,
-            iconColor: 'blue',
-          }
-        : undefined,
-      {
-        icon: <IconBolt size={benefitIconSize} />,
-        iconColor: 'yellow',
-        iconVariant: 'light' as ThemeIconVariant,
-        content: (
-          <Text>
-            <Text span color="yellow.7">
-              {numberWithCommas(metadata?.monthlyBuzz ?? 5000)} Buzz for spending
-            </Text>
-          </Text>
-        ),
-      },
-      metadata.vaultSizeKb
-        ? {
-            content: <Text color="green">Vault size: {formatKBytes(metadata.vaultSizeKb, 0)}</Text>,
             icon: <IconCloud size={benefitIconSize} />,
             iconColor: 'green',
             iconVariant: 'light' as ThemeIconVariant,
@@ -244,11 +258,6 @@ export const getPlanDetails: (
             iconVariant: 'light' as ThemeIconVariant,
           }
         : undefined,
-      {
-        icon: <IconPhotoPlus size={benefitIconSize} />,
-        iconColor: 'blue',
-        content: <Text>{metadata.generationLimit ?? 3}x more generations per day</Text>,
-      },
     ].filter(isDefined),
   };
 
