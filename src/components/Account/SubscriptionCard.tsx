@@ -1,4 +1,5 @@
 import { Button, Card, Stack, Center, Loader, Title, Text, Group } from '@mantine/core';
+import { NextLink } from '@mantine/next';
 import { IconRotateClockwise, IconSettings } from '@tabler/icons-react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -26,7 +27,7 @@ export function SubscriptionCard() {
           </Title>
           {data?.canceledAt ? (
             <SubscribeButton priceId={data?.price.id}>
-              <Button compact variant="outline" rightIcon={<IconRotateClockwise size={16} />}>
+              <Button compact radius="xl" rightIcon={<IconRotateClockwise size={16} />}>
                 Resume
               </Button>
             </SubscribeButton>
@@ -36,13 +37,10 @@ export function SubscriptionCard() {
               radius="xl"
               color="gray"
               rightIcon={<IconSettings size={16} />}
-              onClick={() => {
-                dialogStore.trigger({
-                  component: CancelMembershipFeedbackModal,
-                });
-              }}
+              component={NextLink}
+              href="/user/membership"
             >
-              Cancel
+              Manage
             </Button>
           )}
         </Group>

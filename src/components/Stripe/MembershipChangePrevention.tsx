@@ -122,7 +122,6 @@ export const CancelMembershipFeedbackModal = () => {
   const handleClose = dialog.onClose;
   const [cancelReason, setCancelReason] = useState('Others');
   const { vault, isLoading } = useQueryVault();
-  const { trackAction } = useTrackEvent();
 
   return (
     <Modal {...dialog} size="md" title="Tell us why" radius="md">
@@ -240,9 +239,7 @@ export const VaultStorageDowngrade = ({
   continueLabel = 'Continue',
   cancelLabel = 'Go back',
   onContinue,
-  upcomginVaultSizeKb,
 }: {
-  upcomginVaultSizeKb?: number;
   onContinue: () => void;
   continueLabel: string;
   cancelLabel: string;
