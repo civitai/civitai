@@ -117,7 +117,6 @@ export default function Pricing() {
                           src={freePlanDetails.image}
                           width={128}
                           className={classes.image}
-                          style={{ opacity: 0.2 }}
                         />
                       </Center>
                       <Group position="center" spacing={4} align="flex-end" mb={24}>
@@ -169,6 +168,7 @@ const useStyles = createStyles((theme) => ({
     },
   },
   image: {
+    opacity: 0.3,
     [containerQuery.smallerThan('sm')]: {
       width: 96,
       marginBottom: theme.spacing.xs,

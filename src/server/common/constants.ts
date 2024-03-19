@@ -293,7 +293,7 @@ export const constants = {
     badges: {
       founder: '020f374d-f165-4f45-9082-371e696a44ff',
       bronze: '020f374d-f165-4f45-9082-371e696a44ff',
-      silver: '020f374d-f165-4f45-9082-371e696a44ff',
+      silver: '5844e919-31e3-4dd7-a3c3-f5affdc7af7a',
       gold: '5844e919-31e3-4dd7-a3c3-f5affdc7af7a',
     },
   },
