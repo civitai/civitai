@@ -67,7 +67,7 @@ import { getMinMaxDates, useMutateBounty } from './bounty.utils';
 import { DaysFromNow } from '../Dates/DaysFromNow';
 import { stripTime } from '~/utils/date-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
-import { openBrowsingLevelGuide } from '~/components/BrowsingLevel/openBrowsingLevelGuide';
+import { openBrowsingLevelGuide } from '~/components/Dialog/dialog-registry';
 
 const tooltipProps: Partial<TooltipProps> = {
   maw: 300,

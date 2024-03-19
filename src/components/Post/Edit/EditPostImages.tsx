@@ -45,6 +45,7 @@ import { useImageStore } from '~/store/image.store';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { useRouter } from 'next/router';
 import { getIsPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { BrowsingLevelBadge } from '~/components/ImageGuard/ImageGuard2';
 
 export function EditPostImages({ max = POST_IMAGE_LIMIT }: { max?: number }) {
   const currentUser = useCurrentUser();
@@ -95,8 +96,18 @@ export function EditPostImages({ max = POST_IMAGE_LIMIT }: { max?: number }) {
 }
 
 function ImageController({ image }: { image: PostEditImage }) {
-  const { id, url, previewUrl, name, meta, resourceHelper, blockedFor, type, ingestion } =
-    useImageStore(image);
+  const {
+    id,
+    url,
+    previewUrl,
+    name,
+    meta,
+    resourceHelper,
+    blockedFor,
+    type,
+    ingestion,
+    nsfwLevel,
+  } = useImageStore(image);
 
   const currentUser = useCurrentUser();
   const { classes, cx } = useStyles();
@@ -111,6 +122,7 @@ function ImageController({ image }: { image: PostEditImage }) {
 
   return (
     <Card className={classes.container} withBorder={withBorder} p={0}>
+      <BrowsingLevelBadge browsingLevel={nsfwLevel} className="absolute top-2 left-2 z-10" />
       <EdgeMedia
         src={previewUrl ?? url}
         alt={name ?? undefined}
@@ -204,7 +216,7 @@ function ImageController({ image }: { image: PostEditImage }) {
 
       {isScanned && <VotableTags entityType="image" entityId={id} p="xs" canAdd />}
 
-      <Group className={classes.actions}>
+      <Group className="absolute top-2 right-2 z-10">
         {meta ? (
           <Badge {...readyBadgeProps} onClick={handleSelectImageClick}>
             Generation Data

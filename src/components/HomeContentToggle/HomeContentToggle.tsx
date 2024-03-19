@@ -69,10 +69,10 @@ const homeOptions: Record<string, HomeOption> = {
     url: '/events',
     icon: (props: TablerIconsProps) => <IconCalendar {...props} />,
   },
-  clubs: {
-    url: '/clubs',
-    icon: (props: TablerIconsProps) => <IconClubs {...props} />,
-  },
+  // clubs: {
+  //   url: '/clubs',
+  //   icon: (props: TablerIconsProps) => <IconClubs {...props} />,
+  // },
   builds: {
     url: '/builds',
     icon: (props: TablerIconsProps) => <IconCpu {...props} />,

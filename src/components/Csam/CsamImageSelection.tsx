@@ -35,7 +35,7 @@ export function CsamImageSelection() {
 
   // TODO - get all images for user, don't use this util unless we provide a way to get all images regardless of ingestion status
   const { images, isLoading, fetchNextPage, hasNextPage, isRefetching } = useQueryImages(
-    { username: user?.username ?? undefined, sort: ImageSort.Newest, browsingLevel: undefined },
+    { username: user?.username ?? undefined, sort: ImageSort.Newest },
     { applyHiddenPreferences: false, enabled: !!user }
   );
 

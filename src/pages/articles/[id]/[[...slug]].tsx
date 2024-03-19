@@ -55,6 +55,7 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { getIsSafeBrowsingLevel } from '../../../shared/constants/browsingLevel.constants';
+import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 
 const querySchema = z.object({
   id: z.preprocess(parseNumericString, z.number()),
@@ -246,7 +247,7 @@ export default function ArticleDetailsPage({
                 {image && (
                   <ImageGuard2 image={image} connectType="article" connectId={article.id}>
                     {(safe) => (
-                      <>
+                      <RoutedDialogLink name="imageDetail" state={{ imageId: image.id }}>
                         <ImageGuard2.BlurToggle className="absolute top-2 left-2 z-10" />
                         <ImageContextMenu image={image} className="absolute top-2 right-2 z-10" />
                         {!safe ? (
@@ -268,7 +269,7 @@ export default function ArticleDetailsPage({
                             anim={safe}
                           />
                         )}
-                      </>
+                      </RoutedDialogLink>
                     )}
                   </ImageGuard2>
                 )}

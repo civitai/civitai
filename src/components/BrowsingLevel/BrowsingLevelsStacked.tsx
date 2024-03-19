@@ -1,5 +1,4 @@
-import { Group, Paper, Text, createStyles } from '@mantine/core';
-import { IconCheck } from '@tabler/icons-react';
+import { Group, Paper, Switch, Text, createStyles } from '@mantine/core';
 import {
   useBrowsingModeContext,
   useIsBrowsingLevelSelected,
@@ -39,9 +38,7 @@ function BrowsingLevelItem({ level }: { level: BrowsingLevel }) {
         <Text weight={700}>{browsingLevelLabels[level]}</Text>
         <Text>{browsingLevelDescriptions[level]}</Text>
       </div>
-      <Text color="green" inline style={{ visibility: !isSelected ? 'hidden' : undefined }}>
-        <IconCheck />
-      </Text>
+      <Switch checked={isSelected} onClick={() => toggleBrowsingLevel(level)} />
     </Group>
   );
 }

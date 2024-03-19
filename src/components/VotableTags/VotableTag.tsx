@@ -19,7 +19,7 @@ import { NextLink } from '@mantine/next';
 import { Countdown } from '~/components/Countdown/Countdown';
 import { NsfwLevel } from '~/server/common/enums';
 import {
-  browsingLevelTagColors,
+  votableTagColors,
   getIsSafeBrowsingLevel,
 } from '~/shared/constants/browsingLevel.constants';
 
@@ -85,7 +85,7 @@ export function VotableTag({
 
   const theme = useMantineTheme();
   const isNsfw = !getIsSafeBrowsingLevel(nsfwLevel);
-  const { color, shade } = browsingLevelTagColors[nsfwLevel];
+  const { color, shade } = votableTagColors[nsfwLevel];
   const voteColor = isNsfw ? color[shade] : theme.colors.blue[5];
   const badgeColor = theme.fn.variant({
     color: color,

@@ -81,6 +81,7 @@ export const getTags = async ({
   withModels = false,
   includeAdminTags = false,
   nsfwLevel,
+  include,
 }: Omit<GetTagsInput, 'limit' | 'page'> & {
   take?: number;
   skip?: number;
@@ -127,6 +128,8 @@ export const getTags = async ({
     AND.push(Prisma.sql`t."adminOnly" = false`);
   }
 
+  if (nsfwLevel) AND.push(Prisma.sql`(t."nsfwLevel" & ${nsfwLevel}) != 0`);
+
   let orderBy = `t."name" ASC`;
   if (!sort) {
     if (entityType?.includes(TagTarget.Model)) sort = TagSort.MostModels;
@@ -154,7 +157,7 @@ export const getTags = async ({
       ) "isCategory"`
       : Prisma.sql``;
 
-  const isNsfwLevel = nsfwLevel
+  const isNsfwLevel = include?.includes('nsfwLevel')
     ? Prisma.sql`, COALESCE(
       (
           SELECT MAX(pt."nsfwLevel")
@@ -170,8 +173,7 @@ export const getTags = async ({
   >`
     SELECT
       t."id",
-      t."name",
-      t."nsfwLevel"
+      t."name"
       ${isCategory}
       ${isNsfwLevel}
     FROM "Tag" t

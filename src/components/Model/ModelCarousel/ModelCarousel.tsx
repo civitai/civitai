@@ -32,6 +32,7 @@ import { ImageSort } from '~/server/common/enums';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
+import { ExplainHiddenImages } from '~/components/Image/ExplainHiddenImages/ExplainHiddenImages';
 
 const useStyles = createStyles((theme) => ({
   control: {
@@ -123,14 +124,13 @@ export function ModelCarousel({
   const features = useFeatureFlags();
   const { classes, cx } = useStyles();
 
-  const { images, isLoading } = useQueryImages({
+  const { images, flatData, isLoading } = useQueryImages({
     modelVersionId: modelVersionId,
     prioritizedUserIds: [modelUserId],
     period: 'AllTime',
     sort: ImageSort.MostReactions,
     limit,
     pending: true,
-    browsingLevel: undefined,
   });
 
   if (isLoading)
@@ -170,13 +170,14 @@ export function ModelCarousel({
               <IconPhotoOff size={32} />
             </ThemeIcon>
             <Text size="lg">No showcase images available</Text>
-            <Text size="sm" color="dimmed" ta="center">
+            <ExplainHiddenImages images={flatData} />
+            {/* <Text size="sm" color="dimmed" ta="center">
               {currentUser
                 ? `No images from this creator match your content preferences. Adjust your settings or explore the community gallery below.`
                 : `No images from this creator match the default content preferences. Log in to adjust your settings or explore the community gallery below.`}
-            </Text>
+            </Text> */}
           </Stack>
-          <Group grow w="100%">
+          {/* <Group grow w="100%">
             {currentUser ? (
               <Link href="/user/account#content-moderation">
                 <Button variant="outline">Adjust Settings</Button>
@@ -189,7 +190,7 @@ export function ModelCarousel({
             <Button onClick={onBrowseClick} variant="outline">
               Browse Gallery
             </Button>
-          </Group>
+          </Group> */}
         </Stack>
       </Paper>
     );

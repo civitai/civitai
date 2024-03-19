@@ -9,11 +9,13 @@ import {
   Group,
   Stack,
   Text,
+  ThemeIcon,
   Title,
   createStyles,
   useMantineTheme,
 } from '@mantine/core';
 import { Availability, CollectionType } from '@prisma/client';
+import { IconPhotoOff } from '@tabler/icons-react';
 import { IconDotsVertical, IconBookmark, IconShare3 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
 import Link from 'next/link';
@@ -27,6 +29,7 @@ import { ChatUserButton } from '~/components/Chat/ChatUserButton';
 import { Collection } from '~/components/Collection/Collection';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
+import { ExplainHiddenImages } from '~/components/Image/ExplainHiddenImages/ExplainHiddenImages';
 import { useQueryImages } from '~/components/Image/image.utils';
 import { Meta } from '~/components/Meta/Meta';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
@@ -237,6 +240,14 @@ export function PostDetail({ postId }: { postId: number }) {
             </Stack>
             {!imagesLoading && !unfilteredImages?.length ? (
               <Alert>Unable to load images</Alert>
+            ) : !images.length ? (
+              <Stack spacing={4} align="center">
+                <ThemeIcon color="gray" size={64} radius={100}>
+                  <IconPhotoOff size={32} />
+                </ThemeIcon>
+                <Text size="lg">No images available</Text>
+                <ExplainHiddenImages images={unfilteredImages} />
+              </Stack>
             ) : (
               <PostImages postId={post.id} images={images} isLoading={imagesLoading} />
             )}

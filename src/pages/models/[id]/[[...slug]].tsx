@@ -146,7 +146,6 @@ export const getServerSideProps = createServerSideProps({
           sort: ImageSort.MostReactions,
           limit: CAROUSEL_LIMIT,
           pending: true,
-          browsingLevel: undefined,
         });
 
       if (modelVersionIdParsed) {
@@ -233,6 +232,7 @@ export default function ModelDetailsV2({
       period: 'AllTime',
       sort: ImageSort.MostReactions,
       limit: CAROUSEL_LIMIT,
+      pending: true,
     },
     {
       enabled: !!latestVersion,

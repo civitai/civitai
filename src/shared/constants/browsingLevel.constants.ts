@@ -97,7 +97,7 @@ export const getNsfwLeveLDeprecatedReverseMapping = (level: number) => {
   return nsfwLevelReverseMapDeprecated[level as NsfwLevel] ?? NsfwLevelDeprecated.None;
 };
 
-export const browsingLevelTagColors = {
+export const votableTagColors = {
   [NsfwLevel.PG]: { color: 'gray', shade: 5 },
   [NsfwLevel.PG13]: { color: 'yellow', shade: 5 },
   [NsfwLevel.R]: { color: 'red', shade: 9 },

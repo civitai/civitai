@@ -3,6 +3,7 @@ import { useDebouncedValue } from '@mantine/hooks';
 import { IconSearch, IconX } from '@tabler/icons-react';
 import { uniqBy } from 'lodash-es';
 import { useRef, useState } from 'react';
+import { useHiddenPreferencesContext } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import { useHiddenPreferencesData, useToggleHiddenPreferences } from '~/hooks/hidden-preferences';
 
 import { trpc } from '~/utils/trpc';
@@ -11,16 +12,18 @@ export function HiddenTagsSection({ withTitle = true }: { withTitle?: boolean })
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [search, setSearch] = useState('');
   const [debouncedSearch] = useDebouncedValue(search, 300);
+  const { moderatedTags } = useHiddenPreferencesContext();
 
   const tags = useHiddenPreferencesData().hiddenTags;
   const hiddenTags = uniqBy(
-    tags.filter((x) => x.hidden && !x.parentId),
+    tags.filter((x) => x.hidden && !x.parentId && !moderatedTags.some((y) => y.id === x.id)),
     'id'
   );
 
   const { data, isLoading } = trpc.tag.getAll.useQuery({
     entityType: ['Model'],
     query: debouncedSearch.toLowerCase().trim(),
+    nsfwLevel: 1,
   });
   const modelTags =
     data?.items

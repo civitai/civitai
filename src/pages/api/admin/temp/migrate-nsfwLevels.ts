@@ -21,7 +21,7 @@ const migrationTypes = z.enum([
   'collections',
 ]);
 const schema = z.object({
-  concurrency: z.coerce.number().min(1).max(50).optional().default(25),
+  concurrency: z.coerce.number().min(1).max(50).optional().default(15),
   batchSize: z.coerce.number().min(0).optional().default(500),
   start: z.coerce.number().min(0).optional().default(0),
   end: z.coerce.number().min(0).optional(),
@@ -39,38 +39,38 @@ export default WebhookEndpoint(async (req, res) => {
     type: MigrationType;
     fn: (req: NextApiRequest, res: NextApiResponse) => Promise<void>;
   }> = [
-    {
-      type: 'users',
-      fn: migrateUsers,
-    },
-    {
-      type: 'images',
-      fn: migrateImages,
-    },
-    {
-      type: 'posts',
-      fn: migratePosts,
-    },
-    {
-      type: 'articles',
-      fn: migrateArticles,
-    },
-    {
-      type: 'bounties',
-      fn: migrateBounties,
-    },
-    {
-      type: 'bountyEntries',
-      fn: migrateBountyEntries,
-    },
-    {
-      type: 'modelVersions',
-      fn: migrateModelVersions,
-    },
-    {
-      type: 'models',
-      fn: migrateModels,
-    },
+    // {
+    //   type: 'users',
+    //   fn: migrateUsers,
+    // },
+    // {
+    //   type: 'images',
+    //   fn: migrateImages,
+    // },
+    // {
+    //   type: 'posts',
+    //   fn: migratePosts,
+    // },
+    // {
+    //   type: 'articles',
+    //   fn: migrateArticles,
+    // },
+    // {
+    //   type: 'bounties',
+    //   fn: migrateBounties,
+    // },
+    // {
+    //   type: 'bountyEntries',
+    //   fn: migrateBountyEntries,
+    // },
+    // {
+    //   type: 'modelVersions',
+    //   fn: migrateModelVersions,
+    // },
+    // {
+    //   type: 'models',
+    //   fn: migrateModels,
+    // },
     {
       type: 'collections',
       fn: migrateCollections,
@@ -97,6 +97,13 @@ async function migrateImages(req: NextApiRequest, res: NextApiResponse) {
     params,
     runContext: res,
     rangeFetcher: async (context) => {
+      //TODO.nsfwLevel
+      // if (params.after) {
+      //   const [{ start }] = await dbRead.$queryRaw<{ start: number }[]>(
+      //     Prisma.sql`SELECT MIN(id) "start" FROM "Image" WHERE "createdAt" > '${params.after.toISOString()}';`
+      //   );
+      //   context.start = start;
+      // }
       const [{ max }] = await dbRead.$queryRaw<{ max: number }[]>(
         Prisma.sql`SELECT MAX(id) "max" FROM "Image";`
       );
@@ -113,10 +120,12 @@ async function migrateImages(req: NextApiRequest, res: NextApiResponse) {
             AND NOT toi.disabled
         )
         WHERE i.id BETWEEN ${start} AND ${end} AND i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"
+        AND (i."nsfwLevel" & 24) != 0
       `);
+      // TODO.nsfwLevel - remove `AND (i."nsfwLevel" & 24) != 0`
       cancelFns.push(cancel);
       await result();
-      console.log(`Updated ${params.type} ${start} - ${end}`);
+      console.log(`Updated images ${start} - ${end}`);
     },
   });
 }
@@ -145,7 +154,7 @@ async function migrateUsers(req: NextApiRequest, res: NextApiResponse) {
       `);
       cancelFns.push(cancel);
       await result();
-      console.log(`Updated ${params.type} ${start} - ${end}`);
+      console.log(`Updated users ${start} - ${end}`);
     },
   });
 
@@ -179,7 +188,7 @@ async function migratePosts(req: NextApiRequest, res: NextApiResponse) {
       `);
       cancelFns.push(cancel);
       await result();
-      console.log(`Updated ${params.type} ${start} - ${end}`);
+      console.log(`Updated posts ${start} - ${end}`);
     },
   });
 }
@@ -218,7 +227,7 @@ async function migrateBounties(req: NextApiRequest, res: NextApiResponse) {
       `);
       cancelFns.push(cancel);
       await result();
-      console.log(`Updated ${params.type} ${start} - ${end}`);
+      console.log(`Updated bounties ${start} - ${end}`);
     },
   });
 }
@@ -252,7 +261,7 @@ async function migrateBountyEntries(req: NextApiRequest, res: NextApiResponse) {
       `);
       cancelFns.push(cancel);
       await result();
-      console.log(`Updated ${params.type} ${start} - ${end}`);
+      console.log(`Updated bounties ${start} - ${end}`);
     },
   });
 }
@@ -301,7 +310,7 @@ async function migrateModelVersions(req: NextApiRequest, res: NextApiResponse) {
       `);
       cancelFns.push(cancel);
       await result();
-      console.log(`Updated ${params.type} ${start} - ${end}`);
+      console.log(`Updated modelVersions ${start} - ${end}`);
     },
   });
 }
@@ -340,7 +349,7 @@ async function migrateModels(req: NextApiRequest, res: NextApiResponse) {
       `);
       cancelFns.push(cancel);
       await result();
-      console.log(`Updated ${params.type} ${start} - ${end}`);
+      console.log(`Updated models ${start} - ${end}`);
     },
   });
 }
@@ -372,7 +381,7 @@ async function migrateCollections(req: NextApiRequest, res: NextApiResponse) {
       `);
       cancelFns.push(cancel);
       await result();
-      console.log(`Updated ${params.type} ${start} - ${end}`);
+      console.log(`Updated collections ${start} - ${end}`);
     },
   });
 }

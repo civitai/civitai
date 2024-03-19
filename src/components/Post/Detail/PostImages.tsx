@@ -33,10 +33,6 @@ export function PostImages({
         </Group>
       </Paper>
     );
-  if (!images?.length)
-    return (
-      <Alert>Due to your filter settings, we could not display any images from this post</Alert>
-    );
 
   const remainingImages = images.length - maxInitialImages;
   const _images = showMore ? images : images.slice(0, maxInitialImages);

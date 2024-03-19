@@ -51,7 +51,7 @@ import { constants } from '~/server/common/constants';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { getInitials } from '~/utils/string-helpers';
 import { ClubGetById } from '~/types/router';
-import { openBrowsingLevelGuide } from '~/components/BrowsingLevel/openBrowsingLevelGuide';
+import { openBrowsingLevelGuide } from '~/components/Dialog/dialog-registry';
 
 const tooltipProps: Partial<TooltipProps> = {
   maw: 300,

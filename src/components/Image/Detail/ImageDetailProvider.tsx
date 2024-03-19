@@ -14,6 +14,7 @@ import { ImageGetById, ImageGetInfinite } from '~/types/router';
 import { QS } from '~/utils/qs';
 import { trpc } from '~/utils/trpc';
 import { removeEmpty } from '../../../utils/object-helpers';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 
 type ImageDetailState = {
   images: ImageGetInfinite;
@@ -78,9 +79,10 @@ export function ImageDetailProvider({
   const postId = queryPostId ?? filterPostId;
   // #region [data fetching]
   const shouldFetchMany = !initialImages?.length && (Object.keys(filters).length > 0 || !!postId);
+  const browsingLevel = useBrowsingLevelDebounced();
   const { images: queryImages = [], isInitialLoading: imagesLoading } = useQueryImages(
     // TODO: Hacky way to prevent sending the username when filtering by reactions
-    { ...filters, username: !!reactions?.length ? undefined : username, postId },
+    { ...filters, username: !!reactions?.length ? undefined : username, postId, browsingLevel },
     {
       enabled: shouldFetchMany,
     }

@@ -17,6 +17,7 @@ import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { NoContent } from '~/components/NoContent/NoContent';
 import Link from 'next/link';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 
 type ImageFilters = {
   modelId?: number;
@@ -61,8 +62,9 @@ export default function ImagesInfinite({
   showEof = showEof && filters.period !== MetricTimeframe.AllTime;
   const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
 
+  const browsingLevel = useBrowsingLevelDebounced();
   const { images, isLoading, fetchNextPage, hasNextPage, isRefetching } = useQueryImages(
-    debouncedFilters,
+    { ...debouncedFilters, browsingLevel },
     { keepPreviousData: true }
   );
 

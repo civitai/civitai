@@ -16,7 +16,7 @@ export function useCategoryTags({ entityType }: { entityType: TagTarget }) {
     unlisted: false,
     categories: true,
     limit: 100,
-    nsfwLevel: true,
+    include: ['nsfwLevel'],
   });
 
   const tags = !data ? undefined : data.items;

@@ -83,11 +83,11 @@ const HiddenTags = createUserCache({
         select: { tag: { select: { id: true, name: true } } },
       })
     ).map((x) => x.tag);
-    const hiddenTags = tagEngagment.map((x) => x.id);
+    // const hiddenTags = tagEngagment.map((x) => x.id);
 
-    const hiddenTagsOfHiddenTags = await getHiddenTagsOfHiddenTags(hiddenTags);
+    // const hiddenTagsOfHiddenTags = await getHiddenTagsOfHiddenTags(hiddenTags);
 
-    return [...tagEngagment, ...hiddenTagsOfHiddenTags];
+    return [...tagEngagment];
   },
 });
 
@@ -434,11 +434,11 @@ async function toggleHiddenTags({
   return {
     added: [
       ...votedHideImages.filter(addedFn).map(imageMap),
-      ...changedHiddenTagsOfHiddenTags.filter((x) => addedTags.includes(x.parentId)).map(tagMap),
+      // ...changedHiddenTagsOfHiddenTags.filter((x) => addedTags.includes(x.parentId)).map(tagMap),
     ],
     removed: [
       ...votedHideImages.filter(removeFn).map(imageMap),
-      ...changedHiddenTagsOfHiddenTags.filter((x) => deletedTags.includes(x.parentId)).map(tagMap),
+      // ...changedHiddenTagsOfHiddenTags.filter((x) => deletedTags.includes(x.parentId)).map(tagMap),
     ],
   };
 }

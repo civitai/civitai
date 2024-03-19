@@ -27,6 +27,7 @@ import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { ImageGuard2, ImageGuardConnect } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
+import { ExplainHiddenImages } from '~/components/Image/ExplainHiddenImages/ExplainHiddenImages';
 
 const useStyles = createStyles((theme) => ({
   control: {
@@ -174,8 +175,9 @@ export function ImageCarousel({
                 <IconPhotoOff size={32} />
               </ThemeIcon>
               <Text size="lg">No showcase images available</Text>
+              <ExplainHiddenImages images={transformed} />
             </Stack>
-            <Group grow w="100%">
+            {/* <Group grow w="100%">
               {currentUser ? (
                 <Link href="/user/account#content-moderation">
                   <Button variant="outline">Adjust Settings</Button>
@@ -185,7 +187,7 @@ export function ImageCarousel({
                   <Button variant="outline">Log In</Button>
                 </Link>
               )}
-            </Group>
+            </Group> */}
           </Stack>
         )}
       </Paper>

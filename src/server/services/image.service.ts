@@ -767,7 +767,7 @@ export const getAllImages = async ({
     );
   }
 
-  if (pending && (isModerator || userId) && browsingLevel) {
+  if (pending && (isModerator || userId)) {
     if (isModerator) {
       AND.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`);
     } else if (userId) {

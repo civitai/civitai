@@ -26,11 +26,12 @@ export const HiddenPreferencesProvider = ({ children }: { children: ReactNode })
   const disableHidden = currentUser?.disableHidden;
 
   const hidden = useMemo(() => {
-    const tags = new Map(
-      data.hiddenTags.filter((x) => !disableHidden && x.hidden).map((x) => [x.id, true])
-    );
-
     const moderatedTags = data.hiddenTags.filter((x) => !!x.nsfwLevel);
+    const tags = new Map(
+      data.hiddenTags
+        .filter((x) => !disableHidden && x.hidden && !moderatedTags.some((m) => m.id === x.id))
+        .map((x) => [x.id, true])
+    );
 
     const images = new Map(
       data.hiddenImages.filter((x) => !x.tagId || tags.get(x.tagId)).map((x) => [x.id, true])
