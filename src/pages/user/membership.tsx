@@ -37,7 +37,7 @@ export const getServerSideProps = createServerSideProps({
     if (!session || !session.user)
       return {
         redirect: {
-          destination: getLoginLink({ returnUrl: ctx.resolvedUrl, reason: 'me' }),
+          destination: getLoginLink({ returnUrl: ctx.resolvedUrl }),
           permanent: false,
         },
       };
