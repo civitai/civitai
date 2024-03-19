@@ -545,15 +545,26 @@ export const manageInvoicePaid = async (invoice: Stripe.Invoice) => {
   if (
     invoice.subscription &&
     user &&
+    invoice.billing_reason &&
     ['subscription_cycle', 'subscription_create'].includes(invoice.billing_reason)
   ) {
+    const products = (await dbRead.product.findMany()).filter(
+      (p) => !!(p.metadata as any)?.[env.STRIPE_METADATA_KEY]
+    );
+
+    const billedProduct = products.find((p) =>
+      invoice.lines.data.some((l) => l.price?.product === p.id)
+    );
+
+    const billedProductMeta = (billedProduct?.metadata ?? {}) as Schema.ProductMetadata;
+
     await withRetries(() =>
       createBuzzTransaction({
         fromAccountId: 0,
         toAccountId: user.id,
         type: TransactionType.Reward,
         externalTransactionId: invoice.id,
-        amount: 5000, // Hardcoded for now cause we only have one subscription option
+        amount: billedProductMeta.monthlyBuzz ?? 3000, // assume a min of 3000.
         description: 'Membership bonus',
         details: { invoiceId: invoice.id },
       })
