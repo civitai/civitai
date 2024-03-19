@@ -195,7 +195,7 @@ const useStyles = createStyles((theme) => ({
   heroTitle: {
     fontSize: 32,
     fontWeight: 700,
-    color: theme.colorScheme === 'dark' ? '#fff' : theme.colors.gray[9],
+    color: theme.colorScheme === 'dark' ? theme.white : theme.colors.gray[9],
     [containerQuery.largerThan('md')]: {
       fontSize: 40,
     },
@@ -207,7 +207,7 @@ const useStyles = createStyles((theme) => ({
   heading: {
     fontSize: 24,
     fontWeight: 700,
-    color: theme.colorScheme === 'dark' ? '#fff' : theme.colors.gray[9],
+    color: theme.colorScheme === 'dark' ? theme.white : theme.colors.gray[9],
   },
   copy: {
     fontSize: 16,
