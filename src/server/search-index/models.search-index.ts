@@ -257,7 +257,8 @@ const onFetchItemsToIndex = async ({
         ? await getImagesForModelVersion({
             modelVersionIds,
             imagesPerVersion: 10,
-            browsingLevel: Object.values(NsfwLevel).reduce((acc, level) => acc | level, 0),
+            browsingLevel:
+              NsfwLevel.PG + NsfwLevel.PG13 + NsfwLevel.R + NsfwLevel.X + NsfwLevel.XXX, // Avoid blocked.
           })
         : [];
 
