@@ -51,8 +51,8 @@ export const useUserPaymentMethods = (data: { enabled?: boolean } = { enabled: t
   };
 };
 
-export const shortenPlanInterval = (interval?: string | null) => {
+export const shortenPlanInterval = (interval: string) => {
   if (interval === 'month') return 'mo';
 
-  return interval ?? '';
+  return interval;
 };

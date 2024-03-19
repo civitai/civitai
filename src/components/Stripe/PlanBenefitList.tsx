@@ -5,24 +5,33 @@ import {
   Stack,
   Divider,
   ThemeIconVariant,
+  Text,
 } from '@mantine/core';
-import { IconAdCircleOff, IconCircleCheck } from '@tabler/icons-react';
+import { IconAdCircleOff, IconCircleCheck, IconCircleX } from '@tabler/icons-react';
 
 export const benefitIconSize = 18;
 const themeIconSize = benefitIconSize + 6;
 
 const defaultBenefits = [
-  { content: 'Ad free browsing', icon: <IconAdCircleOff size={benefitIconSize} /> },
-  { content: 'Civitai Link' },
-  { content: 'Civitai Archive' },
-  { content: 'Unique Supporter Badge each month' },
-  { content: 'Can equip special cosmetics' },
+  // { content: 'Ad free browsing', icon: <IconAdCircleOff size={benefitIconSize} /> },
+  {
+    content: (
+      <Text variant="link" td="underline" component="a" href="/product/link" target="_blank">
+        Civitai Link
+      </Text>
+    ),
+  },
+  // { content: 'Can equip special cosmetics' },
   { content: 'Exclusive Discord channels' },
   { content: 'Early access content' },
   { content: 'Early access to new features' },
 ];
 
-export const PlanBenefitList = ({ benefits, useDefaultBenefits = true }: Props) => {
+export const PlanBenefitList = ({
+  benefits,
+  useDefaultBenefits = true,
+  defaultBenefitsDisabled,
+}: Props) => {
   return (
     <Stack>
       <List
@@ -63,8 +72,17 @@ export const PlanBenefitList = ({ benefits, useDefaultBenefits = true }: Props) 
             size="md"
             center
             icon={
-              <ThemeIcon color="gray" size={themeIconSize} radius="xl">
-                <IconCircleCheck size={benefitIconSize} />
+              <ThemeIcon
+                color={defaultBenefitsDisabled ? 'gray' : 'green'}
+                variant="light"
+                size={themeIconSize}
+                radius="xl"
+              >
+                {defaultBenefitsDisabled ? (
+                  <IconCircleX size={benefitIconSize} />
+                ) : (
+                  <IconCircleCheck size={benefitIconSize} />
+                )}
               </ThemeIcon>
             }
           >
@@ -81,6 +99,7 @@ export const PlanBenefitList = ({ benefits, useDefaultBenefits = true }: Props) 
 type Props = {
   benefits: BenefitItem[];
   useDefaultBenefits?: boolean;
+  defaultBenefitsDisabled?: boolean;
 };
 
 export type BenefitItem = {

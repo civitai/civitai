@@ -120,7 +120,7 @@ export default function UserMembership() {
                             <Text component="span" color="dimmed" size="sm">
                               {price.currency.toUpperCase() +
                                 '/' +
-                                shortenPlanInterval(price.interval)}
+                                shortenPlanInterval(price.interval, price.intervalCount)}
                             </Text>
                           </Text>
                         )}

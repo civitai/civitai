@@ -10,6 +10,7 @@ import {
   Button,
   ButtonProps,
   ThemeIconVariant,
+  Tooltip,
 } from '@mantine/core';
 import {
   IconAdCircleOff,
@@ -18,6 +19,11 @@ import {
   IconCloud,
   IconVideo,
   IconPhotoPlus,
+  IconHexagon,
+  IconHexagonPlus,
+  IconList,
+  IconPhotoAi,
+  IconInfoCircle,
 } from '@tabler/icons-react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { benefitIconSize, BenefitItem, PlanBenefitList } from '~/components/Stripe/PlanBenefitList';
@@ -30,7 +36,7 @@ import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
 import { getStripeCurrencyDisplay } from '~/utils/string-helpers';
 import { ProductMetadata } from '~/server/schema/stripe.schema';
 import { isDefined } from '~/utils/type-guards';
-import { formatKBytes, numberWithCommas } from '~/utils/number-helpers';
+import { abbreviateNumber, formatKBytes, numberWithCommas } from '~/utils/number-helpers';
 import { constants } from '~/server/common/constants';
 import { shortenPlanInterval } from '~/components/Stripe/stripe.utils';
 import { ManageSubscriptionButton } from '~/components/Stripe/ManageSubscriptionButton';
@@ -38,6 +44,7 @@ import { FeatureAccess } from '~/server/services/feature-flags.service';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { DowngradeFeedbackModal } from '~/components/Stripe/MembershipChangePrevention';
+import { IconX } from '@tabler/icons-react';
 
 type PlanCardProps = {
   product: StripePlan;
@@ -111,7 +118,7 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
                   {getStripeCurrencyDisplay(price.unitAmount, price.currency)}
                 </Text>
                 <Text align="center" color="dimmed">
-                  / {shortenPlanInterval(price.interval)}
+                  / {shortenPlanInterval(price.interval, price.intervalCount)}
                 </Text>
               </Group>
               <Select
@@ -212,7 +219,7 @@ export const getPlanDetails: (
         content: (
           <Text>
             <Text span color="yellow.7">
-              {numberWithCommas(metadata?.monthlyBuzz ?? 3000)} Buzz for spending
+              {numberWithCommas(metadata?.monthlyBuzz ?? 0)} Buzz for spending
             </Text>
           </Text>
         ),
@@ -221,13 +228,44 @@ export const getPlanDetails: (
         icon: <IconPhotoPlus size={benefitIconSize} />,
         iconColor: 'blue',
         iconVariant: 'light' as ThemeIconVariant,
-        content: <Text>{metadata.generationLimit ?? 3}x more generations per day</Text>,
+        content: (
+          <Text lh={1}>
+            Up to {abbreviateNumber((metadata.generationLimit ?? 1) * 10000)} images per month
+            <Text component="span" lh={1} ml={4} style={{ position: 'relative', top: 5 }}>
+              <Tooltip
+                label="Depends on the complexity of the images requested"
+                withinPortal
+                withArrow
+                maw={250}
+                multiline
+                position="top"
+                style={{ textAlign: 'center' }}
+              >
+                <IconInfoCircle size={20} />
+              </Tooltip>
+            </Text>
+          </Text>
+        ),
       },
-      metadata.vaultSizeKb && features.vault
+      {
+        icon: <IconPhotoAi size={benefitIconSize} />,
+        iconColor: 'blue',
+        iconVariant: 'light' as ThemeIconVariant,
+        content: <Text>{metadata.quantityLimit ?? 4} Images per job</Text>,
+      },
+      {
+        icon: <IconList size={benefitIconSize} />,
+        iconColor: 'blue',
+        iconVariant: 'light' as ThemeIconVariant,
+        content: <Text>{metadata.queueLimit ?? 4} Queued jobs</Text>,
+      },
+      features.vault
         ? {
             content: (
               <Text>
-                {formatKBytes(metadata.vaultSizeKb)}{' '}
+                {(metadata.vaultSizeKb ?? 0) === 0
+                  ? 'No '
+                  : formatKBytes(metadata.vaultSizeKb ?? 0)}{' '}
                 <Text
                   variant="link"
                   td="underline"
@@ -240,26 +278,34 @@ export const getPlanDetails: (
               </Text>
             ),
             icon: <IconCloud size={benefitIconSize} />,
-            iconColor: 'green',
+            iconColor: metadata.vaultSizeKb ? 'blue' : 'gray',
             iconVariant: 'light' as ThemeIconVariant,
           }
         : undefined,
-      metadata.animatedBadge
-        ? {
-            content: (
-              <Text color="blue">
-                Unique{' '}
-                <Text component="span" weight="bold">
-                  Animated
-                </Text>{' '}
-                Supporter Badge each month
-              </Text>
-            ),
-            icon: <IconVideo size={benefitIconSize} />,
-            iconColor: 'blue',
-            iconVariant: 'light' as ThemeIconVariant,
-          }
-        : undefined,
+      {
+        content:
+          metadata.badgeType === 'animated' ? (
+            <Text lh={1}>
+              Unique{' '}
+              <Text lh={1} weight={700} component="span">
+                Animated
+              </Text>{' '}
+              Supporter Badge each month
+            </Text>
+          ) : metadata.badgeType === 'static' ? (
+            <Text lh={1}>Unique Supporter Badge each month</Text>
+          ) : (
+            <Text lh={1}>No Unique Supporter Badge each month</Text>
+          ),
+        icon:
+          metadata.badgeType === 'animated' ? (
+            <IconHexagonPlus size={benefitIconSize} />
+          ) : (
+            <IconHexagon size={benefitIconSize} />
+          ),
+        iconColor: !metadata.badgeType || metadata.badgeType === 'none' ? 'gray' : 'blue',
+        iconVariant: 'light' as ThemeIconVariant,
+      },
     ].filter(isDefined),
   };
 
