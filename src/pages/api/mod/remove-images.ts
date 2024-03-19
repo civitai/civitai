@@ -1,6 +1,6 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
-import { moderateImages } from '~/server/services/user.service';
+import { moderateImages } from '~/server/services/image.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 const schema = z.object({
@@ -10,15 +10,15 @@ const schema = z.object({
 export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
   const { imageIds } = schema.parse(req.body);
-  
+
   await moderateImages({
-    ids: imageIds,
-    needsReview: false,
+    ids: imageIds ?? [],
+    needsReview: 'false',
     reviewAction: 'delete',
-    reviewType: 'blocked'
+    reviewType: 'blocked',
   });
 
   return res.status(200).json({
-    images: imageIds.length,
+    images: (imageIds ?? []).length,
   });
 });

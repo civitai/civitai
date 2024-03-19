@@ -9,6 +9,7 @@ import {
   Select,
   Button,
   ButtonProps,
+  ThemeIconVariant,
 } from '@mantine/core';
 import {
   IconAdCircleOff,
@@ -172,10 +173,10 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
   );
 }
 
-export const getPlanDetails: (product: StripePlan, features: FeatureAccess) => PlanMeta = (
-  product: StripePlan,
+export const getPlanDetails: (
+  product: Pick<StripePlan, 'metadata' | 'name'>,
   features: FeatureAccess
-) => {
+) => PlanMeta = (product: Pick<StripePlan, 'metadata' | 'name'>, features: FeatureAccess) => {
   const metadata = (product.metadata ?? {}) as ProductMetadata;
   const planMeta = {
     name: product?.name ?? 'Supporter Tier',
@@ -210,7 +211,7 @@ export const getPlanDetails: (product: StripePlan, features: FeatureAccess) => P
       {
         icon: <IconBolt size={benefitIconSize} />,
         iconColor: 'yellow',
-        iconVariant: 'light',
+        iconVariant: 'light' as ThemeIconVariant,
         content: (
           <Text>
             <Text span color="yellow.7">
@@ -224,7 +225,7 @@ export const getPlanDetails: (product: StripePlan, features: FeatureAccess) => P
             content: <Text color="green">Vault size: {formatKBytes(metadata.vaultSizeKb, 0)}</Text>,
             icon: <IconCloud size={benefitIconSize} />,
             iconColor: 'green',
-            iconVariant: 'light',
+            iconVariant: 'light' as ThemeIconVariant,
           }
         : undefined,
       metadata.animatedBadge
@@ -240,7 +241,7 @@ export const getPlanDetails: (product: StripePlan, features: FeatureAccess) => P
             ),
             icon: <IconVideo size={benefitIconSize} />,
             iconColor: 'blue',
-            iconVariant: 'light',
+            iconVariant: 'light' as ThemeIconVariant,
           }
         : undefined,
       {

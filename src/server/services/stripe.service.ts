@@ -175,7 +175,7 @@ export const createSubscribeSession = async ({
 
     const isActivePrice = subscriptionItem.price.id === price.id;
     if (!isActivePrice) {
-      const { url } = await createSubscriptionUpgradeSession({
+      const { url } = await createSubscriptionChangeSession({
         customerId,
         priceId,
         subscriptionId: activeSubscription.id,
@@ -258,7 +258,7 @@ export const createManageSubscriptionSession = async ({ customerId }: { customer
   return { url: session.url };
 };
 
-export const createSubscriptionUpgradeSession = async ({
+export const createSubscriptionChangeSession = async ({
   customerId,
   subscriptionId,
   priceId,
@@ -275,6 +275,7 @@ export const createSubscriptionUpgradeSession = async ({
     customer: customerId,
     return_url: `${baseUrl}/user/account`,
     flow_data: {
+      // @ts-ignore This is valid as per stripe's documentation
       type: 'subscription_update_confirm',
       subscription_update_confirm: {
         subscription: subscriptionId,
@@ -285,6 +286,40 @@ export const createSubscriptionUpgradeSession = async ({
             price: priceId,
           },
         ],
+      },
+      after_completion: {
+        type: 'redirect',
+        redirect: {
+          return_url: `${baseUrl}/payment/success?cid=${customerId.slice(-8)}`,
+        },
+      },
+    },
+  });
+
+  return { url: session.url };
+};
+
+export const createCancelSubscriptionSession = async ({ customerId }: { customerId: string }) => {
+  const stripe = await getServerStripe();
+
+  // Check to see if this user has a subscription with Stripe
+  const { data: subscriptions } = await stripe.subscriptions.list({
+    customer: customerId,
+  });
+
+  const activeSubscription = subscriptions.find((x) => x.status !== 'canceled');
+  if (!activeSubscription) {
+    throw throwBadRequestError(`No active subscription found`);
+  }
+
+  const session = await stripe.billingPortal.sessions.create({
+    customer: customerId,
+    return_url: `${baseUrl}/user/account`,
+    flow_data: {
+      // @ts-ignore This is valid as per stripe's documentation
+      type: 'subscription_cancel',
+      subscription_cancel: {
+        subscription: activeSubscription.id,
       },
     },
   });
@@ -312,6 +347,7 @@ export const createBuzzSession = async ({
     where: { id: priceId },
     select: { productId: true, currency: true, type: true },
   });
+
   if (!price)
     throw throwNotFoundError(`The product you are trying to purchase does not exists: ${priceId}`);
 

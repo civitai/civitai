@@ -2,9 +2,9 @@ import {
   List,
   ThemeIcon,
   DefaultMantineColor,
-  ThemeIconProps,
   Stack,
   Divider,
+  ThemeIconVariant,
 } from '@mantine/core';
 import { IconAdCircleOff, IconCircleCheck } from '@tabler/icons-react';
 
@@ -82,5 +82,5 @@ export type BenefitItem = {
   content: React.ReactNode;
   icon?: React.ReactNode;
   iconColor?: DefaultMantineColor;
-  iconVariant?: ThemeIconProps['variant'];
+  iconVariant?: ThemeIconVariant;
 };

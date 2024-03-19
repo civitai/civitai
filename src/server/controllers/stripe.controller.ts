@@ -13,6 +13,7 @@ import {
   createBuzzSession,
   getPaymentIntent,
   getSetupIntent,
+  createCancelSubscriptionSession,
 } from './../services/stripe.service';
 import { Context } from '~/server/createContext';
 import * as Schema from '../schema/stripe.schema';
@@ -200,4 +201,13 @@ export const getSetupIntentHandler = async ({
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
   }
+};
+
+export const createCancelSubscriptionSessionHandler = async ({
+  ctx,
+}: {
+  ctx: DeepNonNullable<Context>;
+}) => {
+  if (!ctx.user.customerId) throw throwNotFoundError('customerId not found');
+  return await createCancelSubscriptionSession({ customerId: ctx.user.customerId });
 };
