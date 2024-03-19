@@ -16,21 +16,13 @@ import {
 } from '@mantine/core';
 import { trpc } from '~/utils/trpc';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
 import { PlanCard } from '~/components/Stripe/PlanCard';
-import { ManageSubscriptionButton } from '~/components/Stripe/ManageSubscriptionButton';
-import {
-  IconCalendarDue,
-  IconCircleCheck,
-  IconExclamationMark,
-  IconHeartHandshake,
-} from '@tabler/icons-react';
+import { IconCalendarDue, IconExclamationMark, IconHeartHandshake } from '@tabler/icons-react';
 import { DonateButton } from '~/components/Stripe/DonateButton';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { PlanBenefitList } from '~/components/Stripe/PlanBenefitList';
 import { joinRedirectReasons, JoinRedirectReason } from '~/utils/join-helpers';
 import { useRouter } from 'next/router';
-import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 
@@ -48,7 +40,6 @@ export default function Pricing() {
     trpc.stripe.getUserSubscription.useQuery();
 
   const isLoading = productsLoading || subscriptionLoading;
-  const showSubscribeButton = !subscription || !!subscription.canceledAt;
 
   return (
     <>
@@ -110,9 +101,12 @@ export default function Pricing() {
           <Tabs.Panel value="donate" pt="md">
             <ContainerGrid justify="center">
               <ContainerGrid.Col md={4} sm={6} xs={12}>
-                <Card withBorder style={{ height: '100%' }}>
+                <Card className={classes.card}>
                   <Stack justify="space-between" style={{ height: '100%' }}>
-                    <Stack spacing={0} mb="md">
+                    <Stack spacing="md" mb="md">
+                      <Title className={classes.cardTitle} order={2} align="center">
+                        One-time Donation
+                      </Title>
                       <Center>
                         <EdgeMedia
                           src="ab3e161b-7c66-4412-9573-ca16dde9f900"
@@ -120,9 +114,9 @@ export default function Pricing() {
                           width={128}
                         />
                       </Center>
-                      <Title className={classes.cardTitle} order={2} align="center">
-                        One-time Donation
-                      </Title>
+                      <DonateButton>
+                        <Button radius="xl">Donate</Button>
+                      </DonateButton>
                     </Stack>
                     <PlanBenefitList
                       benefits={[
@@ -130,10 +124,8 @@ export default function Pricing() {
                         { content: 'Unique nameplate color' },
                         { content: 'Unique Discord role for 30 days' },
                       ]}
+                      useDefaultBenefits={false}
                     />
-                    <DonateButton>
-                      <Button>Donate</Button>
-                    </DonateButton>
                   </Stack>
                 </Card>
               </ContainerGrid.Col>
@@ -166,6 +158,12 @@ const useStyles = createStyles((theme) => ({
     [containerQuery.smallerThan('sm')]: {
       fontSize: 20,
     },
+  },
+  card: {
+    height: '100%',
+    background: theme.colorScheme === 'dark' ? theme.colors.dark[8] : theme.colors.gray[0],
+    borderRadius: theme.radius.md,
+    padding: theme.spacing.lg,
   },
 }));
 

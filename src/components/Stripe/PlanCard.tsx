@@ -37,7 +37,7 @@ import { ManageSubscriptionButton } from '~/components/Stripe/ManageSubscription
 import { FeatureAccess } from '~/server/services/feature-flags.service';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import { DowngradeFeedbackModal } from '~/components/Stripe/DowngradeFeedbackModal';
+import { DowngradeFeedbackModal } from '~/components/Stripe/MembershipChangePrevention';
 
 type PlanCardProps = {
   product: StripePlan;
@@ -105,10 +105,15 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
                 <EdgeMedia src={image} width={128} className={classes.image} />
               </Center>
             )}
-            <Group position="center" spacing={4}>
-              <Text className={classes.price} align="center" size={18} weight={500} lh={1}>
-                {getStripeCurrencyDisplay(price.unitAmount, price.currency)}
-              </Text>
+            <Stack spacing={0} align="center">
+              <Group position="center" spacing={4} align="flex-end">
+                <Text className={classes.price} align="center" lh={1}>
+                  {getStripeCurrencyDisplay(price.unitAmount, price.currency)}
+                </Text>
+                <Text align="center" color="dimmed">
+                  / {shortenPlanInterval(price.interval)}
+                </Text>
+              </Group>
               <Select
                 data={product.prices.map((p) => ({ label: p.currency, value: p.id }))}
                 value={priceId}
@@ -138,10 +143,7 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
                   },
                 })}
               />
-              <Text className={classes.price} align="center" color="dimmed">
-                / {shortenPlanInterval(price.interval)}
-              </Text>
-            </Group>
+            </Stack>
 
             {priceId && (
               <>
@@ -218,8 +220,8 @@ export const getPlanDetails: (
       {
         icon: <IconPhotoPlus size={benefitIconSize} />,
         iconColor: 'blue',
+        iconVariant: 'light' as ThemeIconVariant,
         content: <Text>{metadata.generationLimit ?? 3}x more generations per day</Text>,
-        variant: 'light' as ThemeIconVariant,
       },
       metadata.vaultSizeKb && features.vault
         ? {
@@ -250,7 +252,7 @@ export const getPlanDetails: (
                 <Text component="span" weight="bold">
                   Animated
                 </Text>{' '}
-                Supported Badge each month
+                Supporter Badge each month
               </Text>
             ),
             icon: <IconVideo size={benefitIconSize} />,
@@ -289,8 +291,7 @@ const useStyles = createStyles((theme) => ({
     },
   },
   price: {
-    [containerQuery.smallerThan('sm')]: {
-      fontSize: 16,
-    },
+    fontSize: 48,
+    fontWeight: 'bold',
   },
 }));

@@ -11,7 +11,7 @@ import { IconAdCircleOff, IconCircleCheck } from '@tabler/icons-react';
 export const benefitIconSize = 18;
 const themeIconSize = benefitIconSize + 6;
 
-export const PlanBenefitList = ({ benefits }: Props) => {
+export const PlanBenefitList = ({ benefits, useDefaultBenefits = true }: Props) => {
   const defaultBenefits = [
     { content: 'Ad free browsing', icon: <IconAdCircleOff size={benefitIconSize} /> },
     { content: 'Civitai Link' },
@@ -55,27 +55,32 @@ export const PlanBenefitList = ({ benefits }: Props) => {
           </List.Item>
         ))}
       </List>
-      <Divider mx="-md" />
-      <List
-        spacing="xs"
-        size="md"
-        center
-        icon={
-          <ThemeIcon color="gray" size={themeIconSize} radius="xl">
-            <IconCircleCheck size={benefitIconSize} />
-          </ThemeIcon>
-        }
-      >
-        {defaultBenefits.map(({ content }, index) => (
-          <List.Item key={index}>{content}</List.Item>
-        ))}
-      </List>
+      {useDefaultBenefits && (
+        <>
+          <Divider mx="-md" />
+          <List
+            spacing="xs"
+            size="md"
+            center
+            icon={
+              <ThemeIcon color="gray" size={themeIconSize} radius="xl">
+                <IconCircleCheck size={benefitIconSize} />
+              </ThemeIcon>
+            }
+          >
+            {defaultBenefits.map(({ content }, index) => (
+              <List.Item key={index}>{content}</List.Item>
+            ))}
+          </List>
+        </>
+      )}
     </Stack>
   );
 };
 
 type Props = {
   benefits: BenefitItem[];
+  useDefaultBenefits?: boolean;
 };
 
 export type BenefitItem = {
