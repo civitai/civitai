@@ -219,7 +219,7 @@ export const getPlanDetails: (
         content: (
           <Text>
             <Text span color="yellow.7">
-              {numberWithCommas(metadata?.monthlyBuzz ?? 0)} Buzz for spending
+              {numberWithCommas(metadata?.monthlyBuzz ?? 0)} Buzz per month
             </Text>
           </Text>
         ),

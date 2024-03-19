@@ -760,6 +760,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                   >
                     Generate
                   </Button>
+                  {/* // TODO.generationLimit - add consumed of limit progress bar */}
                 </LoginRedirect>
                 {/* <Tooltip label="Reset" color="dark" withArrow> */}
                 <Button

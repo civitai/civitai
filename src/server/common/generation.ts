@@ -17,3 +17,5 @@ export const calculateGenerationBill = (data: Partial<GenerateFormModel>) => {
     costs.base * (width / costs.width) * (height / costs.height) * (steps / costs.steps) * quantity
   );
 };
+
+// TODO.generationLimit - Add a method to calculate generation limit bill (Will not affect buzz)
