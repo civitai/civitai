@@ -240,7 +240,7 @@ export function PostDetail({ postId }: { postId: number }) {
             </Stack>
             {!imagesLoading && !unfilteredImages?.length ? (
               <Alert>Unable to load images</Alert>
-            ) : !images.length ? (
+            ) : !imagesLoading && !images.length ? (
               <Stack spacing={4} align="center">
                 <ThemeIcon color="gray" size={64} radius={100}>
                   <IconPhotoOff size={32} />
@@ -257,17 +257,17 @@ export function PostDetail({ postId }: { postId: number }) {
             </Stack>
           </Stack>
         </div>
-        <div className={classes.sidebar}>
+        {/* <div className={classes.sidebar}>
           <Adunit showRemoveAds {...adsRegistry.postDetailSidebar} />
-        </div>
+        </div> */}
       </div>
-      <Adunit
+      {/* <Adunit
         py={30}
         sx={(theme) => ({
           background: theme.colorScheme === 'light' ? theme.colors.gray[2] : theme.colors.dark[6],
         })}
         {...adsRegistry.postDetailFooter}
-      />
+      /> */}
     </>
   );
 }
