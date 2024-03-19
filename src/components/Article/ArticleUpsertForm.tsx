@@ -18,7 +18,7 @@ import {
 import { TagTarget } from '@prisma/client';
 import { IconQuestionMark, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { z } from 'zod';
 
 import { BackButton } from '~/components/BackButton/BackButton';
@@ -82,12 +82,18 @@ export const browsingLevelSelectOptions = browsingLevels.map((level) => ({
 }));
 
 export function ArticleUpsertForm({ article }: Props) {
+  const currentUser = useCurrentUser();
   const { classes } = useStyles();
   const queryUtils = trpc.useUtils();
   const router = useRouter();
   const result = querySchema.safeParse(router.query);
 
   const defaultCategory = result.success ? result.data.category : -1;
+
+  const lockedPropertiesRef = useRef<string[]>(article?.lockedProperties ?? []);
+  const canEditUserNsfwLevel = !currentUser?.isModerator
+    ? !article?.lockedProperties?.includes('userNsfwLevel')
+    : true;
 
   const form = useForm({
     schema,
@@ -115,6 +121,19 @@ export function ArticleUpsertForm({ article }: Props) {
       title,
     }),
   });
+  const [userNsfwLevel] = form.watch(['userNsfwLevel']);
+  useEffect(() => {
+    if (currentUser?.isModerator) {
+      if (userNsfwLevel)
+        lockedPropertiesRef.current = [
+          ...new Set([...lockedPropertiesRef.current, 'userNsfwLevel']),
+        ];
+      else
+        lockedPropertiesRef.current = lockedPropertiesRef.current.filter(
+          (x) => x !== 'userNsfwLevel'
+        );
+    }
+  }, [userNsfwLevel]);
 
   const [publishing, setPublishing] = useState(false);
 
@@ -142,10 +161,15 @@ export function ArticleUpsertForm({ article }: Props) {
     upsertArticleMutation.mutate(
       {
         ...rest,
-        userNsfwLevel: userNsfwLevel ? Number(userNsfwLevel) : 0,
+        userNsfwLevel: canEditUserNsfwLevel
+          ? userNsfwLevel
+            ? Number(userNsfwLevel)
+            : 0
+          : undefined,
         tags,
         publishedAt: publishing ? new Date() : null,
         coverImage: coverImage,
+        lockedProperties: lockedPropertiesRef.current,
       },
       {
         async onSuccess(result) {
