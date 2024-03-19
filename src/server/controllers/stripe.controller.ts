@@ -209,5 +209,9 @@ export const createCancelSubscriptionSessionHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   if (!ctx.user.customerId) throw throwNotFoundError('customerId not found');
-  return await createCancelSubscriptionSession({ customerId: ctx.user.customerId });
+  try {
+    return await createCancelSubscriptionSession({ customerId: ctx.user.customerId });
+  } catch (error) {
+    throw getTRPCErrorFromUnknown(error);
+  }
 };

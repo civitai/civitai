@@ -57,7 +57,7 @@ export const DowngradeFeedbackModal = ({
           <Radio.Group
             value={downgradeReason}
             orientation="vertical"
-            label="We love to hear the reason for your downgrade. It will help us improve our service."
+            label="Help us improve our services by leaving your feedback about the reason you want to downgrade."
             onChange={(value) => {
               setDowngradeReason(value);
             }}
@@ -122,6 +122,7 @@ export const CancelMembershipFeedbackModal = () => {
   const handleClose = dialog.onClose;
   const [cancelReason, setCancelReason] = useState('Others');
   const { vault, isLoading } = useQueryVault();
+  const { trackAction } = useTrackEvent();
 
   return (
     <Modal {...dialog} size="md" title="Tell us why" radius="md">
@@ -134,7 +135,7 @@ export const CancelMembershipFeedbackModal = () => {
           <Radio.Group
             value={cancelReason}
             orientation="vertical"
-            label="We love to hear the reason for your downgrade. It will help us improve our service."
+            label="Help us improve our service by leaving your feedback about the reason you wish to cancel"
             onChange={(value) => {
               setCancelReason(value);
             }}
@@ -151,6 +152,14 @@ export const CancelMembershipFeedbackModal = () => {
             <Button
               color="gray"
               onClick={() => {
+                trackAction({
+                  type: 'Membership_Cancel',
+                  details: {
+                    reason: cancelReason,
+                    from: '',
+                  },
+                }).catch(() => undefined);
+
                 handleClose();
                 dialogStore.trigger({
                   component: CancelMembershipBenefitsModal,

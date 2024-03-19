@@ -100,7 +100,7 @@ export default function UserMembership() {
               <Paper withBorder className={classes.card}>
                 <Stack>
                   <Group position="apart">
-                    <Group>
+                    <Group noWrap>
                       {image && (
                         <Center>
                           <EdgeMedia src={image} width={100} />

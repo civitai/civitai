@@ -48,7 +48,9 @@ export default function Pricing() {
 
   const isLoading = productsLoading || subscriptionLoading;
   const currentMembershipUnavailable =
-    !!subscription && !productsLoading && !products.find((p) => p.id === subscription.product.id);
+    !!subscription &&
+    !productsLoading &&
+    !(products ?? []).find((p) => p.id === subscription.product.id);
 
   return (
     <>

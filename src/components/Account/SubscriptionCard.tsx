@@ -8,6 +8,7 @@ import { getPlanDetails } from '~/components/Stripe/PlanCard';
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
 import { shortenPlanInterval } from '~/components/Stripe/stripe.utils';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { formatDate } from '~/utils/date-helpers';
 import { getStripeCurrencyDisplay } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -50,7 +51,7 @@ export function SubscriptionCard() {
           </Center>
         ) : data ? (
           <Group position="apart">
-            <Group>
+            <Group noWrap>
               {image && (
                 <Center>
                   <EdgeMedia src={image} width={40} />
@@ -69,8 +70,7 @@ export function SubscriptionCard() {
                 </Text>
               )}
               <Text size="sm" color="dimmed">
-                {data.cancelAtPeriodEnd ? 'Ends' : 'Renews'}{' '}
-                {new Date(data.currentPeriodEnd).toLocaleDateString()}
+                {data.cancelAtPeriodEnd ? 'Ends' : 'Renews'} {formatDate(data.currentPeriodEnd)}
               </Text>
             </Stack>
           </Group>

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { Currency } from '@prisma/client';
 import { constants } from '~/server/common/constants';
+import { booleanString } from '~/utils/zod-helpers';
 
 export type CreateCustomerInput = z.infer<typeof createCustomerSchema>;
 export const createCustomerSchema = z.object({ id: z.number(), email: z.string().email() });
@@ -75,10 +76,7 @@ export const productMetadataSchema = z
     vaultSizeKb: z.coerce.number().positive().optional(),
     badge: z.string().optional(),
     monthlyBuzz: z.coerce.number().positive().optional(),
-    animatedBadge: z
-      .string()
-      .transform((val) => val === 'true')
-      .optional(),
+    animatedBadge: booleanString().optional(),
     tier: z.enum(['bronze', 'silver', 'gold']),
     generationLimit: z.coerce.number().positive().optional(),
   })

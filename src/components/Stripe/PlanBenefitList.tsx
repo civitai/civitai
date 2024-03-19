@@ -11,18 +11,18 @@ import { IconAdCircleOff, IconCircleCheck } from '@tabler/icons-react';
 export const benefitIconSize = 18;
 const themeIconSize = benefitIconSize + 6;
 
-export const PlanBenefitList = ({ benefits, useDefaultBenefits = true }: Props) => {
-  const defaultBenefits = [
-    { content: 'Ad free browsing', icon: <IconAdCircleOff size={benefitIconSize} /> },
-    { content: 'Civitai Link' },
-    { content: 'Civitai Archive' },
-    { content: 'Unique Supporter Badge each month' },
-    { content: 'Can equip special cosmetics' },
-    { content: 'Exclusive Discord channels' },
-    { content: 'Early access content' },
-    { content: 'Early access to new features' },
-  ];
+const defaultBenefits = [
+  { content: 'Ad free browsing', icon: <IconAdCircleOff size={benefitIconSize} /> },
+  { content: 'Civitai Link' },
+  { content: 'Civitai Archive' },
+  { content: 'Unique Supporter Badge each month' },
+  { content: 'Can equip special cosmetics' },
+  { content: 'Exclusive Discord channels' },
+  { content: 'Early access content' },
+  { content: 'Early access to new features' },
+];
 
+export const PlanBenefitList = ({ benefits, useDefaultBenefits = true }: Props) => {
   return (
     <Stack>
       <List
