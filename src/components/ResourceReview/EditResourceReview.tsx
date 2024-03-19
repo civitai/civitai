@@ -69,7 +69,7 @@ export function EditResourceReview({
           setRating(rating);
           setRecommended(recommended);
           setId(response.id);
-          await queryUtils.resourceReview.invalidate();
+          await queryUtils.resourceReview.getUserResourceReview.invalidate();
         },
       }
     );
@@ -77,7 +77,7 @@ export function EditResourceReview({
 
   const form = useForm({ schema, defaultValues: { details: details ?? '' } });
   const handleSubmit = ({ details }: z.infer<typeof schema>) => {
-    if (!modelId || !modelVersionId || !id || !rating || !recommended) return;
+    if (!modelId || !modelVersionId || !id || !recommended) return;
 
     mutate(
       { id, modelVersionId, modelId, rating, recommended, details },
@@ -87,6 +87,7 @@ export function EditResourceReview({
           form.reset({ details });
           toggleEditDetail();
           onSuccess?.(id);
+          await queryUtils.resourceReview.getUserResourceReview.invalidate();
         },
       }
     );

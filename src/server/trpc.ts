@@ -29,10 +29,10 @@ const isAcceptableOrigin = t.middleware(({ ctx: { user, acceptableOrigin }, next
   return next({ ctx: { user, acceptableOrigin } });
 });
 
-async function needsUpdate(req: NextApiRequest) {
-  const type = req.headers['x-client'] as string;
-  const version = req.headers['x-client-version'] as string;
-  const date = req.headers['x-client-date'] as string;
+async function needsUpdate(req?: NextApiRequest) {
+  const type = req?.headers['x-client'] as string;
+  const version = req?.headers['x-client-version'] as string;
+  const date = req?.headers['x-client-date'] as string;
 
   if (type !== 'web') return false;
   const client = await redis.hGetAll(REDIS_KEYS.CLIENT);

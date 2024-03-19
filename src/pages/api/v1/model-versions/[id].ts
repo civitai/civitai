@@ -15,6 +15,7 @@ import { getImagesForModelVersion } from '~/server/services/image.service';
 import { getVaeFiles } from '~/server/services/model.service';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
+import { reduceToBasicFileMetadata } from '~/server/services/model-file.service';
 
 const hashesAsObject = (hashes: { type: ModelHashType; hash: string }[]) =>
   hashes.reduce((acc, { type, hash }) => ({ ...acc, [type]: hash }), {});
@@ -68,15 +69,16 @@ export async function prepareModelVersionResponse(
     },
     model: { ...model, mode: model.mode == null ? undefined : model.mode },
     files: includeDownloadUrl
-      ? castedFiles.map(({ hashes, url, visibility, ...file }) => ({
+      ? castedFiles.map(({ hashes, url, visibility, metadata, modelVersionId, ...file }) => ({
           ...file,
+          metadata: reduceToBasicFileMetadata(metadata),
           hashes: hashesAsObject(hashes),
           name: getDownloadFilename({ model, modelVersion: version, file }),
           primary: primaryFile.id === file.id,
           downloadUrl: `${baseUrl.origin}${createModelFileDownloadUrl({
             versionId: version.id,
             type: file.type,
-            meta: file.metadata,
+            meta: metadata,
             primary: primaryFile.id === file.id,
           })}`,
         }))

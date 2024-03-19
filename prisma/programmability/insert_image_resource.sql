@@ -2,14 +2,14 @@ CREATE OR REPLACE FUNCTION insert_image_resource(image_id INTEGER)
 RETURNS VOID AS $$
 BEGIN
 	WITH image_resource_hashes AS (
-		SELECT id, null::int model_version_id, (jsonb_each_text(meta->'hashes')).key as name, (jsonb_each_text(meta->'hashes')).value as hash, true as detected
+		SELECT id, null::int model_version_id, (jsonb_each_text(meta->'hashes')).key as name, UPPER((jsonb_each_text(meta->'hashes')).value) as hash, true as detected
 		FROM "Image"
 		WHERE jsonb_typeof(meta->'hashes') = 'object'
 			AND id = image_id
 
 		UNION
 
-		SELECT id, null::int model_version_id, COALESCE(meta->>'Model','model') as name, meta->>'Model hash' as hash, true as detected
+		SELECT id, null::int model_version_id, COALESCE(meta->>'Model','model') as name, UPPER(meta->>'Model hash') as hash, true as detected
 		FROM "Image"
 		WHERE jsonb_typeof(meta->'Model hash') = 'string'
 			AND jsonb_typeof(meta->'hashes') != 'object'
@@ -30,7 +30,7 @@ BEGIN
 
     UNION
 
-		SELECT i.id, mv.id model_version_id, CONCAT(m.name,' - ', mv.name), LOWER(mf.hash) "hash", false as detected
+		SELECT i.id, mv.id model_version_id, CONCAT(m.name,' - ', mv.name), UPPER(mf.hash) "hash", false as detected
 		FROM "Image" i
 		JOIN "Post" p ON i."postId" = p.id
 		JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
@@ -52,7 +52,7 @@ BEGIN
 		  irh.detected,
 			row_number() OVER (PARTITION BY irh.id, irh.hash ORDER BY IIF(irh.detected,0,1), mf.id) row_number
 		FROM image_resource_hashes irh
-		LEFT JOIN "ModelFileHash" mfh ON LOWER(mfh.hash) = LOWER(irh.hash)
+		LEFT JOIN "ModelFileHash" mfh ON mfh.hash = irh.hash
 		LEFT JOIN "ModelFile" mf ON mf.id = mfh."fileId"
 		LEFT JOIN "ModelVersion" mv ON mv.id = mf."modelVersionId"
 		LEFT JOIN "Model" m ON m.id = mv."modelId"

@@ -1,57 +1,44 @@
-import {
-  TrainingDetailsBaseModel,
-  TrainingDetailsBaseModelList,
-} from '~/server/schema/model-version.schema';
+import { constants } from '~/server/common/constants';
+import { TrainingDetailsBaseModel } from '~/server/schema/model-version.schema';
+import { TrainingCost } from '~/server/schema/training.schema';
 
-const baseModelCoeff = 0;
-const etaCoefficients = {
-  models: {
-    sdxl: 19.42979334,
-    pony: 19.42979334,
-    sd_1_5: -25.38624804,
-    anime: -23.84022578,
-    semi: -20.56343578,
-    realistic: -50.28902011,
-  },
-  alpha: -0.649960841,
-  dim: 0.792224422,
-  steps: 0.014458002,
-};
-
-const stepsCoeff = 2;
-const stepsExp = 1.17;
-
-const dollarsPerMinute = 0.44 / 60;
-const dollarsToBuzz = 1000;
-
-const baseBuzzTake = 500;
-const baseBuzzCustomTake = 500;
-
-const minEta = 1;
-
-export const calcEta = (
-  dim: number,
-  alpha: number,
-  steps: number,
-  model: TrainingDetailsBaseModel | null
-) => {
+// Default costs have moved to `training.schema.ts`
+// Costs are now overridable via redis `system:features` hset `training:status` key.
+export const calcEta = ({
+  networkDim: dim,
+  networkAlpha: alpha,
+  targetSteps: steps,
+  baseModel: model,
+  cost,
+}: {
+  networkDim: number;
+  networkAlpha: number;
+  targetSteps: number;
+  baseModel: TrainingDetailsBaseModel | null;
+  cost: TrainingCost;
+}) => {
   if (!model) return;
 
-  const modelCoeff =
-    model in etaCoefficients.models
-      ? etaCoefficients.models[model as TrainingDetailsBaseModelList]
-      : baseModelCoeff;
-
-  return Math.max(
-    minEta,
+  const modelCoeff = cost.etaCoefficients.models[model] ?? cost.baseModelCoeff;
+  const computedEta =
     modelCoeff +
-      etaCoefficients.alpha * alpha +
-      etaCoefficients.dim * dim +
-      (etaCoefficients.steps * stepsCoeff * steps) ** stepsExp
-  );
+    cost.etaCoefficients.alpha * alpha +
+    cost.etaCoefficients.dim * dim +
+    (cost.etaCoefficients.steps * cost.stepsCoeff * steps) ** cost.stepsExp;
+  return Math.max(cost.minEta, computedEta);
 };
 
-export const calcBuzzFromEta = (eta: number, isCustom: boolean) => {
-  const custCost = isCustom ? baseBuzzCustomTake : 0;
-  return Math.round(Math.max(baseBuzzTake + custCost, eta * dollarsPerMinute * dollarsToBuzz));
+export const calcBuzzFromEta = ({
+  eta,
+  isCustom,
+  cost,
+}: {
+  eta: number;
+  isCustom: boolean;
+  cost: TrainingCost;
+}) => {
+  const computedCost = eta * (cost.hourlyCost / 60) * constants.buzz.buzzDollarRatio;
+  let buzz = Math.max(cost.baseBuzz, computedCost);
+  if (isCustom) buzz += cost.customModelBuzz;
+  return Math.round(buzz);
 };

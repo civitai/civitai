@@ -16,6 +16,7 @@ import {
   IconChevronDown,
   IconCloud,
   IconVideo,
+  IconPhotoPlus,
 } from '@tabler/icons-react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { benefitIconSize, BenefitItem, PlanBenefitList } from '~/components/Stripe/PlanBenefitList';
@@ -32,6 +33,8 @@ import { formatKBytes, numberWithCommas } from '~/utils/number-helpers';
 import { constants } from '~/server/common/constants';
 import { shortenPlanInterval } from '~/components/Stripe/stripe.utils';
 import { ManageSubscriptionButton } from '~/components/Stripe/ManageSubscriptionButton';
+import { FeatureAccess } from '~/server/services/feature-flags.service';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 type PlanCardProps = {
   product: StripePlan;
@@ -58,6 +61,7 @@ const subscribeBtnProps: Record<string, Partial<ButtonProps>> = {
 } as const;
 
 export function PlanCard({ product, subscription }: PlanCardProps) {
+  const features = useFeatureFlags();
   const hasActiveSubscription = subscription?.status === 'active';
   const isActivePlan = hasActiveSubscription && subscription?.product?.id === product.id;
   const { classes } = useStyles();
@@ -71,7 +75,7 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
     hasActiveSubscription &&
     constants.memberships.tierOrder.indexOf(meta.tier) <
       constants.memberships.tierOrder.indexOf(subscriptionMeta.tier ?? '');
-  const { benefits, image } = getPlanDetails(product) ?? {};
+  const { benefits, image } = getPlanDetails(product, features) ?? {};
   const defaultPriceId = isActivePlan
     ? subscription?.price.id ?? product.defaultPriceId
     : product.defaultPriceId;
@@ -168,13 +172,41 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
   );
 }
 
-export const getPlanDetails: (product: StripePlan) => PlanMeta = (product: StripePlan) => {
+export const getPlanDetails: (product: StripePlan, features: FeatureAccess) => PlanMeta = (
+  product: StripePlan,
+  features: FeatureAccess
+) => {
   const metadata = (product.metadata ?? {}) as ProductMetadata;
   const planMeta = {
     name: product?.name ?? 'Supporter Tier',
     image:
       metadata?.badge ?? constants.memberships.badges[metadata.tier] ?? constants.supporterBadge,
     benefits: [
+      {
+        icon: <IconPhotoPlus size={benefitIconSize} />,
+        iconColor: 'blue',
+        content: <Text>{metadata.generationLimit ?? 3}x more generations per day</Text>,
+      },
+      metadata.vaultSizeKb && features.vault
+        ? {
+            content: (
+              <Text>
+                {formatKBytes(metadata.vaultSizeKb)}{' '}
+                <Text
+                  variant="link"
+                  td="underline"
+                  component="a"
+                  href="/product/vault"
+                  target="_blank"
+                >
+                  Civitai Vault storage
+                </Text>
+              </Text>
+            ),
+            icon: <IconCloud size={benefitIconSize} />,
+            iconColor: 'blue',
+          }
+        : undefined,
       {
         icon: <IconBolt size={benefitIconSize} />,
         iconColor: 'yellow',
@@ -211,6 +243,11 @@ export const getPlanDetails: (product: StripePlan) => PlanMeta = (product: Strip
             iconVariant: 'light',
           }
         : undefined,
+      {
+        icon: <IconPhotoPlus size={benefitIconSize} />,
+        iconColor: 'blue',
+        content: <Text>{metadata.generationLimit ?? 3}x more generations per day</Text>,
+      },
     ].filter(isDefined),
   };
 

@@ -538,8 +538,16 @@ export const generationConfig = {
   },
   Pony: {
     additionalResourceTypes: [
-      { type: ModelType.LORA, baseModelSet: 'Pony' },
-      { type: ModelType.LoCon, baseModelSet: 'Pony' },
+      {
+        type: ModelType.LORA,
+        baseModelSet: 'Pony',
+        baseModels: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
+      },
+      {
+        type: ModelType.LoCon,
+        baseModelSet: 'Pony',
+        baseModels: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
+      },
       { type: ModelType.TextualInversion, baseModelSet: 'Pony', baseModels: ['SD 1.5'] },
     ] as ResourceFilter[],
     aspectRatios: [

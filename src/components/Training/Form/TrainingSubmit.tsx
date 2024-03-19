@@ -31,7 +31,8 @@ import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import InputResourceSelect from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
-import { goBack, isTrainingCustomModel } from '~/components/Resource/Forms/Training/TrainingCommon';
+import { goBack, isTrainingCustomModel } from '~/components/Training/Form/TrainingCommon';
+import { useTrainingServiceStatus } from '~/components/Training/training.utils';
 import { trainingMinsWait } from '~/components/User/UserTrainingModels';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Form, InputCheckbox, InputNumber, InputSelect, InputText, useForm } from '~/libs/form';
@@ -459,12 +460,13 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   const thisMetadata = thisFile?.metadata as FileMetadata | null;
 
   const [openedSections, setOpenedSections] = useState<string[]>([]);
-  const [formBaseModel, setFormBaseModel] = useState<TrainingDetailsBaseModel | null>(null);
+  const [formBaseModel, setFormBaseModel] = useState<TrainingDetailsBaseModel | null>('sdxl');
   const [baseModel15, setBaseModel15] = useState<TrainingDetailsBaseModel15 | null>(null);
-  const [baseModelXL, setBaseModelXL] = useState<TrainingDetailsBaseModelXL | null>(null);
+  const [baseModelXL, setBaseModelXL] = useState<TrainingDetailsBaseModelXL | null>('sdxl');
   const [etaMins, setEtaMins] = useState<number | undefined>(undefined);
   const [buzzCost, setBuzzCost] = useState<number | undefined>(undefined);
   const [awaitInvalidate, setAwaitInvalidate] = useState<boolean>(false);
+  const status = useTrainingServiceStatus();
 
   const { classes } = useStyles();
   const theme = useMantineTheme();
@@ -578,12 +580,25 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
 
   useEffect(() => {
     const [networkDim, networkAlpha, targetSteps] = watchFieldsBuzz;
-    const eta = calcEta(networkDim, networkAlpha, targetSteps, formBaseModel);
+    const eta = calcEta({
+      networkDim,
+      networkAlpha,
+      targetSteps,
+      baseModel: formBaseModel,
+      cost: status.cost,
+    });
+    const isCustom = isTrainingCustomModel(formBaseModel);
     const price =
-      eta !== undefined ? calcBuzzFromEta(eta, isTrainingCustomModel(formBaseModel)) : eta;
+      eta !== undefined
+        ? calcBuzzFromEta({
+            eta,
+            isCustom,
+            cost: status.cost,
+          })
+        : eta;
     setEtaMins(eta);
     setBuzzCost(price);
-  }, [watchFieldsBuzz, formBaseModel]);
+  }, [watchFieldsBuzz, formBaseModel, status.cost]);
 
   useEffect(() => {
     const newArgs = optimizerArgMap[watchFieldOptimizer] ?? '';

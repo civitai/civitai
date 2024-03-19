@@ -271,12 +271,25 @@ export const getModelsInfiniteHandler = async ({
   ctx: Context;
 }) => {
   try {
-    const { isPrivate, ...results } = await getModelsWithImagesAndModelVersions({
-      input,
-      user: ctx.user,
-    });
+    let loopCount = 0;
+    let isPrivate = false;
+    let nextCursor: string | bigint | undefined;
+    const results: Awaited<ReturnType<typeof getModelsWithImagesAndModelVersions>>['items'] = [];
+    while (results.length <= (input.limit ?? 100) && loopCount < 3) {
+      const result = await getModelsWithImagesAndModelVersions({
+        input,
+        user: ctx.user,
+      });
+      if (result.isPrivate) isPrivate = true;
+      results.push(...result.items);
+      if (!result.nextCursor) break;
+
+      input.cursor = result.nextCursor;
+      nextCursor = result.nextCursor;
+      loopCount++;
+    }
     if (isPrivate) ctx.cache.canCache = false;
-    return results;
+    return { items: results, nextCursor };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

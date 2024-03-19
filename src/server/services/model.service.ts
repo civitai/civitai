@@ -219,28 +219,28 @@ export const getModelsRaw = async ({
     const lowerQuery = query?.toLowerCase();
 
     AND.push(
-      Prisma.join(
+      Prisma.sql`(${Prisma.join(
         [
           Prisma.sql`
-          m."name" ILIKE ${`%${query}%`}
-        `,
+        m."name" ILIKE ${`%${query}%`}
+      `,
           Prisma.sql`
-          EXISTS (
-            SELECT 1 FROM "ModelVersion" mvq
-            JOIN "ModelFile" mf ON mf."modelVersionId" = mvq."id"
-            JOIN "ModelFileHash" mfh ON mfh."fileId" = mf."id"
-            WHERE mvq."modelId" = m."id" AND mfh."hash" = ${query}
-          )
-        `,
+        EXISTS (
+          SELECT 1 FROM "ModelVersion" mvq
+          JOIN "ModelFile" mf ON mf."modelVersionId" = mvq."id"
+          JOIN "ModelFileHash" mfh ON mfh."fileId" = mf."id"
+          WHERE mvq."modelId" = m."id" AND mfh."hash" = ${query}
+        )
+      `,
           Prisma.sql`
-          EXISTS (
-            SELECT 1 FROM "ModelVersion" mvq
-            WHERE mvq."modelId" = m."id" AND ${lowerQuery} = ANY(mvq."trainedWords")
-          )
-        `,
+        EXISTS (
+          SELECT 1 FROM "ModelVersion" mvq
+          WHERE mvq."modelId" = m."id" AND ${lowerQuery} = ANY(mvq."trainedWords")
+        )
+      `,
         ],
         ' OR '
-      )
+      )})`
     );
   }
 
@@ -295,9 +295,7 @@ export const getModelsRaw = async ({
   }
 
   if (types?.length) {
-    AND.push(
-      Prisma.sql`m.type IN (${Prisma.raw(types.map((t) => `'${t}'::"ModelType"`).join(','))})`
-    );
+    AND.push(Prisma.sql`m.type = ANY(ARRAY[${Prisma.join(types)}]::"ModelType"[])`);
   }
 
   if (hidden && sessionUser?.id) {
@@ -1003,7 +1001,15 @@ export const getModelsWithImagesAndModelVersions = async ({
       .map(({ hashes, modelVersions, rank, tagsOnModels, ...model }) => {
         const [version] = modelVersions;
         if (!version) return null;
-        const versionImages = images[version.id]?.images ?? [];
+        const versionImages =
+          images[version.id]?.images.filter(({ id, tags }) => {
+            if (input.excludedImageIds?.includes(id)) return false;
+            if (tags && input.excludedImageTagIds) {
+              for (const tagId of tags)
+                if (input.excludedImageTagIds?.includes(tagId)) return false;
+            }
+            return true;
+          }) ?? [];
         const showImageless =
           (user?.isModerator || model.user.id === user?.id) && (input.user || input.username);
         if (!versionImages.length && !showImageless) return null;

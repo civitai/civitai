@@ -80,5 +80,6 @@ export const productMetadataSchema = z
       .transform((val) => val === 'true')
       .optional(),
     tier: z.enum(['bronze', 'silver', 'gold']),
+    generationLimit: z.coerce.number().positive().optional(),
   })
   .passthrough();
