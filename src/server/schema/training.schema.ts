@@ -41,7 +41,7 @@ export const defaultTrainingCost: TrainingCost = {
   modelCoefficients: {
     sd15: {
       base: 5,
-      steps: 0.014,
+      steps: 0.012,
       stepMultiplier: 1.73,
       expStrength: 1.55,
       expStart: 3000,
