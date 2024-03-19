@@ -66,7 +66,7 @@ export function SubscriptionCard() {
                     ' ' +
                     price.currency.toUpperCase() +
                     '/' +
-                    shortenPlanInterval(price.interval, price.intervalCount)}
+                    shortenPlanInterval(price.interval)}
                 </Text>
               )}
               <Text size="sm" color="dimmed">

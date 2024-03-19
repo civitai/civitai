@@ -417,22 +417,21 @@ async function checkResourcesAccess(
   return true;
 }
 
+// TODO.generationLimit - delete `generation:count` key from redis
 const generationLimiter = createLimiter({
   counterKey: REDIS_KEYS.GENERATION.COUNT,
+  // TODO.generationLimit - add bronze, silver, gold and corresponding daily limits to `generation:limits` hset
   limitKey: REDIS_KEYS.GENERATION.LIMITS,
   fetchCount: async (userKey) => {
-    const res = await clickhouse?.query({
-      query: `
-        SELECT COUNT(*) as count
-        FROM orchestration.textToImageJobs
-        WHERE userId = ${userKey} AND createdAt > subtractHours(now(), 24);
-      `,
-      format: 'JSONEachRow',
-    });
+    if (!clickhouse) return 0;
 
-    const data = (await res?.json<{ count: number }[]>()) ?? [];
-    const count = data[0]?.count ?? 0;
-    return count;
+    const data = await clickhouse.$query<{ cost: number }>`
+      SELECT SUM(jobCost) as cost
+      FROM orchestration.textToImageJobs
+      WHERE userId = ${userKey} AND createdAt > subtractHours(now(), 24);
+    `;
+    const cost = data?.[0]?.cost ?? 0;
+    return cost;
   },
 });
 
@@ -624,6 +623,7 @@ export const createGenerationRequest = async ({
         })
       : undefined;
 
+  // TODO.generationLimit - Grab Cost from the response here
   const response = await fetch(`${env.SCHEDULER_ENDPOINT}/requests`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -653,6 +653,7 @@ export const createGenerationRequest = async ({
     throw throwBadRequestError(message);
   }
 
+  // TODO.generationLimit - increment by Cost instead of quantity
   generationLimiter.increment(userId.toString(), params.quantity);
 
   const data: Generation.Api.RequestProps = await response.json();

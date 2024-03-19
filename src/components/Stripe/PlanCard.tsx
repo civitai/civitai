@@ -118,7 +118,7 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
                   {getStripeCurrencyDisplay(price.unitAmount, price.currency)}
                 </Text>
                 <Text align="center" color="dimmed">
-                  / {shortenPlanInterval(price.interval, price.intervalCount)}
+                  / {shortenPlanInterval(price.interval)}
                 </Text>
               </Group>
               <Select
