@@ -44,7 +44,7 @@ type ButtonStateFn = (props: { hovered: boolean; progress?: number; iconSize?: n
   label: string;
 };
 
-export const CivitiaLinkManageButton = ({
+export const CivitaiLinkManageButton = ({
   children,
   noTooltip,
   tooltipProps = {},
