@@ -71,7 +71,7 @@ export function booleanString() {
   return z.preprocess(
     (value) =>
       typeof value === 'string'
-        ? value === 'true' || value === ''
+        ? value === 'true'
         : typeof value === 'number'
         ? value === 1
         : typeof value === 'boolean'
