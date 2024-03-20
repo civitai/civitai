@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 import { env } from '~/env/server.mjs';
 import {
-  addCheckpointCoverageHandler,
+  toggleCheckpointCoverageHandler,
   changeModelModifierHandler,
   declineReviewHandler,
   deleteModelHandler,
@@ -220,5 +220,5 @@ export const modelRouter = router({
     .mutation(updateGallerySettingsHandler),
   toggleCheckpointCoverage: moderatorProcedure
     .input(toggleCheckpointCoverageSchema)
-    .mutation(addCheckpointCoverageHandler),
+    .mutation(toggleCheckpointCoverageHandler),
 });

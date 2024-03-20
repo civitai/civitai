@@ -19,18 +19,8 @@ export function ToggleModelNotification({ modelId, userId }: { modelId: number; 
   });
 
   const toggleNotifyModelMutation = trpc.user.toggleNotifyModel.useMutation({
-    async onSuccess(_, { modelId, type }) {
-      queryUtils.user.getEngagedModels.setData(undefined, (old) => {
-        if (!old) return;
-
-        const affected = type === ModelEngagementType.Mute ? 'Mute' : 'Notify';
-        const affectedList = old[affected] ?? [];
-        const shouldRemove = affectedList.find((id) => id === modelId);
-
-        if (shouldRemove)
-          return { [affected]: affectedList.filter((id) => id !== modelId), ...old };
-        return { [affected]: [...affectedList, modelId], ...old };
-      });
+    async onSuccess() {
+      await queryUtils.user.getEngagedModels.invalidate();
     },
     onError(error) {
       showErrorNotification({

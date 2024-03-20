@@ -766,7 +766,7 @@ export const toggleNotifyModelHandler = async ({
   try {
     const { id: userId } = ctx.user;
     const result = input.type
-      ? toggleModelEngagement({ modelId: input.modelId, type: input.type, userId })
+      ? await toggleModelEngagement({ modelId: input.modelId, type: input.type, userId })
       : await toggleModelNotify({ ...input, userId });
 
     if (result) {

@@ -44,7 +44,7 @@ import { useRef, useState } from 'react';
 
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useCivitaiLink } from '~/components/CivitaiLink/CivitaiLinkProvider';
-import { CivitiaLinkManageButton } from '~/components/CivitaiLink/CivitiaLinkManageButton';
+import { CivitaiLinkManageButton } from '~/components/CivitaiLink/CivitaiLinkManageButton';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { CreatorCard } from '~/components/CreatorCard/CreatorCard';
 import {
@@ -145,12 +145,8 @@ export function ModelVersionDetails({
   const displayCivitaiLink = civitaiLinked && !!version.hashes && version.hashes?.length > 0;
   const hasPendingClaimReport = model.reportStats && model.reportStats.ownershipProcessing > 0;
 
-  const { data: resourceCovered } = trpc.generation.checkResourcesCoverage.useQuery(
-    { id: version.id },
-    { enabled: features.imageGeneration && !!version, trpc: { context: { skipBatch: true } } }
-  );
   const canGenerate =
-    features.imageGeneration && ((!!resourceCovered && hasAccess) || version.canGenerate);
+    features.imageGeneration && hasAccess && (version.canGenerate || version.hasCheckpointCoverage);
   const publishVersionMutation = trpc.modelVersion.publish.useMutation();
   const publishModelMutation = trpc.model.publish.useMutation();
   const requestReviewMutation = trpc.model.requestReview.useMutation();
@@ -574,7 +570,7 @@ export function ModelVersionDetails({
               <Group spacing="xs" style={{ alignItems: 'flex-start', flexWrap: 'nowrap' }}>
                 {displayCivitaiLink && (
                   <Stack sx={{ flex: 1 }} spacing={4}>
-                    <CivitiaLinkManageButton
+                    <CivitaiLinkManageButton
                       modelId={model.id}
                       modelVersionId={version.id}
                       modelName={model.name}
@@ -593,7 +589,7 @@ export function ModelVersionDetails({
                           {label}
                         </Button>
                       )}
-                    </CivitiaLinkManageButton>
+                    </CivitaiLinkManageButton>
                     {/* {primaryFileDetails} */}
                   </Stack>
                 )}

@@ -43,7 +43,7 @@ import { InViewLoader } from '~/components/InView/InViewLoader';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { CivitiaLinkManageButton } from '~/components/CivitaiLink/CivitiaLinkManageButton';
+import { CivitaiLinkManageButton } from '~/components/CivitaiLink/CivitaiLinkManageButton';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { aDayAgo } from '~/utils/date-helpers';
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
@@ -468,7 +468,7 @@ function ResourceSelectCard({
                             <Menu.Dropdown>{contextMenuItems.map((el) => el)}</Menu.Dropdown>
                           </Menu>
                         )}
-                        <CivitiaLinkManageButton
+                        <CivitaiLinkManageButton
                           modelId={data.id}
                           modelName={data.name}
                           modelType={data.type}
@@ -488,7 +488,7 @@ function ResourceSelectCard({
                               {icon}
                             </HoverActionButton>
                           )}
-                        </CivitiaLinkManageButton>
+                        </CivitaiLinkManageButton>
                       </Stack>
                     </Group>
                     {safe ? (

@@ -120,6 +120,7 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
       meta: true,
       vaeId: true,
       settings: true,
+      requireAuth: true,
       metrics: {
         where: { timeframe: 'AllTime' },
         select: {

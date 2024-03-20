@@ -29,7 +29,7 @@ import dayjs from 'dayjs';
 import { useRouter } from 'next/router';
 import React, { useState, useEffect } from 'react';
 
-import { CivitiaLinkManageButton } from '~/components/CivitaiLink/CivitiaLinkManageButton';
+import { CivitaiLinkManageButton } from '~/components/CivitaiLink/CivitaiLinkManageButton';
 import { CivitaiTooltip } from '~/components/CivitaiWrapped/CivitaiTooltip';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
@@ -472,7 +472,7 @@ export function AmbientModelCard({ data, height }: Props) {
                       }}
                     >
                       <Group spacing={8}>
-                        <CivitiaLinkManageButton
+                        <CivitaiLinkManageButton
                           modelId={id}
                           modelName={name}
                           modelType={data.type}
@@ -497,7 +497,7 @@ export function AmbientModelCard({ data, height }: Props) {
                               {icon}
                             </ActionIcon>
                           )}
-                        </CivitiaLinkManageButton>
+                        </CivitaiLinkManageButton>
                         {features.imageGeneration && data.canGenerate && (
                           <HoverCard width={200} withArrow>
                             <HoverCard.Target>

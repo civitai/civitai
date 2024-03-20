@@ -1,4 +1,4 @@
-import { ModelHashType, ModelStatus, Prisma, VaultItemStatus } from '@prisma/client';
+import { ModelStatus, Prisma, VaultItemStatus } from '@prisma/client';
 import { env } from '~/env/server.mjs';
 import { constants } from '~/server/common/constants';
 import { VaultSort } from '~/server/common/enums';
@@ -16,10 +16,8 @@ import { getCategoryTags } from '~/server/services/system-cache';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { getFileDisplayName, getPrimaryFile } from '~/server/utils/model-helpers';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
-import { formatDate } from '~/utils/date-helpers';
 import { formatKBytes } from '~/utils/number-helpers';
-import { deleteManyObjects, getGetUrlByKey, parseKey } from '~/utils/s3-utils';
-import { getDisplayName } from '~/utils/string-helpers';
+import { deleteManyObjects, getGetUrlByKey } from '~/utils/s3-utils';
 import { isDefined } from '~/utils/type-guards';
 
 type VaultWithUsedStorage = {
@@ -193,11 +191,7 @@ export const addModelVersionToVault = async ({
     },
   });
   const vault = await getOrCreateVault({ userId });
-  const {
-    modelVersion,
-    files: modelVersionFiles,
-    images,
-  } = await getModelVersionDataForVault({
+  const { modelVersion, files: modelVersionFiles } = await getModelVersionDataForVault({
     modelVersionId,
     filePreferences: user?.filePreferences as UserFilePreferences,
   });

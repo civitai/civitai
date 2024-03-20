@@ -1513,7 +1513,7 @@ export const updateGallerySettingsHandler = async ({
   }
 };
 
-export async function addCheckpointCoverageHandler({
+export async function toggleCheckpointCoverageHandler({
   input,
 }: {
   input: ToggleCheckpointCoverageInput;

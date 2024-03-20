@@ -463,6 +463,7 @@ export const generationConfig = {
       { type: ModelType.LORA, baseModelSet: 'SD1' },
       { type: ModelType.LoCon, baseModelSet: 'SD1' },
       { type: ModelType.TextualInversion, baseModelSet: 'SD1' },
+      { type: ModelType.VAE, baseModelSet: 'SD1' },
     ] as ResourceFilter[],
     aspectRatios: [
       { label: 'Square', width: 512, height: 512 },

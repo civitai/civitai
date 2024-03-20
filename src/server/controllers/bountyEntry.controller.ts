@@ -21,6 +21,8 @@ import { UpsertBountyEntryInput } from '~/server/schema/bounty-entry.schema';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { getReactionsSelectV2 } from '~/server/selectors/reaction.selector';
 import { getBountyById } from '../services/bounty.service';
+import { bountiesSearchIndex } from '~/server/search-index';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 
 export const getBountyEntryHandler = async ({
   input,
@@ -158,6 +160,10 @@ export const awardBountyEntryHandler = async ({
           benefactorId: benefactor.userId,
         })
         .catch(handleLogError);
+
+    await bountiesSearchIndex.queueUpdate([
+      { id: benefactor.bountyId, action: SearchIndexUpdateQueueAction.Update },
+    ]);
 
     return benefactor;
   } catch (error) {

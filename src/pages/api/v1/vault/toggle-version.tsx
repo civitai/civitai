@@ -1,8 +1,7 @@
-import { TRPCError } from '@trpc/server';
 import { NextApiRequest, NextApiResponse } from 'next';
 import { SessionUser } from 'next-auth';
 import { z } from 'zod';
-import { getOrCreateVault, toggleModelVersionOnVault } from '~/server/services/vault.service';
+import { toggleModelVersionOnVault } from '~/server/services/vault.service';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
 
 const schema = z.object({
