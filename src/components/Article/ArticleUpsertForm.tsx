@@ -50,6 +50,7 @@ import { constants } from '~/server/common/constants';
 import { imageSchema } from '~/server/schema/image.schema';
 import { browsingLevelLabels, browsingLevels } from '~/shared/constants/browsingLevel.constants';
 import { openBrowsingLevelGuide } from '~/components/Dialog/dialog-registry';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 const schema = upsertArticleInput.omit({ coverImage: true, userNsfwLevel: true }).extend({
   categoryId: z.number().min(0, 'Please select a valid category'),
