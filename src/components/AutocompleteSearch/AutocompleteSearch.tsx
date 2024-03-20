@@ -53,6 +53,7 @@ import {
   searchIndexMap,
 } from '~/components/Search/search.types';
 import { paired } from '~/utils/type-guards';
+import { BrowsingLevelFilter } from '../Search/CustomSearchComponents';
 
 const meilisearch = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -187,11 +188,24 @@ export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ..
     setTargetIndex(value);
   };
 
+  const indexSupportsNsfwLevel = useMemo(
+    () =>
+      [
+        searchIndexMap.articles,
+        searchIndexMap.bounties,
+        searchIndexMap.models,
+        searchIndexMap.images,
+        searchIndexMap.collections,
+      ].some((i) => i === searchIndexMap[targetIndex]),
+    [targetIndex]
+  );
+
   return (
     <InstantSearch
       searchClient={searchClient}
       indexName={searchIndexMap[targetIndex as keyof typeof searchIndexMap]}
     >
+      {indexSupportsNsfwLevel && <BrowsingLevelFilter attributeName="nsfwLevel" />}
       <AutocompleteSearchContent
         {...props}
         indexName={targetIndex}
