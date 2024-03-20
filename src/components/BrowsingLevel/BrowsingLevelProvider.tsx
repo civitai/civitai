@@ -8,7 +8,10 @@ import React, {
 } from 'react';
 import {
   BrowsingLevel,
+  allBrowsingLevelsFlag,
   publicBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+  getBrowsingLevelFromShowNsfw,
 } from '~/shared/constants/browsingLevel.constants';
 import { useCookies } from '~/providers/CookiesProvider';
 import { Flags } from '~/shared/utils';
@@ -43,7 +46,12 @@ export function useBrowsingModeContext() {
     ...store,
     useStore: useBrowsingModeStore,
     toggleShowNsfw: (showNsfw?: boolean) =>
-      store.setState((state) => ({ showNsfw: showNsfw ?? !state.showNsfw })),
+      store.setState((state) => {
+        const _showNsfw = showNsfw ?? !state.showNsfw;
+        // const browsingLevel = getBrowsingLevelFromShowNsfw(_showNsfw);
+        // return { showNsfw: _showNsfw, browsingLevel };
+        return { showNsfw: _showNsfw };
+      }),
     toggleBlurNsfw: (blurNsfw?: boolean) =>
       store.setState((state) => ({ blurNsfw: blurNsfw ?? !state.blurNsfw })),
     toggleBrowsingLevel: (level: BrowsingLevel) => {
@@ -80,11 +88,12 @@ export function BrowsingModeProvider({ children }: { children: React.ReactNode }
 
   function getStoreInitialValues() {
     return !currentUser
-      ? { showNsfw: false, blurNsfw: true, browsingLevel: 0 }
+      ? { showNsfw: false, blurNsfw: true, browsingLevel: 0 } //getBrowsingLevelFromShowNsfw(false) }
       : {
           showNsfw: cookies.showNsfw ?? currentUser.showNsfw,
           blurNsfw: cookies.blurNsfw ?? currentUser.blurNsfw,
           browsingLevel: cookies.browsingLevel ?? currentUser.browsingLevel,
+          // browsingLevel: getBrowsingLevelFromShowNsfw(cookies.showNsfw ?? currentUser.showNsfw),
           disableHidden: cookies.disableHidden,
         };
   }

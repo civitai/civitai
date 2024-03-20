@@ -23,7 +23,7 @@ import {
 } from '~/server/utils/errorHandling';
 import { isDefined } from '~/utils/type-guards';
 import { getHomeBlockCached } from '~/server/services/home-block-cache.service';
-import { homePageBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 export const getHomeBlocks = async <
   TSelect extends Prisma.HomeBlockSelect = Prisma.HomeBlockSelect
@@ -180,7 +180,7 @@ export const getHomeBlockData = async ({
             input: {
               collectionId: collection.id,
               limit: input.limit || metadata.collection.limit,
-              browsingLevel: homePageBrowsingLevelsFlag,
+              browsingLevel: sfwBrowsingLevelsFlag,
             },
           });
 

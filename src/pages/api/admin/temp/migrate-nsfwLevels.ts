@@ -7,6 +7,7 @@ import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { invalidateAllSessions } from '~/server/utils/session-helpers';
 import z from 'zod';
 import { dataProcessor } from '~/server/db/db-helpers';
+import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 type MigrationType = z.infer<typeof migrationTypes>;
 const migrationTypes = z.enum([
@@ -55,26 +56,26 @@ export default WebhookEndpoint(async (req, res) => {
     //   type: 'articles',
     //   fn: migrateArticles,
     // },
-    // {
-    //   type: 'bounties',
-    //   fn: migrateBounties,
-    // },
+    {
+      type: 'bounties',
+      fn: migrateBounties,
+    },
     // {
     //   type: 'bountyEntries',
     //   fn: migrateBountyEntries,
     // },
-    // {
-    //   type: 'modelVersions',
-    //   fn: migrateModelVersions,
-    // },
-    // {
-    //   type: 'models',
-    //   fn: migrateModels,
-    // },
     {
-      type: 'collections',
-      fn: migrateCollections,
+      type: 'modelVersions',
+      fn: migrateModelVersions,
     },
+    {
+      type: 'models',
+      fn: migrateModels,
+    },
+    // {
+    //   type: 'collections',
+    //   fn: migrateCollections,
+    // },
   ];
 
   const migrations = params.type
@@ -98,9 +99,11 @@ async function migrateImages(req: NextApiRequest, res: NextApiResponse) {
     runContext: res,
     rangeFetcher: async (context) => {
       if (params.after) {
+        console.log({ after: params.after });
         const [{ start }] = await dbRead.$queryRaw<{ start: number }[]>(
           Prisma.sql`SELECT MIN(id) "start" FROM "Image" WHERE "createdAt" > '${params.after.toISOString()}';`
         );
+        console.log({ start });
         context.start = start;
       }
       const [{ max }] = await dbRead.$queryRaw<{ max: number }[]>(
@@ -118,10 +121,8 @@ async function migrateImages(req: NextApiRequest, res: NextApiResponse) {
           WHERE toi."imageId" = i.id
             AND NOT toi.disabled
         )
-        WHERE i.id BETWEEN ${start} AND ${end} AND i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"
-        AND (i."nsfwLevel" & 24) != 0
+        WHERE i.id BETWEEN ${start} AND ${end} AND i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus";
       `);
-      // TODO.nsfwLevel - remove `AND (i."nsfwLevel" & 24) != 0`
       cancelFns.push(cancel);
       await result();
       console.log(`Updated images ${start} - ${end}`);
@@ -137,7 +138,7 @@ async function migrateUsers(req: NextApiRequest, res: NextApiResponse) {
     rangeFetcher: async (context) => {
       if (params.after) {
         const [{ start }] = await dbRead.$queryRaw<{ start: number }[]>(
-          Prisma.sql`SELECT MIN(id) "start" FROM "User" WHERE "createdAt" > '${params.after.toISOString()}';`
+          Prisma.sql`SELECT MIN(id) "start" FROM "User" WHERE "createdAt" > '${params.after}';`
         );
         context.start = start;
       }
@@ -235,7 +236,7 @@ async function migrateBounties(req: NextApiRequest, res: NextApiResponse) {
         )
         UPDATE "Bounty" b SET "nsfwLevel" = (
           CASE
-            WHEN b.nsfw = TRUE THEN ${NsfwLevel.XXX}
+            WHEN b.nsfw = TRUE THEN ${nsfwBrowsingLevelsFlag}
             ELSE level."nsfwLevel"
           END
         )
@@ -312,7 +313,7 @@ async function migrateModelVersions(req: NextApiRequest, res: NextApiResponse) {
           SELECT
             mv.id,
             CASE
-              WHEN m.nsfw = TRUE THEN ${NsfwLevel.XXX}
+              WHEN m.nsfw = TRUE THEN ${nsfwBrowsingLevelsFlag}
               ELSE (
                 SELECT COALESCE(bit_or(i."nsfwLevel"), 0) "nsfwLevel"
                 FROM (
@@ -375,7 +376,7 @@ async function migrateModels(req: NextApiRequest, res: NextApiResponse) {
         UPDATE "Model" m
         SET "nsfwLevel" = (
           CASE
-            WHEN m.nsfw = TRUE THEN ${NsfwLevel.XXX}
+            WHEN m.nsfw = TRUE THEN ${nsfwBrowsingLevelsFlag}
             ELSE level."nsfwLevel"
           END
         )

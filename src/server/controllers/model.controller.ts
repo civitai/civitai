@@ -100,8 +100,6 @@ import { BountyDetailsSchema } from '../schema/bounty.schema';
 import {
   allBrowsingLevelsFlag,
   getIsSafeBrowsingLevel,
-  isNsfwBrowsingLevel,
-  nsfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils';
 

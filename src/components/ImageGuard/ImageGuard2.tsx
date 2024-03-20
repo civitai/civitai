@@ -11,7 +11,7 @@ import { NsfwLevel } from '~/server/common/enums';
 import {
   browsingLevelLabels,
   nsfwBrowsingLevelsFlag,
-  isNsfwBrowsingLevel,
+  getIsSafeBrowsingLevel,
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils';
 import { useImageStore } from '~/store/image.store';
@@ -135,8 +135,10 @@ export function BrowsingLevelBadge({
 function BlurToggle({
   className,
   children,
+  withLabel = true,
   ...badgeProps
 }: Omit<BadgeProps, 'children'> & {
+  withLabel?: boolean;
   children?: (toggle: (e: React.MouseEvent<HTMLElement, MouseEvent>) => void) => React.ReactElement;
 }) {
   const currentUser = useCurrentUser();
@@ -153,11 +155,17 @@ function BlurToggle({
   if (!browsingLevel) return null;
 
   if (safe)
-    return (
+    return withLabel ? (
       <Badge classNames={classes} className={className}>
         {browsingLevelLabels[browsingLevel]}
       </Badge>
-    );
+    ) : null;
+
+  const Icon = show ? (
+    <IconEyeOff size={14} strokeWidth={2.5} />
+  ) : (
+    <IconEye size={14} strokeWidth={2.5} />
+  );
 
   return (
     <Badge
@@ -166,11 +174,9 @@ function BlurToggle({
       className={cx(className, 'cursor-pointer')}
       {...badgeProps}
       onClick={toggle}
-      rightSection={
-        show ? <IconEyeOff size={14} strokeWidth={2.5} /> : <IconEye size={14} strokeWidth={2.5} />
-      }
+      rightSection={withLabel ? Icon : null}
     >
-      {browsingLevelLabels[browsingLevel]}
+      {withLabel ? browsingLevelLabels[browsingLevel] : Icon}
     </Badge>
   );
 }
@@ -220,7 +226,7 @@ function toggleShow({
 }
 
 const useStyles = createStyles((theme, params: { browsingLevel?: number }) => {
-  const backgroundColor = !isNsfwBrowsingLevel(params.browsingLevel ?? 0)
+  const backgroundColor = getIsSafeBrowsingLevel(params.browsingLevel ?? 0)
     ? theme.fn.rgba('#000', 0.31)
     : theme.fn.rgba(theme.colors.red[9], 0.6);
   return {

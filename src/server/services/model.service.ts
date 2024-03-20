@@ -147,9 +147,7 @@ type ModelRaw = {
     vaeId: number | null;
     publishedAt: Date | null;
     status: ModelStatus;
-    generationCoverage: {
-      covered: boolean;
-    };
+    covered: boolean;
   }[];
   user: {
     id: number;
@@ -206,9 +204,14 @@ export const getModelsRaw = async ({
     pending,
   } = input;
 
+  const includeDetails = !!include?.includes('details');
+  function ifDetails(sql: TemplateStringsArray) {
+    return includeDetails ? Prisma.raw(sql[0]) : Prisma.empty;
+  }
+
   let isPrivate = false;
   const AND: Prisma.Sql[] = [];
-  const WITH: Prisma.Sql[] = [];
+
   const userId = sessionUser?.id;
   const isModerator = sessionUser?.isModerator ?? false;
 
@@ -478,6 +481,68 @@ export const getModelsRaw = async ({
     )`);
   }
 
+  const modelVersionWhere: Prisma.Sql[] = [];
+
+  if (!sessionUser?.isModerator || !status?.length) {
+    modelVersionWhere.push(Prisma.sql`mv."status" = ${ModelStatus.Published}::"ModelStatus"`);
+  }
+
+  if (baseModels) {
+    modelVersionWhere.push(Prisma.sql`mv."baseModel" IN (${Prisma.join(baseModels, ',')})`);
+  }
+
+  if (!!modelVersionIds?.length) {
+    modelVersionWhere.push(Prisma.sql`mv."id" IN (${Prisma.join(modelVersionIds, ',')})`);
+  }
+
+  if (hidePrivateModels) {
+    modelVersionWhere.push(Prisma.sql`mv."availability" = 'Public'::"Availability"`);
+  }
+
+  if (!includeDetails) {
+    const browsingLevelQuery = Prisma.sql`(lmv."nsfwLevel" & ${browsingLevel}) != 0`;
+    if (pending && (isModerator || userId)) {
+      if (isModerator) {
+        AND.push(Prisma.sql`${browsingLevelQuery} OR lmv."nsfwLevel" = 0`);
+      } else if (userId) {
+        AND.push(
+          Prisma.sql`${browsingLevelQuery} OR (lmv."nsfwLevel" = 0 AND m."userId" = ${userId})`
+        );
+      }
+    } else {
+      AND.push(browsingLevelQuery);
+    }
+  }
+
+  const WITH: Prisma.Sql[] = [
+    Prisma.sql`"CTE_ModelVersionDetails" AS NOT MATERIALIZED (
+      SELECT
+        mv."id",
+        mv.index,
+        mv."modelId",
+        mv."name",
+        mv."earlyAccessTimeFrame",
+        mv."baseModel",
+        mv."baseModelType",
+        mv."createdAt",
+        mv."trainingStatus",
+        mv."publishedAt",
+        mv."status",
+        mv.availability,
+        mv."nsfwLevel",
+        ${ifDetails`
+          mv."description",
+          mv."trainedWords",
+          mv."vaeId",
+        `}
+        COALESCE((
+          SELECT gc.covered
+          FROM "GenerationCoverage" gc
+          WHERE gc."modelVersionId" = mv.id
+        ), false) AS covered
+      FROM "ModelVersion" mv
+    )`,
+  ];
   if (clubId) {
     WITH.push(Prisma.sql`
       "clubModels" AS (
@@ -499,49 +564,11 @@ export const getModelsRaw = async ({
         GROUP BY mv."modelId"
       )
     `);
-  }
 
-  const queryWith = WITH.length > 0 ? Prisma.sql`WITH ${Prisma.join(WITH, ', ')}` : Prisma.sql``;
-
-  const modelVersionWhere: Prisma.Sql[] = [];
-
-  if (!sessionUser?.isModerator || !status?.length) {
-    modelVersionWhere.push(Prisma.sql`mv."status" = ${ModelStatus.Published}::"ModelStatus"`);
-  }
-
-  if (baseModels) {
-    modelVersionWhere.push(Prisma.sql`mv."baseModel" IN (${Prisma.join(baseModels, ',')})`);
-  }
-
-  if (!!modelVersionIds?.length) {
-    modelVersionWhere.push(Prisma.sql`mv."id" IN (${Prisma.join(modelVersionIds, ',')})`);
-  }
-
-  if (hidePrivateModels) {
-    modelVersionWhere.push(Prisma.sql`mv."availability" = 'Public'::"Availability"`);
-  }
-
-  if (clubId) {
     modelVersionWhere.push(Prisma.sql`cm."modelVersionId" = mv."id"`);
   }
 
-  const browsingLevelQuery = Prisma.sql`(mv."nsfwLevel" & ${browsingLevel}) != 0`;
-  if (pending && (isModerator || userId)) {
-    if (isModerator) {
-      modelVersionWhere.push(Prisma.sql`${browsingLevelQuery} OR mv."nsfwLevel" = 0`);
-    } else if (userId) {
-      modelVersionWhere.push(
-        Prisma.sql`${browsingLevelQuery} OR (mv."nsfwLevel" = 0 AND m."userId" = ${userId})`
-      );
-    }
-  } else {
-    modelVersionWhere.push(browsingLevelQuery);
-  }
-
-  const includeDetails = !!include?.includes('details');
-  function ifDetails(sql: TemplateStringsArray) {
-    return includeDetails ? Prisma.raw(sql[0]) : Prisma.empty;
-  }
+  const queryWith = WITH.length > 0 ? Prisma.sql`WITH ${Prisma.join(WITH, ', ')}` : Prisma.sql``;
 
   const modelQuery = Prisma.sql`
     ${queryWith}
@@ -589,47 +616,27 @@ export const getModelsRaw = async ({
       (
         SELECT COALESCE(jsonb_agg(jsonb_build_object('hash', "hash")), '[]'::jsonb) FROM "ModelHash"
             WHERE "modelId" = m."id"
-		  	    AND "modelId" IS NOT NULL
+            AND "modelId" IS NOT NULL
             AND "hashType" = 'SHA256'
             AND "fileType" IN ('Model', 'Pruned Model')
-		  	AND "hash" IS NOT NULL
+        AND "hash" IS NOT NULL
       ) as "hashes",
-      (
-        SELECT
-          jsonb_agg(data)
-        FROM (
-          SELECT jsonb_build_object(
-            'id', mv."id",
-            'name', mv."name",
-            ${ifDetails`
-             'description', mv."description",
-             'trainedWords', mv."trainedWords",
-             'vaeId', mv."vaeId",
-            `}
-            'earlyAccessTimeFrame', mv."earlyAccessTimeFrame",
-            'baseModel', mv."baseModel",
-            'baseModelType', mv."baseModelType",
-            'createdAt', mv."createdAt",
-            'trainingStatus', mv."trainingStatus",
-            'publishedAt', mv."publishedAt",
-            'status', mv."status",
-            'generationCoverage', jsonb_build_object(
-              'covered', COALESCE(gc."covered", false)
-             )
-          ) as data
-          FROM "ModelVersion" mv
-          LEFT JOIN "GenerationCoverage" gc ON gc."modelVersionId" = mv."id"
-          WHERE mv."modelId" = m."id"
-          ${
-            modelVersionWhere.length > 0
-              ? Prisma.sql`AND ${Prisma.join(modelVersionWhere, ' AND ')}`
-              : Prisma.sql``
-          }
-          ORDER BY mv.index ASC
-          ${Prisma.raw(includeDetails ? '' : 'LIMIT 1')}
-        ) as t
-      ) as "modelVersions",
-	    jsonb_build_object(
+      ${
+        includeDetails
+          ? Prisma.sql`(
+          SELECT jsonb_agg(data)
+          FROM (SELECT row_to_json(lmv) AS data) as t
+          ) as "modelVersions",`
+          : Prisma.sql`(
+          SELECT jsonb_agg(data)
+          FROM (
+            SELECT row_to_json(lmv) as data
+            FROM "CTE_ModelVersionDetails" mvd
+            WHERE mvd."modelId" = m.id
+          ) as t
+        ) as "modelVersions",`
+      }
+      jsonb_build_object(
         'id', u."id",
         'username', u."username",
         'deletedAt', u."deletedAt",
@@ -638,8 +645,20 @@ export const getModelsRaw = async ({
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} as "cursorId"
     FROM "Model" m
     JOIN "ModelMetric" mm ON mm."modelId" = m."id" AND mm."timeframe" = ${period}::"MetricTimeframe"
-    LEFT JOIN "User" u ON m."userId" = u.id
+    JOIN "User" u ON m."userId" = u.id
     ${clubId ? Prisma.sql`JOIN "clubModels" cm ON cm."modelId" = m."id"` : Prisma.sql``}
+    CROSS JOIN LATERAL (
+        SELECT *
+        FROM "CTE_ModelVersionDetails" mv
+        WHERE mv."modelId" = m.id
+        ${
+          modelVersionWhere.length > 0
+            ? Prisma.sql`AND ${Prisma.join(modelVersionWhere, ' AND ')}`
+            : Prisma.sql``
+        }
+        ORDER BY mv.index ASC
+        LIMIT 1
+    ) lmv -- LatestModelVersion
     WHERE ${Prisma.join(AND, ' AND ')}
     ORDER BY ${Prisma.raw(orderBy)}
     LIMIT ${(take ?? 100) + 1}
@@ -984,10 +1003,12 @@ export const getModelsWithImagesAndModelVersions = async ({
     modelVersionWhere = undefined;
   }
 
+  console.time('getModelsRaw');
   const { items, isPrivate, nextCursor } = await getModelsRaw({
     input: { ...input, take },
     user,
   });
+  console.timeEnd('getModelsRaw');
 
   const modelVersionIds = items
     .filter((model) => model.mode !== ModelModifier.TakenDown)
@@ -1012,8 +1033,7 @@ export const getModelsWithImagesAndModelVersions = async ({
         if (!versionImages.length && !showImageless) return null;
 
         const canGenerate =
-          !!version.generationCoverage?.covered &&
-          unavailableGenResources.indexOf(version.id) === -1;
+          !!version?.covered && unavailableGenResources.indexOf(version.id) === -1;
 
         return {
           ...model,
@@ -1030,10 +1050,11 @@ export const getModelsWithImagesAndModelVersions = async ({
             rating: rank?.[`rating${input.period}`] ?? 0,
           },
           version,
-          // !important - for feed queries, when `model.nsfw === true`, we set all image `nsfwLevel` values to `NsfwLevel.XXX`
-          images: model.nsfw
-            ? versionImages.map((x) => ({ ...x, nsfwLevel: NsfwLevel.XXX }))
-            : versionImages,
+          // // !important - for feed queries, when `model.nsfw === true`, we set all image `nsfwLevel` values to `NsfwLevel.XXX`
+          // images: model.nsfw
+          //   ? versionImages.map((x) => ({ ...x, nsfwLevel: NsfwLevel.XXX }))
+          //   : versionImages,
+          images: versionImages,
           canGenerate,
         };
       })
@@ -1921,7 +1942,7 @@ export async function getModelsWithVersions({
         ...model,
         user: user.username === 'civitai' ? undefined : user,
         modelVersions: modelVersions.map(
-          ({ trainingStatus, vaeId, earlyAccessTimeFrame, generationCoverage, ...version }) => {
+          ({ trainingStatus, vaeId, earlyAccessTimeFrame, covered, ...version }) => {
             const stats = getStatsForVersion(version.id);
             const vaeFile = vaeFiles.filter((x) => x.modelVersionId === vaeId);
             const files = groupedFiles[version.id]?.files ?? [];

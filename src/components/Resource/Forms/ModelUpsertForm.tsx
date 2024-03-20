@@ -360,7 +360,7 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                 />
                 <InputCheckbox
                   name="nsfw"
-                  label="Is intended to produce sexual themes"
+                  label="Is intended to produce mature themes"
                   disabled={!canEditNsfw}
                 />
               </Stack>
