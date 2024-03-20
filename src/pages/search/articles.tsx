@@ -2,6 +2,7 @@ import { Stack, Text, Box, Center, Loader, Title, ThemeIcon, Anchor } from '@man
 import { useInstantSearch } from 'react-instantsearch';
 
 import {
+  BrowsingLevelFilter,
   ClearRefinements,
   SearchableMultiSelectRefinementList,
   SortBy,
@@ -37,6 +38,7 @@ export default function ArticlesSearch() {
 const RenderFilters = () => {
   return (
     <>
+      <BrowsingLevelFilter attributeName="nsfwLevel" />
       <SortBy
         title="Sort articles by"
         items={[

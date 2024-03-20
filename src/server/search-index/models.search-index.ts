@@ -18,6 +18,7 @@ import { withRetries } from '~/server/utils/errorHandling';
 import { getModelVersionsForSearchIndex } from '../selectors/modelVersion.selector';
 import { getUnavailableResources } from '../services/generation/generation.service';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { NsfwLevel } from '../common/enums';
 import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import { SearchIndexUpdate } from '~/server/search-index/SearchIndexUpdate';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
@@ -256,6 +257,8 @@ const onFetchItemsToIndex = async ({
         ? await getImagesForModelVersion({
             modelVersionIds,
             imagesPerVersion: 10,
+            browsingLevel:
+              NsfwLevel.PG + NsfwLevel.PG13 + NsfwLevel.R + NsfwLevel.X + NsfwLevel.XXX, // Avoid blocked.
           })
         : [];
 

@@ -228,8 +228,8 @@ const onFetchItemsToIndex = async ({
     c."type",
     c."read",
     c."write",
-    c."mode"
-    c."nsfwLevel",
+    c."mode",
+    c."nsfwLevel"   
     FROM "Collection" c
     WHERE ${Prisma.join(WHERE, ' AND ')}
     OFFSET ${offset} LIMIT ${READ_BATCH_SIZE}
