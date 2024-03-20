@@ -1,5 +1,6 @@
 import { ModelWizard } from '~/components/Resource/Wizard/ModelWizard';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { getLoginLink } from '~/utils/login-helpers';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -8,7 +9,7 @@ export const getServerSideProps = createServerSideProps({
     if (!session) {
       return {
         redirect: {
-          destination: '/login',
+          destination: getLoginLink({ returnUrl: '/models/create' }),
           permanent: false,
         },
       };

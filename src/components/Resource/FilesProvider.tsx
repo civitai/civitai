@@ -175,6 +175,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
     if (modelVersionId)
       await queryUtils.modelVersion.getById.invalidate({
         id: modelVersionId,
+        withFiles: true,
       });
   };
 
@@ -282,7 +283,10 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
         ) : undefined,
       });
 
-      await queryUtils.modelVersion.getById.invalidate({ id: result.modelVersion.id });
+      await queryUtils.modelVersion.getById.invalidate({
+        id: result.modelVersion.id,
+        withFiles: true,
+      });
       if (model) await queryUtils.model.getById.invalidate({ id: model.id });
     },
     onError(error) {

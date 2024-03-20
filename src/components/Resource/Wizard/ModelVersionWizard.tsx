@@ -1,19 +1,8 @@
-import {
-  Anchor,
-  Button,
-  Container,
-  Group,
-  Stack,
-  Stepper,
-  Text,
-  Title,
-  Center,
-  Loader,
-} from '@mantine/core';
+import { Anchor, Button, Container, Group, Stack, Stepper, Text, Title } from '@mantine/core';
 import { IconArrowLeft } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 
 import { PostEditWrapper } from '~/components/Post/Edit/PostEditLayout';
 import { Files, UploadStepActions } from '~/components/Resource/Files';
@@ -25,20 +14,19 @@ import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
 import { PostUpsertForm } from '../Forms/PostUpsertForm';
 
+const MAX_STEPS = 3;
+
 export function ModelVersionWizard({ data }: Props) {
   const router = useRouter();
 
-  const { id, versionId, step = '1' } = router.query;
+  const { id, versionId } = router.query;
   const isNew = router.pathname.includes('/create');
-  const parsedStep = Array.isArray(step) ? Number(step[0]) : Number(step);
-
-  const [activeStep, setActiveStep] = useState<number>(parsedStep);
+  const parsedStep = router.query.step ? Number(router.query.step) : 1;
+  const step = isNumber(parsedStep) ? parsedStep : 1;
 
   const { data: modelVersion } = trpc.modelVersion.getById.useQuery(
     { id: Number(versionId), withFiles: true },
-    {
-      enabled: !!versionId,
-    }
+    { enabled: !!versionId }
   );
 
   const modelData = modelVersion?.model ?? data;
@@ -49,20 +37,20 @@ export function ModelVersionWizard({ data }: Props) {
   );
 
   const goNext = () => {
-    if (activeStep < 3)
+    if (step < MAX_STEPS)
       router.replace(
-        `/models/${id}/model-versions/${versionId}/wizard?step=${activeStep + 1}`,
+        `/models/${id}/model-versions/${versionId}/wizard?step=${step + 1}`,
         undefined,
-        { shallow: true, scroll: true }
+        { shallow: !isNew }
       );
   };
 
   const goBack = () => {
-    if (activeStep > 1)
+    if (step > 1)
       router.replace(
-        `/models/${id}/model-versions/${versionId}/wizard?step=${activeStep - 1}`,
+        `/models/${id}/model-versions/${versionId}/wizard?step=${step - 1}`,
         undefined,
-        { shallow: true, scroll: true }
+        { shallow: !isNew }
       );
   };
 
@@ -83,17 +71,6 @@ export function ModelVersionWizard({ data }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasFiles, id, isNew, versionId]);
 
-  useEffect(() => {
-    // set current step based on query param
-    if (activeStep.toString() !== router.query.step) {
-      const rawStep = router.query.step;
-      const step = Number(rawStep);
-      const validStep = isNumber(step) && step >= 1 && step <= 3;
-
-      setActiveStep(validStep ? step : 1);
-    }
-  }, [router.query, activeStep]);
-
   const editing = !!modelVersion?.id;
   const postId = modelVersion?.posts?.[0]?.id;
 
@@ -110,7 +87,7 @@ export function ModelVersionWizard({ data }: Props) {
             </Anchor>
           </Link>
           <Stepper
-            active={activeStep - 1}
+            active={step - 1}
             onStepClick={(step) =>
               router.replace(
                 `/models/${modelData?.id}/model-versions/${versionId}/wizard?step=${step + 1}`
