@@ -100,7 +100,7 @@ type UserForSearchIndex = {
     answerAcceptCount: number;
     hiddenCount: number;
     answerCount: number;
-  }[];
+  };
   stats: {
     ratingAllTime: number;
     ratingCountAllTime: number;

@@ -13,6 +13,8 @@ import {
   bountyExpiredReminderEmail,
   bountyRefundedEmail,
 } from '~/server/email/templates';
+import { bountiesSearchIndex } from '~/server/search-index';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 
 const log = createLogger('prepare-bounties', 'blue');
 
@@ -300,6 +302,8 @@ const prepareBounties = createJob('prepare-bounties', '0 23 * * *', async () => 
           break;
       }
     }
+
+    await bountiesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
 
     if (user) {
       bountyAutomaticallyAwardedEmail.send({
