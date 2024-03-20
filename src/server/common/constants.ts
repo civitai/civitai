@@ -289,7 +289,7 @@ export const constants = {
   },
   supporterBadge: '020f374d-f165-4f45-9082-371e696a44ff',
   memberships: {
-    tierOrder: ['bronze', 'founder', 'silver', 'gold'],
+    tierOrder: ['founder', 'bronze', 'silver', 'gold'],
     badges: {
       founder: '020f374d-f165-4f45-9082-371e696a44ff',
       bronze: '020f374d-f165-4f45-9082-371e696a44ff',

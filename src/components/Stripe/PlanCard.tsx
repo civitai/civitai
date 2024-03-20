@@ -226,31 +226,6 @@ export const getPlanDetails: (
         ),
       },
       {
-        icon: <IconPhotoPlus size={benefitIconSize} />,
-        iconColor: 'blue',
-        iconVariant: 'light' as ThemeIconVariant,
-        content: (
-          <Text lh={1}>
-            Up to {abbreviateNumber(generationLimit)} images per month
-            <Text component="span" lh={1} ml={4} style={{ position: 'relative', top: 5 }}>
-              <Tooltip
-                label={`Depends on the complexity of the images requested. Capped at ${numberWithCommas(
-                  Math.ceil(generationLimit / 30)
-                )} per day`}
-                withinPortal
-                withArrow
-                maw={250}
-                multiline
-                position="top"
-                style={{ textAlign: 'center' }}
-              >
-                <IconInfoCircle size={20} />
-              </Tooltip>
-            </Text>
-          </Text>
-        ),
-      },
-      {
         icon: <IconPhotoAi size={benefitIconSize} />,
         iconColor: 'blue',
         iconVariant: 'light' as ThemeIconVariant,
