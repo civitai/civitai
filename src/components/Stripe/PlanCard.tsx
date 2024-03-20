@@ -207,6 +207,7 @@ export const getPlanDetails: (
   features: FeatureAccess
 ) => PlanMeta = (product: Pick<StripePlan, 'metadata' | 'name'>, features: FeatureAccess) => {
   const metadata = (product.metadata ?? {}) as ProductMetadata;
+  const generationLimit = (metadata.generationLimit ?? 1) * 10000;
   const planMeta = {
     name: product?.name ?? 'Supporter Tier',
     image:
@@ -230,10 +231,12 @@ export const getPlanDetails: (
         iconVariant: 'light' as ThemeIconVariant,
         content: (
           <Text lh={1}>
-            Up to {abbreviateNumber((metadata.generationLimit ?? 1) * 10000)} images per month
+            Up to {abbreviateNumber(generationLimit)} images per month
             <Text component="span" lh={1} ml={4} style={{ position: 'relative', top: 5 }}>
               <Tooltip
-                label="Depends on the complexity of the images requested"
+                label={`Depends on the complexity of the images requested. Capped at ${numberWithCommas(
+                  Math.ceil(generationLimit / 30)
+                )} per day`}
                 withinPortal
                 withArrow
                 maw={250}

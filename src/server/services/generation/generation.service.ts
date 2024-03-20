@@ -657,6 +657,7 @@ export const createGenerationRequest = async ({
   generationLimiter.increment(userId.toString(), params.quantity);
 
   const data: Generation.Api.RequestProps = await response.json();
+  // TODO.generationLimit - include data about limit max and used
   const [formatted] = await formatGenerationRequests([data]);
   return formatted;
 };

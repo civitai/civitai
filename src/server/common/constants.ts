@@ -501,9 +501,10 @@ export const generationConfig = {
       { label: 'Portrait', width: 512, height: 768 },
     ],
     costs: {
+      // TODO.generationLimit - set the base to 1 and make sure we don't actually charge Buzz
       base: 0,
       quantity: 1,
-      steps: 40,
+      steps: 30,
       width: 512,
       height: 512,
     },
@@ -531,10 +532,11 @@ export const generationConfig = {
     ],
     costs: {
       // TODO.generation: Uncomment this out by next week once we start charging for SDXL generation
+      // TODO.generationLimit - set the base to 4 and make sure we don't actually charge Buzz
       // base: 4,
       base: 0,
       quantity: 1,
-      steps: 40,
+      steps: 30,
       width: 1024,
       height: 1024,
     },
