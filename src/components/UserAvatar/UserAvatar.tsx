@@ -150,7 +150,7 @@ export function UserAvatar({
                     )}
                   </Text>
                 ) : (
-                  <ImageGuard2 image={image}>
+                  <ImageGuard2 image={image} explain={false}>
                     {(safe) => (
                       <Center h="100%">
                         <ImageGuard2.BlurToggle>

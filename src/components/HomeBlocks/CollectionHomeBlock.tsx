@@ -142,7 +142,6 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
   }, [collection?.items]);
 
   const shuffledData = useMemo(() => shuffled.map((x) => x.data), [shuffled]);
-  useEffect(() => console.log('shuffledData'), [shuffledData]);
 
   // TODO - find a different way to return collections so that the type isn't set on the individual item
   const type = shuffled[0]?.type ?? 'model';

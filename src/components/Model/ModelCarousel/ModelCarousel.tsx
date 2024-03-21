@@ -1,38 +1,32 @@
 import { Carousel } from '@mantine/carousel';
 import {
   ActionIcon,
-  AspectRatio,
   Box,
-  Button,
+  Card,
   Center,
   createStyles,
-  Group,
   Indicator,
   Loader,
-  Paper,
   Stack,
-  Text,
-  ThemeIcon,
 } from '@mantine/core';
-import { IconBrush, IconInfoCircle, IconPhotoOff } from '@tabler/icons-react';
-import Link from 'next/link';
-import { useRouter } from 'next/router';
+import { IconBrush, IconInfoCircle } from '@tabler/icons-react';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { generationPanel } from '~/store/generation.store';
-
 import { useQueryImages } from '~/components/Image/image.utils';
-import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { Reactions } from '~/components/Reaction/Reactions';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ImageSort } from '~/server/common/enums';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
-import { ExplainHiddenImages } from '~/components/Image/ExplainHiddenImages/ExplainHiddenImages';
+import {
+  ExplainHiddenImages,
+  useExplainHiddenImages,
+} from '~/components/Image/ExplainHiddenImages/ExplainHiddenImages';
+import { BrowsingModeOverrideProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 
 const useStyles = createStyles((theme) => ({
   control: {
@@ -110,7 +104,15 @@ const useStyles = createStyles((theme) => ({
   top: { top: 0 },
 }));
 
-export function ModelCarousel({
+export function ModelCarousel(props: Props) {
+  return (
+    <BrowsingModeOverrideProvider>
+      <ModelCarouselContent {...props} />
+    </BrowsingModeOverrideProvider>
+  );
+}
+
+function ModelCarouselContent({
   modelId,
   modelVersionId,
   modelUserId,
@@ -119,8 +121,6 @@ export function ModelCarousel({
   limit = 10,
   onBrowseClick,
 }: Props) {
-  const router = useRouter();
-  const currentUser = useCurrentUser();
   const features = useFeatureFlags();
   const { classes, cx } = useStyles();
 
@@ -132,6 +132,8 @@ export function ModelCarousel({
     limit,
     pending: true,
   });
+
+  const hiddenExplained = useExplainHiddenImages(flatData);
 
   if (isLoading)
     return (
@@ -149,52 +151,6 @@ export function ModelCarousel({
         </Center>
       </Box>
     );
-
-  if (!isLoading && !images.length) {
-    return (
-      <Paper
-        p="sm"
-        radius="md"
-        className={cx(!mobile && classes.carousel, mobile && classes.mobileBlock)}
-        sx={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          minHeight: mobile ? 300 : 500,
-        }}
-        withBorder
-      >
-        <Stack align="center" maw={380}>
-          <Stack spacing={4} align="center">
-            <ThemeIcon color="gray" size={64} radius={100}>
-              <IconPhotoOff size={32} />
-            </ThemeIcon>
-            <Text size="lg">No showcase images available</Text>
-            <ExplainHiddenImages images={flatData} />
-            {/* <Text size="sm" color="dimmed" ta="center">
-              {currentUser
-                ? `No images from this creator match your content preferences. Adjust your settings or explore the community gallery below.`
-                : `No images from this creator match the default content preferences. Log in to adjust your settings or explore the community gallery below.`}
-            </Text> */}
-          </Stack>
-          {/* <Group grow w="100%">
-            {currentUser ? (
-              <Link href="/user/account#content-moderation">
-                <Button variant="outline">Adjust Settings</Button>
-              </Link>
-            ) : (
-              <Link href={`/login?returnUrl=${router.asPath}`}>
-                <Button variant="outline">Log In</Button>
-              </Link>
-            )}
-            <Button onClick={onBrowseClick} variant="outline">
-              Browse Gallery
-            </Button>
-          </Group> */}
-        </Stack>
-      </Paper>
-    );
-  }
 
   return (
     <Carousel
@@ -214,7 +170,7 @@ export function ModelCarousel({
         const fromCommunity = image.user.id !== modelUserId;
         return (
           <Carousel.Slide key={image.id}>
-            <Center style={{ height: '100%', width: '100%' }}>
+            <Center h="100%" w="100%">
               <div style={{ width: '100%', position: 'relative' }}>
                 <ImageGuard2 image={image} connectType="model" connectId={modelId}>
                   {(safe) => (
@@ -243,34 +199,23 @@ export function ModelCarousel({
                         )}
                       </Stack>
                       <RoutedDialogLink name="imageDetail" state={{ imageId: image.id, images }}>
-                        {!safe ? (
-                          <AspectRatio
-                            ratio={(image.width ?? 1) / (image.height ?? 1)}
-                            sx={(theme) => ({
-                              width: '100%',
-                              borderRadius: theme.radius.md,
-                              overflow: 'hidden',
-                            })}
-                          >
-                            <MediaHash {...image} />
-                          </AspectRatio>
-                        ) : (
-                          <Indicator
-                            label="From Community"
-                            radius="sm"
-                            position="top-center"
-                            size={24}
-                            disabled={!fromCommunity}
-                            withBorder
-                          >
-                            <ImagePreview
-                              image={image}
-                              edgeImageProps={{ width: 450 }}
-                              radius="md"
-                              style={{ width: '100%' }}
-                            />
-                          </Indicator>
-                        )}
+                        <Indicator
+                          label="From Community"
+                          radius="sm"
+                          position="top-center"
+                          size={24}
+                          disabled={!fromCommunity}
+                          withBorder
+                        >
+                          <ImagePreview
+                            image={image}
+                            edgeImageProps={{ width: 450 }}
+                            aspectRatio={(image.width ?? 1) / (image.height ?? 1)}
+                            radius="md"
+                            style={{ width: '100%' }}
+                            nsfw={!safe}
+                          />
+                        </Indicator>
                       </RoutedDialogLink>
                       <Reactions
                         entityId={image.id}
@@ -313,6 +258,13 @@ export function ModelCarousel({
           </Carousel.Slide>
         );
       })}
+      {hiddenExplained.hasHidden && (
+        <Carousel.Slide>
+          <Card withBorder component={Center} mih={450} h="100%" w="100%">
+            <ExplainHiddenImages {...hiddenExplained} />
+          </Card>
+        </Carousel.Slide>
+      )}
     </Carousel>
   );
 }

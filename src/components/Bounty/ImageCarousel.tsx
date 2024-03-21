@@ -1,33 +1,19 @@
 import { Carousel } from '@mantine/carousel';
-import {
-  ActionIcon,
-  AspectRatio,
-  Box,
-  Button,
-  Center,
-  createStyles,
-  Group,
-  Loader,
-  Paper,
-  Stack,
-  Text,
-  ThemeIcon,
-} from '@mantine/core';
-import { IconInfoCircle, IconPhotoOff } from '@tabler/icons-react';
-import { useRouter } from 'next/router';
-
-import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { ActionIcon, Box, Card, Center, createStyles, Loader } from '@mantine/core';
+import { IconInfoCircle } from '@tabler/icons-react';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ImageProps } from '~/components/ImageViewer/ImageViewer';
-import Link from 'next/link';
 import { useEffect, useMemo } from 'react';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { ImageGuard2, ImageGuardConnect } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
-import { ExplainHiddenImages } from '~/components/Image/ExplainHiddenImages/ExplainHiddenImages';
+import {
+  ExplainHiddenImages,
+  useExplainHiddenImages,
+} from '~/components/Image/ExplainHiddenImages/ExplainHiddenImages';
+import { BrowsingModeOverrideProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 
 const useStyles = createStyles((theme) => ({
   control: {
@@ -113,7 +99,15 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
-export function ImageCarousel({
+export function ImageCarousel(props: Props) {
+  return (
+    <BrowsingModeOverrideProvider>
+      <ImageCarouselContent {...props} />
+    </BrowsingModeOverrideProvider>
+  );
+}
+
+export function ImageCarouselContent({
   images,
   connectType,
   connectId,
@@ -122,8 +116,6 @@ export function ImageCarousel({
   isLoading: loading,
   onImageChange,
 }: Props) {
-  const router = useRouter();
-  const currentUser = useCurrentUser();
   const { classes, cx } = useStyles();
 
   const transformed = useMemo(
@@ -140,6 +132,7 @@ export function ImageCarousel({
     data: transformed,
   });
   const isLoading = loading || loadingPreferences;
+  const hiddenExplained = useExplainHiddenImages(transformed);
 
   useEffect(() => {
     if (filteredImages.length > 0) {
@@ -147,52 +140,22 @@ export function ImageCarousel({
     }
   }, [filteredImages]);
 
-  if (!filteredImages.length) {
+  if (isLoading)
     return (
-      <Paper
-        p="sm"
-        radius="md"
+      <Box
         className={cx(!mobile && classes.carousel, mobile && classes.mobileBlock)}
         sx={{
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          minHeight: mobile ? 300 : 400,
+          minHeight: mobile ? 300 : 600,
         }}
-        withBorder
-        pos="relative"
       >
-        {isLoading ? (
-          <Box className={classes.loader}>
-            <Center>
-              <Loader />
-            </Center>
-          </Box>
-        ) : (
-          <Stack align="center" maw={380}>
-            <Stack spacing={4} align="center">
-              <ThemeIcon color="gray" size={64} radius={100}>
-                <IconPhotoOff size={32} />
-              </ThemeIcon>
-              <Text size="lg">No showcase images available</Text>
-              <ExplainHiddenImages images={transformed} />
-            </Stack>
-            {/* <Group grow w="100%">
-              {currentUser ? (
-                <Link href="/user/account#content-moderation">
-                  <Button variant="outline">Adjust Settings</Button>
-                </Link>
-              ) : (
-                <Link href={`/login?returnUrl=${router.asPath}`}>
-                  <Button variant="outline">Log In</Button>
-                </Link>
-              )}
-            </Group> */}
-          </Stack>
-        )}
-      </Paper>
+        <Center>
+          <Loader size="md" />
+        </Center>
+      </Box>
     );
-  }
 
   return (
     <Box pos="relative">
@@ -251,29 +214,17 @@ export function ImageCarousel({
                     <div className="relative w-full">
                       <ImageGuard2.BlurToggle className="absolute top-2 left-2 z-10" />
                       <ImageContextMenu image={image} className="absolute top-2 right-2 z-10" />
-                      {!safe ? (
-                        <AspectRatio
-                          ratio={1}
-                          sx={(theme) => ({
-                            width: '100%',
-                            borderRadius: theme.radius.md,
-                            overflow: 'hidden',
-                          })}
-                        >
-                          <MediaHash {...image} />
-                        </AspectRatio>
-                      ) : (
-                        <ImagePreview
-                          image={image}
-                          edgeImageProps={{
-                            width: 450,
-                            style: { objectPosition: mobile ? 'top' : 'center' },
-                          }}
-                          radius="md"
-                          style={{ width: '100%' }}
-                          aspectRatio={1}
-                        />
-                      )}
+                      <ImagePreview
+                        image={image}
+                        edgeImageProps={{
+                          width: 450,
+                          style: { objectPosition: mobile ? 'top' : 'center' },
+                        }}
+                        radius="md"
+                        style={{ width: '100%' }}
+                        aspectRatio={1}
+                        nsfw={!safe}
+                      />
                       {image.meta && (
                         <ImageMetaPopover
                           meta={image.meta}
@@ -292,6 +243,13 @@ export function ImageCarousel({
             )}
           </ImageGuard2>
         ))}
+        {hiddenExplained.hasHidden && (
+          <Carousel.Slide>
+            <Card withBorder component={Center} mih={450} h="100%" w="100%">
+              <ExplainHiddenImages {...hiddenExplained} />
+            </Card>
+          </Carousel.Slide>
+        )}
       </Carousel>
     </Box>
   );

@@ -128,8 +128,11 @@ export function BrowsingModeProvider({ children }: { children: React.ReactNode }
   return <BrowsingModeCtx.Provider value={store}>{children}</BrowsingModeCtx.Provider>;
 }
 
-const BrowsingModeOverrideCtx = createContext<{ browsingLevelOverride?: number }>({});
-const useBrowsingModeOverrideContext = () => useContext(BrowsingModeOverrideCtx);
+const BrowsingModeOverrideCtx = createContext<{
+  browsingLevelOverride?: number;
+  setBrowsingLevelOverride?: React.Dispatch<React.SetStateAction<number | undefined>>;
+}>({});
+export const useBrowsingModeOverrideContext = () => useContext(BrowsingModeOverrideCtx);
 export function BrowsingModeOverrideProvider({
   children,
   browsingLevel,
@@ -137,10 +140,12 @@ export function BrowsingModeOverrideProvider({
   children: React.ReactNode;
   browsingLevel?: number;
 }) {
-  const overrides = useMemo(() => ({ browsingLevelOverride: browsingLevel }), [browsingLevel]);
+  const [browsingLevelOverride, setBrowsingLevelOverride] = useState(browsingLevel);
+
+  useDidUpdate(() => setBrowsingLevelOverride(browsingLevel), [browsingLevel]);
 
   return (
-    <BrowsingModeOverrideCtx.Provider value={overrides}>
+    <BrowsingModeOverrideCtx.Provider value={{ browsingLevelOverride, setBrowsingLevelOverride }}>
       {children}
     </BrowsingModeOverrideCtx.Provider>
   );

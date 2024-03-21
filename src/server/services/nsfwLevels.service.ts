@@ -8,12 +8,9 @@ import {
   collectionsSearchIndex,
   modelsSearchIndex,
 } from '~/server/search-index';
-import {
-  ImageConnectionType,
-  NsfwLevel,
-  SearchIndexUpdateQueueAction,
-} from '~/server/common/enums';
+import { ImageConnectionType, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 async function getImageConnectedEntities(imageIds: number[]) {
   // these dbReads could be run concurrently
@@ -284,7 +281,7 @@ export async function updateBountyNsfwLevels(bountyIds: number[]) {
     )
     UPDATE "Bounty" b SET "nsfwLevel" = (
       CASE
-        WHEN b.nsfw = TRUE THEN ${NsfwLevel.XXX}
+        WHEN b.nsfw = TRUE THEN ${nsfwBrowsingLevelsFlag}
         ELSE level."nsfwLevel"
       END
     )
@@ -352,7 +349,7 @@ export async function updateModelNsfwLevels(modelIds: number[]) {
     UPDATE "Model" m
     SET "nsfwLevel" = (
       CASE
-        WHEN m.nsfw = TRUE THEN ${NsfwLevel.XXX}
+        WHEN m.nsfw = TRUE THEN ${nsfwBrowsingLevelsFlag}
         ELSE level."nsfwLevel"
       END
     )
@@ -371,7 +368,7 @@ export async function updateModelVersionNsfwLevels(modelVersionIds: number[]) {
       SELECT
         mv.id,
         CASE
-          WHEN m.nsfw = TRUE THEN 16
+          WHEN m.nsfw = TRUE THEN ${nsfwBrowsingLevelsFlag}
           ELSE (
             SELECT COALESCE(bit_or(i."nsfwLevel"), 0) "nsfwLevel"
             FROM (

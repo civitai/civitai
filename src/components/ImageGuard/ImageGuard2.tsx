@@ -82,9 +82,11 @@ export function ImageGuard2({
   children,
   connectId,
   connectType,
+  explain = true,
 }: {
   image: ImageProps;
   children: (show: boolean) => React.ReactElement | null;
+  explain?: boolean;
 } & ConnectProps) {
   const nsfwLevel = image.nsfwLevel ?? 0;
   const currentUser = useCurrentUser();
@@ -118,7 +120,7 @@ export function ImageGuard2({
     <ImageGuardCtx.Provider
       value={{ safe, show, browsingLevel: nsfwLevel, imageId: image.id, key }}
     >
-      {!show && (
+      {!show && explain && (
         <BlurToggle>
           {(toggle) => (
             <Center className="absolute z-10 transform -translate-x-1/2 -translate-y-[60%] top-1/2 left-1/2 flex flex-col w-full text-white">
@@ -197,10 +199,8 @@ export function BrowsingLevelBadge({
 function BlurToggle({
   className,
   children,
-  withLabel = true,
   ...badgeProps
 }: Omit<BadgeProps, 'children'> & {
-  withLabel?: boolean;
   children?: (toggle: (e: React.MouseEvent<HTMLElement, MouseEvent>) => void) => React.ReactElement;
 }) {
   const currentUser = useCurrentUser();
@@ -217,7 +217,7 @@ function BlurToggle({
   if (!browsingLevel) return null;
 
   if (safe)
-    return withLabel && currentUser?.isModerator ? (
+    return currentUser?.isModerator ? (
       <Badge classNames={classes} className={className}>
         {browsingLevelLabels[browsingLevel]}
       </Badge>

@@ -1003,12 +1003,10 @@ export const getModelsWithImagesAndModelVersions = async ({
     modelVersionWhere = undefined;
   }
 
-  console.time('getModelsRaw');
   const { items, isPrivate, nextCursor } = await getModelsRaw({
     input: { ...input, take },
     user,
   });
-  console.timeEnd('getModelsRaw');
 
   const modelVersionIds = items
     .filter((model) => model.mode !== ModelModifier.TakenDown)
@@ -1019,6 +1017,8 @@ export const getModelsWithImagesAndModelVersions = async ({
     ? await getImagesForModelVersionCache(modelVersionIds)
     : {};
 
+  const { excludedTagIds } = input;
+
   const unavailableGenResources = await getUnavailableResources();
   const result = {
     nextCursor,
@@ -1028,9 +1028,12 @@ export const getModelsWithImagesAndModelVersions = async ({
         const [version] = modelVersions;
         if (!version) return null;
         const versionImages = modelVersionImages[version.id]?.images ?? [];
+        const filteredImages = excludedTagIds
+          ? versionImages.filter((x) => !excludedTagIds?.includes(x.id))
+          : versionImages;
         const showImageless =
           (user?.isModerator || model.user.id === user?.id) && (input.user || input.username);
-        if (!versionImages.length && !showImageless) return null;
+        if (!filteredImages.length && !showImageless) return null;
 
         const canGenerate =
           !!version?.covered && unavailableGenResources.indexOf(version.id) === -1;
@@ -1054,7 +1057,7 @@ export const getModelsWithImagesAndModelVersions = async ({
           // images: model.nsfw
           //   ? versionImages.map((x) => ({ ...x, nsfwLevel: NsfwLevel.XXX }))
           //   : versionImages,
-          images: versionImages,
+          images: filteredImages,
           canGenerate,
         };
       })

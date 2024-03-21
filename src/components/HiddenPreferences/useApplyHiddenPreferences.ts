@@ -137,8 +137,9 @@ function filterPreferences<
               const userId = i.userId;
               const isOwner = userId && userId === currentUser?.id;
               if ((isOwner || isModerator) && i.nsfwLevel === 0) return true;
-              if (i.nsfwLevel > maxSelectedLevel) return false;
-              // if (!Flags.intersects(i.nsfwLevel, browsingLevel)) return false;
+              if (x.nsfw) {
+                if (i.nsfwLevel > maxSelectedLevel) return false;
+              } else if (!Flags.intersects(i.nsfwLevel, browsingLevel)) return false;
               if (hiddenImages.get(i.id)) return false;
               for (const tag of i.tags ?? []) if (hiddenTags.get(tag)) return false;
               return true;

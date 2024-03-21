@@ -1,53 +1,41 @@
-import { Badge, Group, Stack, Text, createStyles } from '@mantine/core';
+import { Badge, Button, Group, Stack, Text, createStyles } from '@mantine/core';
 import React, { useMemo } from 'react';
-import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import {
+  useBrowsingLevelDebounced,
+  useBrowsingModeOverrideContext,
+} from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useHiddenPreferencesContext } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import { useQueryHiddenPreferences } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { BrowsingLevel, browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
+import {
+  BrowsingLevel,
+  browsingLevelLabels,
+  flagifyBrowsingLevel,
+} from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils';
 
-export function ExplainHiddenImages<
-  T extends { id: number; nsfwLevel: number; tagIds?: number[] }
->({ images }: { images?: T[] }) {
+export function ExplainHiddenImages({
+  hiddenByBrowsingLevel,
+  hiddenByTags,
+  hasHidden,
+}: ReturnType<typeof useExplainHiddenImages>) {
   const { classes } = useStyles();
-  const browsingLevel = useBrowsingLevelDebounced();
-  const hiddenPreferences = useHiddenPreferencesContext();
   const { data } = useQueryHiddenPreferences();
   const currentUser = useCurrentUser();
+  const browsingLevel = useBrowsingLevelDebounced();
+  const { setBrowsingLevelOverride } = useBrowsingModeOverrideContext();
+  if (!hasHidden) return null;
 
-  const { hiddenByBrowsingLevel, hiddenByTag } = useMemo(() => {
-    const hiddenByBrowsingLevel: Record<number, number> = {};
-
-    const hiddenByTag: Record<number, number> = {};
-
-    for (const image of images ?? []) {
-      for (const tag of image.tagIds ?? []) {
-        if (hiddenPreferences.hiddenTags.get(tag)) {
-          if (!hiddenByTag[tag]) hiddenByTag[tag] = 1;
-          else hiddenByTag[tag]++;
-        }
-      }
-      if (!Flags.intersects(browsingLevel, image.nsfwLevel)) {
-        if (!hiddenByBrowsingLevel[image.nsfwLevel]) hiddenByBrowsingLevel[image.nsfwLevel] = 1;
-        else hiddenByBrowsingLevel[image.nsfwLevel]++;
-      }
-    }
-
-    return {
-      hiddenByBrowsingLevel,
-      hiddenByTag,
-    };
-  }, [browsingLevel, hiddenPreferences, images]);
-
-  if (!images?.length) return null;
-
-  const totalHiddenByBrowsingLevel = Object.values(hiddenByBrowsingLevel).reduce<number>(
-    (acc, val) => acc + val,
-    0
-  );
-  const totalHiddenByTags = Object.values(hiddenByTag).reduce<number>((acc, val) => acc + val, 0);
+  const totalHiddenByBrowsingLevel = hiddenByBrowsingLevel.length;
+  const totalHiddenByTags = hiddenByTags.length;
   const showHiddenBrowsingLevels = totalHiddenByBrowsingLevel > 0 && !!currentUser?.showNsfw;
+
+  const handleShowAll = () => {
+    const browsingLevelOverride = flagifyBrowsingLevel(
+      hiddenByBrowsingLevel.map((x) => x.browsingLevel)
+    );
+    setBrowsingLevelOverride?.(Flags.addFlag(browsingLevelOverride, browsingLevel));
+  };
 
   return (
     <Stack spacing="sm" align="center">
@@ -57,21 +45,29 @@ export function ExplainHiddenImages<
             Hidden by your browsing level:
           </Text>
           <Group spacing="xs" position="center">
-            {Object.entries(hiddenByBrowsingLevel).map(([level, count]) => (
-              <Badge key={level} rightSection={count} variant="outline" classNames={classes}>
-                {browsingLevelLabels[Number(level) as BrowsingLevel]}
+            {hiddenByBrowsingLevel.map(({ browsingLevel, count }) => (
+              <Badge
+                key={browsingLevel}
+                rightSection={count}
+                variant="outline"
+                classNames={classes}
+              >
+                {browsingLevelLabels[browsingLevel as BrowsingLevel]}
               </Badge>
             ))}
           </Group>
+          <Button mt={4} onClick={handleShowAll}>
+            Show Hidden
+          </Button>
         </Stack>
       )}
-      {currentUser && totalHiddenByTags > 0 && (
+      {!showHiddenBrowsingLevels && currentUser && totalHiddenByTags > 0 && (
         <Stack spacing={4}>
           <Text size="sm" color="dimmed" ta="center">
             Hidden by your tag preferences:
           </Text>
           <Group spacing="xs" position="center">
-            {Object.entries(hiddenByTag).map(([tagId, count]) => (
+            {hiddenByTags.map(({ tagId, count }) => (
               <Badge key={tagId} rightSection={count} variant="outline" classNames={classes}>
                 {data?.hiddenTags.find((x) => x.id === Number(tagId))?.name}
               </Badge>
@@ -90,3 +86,43 @@ const useStyles = createStyles((theme) => ({
     borderLeft: '1px solid',
   },
 }));
+
+export function useExplainHiddenImages<
+  T extends { id: number; nsfwLevel: number; tagIds?: number[] }
+>(images?: T[]) {
+  const browsingLevel = useBrowsingLevelDebounced();
+  const hiddenPreferences = useHiddenPreferencesContext();
+
+  return useMemo(() => {
+    const browsingLevelDict: Record<number, number> = {};
+    const tagDict: Record<number, number> = {};
+
+    for (const image of images ?? []) {
+      for (const tag of image.tagIds ?? []) {
+        if (hiddenPreferences.hiddenTags.get(tag)) {
+          if (!tagDict[tag]) tagDict[tag] = 1;
+          else tagDict[tag]++;
+        }
+      }
+      if (!Flags.intersects(browsingLevel, image.nsfwLevel) && image.nsfwLevel < browsingLevel) {
+        if (!browsingLevelDict[image.nsfwLevel]) browsingLevelDict[image.nsfwLevel] = 1;
+        else browsingLevelDict[image.nsfwLevel]++;
+      }
+    }
+
+    const hiddenByBrowsingLevel = Object.entries(browsingLevelDict).map(([key, count]) => ({
+      browsingLevel: Number(key),
+      count,
+    }));
+    const hiddenByTags = Object.entries(tagDict).map(([key, count]) => ({
+      tagId: Number(key),
+      count,
+    }));
+
+    return {
+      hiddenByBrowsingLevel,
+      hiddenByTags,
+      hasHidden: !!hiddenByBrowsingLevel.length || !!hiddenByTags.length,
+    };
+  }, [browsingLevel, hiddenPreferences, images]);
+}

@@ -44,10 +44,10 @@ export default WebhookEndpoint(async (req, res) => {
     //   type: 'users',
     //   fn: migrateUsers,
     // },
-    // {
-    //   type: 'images',
-    //   fn: migrateImages,
-    // },
+    {
+      type: 'images',
+      fn: migrateImages,
+    },
     // {
     //   type: 'posts',
     //   fn: migratePosts,
@@ -56,22 +56,22 @@ export default WebhookEndpoint(async (req, res) => {
     //   type: 'articles',
     //   fn: migrateArticles,
     // },
-    {
-      type: 'bounties',
-      fn: migrateBounties,
-    },
+    // {
+    //   type: 'bounties',
+    //   fn: migrateBounties,
+    // },
     // {
     //   type: 'bountyEntries',
     //   fn: migrateBountyEntries,
     // },
-    {
-      type: 'modelVersions',
-      fn: migrateModelVersions,
-    },
-    {
-      type: 'models',
-      fn: migrateModels,
-    },
+    // {
+    //   type: 'modelVersions',
+    //   fn: migrateModelVersions,
+    // },
+    // {
+    //   type: 'models',
+    //   fn: migrateModels,
+    // },
     // {
     //   type: 'collections',
     //   fn: migrateCollections,
@@ -100,9 +100,8 @@ async function migrateImages(req: NextApiRequest, res: NextApiResponse) {
     rangeFetcher: async (context) => {
       if (params.after) {
         console.log({ after: params.after });
-        const [{ start }] = await dbRead.$queryRaw<{ start: number }[]>(
-          Prisma.sql`SELECT MIN(id) "start" FROM "Image" WHERE "createdAt" > '${params.after.toISOString()}';`
-        );
+        const [{ start }] = await dbRead.$queryRaw<{ start: number }[]>`
+          SELECT MIN(id) "start" FROM "Image" WHERE "createdAt" > ${params.after};`;
         console.log({ start });
         context.start = start;
       }

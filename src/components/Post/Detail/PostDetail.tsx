@@ -21,17 +21,19 @@ import { IconPhotoOff } from '@tabler/icons-react';
 import { IconDotsVertical, IconBookmark, IconShare3 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
 import Link from 'next/link';
-import { Adunit } from '~/components/Ads/AdUnit';
-import { adsRegistry } from '~/components/Ads/adsRegistry';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { NavigateBack } from '~/components/BackButton/BackButton';
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
+import { BrowsingModeOverrideProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { TipBuzzButton } from '~/components/Buzz/TipBuzzButton';
 import { ChatUserButton } from '~/components/Chat/ChatUserButton';
 import { Collection } from '~/components/Collection/Collection';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
-import { ExplainHiddenImages } from '~/components/Image/ExplainHiddenImages/ExplainHiddenImages';
+import {
+  ExplainHiddenImages,
+  useExplainHiddenImages,
+} from '~/components/Image/ExplainHiddenImages/ExplainHiddenImages';
 import { useQueryImages } from '~/components/Image/image.utils';
 import { Meta } from '~/components/Meta/Meta';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
@@ -52,7 +54,17 @@ import { containerQuery } from '~/utils/mantine-css-helpers';
 import { removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
-export function PostDetail({ postId }: { postId: number }) {
+type Props = { postId: number };
+
+export function PostDetail(props: Props) {
+  return (
+    <BrowsingModeOverrideProvider>
+      <PostDetailContent {...props} />
+    </BrowsingModeOverrideProvider>
+  );
+}
+
+export function PostDetailContent({ postId }: Props) {
   const { classes } = useStyles();
   const currentUser = useCurrentUser();
   const { query } = useBrowserRouter();
@@ -64,6 +76,7 @@ export function PostDetail({ postId }: { postId: number }) {
     isLoading: imagesLoading,
   } = useQueryImages({ postId, pending: true, browsingLevel: undefined });
   const { data: postResources = [] } = trpc.post.getResources.useQuery({ id: postId });
+  const hiddenExplained = useExplainHiddenImages(unfilteredImages);
 
   const meta = (
     <Meta
@@ -249,7 +262,7 @@ export function PostDetail({ postId }: { postId: number }) {
                     <IconPhotoOff size={32} />
                   </ThemeIcon>
                   <Text size="lg">No images available</Text>
-                  <ExplainHiddenImages images={unfilteredImages} />
+                  <ExplainHiddenImages {...hiddenExplained} />
                 </Stack>
               </Paper>
             ) : (
@@ -265,13 +278,6 @@ export function PostDetail({ postId }: { postId: number }) {
           <Adunit showRemoveAds {...adsRegistry.postDetailSidebar} />
         </div> */}
       </div>
-      {/* <Adunit
-        py={30}
-        sx={(theme) => ({
-          background: theme.colorScheme === 'light' ? theme.colors.gray[2] : theme.colors.dark[6],
-        })}
-        {...adsRegistry.postDetailFooter}
-      /> */}
     </>
   );
 }

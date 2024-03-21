@@ -73,9 +73,9 @@ export function ResourceReviewCarousel({
           loop
         >
           {images.map((image, i) => (
-            <ImageGuard2 key={image.id} image={image} connectType="review" connectId={reviewId}>
-              {(safe) => (
-                <Carousel.Slide>
+            <Carousel.Slide key={image.id}>
+              <ImageGuard2 image={image} connectType="review" connectId={reviewId}>
+                {(safe) => (
                   <Center style={{ height: '100%', width: '100%' }}>
                     <div style={{ width: '100%', position: 'relative' }}>
                       <ImageGuard2.BlurToggle className="absolute top-2 left-2 z-10" />
@@ -146,9 +146,9 @@ export function ResourceReviewCarousel({
                       )}
                     </div>
                   </Center>
-                </Carousel.Slide>
-              )}
-            </ImageGuard2>
+                )}
+              </ImageGuard2>
+            </Carousel.Slide>
           ))}
           {viewMore && (
             <Carousel.Slide style={{ display: 'flex', alignItems: 'center' }}>
