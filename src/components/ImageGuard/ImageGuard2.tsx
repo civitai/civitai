@@ -1,11 +1,13 @@
-import { Badge, BadgeProps, Text, createStyles, Center, Alert, Button } from '@mantine/core';
+import { Badge, BadgeProps, Text, createStyles, Center, Alert, Button, Stack } from '@mantine/core';
 import { IconEye, IconEyeOff } from '@tabler/icons-react';
 import Router from 'next/router';
-import React, { createContext, useCallback, useContext } from 'react';
+import React, { createContext, useCallback, useContext, useMemo } from 'react';
 import { create } from 'zustand';
 import { ConfirmDialog } from '~/components/Dialog/Common/ConfirmDialog';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { useHiddenPreferencesContext } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { getTagDisplayName } from '~/libs/tags';
 import { constants } from '~/server/common/constants';
 import { NsfwLevel } from '~/server/common/enums';
 import {
@@ -22,6 +24,8 @@ type ImageProps = {
   userId?: number;
   user?: { id: number };
   url?: string | null;
+  tags?: number[];
+  tagIds?: number[];
 };
 
 type ConnectId = string | number;
@@ -86,6 +90,14 @@ export function ImageGuard2({
   const currentUser = useCurrentUser();
   const showImage = useShowImagesStore(useCallback((state) => state[image.id], [image.id]));
   const key = getConnectionKey({ connectType, connectId });
+  const { classes } = useBadgeStyles({ browsingLevel: nsfwLevel });
+  const { moderatedTags } = useHiddenPreferencesContext();
+  const tags = useMemo(() => {
+    const imageTags = image.tags ?? image.tagIds ?? [];
+    return moderatedTags
+      .filter((x) => x.nsfwLevel === nsfwLevel && imageTags.includes(x.id))
+      .map((x) => getTagDisplayName(x.name));
+  }, [image.tags, image.tagIds, moderatedTags, nsfwLevel]);
 
   const { tosViolation } = useImageStore(image);
 
@@ -105,14 +117,52 @@ export function ImageGuard2({
     <ImageGuardCtx.Provider
       value={{ safe, show, browsingLevel: nsfwLevel, imageId: image.id, key }}
     >
-      {/* TODO.justin */}
-      {/* !important - message for justin - reference `BrowsingLevelGuide.tsx` to easily see how to pull in tags by nsfwLevel*/}
       {!show && (
         <BlurToggle>
           {(toggle) => (
-            <Center className="absolute z-10 transform -translate-x-1/2 -translate-y-1/2 top-1/2 left-1/2 flex flex-col">
-              <Text mb="xs">This image is rated {browsingLevelLabels[nsfwLevel as NsfwLevel]}</Text>
-              <Button onClick={toggle}>Show</Button>
+            <Center className="absolute z-10 transform -translate-x-1/2 -translate-y-1/2 top-1/2 left-1/2 flex flex-col w-full text-white">
+              <Stack align="center" spacing="sm" w="100%">
+                <Text size="sm" className="text-shadow-sm shadow-black/50">
+                  This image is rated
+                </Text>
+                <Badge
+                  color="red"
+                  size="xl"
+                  classNames={classes}
+                  className="shadow shadow-black/30 min-w-[32px] text-center"
+                >
+                  {browsingLevelLabels[nsfwLevel as NsfwLevel]}
+                </Badge>
+                {tags.length ? (
+                  <Text
+                    size="xs"
+                    className="text-shadow-sm shadow-black/50 opacity-70 leading-tight text-center px-5"
+                  >
+                    {tags.join(', ')}
+                  </Text>
+                ) : null}
+                <Button
+                  onClick={toggle}
+                  radius="xl"
+                  sx={(theme) => ({
+                    color:
+                      theme.colorScheme === 'dark' ? theme.colors.dark[0] : theme.colors.gray[9],
+                    backgroundColor: theme.fn.rgba(
+                      theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
+                      0.6
+                    ),
+                    boxShadow: theme.shadows.sm,
+                    '&:hover': {
+                      backgroundColor: theme.fn.rgba(
+                        theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
+                        0.7
+                      ),
+                    },
+                  })}
+                >
+                  Show
+                </Button>
+              </Stack>
             </Center>
           )}
         </BlurToggle>
@@ -134,7 +184,7 @@ export function BrowsingLevelBadge({
 }: {
   browsingLevel?: number;
 } & BadgeProps) {
-  const { classes } = useStyles({ browsingLevel });
+  const { classes } = useBadgeStyles({ browsingLevel });
   if (!browsingLevel) return null;
 
   return (
@@ -155,7 +205,7 @@ function BlurToggle({
 }) {
   const currentUser = useCurrentUser();
   const { safe, show, browsingLevel, imageId, key } = useImageGuardContext();
-  const { classes, cx } = useStyles({ browsingLevel });
+  const { classes, cx } = useBadgeStyles({ browsingLevel });
 
   const toggle = (event: React.MouseEvent<HTMLElement, MouseEvent>) =>
     toggleShow({ event, isAuthed: !!currentUser, key, imageId });
@@ -238,7 +288,7 @@ function toggleShow({
   }
 }
 
-const useStyles = createStyles((theme, params: { browsingLevel?: number }) => {
+const useBadgeStyles = createStyles((theme, params: { browsingLevel?: number }) => {
   const backgroundColor = getIsSafeBrowsingLevel(params.browsingLevel ?? 0)
     ? theme.fn.rgba('#000', 0.31)
     : theme.fn.rgba(theme.colors.red[9], 0.6);
@@ -247,6 +297,8 @@ const useStyles = createStyles((theme, params: { browsingLevel?: number }) => {
       userSelect: 'none',
       backgroundColor,
       color: 'white',
+      paddingLeft: 8,
+      paddingRight: 8,
 
       '& > span': {
         lineHeight: 1,
