@@ -1,17 +1,8 @@
-import React, {
-  createContext,
-  useContext,
-  useDeferredValue,
-  useEffect,
-  useMemo,
-  useState,
-} from 'react';
+import React, { createContext, useContext, useDeferredValue, useEffect, useState } from 'react';
 import {
   BrowsingLevel,
   allBrowsingLevelsFlag,
   publicBrowsingLevelsFlag,
-  sfwBrowsingLevelsFlag,
-  getBrowsingLevelFromShowNsfw,
 } from '~/shared/constants/browsingLevel.constants';
 import { useCookies } from '~/providers/CookiesProvider';
 import { Flags } from '~/shared/utils';
@@ -21,6 +12,7 @@ import { trpc } from '~/utils/trpc';
 import { useDebouncer } from '~/utils/debouncer';
 import { useSession } from 'next-auth/react';
 import { useDebouncedValue, useDidUpdate } from '@mantine/hooks';
+import { deleteCookie } from 'cookies-next';
 
 type StoreState = {
   showNsfw: boolean;
@@ -71,10 +63,13 @@ export function useBrowsingModeContext() {
 }
 
 function updateCookieValues({ browsingLevel, blurNsfw, showNsfw, disableHidden }: StoreState) {
+  console.log('update cookies');
   setCookie('level', browsingLevel);
   setCookie('blur', blurNsfw);
   setCookie('nsfw', showNsfw);
   setCookie('disableHidden', disableHidden);
+  // setCookie('mode', 'NSFW');
+  deleteCookie('mode');
 }
 
 export function BrowsingModeProvider({ children }: { children: React.ReactNode }) {
@@ -87,15 +82,22 @@ export function BrowsingModeProvider({ children }: { children: React.ReactNode }
   const [store, setStore] = useState(createBrowsingModeStore(getStoreInitialValues()));
 
   function getStoreInitialValues() {
-    return !currentUser
-      ? { showNsfw: false, blurNsfw: true, browsingLevel: 0 } //getBrowsingLevelFromShowNsfw(false) }
-      : {
-          showNsfw: cookies.showNsfw ?? currentUser.showNsfw,
-          blurNsfw: cookies.blurNsfw ?? currentUser.blurNsfw,
-          browsingLevel: cookies.browsingLevel ?? currentUser.browsingLevel,
-          // browsingLevel: getBrowsingLevelFromShowNsfw(cookies.showNsfw ?? currentUser.showNsfw),
-          disableHidden: cookies.disableHidden,
-        };
+    if (!currentUser) return { showNsfw: false, blurNsfw: true, browsingLevel: 0 };
+
+    let showNsfw = cookies.showNsfw ?? currentUser.showNsfw;
+    let browsingLevel = cookies.browsingLevel ?? currentUser.browsingLevel;
+    // if cookies.mode is present, then this is the user's first time accessing this feature
+    if (cookies.mode) {
+      showNsfw = false;
+      browsingLevel = allBrowsingLevelsFlag;
+    }
+
+    return {
+      showNsfw,
+      blurNsfw: cookies.blurNsfw ?? currentUser.blurNsfw,
+      browsingLevel,
+      disableHidden: cookies.disableHidden,
+    };
   }
 
   useDidUpdate(() => {
@@ -118,6 +120,7 @@ export function BrowsingModeProvider({ children }: { children: React.ReactNode }
   useEffect(() => {
     if (store && isAuthed) {
       return store.subscribe((state, prevState) => {
+        console.log('subscription');
         updateCookieValues(state);
         const disableHiddenChanged = state.disableHidden !== prevState.disableHidden;
         if (currentUser && !disableHiddenChanged) debouncer(() => mutate({ ...state }));

@@ -33,6 +33,7 @@ function BrowsingLevelItem({ level }: { level: BrowsingLevel }) {
       p="md"
       onClick={() => toggleBrowsingLevel(level)}
       className={cx({ [classes.active]: isSelected })}
+      noWrap
     >
       <div>
         <Text weight={700}>{browsingLevelLabels[level]}</Text>

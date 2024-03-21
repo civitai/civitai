@@ -104,6 +104,17 @@ async function migrateImages(req: NextApiRequest, res: NextApiResponse) {
           SELECT MIN(id) "start" FROM "Image" WHERE "createdAt" > ${params.after};`;
         console.log({ start });
         context.start = start;
+
+        // const test= await dbRead.$queryRaw`
+        // WITH dates AS (
+        //   SELECT
+        //   MIN("createdAt") as start,
+        //   MAX("createdAt") as end
+        //   FROM "Image" WHERE "createdAt" > ${params.after}
+        // )
+        // SELECT MIN(id) as min, MAX(id) as max
+        // FROM "Image" i
+        // JOIN dates d ON d.start = i."createdAt" OR d.end = i."createdAt";`
       }
       const [{ max }] = await dbRead.$queryRaw<{ max: number }[]>(
         Prisma.sql`SELECT MAX(id) "max" FROM "Image";`

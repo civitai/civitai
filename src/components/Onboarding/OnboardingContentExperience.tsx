@@ -1,4 +1,14 @@
-import { Button, Card, Container, Group, Stack, createStyles, Text, Switch } from '@mantine/core';
+import {
+  Button,
+  Card,
+  Container,
+  Group,
+  Stack,
+  createStyles,
+  Text,
+  Switch,
+  Title,
+} from '@mantine/core';
 import { HiddenTagsSection } from '~/components/Account/HiddenTagsSection';
 import { MatureContentSettings } from '~/components/Account/MatureContentSettings';
 import { NewsletterToggle } from '~/components/Account/NewsletterToggle';
@@ -19,7 +29,7 @@ export function OnboardingContentExperience() {
 
   return (
     <Container size="xs" px={0}>
-      <Stack>
+      <Stack spacing="xl">
         <StepperTitle
           title="Content Experience"
           description="Personalize your AI content exploration! Fine-tune preferences for a delightful and safe browsing experience."
@@ -52,8 +62,11 @@ export function OnboardingContentExperience() {
           />
         </Card>
 
+        <Stack spacing="xs" mt="sm">
+          <Title order={3}>Content Moderation</Title>
+          <MatureContentSettings />
+        </Stack>
         <HiddenTagsSection />
-        <MatureContentSettings />
         <Group position="apart">
           <OnboardingAbortButton size="lg">Sign Out</OnboardingAbortButton>
           <Button size="lg" onClick={handleStepComplete} loading={isLoading}>

@@ -255,18 +255,15 @@ export function PostDetailContent({ postId }: Props) {
             </Stack>
             {!imagesLoading && !unfilteredImages?.length ? (
               <Alert>Unable to load images</Alert>
-            ) : !imagesLoading && !images.length ? (
-              <Paper component={Center} p="xl" mih={300} withBorder>
-                <Stack spacing={4} align="center">
-                  <ThemeIcon color="gray" size={64} radius={100}>
-                    <IconPhotoOff size={32} />
-                  </ThemeIcon>
-                  <Text size="lg">No images available</Text>
-                  <ExplainHiddenImages {...hiddenExplained} />
-                </Stack>
-              </Paper>
             ) : (
-              <PostImages postId={post.id} images={images} isLoading={imagesLoading} />
+              <>
+                <PostImages postId={post.id} images={images} isLoading={imagesLoading} />
+                {hiddenExplained.hasHidden && !imagesLoading && (
+                  <Paper component={Center} p="xl" mih={300} withBorder>
+                    <ExplainHiddenImages {...hiddenExplained} />
+                  </Paper>
+                )}
+              </>
             )}
             <Stack spacing="xl" mt="xl" id="comments" mb={90}>
               {post.detail && <RenderHtml html={post.detail} withMentions />}
