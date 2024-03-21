@@ -219,19 +219,18 @@ export function ModelVersionList({
               compact
             >
               <Group spacing={8} noWrap>
-                {features.imageGeneration &&
-                  (version.canGenerate || version.hasCheckpointCoverage) && (
-                    <ThemeIcon
-                      title="This version is available for image generation"
-                      color="cyan"
-                      variant="light"
-                      radius="xl"
-                      size="sm"
-                      sx={{ backgroundColor: 'transparent' }}
-                    >
-                      <IconBrush size={16} stroke={2.5} />
-                    </ThemeIcon>
-                  )}
+                {features.imageGeneration && version.canGenerate && (
+                  <ThemeIcon
+                    title="This version is available for image generation"
+                    color="cyan"
+                    variant="light"
+                    radius="xl"
+                    size="sm"
+                    sx={{ backgroundColor: 'transparent' }}
+                  >
+                    <IconBrush size={16} stroke={2.5} />
+                  </ThemeIcon>
+                )}
                 {version.name}
               </Group>
             </Button>
@@ -341,9 +340,7 @@ export function ModelVersionList({
                         }
                         closeMenuOnClick={false}
                       >
-                        {version.hasCheckpointCoverage
-                          ? 'Remove from generation'
-                          : 'Add to generation'}
+                        {version.canGenerate ? 'Remove from generation' : 'Add to generation'}
                       </Menu.Item>
                     </>
                   )}
