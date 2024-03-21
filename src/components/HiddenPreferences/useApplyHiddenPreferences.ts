@@ -144,7 +144,15 @@ function filterPreferences<
               for (const tag of i.tags ?? []) if (hiddenTags.get(tag)) return false;
               return true;
             }) ?? [];
-          return filteredImages.length
+
+          const sortedImages = x.nsfw
+            ? filteredImages.sort((a, b) => {
+                const aIntersects = Flags.intersects(a.nsfwLevel, browsingLevel);
+                const bIntersects = Flags.intersects(b.nsfwLevel, browsingLevel);
+                return aIntersects === bIntersects ? 0 : aIntersects ? -1 : 1;
+              })
+            : filteredImages;
+          return sortedImages.length
             ? {
                 ...x,
                 images: filteredImages,
