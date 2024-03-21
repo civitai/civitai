@@ -1,12 +1,14 @@
 import {
   ActionIcon,
   Badge,
+  Center,
   Divider,
   Group,
   Menu,
   Stack,
   Text,
   UnstyledButton,
+  Button,
 } from '@mantine/core';
 import {
   IconDownload,
@@ -61,6 +63,7 @@ import { ImageMetaProps } from '~/server/schema/image.schema';
 import { ToggleSearchableMenuItem } from '../MenuItems/ToggleSearchableMenuItem';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
+import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
 
 const IMAGE_CARD_WIDTH = 450;
 

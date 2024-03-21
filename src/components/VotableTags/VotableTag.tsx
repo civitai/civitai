@@ -86,7 +86,7 @@ export function VotableTag({
   const theme = useMantineTheme();
   const isNsfw = !getIsSafeBrowsingLevel(nsfwLevel);
   const { color, shade } = votableTagColors[nsfwLevel];
-  const voteColor = isNsfw ? color[shade] : theme.colors.blue[5];
+  const voteColor = isNsfw ? theme.colors[color][shade] : theme.colors.blue[5];
   const badgeColor = theme.fn.variant({
     color: color,
     variant: isNsfw ? 'light' : 'filled',

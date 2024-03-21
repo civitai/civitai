@@ -29,11 +29,11 @@ export const browsingLevelLabels = {
 } as const;
 
 export const browsingLevelDescriptions = {
-  [NsfwLevel.PG]: 'Suitable for all ages',
-  [NsfwLevel.PG13]: 'Suitable for ages 13 and up',
-  [NsfwLevel.R]: 'Suitable for ages 17 and up',
-  [NsfwLevel.X]: 'Adult content',
-  [NsfwLevel.XXX]: 'Explicit adult content',
+  [NsfwLevel.PG]: 'Safe for work. No naughty stuff',
+  [NsfwLevel.PG13]: 'Revealing clothing, violence, and light gore. ',
+  [NsfwLevel.R]: 'Adult themes and situations, partial nudity,  graphic violence and death.',
+  [NsfwLevel.X]: 'Graphic nudity,  Adult objects and settings',
+  [NsfwLevel.XXX]: 'Sexual content and activity',
 } as const;
 
 // public browsing levels

@@ -7,6 +7,7 @@ import {
 } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NsfwLevel } from '~/server/common/enums';
+import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils';
 import { isDefined, paired } from '~/utils/type-guards';
 
@@ -115,6 +116,7 @@ function filterPreferences<
   const isModerator = !!currentUser?.isModerator;
   const { key, value } = paired<BaseDataTypeMap>(type, data);
   const { hiddenModels, hiddenImages, hiddenTags, hiddenUsers, moderatedTags } = hiddenPreferences;
+  const maxSelectedLevel = Math.max(...parseBitwiseBrowsingLevel(browsingLevel));
 
   switch (key) {
     case 'models':
@@ -135,7 +137,8 @@ function filterPreferences<
               const userId = i.userId;
               const isOwner = userId && userId === currentUser?.id;
               if ((isOwner || isModerator) && i.nsfwLevel === 0) return true;
-              if (!Flags.intersects(i.nsfwLevel, browsingLevel)) return false;
+              if (i.nsfwLevel > maxSelectedLevel) return false;
+              // if (!Flags.intersects(i.nsfwLevel, browsingLevel)) return false;
               if (hiddenImages.get(i.id)) return false;
               for (const tag of i.tags ?? []) if (hiddenTags.get(tag)) return false;
               return true;

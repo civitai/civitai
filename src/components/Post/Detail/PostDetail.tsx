@@ -13,6 +13,8 @@ import {
   Title,
   createStyles,
   useMantineTheme,
+  Paper,
+  Center,
 } from '@mantine/core';
 import { Availability, CollectionType } from '@prisma/client';
 import { IconPhotoOff } from '@tabler/icons-react';
@@ -241,13 +243,15 @@ export function PostDetail({ postId }: { postId: number }) {
             {!imagesLoading && !unfilteredImages?.length ? (
               <Alert>Unable to load images</Alert>
             ) : !imagesLoading && !images.length ? (
-              <Stack spacing={4} align="center">
-                <ThemeIcon color="gray" size={64} radius={100}>
-                  <IconPhotoOff size={32} />
-                </ThemeIcon>
-                <Text size="lg">No images available</Text>
-                <ExplainHiddenImages images={unfilteredImages} />
-              </Stack>
+              <Paper component={Center} p="xl" mih={300} withBorder>
+                <Stack spacing={4} align="center">
+                  <ThemeIcon color="gray" size={64} radius={100}>
+                    <IconPhotoOff size={32} />
+                  </ThemeIcon>
+                  <Text size="lg">No images available</Text>
+                  <ExplainHiddenImages images={unfilteredImages} />
+                </Stack>
+              </Paper>
             ) : (
               <PostImages postId={post.id} images={images} isLoading={imagesLoading} />
             )}

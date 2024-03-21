@@ -1,4 +1,4 @@
-import { Badge, BadgeProps, Text, createStyles, Center, Alert } from '@mantine/core';
+import { Badge, BadgeProps, Text, createStyles, Center, Alert, Button } from '@mantine/core';
 import { IconEye, IconEyeOff } from '@tabler/icons-react';
 import Router from 'next/router';
 import React, { createContext, useCallback, useContext } from 'react';
@@ -105,6 +105,18 @@ export function ImageGuard2({
     <ImageGuardCtx.Provider
       value={{ safe, show, browsingLevel: nsfwLevel, imageId: image.id, key }}
     >
+      {/* TODO.justin */}
+      {/* !important - message for justin - reference `BrowsingLevelGuide.tsx` to easily see how to pull in tags by nsfwLevel*/}
+      {!show && (
+        <BlurToggle>
+          {(toggle) => (
+            <Center className="absolute z-10 transform -translate-x-1/2 -translate-y-1/2 top-1/2 left-1/2 flex flex-col">
+              <Text mb="xs">This image is rated {browsingLevelLabels[nsfwLevel as NsfwLevel]}</Text>
+              <Button onClick={toggle}>Show</Button>
+            </Center>
+          )}
+        </BlurToggle>
+      )}
       {tosViolation ? (
         <Center w="100%" h="100%">
           <Alert color="red">TOS Violation</Alert>
@@ -155,7 +167,7 @@ function BlurToggle({
   if (!browsingLevel) return null;
 
   if (safe)
-    return withLabel ? (
+    return withLabel && currentUser?.isModerator ? (
       <Badge classNames={classes} className={className}>
         {browsingLevelLabels[browsingLevel]}
       </Badge>
@@ -174,9 +186,10 @@ function BlurToggle({
       className={cx(className, 'cursor-pointer')}
       {...badgeProps}
       onClick={toggle}
-      rightSection={withLabel ? Icon : null}
+      // rightSection={withLabel ? Icon : null}
     >
-      {withLabel ? browsingLevelLabels[browsingLevel] : Icon}
+      {/* {withLabel ? browsingLevelLabels[browsingLevel] : Icon} */}
+      {Icon}
     </Badge>
   );
 }
@@ -234,16 +247,15 @@ const useStyles = createStyles((theme, params: { browsingLevel?: number }) => {
       userSelect: 'none',
       backgroundColor,
       color: 'white',
-      boxShadow: '1px 2px 3px -1px rgba(37,38,43,0.2)',
 
       '& > span': {
-        boxShadow: '0 1px 0 1px rgba(255,255,255,.1)',
         lineHeight: 1,
       },
     },
     rightSection: {
       borderLeft: '1px solid rgba(0,0,0,.15)',
       paddingLeft: 5,
+      marginRight: -2,
     },
   };
 });
