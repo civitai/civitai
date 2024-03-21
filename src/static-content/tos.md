@@ -28,7 +28,17 @@ ARBITRATION NOTICE. EXCEPT FOR CERTAIN KINDS OF DISPUTES DESCRIBED IN SECTION 18
 
 - 5.3 **Purchase of Creator Content.** If you purchase any offerings of Creators through the Service, you agree to pay on a one-time or subscription basis as specified by the Creators. You agree that Creators have the right to determine pricing and/or subscription tiers for their offerings and may adjust such from time to time at their discretion. You are solely responsible for ensuring that you have sufficient Buzz in your Account for your purchase(s) and agree that your purchase(s) may be denied or canceled in the event that your Account balance is insufficient. If any User Content or channels are offered on a subscription basis, they will be subject to Section 5.7 below.
 
-- 5.4 **Refund**. Civitai will grant you a refund if any User Content you purchased through the Service was removed or taken down from the Service by us or by the Creator in compliance with the applicable requirements under the Digital Millennium Copyright Act. All refunds will be in Buzz and credited to your Account upon request or within a reasonable time after the take-down or removal of the User Content.
+- 5.4 **Refund**. As a customer, you are eligible for a refund in the following situations:
+  - Recurring Technical Problems: If ongoing technical difficulties hinder your use of the platform.
+  - Failure to Receive Buzz: If Buzz you've bought isn't received or added to your account due to technical Issues.
+  - Flawed Resource: If digital products you've trained are substantially flawed beyond what could be reasonably attributed to user error.
+
+  We retain the right to refuse a refund in the event:
+  - You were muted or removed from the platform for breaking content guidelines
+  - You are unable to get results to your satisfaction through no technical fault of the platform.
+  - You have changed your mind.
+
+  Civitai will grant you a refund if any User Content you purchased through the Service was removed or taken down from the Service by us or by the Creator in compliance with the applicable requirements under the Digital Millennium Copyright Act. Refunds will be given in Buzz for platform services and credited to your Account upon request or within a reasonable time.
 
 - 5.5 **Payment Processing.** Civitai may contract with a third party to process payments submitted through the Service (the “Payment Processor”). Users may be required to provide their payment method details to the Payment Processor. Before you pay for Buzz through the Payment Processor, you will have an opportunity to review the amounts that you will be charged.
 
@@ -38,7 +48,7 @@ ARBITRATION NOTICE. EXCEPT FOR CERTAIN KINDS OF DISPUTES DESCRIBED IN SECTION 18
 
 - 5.8 **Delinquent Accounts.** Civitai may suspend or terminate access to the Service, including fee-based portions of the Service, for any account for which any amount is due but unpaid. In addition to the amount due for the Service, a delinquent account will be charged with fees or charges that are incidental to any chargeback or collection of any the unpaid amount, including collection fees. If your payment method is no longer valid at the time a renewal Subscription Fee is due, then Civitai reserves the right to delete your account and any information or User Content (defined below) associated with your Account without any liability to you.
 
-6. **Licenses**
+1. **Licenses**
 
 - 6.1 **Limited License.** Subject to your complete and ongoing compliance with these Terms, Civitai grants you, solely for your personal, non-commercial use, a limited, non-exclusive, non-transferable, non-sublicensable, revocable license to: (a) install and use one object code copy of any mobile or other downloadable application associated with the Service (whether installed by you or pre-installed on your mobile device by the device manufacturer or a wireless telephone provider) on a mobile device that you own or control; and (b) access and use the Service.
 
