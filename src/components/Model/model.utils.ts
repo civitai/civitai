@@ -94,7 +94,7 @@ export const useQueryModels = (
   options?: { keepPreviousData?: boolean; enabled?: boolean }
 ) => {
   const _filters = filters ?? {};
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const { data, isLoading, ...rest } = trpc.model.getAll.useInfiniteQuery(_filters, {
     getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
     getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),
@@ -131,7 +131,7 @@ export const useToggleCheckpointCoverageMutation = () => {
         return {
           ...old,
           modelVersions: old.modelVersions.map((v) =>
-            v.id === versionId ? { ...v, hasCheckpointCoverage: !v.hasCheckpointCoverage } : v
+            v.id === versionId ? { ...v, canGenerate: !v.canGenerate } : v
           ),
         };
       });

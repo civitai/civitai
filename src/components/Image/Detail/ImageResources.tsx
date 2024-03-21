@@ -57,9 +57,15 @@ export function ImageResources({ imageId }: { imageId: number }) {
     });
 
   const resources = useMemo(() => {
-    const resources =
+    return (
       data
-        ?.map((resource, index) => {
+        // remove duplicates items from data based on modelVersionId
+        ?.filter(
+          (resource, index, items) =>
+            !!resource.modelVersionId &&
+            items.findIndex((t) => t.modelVersionId === resource.modelVersionId) === index
+        )
+        .map((resource, index) => {
           const hasReview = resource.modelId ? reviewedModels.includes(resource.modelId) : false;
           const isAvailable = resource.modelVersionId !== null;
           return {
@@ -75,8 +81,8 @@ export function ImageResources({ imageId }: { imageId: number }) {
           if (a.hasReview && !b.hasReview) return -1;
           if (!a.hasReview && b.hasReview) return 1;
           return 0;
-        }) ?? [];
-    return resources;
+        }) ?? []
+    );
   }, [data, reviewedModels]);
 
   const { mutate, isLoading: removingResource } = trpc.image.removeResource.useMutation();

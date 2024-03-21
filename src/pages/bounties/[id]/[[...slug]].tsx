@@ -349,6 +349,7 @@ export default function BountyDetailsPage({
                     const deleteImage = (
                       <DeleteImage
                         closeOnConfirm
+                        key="delete-image"
                         imageId={image.id}
                         onSuccess={handleImageDelete}
                         onDelete={() => {
