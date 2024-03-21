@@ -792,7 +792,7 @@ const getImageGenerationData = async (id: number): Promise<Generation.Data> => {
   } = imageGenerationSchema.parse(image.meta);
 
   const resources = await dbRead.$queryRaw<
-    Array<Generation.Resource & { covered: boolean; hash?: string }>
+    Array<Generation.Resource & { covered: boolean; hash?: string; strength?: number }>
   >`
     SELECT
       mv.id,
@@ -803,6 +803,7 @@ const getImageGenerationData = async (id: number): Promise<Generation.Data> => {
       m.name "modelName",
       m.type "modelType",
       ir."hash",
+      ir.strength,
       gc.covered
     FROM "ImageResource" ir
     JOIN "ModelVersion" mv on mv.id = ir."modelVersionId"
@@ -819,7 +820,7 @@ const getImageGenerationData = async (id: number): Promise<Generation.Data> => {
 
       // get the resource that matches the hash
       const resource = deduped.find((x) => x.hash === hash);
-      if (!resource) continue;
+      if (!resource || resource.strength) continue;
 
       // get everything that matches <key:{number}>
       const matches = new RegExp(`<${key}:([0-9\.]+)>`, 'i').exec(meta.prompt);
@@ -839,7 +840,7 @@ const getImageGenerationData = async (id: number): Promise<Generation.Data> => {
   return {
     resources: deduped.map((resource) => ({
       ...resource,
-      strength: 1,
+      strength: resource.strength ?? 1,
     })),
     params: {
       ...meta,
