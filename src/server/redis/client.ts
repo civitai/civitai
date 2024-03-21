@@ -81,6 +81,7 @@ export const REDIS_KEYS = {
   },
   CACHES: {
     FILES_FOR_MODEL_VERSION: 'caches:files-for-model-version',
+    MULTIPLIERS_FOR_USER: 'caches:multipliers-for-user',
   },
   QUEUES: {
     BUCKETS: 'queues:buckets',
