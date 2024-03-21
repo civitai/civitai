@@ -40,42 +40,42 @@ export default WebhookEndpoint(async (req, res) => {
     type: MigrationType;
     fn: (req: NextApiRequest, res: NextApiResponse) => Promise<void>;
   }> = [
-    // {
-    //   type: 'users',
-    //   fn: migrateUsers,
-    // },
+    {
+      type: 'users',
+      fn: migrateUsers,
+    },
     {
       type: 'images',
       fn: migrateImages,
     },
-    // {
-    //   type: 'posts',
-    //   fn: migratePosts,
-    // },
-    // {
-    //   type: 'articles',
-    //   fn: migrateArticles,
-    // },
-    // {
-    //   type: 'bounties',
-    //   fn: migrateBounties,
-    // },
-    // {
-    //   type: 'bountyEntries',
-    //   fn: migrateBountyEntries,
-    // },
-    // {
-    //   type: 'modelVersions',
-    //   fn: migrateModelVersions,
-    // },
-    // {
-    //   type: 'models',
-    //   fn: migrateModels,
-    // },
-    // {
-    //   type: 'collections',
-    //   fn: migrateCollections,
-    // },
+    {
+      type: 'posts',
+      fn: migratePosts,
+    },
+    {
+      type: 'articles',
+      fn: migrateArticles,
+    },
+    {
+      type: 'bounties',
+      fn: migrateBounties,
+    },
+    {
+      type: 'bountyEntries',
+      fn: migrateBountyEntries,
+    },
+    {
+      type: 'modelVersions',
+      fn: migrateModelVersions,
+    },
+    {
+      type: 'models',
+      fn: migrateModels,
+    },
+    {
+      type: 'collections',
+      fn: migrateCollections,
+    },
   ];
 
   const migrations = params.type
@@ -99,22 +99,17 @@ async function migrateImages(req: NextApiRequest, res: NextApiResponse) {
     runContext: res,
     rangeFetcher: async (context) => {
       if (params.after) {
-        console.log({ after: params.after });
-        const [{ start }] = await dbRead.$queryRaw<{ start: number }[]>`
-          SELECT MIN(id) "start" FROM "Image" WHERE "createdAt" > ${params.after};`;
-        console.log({ start });
-        context.start = start;
-
-        // const test= await dbRead.$queryRaw`
-        // WITH dates AS (
-        //   SELECT
-        //   MIN("createdAt") as start,
-        //   MAX("createdAt") as end
-        //   FROM "Image" WHERE "createdAt" > ${params.after}
-        // )
-        // SELECT MIN(id) as min, MAX(id) as max
-        // FROM "Image" i
-        // JOIN dates d ON d.start = i."createdAt" OR d.end = i."createdAt";`
+        const results = await dbRead.$queryRaw<{ start: number; end: number }[]>`
+        WITH dates AS (
+          SELECT
+          MIN("createdAt") as start,
+          MAX("createdAt") as end
+          FROM "Image" WHERE "createdAt" > ${params.after}
+        )
+        SELECT MIN(id) as start, MAX(id) as end
+        FROM "Image" i
+        JOIN dates d ON d.start = i."createdAt" OR d.end = i."createdAt";`;
+        return results[0];
       }
       const [{ max }] = await dbRead.$queryRaw<{ max: number }[]>(
         Prisma.sql`SELECT MAX(id) "max" FROM "Image";`
@@ -147,10 +142,19 @@ async function migrateUsers(req: NextApiRequest, res: NextApiResponse) {
     runContext: res,
     rangeFetcher: async (context) => {
       if (params.after) {
-        const [{ start }] = await dbRead.$queryRaw<{ start: number }[]>(
-          Prisma.sql`SELECT MIN(id) "start" FROM "User" WHERE "createdAt" > '${params.after}';`
-        );
-        context.start = start;
+        if (params.after) {
+          const results = await dbRead.$queryRaw<{ start: number; end: number }[]>`
+          WITH dates AS (
+            SELECT
+            MIN("createdAt") as start,
+            MAX("createdAt") as end
+            FROM "User" WHERE "createdAt" > ${params.after}
+          )
+          SELECT MIN(id) as start, MAX(id) as end
+          FROM "User" i
+          JOIN dates d ON d.start = i."createdAt" OR d.end = i."createdAt";`;
+          return results[0];
+        }
       }
       const [{ max }] = await dbRead.$queryRaw<{ max: number }[]>(
         Prisma.sql`SELECT MAX(id) "max" FROM "User";`
@@ -184,10 +188,17 @@ async function migratePosts(req: NextApiRequest, res: NextApiResponse) {
     runContext: res,
     rangeFetcher: async (context) => {
       if (params.after) {
-        const [{ start }] = await dbRead.$queryRaw<{ start: number }[]>(
-          Prisma.sql`SELECT MIN(id) "start" FROM "Post" WHERE "createdAt" > '${params.after.toISOString()}';`
-        );
-        context.start = start;
+        const results = await dbRead.$queryRaw<{ start: number; end: number }[]>`
+          WITH dates AS (
+            SELECT
+            MIN("createdAt") as start,
+            MAX("createdAt") as end
+            FROM "Post" WHERE "createdAt" > ${params.after}
+          )
+          SELECT MIN(id) as start, MAX(id) as end
+          FROM "Post" i
+          JOIN dates d ON d.start = i."createdAt" OR d.end = i."createdAt";`;
+        return results[0];
       }
       const [{ max }] = await dbRead.$queryRaw<{ max: number }[]>(
         Prisma.sql`SELECT MAX(id) "max" FROM "Post";`
@@ -222,10 +233,17 @@ async function migrateBounties(req: NextApiRequest, res: NextApiResponse) {
     runContext: res,
     rangeFetcher: async (context) => {
       if (params.after) {
-        const [{ start }] = await dbRead.$queryRaw<{ start: number }[]>(
-          Prisma.sql`SELECT MIN(id) "start" FROM "Bounty" WHERE "createdAt" > '${params.after.toISOString()}';`
-        );
-        context.start = start;
+        const results = await dbRead.$queryRaw<{ start: number; end: number }[]>`
+          WITH dates AS (
+            SELECT
+            MIN("createdAt") as start,
+            MAX("createdAt") as end
+            FROM "Bounty" WHERE "createdAt" > ${params.after}
+          )
+          SELECT MIN(id) as start, MAX(id) as end
+          FROM "Bounty" i
+          JOIN dates d ON d.start = i."createdAt" OR d.end = i."createdAt";`;
+        return results[0];
       }
       const [{ max }] = await dbRead.$queryRaw<{ max: number }[]>(
         Prisma.sql`SELECT MAX(id) "max" FROM "Bounty";`
@@ -267,10 +285,17 @@ async function migrateBountyEntries(req: NextApiRequest, res: NextApiResponse) {
     runContext: res,
     rangeFetcher: async (context) => {
       if (params.after) {
-        const [{ start }] = await dbRead.$queryRaw<{ start: number }[]>(
-          Prisma.sql`SELECT MIN(id) "start" FROM "BountyEntry" WHERE "createdAt" > '${params.after.toISOString()}';`
-        );
-        context.start = start;
+        const results = await dbRead.$queryRaw<{ start: number; end: number }[]>`
+          WITH dates AS (
+            SELECT
+            MIN("createdAt") as start,
+            MAX("createdAt") as end
+            FROM "BountyEntry" WHERE "createdAt" > ${params.after}
+          )
+          SELECT MIN(id) as start, MAX(id) as end
+          FROM "BountyEntry" i
+          JOIN dates d ON d.start = i."createdAt" OR d.end = i."createdAt";`;
+        return results[0];
       }
       const [{ max }] = await dbRead.$queryRaw<{ max: number }[]>(
         Prisma.sql`SELECT MAX(id) "max" FROM "BountyEntry";`
@@ -307,10 +332,17 @@ async function migrateModelVersions(req: NextApiRequest, res: NextApiResponse) {
     runContext: res,
     rangeFetcher: async (context) => {
       if (params.after) {
-        const [{ start }] = await dbRead.$queryRaw<{ start: number }[]>(
-          Prisma.sql`SELECT MIN(id) "start" FROM "ModelVersion" WHERE "createdAt" > '${params.after.toISOString()}';`
-        );
-        context.start = start;
+        const results = await dbRead.$queryRaw<{ start: number; end: number }[]>`
+          WITH dates AS (
+            SELECT
+            MIN("createdAt") as start,
+            MAX("createdAt") as end
+            FROM "ModelVersion" WHERE "createdAt" > ${params.after}
+          )
+          SELECT MIN(id) as start, MAX(id) as end
+          FROM "ModelVersion" i
+          JOIN dates d ON d.start = i."createdAt" OR d.end = i."createdAt";`;
+        return results[0];
       }
       const [{ max }] = await dbRead.$queryRaw<{ max: number }[]>(
         Prisma.sql`SELECT MAX(id) "max" FROM "ModelVersion";`
@@ -362,10 +394,17 @@ async function migrateModels(req: NextApiRequest, res: NextApiResponse) {
     runContext: res,
     rangeFetcher: async (context) => {
       if (params.after) {
-        const [{ start }] = await dbRead.$queryRaw<{ start: number }[]>(
-          Prisma.sql`SELECT MIN(id) "start" FROM "Model" WHERE "createdAt" > '${params.after.toISOString()}';`
-        );
-        context.start = start;
+        const results = await dbRead.$queryRaw<{ start: number; end: number }[]>`
+          WITH dates AS (
+            SELECT
+            MIN("createdAt") as start,
+            MAX("createdAt") as end
+            FROM "Model" WHERE "createdAt" > ${params.after}
+          )
+          SELECT MIN(id) as start, MAX(id) as end
+          FROM "Model" i
+          JOIN dates d ON d.start = i."createdAt" OR d.end = i."createdAt";`;
+        return results[0];
       }
       const [{ max }] = await dbRead.$queryRaw<{ max: number }[]>(
         Prisma.sql`SELECT MAX(id) "max" FROM "Model";`
@@ -407,10 +446,17 @@ async function migrateCollections(req: NextApiRequest, res: NextApiResponse) {
     runContext: res,
     rangeFetcher: async (context) => {
       if (params.after) {
-        const [{ start }] = await dbRead.$queryRaw<{ start: number }[]>(
-          Prisma.sql`SELECT MIN(id) "start" FROM "Collection" WHERE "createdAt" > '${params.after.toISOString()}';`
-        );
-        context.start = start;
+        const results = await dbRead.$queryRaw<{ start: number; end: number }[]>`
+          WITH dates AS (
+            SELECT
+            MIN("createdAt") as start,
+            MAX("createdAt") as end
+            FROM "Collection" WHERE "createdAt" > ${params.after}
+          )
+          SELECT MIN(id) as start, MAX(id) as end
+          FROM "Collection" i
+          JOIN dates d ON d.start = i."createdAt" OR d.end = i."createdAt";`;
+        return results[0];
       }
       const [{ max }] = await dbRead.$queryRaw<{ max: number }[]>(
         Prisma.sql`SELECT MAX(id) "max" FROM "Collection";`
@@ -445,10 +491,17 @@ async function migrateArticles(req: NextApiRequest, res: NextApiResponse) {
     runContext: res,
     rangeFetcher: async (context) => {
       if (params.after) {
-        const [{ start }] = await dbRead.$queryRaw<{ start: number }[]>(
-          Prisma.sql`SELECT MIN(id) "start" FROM "Article" WHERE "createdAt" > '${params.after.toISOString()}';`
-        );
-        context.start = start;
+        const results = await dbRead.$queryRaw<{ start: number; end: number }[]>`
+          WITH dates AS (
+            SELECT
+            MIN("createdAt") as start,
+            MAX("createdAt") as end
+            FROM "Article" WHERE "createdAt" > ${params.after}
+          )
+          SELECT MIN(id) as start, MAX(id) as end
+          FROM "Article" i
+          JOIN dates d ON d.start = i."createdAt" OR d.end = i."createdAt";`;
+        return results[0];
       }
       const [{ max }] = await dbRead.$queryRaw<{ max: number }[]>(
         Prisma.sql`SELECT MAX(id) "max" FROM "Article";`
