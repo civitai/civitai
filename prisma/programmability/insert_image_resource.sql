@@ -50,7 +50,7 @@ BEGIN
 		  irh.name,
 		  irh.hash,
 		  irh.detected,
-			row_number() OVER (PARTITION BY irh.id, irh.hash ORDER BY IIF(irh.detected,0,1), mf.id) row_number
+			row_number() OVER (PARTITION BY irh.id, irh.hash ORDER BY IIF(irh.detected,0,1), IIF(m.status = 'Published', 0, 1), mf.id) row_number
 		FROM image_resource_hashes irh
 		LEFT JOIN "ModelFileHash" mfh ON mfh.hash = irh.hash
 		LEFT JOIN "ModelFile" mf ON mf.id = mfh."fileId"
