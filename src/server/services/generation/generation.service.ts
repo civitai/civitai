@@ -813,6 +813,9 @@ const getImageGenerationData = async (id: number): Promise<Generation.Data> => {
   `;
 
   const deduped = uniqBy(resources, 'id');
+  for (const resource of deduped) {
+    if (resource.strength) resource.strength /= 100;
+  }
 
   if (meta.hashes && meta.prompt) {
     for (const [key, hash] of Object.entries(meta.hashes)) {
