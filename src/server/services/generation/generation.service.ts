@@ -816,10 +816,11 @@ const getImageGenerationData = async (id: number): Promise<Generation.Data> => {
 
   if (meta.hashes && meta.prompt) {
     for (const [key, hash] of Object.entries(meta.hashes)) {
-      if (!['lora:', 'lyco:'].includes(key)) continue;
+      if (!['lora:', 'lyco:'].some((x) => key.startsWith(x))) continue;
 
       // get the resource that matches the hash
-      const resource = deduped.find((x) => x.hash === hash);
+      const uHash = hash.toUpperCase();
+      const resource = deduped.find((x) => x.hash === uHash);
       if (!resource || resource.strength) continue;
 
       // get everything that matches <key:{number}>
