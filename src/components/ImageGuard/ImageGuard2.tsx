@@ -91,13 +91,14 @@ export function ImageGuard2({
   const showImage = useShowImagesStore(useCallback((state) => state[image.id], [image.id]));
   const key = getConnectionKey({ connectType, connectId });
   const { classes } = useBadgeStyles({ browsingLevel: nsfwLevel });
-  const { moderatedTags } = useHiddenPreferencesContext();
-  const tags = useMemo(() => {
-    const imageTags = image.tags ?? image.tagIds ?? [];
-    return moderatedTags
-      .filter((x) => x.nsfwLevel === nsfwLevel && imageTags.includes(x.id))
-      .map((x) => getTagDisplayName(x.name));
-  }, [image.tags, image.tagIds, moderatedTags, nsfwLevel]);
+  // Disable display of the moderated tags
+  // const { moderatedTags } = useHiddenPreferencesContext();
+  // const tags = useMemo(() => {
+  //   const imageTags = image.tags ?? image.tagIds ?? [];
+  //   return moderatedTags
+  //     .filter((x) => x.nsfwLevel === nsfwLevel && imageTags.includes(x.id))
+  //     .map((x) => getTagDisplayName(x.name));
+  // }, [image.tags, image.tagIds, moderatedTags, nsfwLevel]);
 
   const { tosViolation } = useImageStore(image);
 
@@ -120,7 +121,7 @@ export function ImageGuard2({
       {!show && (
         <BlurToggle>
           {(toggle) => (
-            <Center className="absolute z-10 transform -translate-x-1/2 -translate-y-1/2 top-1/2 left-1/2 flex flex-col w-full text-white">
+            <Center className="absolute z-10 transform -translate-x-1/2 -translate-y-[60%] top-1/2 left-1/2 flex flex-col w-full text-white">
               <Stack align="center" spacing="sm" w="100%">
                 <Text size="sm" className="text-shadow-sm shadow-black/50">
                   This image is rated
@@ -133,20 +134,19 @@ export function ImageGuard2({
                 >
                   {browsingLevelLabels[nsfwLevel as NsfwLevel]}
                 </Badge>
-                {tags.length ? (
+                {/* {tags.length ? (
                   <Text
                     size="xs"
                     className="text-shadow-sm shadow-black/50 opacity-70 leading-tight text-center px-5"
                   >
                     {tags.join(', ')}
                   </Text>
-                ) : null}
+                ) : null} */}
                 <Button
                   onClick={toggle}
                   radius="xl"
                   sx={(theme) => ({
-                    color:
-                      theme.colorScheme === 'dark' ? theme.colors.dark[0] : theme.colors.gray[9],
+                    color: theme.colorScheme === 'dark' ? theme.white : theme.colors.gray[9],
                     backgroundColor: theme.fn.rgba(
                       theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
                       0.6
