@@ -455,10 +455,9 @@ export const createGenerationRequest = async ({
   // Handle rate limiting
   if (await generationLimiter.hasExceededLimit(userId.toString(), userTier ?? 'free')) {
     const limitHitTime = await generationLimiter.getLimitHitTime(userId.toString());
-    let message = 'You have exceeded the generation limit.';
+    let message = 'You have exceeded the daily generation limit.';
     if (!limitHitTime) message += ' Please try again later.';
     else message += ` Please try again ${dayjs(limitHitTime).add(60, 'minutes').fromNow()}.`;
-    message += ' Time to go outside.';
     throw throwRateLimitError(message);
   }
 
