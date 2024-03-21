@@ -44,7 +44,7 @@ import { getDisplayName, slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { CollectionType, CosmeticType, ModelModifier } from '@prisma/client';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
-import { CivitiaLinkManageButton } from '~/components/CivitaiLink/CivitiaLinkManageButton';
+import { CivitaiLinkManageButton } from '~/components/CivitaiLink/CivitaiLinkManageButton';
 import { generationPanel } from '~/store/generation.store';
 import { UseQueryModelReturn } from '~/components/Model/model.utils';
 import { env } from '~/env/client.mjs';
@@ -334,7 +334,7 @@ export function ModelCard({ data, forceInView }: Props) {
                                       <IconBrush stroke={2.5} size={16} />
                                     </HoverActionButton>
                                   )}
-                                  <CivitiaLinkManageButton
+                                  <CivitaiLinkManageButton
                                     modelId={data.id}
                                     modelName={data.name}
                                     modelType={data.type}
@@ -354,7 +354,7 @@ export function ModelCard({ data, forceInView }: Props) {
                                         {icon}
                                       </HoverActionButton>
                                     )}
-                                  </CivitiaLinkManageButton>
+                                  </CivitaiLinkManageButton>
                                 </Stack>
                               </Group>
                               {image ? (

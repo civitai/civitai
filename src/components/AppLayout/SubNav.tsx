@@ -52,7 +52,7 @@ export function SubNav() {
       if (!node?.current) return;
 
       const scroll = node.current.scrollTop;
-      if (scroll > currentScroll.current)
+      if (currentScroll.current > 0 && scroll > currentScroll.current)
         subNavRef?.current?.style?.setProperty('transform', 'translateY(-200%)');
       else subNavRef?.current?.style?.setProperty('transform', 'translateY(0)');
 
