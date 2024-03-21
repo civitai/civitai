@@ -63,7 +63,6 @@ export function useBrowsingModeContext() {
 }
 
 function updateCookieValues({ browsingLevel, blurNsfw, showNsfw, disableHidden }: StoreState) {
-  console.log('update cookies');
   setCookie('level', browsingLevel);
   setCookie('blur', blurNsfw);
   setCookie('nsfw', showNsfw);
@@ -120,7 +119,6 @@ export function BrowsingModeProvider({ children }: { children: React.ReactNode }
   useEffect(() => {
     if (store && isAuthed) {
       return store.subscribe((state, prevState) => {
-        console.log('subscription');
         updateCookieValues(state);
         const disableHiddenChanged = state.disableHidden !== prevState.disableHidden;
         if (currentUser && !disableHiddenChanged) debouncer(() => mutate({ ...state }));

@@ -130,7 +130,6 @@ export const getTags = async ({
 
   if (nsfwLevel) AND.push(Prisma.sql`(t."nsfwLevel" & ${nsfwLevel}) != 0`);
 
-  let orderBy = `t."name" ASC`;
   if (!sort) {
     if (entityType?.includes(TagTarget.Model)) sort = TagSort.MostModels;
     else if (entityType?.includes(TagTarget.Image)) sort = TagSort.MostImages;
@@ -138,15 +137,16 @@ export const getTags = async ({
     else if (entityType?.includes(TagTarget.Article)) sort = TagSort.MostArticles;
   }
 
-  if (query) {
-    orderBy = `LENGTH(t."name")`;
-    if (entityType?.includes(TagTarget.Model)) orderBy += `, r."modelCountAllTimeRank"`;
-    if (entityType?.includes(TagTarget.Image)) orderBy += `, r."imageCountAllTimeRank"`;
-    if (entityType?.includes(TagTarget.Post)) orderBy += `, r."postCountAllTimeRank"`;
-  } else if (sort === TagSort.MostImages) orderBy = `r."imageCountAllTimeRank"`;
-  else if (sort === TagSort.MostModels) orderBy = `r."modelCountAllTimeRank"`;
-  else if (sort === TagSort.MostPosts) orderBy = `r."postCountAllTimeRank"`;
-  else if (sort === TagSort.MostArticles) orderBy = `r."articleCountAllTimeRank"`;
+  const tagsOrderBy: string[] = [];
+  if (query) tagsOrderBy.push(`LENGTH(t."name")`);
+  if (sort === TagSort.MostImages) tagsOrderBy.push(`r."imageCountAllTimeRank"`);
+  else if (sort === TagSort.MostModels) tagsOrderBy.push(`r."modelCountAllTimeRank"`);
+  else if (sort === TagSort.MostPosts) tagsOrderBy.push(`r."postCountAllTimeRank"`);
+  else if (sort === TagSort.MostArticles) tagsOrderBy.push(`r."articleCountAllTimeRank"`);
+  else if (sort === TagSort.MostHidden) {
+    tagsOrderBy.push(`r."hiddenCountAllTimeRank"`);
+  }
+  const orderBy = tagsOrderBy.length ? tagsOrderBy.join(', ') : `t."name" ASC`;
 
   const isCategory =
     !categories && !!categoryTags?.length
@@ -179,7 +179,7 @@ export const getTags = async ({
     FROM "Tag" t
     ${Prisma.raw(orderBy.includes('r.') ? `LEFT JOIN "TagRank" r ON r."tagId" = t."id"` : '')}
     WHERE ${Prisma.join(AND, ' AND ')}
-    ORDER BY ${Prisma.raw(orderBy)}
+    ORDER BY ${Prisma.raw(tagsOrderBy.join(', '))}
     LIMIT ${take} OFFSET ${skip}
   `;
 

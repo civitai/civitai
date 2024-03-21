@@ -81,6 +81,7 @@ export enum TagSort {
   MostImages = 'Most Images',
   MostPosts = 'Most Posts',
   MostArticles = 'Most Articles',
+  MostHidden = 'Most Hidden',
 }
 
 export enum ImageScanType {

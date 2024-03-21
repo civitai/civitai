@@ -5,6 +5,7 @@ import { uniqBy } from 'lodash-es';
 import { useRef, useState } from 'react';
 import { useHiddenPreferencesContext } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import { useHiddenPreferencesData, useToggleHiddenPreferences } from '~/hooks/hidden-preferences';
+import { TagSort } from '~/server/common/enums';
 
 import { trpc } from '~/utils/trpc';
 
@@ -24,6 +25,7 @@ export function HiddenTagsSection({ withTitle = true }: { withTitle?: boolean })
     entityType: ['Model'],
     query: debouncedSearch.toLowerCase().trim(),
     nsfwLevel: 1,
+    sort: TagSort.MostHidden,
   });
   const modelTags =
     data?.items
@@ -60,6 +62,8 @@ export function HiddenTagsSection({ withTitle = true }: { withTitle?: boolean })
           withinPortal
           variant="unstyled"
           zIndex={400}
+          limit={20}
+          maxDropdownHeight={250}
         />
       </Card.Section>
       <Card.Section inheritPadding py="md">
