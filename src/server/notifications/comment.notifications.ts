@@ -1,5 +1,6 @@
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
 import { QS } from '../../utils/qs';
+import { startCase } from 'lodash-es';
 
 export const threadUrlMap = ({ threadType, threadParentId, ...details }: any) => {
   const queryString = QS.stringify({
@@ -241,7 +242,9 @@ export const commentNotifications = createNotificationProcessor({
 
       const url = threadUrlMap(details);
       return {
-        message: `${details.username} responded to a ${details.threadType} thread you're in`,
+        message: `${details.username} responded to a ${startCase(
+          details.threadType
+        )} thread you're in`,
         url,
       };
     },
