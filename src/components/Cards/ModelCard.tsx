@@ -236,7 +236,7 @@ export function ModelCard({ data, forceInView }: Props) {
                             noWrap
                           >
                             <Group spacing={4}>
-                              <ImageGuard2.BlurToggle className={classes.chip} withLabel={false} />
+                              <ImageGuard2.BlurToggle className={classes.chip} />
                               <Badge
                                 className={cx(classes.infoChip, classes.chip)}
                                 variant="light"
