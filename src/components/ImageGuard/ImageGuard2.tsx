@@ -24,8 +24,8 @@ type ImageProps = {
   userId?: number;
   user?: { id: number };
   url?: string | null;
-  tags?: number[];
-  tagIds?: number[];
+  // tags?: number[];
+  // tagIds?: number[];
 };
 
 type ConnectId = string | number;
