@@ -92,7 +92,7 @@ export const automaticMetadataProcessor = createMetadataProcessor({
   parse(exif) {
     const metadata: ImageMetaProps = {};
     const generationDetails = exif.generationDetails as string;
-    console.log('gd', generationDetails);
+
     if (!generationDetails) return metadata;
     const metaLines = generationDetails.split('\n').filter((line) => {
       // filter out empty lines and any lines that start with a key we want to strip
