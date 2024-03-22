@@ -6,6 +6,12 @@ export const createTrainingRequestSchema = z.object({
   modelVersionId: z.number(),
 });
 
+export type CreateTrainingRequestDryRunInput = z.infer<typeof createTrainingRequestDryRunSchema>;
+export const createTrainingRequestDryRunSchema = z.object({
+  baseModel: z.string().nullable(),
+  // cost: z.number().optional(),
+});
+
 export type MoveAssetInput = z.infer<typeof moveAssetInput>;
 export const moveAssetInput = z.object({
   url: z.string().url(),
