@@ -946,15 +946,6 @@ export const getAllImages = async ({
     }
   > = rawImages
     .filter((x) => {
-      // if (x.postId === 1783839)
-      //   console.log('REEEE', {
-      //     unpub: x.unpublishedAt,
-      //     pub: x.publishedAt,
-      //     gtNow: x.publishedAt > now,
-      //     condition: !x.publishedAt || x.publishedAt > now || !!x.unpublishedAt,
-      //     otherCondition: x.userId !== userId,
-      //   });
-      // Filter out images that shouldn't be seen by user
       if (isModerator) return true;
       if (x.needsReview && x.userId !== userId) return false;
       if ((!x.publishedAt || x.publishedAt > now || !!x.unpublishedAt) && x.userId !== userId)
