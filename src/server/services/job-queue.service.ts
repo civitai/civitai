@@ -21,31 +21,3 @@ export async function enqueueJobs(
     `);
   }
 }
-
-const jobQueueMap = {
-  [EntityType.Image]: 'imageIds',
-  [EntityType.Post]: 'postIds',
-  [EntityType.Article]: 'articleIds',
-  [EntityType.Bounty]: 'bountyIds',
-  [EntityType.BountyEntry]: 'bountyEntryIds',
-  [EntityType.Collection]: 'collectionIds',
-  [EntityType.Model]: 'modelIds',
-  [EntityType.ModelVersion]: 'modelVersionIds',
-} as const;
-type JobQueueMap = typeof jobQueueMap;
-type JobQueueIds = {
-  [K in JobQueueMap[keyof JobQueueMap]]: number[];
-};
-
-export function reduceJobQueueToIds(jobs: { entityId: number; entityType: EntityType }[]) {
-  const jobIds: Partial<JobQueueIds> = {};
-  for (const key in jobQueueMap) {
-    jobIds[jobQueueMap[key as keyof JobQueueMap]] = [];
-  }
-  for (const job of jobs) {
-    const key = jobQueueMap[job.entityType];
-    if (!jobIds[key]) jobIds[key] = [];
-    jobIds[key]!.push(job.entityId);
-  }
-  return jobIds as JobQueueIds;
-}

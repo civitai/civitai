@@ -4,6 +4,7 @@ import Router from 'next/router';
 import React, { createContext, useCallback, useContext, useMemo } from 'react';
 import { create } from 'zustand';
 import { ConfirmDialog } from '~/components/Dialog/Common/ConfirmDialog';
+import { openSetBrowsingLevelModal } from '~/components/Dialog/dialog-registry';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useHiddenPreferencesContext } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -88,10 +89,10 @@ export function ImageGuard2({
   children: (show: boolean) => React.ReactElement | null;
   explain?: boolean;
 } & ConnectProps) {
-  const nsfwLevel = image.nsfwLevel ?? 0;
   const currentUser = useCurrentUser();
   const showImage = useShowImagesStore(useCallback((state) => state[image.id], [image.id]));
   const key = getConnectionKey({ connectType, connectId });
+  const { tosViolation, nsfwLevel = 0 } = useImageStore(image);
   const { classes } = useBadgeStyles({ browsingLevel: nsfwLevel });
   // Disable display of the moderated tags
   // const { moderatedTags } = useHiddenPreferencesContext();
@@ -102,15 +103,12 @@ export function ImageGuard2({
   //     .map((x) => getTagDisplayName(x.name));
   // }, [image.tags, image.tagIds, moderatedTags, nsfwLevel]);
 
-  const { tosViolation } = useImageStore(image);
-
   const showConnect = useShowConnectionStore(
     useCallback((state) => (key ? state[key] : undefined), [key])
   );
 
   const userId = image.userId ?? image.user?.id;
-  const showUnprocessed =
-    !image.nsfwLevel && (currentUser?.isModerator || userId === currentUser?.id);
+  const showUnprocessed = !nsfwLevel && (currentUser?.isModerator || userId === currentUser?.id);
   const nsfw = Flags.hasFlag(nsfwBrowsingLevelsFlag, nsfwLevel);
   const shouldBlur = (currentUser?.blurNsfw ?? true) && !showUnprocessed;
   const safe = !nsfw ? true : !shouldBlur;
@@ -218,7 +216,15 @@ function BlurToggle({
 
   if (safe)
     return currentUser?.isModerator ? (
-      <Badge classNames={classes} className={className}>
+      <Badge
+        classNames={classes}
+        className={className}
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          openSetBrowsingLevelModal({ imageId, nsfwLevel: browsingLevel });
+        }}
+      >
         {browsingLevelLabels[browsingLevel]}
       </Badge>
     ) : null;

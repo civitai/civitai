@@ -8,6 +8,7 @@ type ImageProps = {
   ingestion?: ImageIngestionStatus;
   blockedFor?: string | null;
   needsReview?: string | null;
+  nsfwLevel?: number;
 };
 
 type ImageStore = {

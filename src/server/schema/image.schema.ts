@@ -7,7 +7,7 @@ import {
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
 import { baseQuerySchema, periodModeSchema } from '~/server/schema/base.schema';
-import { ImageSort } from './../common/enums';
+import { ImageSort, NsfwLevel } from './../common/enums';
 import { SearchIndexEntityTypes } from '~/components/Search/parsers/base';
 import { zc } from '~/utils/schema-helpers';
 
@@ -293,3 +293,9 @@ export const scanJobsSchema = z
   })
   .passthrough();
 // .catchall(z.string());
+
+export type SetImageNsfwLevelOutput = z.output<typeof setImageNsfwLevelSchema>;
+export const setImageNsfwLevelSchema = z.object({
+  id: z.number(),
+  nsfwLevel: z.nativeEnum(NsfwLevel),
+});

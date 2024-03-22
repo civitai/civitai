@@ -26,6 +26,7 @@ import {
   ImageEntityType,
   ImageReviewQueueInput,
   ImageUploadProps,
+  SetImageNsfwLevelOutput,
   UpdateImageInput,
 } from '~/server/schema/image.schema';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
@@ -63,6 +64,7 @@ import { bulkSetReportStatus } from '~/server/services/report.service';
 import { baseS3Client } from '~/utils/s3-client';
 import { pgDbRead, pgDbWrite } from '~/server/db/pgDb';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
+import { trackModActivity } from '~/server/services/moderator.service';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -1093,6 +1095,7 @@ export const getImage = async ({
       i.ingestion,
       i.type,
       i.metadata,
+      i."nsfwLevel",
       COALESCE(im."cryCount", 0) "cryCount",
       COALESCE(im."laughCount", 0) "laughCount",
       COALESCE(im."likeCount", 0) "likeCount",
@@ -1423,7 +1426,6 @@ export async function getImagesForModelVersionCache(modelVersionIds: number[]) {
       return records;
     },
     appendFn: async (records) => {
-      console.log({ records });
       const imageIds = [...records].flatMap((x) => x.images.map((i) => i.id));
       const tagIdsVar = await getTagIdsForImages(imageIds);
       for (const entry of records) {
@@ -2586,4 +2588,13 @@ export async function ingestArticleCoverImages(array: { imageId: number; article
   );
 
   await ingestImageBulk({ images, lowPriority: true });
+}
+
+export async function setImageNsfwLevel({
+  id,
+  nsfwLevel,
+  user,
+}: SetImageNsfwLevelOutput & { user: SessionUser }) {
+  await dbWrite.image.update({ where: { id }, data: { nsfwLevel, nsfwLevelLocked: true } });
+  await trackModActivity(user.id, { entityType: 'image', entityId: id, activity: 'setNsfwLevel' });
 }

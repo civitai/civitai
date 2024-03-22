@@ -1164,6 +1164,7 @@ model Image {
   metadata          Json                    @default("{}") // file metadata
   nsfw              NsfwLevel               @default(None)
   nsfwLevel         Int                     @default(0)
+  nsfwLevelLocked   Boolean                 @default(false)
   tosViolation      Boolean                 @default(false)
   analysis          Json?
   generationProcess ImageGenerationProcess?

@@ -44,10 +44,10 @@ export default WebhookEndpoint(async (req, res) => {
     //   type: 'users',
     //   fn: migrateUsers,
     // },
-    // {
-    //   type: 'images',
-    //   fn: migrateImages,
-    // },
+    {
+      type: 'images',
+      fn: migrateImages,
+    },
     // {
     //   type: 'posts',
     //   fn: migratePosts,

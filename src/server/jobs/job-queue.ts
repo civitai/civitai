@@ -1,15 +1,42 @@
 import { dbRead, dbWrite } from '~/server/db/client';
 import { createJob } from './job';
-import { JobQueueType } from '@prisma/client';
+import { EntityType, JobQueueType } from '@prisma/client';
 import {
   getNsfwLevelRelatedEntities,
   updateNsfwLevels,
 } from '~/server/services/nsfwLevels.service';
-import { reduceJobQueueToIds } from '~/server/services/job-queue.service';
 import { uniq, chunk } from 'lodash-es';
 import { imagesSearchIndex } from '~/server/search-index';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
+
+const jobQueueMap = {
+  [EntityType.Image]: 'imageIds',
+  [EntityType.Post]: 'postIds',
+  [EntityType.Article]: 'articleIds',
+  [EntityType.Bounty]: 'bountyIds',
+  [EntityType.BountyEntry]: 'bountyEntryIds',
+  [EntityType.Collection]: 'collectionIds',
+  [EntityType.Model]: 'modelIds',
+  [EntityType.ModelVersion]: 'modelVersionIds',
+} as const;
+type JobQueueMap = typeof jobQueueMap;
+type JobQueueIds = {
+  [K in JobQueueMap[keyof JobQueueMap]]: number[];
+};
+
+export function reduceJobQueueToIds(jobs: { entityId: number; entityType: EntityType }[]) {
+  const jobIds: Partial<JobQueueIds> = {};
+  for (const key in jobQueueMap) {
+    jobIds[jobQueueMap[key as keyof JobQueueMap]] = [];
+  }
+  for (const job of jobs) {
+    const key = jobQueueMap[job.entityType];
+    if (!jobIds[key]) jobIds[key] = [];
+    jobIds[key]!.push(job.entityId);
+  }
+  return jobIds as JobQueueIds;
+}
 
 const updateNsfwLevelJob = createJob('update-nsfw-levels', '*/1 * * * *', async (e) => {
   // const [lastRun, setLastRun] = await getJobDate('update-nsfw-levels');
