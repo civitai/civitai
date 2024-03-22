@@ -5,7 +5,7 @@ import { clickhouse } from '~/server/clickhouse/client';
 import { dbWrite } from '~/server/db/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { TransactionType } from '~/server/schema/buzz.schema';
-import { createBuzzTransactionMany } from '~/server/services/buzz.service';
+import { createBuzzTransactionMany, getMultipliersForUser } from '~/server/services/buzz.service';
 import { hashifyObject } from '~/utils/string-helpers';
 import { withRetries } from '../utils/errorHandling';
 
@@ -48,6 +48,13 @@ export function createBuzzEvent<T>({
       awarded: -1,
     };
 
+    // Apply multipliers
+    const { rewardsMultiplier } = await getMultipliersForUser(userId);
+    if (rewardsMultiplier !== 1) {
+      data.awardAmount *= rewardsMultiplier;
+      if (data.cap) data.cap *= rewardsMultiplier;
+    }
+
     if (!isOnDemand) {
       return data;
     }
@@ -82,10 +89,7 @@ export function createBuzzEvent<T>({
     const typeCache = JSON.parse(typeCacheJson);
     const eventCount = Object.keys(typeCache).length;
 
-    data.awarded = Math.min(eventCount * awardAmount, data.cap ?? Infinity);
-    // eventCount > 0
-    //   ? Math.min(eventCount * awardAmount, data.cap ?? Infinity)
-    // : Math.min((awarded[0]?.total ?? 0) * awardAmount, data.cap ?? Infinity);
+    data.awarded = Math.min(eventCount * data.awardAmount, data.cap ?? Infinity);
 
     return data;
   };
@@ -100,7 +104,7 @@ export function createBuzzEvent<T>({
               type: TransactionType.Reward,
               toAccountId: event.toUserId,
               fromAccountId: 0, // central bank
-              amount: event.awardAmount,
+              amount: event.awardAmount * (event.multiplier ?? 1),
               description: `Buzz Reward: ${description}`,
               details: {
                 type: event.type,
@@ -149,6 +153,8 @@ export function createBuzzEvent<T>({
     const definedKey = await getKey(input, { ch: clickhouse, db: dbWrite });
     if (!definedKey) return;
 
+    const { rewardsMultiplier } = await getMultipliersForUser(definedKey.toUserId);
+
     const transactionDetails = buzzEvent.getTransactionDetails
       ? await buzzEvent.getTransactionDetails(input, { ch: clickhouse, db: dbWrite })
       : undefined;
@@ -157,6 +163,7 @@ export function createBuzzEvent<T>({
     const event: BuzzEventLog = {
       ...key,
       awardAmount,
+      multiplier: rewardsMultiplier,
       status: 'pending',
       ip: ['::1', ''].includes(ip ?? '') ? undefined : ip,
       transactionDetails: JSON.stringify(transactionDetails ?? {}),
@@ -341,6 +348,7 @@ type BuzzEventKey = {
 
 export type BuzzEventLog = BuzzEventKey & {
   awardAmount: number;
+  multiplier?: number;
   status?: 'pending' | 'awarded' | 'capped' | 'unqualified';
   ip?: string;
   version?: number;

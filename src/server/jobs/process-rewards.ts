@@ -22,27 +22,22 @@ export const processRewards = createJob('rewards-process', '*/1 * * * *', async 
   timers.optimized += await mergeUniqueEvents();
 
   // Get all records that need to be processed
-  const toProcessAll = await clickhouse
-    .query({
-      query: `
-      SELECT
-        type,
-        forId,
-        toUserId,
-        byUserId,
-        awardAmount,
-        status,
-        ip,
-        version,
-        transactionDetails
-      FROM buzzEvents
-      WHERE status = 'pending'
-        AND time >= parseDateTimeBestEffortOrNull('${chLastUpdate}')
-        AND time < parseDateTimeBestEffortOrNull('${chNow}')
-    `,
-      format: 'JSONEachRow',
-    })
-    .then((x) => x.json<BuzzEventLog[]>());
+  const toProcessAll = await clickhouse.$query<BuzzEventLog>`
+    SELECT
+      type,
+      forId,
+      toUserId,
+      byUserId,
+      awardAmount,
+      status,
+      ip,
+      version,
+      transactionDetails
+    FROM buzzEvents
+    WHERE status = 'pending'
+      AND time >= parseDateTimeBestEffortOrNull('${chLastUpdate}')
+      AND time < parseDateTimeBestEffortOrNull('${chNow}')
+  `;
 
   for (const reward of rewards) {
     const toProcess = toProcessAll.filter((x) => reward.types.includes(x.type));

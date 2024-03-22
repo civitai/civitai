@@ -25,6 +25,9 @@ import { QS } from '~/utils/qs';
 import { getUsers } from './user.service';
 import { stripTime } from '~/utils/date-helpers';
 import { eventEngine } from '~/server/events';
+import { REDIS_KEYS } from '~/server/redis/client';
+import { CacheTTL } from '~/server/common/constants';
+import { bustCachedArray, cachedObject } from '~/server/utils/cache-helpers';
 
 type AccountType = 'User';
 
@@ -54,6 +57,52 @@ export async function getUserBuzzAccount({ accountId, accountType }: GetUserBuzz
     3,
     1500
   );
+}
+
+type CachedUserMultiplier = {
+  userId: number;
+  rewardsMultiplier: number;
+  purchasesMultiplier: number;
+};
+export async function getMultipliersForUserCache(userIds: number[]) {
+  return await cachedObject<CachedUserMultiplier>({
+    key: REDIS_KEYS.CACHES.MULTIPLIERS_FOR_USER,
+    idKey: 'userId',
+    ids: userIds,
+    ttl: CacheTTL.day,
+    lookupFn: async (ids) => {
+      const multipliers = await dbRead.$queryRaw<CachedUserMultiplier[]>`
+        SELECT
+          cs."userId",
+          COALESCE((p.metadata->>'rewardsMultiplier')::int, 1) as "rewardsMultiplier",
+          COALESCE((p.metadata->>'purchasesMultiplier')::int, 1) as "purchasesMultiplier"
+        FROM "CustomerSubscription" cs
+        JOIN "Product" p ON p.id = cs."productId"
+        WHERE cs."userId" IN (1);
+      `;
+
+      const records: Record<number, CachedUserMultiplier> = Object.fromEntries(
+        multipliers.map((m) => [m.userId, m])
+      );
+      for (const userId of ids) {
+        if (records[userId]) continue;
+        records[userId] = { userId, rewardsMultiplier: 1, purchasesMultiplier: 1 };
+      }
+
+      return records;
+    },
+  });
+}
+
+export async function getMultipliersForUser(userId: number, refresh = false) {
+  if (refresh) await deleteMultipliersForUserCache(userId);
+
+  const multipliers = await getMultipliersForUserCache([userId]);
+  return multipliers[userId];
+}
+
+export async function deleteMultipliersForUserCache(userId: number) {
+  await bustCachedArray(REDIS_KEYS.CACHES.MULTIPLIERS_FOR_USER, 'userId', userId);
 }
 
 export async function getUserBuzzTransactions({
