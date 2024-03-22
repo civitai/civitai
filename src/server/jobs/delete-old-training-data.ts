@@ -28,11 +28,12 @@ export const deleteOldTrainingData = createJob(
     const oldTraining = await dbWrite.$queryRaw<OldTrainingRow[]>`
       SELECT mf.id                                         as mf_id,
              mf.metadata -> 'trainingResults' -> 'history' as history,
-             mf.metadata -> 'trainingResults' -> 'jobId'   as job_id,
+             mf.metadata -> 'trainingResults' ->> 'jobId'  as job_id,
              COALESCE(COALESCE(mf.metadata -> 'trainingResults' ->> 'submittedAt',
-		                mf.metadata -> 'trainingResults' -> 'history' -> 0 ->> 'time')::timestamp,
-                mv."updatedAt"
-              ) as submitted_at
+                               mf.metadata -> 'trainingResults' -> 'history' -> 0 ->>
+                               'time')::timestamp,
+                      mv."updatedAt"
+             )                                             as submitted_at,
              mf.visibility,
              mf.url
       FROM "ModelVersion" mv

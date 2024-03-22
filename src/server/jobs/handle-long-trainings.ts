@@ -9,7 +9,7 @@ import { getOrchestratorCaller } from '../http/orchestrator/orchestrator.caller'
 import { createJob, getJobDate } from './job';
 
 const SUBMITTED_CHECK_INTERVAL = 10;
-const PROCESSING_CHECK_INTERVAL = 20;
+// const PROCESSING_CHECK_INTERVAL = 40;
 const REJECTED_CHECK_INTERVAL = 4 * 60;
 
 const logJob = (data: MixedObject) => {
@@ -75,6 +75,7 @@ async function handleJob({
   }
 
   if (job.status === 'Failed' || job.status === 'Deleted' || job.status === 'Expired') {
+    log(`Job status is ${job.status}, failing.`);
     await updateStatus('Failed');
     return await refund();
   }
@@ -91,6 +92,7 @@ async function handleJob({
     }
   }
 
+  // we could put || status === 'Processing' here, but let's leave it out for now
   if (status === 'Submitted') {
     // - if it's not in the queue after 10 minutes, resubmit it
     if (minsDiff > SUBMITTED_CHECK_INTERVAL) {
@@ -111,13 +113,14 @@ async function handleJob({
     }
   }
 
-  if (status === 'Processing') {
-    // - if it hasn't gotten an update in 20 minutes, mark failed
-    if (minsDiff > PROCESSING_CHECK_INTERVAL) {
-      await updateStatus('Failed');
-      return await refund();
-    }
-  }
+  // if (status === 'Processing') {
+  //   // - if it hasn't gotten an update in 20 minutes, mark failed
+  //   if (minsDiff > PROCESSING_CHECK_INTERVAL) {
+  //     log(`Have not received an update in allotted time, failing.`);
+  //     await updateStatus('Failed');
+  //     return await refund();
+  //   }
+  // }
 
   return true;
 

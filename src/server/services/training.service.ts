@@ -1,4 +1,5 @@
 import { TrainingStatus } from '@prisma/client';
+import { TRPCError } from '@trpc/server';
 import { isTrainingCustomModel } from '~/components/Training/Form/TrainingCommon';
 import { trainingSettings } from '~/components/Training/Form/TrainingSubmit';
 import { env } from '~/env/server.mjs';
@@ -9,6 +10,7 @@ import { TransactionType } from '~/server/schema/buzz.schema';
 import { TrainingDetailsBaseModel, TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import {
   AutoTagInput,
+  CreateTrainingRequestDryRunInput,
   CreateTrainingRequestInput,
   defaultTrainingCost,
   MoveAssetInput,
@@ -22,6 +24,7 @@ import {
 } from '~/server/services/buzz.service';
 import {
   throwBadRequestError,
+  throwDbError,
   throwInsufficientFundsError,
   throwRateLimitError,
   withRetries,
@@ -221,16 +224,16 @@ export const createTrainingRequest = async ({
     }
   }
 
+  const eta = calcEta({
+    cost: status.cost,
+    baseModel: baseModelType,
+    targetSteps: trainingParams.targetSteps,
+  });
+
   // Determine if we still need to charge them for this training
   let transactionId = modelVersion.fileMetadata?.trainingResults?.transactionId;
   if (!transactionId) {
     // And if so, charge them
-    const eta = calcEta({
-      cost: status.cost,
-      baseModel: baseModelType,
-      targetSteps: trainingParams.targetSteps,
-    });
-
     if (eta === undefined) {
       throw throwBadRequestError(
         'Could not compute Buzz price for training - please check your parameters.'
@@ -291,6 +294,7 @@ export const createTrainingRequest = async ({
     properties: { userId, transactionId, modelFileId: modelVersion.fileId },
     model: baseModel in modelMap ? modelMap[baseModel] : baseModel,
     trainingData: trainingUrl,
+    cost: Math.round((eta ?? 0) * 100) / 100,
     retries: constants.maxTrainingRetries,
     params: {
       ...trainingParams,
@@ -350,6 +354,31 @@ export const createTrainingRequest = async ({
   return data;
 };
 
+export const createTrainingRequestDryRun = async ({
+  baseModel,
+}: // cost,
+CreateTrainingRequestDryRunInput) => {
+  if (!baseModel) return null;
+
+  const generationRequest: Orchestrator.Training.ImageResourceTrainingJobDryRunPayload = {
+    model: baseModel in modelMap ? modelMap[baseModel] : baseModel,
+    // cost: Math.round((cost ?? 0) * 100) / 100,
+    cost: 0,
+    trainingData: '',
+    params: {},
+  };
+
+  const response = await getOrchestratorCaller(new Date()).imageResourceTrainingDryRun({
+    payload: generationRequest,
+  });
+
+  if (!response.ok) {
+    return null;
+  }
+
+  return response.data?.jobs?.[0].serviceProviders?.['RunPods']?.queuePosition?.estimatedStartDate;
+};
+
 export type TagDataResponse = {
   [key: string]: {
     wdTagger: {
@@ -399,4 +428,37 @@ export const autoTagHandler = async ({
   }
 
   return response.data;
+};
+
+export const getJobEstStartsHandler = async ({ userId }: { userId: number }) => {
+  try {
+    const modelData = await dbWrite.$queryRaw<{ id: number; job_id: string | null }[]>`
+      SELECT m.id,
+             mf.metadata -> 'trainingResults' ->> 'jobId' as job_id
+      FROM "ModelVersion" mv
+             JOIN "Model" m ON m.id = mv."modelId"
+             JOIN "ModelFile" mf ON mf."modelVersionId" = mv.id AND mf.type = 'Training Data'
+      WHERE m."userId" = ${userId}
+        AND m."uploadType" = 'Trained'
+        AND m.status not in ('Published', 'Deleted')
+        AND mv."trainingStatus" = 'Submitted'
+    `;
+
+    const returnData: { [key: number]: Date | undefined } = {};
+    for (const md of modelData) {
+      const { id: mId, job_id: jobId } = md;
+      if (!jobId) continue;
+
+      const res = await getOrchestratorCaller(new Date()).getJobById({ id: jobId });
+      if (!res.ok) continue;
+      const { data } = res;
+
+      returnData[mId] = data?.serviceProviders?.['RunPods']?.queuePosition?.estimatedStartDate;
+    }
+
+    return returnData;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
 };

@@ -45,9 +45,9 @@ import { isEqual } from 'lodash-es';
 import React, { useEffect, useState } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
+import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import { goBack, goNext } from '~/components/Training/Form/TrainingCommon';
 import { TrainingEditTagsModal } from '~/components/Training/Form/TrainingEditTagsModal';
-import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import { UploadType } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE, ZIP_MIME_TYPE } from '~/server/common/mime-types';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
@@ -255,7 +255,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
       Object.entries(zData.files).map(async ([zname, zf]) => {
         // - we could read the type here with some crazy blob/hex inspecting
         const fileSplit = zname.split('.');
-        const fileExt = fileSplit.pop() || '';
+        const fileExt = (fileSplit.pop() || '').toLowerCase();
         const baseFileName = fileSplit.join('.');
         if (fileExt in imageExts) {
           const imgBlob = await zf.async('blob');
