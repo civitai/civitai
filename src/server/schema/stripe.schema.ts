@@ -78,9 +78,11 @@ export const productMetadataSchema = z
     monthlyBuzz: z.coerce.number().positive().optional(),
     animatedBadge: booleanString().optional(),
     badgeType: z.enum(['none', 'static', 'animated']),
-    tier: z.enum(['bronze', 'silver', 'gold']),
+    tier: z.enum(['founder', 'bronze', 'silver', 'gold']),
     generationLimit: z.coerce.number().positive().optional(),
     quantityLimit: z.coerce.number().positive().optional(),
     queueLimit: z.coerce.number().positive().optional(),
+    rewardsMultiplier: z.coerce.number().positive().default(1),
+    purchasesMultiplier: z.coerce.number().positive().default(1),
   })
   .passthrough();

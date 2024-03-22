@@ -21,7 +21,11 @@ import { formatPriceForDisplay } from '~/utils/number-helpers';
 import { TransactionType } from '../schema/buzz.schema';
 import * as Schema from '../schema/stripe.schema';
 import { PaymentMethodDeleteInput } from '../schema/stripe.schema';
-import { completeStripeBuzzTransaction, createBuzzTransaction } from './buzz.service';
+import {
+  completeStripeBuzzTransaction,
+  createBuzzTransaction,
+  getMultipliersForUser,
+} from './buzz.service';
 import { getOrCreateVault } from '~/server/services/vault.service';
 
 const baseUrl = getBaseUrl();
@@ -463,6 +467,7 @@ export const upsertSubscription = async (
     }
   }
 
+  await getMultipliersForUser(user.id, true);
   await invalidateSession(user.id);
 };
 
@@ -601,7 +606,7 @@ export const manageInvoicePaid = async (invoice: Stripe.Invoice) => {
         type: TransactionType.Reward,
         externalTransactionId: invoice.id,
         amount: billedProductMeta.monthlyBuzz ?? 3000, // assume a min of 3000.
-        description: 'Membership bonus',
+        description: `Membership bonus.`,
         details: { invoiceId: invoice.id },
       })
     ).catch(handleLogError);

@@ -51,8 +51,8 @@ export function createBuzzEvent<T>({
     // Apply multipliers
     const { rewardsMultiplier } = await getMultipliersForUser(userId);
     if (rewardsMultiplier !== 1) {
-      data.awardAmount *= rewardsMultiplier;
-      if (data.cap) data.cap *= rewardsMultiplier;
+      data.awardAmount = Math.ceil(rewardsMultiplier * data.awardAmount);
+      if (data.cap) data.cap = Math.ceil(rewardsMultiplier * data.cap);
     }
 
     if (!isOnDemand) {
