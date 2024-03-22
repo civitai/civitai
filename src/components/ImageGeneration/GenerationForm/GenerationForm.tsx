@@ -83,6 +83,7 @@ import Router from 'next/router';
 import { NextLink } from '@mantine/next';
 import { IconLock } from '@tabler/icons-react';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
+import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 
 const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
   const { classes } = useStyles();
@@ -134,6 +135,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
     isSDXL,
     isLCM,
     unstableResources,
+    isCalculatingCost,
   } = useDerivedGenerationState();
 
   const { conditionalPerformTransaction } = useBuzzTransaction({
@@ -248,7 +250,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
   const { requests } = useGetGenerationRequests();
   const pendingProcessingCount = usePollGenerationRequests(requests);
   const reachedRequestLimit = pendingProcessingCount >= limits.queue;
-  const disableGenerateButton = reachedRequestLimit;
+  const disableGenerateButton = reachedRequestLimit || isCalculatingCost;
 
   // Manually handle error display for prompt box
   const { errors } = form.formState;
@@ -729,38 +731,15 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                   </Stack>
                 </Card>
                 <LoginRedirect reason="image-gen" returnUrl="/generate">
-                  {/* TODO.generation: Uncomment this out by next week */}
-                  {/* {isSDXL ? (
-                        <BuzzTransactionButton
-                          type="submit"
-                          size="lg"
-                          label="Generate"
-                          loading={isSubmitting || loading}
-                          className={classes.generateButtonButton}
-                          disabled={disableGenerateButton}
-                          buzzAmount={totalCost}
-                        />
-                      ) : (
-                        <Button
-                          type="submit"
-                          size="lg"
-                          loading={isSubmitting || loading}
-                          className={classes.generateButtonButton}
-                          disabled={disableGenerateButton}
-                        >
-                          Generate
-                        </Button>
-                      )} */}
-                  <Button
+                  <BuzzTransactionButton
                     type="submit"
                     size="lg"
-                    loading={isLoading}
+                    label="Generate"
+                    loading={isCalculatingCost}
                     className={classes.generateButtonButton}
                     disabled={disableGenerateButton}
-                  >
-                    Generate
-                  </Button>
-                  {/* // TODO.generationLimit - add consumed of limit progress bar */}
+                    buzzAmount={totalCost}
+                  />
                 </LoginRedirect>
                 {/* <Tooltip label="Reset" color="dark" withArrow> */}
                 <Button

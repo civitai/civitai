@@ -15,10 +15,20 @@ class OrchestratorCaller extends HttpCaller {
     });
   }
 
-  public textToImage({ payload }: { payload: Orchestrator.Generation.TextToImageJobPayload }) {
-    return this.post<Orchestrator.Generation.TextToImageResponse>('/v1/consumer/jobs', {
-      payload: { $type: 'textToImage', ...payload },
-    });
+  public textToImage({
+    payload,
+    isTestRun = false,
+  }: {
+    payload: Omit<Orchestrator.Generation.TextToImageJobPayload, 'type'>;
+    isTestRun?: boolean;
+  }) {
+    return this.post<Orchestrator.Generation.TextToImageResponse>(
+      `/v1/consumer/jobs${isTestRun ? '?whatif=true' : undefined}`,
+      {
+        // TODO.Orchestrator: Timeout is a temporary measure - Remove once Koen approves of it.
+        payload: { $type: 'textToImage', timeout: '00:05:00', ...payload },
+      }
+    );
   }
 
   public copyAsset({

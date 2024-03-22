@@ -81,6 +81,8 @@ const featureFlags = createFeatureFlags({
   creatorsProgram: ['mod', 'granted'],
   buzzWithdrawalTransfer: ['granted'],
   vault: ['mod'],
+  // TODO.imageGenerationBuzzCharge: This should be enabled to the public once formally released.
+  imageGenerationBuzz: ['mod'],
 });
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
 

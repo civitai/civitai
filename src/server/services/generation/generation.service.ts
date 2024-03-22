@@ -61,6 +61,7 @@ import { clickhouse } from '~/server/clickhouse/client';
 import dayjs from 'dayjs';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { UserTier } from '~/server/schema/user.schema';
+import { Orchestrator } from '~/server/http/orchestrator/orchestrator.types';
 
 export function parseModelVersionId(assetId: string) {
   const pattern = /^@civitai\/(\d+)$/;
@@ -417,10 +418,9 @@ async function checkResourcesAccess(
   return true;
 }
 
-// TODO.generationLimit - delete `generation:count` key from redis
+// TODO.imageGenerationBuzzCharge - Remove all limiters. Generation will not be limited as it's now using buzz.
 const generationLimiter = createLimiter({
   counterKey: REDIS_KEYS.GENERATION.COUNT,
-  // TODO.generationLimit - add bronze, silver, gold and corresponding daily limits to `generation:limits` hset
   limitKey: REDIS_KEYS.GENERATION.LIMITS,
   fetchCount: async (userKey) => {
     if (!clickhouse) return 0;
@@ -434,6 +434,98 @@ const generationLimiter = createLimiter({
     return cost;
   },
 });
+
+export const prepareGenerationInput = async ({
+  userId,
+  resources,
+  params: { nsfw, negativePrompt, ...params },
+}: CreateGenerationRequestInput & {
+  userId: number;
+}) => {
+  const { additionalResourceTypes, aspectRatios } = getGenerationConfig(params.baseModel);
+  const status = await getGenerationStatus();
+  const isPromptNsfw = includesNsfw(params.prompt);
+  nsfw ??= isPromptNsfw !== false;
+
+  const additionalNetworks = resources
+    .filter((x) => additionalResourceTypes.map((x) => x.type).includes(x.modelType as any))
+    .reduce(
+      (acc, { id, modelType, ...rest }) => {
+        acc[`@civitai/${id}`] = { type: modelType, ...rest };
+        return acc;
+      },
+      {} as {
+        [key: string]: {
+          type: string;
+          strength?: number;
+          triggerWord?: string;
+        };
+      }
+    );
+
+  const negativePrompts = [negativePrompt ?? ''];
+  if (!nsfw && status.sfwEmbed) {
+    for (const { id, triggerWord } of safeNegatives) {
+      additionalNetworks[`@civitai/${id}`] = {
+        triggerWord,
+        type: ModelType.TextualInversion,
+      };
+      negativePrompts.unshift(triggerWord);
+    }
+  }
+
+  const positivePrompts = [params.prompt];
+  if (isPromptNsfw && status.minorFallback) {
+    for (const { id, triggerWord } of minorPositives) {
+      additionalNetworks[`@civitai/${id}`] = {
+        triggerWord,
+        type: ModelType.TextualInversion,
+      };
+      positivePrompts.unshift(triggerWord);
+    }
+    for (const { id, triggerWord } of minorNegatives) {
+      additionalNetworks[`@civitai/${id}`] = {
+        triggerWord,
+        type: ModelType.TextualInversion,
+      };
+      negativePrompts.unshift(triggerWord);
+    }
+  }
+
+  if (params.aspectRatio.includes('x'))
+    throw throwBadRequestError('Invalid size. Please select your size and try again');
+
+  const { height, width } = aspectRatios[Number(params.aspectRatio)];
+
+  const checkpoint = resources.find((x) => x.modelType === ModelType.Checkpoint);
+
+  if (!checkpoint)
+    throw throwBadRequestError('A checkpoint is required to make a generation request');
+
+  const generationRequest = {
+    userId,
+    nsfw,
+    job: {
+      model: `@civitai/${checkpoint.id}`,
+      baseModel: baseModelToOrchestration[params.baseModel as BaseModelSetType],
+      quantity: params.quantity,
+      additionalNetworks,
+      params: {
+        prompt: positivePrompts.join(', '),
+        negativePrompt: negativePrompts.join(', '),
+        scheduler: samplersToSchedulers[params.sampler as Sampler],
+        steps: params.steps,
+        cfgScale: params.cfgScale,
+        height,
+        width,
+        seed: params.seed,
+        clipSkip: params.clipSkip,
+      },
+    },
+  };
+
+  return generationRequest;
+};
 
 export const createGenerationRequest = async ({
   userId,
@@ -600,6 +692,7 @@ export const createGenerationRequest = async ({
   // console.log(JSON.stringify(generationRequest));
   // console.log('________');
 
+  // TODO.imageGenerationBuzzCharge - Remove all cost calculation from the front-end. This is done by the orchestrator. Charge happens there too.
   const totalCost = calculateGenerationBill({
     baseModel: params.baseModel,
     quantity: params.quantity,
@@ -622,7 +715,6 @@ export const createGenerationRequest = async ({
         })
       : undefined;
 
-  // TODO.generationLimit - Grab Cost from the response here
   const response = await fetch(`${env.SCHEDULER_ENDPOINT}/requests`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -652,11 +744,11 @@ export const createGenerationRequest = async ({
     throw throwBadRequestError(message);
   }
 
-  // TODO.generationLimit - increment by Cost instead of quantity
+  // TODO.imageGenerationBuzzCharge - Remove all cost calculation / generation limit from the front-end. This is done by the orchestrator.
   generationLimiter.increment(userId.toString(), params.quantity);
 
   const data: Generation.Api.RequestProps = await response.json();
-  // TODO.generationLimit - include data about limit max and used
+  // TODO.imageGenerationBuzzCharge - Remove all cost calculation / generation limit from the front-end. This is done by the orchestrator.
   const [formatted] = await formatGenerationRequests([data]);
   return formatted;
 };
@@ -963,4 +1055,27 @@ export const sendGenerationFeedback = async ({ jobId, reason, message }: SendFee
   if (!response.ok) throw new Error('An unknown error occurred. Please try again later');
 
   return response;
+};
+
+export const textToImage = async ({
+  input,
+  isTestRun,
+}: {
+  input: CreateGenerationRequestInput & {
+    userId: number;
+  };
+  isTestRun?: boolean;
+}) => {
+  const data = await prepareGenerationInput(input);
+  const response = await orchestratorCaller.textToImage({
+    payload: {
+      properties: {},
+      ...data.job,
+    },
+    isTestRun,
+  });
+
+  if (!response.ok) throw new Error('An unknown error occurred. Please try again later');
+
+  return response.data;
 };

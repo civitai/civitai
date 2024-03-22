@@ -502,7 +502,7 @@ export const generationConfig = {
       { label: 'Portrait', width: 512, height: 768 },
     ],
     costs: {
-      // TODO.generationLimit - set the base to 1 and make sure we don't actually charge Buzz
+      // TODO.imageGenerationBuzzCharge - Remove all cost calculation from the front-end. This is done by the orchestrator.
       base: 0,
       quantity: 1,
       steps: 30,
@@ -533,8 +533,7 @@ export const generationConfig = {
       { label: 'Portrait', width: 832, height: 1216 },
     ],
     costs: {
-      // TODO.generation: Uncomment this out by next week once we start charging for SDXL generation
-      // TODO.generationLimit - set the base to 4 and make sure we don't actually charge Buzz
+      // TODO.imageGenerationBuzzCharge - Remove all cost calculation from the front-end. This is done by the orchestrator.
       // base: 4,
       base: 0,
       quantity: 1,

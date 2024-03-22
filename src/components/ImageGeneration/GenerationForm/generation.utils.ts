@@ -14,6 +14,7 @@ import { calculateGenerationBill } from '~/server/common/generation';
 import { RunType } from '~/store/generation.store';
 import { uniqBy } from 'lodash';
 import {
+  CreateGenerationRequestInput,
   GenerateFormModel,
   generationStatusSchema,
   SendFeedbackInput,
@@ -24,6 +25,9 @@ import { Generation } from '~/server/services/generation/generation.types';
 import { findClosest } from '~/utils/number-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { showErrorNotification } from '~/utils/notifications';
+import { ModelType } from '@prisma/client';
+import { useDebouncedValue } from '@mantine/hooks';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export const useGenerationFormStore = create<Partial<GenerateFormModel>>()(
   persist(() => ({}), { name: 'generation-form-2', version: 0 })
@@ -37,9 +41,7 @@ export const useTempGenerateStore = create<{
 
 export const useDerivedGenerationState = () => {
   const status = useGenerationStatus();
-  const totalCost = useGenerationFormStore(({ baseModel, aspectRatio, steps, quantity }) =>
-    calculateGenerationBill({ baseModel, aspectRatio, steps, quantity })
-  );
+  const { totalCost, isCalculatingCost } = useEstimateTextToImageJobCost();
 
   const selectedResources = useGenerationFormStore(({ resources = [], model }) => {
     return model ? resources.concat([model]).filter(isDefined) : resources.filter(isDefined);
@@ -83,6 +85,7 @@ export const useDerivedGenerationState = () => {
 
     return samplerOffset + cfgOffset;
   });
+
   const unstableResources = useMemo(
     () => selectedResources.filter((x) => allUnstableResources.includes(x.id)),
     [selectedResources, allUnstableResources]
@@ -98,6 +101,7 @@ export const useDerivedGenerationState = () => {
     isSDXL: baseModel === 'SDXL',
     isLCM,
     unstableResources,
+    isCalculatingCost,
   };
 };
 
@@ -110,6 +114,65 @@ export const useGenerationStatus = () => {
 
   if (isLoading) return defaultServiceStatus;
   return status ?? defaultServiceStatus;
+};
+
+export const useEstimateTextToImageJobCost = () => {
+  const generationForm = useGenerationFormStore.getState();
+  const [debouncedGenerationForm] = useDebouncedValue(generationForm, 500);
+  const { imageGenerationBuzz } = useFeatureFlags();
+
+  const input = useMemo(() => {
+    if (!imageGenerationBuzz) {
+      return null;
+    }
+
+    const { model, resources = [], vae, ...params } = debouncedGenerationForm;
+
+    const _resources = [model, ...resources, vae].filter(isDefined).map((resource) => {
+      if (resource.modelType === 'TextualInversion')
+        return { ...resource, triggerWord: resource.trainedWords[0] };
+      return resource;
+    });
+
+    if (!_resources.length) return undefined;
+
+    return {
+      resources: _resources.filter((x) => x.covered !== false),
+      params: { ...params, baseModel: model?.baseModel },
+    };
+  }, [
+    /* eslint-disable react-hooks/exhaustive-deps */
+    debouncedGenerationForm.model,
+    debouncedGenerationForm.aspectRatio,
+    debouncedGenerationForm.steps,
+    debouncedGenerationForm.quantity,
+    debouncedGenerationForm.resources,
+    debouncedGenerationForm.sampler,
+    debouncedGenerationForm.vae,
+    imageGenerationBuzz,
+    /* eslint-enable react-hooks/exhaustive-deps */
+  ]);
+
+  const { data: result, isLoading } = trpc.generation.estimateTextToImage.useQuery(
+    input as CreateGenerationRequestInput,
+    {
+      enabled: !!input && imageGenerationBuzz,
+    }
+  );
+
+  const totalCost = imageGenerationBuzz
+    ? Math.ceil(
+        (result?.jobs ?? []).reduce((acc, job) => {
+          acc += job.cost;
+          return acc;
+        }, 0)
+      )
+    : 0;
+
+  return {
+    totalCost,
+    isCalculatingCost: imageGenerationBuzz ? false : input ? isLoading : false,
+  };
 };
 
 export const useUnsupportedResources = () => {

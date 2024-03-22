@@ -119,6 +119,7 @@ export namespace Orchestrator {
 
     export type TextToImageJob = Orchestrator.Job<{ blobKey: string; available: boolean }> & {
       serviceProviders: Record<string, ServiceProvider>;
+      cost: number;
     };
 
     export type TextToImageResponse = Orchestrator.JobResponse<TextToImageJob>;
