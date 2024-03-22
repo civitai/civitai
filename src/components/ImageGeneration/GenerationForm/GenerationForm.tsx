@@ -735,7 +735,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                     type="submit"
                     size="lg"
                     label="Generate"
-                    loading={isCalculatingCost}
+                    loading={isCalculatingCost || isLoading}
                     className={classes.generateButtonButton}
                     disabled={disableGenerateButton}
                     buzzAmount={totalCost}

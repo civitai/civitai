@@ -171,7 +171,7 @@ export const useEstimateTextToImageJobCost = () => {
 
   return {
     totalCost,
-    isCalculatingCost: imageGenerationBuzz ? false : input ? isLoading : false,
+    isCalculatingCost: !imageGenerationBuzz ? false : input ? isLoading : false,
   };
 };
 
