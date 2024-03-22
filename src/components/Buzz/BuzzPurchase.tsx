@@ -11,6 +11,8 @@ import {
   Accordion,
   ThemeIcon,
   Divider,
+  Anchor,
+  Alert,
 } from '@mantine/core';
 import { Currency, Price } from '@prisma/client';
 import {
@@ -39,6 +41,8 @@ import { BuzzPaypalButton } from './BuzzPaypalButton';
 import { closeAllModals, openConfirmModal, openModal } from '@mantine/modals';
 import { dialogStore } from '../Dialog/dialogStore';
 import { AlertDialog } from '../Dialog/Common/AlertDialog';
+import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
+import { useUserMultipliers } from '~/components/Buzz/useBuzz';
 
 const useStyles = createStyles((theme) => ({
   chipGroup: {
@@ -139,6 +143,9 @@ export const BuzzPurchase = ({
   const [customAmount, setCustomAmount] = useState<number | undefined>();
   const [activeControl, setActiveControl] = useState<string | null>(null);
   const ctaEnabled = !!selectedPrice?.unitAmount || (!selectedPrice && customAmount);
+  const { multipliers, multipliersLoading } = useUserMultipliers();
+  const purchasesMultiplier = multipliers.purchasesMultiplier ?? 1;
+
   const {
     packages = [],
     isLoading,
@@ -286,7 +293,7 @@ export const BuzzPurchase = ({
       <Stack spacing={0}>
         <Text>Buy buzz as a one-off purchase. No commitment, no strings attached.</Text>
       </Stack>
-      {isLoading || processing ? (
+      {isLoading || processing || multipliersLoading ? (
         <Center py="xl">
           <Loader variant="bars" />
         </Center>
@@ -453,6 +460,17 @@ export const BuzzPurchase = ({
           Stripe supports Credit cards, Bank transfer, Google Pay, Apple Pay, and more.
         </Text>
       </Stack>
+      <DismissibleAlert
+        id="rewards-program-notice"
+        content={
+          <Text align="center">
+            Want to get free Buzz? Check out our{' '}
+            <Anchor href="/user/buzz-dashboard#rewards" target="_blank">
+              rewards program
+            </Anchor>
+          </Text>
+        }
+      />
     </Stack>
   );
 };

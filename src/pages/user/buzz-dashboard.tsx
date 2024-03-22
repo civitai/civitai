@@ -76,7 +76,9 @@ export default function UserBuzzDashboard() {
 
           <Paper withBorder className={classes.tileCard} h="100%">
             <Stack p="md">
-              <Title order={3}>Other ways you can earn Buzz</Title>
+              <Title order={3} id="rewards">
+                Other ways you can earn Buzz
+              </Title>
               {loadingRewards ? (
                 <Center py="xl">
                   <Loader />

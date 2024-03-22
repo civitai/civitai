@@ -13,6 +13,7 @@ import {
 import {
   completeStripeBuzzTransaction,
   createBuzzTransaction,
+  getMultipliersForUser,
   getUserBuzzAccount,
   getUserBuzzTransactions,
 } from '~/server/services/buzz.service';
@@ -239,3 +240,11 @@ export async function depositClubFundsHandler({
     throw getTRPCErrorFromUnknown(error);
   }
 }
+
+export const getUserMultipliersHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
+  try {
+    return getMultipliersForUser(ctx.user.id);
+  } catch (error) {
+    throw getTRPCErrorFromUnknown(error);
+  }
+};
