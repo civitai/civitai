@@ -27,7 +27,7 @@ import {
 } from '~/server/utils/errorHandling';
 import { ChatAllMessages, ChatCreateChat } from '~/types/router';
 
-const maxChats = 100;
+const maxChats = 200;
 const maxChatsPerDay = 10;
 const maxUsersPerChat = 10;
 

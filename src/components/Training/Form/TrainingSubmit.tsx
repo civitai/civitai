@@ -5,8 +5,10 @@ import {
   Button,
   Card,
   createStyles,
+  Divider,
   Group,
   Input,
+  Loader,
   Paper,
   SegmentedControl,
   Stack,
@@ -19,6 +21,7 @@ import { openConfirmModal } from '@mantine/modals';
 import { showNotification } from '@mantine/notifications';
 import { Currency, ModelType, TrainingStatus } from '@prisma/client';
 import { IconAlertCircle, IconAlertTriangle } from '@tabler/icons-react';
+import dayjs from 'dayjs';
 import { useRouter } from 'next/router';
 import React, { useEffect, useState } from 'react';
 import { z } from 'zod';
@@ -33,7 +36,6 @@ import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable
 import InputResourceSelect from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
 import { goBack, isTrainingCustomModel } from '~/components/Training/Form/TrainingCommon';
 import { useTrainingServiceStatus } from '~/components/Training/training.utils';
-import { trainingMinsWait } from '~/components/User/UserTrainingModels';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Form, InputCheckbox, InputNumber, InputSelect, InputText, useForm } from '~/libs/form';
 import { BaseModel, baseModelSets } from '~/server/common/constants';
@@ -465,6 +467,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   const [baseModel15, setBaseModel15] = useState<TrainingDetailsBaseModel15 | null>(null);
   const [baseModelXL, setBaseModelXL] = useState<TrainingDetailsBaseModelXL | null>('sdxl');
   const [etaMins, setEtaMins] = useState<number | undefined>(undefined);
+  // const [debouncedEtaMins] = useDebouncedValue(etaMins, 2000);
   const [buzzCost, setBuzzCost] = useState<number | undefined>(undefined);
   const [awaitInvalidate, setAwaitInvalidate] = useState<boolean>(false);
   const status = useTrainingServiceStatus();
@@ -608,6 +611,21 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [watchFieldOptimizer]);
+
+  const { data: dryRunData, isFetching: dryRunLoading } =
+    trpc.training.createRequestDryRun.useQuery(
+      {
+        baseModel: formBaseModel,
+        // cost: debouncedEtaMins,
+      },
+      {
+        refetchInterval: 1000 * 60,
+        refetchIntervalInBackground: false,
+        refetchOnWindowFocus: true,
+        staleTime: 1000 * 60,
+        enabled: !!formBaseModel,
+      }
+    );
 
   // TODO [bw] this should be a new route for modelVersion.update instead
   const upsertVersionMutation = trpc.modelVersion.upsert.useMutation({
@@ -1236,10 +1254,30 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
             >
               {/* TODO: some tooltip -> link explaining */}
               <Group spacing="sm">
+                <Badge>Est. Wait Time</Badge>
+                {dryRunLoading ? (
+                  <Loader size="sm" />
+                ) : (
+                  <Text>
+                    {/*{!!dryRunData ? formatDate(dryRunData, 'MMM D, YYYY hh:mm:ss A') : 'Unknown'}*/}
+                    {!!dryRunData ? dayjs(dryRunData).add(10, 's').fromNow(true) : 'Unknown'}
+                  </Text>
+                )}
+                <Divider orientation="vertical" />
                 <Badge>ETA</Badge>
-                <Text>
-                  {!isDefined(etaMins) ? 'Unknown' : minsToHours(etaMins + trainingMinsWait)}
-                </Text>
+                {dryRunLoading ? (
+                  <Loader size="sm" />
+                ) : (
+                  <Text>
+                    {!isDefined(etaMins)
+                      ? 'Unknown'
+                      : minsToHours(
+                          (!!dryRunData
+                            ? (new Date().getTime() - new Date(dryRunData).getTime()) / 60000
+                            : 10) + etaMins
+                        )}
+                  </Text>
+                )}
               </Group>
             </Paper>
           </>
