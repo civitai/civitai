@@ -1,4 +1,15 @@
-import { Container, Title, Text, useMantineTheme, Switch, Stack } from '@mantine/core';
+import {
+  Container,
+  Title,
+  Text,
+  useMantineTheme,
+  Switch,
+  Stack,
+  Badge,
+  Card,
+  Group,
+  Divider,
+} from '@mantine/core';
 import { Dropzone } from '@mantine/dropzone';
 import { IconPhoto, IconUpload, IconX } from '@tabler/icons-react';
 import { useState } from 'react';
@@ -58,7 +69,31 @@ export default function MetadataTester() {
             </Text>
           </div>
         </Dropzone>
-        {meta && <ImageMeta meta={meta} />}
+        {meta && (
+          <>
+            {meta.resources && (
+              <Card withBorder p="sm">
+                {(meta.resources as any[]).map((resource) => (
+                  <Card.Section key={resource.id} inheritPadding py="xs" withBorder>
+                    <Group spacing={4}>
+                      <Text size="sm" weight={500}>
+                        {resource.name}
+                      </Text>
+                      <Badge color="blue" size="xs">
+                        {resource.type}
+                        {resource.weight && <> {resource.weight}</>}
+                      </Badge>
+                      <Text size="xs" color="dimmed" ml="auto">
+                        {resource.hash}
+                      </Text>
+                    </Group>
+                  </Card.Section>
+                ))}
+              </Card>
+            )}
+            <ImageMeta meta={meta} />
+          </>
+        )}
       </Stack>
     </Container>
   );
