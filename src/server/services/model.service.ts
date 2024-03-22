@@ -10,7 +10,7 @@ import {
 } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { ManipulateType } from 'dayjs';
-import { isEmpty, groupBy } from 'lodash-es';
+import { isEmpty } from 'lodash-es';
 import { SessionUser } from 'next-auth';
 
 import { env } from '~/env/server.mjs';
@@ -35,7 +35,7 @@ import {
   UnpublishModelSchema,
 } from '~/server/schema/model.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
-import { modelsSearchIndex } from '~/server/search-index';
+import { imagesSearchIndex, modelsSearchIndex } from '~/server/search-index';
 import { associatedResourceSelect } from '~/server/selectors/model.selector';
 import { modelFileSelect } from '~/server/selectors/modelFile.selector';
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
@@ -1356,7 +1356,23 @@ export const publishModelById = async ({
       )
     );
   }
+
+  // Fetch affected posts to update their images in search index
+  const posts = await dbRead.post.findMany({
+    where: { modelVersionId: { in: model.modelVersions.map((x) => x.id) }, userId: model.userId },
+    select: { id: true },
+  });
+  const images = await dbRead.image.findMany({
+    where: { postId: { in: posts.map((x) => x.id) } },
+    select: { id: true },
+  });
+
+  // Update search index for model
   await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+  // Update search index for all affected images
+  await imagesSearchIndex.queueUpdate(
+    images.map((x) => ({ id: x.id, action: SearchIndexUpdateQueueAction.Update }))
+  );
 
   return model;
 };
@@ -1419,8 +1435,22 @@ export const unpublishModelById = async ({
     { timeout: 10000 }
   );
 
+  // Fetch affected posts to remove their images from search index
+  const posts = await dbRead.post.findMany({
+    where: { modelVersionId: { in: model.modelVersions.map((x) => x.id) }, userId: model.userId },
+    select: { id: true },
+  });
+  const images = await dbRead.image.findMany({
+    where: { postId: { in: posts.map((x) => x.id) } },
+    select: { id: true },
+  });
+
   // Remove this model from search index as it's been unpublished.
   await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
+  // Remove all affected images from search index
+  await imagesSearchIndex.queueUpdate(
+    images.map((x) => ({ id: x.id, action: SearchIndexUpdateQueueAction.Delete }))
+  );
 
   return model;
 };

@@ -25,7 +25,7 @@ import {
 import { updateModelLastVersionAt } from './model.service';
 import { prepareModelInOrchestrator } from './generation/generation.service';
 import { isDefined } from '~/utils/type-guards';
-import { modelsSearchIndex } from '~/server/search-index';
+import { imagesSearchIndex, modelsSearchIndex } from '~/server/search-index';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
 import dayjs from 'dayjs';
 import { clickhouse } from '~/server/clickhouse/client';
@@ -369,6 +369,24 @@ export const publishModelVersionById = async ({
     { timeout: 10000 }
   );
 
+  // Fetch all posts and images related to the model version to update in search index
+  const posts = await dbRead.post.findMany({
+    where: { modelVersionId: version.id, userId: version.model.userId },
+    select: { id: true },
+  });
+  const images = await dbRead.image.findMany({
+    where: { postId: { in: posts.map((x) => x.id) } },
+    select: { id: true },
+  });
+
+  // Update search index for model and images
+  await modelsSearchIndex.queueUpdate([
+    { id: version.model.id, action: SearchIndexUpdateQueueAction.Update },
+  ]);
+  await imagesSearchIndex.queueUpdate(
+    images.map((image) => ({ id: image.id, action: SearchIndexUpdateQueueAction.Update }))
+  );
+
   if (!republishing && !meta?.unpublishedBy)
     await updateModelLastVersionAt({ id: version.modelId });
   await prepareModelInOrchestrator({ id: version.id, baseModel: version.baseModel });
@@ -426,9 +444,22 @@ export const unpublishModelVersionById = async ({
     { timeout: 10000 }
   );
 
+  // Fetch all posts and images related to the model version to remove from search index
+  const posts = await dbRead.post.findMany({
+    where: { modelVersionId: version.id, userId: version.model.userId },
+    select: { id: true },
+  });
+  const images = await dbRead.image.findMany({
+    where: { postId: { in: posts.map((x) => x.id) } },
+    select: { id: true },
+  });
+
   await modelsSearchIndex.queueUpdate([
     { id: version.model.id, action: SearchIndexUpdateQueueAction.Update },
   ]);
+  await imagesSearchIndex.queueUpdate(
+    images.map((image) => ({ id: image.id, action: SearchIndexUpdateQueueAction.Delete }))
+  );
   await updateModelLastVersionAt({ id: version.model.id });
 
   return version;
