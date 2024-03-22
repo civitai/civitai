@@ -1804,21 +1804,43 @@ export async function getCheckpointGenerationCoverage(versionIds: number[]) {
 }
 
 export async function toggleCheckpointCoverage({ id, versionId }: ToggleCheckpointCoverageInput) {
-  await dbWrite.$executeRaw`
-    INSERT INTO "CoveredCheckpoint" ("model_id", "version_id")
-    VALUES (${id}, ${versionId})
-    ON CONFLICT DO NOTHING;
-  `;
-
-  await dbWrite.$executeRaw`
-    REFRESH MATERIALIZED VIEW "CoveredCheckpointDetails";
-  `;
-
   const affectedVersionIds = await dbWrite.$queryRaw<{ version_id: number }[]>`
     SELECT version_id FROM "CoveredCheckpointDetails"
     JOIN "ModelVersion" mv ON mv.id = version_id
-    WHERE mv."modelId" = id;
+    WHERE mv."modelId" = ${id};
   `;
+
+  const transaction: Prisma.PrismaPromise<unknown>[] = [
+    dbWrite.$executeRaw`
+      REFRESH MATERIALIZED VIEW "CoveredCheckpointDetails";
+    `,
+  ];
+
+  if (versionId) {
+    if (affectedVersionIds.some((x) => x.version_id === versionId)) {
+      transaction.unshift(
+        dbWrite.$executeRaw`
+        DELETE FROM "CoveredCheckpoint"
+        WHERE ("model_id" = ${id} AND "version_id" = ${versionId}) OR ("model_id" = ${id} AND "version_id" IS NULL);
+      `
+      );
+      affectedVersionIds.splice(
+        affectedVersionIds.findIndex((x) => x.version_id === versionId),
+        1
+      );
+    } else {
+      transaction.unshift(
+        dbWrite.$executeRaw`
+        INSERT INTO "CoveredCheckpoint" ("model_id", "version_id")
+        VALUES (${id}, ${versionId})
+        ON CONFLICT DO NOTHING;
+      `
+      );
+      affectedVersionIds.push({ version_id: versionId });
+    }
+  }
+
+  await dbWrite.$transaction(transaction);
 
   return affectedVersionIds.map((x) => x.version_id);
 }

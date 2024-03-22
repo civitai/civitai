@@ -454,10 +454,9 @@ export const createGenerationRequest = async ({
   // Handle rate limiting
   if (await generationLimiter.hasExceededLimit(userId.toString(), userTier ?? 'free')) {
     const limitHitTime = await generationLimiter.getLimitHitTime(userId.toString());
-    let message = 'You have exceeded the generation limit.';
+    let message = 'You have exceeded the daily generation limit.';
     if (!limitHitTime) message += ' Please try again later.';
     else message += ` Please try again ${dayjs(limitHitTime).add(60, 'minutes').fromNow()}.`;
-    message += ' Time to go outside.';
     throw throwRateLimitError(message);
   }
 
@@ -795,7 +794,7 @@ const getImageGenerationData = async (id: number): Promise<Generation.Data> => {
   } = imageGenerationSchema.parse(image.meta);
 
   const resources = await dbRead.$queryRaw<
-    Array<Generation.Resource & { covered: boolean; hash?: string }>
+    Array<Generation.Resource & { covered: boolean; hash?: string; strength?: number }>
   >`
     SELECT
       mv.id,
@@ -806,6 +805,7 @@ const getImageGenerationData = async (id: number): Promise<Generation.Data> => {
       m.name "modelName",
       m.type "modelType",
       ir."hash",
+      ir.strength,
       gc.covered
     FROM "ImageResource" ir
     JOIN "ModelVersion" mv on mv.id = ir."modelVersionId"
@@ -815,14 +815,18 @@ const getImageGenerationData = async (id: number): Promise<Generation.Data> => {
   `;
 
   const deduped = uniqBy(resources, 'id');
+  for (const resource of deduped) {
+    if (resource.strength) resource.strength /= 100;
+  }
 
   if (meta.hashes && meta.prompt) {
     for (const [key, hash] of Object.entries(meta.hashes)) {
-      if (!['lora:', 'lyco:'].includes(key)) continue;
+      if (!['lora:', 'lyco:'].some((x) => key.startsWith(x))) continue;
 
       // get the resource that matches the hash
-      const resource = deduped.find((x) => x.hash === hash);
-      if (!resource) continue;
+      const uHash = hash.toUpperCase();
+      const resource = deduped.find((x) => x.hash === uHash);
+      if (!resource || resource.strength) continue;
 
       // get everything that matches <key:{number}>
       const matches = new RegExp(`<${key}:([0-9\.]+)>`, 'i').exec(meta.prompt);
@@ -842,7 +846,7 @@ const getImageGenerationData = async (id: number): Promise<Generation.Data> => {
   return {
     resources: deduped.map((resource) => ({
       ...resource,
-      strength: 1,
+      strength: resource.strength ?? 1,
     })),
     params: {
       ...meta,

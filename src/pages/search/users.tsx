@@ -149,7 +149,7 @@ export function UserHitList() {
 export function UserCard({ data }: { data: UserSearchIndexRecord }) {
   if (!data) return null;
 
-  const { stats } = data;
+  const { stats, metrics } = data;
 
   return (
     <Link href={`/user/${data.username}`} passHref>
@@ -164,17 +164,15 @@ export function UserCard({ data }: { data: UserSearchIndexRecord }) {
             />
             <FollowUserButton userId={data.id} size="md" compact />
           </Group>
-          {stats && (
-            <Group spacing={8}>
-              <RankBadge size="md" rank={data.rank} />
-              <UserStatBadges
-                uploads={stats.uploadCountAllTime}
-                followers={stats.followerCountAllTime}
-                favorites={stats.thumbsUpCountAllTime}
-                downloads={stats.downloadCountAllTime}
-              />
-            </Group>
-          )}
+          <Group spacing={8}>
+            <RankBadge size="md" rank={data.rank} />
+            <UserStatBadges
+              uploads={metrics.uploadCount ?? 0}
+              followers={metrics.followerCount ?? 0}
+              favorites={stats?.thumbsUpCountAllTime ?? 0}
+              downloads={stats?.downloadCountAllTime ?? 0}
+            />
+          </Group>
         </Stack>
       </Card>
     </Link>

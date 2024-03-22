@@ -124,6 +124,8 @@ export async function cachedArray<T extends object>({
 
 export async function bustCachedArray(key: string, idKey: string, id: number | number[]) {
   const ids = Array.isArray(id) ? id : [id];
+  if (ids.length === 0) return;
+
   const cachedAt = Date.now();
   const toCache = Object.fromEntries(
     ids.map((id) => [id, JSON.stringify({ [idKey]: id, cachedAt, debounce: true })])

@@ -85,14 +85,14 @@ async function getBenefactorTasks(ctx: MetricProcessorRunContext) {
       -- update bounty entry benefactor metrics
       INSERT INTO "BountyEntryMetric" ("bountyEntryId", timeframe, "unitAmountCount")
       SELECT
-        "awardedToId",
+        bb."awardedToId",
         tf.timeframe,
         ${snippets.timeframeSum('"createdAt"', '"unitAmount"')} as "unitAmountCount"
-      FROM "BountyBenefactor"
+      FROM "BountyBenefactor" bb
       CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-      WHERE "awardedToId" IN (${ids.join(',')})
-      GROUP BY "bountyId", tf.timeframe
-      ON CONFLICT ("bountyId", timeframe) DO UPDATE
+      WHERE bb."awardedToId" IN (${ids.join(',')})
+      GROUP BY bb."bountyId", bb."awardedToId", tf.timeframe
+      ON CONFLICT ("bountyEntryId", timeframe) DO UPDATE
         SET "unitAmountCount" = EXCLUDED."unitAmountCount", "updatedAt" = NOW()
     `;
     log('getBenefactorTasks', i + 1, 'of', tasks.length, 'done');

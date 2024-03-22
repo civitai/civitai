@@ -1245,6 +1245,7 @@ model ImageResource {
   hash           String?
   imageId        Int
   image          Image         @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  strength       Int           @default(100)
   detected       Boolean       @default(false)
 
   @@unique([modelVersionId, name, imageId])

@@ -19,16 +19,18 @@ export const autoTagInput = z.object({
   modelId: z.number().positive(),
 });
 
+const trainingEtaSchema = z.object({
+  base: z.number(),
+  steps: z.number().min(0),
+  stepMultiplier: z.number().min(1),
+  expStrength: z.number().min(0),
+  expStart: z.number().min(1),
+});
 const trainingCostSchema = z.object({
-  baseModelCoeff: z.number(),
-  etaCoefficients: z.object({
-    models: z.record(z.string(), z.number()),
-    alpha: z.number(),
-    dim: z.number(),
-    steps: z.number(),
+  modelCoefficients: z.object({
+    sd15: trainingEtaSchema,
+    sdxl: trainingEtaSchema,
   }),
-  stepsCoeff: z.number().min(1),
-  stepsExp: z.number().min(1),
   hourlyCost: z.number().min(0),
   baseBuzz: z.number().min(0),
   customModelBuzz: z.number().min(0),
@@ -36,22 +38,22 @@ const trainingCostSchema = z.object({
 });
 export type TrainingCost = z.infer<typeof trainingCostSchema>;
 export const defaultTrainingCost: TrainingCost = {
-  baseModelCoeff: 0,
-  etaCoefficients: {
-    models: {
-      sdxl: 19.42979334,
-      pony: 19.42979334,
-      sd_1_5: -25.38624804,
-      anime: -23.84022578,
-      semi: -20.56343578,
-      realistic: -50.28902011,
+  modelCoefficients: {
+    sd15: {
+      base: 5,
+      steps: 0.012,
+      stepMultiplier: 1.73,
+      expStrength: 1.55,
+      expStart: 3000,
     },
-    alpha: -0.649960841,
-    dim: 0.792224422,
-    steps: 0.014458002,
+    sdxl: {
+      base: 30,
+      steps: 0.02,
+      stepMultiplier: 1.73,
+      expStrength: 1.1,
+      expStart: 2200,
+    },
   },
-  stepsCoeff: 2,
-  stepsExp: 1.17,
   hourlyCost: 0.44,
   baseBuzz: 500,
   customModelBuzz: 500,
