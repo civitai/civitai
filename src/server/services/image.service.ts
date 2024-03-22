@@ -436,24 +436,24 @@ export function applyUserPreferencesSql(
 
 type GetAllImagesRaw = {
   id: number;
-  name: string;
+  name: string | null;
   url: string;
   nsfwLevel: NsfwLevel;
-  width: number;
-  height: number;
-  hash: string;
-  meta: ImageMetaProps;
+  width: number | null;
+  height: number | null;
+  hash: string | null;
+  meta: ImageMetaProps | null;
   hideMeta: boolean;
-  generationProcess: ImageGenerationProcess;
+  generationProcess: ImageGenerationProcess | null;
   createdAt: Date;
-  mimeType: string;
-  scannedAt: Date;
+  mimeType: string | null;
+  scannedAt: Date | null;
   ingestion: ImageIngestionStatus;
   needsReview: string | null;
   userId: number;
-  index: number;
-  postId: number;
-  postTitle: string;
+  index: number | null;
+  postId: number | null;
+  postTitle: string | null;
   modelVersionId: number | null;
   imageId: number | null;
   publishedAt: Date | null;
