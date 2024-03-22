@@ -80,7 +80,7 @@ const featureFlags = createFeatureFlags({
   chat: ['user'],
   creatorsProgram: ['mod', 'granted'],
   buzzWithdrawalTransfer: ['granted'],
-  vault: ['mod'],
+  vault: ['public'],
   // TODO.imageGenerationBuzzCharge: This should be enabled to the public once formally released.
   imageGenerationBuzz: ['mod'],
 });
