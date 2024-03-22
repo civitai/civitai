@@ -95,7 +95,7 @@ export const useQueryModels = (
   options?: { keepPreviousData?: boolean; enabled?: boolean }
 ) => {
   const _filters = filters ?? {};
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const browsingLevel = useBrowsingLevelDebounced();
   const { data, isLoading, ...rest } = trpc.model.getAll.useInfiniteQuery(
     { ..._filters, browsingLevel },
@@ -140,7 +140,7 @@ export const useToggleCheckpointCoverageMutation = () => {
         return {
           ...old,
           modelVersions: old.modelVersions.map((v) =>
-            v.id === versionId ? { ...v, hasCheckpointCoverage: !v.hasCheckpointCoverage } : v
+            v.id === versionId ? { ...v, canGenerate: !v.canGenerate } : v
           ),
         };
       });

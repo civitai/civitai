@@ -1853,7 +1853,7 @@ export async function toggleCheckpointCoverage({ id, versionId }: ToggleCheckpoi
       transaction.unshift(
         dbWrite.$executeRaw`
         DELETE FROM "CoveredCheckpoint"
-        WHERE "model_id" = ${id} AND "version_id" = ${versionId};
+        WHERE ("model_id" = ${id} AND "version_id" = ${versionId}) OR ("model_id" = ${id} AND "version_id" IS NULL);
       `
       );
       affectedVersionIds.splice(

@@ -129,8 +129,6 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
       select: { id: true, modelVersionId: true },
       orderBy: { id: 'asc' },
     });
-    const coveredCheckpoints =
-      model.type === 'Checkpoint' ? await getCheckpointGenerationCoverage(modelVersionIds) : null;
 
     // recommended VAEs
     const vaeIds = filteredVersions.map((x) => x.vaeId).filter(isDefined);
@@ -194,7 +192,6 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
         const canGenerate =
           !!version.generationCoverage?.covered &&
           unavailableGenResources.indexOf(version.id) === -1;
-        const hasCheckpointCoverage = coveredCheckpoints?.includes(version.id) ?? false;
 
         // sort version files by file type, 'Model' type goes first
         const vaeFile = vaeFiles.filter((x) => x.modelVersionId === version.vaeId);
@@ -237,7 +234,6 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
           earlyAccessDeadline,
           canDownload,
           canGenerate,
-          hasCheckpointCoverage,
           files: files as Array<
             Omit<(typeof files)[number], 'metadata'> & { metadata: FileMetadata }
           >,

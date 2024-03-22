@@ -493,6 +493,7 @@ export const generationConfig = {
       { type: ModelType.LORA, baseModelSet: 'SDXL' },
       { type: ModelType.LoCon, baseModelSet: 'SDXL' },
       { type: ModelType.TextualInversion, baseModelSet: 'SDXL', baseModels: ['SD 1.5'] },
+      { type: ModelType.VAE, baseModelSet: 'SDXL' },
     ] as ResourceFilter[],
     aspectRatios: [
       { label: 'Square', width: 1024, height: 1024 },

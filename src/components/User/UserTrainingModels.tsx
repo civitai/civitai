@@ -17,6 +17,7 @@ import {
   Stack,
   Table,
   Text,
+  Tooltip,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
@@ -53,6 +54,7 @@ import { calcEta } from '~/utils/training';
 import { trpc } from '~/utils/trpc';
 import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
 
+// TODO make this an importable var
 const useStyles = createStyles((theme) => ({
   header: {
     position: 'sticky',
@@ -127,8 +129,6 @@ const trainingStatusFields: Record<TrainingStatus, { color: MantineColor; descri
 
 const modelsLimit = 10;
 
-export const trainingMinsWait = 10;
-
 export default function UserTrainingModels() {
   const { classes, cx } = useStyles();
   const queryUtils = trpc.useUtils();
@@ -136,8 +136,8 @@ export default function UserTrainingModels() {
 
   const [page, setPage] = useState(1);
   const [scrolled, setScrolled] = useState(false);
-  const [opened, { open, close }] = useDisclosure(false);
   const [modalData, setModalData] = useState<ModalData>({});
+  const [opened, { open, close }] = useDisclosure(false);
 
   const status = useTrainingServiceStatus();
   const { data, isLoading } = trpc.model.getMyTrainingModels.useQuery({ page, limit: modelsLimit });
@@ -148,6 +148,8 @@ export default function UserTrainingModels() {
     pageSize: 1,
     totalPages: 1,
   };
+
+  const { data: estData, isLoading: isEstLoading } = trpc.training.getJobEstStarts.useQuery();
 
   const deleteMutation = trpc.model.delete.useMutation({
     onSuccess: async () => {
@@ -222,6 +224,7 @@ export default function UserTrainingModels() {
               <th>Type</th>
               <th>Training Status</th>
               <th>Created</th>
+              <th>Start</th>
               <th>ETA</th>
               <th>Missing info</th>
               <th>Actions</th>
@@ -239,9 +242,9 @@ export default function UserTrainingModels() {
               items.map((model) => {
                 if (!model.modelVersions.length) return null;
                 const thisModelVersion = model.modelVersions[0];
-                const isProcessing =
-                  thisModelVersion.trainingStatus === TrainingStatus.Submitted ||
-                  thisModelVersion.trainingStatus === TrainingStatus.Processing;
+                const isSubmitted = thisModelVersion.trainingStatus === TrainingStatus.Submitted;
+                const isProcessing = thisModelVersion.trainingStatus === TrainingStatus.Processing;
+                const isRunning = isSubmitted || isProcessing;
 
                 const thisTrainingDetails = thisModelVersion.trainingDetails as
                   | TrainingDetailsObj
@@ -252,13 +255,6 @@ export default function UserTrainingModels() {
                 const hasFiles = !!thisFile;
                 const hasTrainingParams = !!thisTrainingDetails?.params;
 
-                const startTime = thisFileMetadata?.trainingResults?.history
-                  ?.filter(
-                    (h) =>
-                      h.status === TrainingStatus.Submitted ||
-                      h.status === TrainingStatus.Processing
-                  )
-                  .slice(-1)?.[0]?.time;
                 const numEpochs = thisTrainingDetails?.params?.maxTrainEpochs;
                 const epochsDone =
                   thisFileMetadata?.trainingResults?.epochs?.slice(-1)[0]?.epoch_number ?? 0;
@@ -267,7 +263,31 @@ export default function UserTrainingModels() {
                 const baseModelType = thisTrainingDetails?.baseModelType ?? 'sd15';
                 const { targetSteps } = thisTrainingDetails?.params || {};
 
-                // would love to use .every(isDefined) here but TS isn't smart enough
+                const startDate = isSubmitted
+                  ? (estData ?? {})[model.id]
+                  : thisFileMetadata?.trainingResults?.submittedAt;
+                const startStr = !!startDate
+                  ? formatDate(startDate, 'MMM D, YYYY hh:mm:ss A')
+                  : undefined;
+                const startDiv = isSubmitted ? (
+                  !!startStr ? (
+                    <Tooltip label="Estimated start time based on queue position">
+                      <Group>
+                        <Text>{startStr}</Text>
+                        <Badge>Est.</Badge>
+                      </Group>
+                    </Tooltip>
+                  ) : isEstLoading ? (
+                    <Loader size="sm" />
+                  ) : (
+                    <Text>Unknown</Text>
+                  )
+                ) : thisModelVersion.trainingStatus === TrainingStatus.Pending ? (
+                  <Text>-</Text>
+                ) : (
+                  <Text>{startStr ?? 'Unknown'}</Text>
+                );
+
                 const etaMins = !!targetSteps
                   ? calcEta({
                       cost: status.cost,
@@ -277,12 +297,10 @@ export default function UserTrainingModels() {
                   : undefined;
                 // mins wait here might need to only be calced if the last history entry is "Submitted"
                 const eta =
-                  !!startTime && !!etaMins
-                    ? new Date(
-                        new Date(startTime).getTime() + (trainingMinsWait + etaMins) * 60 * 1000
-                      )
+                  !!startDate && !!etaMins
+                    ? new Date(new Date(startDate).getTime() + etaMins * 60 * 1000)
                     : undefined;
-                const etaStr = isProcessing
+                const etaStr = isRunning
                   ? !!eta
                     ? formatDate(eta, 'MMM D, YYYY hh:mm:ss A')
                     : 'Unknown'
@@ -321,9 +339,7 @@ export default function UserTrainingModels() {
                                       ? 'Ready'
                                       : thisModelVersion.trainingStatus
                                   )}
-                                  {(thisModelVersion.trainingStatus === TrainingStatus.Submitted ||
-                                    thisModelVersion.trainingStatus ===
-                                      TrainingStatus.Processing) && <Loader size={12} />}
+                                  {isRunning && <Loader size={12} />}
                                 </Group>
                               </Badge>
                             </HoverCard.Target>
@@ -334,7 +350,7 @@ export default function UserTrainingModels() {
                               </Text>
                             </HoverCard.Dropdown>
                           </HoverCard>
-                          {thisModelVersion.trainingStatus === TrainingStatus.Processing && (
+                          {isProcessing && (
                             <>
                               <Divider size="sm" orientation="vertical" />
                               <HoverCard shadow="md" width={250} zIndex={100} withArrow>
@@ -391,7 +407,10 @@ export default function UserTrainingModels() {
                         )}
                       </HoverCard>
                     </td>
-                    <td>{etaStr}</td>
+                    <td>{startDiv}</td>
+                    <td>
+                      <Text>{etaStr}</Text>
+                    </td>
                     <td>
                       <Group spacing={8} noWrap>
                         {!hasFiles || !hasTrainingParams ? (
@@ -452,8 +471,8 @@ export default function UserTrainingModels() {
                           variant="light"
                           size="md"
                           radius="xl"
-                          onMouseUp={(e) => !isProcessing && handleDeleteModel(e, model)}
-                          disabled={isProcessing}
+                          onMouseUp={(e) => !isRunning && handleDeleteModel(e, model)}
+                          disabled={isRunning}
                         >
                           <IconTrash size={16} />
                         </ActionIcon>
