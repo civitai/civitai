@@ -55,17 +55,20 @@ export function BrowsingModeMenu() {
   return (
     <div id="browsing-mode">
       <Stack spacing="md" className="sm:min-w-96">
-        <Group position="apart">
+        {/* <Group position="apart">
           <Group align="center" spacing={4}>
             <IconEyeExclamation />
             <Text>Mature Content</Text>
           </Group>
           <Switch checked={showNsfw} onChange={(e) => toggleShowNsfw(e.target.checked)} />
-        </Group>
+        </Group> */}
         {/* <Divider /> */}
         {showNsfw && (
           <Stack spacing="lg">
-            <BrowsingLevelsGrouped />
+            <Stack spacing={4}>
+              <Text>Browsing Level</Text>
+              <BrowsingLevelsGrouped />
+            </Stack>
             <Checkbox
               checked={blurNsfw}
               onChange={(e) => toggleBlurNsfw(e.target.checked)}
