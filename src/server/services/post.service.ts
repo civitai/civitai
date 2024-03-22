@@ -153,6 +153,7 @@ export const getPostsInfinite = async ({
   const joins: string[] = [];
   if (!isOwnerRequest) {
     AND.push(Prisma.sql`p."publishedAt" < now()`);
+    AND.push(Prisma.sql`p.metadata->>'unpublishedAt' IS NULL`);
 
     // We could techically do this on the FE.
     if (browsingMode === BrowsingMode.SFW) {
@@ -175,6 +176,7 @@ export const getPostsInfinite = async ({
   } else {
     if (draftOnly) AND.push(Prisma.sql`p."publishedAt" IS NULL`);
     else AND.push(Prisma.sql`p."publishedAt" IS NOT NULL`);
+    AND.push(Prisma.sql`p.metadata->>'unpublishedAt' IS NULL`);
   }
 
   if (ids) AND.push(Prisma.sql`p.id IN (${Prisma.join(ids)})`);

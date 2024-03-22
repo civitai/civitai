@@ -74,7 +74,6 @@ import {
   upsertModel,
   getGallerySettingsByModelId,
   toggleCheckpointCoverage,
-  getCheckpointGenerationCoverage,
 } from '~/server/services/model.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { getCategoryTags } from '~/server/services/system-cache';

@@ -340,24 +340,34 @@ export const publishModelVersionById = async ({
   if (publishedAt && publishedAt > new Date()) status = ModelStatus.Scheduled;
   else publishedAt = new Date();
 
-  const version = await dbWrite.modelVersion.update({
-    where: { id },
-    data: {
-      status,
-      publishedAt: !republishing ? publishedAt : undefined,
-      meta,
-      posts:
-        status !== ModelStatus.Scheduled
-          ? { updateMany: { where: { publishedAt: null }, data: { publishedAt } } }
-          : undefined,
+  const version = await dbWrite.$transaction(
+    async (tx) => {
+      const updatedVersion = await dbWrite.modelVersion.update({
+        where: { id },
+        data: {
+          status,
+          publishedAt: !republishing ? publishedAt : undefined,
+          meta,
+        },
+        select: {
+          id: true,
+          modelId: true,
+          baseModel: true,
+          model: { select: { userId: true, id: true, type: true, nsfw: true } },
+        },
+      });
+
+      await tx.$executeRaw`
+        UPDATE "Post"
+        SET "metadata" = "metadata" - 'unpublishedAt' - 'unpublishedBy'
+        WHERE "userId" = ${updatedVersion.model.userId}
+        AND "modelVersionId" = ${updatedVersion.id}
+      `;
+
+      return updatedVersion;
     },
-    select: {
-      id: true,
-      modelId: true,
-      baseModel: true,
-      model: { select: { userId: true, id: true, type: true, nsfw: true } },
-    },
-  });
+    { timeout: 10000 }
+  );
 
   if (!republishing && !meta?.unpublishedBy)
     await updateModelLastVersionAt({ id: version.modelId });
@@ -375,6 +385,7 @@ export const unpublishModelVersionById = async ({
   meta,
   user,
 }: UnpublishModelSchema & { meta?: ModelMeta; user: SessionUser }) => {
+  const unpublishedAt = new Date().toISOString();
   const version = await dbWrite.$transaction(
     async (tx) => {
       const updatedVersion = await tx.modelVersion.update({
@@ -389,21 +400,23 @@ export const unpublishModelVersionById = async ({
                   customMessage,
                 }
               : {}),
-            unpublishedAt: new Date().toISOString(),
+            unpublishedAt,
             unpublishedBy: user.id,
           },
         },
         select: { id: true, model: { select: { id: true, userId: true, nsfw: true } } },
       });
 
-      await tx.post.updateMany({
-        where: {
-          modelVersionId: updatedVersion.id,
-          userId: updatedVersion.model.userId,
-          publishedAt: { not: null },
-        },
-        data: { publishedAt: null },
-      });
+      await tx.$executeRaw`
+        UPDATE "Post"
+        SET "metadata" = "metadata" || jsonb_build_object(
+          'unpublishedAt', ${unpublishedAt},
+          'unpublishedBy', ${user.id}
+        )
+        WHERE "publishedAt" IS NOT NULL
+        AND "userId" = ${updatedVersion.model.userId}
+        AND "modelVersionId" = ${updatedVersion.id}
+      `;
 
       await preventReplicationLag('model', updatedVersion.model.id);
       await preventReplicationLag('modelVersion', updatedVersion.id);

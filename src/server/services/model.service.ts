@@ -1102,13 +1102,19 @@ export const deleteModelById = async ({
     if (!model) return null;
 
     // TODO - account for case that a user restores a model and doesn't want all posts to be re-published
-    await tx.post.updateMany({
-      where: {
-        userId: model.userId,
-        modelVersionId: { in: model.modelVersions.map(({ id }) => id) },
-      },
-      data: { publishedAt: null },
-    });
+    await tx.$executeRaw`
+      UPDATE "Post"
+      SET "metadata" = "metadata" || jsonb_build_object(
+        'unpublishedAt', ${new Date().toISOString()},
+        'unpublishedBy', ${userId}
+      )
+      WHERE "publishedAt" IS NOT NULL
+      AND "userId" = ${model.userId}
+      AND "modelVersionId" IN (${Prisma.join(
+        model.modelVersions.map(({ id }) => id),
+        ','
+      )})
+    `;
 
     await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
 
@@ -1328,10 +1334,12 @@ export const publishModelById = async ({
       });
 
       if (includeVersions) {
-        await tx.post.updateMany({
-          where: { modelVersionId: { in: versionIds } },
-          data: { publishedAt },
-        });
+        await tx.$executeRaw`
+          UPDATE "Post"
+          SET "metadata" = "metadata" - 'unpublishedAt' - 'unpublishedBy'
+          WHERE "userId" = ${model.userId}
+          AND "modelVersionId" IN (${Prisma.join(versionIds, ',')})
+        `;
       }
       if (!republishing && !meta?.unpublishedBy) await updateModelLastVersionAt({ id, tx });
 
@@ -1365,6 +1373,7 @@ export const unpublishModelById = async ({
 }) => {
   const model = await dbWrite.$transaction(
     async (tx) => {
+      const unpublishedAt = new Date().toISOString();
       const updatedMeta = {
         ...meta,
         ...(reason
@@ -1373,7 +1382,7 @@ export const unpublishModelById = async ({
               customMessage,
             }
           : {}),
-        unpublishedAt: new Date().toISOString(),
+        unpublishedAt,
         unpublishedBy: user.id,
       };
       const updatedModel = await tx.model.update({
@@ -1391,14 +1400,19 @@ export const unpublishModelById = async ({
         select: { userId: true, modelVersions: { select: { id: true } } },
       });
 
-      await tx.post.updateMany({
-        where: {
-          modelVersionId: { in: updatedModel.modelVersions.map((x) => x.id) },
-          userId: updatedModel.userId,
-          publishedAt: { not: null },
-        },
-        data: { publishedAt: null },
-      });
+      await tx.$executeRaw`
+        UPDATE "Post"
+        SET "metadata" = "metadata" || jsonb_build_object(
+          'unpublishedAt', ${unpublishedAt},
+          'unpublishedBy', ${user.id}
+        )
+        WHERE "publishedAt" IS NOT NULL
+        AND "userId" = ${updatedModel.userId}
+        AND "modelVersionId" IN (${Prisma.join(
+          updatedModel.modelVersions.map((x) => x.id),
+          ','
+        )})
+      `;
 
       return updatedModel;
     },
