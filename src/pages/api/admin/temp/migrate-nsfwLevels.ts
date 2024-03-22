@@ -40,42 +40,42 @@ export default WebhookEndpoint(async (req, res) => {
     type: MigrationType;
     fn: (req: NextApiRequest, res: NextApiResponse) => Promise<void>;
   }> = [
-    {
-      type: 'users',
-      fn: migrateUsers,
-    },
-    {
-      type: 'images',
-      fn: migrateImages,
-    },
-    {
-      type: 'posts',
-      fn: migratePosts,
-    },
-    {
-      type: 'articles',
-      fn: migrateArticles,
-    },
-    {
-      type: 'bounties',
-      fn: migrateBounties,
-    },
-    {
-      type: 'bountyEntries',
-      fn: migrateBountyEntries,
-    },
-    {
-      type: 'modelVersions',
-      fn: migrateModelVersions,
-    },
-    {
-      type: 'models',
-      fn: migrateModels,
-    },
-    {
-      type: 'collections',
-      fn: migrateCollections,
-    },
+    // {
+    //   type: 'users',
+    //   fn: migrateUsers,
+    // },
+    // {
+    //   type: 'images',
+    //   fn: migrateImages,
+    // },
+    // {
+    //   type: 'posts',
+    //   fn: migratePosts,
+    // },
+    // {
+    //   type: 'articles',
+    //   fn: migrateArticles,
+    // },
+    // {
+    //   type: 'bounties',
+    //   fn: migrateBounties,
+    // },
+    // {
+    //   type: 'bountyEntries',
+    //   fn: migrateBountyEntries,
+    // },
+    // {
+    //   type: 'modelVersions',
+    //   fn: migrateModelVersions,
+    // },
+    // {
+    //   type: 'models',
+    //   fn: migrateModels,
+    // },
+    // {
+    //   type: 'collections',
+    //   fn: migrateCollections,
+    // },
   ];
 
   const migrations = params.type

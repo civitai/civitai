@@ -104,6 +104,36 @@ export const useQueryImages = (
   };
 };
 
+export const useQueryModelVersionImages = (
+  modelVersionId: number,
+  options?: { keepPreviousData?: boolean; enabled?: boolean }
+) => {
+  const { data, isLoading, ...rest } = trpc.image.getImagesForModelVersion.useQuery(
+    {
+      id: modelVersionId,
+    },
+    options
+  );
+
+  const images = data?.[modelVersionId]?.images;
+
+  const { items, loadingPreferences, hiddenCount } = useApplyHiddenPreferences({
+    type: 'images',
+    data: images,
+    isRefetching: rest.isRefetching,
+  });
+
+  return {
+    data,
+    flatData: images,
+    images: items,
+    removedImages: hiddenCount,
+    fetchedImages: images?.length,
+    isLoading: isLoading || loadingPreferences,
+    ...rest,
+  };
+};
+
 const CSAM_NOTIFICATION_ID = 'sending-report';
 export function useReportCsamImages(
   options?: Parameters<typeof trpc.image.reportCsamImages.useMutation>[0]

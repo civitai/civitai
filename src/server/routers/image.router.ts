@@ -40,6 +40,7 @@ import {
   createImage,
   createArticleCoverImage,
   ingestArticleCoverImages,
+  getImagesForModelVersionCache,
 } from '~/server/services/image.service';
 import { CacheTTL } from '~/server/common/constants';
 import { z } from 'zod';
@@ -92,6 +93,9 @@ export const imageRouter = router({
   //   .mutation(updateImageHandler),
   getDetail: publicProcedure.input(getByIdSchema).query(getImageDetailHandler),
   getInfinite: publicProcedure.input(getInfiniteImagesSchema).query(getInfiniteImagesHandler),
+  getImagesForModelVersion: publicProcedure
+    .input(getByIdSchema)
+    .query(({ input }) => getImagesForModelVersionCache([input.id])),
   getImagesAsPostsInfinite: publicProcedure
     .input(getInfiniteImagesSchema)
     .query(getImagesAsPostsInfiniteHandler),

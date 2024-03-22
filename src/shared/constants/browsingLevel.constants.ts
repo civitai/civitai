@@ -59,10 +59,6 @@ export function getIsSafeBrowsingLevel(level: number) {
   return level !== 0 && !Flags.intersects(level, nsfwBrowsingLevelsFlag);
 }
 
-export function getBrowsingLevelFromShowNsfw(showNsfw?: boolean) {
-  return !showNsfw ? sfwBrowsingLevelsFlag : allBrowsingLevelsFlag;
-}
-
 export const browsingLevelOr = (array: (number | undefined)[]) => {
   for (const item of array) {
     if (!!item) return item;

@@ -1257,26 +1257,13 @@ export const getImagesForModelVersion = async ({
   const userId = user?.id;
   const isModerator = user?.isModerator ?? false;
 
-  const imageWhere: Prisma.Sql[] = [
-    // Use this to return models that are live on the site, and have images, but are now owned by Civitai.
-    Prisma.sql`(p."userId" = m."userId" OR m."userId" = -1)`,
-    Prisma.sql`p."modelVersionId" IN (${Prisma.join(modelVersionIds)})`,
-    Prisma.sql`i."needsReview" IS NULL`,
-  ];
-
-  // ensure that only scanned images make it to the main feed
-  // nb: if image ingestion fails, models will not make it to any model feed (including the user published tab)
-  if (isProd) {
-    imageWhere.push(
-      Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`
-    );
-  }
+  const imageWhere: Prisma.Sql[] = [Prisma.sql`p."publishedAt" IS NOT NULL`];
 
   if (!!excludedTagIds?.length) {
     const excludedTagsOr: Prisma.Sql[] = [
       Prisma.join(
         [
-          Prisma.sql`i."ingestion" = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`,
+          Prisma.sql`i."nsfwLevel" != 0`,
           Prisma.sql`NOT EXISTS (SELECT 1 FROM "TagsOnImage" toi WHERE toi."imageId" = i.id AND toi.disabled = false AND toi."tagId" IN (${Prisma.join(
             excludedTagIds
           )}) )`,
@@ -1308,7 +1295,7 @@ export const getImagesForModelVersion = async ({
     imageWhere.push(
       browsingLevel
         ? Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`
-        : Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`
+        : Prisma.sql`i."nsfwLevel" != 0`
     );
   }
 
@@ -1326,7 +1313,11 @@ export const getImagesForModelVersion = async ({
         JOIN "Post" p ON p.id = i."postId"
         JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
         JOIN "Model" m ON m.id = mv."modelId"
-        WHERE ${Prisma.join(imageWhere, ' AND ')}
+        WHERE m."userId" != -1
+          AND (p."userId" = m."userId" OR m."userId" = -1)
+          AND p."modelVersionId" IN (${Prisma.join(modelVersionIds)})
+          AND ${Prisma.join(imageWhere, ' AND ')}
+
       ) ranked
       WHERE ranked.row_num <= ${imagesPerVersion}
     )
@@ -1342,16 +1333,61 @@ export const getImagesForModelVersion = async ({
       i.type,
       i.metadata,
       t."modelVersionId",
-      p."availability",
-      i."sizeKB"
+      p."availability"
       ${Prisma.raw(include.includes('meta') ? ', i.meta' : '')}
     FROM targets t
     JOIN "Image" i ON i.id = t.id
     JOIN "Post" p ON p.id = i."postId"
     ORDER BY i."postId", i."index"
   `;
-  // const { rows: images } = await pgDbRead.query<ImagesForModelVersions>(query);
-  const images = await dbRead.$queryRaw<ImagesForModelVersions[]>(query);
+  let images = await dbRead.$queryRaw<ImagesForModelVersions[]>(query);
+
+  const remainingModelVersionIds = modelVersionIds.filter(
+    (x) => !images.some((i) => i.modelVersionId === x)
+  );
+
+  if (remainingModelVersionIds.length) {
+    const communityImages = await dbRead.$queryRaw<ImagesForModelVersions[]>`
+        WITH targets AS (
+          SELECT
+            id,
+            "modelVersionId",
+            row_num
+          FROM (
+            SELECT
+              ir."imageId" id,
+              ir."modelVersionId",
+              row_number() OVER (PARTITION BY ir."modelVersionId" ORDER BY im."reactionCount" DESC) row_num
+            FROM "ImageResource" ir
+            JOIN "Image" i ON i.id = ir."imageId"
+            JOIN "Post" p ON p.id = i."postId"
+            JOIN "ImageMetric" im ON im."imageId" = ir."imageId" AND im.timeframe = 'AllTime'::"MetricTimeframe"
+            WHERE ir."modelVersionId" IN (${Prisma.join(remainingModelVersionIds)})
+              AND ${Prisma.join(imageWhere, ' AND ')}
+          ) ranked
+          WHERE ranked.row_num <= 20
+        )
+        SELECT
+          i.id,
+          i."userId",
+          i.name,
+          i.url,
+          i."nsfwLevel",
+          i.width,
+          i.height,
+          i.hash,
+          i.type,
+          i.metadata,
+          t."modelVersionId",
+          p."availability"
+          ${Prisma.raw(include.includes('meta') ? ', i.meta' : '')}
+        FROM targets t
+        JOIN "Image" i ON i.id = t.id
+        JOIN "Post" p ON p.id = i."postId"
+        ORDER BY t.row_num
+      `;
+    images = [...images, ...communityImages];
+  }
 
   if (include.includes('tags')) {
     const imageIds = images.map((i) => i.id);
@@ -1375,60 +1411,7 @@ export async function getImagesForModelVersionCache(modelVersionIds: number[]) {
     ids: modelVersionIds,
     ttl: CacheTTL.sm,
     lookupFn: async (ids) => {
-      const imageWhere: Prisma.Sql[] = [
-        // Use this to return models that are live on the site, and have images, but are now owned by Civitai.
-        Prisma.sql`(p."userId" = m."userId" OR m."userId" = -1)`,
-        Prisma.sql`p."modelVersionId" IN (${Prisma.join(ids)})`,
-        Prisma.sql`i."needsReview" IS NULL`,
-        Prisma.sql`i."nsfwLevel" != 0`,
-      ];
-
-      // ensure that only scanned images make it to the main feed
-      // nb: if image ingestion fails, models will not make it to any model feed (including the user published tab)
-      // if (isProd) {
-      //   imageWhere.push(
-      //     Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`
-      //   );
-      // }
-
-      const query = Prisma.sql`
-        WITH targets AS (
-          SELECT
-            id,
-            "modelVersionId"
-          FROM (
-            SELECT
-              i.id,
-              p."modelVersionId",
-              row_number() OVER (PARTITION BY p."modelVersionId" ORDER BY i."postId", i.index) row_num
-            FROM "Image" i
-            JOIN "Post" p ON p.id = i."postId"
-            JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
-            JOIN "Model" m ON m.id = mv."modelId"
-            WHERE ${Prisma.join(imageWhere, ' AND ')}
-          ) ranked
-          WHERE ranked.row_num <= 10
-        )
-        SELECT
-          i.id,
-          i."userId",
-          i.name,
-          i.url,
-          i."nsfwLevel",
-          i.width,
-          i.height,
-          i.hash,
-          i.type,
-          i.metadata,
-          t."modelVersionId",
-          p."availability"
-        FROM targets t
-        JOIN "Image" i ON i.id = t.id
-        JOIN "Post" p ON p.id = i."postId"
-        ORDER BY i."postId", i."index"
-      `;
-      // const { rows: images } = await pgDbRead.query<ImagesForModelVersions>(query);
-      const images = await dbRead.$queryRaw<ImagesForModelVersions[]>(query);
+      const images = await getImagesForModelVersion({ modelVersionIds: ids, imagesPerVersion: 20 });
 
       const records: Record<number, CachedImagesForModelVersions> = {};
       for (const image of images) {
@@ -1440,6 +1423,7 @@ export async function getImagesForModelVersionCache(modelVersionIds: number[]) {
       return records;
     },
     appendFn: async (records) => {
+      console.log({ records });
       const imageIds = [...records].flatMap((x) => x.images.map((i) => i.id));
       const tagIdsVar = await getTagIdsForImages(imageIds);
       for (const entry of records) {
