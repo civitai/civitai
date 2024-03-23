@@ -17,6 +17,7 @@ export function ModerationNav() {
         { label: 'Withdrawal Requests', href: '/moderator/buzz-withdrawal-requests' },
         { label: 'Rewards', href: '/moderator/rewards' },
         { label: 'Auditor', href: '/testing/auditor' },
+        { label: 'Rater', href: '/research/rater' },
         { label: 'Metadata Tester', href: '/testing/metadata-test' },
       ].map((link) => (
         <Menu.Item key={link.href} component={NextLink} href={link.href}>
