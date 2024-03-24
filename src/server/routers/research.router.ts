@@ -1,6 +1,10 @@
 import { z } from 'zod';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { REDIS_KEYS } from '~/server/redis/client';
 import { protectedProcedure, router } from '~/server/trpc';
+import { cachedCounter } from '~/server/utils/cache-helpers';
+import { calculateLevelProgression } from '~/server/utils/research-utils';
+import { queueNewRaterLevelWebhook } from '~/server/webhooks/research.webhooks';
 import { getRandomInt } from '~/utils/number-helpers';
 
 const raterGetImagesSchema = z.object({
@@ -25,15 +29,19 @@ async function getImageStartingPoint() {
 }
 
 export type RaterImage = { id: number; url: string; nsfwLevel: number };
+const ratingsCounter = cachedCounter(REDIS_KEYS.RESEARCH.RATINGS_COUNT, async (userId: number) => {
+  const [{ count }] = await dbRead.$queryRaw<{ count: number }[]>`
+    SELECT COUNT(*) as count
+    FROM "research_ratings"
+    WHERE "userId" = ${userId};
+  `;
+  return Number(count ?? 0);
+});
 
 export const researchRouter = router({
   raterGetStatus: protectedProcedure.query(async ({ ctx }) => {
-    const [{ count }] = await dbRead.$queryRaw<{ count: number }[]>`
-      SELECT COUNT(*) as count
-      FROM "research_ratings"
-      WHERE "userId" = ${ctx.user.id};
-    `;
-    return { count: Number(count) };
+    const count = await ratingsCounter.get(ctx.user.id);
+    return { count };
   }),
   raterGetImages: protectedProcedure.input(raterGetImagesSchema).query(async ({ input }) => {
     input.cursor ??= await getImageStartingPoint();
@@ -50,13 +58,25 @@ export const researchRouter = router({
   raterSetRatings: protectedProcedure
     .input(raterSetRatingsSchema)
     .mutation(async ({ input, ctx }) => {
+      const count = await ratingsCounter.get(ctx.user.id);
       const values = Object.entries(input.ratings).map(
-        ([imageId, nsfwLevel]) => `(${ctx.user.id}, ${imageId}, ${nsfwLevel})`
+        ([imageId, nsfwLevel]) => `(${ctx.user.id}, ${Number(imageId)}, ${nsfwLevel})`
       );
-      await dbWrite.$executeRawUnsafe(`
+      const results = await dbWrite.$queryRawUnsafe<{ imageId: number }[]>(`
         INSERT INTO "research_ratings" ("userId", "imageId", "nsfwLevel")
         VALUES ${values.join(', ')}
-        ON CONFLICT ("userId", "imageId") DO UPDATE SET "nsfwLevel" = EXCLUDED."nsfwLevel";
+        ON CONFLICT ("userId", "imageId") DO UPDATE SET "nsfwLevel" = EXCLUDED."nsfwLevel"
+        RETURNING "imageId";
       `);
+
+      if (results.length) {
+        const currentProgress = calculateLevelProgression(count);
+        console.log(results.length);
+        await ratingsCounter.incrementBy(ctx.user.id, results.length);
+        const newProgress = calculateLevelProgression(count + results.length);
+
+        // If we just did enough to level up, queue a webhook
+        if (newProgress.level > currentProgress.level) await queueNewRaterLevelWebhook(ctx.user.id);
+      }
     }),
 });
