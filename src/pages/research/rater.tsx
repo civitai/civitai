@@ -1,15 +1,13 @@
 import {
-  Container,
   Chip,
   Group,
   Stack,
-  Paper,
   Card,
   Title,
   Text,
   Badge,
   Button,
-  Skeleton,
+  Loader,
   Box,
   Kbd,
   HoverCard,
@@ -24,7 +22,6 @@ import { setPageOptions } from '~/components/AppLayout/AppLayout';
 import { RaterImage } from '~/server/routers/research.router';
 import { trpc } from '~/utils/trpc';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import useSound from 'use-sound';
 import Lottie from 'react-lottie';
 import * as levelAnimation from '~/utils/lotties/level-up-animation.json';
 import {
@@ -38,6 +35,7 @@ import {
 } from '@tabler/icons-react';
 import { calculateLevelProgression } from '~/server/utils/research-utils';
 import { NextLink } from '@mantine/next';
+import { useGameSounds } from '~/hooks/useGameSounds';
 
 const NsfwLevel = {
   PG: 1,
@@ -50,6 +48,14 @@ const NsfwLevel = {
 const NsfwNumMap = Object.fromEntries(
   Object.entries(NsfwLevel).map(([key, value]) => [value, key])
 );
+
+const levelPlayBackRates: Record<string, number> = {
+  [NsfwLevel.PG]: 1.4,
+  [NsfwLevel.PG13]: 1.2,
+  [NsfwLevel.R]: 1,
+  [NsfwLevel.X]: 0.8,
+  [NsfwLevel.XXX]: 0.7,
+};
 
 const explanationMap: Record<string, string> = {
   PG: 'Safe for all ages',
@@ -64,10 +70,7 @@ let toSet: Record<number, number> = {};
 let toSetTimeout: any;
 let levelTimeout: any;
 let ratingTimeout: any;
-
-const pointSound = '/sounds/point.mp3';
-const levelSound = '/sounds/level-up.mp3';
-const undoSound = '/sounds/undo.mp3';
+let skipCount = 0;
 
 export default function Rater() {
   const { classes } = useStyles();
@@ -79,15 +82,13 @@ export default function Rater() {
     key: 'rater-level',
     defaultValue: NsfwLevel.PG | NsfwLevel.PG13 | NsfwLevel.R,
   });
-  const [cursor, setCursor] = useLocalStorage<number>({
+  const [cursor, setCursor] = useLocalStorage<number | undefined>({
     key: 'rater-cursor',
     defaultValue: undefined,
   });
 
   // Prep Sounds
-  const [playPoint] = useSound(pointSound, { volume: 0.5 });
-  const [playLevel] = useSound(levelSound, { volume: 0.5 });
-  const [playUndo] = useSound(undoSound, { volume: 0.3 });
+  const playSound = useGameSounds();
 
   // Get Status
   const queryUtils = trpc.useContext();
@@ -103,7 +104,7 @@ export default function Rater() {
   const progression = status ? calculateLevelProgression(status.count) : undefined;
   function levelUp() {
     setIsLevelingUp(true);
-    if (!muted) playLevel();
+    if (!muted) playSound('levelUp');
     levelTimeout && clearTimeout(levelTimeout);
     levelTimeout = setTimeout(() => setIsLevelingUp(false), 2500);
   }
@@ -116,6 +117,7 @@ export default function Rater() {
     { level, cursor },
     {
       enabled: pendingImages.length < 5,
+      cacheTime: 0,
     }
   );
   useEffect(() => {
@@ -143,7 +145,10 @@ export default function Rater() {
     }, 200);
 
     // Play sound
-    if (!muted) playPoint();
+    if (!muted) {
+      if (level === NsfwLevel.Blocked) playSound('buzz');
+      else playSound('point', levelPlayBackRates[level]);
+    }
 
     // Check for level up
     const shouldLevelUp =
@@ -173,15 +178,21 @@ export default function Rater() {
     if (lastImage) {
       pendingImagesHandlers.prepend(lastImage);
       incrementCount(-1);
-      if (!muted) playUndo();
+      if (!muted) playSound('undo');
     }
   }
 
   // Handle skipping
   function skipImage() {
     if (!image) return;
+    skipCount++;
     addToHistory(image);
-    pendingImagesHandlers.shift();
+    if (skipCount % 3 === 0) {
+      setCursor(undefined);
+      pendingImagesHandlers.setState([]);
+    } else {
+      pendingImagesHandlers.shift();
+    }
   }
 
   // Handle level change
@@ -205,6 +216,7 @@ export default function Rater() {
       if (event.key === '3') handleSetLevel(NsfwLevel.R);
       if (event.key === '4') handleSetLevel(NsfwLevel.X);
       if (event.key === '5') handleSetLevel(NsfwLevel.XXX);
+      if (event.key === '6') handleSetLevel(NsfwLevel.Blocked);
       if (event.key === 'ArrowRight' || event.code === 'Space') skipImage();
       if (event.ctrlKey && event.key === 'z') undoRating();
       if (event.ctrlKey && event.shiftKey && event.key === 'Enter') levelUp();
@@ -245,11 +257,7 @@ export default function Rater() {
         </Card>
       )}
       <Box className={classes.image}>
-        {image ? (
-          <EdgeMedia src={image?.url} width={700} />
-        ) : (
-          <Skeleton height={600} width={600}></Skeleton>
-        )}
+        {image ? <EdgeMedia src={image?.url} width={700} /> : <Loader size="xl" />}
         <Card
           id="rating"
           withBorder
@@ -260,15 +268,17 @@ export default function Rater() {
         >
           PG
         </Card>
-        <ActionIcon
-          className={classes.link}
-          component={NextLink}
-          target="_blank"
-          href={`/images/${image?.id}`}
-          variant="transparent"
-        >
-          <IconExternalLink />
-        </ActionIcon>
+        {image && (
+          <ActionIcon
+            className={classes.link}
+            component={NextLink}
+            target="_blank"
+            href={`/images/${image?.id}`}
+            variant="transparent"
+          >
+            <IconExternalLink />
+          </ActionIcon>
+        )}
       </Box>
       <Group align="flex-end" className={classes.rater}>
         <Title order={1} lh={1}>
@@ -433,6 +443,8 @@ const useStyles = createStyles((theme) => ({
     display: 'flex',
     zIndex: 1,
     position: 'relative',
+    justifyContent: 'center',
+    alignItems: 'center',
     img: {
       height: 'auto',
       width: 'auto',
