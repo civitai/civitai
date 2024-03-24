@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { addToQueue, checkoutQueue } from '~/server/redis/queues';
+import { ratingsCounter } from '~/server/routers/research.router';
 import { calculateLevelProgression } from '~/server/utils/research-utils';
 import { createWebhookProcessor } from '~/server/webhooks/base.webhooks';
 
@@ -8,7 +9,7 @@ type RaterWebhookData = {
   userId: number;
   username: string;
   image: string;
-  count: number;
+  count?: number;
   level?: number;
 };
 
@@ -27,23 +28,18 @@ export const researchWebhooks = createWebhookProcessor({
             SELECT url
             FROM "Image"
             WHERE id = u."profilePictureId"
-          ), u.image) as image,
-          (
-            SELECT COUNT(*) as count
-            FROM research_ratings
-            WHERE "userId" = u.id
-          ) count
+          ), u.image) as image
         FROM "User" u
         WHERE id IN (${Prisma.join(userIds)})
       `;
-      await queue.commit();
 
       for (const result of results) {
-        result.count = Number(result.count);
+        result.count = await ratingsCounter.get(result.userId);
         const { level } = calculateLevelProgression(result.count);
         result.level = level + 1;
         if (result.image) result.image = getEdgeUrl(result.image, { width: 96 });
       }
+      await queue.commit();
 
       return results;
     },

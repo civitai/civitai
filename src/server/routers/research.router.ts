@@ -29,14 +29,17 @@ async function getImageStartingPoint() {
 }
 
 export type RaterImage = { id: number; url: string; nsfwLevel: number };
-const ratingsCounter = cachedCounter(REDIS_KEYS.RESEARCH.RATINGS_COUNT, async (userId: number) => {
-  const [{ count }] = await dbRead.$queryRaw<{ count: number }[]>`
+export const ratingsCounter = cachedCounter(
+  REDIS_KEYS.RESEARCH.RATINGS_COUNT,
+  async (userId: number) => {
+    const [{ count }] = await dbRead.$queryRaw<{ count: number }[]>`
     SELECT COUNT(*) as count
     FROM "research_ratings"
     WHERE "userId" = ${userId};
   `;
-  return Number(count ?? 0);
-});
+    return Number(count ?? 0);
+  }
+);
 
 export const researchRouter = router({
   raterGetStatus: protectedProcedure.query(async ({ ctx }) => {
@@ -71,7 +74,6 @@ export const researchRouter = router({
 
       if (results.length) {
         const currentProgress = calculateLevelProgression(count);
-        console.log(results.length);
         await ratingsCounter.incrementBy(ctx.user.id, results.length);
         const newProgress = calculateLevelProgression(count + results.length);
 

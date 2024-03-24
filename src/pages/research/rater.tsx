@@ -34,8 +34,10 @@ import {
   IconFlag,
   IconStarFilled,
   IconHelpHexagon,
+  IconExternalLink,
 } from '@tabler/icons-react';
 import { calculateLevelProgression } from '~/server/utils/research-utils';
+import { NextLink } from '@mantine/next';
 
 const NsfwLevel = {
   PG: 1,
@@ -258,6 +260,15 @@ export default function Rater() {
         >
           PG
         </Card>
+        <ActionIcon
+          className={classes.link}
+          component={NextLink}
+          target="_blank"
+          href={`/images/${image?.id}`}
+          variant="transparent"
+        >
+          <IconExternalLink />
+        </ActionIcon>
       </Box>
       <Group align="flex-end" className={classes.rater}>
         <Title order={1} lh={1}>
@@ -421,6 +432,7 @@ const useStyles = createStyles((theme) => ({
     marginTop: theme.spacing.md,
     display: 'flex',
     zIndex: 1,
+    position: 'relative',
     img: {
       height: 'auto',
       width: 'auto',
@@ -432,6 +444,12 @@ const useStyles = createStyles((theme) => ({
       borderRadius: theme.radius.md,
       boxShadow: theme.shadows.md,
     },
+  },
+  link: {
+    position: 'absolute',
+    bottom: 0,
+    right: 0,
+    zIndex: 10,
   },
   levelNotice: {
     position: 'absolute',
