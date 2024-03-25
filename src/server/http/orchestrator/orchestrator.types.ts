@@ -54,11 +54,16 @@ export namespace Orchestrator {
     export type ClearAssetsJobPayload = { jobId: string };
     export type ClearAssetsJobResponse = Orchestrator.JobResponse<ClearAssetsJob>;
 
-    const imageResourceTrainingJobInputSchema = z.object({
-      callbackUrl: z.string().url().optional(),
+    const imageResourceTrainingJobInputDryRunSchema = z.object({
       model: z.string(),
-      trainingData: z.string().url(),
+      cost: z.number(),
+      trainingData: z.string(),
+      params: z.object({}),
+    });
+    const imageResourceTrainingJobInputSchema = imageResourceTrainingJobInputDryRunSchema.extend({
+      callbackUrl: z.string().url().optional(),
       retries: z.number(),
+      trainingData: z.string().url(),
       params: z
         .object({
           modelFileId: z.number(),
@@ -68,10 +73,15 @@ export namespace Orchestrator {
         .merge(trainingDetailsParams),
       properties: z.record(z.unknown()).optional(),
     });
+    export type ImageResourceTrainingJobDryRunPayload = z.infer<
+      typeof imageResourceTrainingJobInputDryRunSchema
+    >;
     export type ImageResourceTrainingJobPayload = z.infer<
       typeof imageResourceTrainingJobInputSchema
     >;
-    export type ImageResourceTrainingResponse = Orchestrator.JobResponse;
+    export type ImageResourceTrainingResponse = Orchestrator.JobResponse<
+      Orchestrator.Job & GetJobResponse
+    >;
 
     const imageAutoTagInputSchema = z.object({
       retries: z.number().positive(),

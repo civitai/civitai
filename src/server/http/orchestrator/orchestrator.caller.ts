@@ -3,6 +3,8 @@ import { logToAxiom } from '~/server/logging/client';
 import { HttpCaller } from '../httpCaller';
 import { Orchestrator } from './orchestrator.types';
 
+const dryRunParam = 'whatif';
+
 class OrchestratorCaller extends HttpCaller {
   constructor(endpoint?: string, token?: string) {
     endpoint ??= env.ORCHESTRATOR_ENDPOINT;
@@ -77,6 +79,19 @@ class OrchestratorCaller extends HttpCaller {
     return this.post<Orchestrator.Training.ImageResourceTrainingResponse>('/v1/consumer/jobs', {
       payload: { $type: 'imageResourceTraining', ...payload },
     });
+  }
+
+  public imageResourceTrainingDryRun({
+    payload,
+  }: {
+    payload: Orchestrator.Training.ImageResourceTrainingJobDryRunPayload;
+  }) {
+    return this.post<Orchestrator.Training.ImageResourceTrainingResponse>(
+      `/v1/consumer/jobs?${dryRunParam}=true`,
+      {
+        payload: { $type: 'imageResourceTraining', ...payload },
+      }
+    );
   }
 
   public imageAutoTag({ payload }: { payload: Orchestrator.Training.ImageAutoTagJobPayload }) {

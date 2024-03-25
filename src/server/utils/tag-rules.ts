@@ -185,6 +185,7 @@ const tagCombos: ComputedTagCombo[] = [
   {
     tag: 'sexual situations',
     qualifiers: [
+      '!sexual activity',
       'undressing',
       'downblouse + tongue out',
       'ass focus',
@@ -199,6 +200,7 @@ const tagCombos: ComputedTagCombo[] = [
       'grabbing own breast',
       'oral invitation',
       'erection under clothes',
+      'lying + on back + legs up',
     ],
     sources: [TagSource.WD14],
   },

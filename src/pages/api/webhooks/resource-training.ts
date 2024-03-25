@@ -126,7 +126,8 @@ export default WebhookEndpoint(async (req, res) => {
       try {
         await updateRecords(
           { ...(data.context ?? {}), modelFileId: data.jobProperties.modelFileId },
-          status
+          status,
+          data.jobId
         );
       } catch (e: unknown) {
         logWebhook({
@@ -154,7 +155,8 @@ export default WebhookEndpoint(async (req, res) => {
 
 async function updateRecords(
   { modelFileId, message, epochs, start_time, end_time }: ContextProps & { modelFileId: number },
-  status: TrainingStatus
+  status: TrainingStatus,
+  jobId: string
 ) {
   const modelFile = await dbWrite.modelFile.findFirst({
     where: { id: modelFileId },
@@ -234,12 +236,19 @@ async function updateRecords(
     });
   }
 
-  await fetch(
-    `${env.SIGNALS_ENDPOINT}/users/${model.user.id}/signals/${SignalMessages.TrainingUpdate}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ modelId: model.id, status, fileMetadata: metadata }),
-    }
-  );
+  try {
+    await fetch(
+      `${env.SIGNALS_ENDPOINT}/users/${model.user.id}/signals/${SignalMessages.TrainingUpdate}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ modelId: model.id, status, fileMetadata: metadata }),
+      }
+    );
+  } catch (e: unknown) {
+    logWebhook({
+      message: 'Failed to send signal for update',
+      data: { error: (e as Error)?.message, cause: (e as Error)?.cause, jobId },
+    });
+  }
 }

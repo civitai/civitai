@@ -140,3 +140,33 @@ export async function cachedObject<T extends object>(lookupOptions: CachedLookup
     results.map((x) => [(x[lookupOptions.idKey] as number | string).toString(), x])
   ) as Record<string, T>;
 }
+
+export type CachedCounterOptions = {
+  ttl?: number;
+};
+export function cachedCounter<T extends string | number>(
+  rootKey: string,
+  fetchFn: (id: T) => Promise<number>,
+  { ttl }: CachedCounterOptions = {}
+) {
+  ttl ??= CacheTTL.hour;
+  const counter = {
+    async get(id: T) {
+      const key = `${rootKey}:${id}`;
+      const cachedCount = Number((await redis.get(key)) ?? 0);
+      if (cachedCount) return cachedCount;
+
+      const count = await fetchFn(id);
+      await redis.set(key, count, { EX: ttl });
+      return count;
+    },
+    async incrementBy(id: T, amount: number) {
+      const key = `${rootKey}:${id}`;
+      const count = await counter.get(id);
+      await redis.incrBy(key, amount);
+      return count + amount;
+    },
+  };
+
+  return counter;
+}

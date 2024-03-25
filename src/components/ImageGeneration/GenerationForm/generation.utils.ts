@@ -33,12 +33,6 @@ export const useGenerationFormStore = create<Partial<GenerateFormModel>>()(
   persist(() => ({}), { name: 'generation-form-2', version: 0 })
 );
 
-export const useTempGenerateStore = create<{
-  baseModel?: BaseModelSetType;
-  hasResources?: boolean;
-  isLCM?: boolean;
-}>(() => ({}));
-
 export const useDerivedGenerationState = () => {
   const status = useGenerationStatus();
   const { totalCost, isCalculatingCost } = useEstimateTextToImageJobCost();

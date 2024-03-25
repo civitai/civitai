@@ -5,8 +5,10 @@ import {
   Button,
   Card,
   createStyles,
+  Divider,
   Group,
   Input,
+  Loader,
   Paper,
   SegmentedControl,
   Stack,
@@ -18,7 +20,8 @@ import {
 import { openConfirmModal } from '@mantine/modals';
 import { showNotification } from '@mantine/notifications';
 import { Currency, ModelType, TrainingStatus } from '@prisma/client';
-import { IconAlertCircle, IconAlertTriangle } from '@tabler/icons-react';
+import { IconAlertCircle, IconAlertTriangle, IconExclamationCircle } from '@tabler/icons-react';
+import dayjs from 'dayjs';
 import { useRouter } from 'next/router';
 import React, { useEffect, useState } from 'react';
 import { z } from 'zod';
@@ -31,9 +34,12 @@ import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import InputResourceSelect from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
-import { goBack, isTrainingCustomModel } from '~/components/Training/Form/TrainingCommon';
+import {
+  blockedCustomModels,
+  goBack,
+  isTrainingCustomModel,
+} from '~/components/Training/Form/TrainingCommon';
 import { useTrainingServiceStatus } from '~/components/Training/training.utils';
-import { trainingMinsWait } from '~/components/User/UserTrainingModels';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Form, InputCheckbox, InputNumber, InputSelect, InputText, useForm } from '~/libs/form';
 import { BaseModel, baseModelSets } from '~/server/common/constants';
@@ -465,6 +471,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   const [baseModel15, setBaseModel15] = useState<TrainingDetailsBaseModel15 | null>(null);
   const [baseModelXL, setBaseModelXL] = useState<TrainingDetailsBaseModelXL | null>('sdxl');
   const [etaMins, setEtaMins] = useState<number | undefined>(undefined);
+  // const [debouncedEtaMins] = useDebouncedValue(etaMins, 2000);
   const [buzzCost, setBuzzCost] = useState<number | undefined>(undefined);
   const [awaitInvalidate, setAwaitInvalidate] = useState<boolean>(false);
   const status = useTrainingServiceStatus();
@@ -609,6 +616,21 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [watchFieldOptimizer]);
 
+  const { data: dryRunData, isFetching: dryRunLoading } =
+    trpc.training.createRequestDryRun.useQuery(
+      {
+        baseModel: formBaseModel,
+        // cost: debouncedEtaMins,
+      },
+      {
+        refetchInterval: 1000 * 60,
+        refetchIntervalInBackground: false,
+        refetchOnWindowFocus: true,
+        staleTime: 1000 * 60,
+        enabled: !!formBaseModel,
+      }
+    );
+
   // TODO [bw] this should be a new route for modelVersion.update instead
   const upsertVersionMutation = trpc.modelVersion.upsert.useMutation({
     onError(error) {
@@ -637,6 +659,14 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     if (!formBaseModel) {
       showErrorNotification({
         error: new Error('A base model must be chosen.'),
+        autoClose: false,
+      });
+      return;
+    }
+
+    if (blockedCustomModels.includes(formBaseModel)) {
+      showErrorNotification({
+        error: new Error('This model has been blocked from training - please try another one.'),
         autoClose: false,
       });
       return;
@@ -1023,12 +1053,26 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                       ? 'Custom model selected.'
                       : baseModelDescriptions[formBaseModel]?.description ?? 'No description.'}
                   </Text>
-                  {isTrainingCustomModel(formBaseModel) && (
+                  {blockedCustomModels.includes(formBaseModel) ? (
+                    <AlertWithIcon
+                      icon={<IconExclamationCircle />}
+                      iconColor="default"
+                      p="sm"
+                      color="red"
+                    >
+                      <Text>
+                        This model currently does not work properly with kohya.
+                        <br />
+                        We are working on a fix for this - in the meantime, please try a different
+                        model.
+                      </Text>
+                    </AlertWithIcon>
+                  ) : isTrainingCustomModel(formBaseModel) ? (
                     <AlertWithIcon icon={<IconAlertCircle />} iconColor="default" p="xs">
                       Note: custom models may see a higher failure rate than normal, and cost more
                       Buzz.
                     </AlertWithIcon>
-                  )}
+                  ) : undefined}
                 </Stack>
               </Card.Section>
             )}
@@ -1236,10 +1280,30 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
             >
               {/* TODO: some tooltip -> link explaining */}
               <Group spacing="sm">
+                <Badge>Est. Wait Time</Badge>
+                {dryRunLoading ? (
+                  <Loader size="sm" />
+                ) : (
+                  <Text>
+                    {/*{!!dryRunData ? formatDate(dryRunData, 'MMM D, YYYY hh:mm:ss A') : 'Unknown'}*/}
+                    {!!dryRunData ? dayjs(dryRunData).add(10, 's').fromNow(true) : 'Unknown'}
+                  </Text>
+                )}
+                <Divider orientation="vertical" />
                 <Badge>ETA</Badge>
-                <Text>
-                  {!isDefined(etaMins) ? 'Unknown' : minsToHours(etaMins + trainingMinsWait)}
-                </Text>
+                {dryRunLoading ? (
+                  <Loader size="sm" />
+                ) : (
+                  <Text>
+                    {!isDefined(etaMins)
+                      ? 'Unknown'
+                      : minsToHours(
+                          (!!dryRunData
+                            ? (new Date().getTime() - new Date(dryRunData).getTime()) / 60000
+                            : 10) + etaMins
+                        )}
+                  </Text>
+                )}
               </Group>
             </Paper>
           </>
@@ -1252,6 +1316,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         <BuzzTransactionButton
           type="submit"
           loading={awaitInvalidate}
+          disabled={blockedCustomModels.includes(formBaseModel ?? '')}
           label="Submit"
           buzzAmount={buzzCost ?? 0}
         />
