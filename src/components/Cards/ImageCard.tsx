@@ -55,10 +55,11 @@ function UnroutedImageCard({ data }: Props) {
                   align="start"
                   spacing={4}
                   className="absolute top-2 left-2 right-2 z-10"
+                  style={{ pointerEvents: 'none' }}
                 >
-                  <ImageGuard2.BlurToggle radius="xl" h={26} />
+                  <ImageGuard2.BlurToggle radius="xl" h={26} sx={{ pointerEvents: 'auto' }} />
                   {safe && (
-                    <Stack spacing="xs" ml="auto">
+                    <Stack spacing="xs" ml="auto" style={{ pointerEvents: 'auto' }}>
                       <ImageContextMenu image={data} />
                       {features.imageGeneration && data.meta && (
                         <HoverActionButton

@@ -34,9 +34,10 @@ export function PostCard({ data }: Props) {
                 align="start"
                 spacing={4}
                 className={cx(classes.contentOverlay, classes.top)}
+                style={{ pointerEvents: 'none' }}
               >
-                <ImageGuard2.BlurToggle />
-                <ImageContextMenu image={image} context="post" />
+                <ImageGuard2.BlurToggle sx={{ pointerEvents: 'auto' }} />
+                <ImageContextMenu image={image} context="post" style={{ pointerEvents: 'auto' }} />
               </Group>
               {!safe ? (
                 <MediaHash {...image} />

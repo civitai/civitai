@@ -3,9 +3,9 @@ import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';
 import Router from 'next/router';
 import { useCallback } from 'react';
+import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { MAX_TAGS, MIN_THRESHOLD } from '~/components/Training/Form/TrainingAutoTagModal';
 import { getCaptionAsList } from '~/components/Training/Form/TrainingImages';
-import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { SignalMessages } from '~/server/common/enums';
 import { Orchestrator } from '~/server/http/orchestrator/orchestrator.types';
 import { TrainingUpdateSignalSchema } from '~/server/schema/signals.schema';
@@ -39,6 +39,14 @@ export const isTrainingCustomModel = (m: string | null) => {
   if (!m) return false;
   return m.startsWith('civitai:');
 };
+
+export const blockedCustomModels = [
+  'civitai:133005@348913',
+  'civitai:260267@403131',
+  'civitai:167764@253250',
+  'civitai:269232@303526',
+  'civitai:53761@285757',
+];
 
 export const useTrainingSignals = () => {
   const queryClient = useQueryClient();

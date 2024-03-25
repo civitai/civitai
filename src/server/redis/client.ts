@@ -84,5 +84,8 @@ export const REDIS_KEYS = {
   QUEUES: {
     BUCKETS: 'queues:buckets',
   },
+  RESEARCH: {
+    RATINGS_COUNT: 'research:ratings-count',
+  },
   LIVE_NOW: 'live-now',
 } as const;

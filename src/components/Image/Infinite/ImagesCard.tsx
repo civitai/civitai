@@ -89,10 +89,11 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                         align="start"
                         spacing={4}
                         className="absolute top-2 left-2 right-2 z-10"
+                        style={{ pointerEvents: 'none' }}
                       >
-                        <ImageGuard2.BlurToggle />
+                        <ImageGuard2.BlurToggle sx={{ pointerEvents: 'auto' }} />
                         {safe && (
-                          <Stack spacing="xs" ml="auto">
+                          <Stack spacing="xs" ml="auto" sx={{ pointerEvents: 'auto' }}>
                             {!isBlocked && <ImageContextMenu image={image} />}
                             {features.imageGeneration && image.meta && (
                               <HoverActionButton
