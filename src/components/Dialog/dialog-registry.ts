@@ -7,6 +7,7 @@ const SetBrowsingLevelModal = dynamic(
 const HiddenTagsModal = dynamic(() => import('~/components/Tags/HiddenTagsModal'));
 
 export const openBrowsingLevelGuide = () => dialogStore.trigger({ component: BrowsingLevelGuide });
-export const openHiddenTagsModal = () => dialogStore.trigger({ component: HiddenTagsModal });
 export const openSetBrowsingLevelModal = (props: { imageId: number; nsfwLevel: number }) =>
   dialogStore.trigger({ component: SetBrowsingLevelModal, props });
+export const openHiddenTagsModal = () =>
+  dialogStore.trigger({ component: HiddenTagsModal, target: '#browsing-mode' });

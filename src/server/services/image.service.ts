@@ -444,6 +444,8 @@ type GetAllImagesRaw = {
   hash: string | null;
   meta: ImageMetaProps | null;
   hideMeta: boolean;
+  hasMeta: boolean;
+  onSite: boolean;
   generationProcess: ImageGenerationProcess | null;
   createdAt: Date;
   mimeType: string | null;
@@ -809,8 +811,22 @@ export const getAllImages = async ({
       i.width,
       i.height,
       i.hash,
-      i.meta,
-      i."hideMeta",
+      -- i.meta,
+      -- i."hideMeta",
+      (
+        CASE
+          WHEN i.meta IS NOT NULL AND NOT i."hideMeta"
+          THEN TRUE
+          ELSE FALSE
+        END
+      ) AS "hasMeta",
+      (
+        CASE
+          WHEN i.meta->>'civitaiResources' IS NOT NULL
+          THEN TRUE
+          ELSE FALSE
+        END
+      ) as "onSite",
       i."generationProcess",
       i."createdAt",
       i."mimeType",
@@ -938,6 +954,8 @@ export const getAllImages = async ({
   const now = new Date();
   const images: Array<
     Omit<ImageV2Model, 'nsfwLevel'> & {
+      meta: ImageMetaProps | null;
+      hideMeta: boolean;
       tags?: VotableTagModel[] | undefined;
       tagIds?: number[];
       publishedAt?: Date | null;

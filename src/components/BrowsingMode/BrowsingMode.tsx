@@ -14,6 +14,7 @@ import { HiddenTagsSection } from '~/components/Account/HiddenTagsSection';
 import { useBrowsingModeContext } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { BrowsingLevelsGrouped } from '~/components/BrowsingLevel/BrowsingLevelsGrouped';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { openHiddenTagsModal } from '~/components/Dialog/dialog-registry';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';
@@ -44,13 +45,6 @@ export function BrowsingModeMenu() {
   const showNsfw = currentUser?.showNsfw;
   const blurNsfw = currentUser?.blurNsfw;
   const disableHidden = currentUser?.disableHidden;
-
-  const handleHiddenFiltersClick = () => {
-    dialogStore.trigger({
-      component: HiddenTagsModal,
-      target: '#browsing-mode',
-    });
-  };
 
   return (
     <div id="browsing-mode">
@@ -89,7 +83,7 @@ export function BrowsingModeMenu() {
             variant="link"
             className="hover:cursor-pointer"
             underline
-            onClick={handleHiddenFiltersClick}
+            onClick={openHiddenTagsModal}
           >
             My filters
           </Text>
@@ -105,5 +99,13 @@ function HiddenTagsModal() {
     <Modal {...dialog} title="Hidden Tags">
       <HiddenTagsSection withTitle={false} />
     </Modal>
+  );
+}
+
+function QuickToggles() {
+  return (
+    <Stack>
+      <Checkbox label="View less anime content" description="" />
+    </Stack>
   );
 }
