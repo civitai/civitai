@@ -2013,7 +2013,8 @@ export const getEntityCoverImage = async ({
       t."entityId",
       t."entityType"
     FROM targets t
-    JOIN "Image" i ON i.id = t."imageId"`;
+    JOIN "Image" i ON i.id = t."imageId"
+    WHERE i."ingestion" = 'Scanned' AND i."needsReview" IS NULL`;
 
   let tagsVar: (VotableTagModel & { imageId: number })[] | undefined = [];
   if (include && include.includes('tags')) {
