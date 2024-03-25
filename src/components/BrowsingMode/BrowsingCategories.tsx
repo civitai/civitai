@@ -2,6 +2,7 @@ import { Checkbox, Group, Paper, Switch, createStyles, Text } from '@mantine/cor
 import { useHiddenPreferencesData, useToggleHiddenPreferences } from '~/hooks/hidden-preferences';
 import { HiddenTag } from '~/server/services/user-preferences.service';
 import { toggleableBrowsingCategories } from '~/shared/constants/browsingLevel.constants';
+import { toStringList } from '~/utils/array-helpers';
 
 const useStyles = createStyles((theme) => ({
   root: {
@@ -91,7 +92,9 @@ const SwitchCategories = ({ hiddenTags, onToggle }: SwitchProps) => {
                 <Text size="md" weight={700}>
                   {category.title}
                 </Text>
-                <Text size="md">{category.description}</Text>
+                <Text size="md">{`View less content tagged with the following: ${toStringList(
+                  category.relatedTags.map(({ name }) => name)
+                )}`}</Text>
               </div>
             }
           />

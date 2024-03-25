@@ -110,9 +110,7 @@ export const toggleableBrowsingCategories = [
     relatedTags: [
       { id: 4, name: 'anime' },
       { id: 413, name: 'manga' },
-      { id: 1915, name: 'doujin' },
       { id: 5218, name: 'hentai' },
-      { id: 119549, name: 'doujinshi' },
     ],
   },
 ];
