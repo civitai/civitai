@@ -13,6 +13,7 @@ import { IconEyeExclamation } from '@tabler/icons-react';
 import { HiddenTagsSection } from '~/components/Account/HiddenTagsSection';
 import { MatureContentSettings } from '~/components/Account/MatureContentSettings';
 import { NewsletterToggle } from '~/components/Account/NewsletterToggle';
+import { BrowsingCategories } from '~/components/BrowsingMode/BrowsingCategories';
 import { OnboardingAbortButton } from '~/components/Onboarding/OnboardingAbortButton';
 import { useOnboardingWizardContext } from '~/components/Onboarding/OnboardingWizard';
 import { useOnboardingStepCompleteMutation } from '~/components/Onboarding/onboarding.utils';
@@ -83,7 +84,16 @@ export function OnboardingContentExperience() {
           <Title order={3}>Content Moderation</Title>
           <MatureContentSettings />
         </Stack>
-        <HiddenTagsSection />
+
+        <Stack spacing="xs" mt="sm">
+          <Title order={3}>Reduced Browsing Content</Title>
+          <Text size="sm">
+            Select the categories you want to see less content from. If no categories are selected,
+            we will serve you content based off system defaults.
+          </Text>
+          <BrowsingCategories variant="switch" />
+          {/* <HiddenTagsSection /> */}
+        </Stack>
         <Group position="apart">
           <OnboardingAbortButton size="lg">Sign Out</OnboardingAbortButton>
           <Button size="lg" onClick={handleStepComplete} loading={isLoading}>

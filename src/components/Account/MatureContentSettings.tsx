@@ -34,7 +34,7 @@ export function MatureContentSettings() {
       {showNsfw && (
         <Stack spacing="xs">
           <Stack spacing={0}>
-            <Title order={2}>Browsing levels</Title>
+            <Title order={3}>Browsing Levels</Title>
             <Text size="sm">
               Pick browsing levels for the type of content you want to see. If no levels are
               selected, we will serve you content based off system defaults.
