@@ -102,3 +102,17 @@ export const votableTagColors = {
   [NsfwLevel.XXX]: { color: 'red', shade: 9 },
   [NsfwLevel.Blocked]: { color: 'red', shade: 9 },
 } as const;
+
+export const toggleableBrowsingCategories = [
+  {
+    title: 'Anime',
+    description: 'View less anime content',
+    relatedTags: [
+      { id: 4, name: 'anime' },
+      { id: 413, name: 'manga' },
+      { id: 1915, name: 'doujin' },
+      { id: 5218, name: 'hentai' },
+      { id: 119549, name: 'doujinshi' },
+    ],
+  },
+];
