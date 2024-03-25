@@ -26,7 +26,7 @@ import {
   ImageEntityType,
   ImageReviewQueueInput,
   ImageUploadProps,
-  SetImageNsfwLevelOutput,
+  UpdateImageNsfwLevelOutput,
   UpdateImageInput,
 } from '~/server/schema/image.schema';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
@@ -2608,11 +2608,22 @@ export async function ingestArticleCoverImages(array: { imageId: number; article
   await ingestImageBulk({ images, lowPriority: true });
 }
 
-export async function setImageNsfwLevel({
+export async function updateImageNsfwLevel({
   id,
   nsfwLevel,
   user,
-}: SetImageNsfwLevelOutput & { user: SessionUser }) {
-  await dbWrite.image.update({ where: { id }, data: { nsfwLevel, nsfwLevelLocked: true } });
-  await trackModActivity(user.id, { entityType: 'image', entityId: id, activity: 'setNsfwLevel' });
+}: UpdateImageNsfwLevelOutput & { user: SessionUser }) {
+  if (user.isModerator) {
+    await dbWrite.image.update({ where: { id }, data: { nsfwLevel, nsfwLevelLocked: true } });
+    await trackModActivity(user.id, {
+      entityType: 'image',
+      entityId: id,
+      activity: 'setNsfwLevel',
+    });
+  } else {
+    const image = await dbRead.image.findFirst({ where: { id }, select: { userId: true } });
+    if (!image || image.userId !== user.id) throw throwAuthorizationError();
+    await dbWrite.imageRatingRequest.create({ data: { nsfwLevel, imageId: id, userId: user.id } });
+    return { userId: user.id };
+  }
 }

@@ -6,6 +6,7 @@ import { isEqual } from 'lodash-es';
 import React, { useEffect } from 'react';
 
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
+import { FeedWrapper } from '~/components/Feed/FeedWrapper';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
 import { PostsCard } from '~/components/Post/Infinite/PostsCard';
@@ -32,7 +33,15 @@ type PostsInfiniteProps = {
   showAds?: boolean;
 };
 
-export default function PostsInfinite({
+export default function PostsInfinite(props: PostsInfiniteProps) {
+  return (
+    <FeedWrapper>
+      <PostsInfiniteContent {...props} />
+    </FeedWrapper>
+  );
+}
+
+function PostsInfiniteContent({
   filters: filterOverrides = {},
   showEof = false,
   showAds,

@@ -104,7 +104,12 @@ export function ImageDetailCarousel({ className }: GalleryCarouselProps) {
               style={{ position: 'absolute', top: 15, width: '100%', zIndex: 10 }}
             >
               <Group>
-                <ImageGuard2.BlurToggle radius="xl" h={30} size="lg" />
+                <ImageGuard2.BlurToggle
+                  radius="xl"
+                  h={30}
+                  size="lg"
+                  sfwClassName={classes.actionIcon}
+                />
                 <Badge
                   radius="xl"
                   size="sm"

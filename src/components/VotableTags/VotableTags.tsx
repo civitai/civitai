@@ -25,7 +25,6 @@ export function VotableTags({
     { id, type },
     { enabled: !initialTags, initialData: initialTags }
   );
-  console.log({ tags });
   canAdd = canAdd && !initialTags;
   const canAddModerated = canAdd && !!currentUser?.isModerator;
 

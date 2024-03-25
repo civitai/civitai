@@ -1,12 +1,13 @@
 import { Modal, Paper, Text, createStyles, UnstyledButton } from '@mantine/core';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
   browsingLevels,
   browsingLevelLabels,
   browsingLevelDescriptions,
 } from '~/shared/constants/browsingLevel.constants';
 import { imageStore } from '~/store/image.store';
-import { showErrorNotification } from '~/utils/notifications';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 export default function SetBrowsingLevelModal({
@@ -16,15 +17,30 @@ export default function SetBrowsingLevelModal({
   imageId: number;
   nsfwLevel: number;
 }) {
+  const currentUser = useCurrentUser();
   const dialog = useDialogContext();
   const { classes, cx } = useStyles();
 
-  const { mutate } = trpc.image.setImageNsfwLevel.useMutation({
+  const updateImageNsfwLevel = trpc.image.updateImageNsfwLevel.useMutation({
+    onSuccess: () => {
+      if (!currentUser?.isModerator)
+        showSuccessNotification({ message: 'Succesfully requested image rating update' });
+    },
     onError: (error) => {
-      imageStore.setImage(imageId, { nsfwLevel });
-      showErrorNotification({ title: 'There was an error updating the image nsfwLevel', error });
+      if (currentUser?.isModerator) {
+        imageStore.setImage(imageId, { nsfwLevel });
+        showErrorNotification({ title: 'There was an error updating the image nsfwLevel', error });
+      } else {
+        showErrorNotification({ title: 'There was an error making this request', error });
+      }
     },
   });
+
+  const handleClick = (level: number) => {
+    if (currentUser?.isModerator) imageStore.setImage(imageId, { nsfwLevel: level });
+    updateImageNsfwLevel.mutate({ id: imageId, nsfwLevel: level });
+    dialog.onClose();
+  };
 
   return (
     <Modal title="Nsfw Levels" {...dialog}>
@@ -35,11 +51,7 @@ export default function SetBrowsingLevelModal({
             p="md"
             w="100%"
             className={cx({ [classes.active]: nsfwLevel === level })}
-            onClick={() => {
-              mutate({ id: imageId, nsfwLevel: level });
-              imageStore.setImage(imageId, { nsfwLevel: level });
-              dialog.onClose();
-            }}
+            onClick={() => handleClick(level)}
           >
             <Text weight={700}>{browsingLevelLabels[level]}</Text>
             <Text>{browsingLevelDescriptions[level]}</Text>

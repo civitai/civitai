@@ -15,7 +15,7 @@ import {
   getEntitiesCoverImage,
   imageReviewQueueInputSchema,
   createImageSchema,
-  setImageNsfwLevelSchema,
+  updateImageNsfwLevelSchema,
 } from './../schema/image.schema';
 import {
   deleteImageHandler,
@@ -42,7 +42,7 @@ import {
   createArticleCoverImage,
   ingestArticleCoverImages,
   getImagesForModelVersionCache,
-  setImageNsfwLevel,
+  updateImageNsfwLevel,
 } from '~/server/services/image.service';
 import { CacheTTL } from '~/server/common/constants';
 import { z } from 'zod';
@@ -131,7 +131,7 @@ export const imageRouter = router({
     .mutation(({ input: imageIds, ctx }) =>
       reportCsamImages({ imageIds, user: ctx.user, ip: ctx.ip })
     ),
-  setImageNsfwLevel: moderatorProcedure
-    .input(setImageNsfwLevelSchema)
-    .mutation(({ input, ctx }) => setImageNsfwLevel({ ...input, user: ctx.user })),
+  updateImageNsfwLevel: protectedProcedure
+    .input(updateImageNsfwLevelSchema)
+    .mutation(({ input, ctx }) => updateImageNsfwLevel({ ...input, user: ctx.user })),
 });

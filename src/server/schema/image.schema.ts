@@ -294,8 +294,8 @@ export const scanJobsSchema = z
   .passthrough();
 // .catchall(z.string());
 
-export type SetImageNsfwLevelOutput = z.output<typeof setImageNsfwLevelSchema>;
-export const setImageNsfwLevelSchema = z.object({
+export type UpdateImageNsfwLevelOutput = z.output<typeof updateImageNsfwLevelSchema>;
+export const updateImageNsfwLevelSchema = z.object({
   id: z.number(),
   nsfwLevel: z.nativeEnum(NsfwLevel),
 });

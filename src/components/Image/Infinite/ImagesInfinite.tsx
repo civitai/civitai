@@ -18,6 +18,8 @@ import { InViewLoader } from '~/components/InView/InViewLoader';
 import { NoContent } from '~/components/NoContent/NoContent';
 import Link from 'next/link';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { FeedWrapper } from '~/components/Feed/FeedWrapper';
+import { Feed } from '~/components/ImageGeneration/Feed';
 
 type ImageFilters = {
   modelId?: number;
@@ -48,7 +50,15 @@ type ImagesInfiniteProps = {
   showEmptyCta?: boolean;
 };
 
-export default function ImagesInfinite({
+export default function ImagesInfinite(props: ImagesInfiniteProps) {
+  return (
+    <FeedWrapper>
+      <ImagesInfiniteContent {...props} />
+    </FeedWrapper>
+  );
+}
+
+export function ImagesInfiniteContent({
   withTags,
   filters: filterOverrides = {},
   showEof = false,

@@ -1274,6 +1274,16 @@ model ImageMetric {
   @@id([imageId, timeframe])
 }
 
+model ImageRatingRequest {
+  userId    Int
+  imageId   Int
+  createdAt DateTime     @default(now())
+  nsfwLevel Int
+  status    ReportStatus @default(Pending)
+
+  @@id([imageId, userId])
+}
+
 model CollectionMetric {
   collection       Collection      @relation(fields: [collectionId], references: [id], onDelete: Cascade)
   collectionId     Int
