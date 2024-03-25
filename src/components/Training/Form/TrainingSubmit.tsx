@@ -20,7 +20,7 @@ import {
 import { openConfirmModal } from '@mantine/modals';
 import { showNotification } from '@mantine/notifications';
 import { Currency, ModelType, TrainingStatus } from '@prisma/client';
-import { IconAlertCircle, IconAlertTriangle } from '@tabler/icons-react';
+import { IconAlertCircle, IconAlertTriangle, IconExclamationCircle } from '@tabler/icons-react';
 import dayjs from 'dayjs';
 import { useRouter } from 'next/router';
 import React, { useEffect, useState } from 'react';
@@ -34,7 +34,11 @@ import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import InputResourceSelect from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
-import { goBack, isTrainingCustomModel } from '~/components/Training/Form/TrainingCommon';
+import {
+  blockedCustomModels,
+  goBack,
+  isTrainingCustomModel,
+} from '~/components/Training/Form/TrainingCommon';
 import { useTrainingServiceStatus } from '~/components/Training/training.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Form, InputCheckbox, InputNumber, InputSelect, InputText, useForm } from '~/libs/form';
@@ -660,6 +664,14 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
       return;
     }
 
+    if (blockedCustomModels.includes(formBaseModel)) {
+      showErrorNotification({
+        error: new Error('This model has been blocked from training - please try another one.'),
+        autoClose: false,
+      });
+      return;
+    }
+
     // TODO [bw] we should probably disallow people to get to the training wizard at all when it's not pending
     if (thisModelVersion.trainingStatus !== TrainingStatus.Pending) {
       showNotification({
@@ -1041,12 +1053,26 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                       ? 'Custom model selected.'
                       : baseModelDescriptions[formBaseModel]?.description ?? 'No description.'}
                   </Text>
-                  {isTrainingCustomModel(formBaseModel) && (
+                  {blockedCustomModels.includes(formBaseModel) ? (
+                    <AlertWithIcon
+                      icon={<IconExclamationCircle />}
+                      iconColor="default"
+                      p="sm"
+                      color="red"
+                    >
+                      <Text>
+                        This model currently does not work properly with kohya.
+                        <br />
+                        We are working on a fix for this - in the meantime, please try a different
+                        model.
+                      </Text>
+                    </AlertWithIcon>
+                  ) : isTrainingCustomModel(formBaseModel) ? (
                     <AlertWithIcon icon={<IconAlertCircle />} iconColor="default" p="xs">
                       Note: custom models may see a higher failure rate than normal, and cost more
                       Buzz.
                     </AlertWithIcon>
-                  )}
+                  ) : undefined}
                 </Stack>
               </Card.Section>
             )}
@@ -1290,6 +1316,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         <BuzzTransactionButton
           type="submit"
           loading={awaitInvalidate}
+          disabled={blockedCustomModels.includes(formBaseModel ?? '')}
           label="Submit"
           buzzAmount={buzzCost ?? 0}
         />
