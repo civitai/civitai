@@ -15,7 +15,7 @@ import {
 import { Flags } from '~/shared/utils';
 
 export function ExplainHiddenImages({
-  hiddenByBrowsingLevel,
+  hiddenBelowBrowsingLevel: hiddenByBrowsingLevel,
   hiddenByTags,
   hasHidden,
 }: ReturnType<typeof useExplainHiddenImages>) {
@@ -75,6 +75,7 @@ export function ExplainHiddenImages({
           </Group>
         </Stack>
       )}
+      {!totalHiddenByTags && <Text>Images hidden due to mature content settings</Text>}
     </Stack>
   );
 }
@@ -94,23 +95,31 @@ export function useExplainHiddenImages<
   const hiddenPreferences = useHiddenPreferencesContext();
 
   return useMemo(() => {
-    const browsingLevelDict: Record<number, number> = {};
+    const browsingLevelBelowDict: Record<number, number> = {};
+    const browsingLevelAboveDict: Record<number, number> = {};
     const tagDict: Record<number, number> = {};
 
     for (const image of images ?? []) {
+      if (!image.browsingLevel) continue;
       for (const tag of image.tagIds ?? []) {
         if (hiddenPreferences.hiddenTags.get(tag)) {
           if (!tagDict[tag]) tagDict[tag] = 1;
           else tagDict[tag]++;
         }
       }
-      if (!Flags.intersects(browsingLevel, image.nsfwLevel) && image.nsfwLevel < browsingLevel) {
-        if (!browsingLevelDict[image.nsfwLevel]) browsingLevelDict[image.nsfwLevel] = 1;
-        else browsingLevelDict[image.nsfwLevel]++;
+      if (!Flags.intersects(browsingLevel, image.nsfwLevel) && image.nsfwLevel !== browsingLevel) {
+        const dict =
+          image.nsfwLevel < browsingLevel ? browsingLevelBelowDict : browsingLevelAboveDict;
+        if (!dict[image.nsfwLevel]) dict[image.nsfwLevel] = 1;
+        else dict[image.nsfwLevel]++;
       }
     }
 
-    const hiddenByBrowsingLevel = Object.entries(browsingLevelDict).map(([key, count]) => ({
+    const hiddenBelowBrowsingLevel = Object.entries(browsingLevelBelowDict).map(([key, count]) => ({
+      browsingLevel: Number(key),
+      count,
+    }));
+    const hiddenAboveBrowsingLevel = Object.entries(browsingLevelAboveDict).map(([key, count]) => ({
       browsingLevel: Number(key),
       count,
     }));
@@ -120,9 +129,13 @@ export function useExplainHiddenImages<
     }));
 
     return {
-      hiddenByBrowsingLevel,
+      hiddenBelowBrowsingLevel: hiddenBelowBrowsingLevel,
+      hiddenAboveBrowsingLevel,
       hiddenByTags,
-      hasHidden: !!hiddenByBrowsingLevel.length || !!hiddenByTags.length,
+      hasHidden:
+        !!hiddenBelowBrowsingLevel.length ||
+        !!hiddenAboveBrowsingLevel.length ||
+        !!hiddenByTags.length,
     };
   }, [browsingLevel, hiddenPreferences, images]);
 }

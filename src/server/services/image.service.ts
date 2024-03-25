@@ -811,8 +811,8 @@ export const getAllImages = async ({
       i.width,
       i.height,
       i.hash,
-      -- i.meta,
-      -- i."hideMeta",
+      i.meta,
+      i."hideMeta",
       (
         CASE
           WHEN i.meta IS NOT NULL AND NOT i."hideMeta"
