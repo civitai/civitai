@@ -25,7 +25,10 @@ type StepPropsCustom = StepProps & {
   Component: React.FC;
 };
 
-const OnboardingWizardCtx = createContext<{ next: () => void }>({ next: () => undefined });
+const OnboardingWizardCtx = createContext<{ next: () => void; isReturningUser: boolean }>({
+  next: () => undefined,
+  isReturningUser: false,
+});
 export const useOnboardingWizardContext = () => useContext(OnboardingWizardCtx);
 
 export default function OnboardingWizard({ onComplete }: { onComplete: () => void }) {
@@ -68,6 +71,8 @@ export default function OnboardingWizard({ onComplete }: { onComplete: () => voi
   ].filter((item) => onboardingStepsRef.current.includes(item.step));
   const Component = steps[active]?.Component;
 
+  const isReturningUser = steps.length === 1 && steps[0].step === OnboardingSteps.BrowsingLevels;
+
   return (
     <Modal
       {...dialog}
@@ -76,16 +81,18 @@ export default function OnboardingWizard({ onComplete }: { onComplete: () => voi
       closeOnClickOutside={false}
       fullScreen
     >
-      <Center>
-        <Group spacing="xs">
-          <LogoBadge w={86} />
-          <Stack spacing={0} mt={-5}>
-            <Title sx={{ lineHeight: 1 }}>Welcome!</Title>
-            <Text>{`Let's setup your account`}</Text>
-          </Stack>
-        </Group>
-      </Center>
-      <OnboardingWizardCtx.Provider value={{ next }}>
+      {!isReturningUser && (
+        <Center>
+          <Group spacing="xs">
+            <LogoBadge w={86} />
+            <Stack spacing={0} mt={-5}>
+              <Title sx={{ lineHeight: 1 }}>Welcome!</Title>
+              <Text>{`Let's setup your account`}</Text>
+            </Stack>
+          </Group>
+        </Center>
+      )}
+      <OnboardingWizardCtx.Provider value={{ next, isReturningUser }}>
         <Container size="lg" px="0" h="100%">
           {steps.length > 1 ? (
             <Stepper

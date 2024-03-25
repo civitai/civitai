@@ -6,7 +6,6 @@ export default function HiddenTagsModal() {
   const dialog = useDialogContext();
   return (
     <Modal {...dialog} title="Hidden Tags">
-      <Checkbox label="View less anime content" />
       <HiddenTagsSection withTitle={false} />
     </Modal>
   );

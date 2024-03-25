@@ -36,8 +36,8 @@ export function MatureContentSettings() {
           <Stack spacing={0}>
             <Title order={2}>Browsing levels</Title>
             <Text size="sm">
-              Pick browsing browsing levels for the type of content you want to see. If no levels
-              are selected, we will serve you content based off system defaults.
+              Pick browsing levels for the type of content you want to see. If no levels are
+              selected, we will serve you content based off system defaults.
             </Text>
           </Stack>
           <BrowsingLevelsStacked />

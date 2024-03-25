@@ -60,8 +60,6 @@ export function ImageDetail() {
   if (isLoading) return <PageLoader />;
   if (!image) return <NotFound />;
 
-  console.log({ image });
-
   const nsfw = !getIsSafeBrowsingLevel(image.nsfwLevel);
 
   return (

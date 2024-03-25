@@ -1,21 +1,8 @@
-import {
-  Group,
-  Text,
-  Stack,
-  Switch,
-  Popover,
-  ActionIcon,
-  Checkbox,
-  Divider,
-  Modal,
-} from '@mantine/core';
+import { Group, Text, Stack, Popover, ActionIcon, Checkbox } from '@mantine/core';
 import { IconEyeExclamation, TablerIconsProps } from '@tabler/icons-react';
-import { HiddenTagsSection } from '~/components/Account/HiddenTagsSection';
 import { useBrowsingModeContext } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { BrowsingLevelsGrouped } from '~/components/BrowsingLevel/BrowsingLevelsGrouped';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { openHiddenTagsModal } from '~/components/Dialog/dialog-registry';
-import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';
 
@@ -40,7 +27,7 @@ type BrowsingModeIconProps = {
 };
 
 export function BrowsingModeMenu() {
-  const { toggleBlurNsfw, toggleShowNsfw, toggleDisableHidden } = useBrowsingModeContext();
+  const { toggleBlurNsfw, toggleDisableHidden } = useBrowsingModeContext();
   const currentUser = useCurrentUser();
   const showNsfw = currentUser?.showNsfw;
   const blurNsfw = currentUser?.blurNsfw;
@@ -49,14 +36,6 @@ export function BrowsingModeMenu() {
   return (
     <div id="browsing-mode">
       <Stack spacing="md" className="sm:min-w-96">
-        {/* <Group position="apart">
-          <Group align="center" spacing={4}>
-            <IconEyeExclamation />
-            <Text>Mature Content</Text>
-          </Group>
-          <Switch checked={showNsfw} onChange={(e) => toggleShowNsfw(e.target.checked)} />
-        </Group> */}
-        {/* <Divider /> */}
         {showNsfw && (
           <Stack spacing="lg">
             <Stack spacing={4}>
@@ -90,22 +69,5 @@ export function BrowsingModeMenu() {
         </Group>
       </Stack>
     </div>
-  );
-}
-
-function HiddenTagsModal() {
-  const dialog = useDialogContext();
-  return (
-    <Modal {...dialog} title="Hidden Tags">
-      <HiddenTagsSection withTitle={false} />
-    </Modal>
-  );
-}
-
-function QuickToggles() {
-  return (
-    <Stack>
-      <Checkbox label="View less anime content" description="" />
-    </Stack>
   );
 }

@@ -9,6 +9,7 @@ import {
   Switch,
   Title,
 } from '@mantine/core';
+import { IconEyeExclamation } from '@tabler/icons-react';
 import { HiddenTagsSection } from '~/components/Account/HiddenTagsSection';
 import { MatureContentSettings } from '~/components/Account/MatureContentSettings';
 import { NewsletterToggle } from '~/components/Account/NewsletterToggle';
@@ -20,7 +21,7 @@ import { OnboardingSteps } from '~/server/common/enums';
 
 export function OnboardingContentExperience() {
   const { classes } = useStyles();
-  const { next } = useOnboardingWizardContext();
+  const { next, isReturningUser } = useOnboardingWizardContext();
   const { mutate, isLoading } = useOnboardingStepCompleteMutation();
 
   const handleStepComplete = () => {
@@ -30,37 +31,53 @@ export function OnboardingContentExperience() {
   return (
     <Container size="xs" px={0}>
       <Stack spacing="xl">
-        <StepperTitle
-          title="Content Experience"
-          description="Personalize your AI content exploration! Fine-tune preferences for a delightful and safe browsing experience."
-        />
+        {!isReturningUser ? (
+          <>
+            <StepperTitle
+              title="Content Experience"
+              description="Personalize your AI content exploration! Fine-tune preferences for a delightful and safe browsing experience."
+            />
+            <Card withBorder className={classes.newsletterCard}>
+              <Card.Section withBorder inheritPadding py="xs">
+                <Group position="apart">
+                  <Text weight={500}>Send me the Civitai Newsletter!</Text>
+                  <NewsletterToggle>
+                    {({ subscribed, setSubscribed, isLoading: subscriptionLoading }) => (
+                      <Switch
+                        disabled={subscriptionLoading}
+                        checked={subscribed}
+                        onChange={({ target }) => setSubscribed(target.checked)}
+                      />
+                    )}
+                  </NewsletterToggle>
+                </Group>
+              </Card.Section>
 
-        <Card withBorder className={classes.newsletterCard}>
-          <Card.Section withBorder inheritPadding py="xs">
-            <Group position="apart">
-              <Text weight={500}>Send me the Civitai Newsletter!</Text>
-              <NewsletterToggle>
-                {({ subscribed, setSubscribed, isLoading: subscriptionLoading }) => (
-                  <Switch
-                    disabled={subscriptionLoading}
-                    checked={subscribed}
-                    onChange={({ target }) => setSubscribed(target.checked)}
-                  />
-                )}
-              </NewsletterToggle>
-            </Group>
-          </Card.Section>
-
-          <Text lh={1.3} mt="xs">
-            Biweekly updates on industry news, new Civitai features, trending resources, community
-            contests, and more!
-          </Text>
-          <img
-            src="/images/newsletter-banner.png"
-            alt="Robot holding a newspaper"
-            className={classes.newsletterBot}
+              <Text lh={1.3} mt="xs">
+                Biweekly updates on industry news, new Civitai features, trending resources,
+                community contests, and more!
+              </Text>
+              <img
+                src="/images/newsletter-banner.png"
+                alt="Robot holding a newspaper"
+                className={classes.newsletterBot}
+              />
+            </Card>
+          </>
+        ) : (
+          <StepperTitle
+            title="Content Experience"
+            description={
+              <Text>
+                We have updated our rating system to simplify filtering content on the site. Going
+                forward content on Civitai will be rated on a standard scale consistent with other
+                media. This is a one-time process to set your basic filtering, but you can adjust it
+                any time using the <IconEyeExclamation style={{ display: 'inline-block' }} /> icon
+                in the top right.
+              </Text>
+            }
           />
-        </Card>
+        )}
 
         <Stack spacing="xs" mt="sm">
           <Title order={3}>Content Moderation</Title>

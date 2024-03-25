@@ -30,9 +30,9 @@ export const browsingLevelLabels = {
 
 export const browsingLevelDescriptions = {
   [NsfwLevel.PG]: 'Safe for work. No naughty stuff',
-  [NsfwLevel.PG13]: 'Revealing clothing, violence, and light gore. ',
-  [NsfwLevel.R]: 'Adult themes and situations, partial nudity,  graphic violence and death.',
-  [NsfwLevel.X]: 'Graphic nudity,  Adult objects and settings',
+  [NsfwLevel.PG13]: 'Revealing clothing, violence, and light gore ',
+  [NsfwLevel.R]: 'Adult themes and situations, partial nudity, graphic violence and death',
+  [NsfwLevel.X]: 'Graphic nudity, adult objects and settings',
   [NsfwLevel.XXX]: 'Sexual content and activity',
 } as const;
 
@@ -94,6 +94,7 @@ export const getNsfwLeveLDeprecatedReverseMapping = (level: number) => {
 };
 
 export const votableTagColors = {
+  [0]: { color: 'gray', shade: 5 },
   [NsfwLevel.PG]: { color: 'gray', shade: 5 },
   [NsfwLevel.PG13]: { color: 'yellow', shade: 5 },
   [NsfwLevel.R]: { color: 'red', shade: 9 },
