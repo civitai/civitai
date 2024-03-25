@@ -834,11 +834,16 @@ export function ModelVersionDetails({
                         </Anchor>
                       </Menu.Target>
                       <Menu.Dropdown>
-                        <Menu.Item component={NextLink} href={`/models/${version.modelId}/edit`}>
+                        <Menu.Item
+                          component={NextLink}
+                          onClick={(e) => e.stopPropagation()}
+                          href={`/models/${version.modelId}/edit`}
+                        >
                           Edit Model Details
                         </Menu.Item>
                         <Menu.Item
                           component={NextLink}
+                          onClick={(e) => e.stopPropagation()}
                           href={`/models/${version.modelId}/model-versions/${version.id}/edit`}
                         >
                           Edit Version Details

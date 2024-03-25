@@ -179,6 +179,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
           resourceId: id,
           settings: { strength },
         })) ?? [];
+
       const result = await upsertVersionMutation.mutateAsync({
         ...data,
         clipSkip: data.clipSkip ?? null,
