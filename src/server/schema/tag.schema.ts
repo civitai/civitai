@@ -38,6 +38,7 @@ export const getTagsInput = getAllQuerySchema.extend({
   sort: z.nativeEnum(TagSort).optional(),
   nsfwLevel: z.number().optional(),
   include: z.enum(['nsfwLevel', 'isCategory']).array().optional(),
+  moderation: z.boolean().optional(),
 });
 export type GetTagsInput = z.infer<typeof getTagsInput>;
 
