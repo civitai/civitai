@@ -100,7 +100,7 @@ export function useExplainHiddenImages<
     const tagDict: Record<number, number> = {};
 
     for (const image of images ?? []) {
-      if (!image.browsingLevel) continue;
+      if (!image.nsfwLevel) continue;
       for (const tag of image.tagIds ?? []) {
         if (hiddenPreferences.hiddenTags.get(tag)) {
           if (!tagDict[tag]) tagDict[tag] = 1;
