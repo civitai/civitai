@@ -2,10 +2,11 @@ import { ActionIcon, Autocomplete, Badge, Card, Group, Loader, Stack, Text } fro
 import { useDebouncedValue } from '@mantine/hooks';
 import { IconSearch, IconX } from '@tabler/icons-react';
 import { uniqBy } from 'lodash-es';
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useHiddenPreferencesContext } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import { useHiddenPreferencesData, useToggleHiddenPreferences } from '~/hooks/hidden-preferences';
 import { TagSort } from '~/server/common/enums';
+import { toggleableBrowsingCategories } from '~/shared/constants/browsingLevel.constants';
 
 import { trpc } from '~/utils/trpc';
 
@@ -16,10 +17,23 @@ export function HiddenTagsSection({ withTitle = true }: { withTitle?: boolean })
   const { moderatedTags } = useHiddenPreferencesContext();
 
   const tags = useHiddenPreferencesData().hiddenTags;
-  const hiddenTags = uniqBy(
-    tags.filter((x) => x.hidden && !x.parentId && !moderatedTags.some((y) => y.id === x.id)),
-    'id'
-  );
+  const hiddenTags = useMemo(() => {
+    let uniqueTags = uniqBy(
+      tags.filter((x) => x.hidden && !x.parentId && !moderatedTags.some((y) => y.id === x.id)),
+      'id'
+    );
+
+    const categoryTagIds = toggleableBrowsingCategories.map((category) =>
+      category.relatedTags.map((t) => t.id)
+    );
+    for (const tagIds of categoryTagIds) {
+      if (tagIds.every((id) => uniqueTags.find((tag) => tag.id === id))) {
+        uniqueTags = uniqueTags.filter((tag) => !tagIds.includes(tag.id));
+      }
+    }
+
+    return uniqueTags;
+  }, [moderatedTags, tags]);
 
   const { data, isLoading } = trpc.tag.getAll.useQuery({
     // entityType: ['Model'],
@@ -30,7 +44,7 @@ export function HiddenTagsSection({ withTitle = true }: { withTitle?: boolean })
   });
   const modelTags =
     data?.items
-      .filter((x) => !hiddenTags.some((y) => y.id === x.id))
+      .filter((x) => !tags.some((y) => y.id === x.id))
       .map(({ id, name }) => ({ id, value: name })) ?? [];
 
   const toggleHiddenMutation = useToggleHiddenPreferences();
