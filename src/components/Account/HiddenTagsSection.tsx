@@ -22,10 +22,11 @@ export function HiddenTagsSection({ withTitle = true }: { withTitle?: boolean })
   );
 
   const { data, isLoading } = trpc.tag.getAll.useQuery({
-    entityType: ['Model'],
+    // entityType: ['Model'],
     query: debouncedSearch.toLowerCase().trim(),
     nsfwLevel: 1,
     sort: TagSort.MostHidden,
+    moderation: false,
   });
   const modelTags =
     data?.items

@@ -82,6 +82,7 @@ export const getTags = async ({
   includeAdminTags = false,
   nsfwLevel,
   include,
+  moderation,
 }: Omit<GetTagsInput, 'limit' | 'page'> & {
   take?: number;
   skip?: number;
@@ -126,6 +127,10 @@ export const getTags = async ({
   }
   if (!includeAdminTags) {
     AND.push(Prisma.sql`t."adminOnly" = false`);
+  }
+
+  if (moderation === false) {
+    AND.push(Prisma.sql`t.type != 'Moderation'`);
   }
 
   if (nsfwLevel) AND.push(Prisma.sql`(t."nsfwLevel" & ${nsfwLevel}) != 0`);

@@ -549,9 +549,18 @@ export const getPostTags = async ({
     SELECT
       t.id,
       t.name,
+      (
+        SELECT COALESCE(
+        (
+            SELECT MAX(pt."nsfwLevel")
+            FROM "TagsOnTags" tot
+            JOIN "Tag" pt ON tot."fromTagId" = pt.id
+            WHERE tot."toTagId" = t.id
+        ), t."nsfwLevel") "nsfwLevel"
+      ) "nsfwLevel",
       t."isCategory",
       COALESCE(${
-        showTrending ? Prisma.sql`s."postCountDay"` : Prisma.sql`s."postCountAllTime"`
+        showTrending ? Prisma.sql`s."postCountWeek"` : Prisma.sql`s."postCountAllTime"`
       }, 0)::int AS "postCount"
     FROM "Tag" t
     LEFT JOIN "TagStat" s ON s."tagId" = t.id
@@ -559,7 +568,7 @@ export const getPostTags = async ({
     WHERE
       ${showTrending ? Prisma.sql`t."isCategory" = true` : Prisma.sql`t.name ILIKE ${query + '%'}`}
     ORDER BY ${Prisma.raw(
-      showTrending ? `r."postCountDayRank" ASC` : `r."postCountAllTimeRank" ASC`
+      showTrending ? `r."postCountWeekRank" ASC` : `r."postCountAllTimeRank" ASC`
     )}
     LIMIT ${limit}
   `;
