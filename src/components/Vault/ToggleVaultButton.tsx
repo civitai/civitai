@@ -123,10 +123,10 @@ export function ToggleVaultButton({
 
     try {
       await toggleModelVersion({ modelVersionId });
-    } catch (e) {
+    } catch (e: any) {
       // I hate this, but it's the only way to check for this error...
       // TRPC doesn't have a way to expand errors
-      if (e.message.includes('Vault storage limit exceeded')) {
+      if (e.hasOwnProperty('message') && e?.message?.includes('Vault storage limit exceeded')) {
         dialogStore.trigger({
           component: MembershipUpsell,
         });
