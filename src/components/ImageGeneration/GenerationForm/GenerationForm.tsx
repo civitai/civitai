@@ -84,6 +84,7 @@ import { NextLink } from '@mantine/next';
 import { IconLock } from '@tabler/icons-react';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
+import { DailyBoostRewardClaim } from '~/components/Buzz/Rewards/DailyBoostRewardClaim';
 
 const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
   const { classes } = useStyles();
@@ -642,6 +643,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
           </Stack>
         </ScrollArea>
         <Stack spacing={4} px="md" pt="xs" pb={3} className={classes.generationArea}>
+          <DailyBoostRewardClaim />
           {promptWarning && (
             <div>
               <Alert color="red" title="Prohibited Prompt">

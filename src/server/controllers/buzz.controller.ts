@@ -22,6 +22,7 @@ import { DEFAULT_PAGE_SIZE } from '../utils/pagination-helpers';
 import { dbRead } from '~/server/db/client';
 import { userContributingClubs } from '../services/club.service';
 import { ClubAdminPermission } from '@prisma/client';
+import { dailyBoostReward } from '~/server/rewards/active/dailyBoost.reward';
 
 export function getUserAccountHandler({ ctx }: { ctx: DeepNonNullable<Context> }) {
   try {
@@ -244,6 +245,14 @@ export async function depositClubFundsHandler({
 export const getUserMultipliersHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
   try {
     return getMultipliersForUser(ctx.user.id);
+  } catch (error) {
+    throw getTRPCErrorFromUnknown(error);
+  }
+};
+
+export const claimDailyBoostRewardHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
+  try {
+    await dailyBoostReward.apply({ userId: ctx.user.id });
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
   }
