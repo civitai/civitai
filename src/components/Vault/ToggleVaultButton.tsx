@@ -1,5 +1,5 @@
 import { Button, Modal, Stack, ThemeIcon, Text } from '@mantine/core';
-import { IconCloudLock } from '@tabler/icons-react';
+import { IconCloudLock, IconServerBolt } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React, { useCallback } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
@@ -54,6 +54,40 @@ const VaultUpsell = () => {
   );
 };
 
+const MembershipUpsell = () => {
+  const dialog = useDialogContext();
+  const handleClose = dialog.onClose;
+  const router = useRouter();
+
+  return (
+    <Modal {...dialog} title="Whoops!" size="sm" withCloseButton>
+      <Stack align="center">
+        <ThemeIcon size={100} radius={50} color="teal" variant="light">
+          <IconServerBolt size={50} />
+        </ThemeIcon>
+        <Text weight={700} align="center">
+          Looks like you&rsquo;re running out of storage
+        </Text>
+        <Text align="center" size="sm">
+          You can get more storage by upgrading to a higher membership tier, along with other great
+          benefits!
+        </Text>
+
+        <Button
+          onClick={() => {
+            router.push('/pricing');
+            handleClose();
+          }}
+          fullWidth
+          radius="xl"
+        >
+          Upgrade my membership now
+        </Button>
+      </Stack>
+    </Modal>
+  );
+};
+
 export function ToggleVaultButton({
   modelVersionId,
   children,
@@ -77,7 +111,7 @@ export function ToggleVaultButton({
   );
 
   const { toggleModelVersion, togglingModelVersion } = useMutateVault();
-  const toggleVaultItem = useCallback(() => {
+  const toggleVaultItem = useCallback(async () => {
     if (!currentUser?.isMember) {
       // Upsell:
       dialogStore.trigger({
@@ -87,7 +121,17 @@ export function ToggleVaultButton({
       return;
     }
 
-    toggleModelVersion({ modelVersionId });
+    try {
+      await toggleModelVersion({ modelVersionId });
+    } catch (e) {
+      // I hate this, but it's the only way to check for this error...
+      // TRPC doesn't have a way to expand errors
+      if (e.message.includes('Vault storage limit exceeded')) {
+        dialogStore.trigger({
+          component: MembershipUpsell,
+        });
+      }
+    }
   }, [toggleModelVersion, modelVersionId]);
 
   if (!features.vault) {
