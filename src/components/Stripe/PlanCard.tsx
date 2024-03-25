@@ -226,6 +226,45 @@ export const getPlanDetails: (
         ),
       },
       {
+        icon: <IconBolt size={benefitIconSize} />,
+        iconColor: (metadata?.purchasesMultiplier ?? 1) === 1 ? 'gray' : 'yellow',
+        iconVariant: 'light' as ThemeIconVariant,
+        content:
+          (metadata?.purchasesMultiplier ?? 1) === 1 ? (
+            <Text>
+              <Text span color="yellow.7">
+                No extra Buzz on purchases
+              </Text>
+            </Text>
+          ) : (
+            <Text>
+              <Text span color="yellow.7">
+                Extra {(((metadata?.purchasesMultiplier ?? 1) - 1) * 100).toFixed(0)}% Buzz on
+                purchases
+              </Text>
+            </Text>
+          ),
+      },
+      {
+        icon: <IconBolt size={benefitIconSize} />,
+        iconColor: (metadata?.rewardsMultiplier ?? 1) === 1 ? 'gray' : 'yellow',
+        iconVariant: 'light' as ThemeIconVariant,
+        content:
+          (metadata?.rewardsMultiplier ?? 1) === 1 ? (
+            <Text>
+              <Text span color="yellow.7">
+                No extra Buzz on rewards
+              </Text>
+            </Text>
+          ) : (
+            <Text>
+              <Text span color="yellow.7">
+                Rewards give you {metadata?.rewardsMultiplier ?? 1}x more Buzz!
+              </Text>
+            </Text>
+          ),
+      },
+      {
         icon: <IconPhotoAi size={benefitIconSize} />,
         iconColor: 'blue',
         iconVariant: 'light' as ThemeIconVariant,

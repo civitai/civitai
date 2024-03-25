@@ -31,7 +31,11 @@ import { useQueryBuzzPackages } from '../Buzz/buzz.utils';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 import { openStripeTransactionModal } from '~/components/Modals/StripeTransactionModal';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { formatCurrencyForDisplay, formatPriceForDisplay } from '~/utils/number-helpers';
+import {
+  formatCurrencyForDisplay,
+  formatPriceForDisplay,
+  numberWithCommas,
+} from '~/utils/number-helpers';
 import { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
@@ -145,6 +149,7 @@ export const BuzzPurchase = ({
   const ctaEnabled = !!selectedPrice?.unitAmount || (!selectedPrice && customAmount);
   const { multipliers, multipliersLoading } = useUserMultipliers();
   const purchasesMultiplier = multipliers.purchasesMultiplier ?? 1;
+  const isMember = currentUser?.isMember;
 
   const {
     packages = [],
@@ -438,6 +443,35 @@ export const BuzzPurchase = ({
                 ${formatCurrencyForDisplay(unitAmount)}
               </Text>
             </Text>
+            {purchasesMultiplier > 1 && (
+              <Alert color="yellow" title="Your membership gets you more!" icon={<IconBolt />}>
+                <Text>
+                  Thanks to your membership you will get an extra{' '}
+                  <Text component="span" weight="bold">
+                    {numberWithCommas(Math.floor(buzzAmount * purchasesMultiplier - buzzAmount))}{' '}
+                    Buzz
+                  </Text>{' '}
+                  for a total of{' '}
+                  <Text component="span" weight="bold">
+                    {numberWithCommas(Math.floor(buzzAmount * purchasesMultiplier))} Buzz
+                  </Text>{' '}
+                  for the same price!
+                </Text>
+              </Alert>
+            )}
+            {purchasesMultiplier === 1 && !isMember && (
+              <Alert color="yellow" title="Did you know?" icon={<IconBolt />}>
+                <Stack>
+                  <Text>
+                    Memberships allow you to get a better bang for your buck by giving you extra
+                    buzz per purchase, a reward multiplier and more!
+                  </Text>
+                  <Anchor href="/pricing" onClick={onCancel}>
+                    Check out our memberships now!
+                  </Anchor>{' '}
+                </Stack>
+              </Alert>
+            )}
           </>
         )}
         <Button disabled={!ctaEnabled} onClick={handleSubmit} leftIcon={<IconBrandStripe />}>
