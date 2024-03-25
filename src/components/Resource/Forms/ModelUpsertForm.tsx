@@ -124,8 +124,6 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
 
   const upsertModelMutation = trpc.model.upsert.useMutation({
     onSuccess: async (data, payload) => {
-      // Reset dirty state, but keep the values
-      form.reset({}, { keepValues: true });
       await queryUtils.model.getById.invalidate({ id: data.id });
       await queryUtils.model.getAllInfiniteSimple.invalidate();
       if (!payload.id) await queryUtils.model.getMyDraftModels.invalidate();
