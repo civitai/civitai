@@ -24,8 +24,7 @@ export default function SetBrowsingLevelModal({
 
   const updateImageNsfwLevel = trpc.image.updateImageNsfwLevel.useMutation({
     onSuccess: () => {
-      if (!isModerator)
-        showSuccessNotification({ message: 'Succesfully requested image rating update' });
+      if (!isModerator) showSuccessNotification({ message: 'Image rating vote received' });
     },
     onError: (error) => {
       if (isModerator) {
@@ -44,7 +43,7 @@ export default function SetBrowsingLevelModal({
   };
 
   return (
-    <Modal title={isModerator ? 'Image ratings' : 'Request image rating update'} {...dialog}>
+    <Modal title={isModerator ? 'Image ratings' : 'Vote for image rating'} {...dialog}>
       <Paper withBorder p={0} className={classes.root}>
         {browsingLevels.map((level) => (
           <UnstyledButton

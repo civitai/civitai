@@ -1,7 +1,17 @@
-import { ActionIcon, Center, Group, GroupProps, Loader, MantineProvider } from '@mantine/core';
+import {
+  ActionIcon,
+  Center,
+  Group,
+  GroupProps,
+  Loader,
+  MantineProvider,
+  createStyles,
+} from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { IconChevronDown, IconChevronUp } from '@tabler/icons-react';
 import { useMemo } from 'react';
+import { openSetBrowsingLevelModal } from '~/components/Dialog/dialog-registry';
+import { BrowsingLevelBadge } from '~/components/ImageGuard/ImageGuard2';
 import { VotableTag } from '~/components/VotableTags/VotableTag';
 import { VotableTagAdd } from '~/components/VotableTags/VotableTagAdd';
 import { VotableTagMature } from '~/components/VotableTags/VotableTagMature';
@@ -18,9 +28,11 @@ export function VotableTags({
   tags: initialTags,
   canAdd = false,
   collapsible = false,
+  nsfwLevel,
   ...props
 }: GalleryTagProps) {
   const currentUser = useCurrentUser();
+  const { classes } = useStyles();
   const { data: tags = [], isLoading } = trpc.tag.getVotableTags.useQuery(
     { id, type },
     { enabled: !initialTags, initialData: initialTags }
@@ -60,6 +72,15 @@ export function VotableTags({
   return (
     <MantineProvider theme={{ colorScheme: 'dark' }}>
       <Group spacing={4} {...props}>
+        {nsfwLevel && type === 'image' && (
+          <BrowsingLevelBadge
+            radius="xs"
+            browsingLevel={nsfwLevel}
+            className="cursor-pointer"
+            onClick={() => openSetBrowsingLevelModal({ imageId: id, nsfwLevel })}
+            sfwClassName={classes.nsfwBadge}
+          />
+        )}
         {canAdd && (
           <VotableTagAdd
             addTag={(tag) => {
@@ -116,4 +137,11 @@ type GalleryTagProps = {
   tags?: VotableTagModel[];
   canAdd?: boolean;
   collapsible?: boolean;
+  nsfwLevel?: number;
 } & Omit<GroupProps, 'id'>;
+
+const useStyles = createStyles((theme) => ({
+  nsfwBadge: {
+    backgroundColor: theme.colors.blue[9],
+  },
+}));

@@ -30,7 +30,8 @@ function BrowsingLevelItem({ level }: { level: BrowsingLevel }) {
   return (
     <Group
       position="apart"
-      p="md"
+      py="sm"
+      px="md"
       onClick={() => toggleBrowsingLevel(level)}
       className={cx({ [classes.active]: isSelected })}
       noWrap

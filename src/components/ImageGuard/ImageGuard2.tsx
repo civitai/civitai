@@ -170,15 +170,24 @@ export function ImageGuard2({
 
 export function BrowsingLevelBadge({
   browsingLevel,
+  className,
+  sfwClassName,
+  nsfwClassName,
   ...badgeProps
 }: {
   browsingLevel?: number;
-} & BadgeProps & { onClick?: () => void }) {
-  const { classes } = useBadgeStyles({ browsingLevel });
+} & BadgeProps & { onClick?: () => void; sfwClassName?: string; nsfwClassName?: string }) {
+  const { classes, cx } = useBadgeStyles({ browsingLevel });
   if (!browsingLevel) return null;
+  const nsfw = Flags.hasFlag(nsfwBrowsingLevelsFlag, browsingLevel);
+
+  const badgeClass = cx(className, {
+    [sfwClassName ? sfwClassName : '']: !nsfw,
+    [nsfwClassName ? nsfwClassName : '']: nsfw,
+  });
 
   return (
-    <Badge classNames={classes} {...badgeProps}>
+    <Badge classNames={classes} className={badgeClass} {...badgeProps}>
       {browsingLevelLabels[browsingLevel as NsfwLevel]}
     </Badge>
   );
@@ -307,11 +316,6 @@ const useBadgeStyles = createStyles((theme, params: { browsingLevel?: number }) 
       '& > span': {
         lineHeight: 1,
       },
-    },
-    rightSection: {
-      borderLeft: '1px solid rgba(0,0,0,.15)',
-      paddingLeft: 5,
-      marginRight: -2,
     },
   };
 });

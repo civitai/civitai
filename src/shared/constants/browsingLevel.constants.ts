@@ -106,11 +106,14 @@ export const votableTagColors = {
 export const toggleableBrowsingCategories = [
   {
     title: 'Anime',
-    description: 'View less anime content',
     relatedTags: [
       { id: 4, name: 'anime' },
       { id: 413, name: 'manga' },
       { id: 5218, name: 'hentai' },
     ],
+  },
+  {
+    title: 'Political',
+    relatedTags: [{ id: 2470, name: 'political' }],
   },
 ];

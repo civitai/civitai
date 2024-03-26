@@ -2621,9 +2621,6 @@ export async function updateImageNsfwLevel({
       activity: 'setNsfwLevel',
     });
   } else {
-    const image = await dbRead.image.findFirst({ where: { id }, select: { userId: true } });
-    if (!image || image.userId !== user.id) throw throwAuthorizationError();
     await dbWrite.imageRatingRequest.create({ data: { nsfwLevel, imageId: id, userId: user.id } });
-    return { userId: user.id };
   }
 }

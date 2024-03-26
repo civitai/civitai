@@ -50,15 +50,18 @@ import { env } from '~/env/client.mjs';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { useImageStore } from '~/store/image.store';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 
 export function ImageDetail() {
   const { classes, cx, theme } = useStyles();
-  const { image, isLoading, active, close, toggleInfo } = useImageDetailContext();
+  const { image: _image, isLoading, active, close, toggleInfo } = useImageDetailContext();
   const { query } = useBrowserRouter();
 
+  const image = useImageStore(_image);
+
   if (isLoading) return <PageLoader />;
-  if (!image) return <NotFound />;
+  if (!_image) return <NotFound />;
 
   const nsfw = !getIsSafeBrowsingLevel(image.nsfwLevel);
 
@@ -258,7 +261,14 @@ export function ImageDetail() {
                     {`This image won't be visible to other users until it's reviewed by our moderators.`}
                   </AlertWithIcon>
                 )}
-                <VotableTags entityType="image" entityId={image.id} canAdd collapsible px="sm" />
+                <VotableTags
+                  entityType="image"
+                  entityId={image.id}
+                  canAdd
+                  collapsible
+                  px="sm"
+                  nsfwLevel={image.nsfwLevel}
+                />
                 <div>
                   <Divider
                     label="Discussion"
