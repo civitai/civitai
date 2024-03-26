@@ -17,6 +17,7 @@ export function VotableTagAdd({ addTag }: VotableTagAddProps) {
       entityType: [TagTarget.Image],
       types: ['UserGenerated', 'Label'],
       query: debouncedSearch.trim().toLowerCase(),
+      include: ['nsfwLevel'],
     },
     {
       enabled: debouncedSearch.trim().length > 0,

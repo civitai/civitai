@@ -70,7 +70,7 @@ export function VotableTag({
   entityId,
   tagId,
   initialVote = 0,
-  nsfwLevel,
+  nsfwLevel = 1,
   name,
   score,
   needsReview = false,
