@@ -173,7 +173,7 @@ export function BrowsingLevelBadge({
   ...badgeProps
 }: {
   browsingLevel?: number;
-} & BadgeProps) {
+} & BadgeProps & { onClick?: () => void }) {
   const { classes } = useBadgeStyles({ browsingLevel });
   if (!browsingLevel) return null;
 
