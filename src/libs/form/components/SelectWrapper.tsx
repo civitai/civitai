@@ -57,7 +57,7 @@ export function SelectWrapper<T extends string | number>({
   );
 
   const handleChange = (value: string) => {
-    const returnValue = initialType === 'number' ? Number(value) : value;
+    const returnValue = initialType === 'number' && value != null ? Number(value) : value;
     setSelectedPreset(returnValue as string);
     onChange?.(returnValue as T);
   };

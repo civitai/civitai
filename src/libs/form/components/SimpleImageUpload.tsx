@@ -18,6 +18,7 @@ import { isEqual } from 'lodash-es';
 import { useEffect, useState } from 'react';
 
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { BrowsingLevelBadge } from '~/components/ImageGuard/ImageGuard2';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { constants } from '~/server/common/constants';
 import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
@@ -25,7 +26,9 @@ import { DataFromFile } from '~/utils/metadata';
 import { formatBytes } from '~/utils/number-helpers';
 
 type SimpleImageUploadProps = Omit<InputWrapperProps, 'children' | 'onChange'> & {
-  value?: string | { url: string };
+  value?:
+    | string
+    | { id: number; nsfwLevel?: number; userId?: number; user?: { id: number }; url: string };
   onChange?: (value: DataFromFile | null) => void;
   previewWidth?: number;
   maxSize?: number;
@@ -163,6 +166,12 @@ export function SimpleImageUpload({
                   }
             }
           >
+            {!!value && typeof value !== 'string' && (
+              <BrowsingLevelBadge
+                browsingLevel={value.nsfwLevel}
+                className="absolute top-2 left-2 z-10"
+              />
+            )}
             <EdgeMedia
               src={image.objectUrl ?? image.url}
               type={MediaType.image}

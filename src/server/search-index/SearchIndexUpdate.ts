@@ -1,3 +1,5 @@
+import { chunk } from 'lodash-es';
+import { dbWrite } from '~/server/db/client';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { addToQueue, checkoutQueue } from '~/server/redis/queues';
 

@@ -16,6 +16,7 @@ import { ImageCard } from '~/components/Cards/ImageCard';
 import Link from 'next/link';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { ShowcaseGrid } from '~/components/Profile/Sections/ShowcaseGrid';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 
 const MAX_IMAGES_DISPLAY = 32; // 2 rows of 7
 
@@ -30,6 +31,7 @@ export const MyImagesSection = ({ user }: ProfileSectionProps) => {
     tags: [],
   });
 
+  const browsingLevel = useBrowsingLevelDebounced();
   const {
     images: _images,
     isLoading,
@@ -42,6 +44,7 @@ export const MyImagesSection = ({ user }: ProfileSectionProps) => {
       withMeta: false,
       types: undefined,
       include: ['profilePictures'],
+      browsingLevel,
     },
     { keepPreviousData: true, enabled: inView }
   );

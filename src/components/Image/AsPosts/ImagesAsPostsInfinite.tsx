@@ -43,12 +43,13 @@ import { trpc } from '~/utils/trpc';
 import { IconSettings } from '@tabler/icons-react';
 import { ModelById } from '~/types/router';
 import { GalleryModerationModal } from './GalleryModerationModal';
-import { useModelGallerySettings } from './gallery.utils';
 import { NextLink } from '@mantine/next';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
-import { isDefined } from '~/utils/type-guards';
 import { Adunit } from '~/components/Ads/AdUnit';
 import { adsRegistry } from '~/components/Ads/adsRegistry';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { Flags } from '~/shared/utils';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { QS } from '~/utils/qs';
 import { ImageFiltersDropdown } from '~/components/Image/Filters/ImageFiltersDropdown';
 
@@ -96,7 +97,6 @@ export default function ImagesAsPostsInfinite({
   const isMobile = useContainerSmallerThan('sm');
   const limit = isMobile ? LIMIT / 2 : LIMIT;
 
-  const [opened, setOpened] = useState(false);
   const [showHidden, setShowHidden] = useState(false);
 
   const imageFilters = useImageFilters('modelImages');
@@ -110,113 +110,34 @@ export default function ImagesAsPostsInfinite({
     // types: [MediaType.image, MediaType.video], // override global types image filter
   });
 
+  const browsingLevel = useBrowsingLevelDebounced();
+  const { data: gallerySettings } = trpc.model.getGallerySettings.useQuery({ id: model.id });
+  let intersection = browsingLevel;
+  if (gallerySettings?.level) {
+    intersection = Flags.intersection(browsingLevel, gallerySettings.level);
+  }
+  const enabled = !!gallerySettings && intersection > 0;
   const { data, isLoading, fetchNextPage, hasNextPage, isRefetching } =
     trpc.image.getImagesAsPostsInfinite.useInfiniteQuery(
-      { ...filters, limit },
+      { ...filters, limit, browsingLevel: intersection },
       {
         getNextPageParam: (lastPage) => lastPage.nextCursor,
         trpc: { context: { skipBatch: true } },
         keepPreviousData: true,
+        enabled,
         // enabled: inView,
       }
     );
 
   const flatData = useMemo(() => data?.pages.flatMap((x) => (!!x ? x.items : [])), [data]);
-  const { items: preferred } = useApplyHiddenPreferences({
+  const { items } = useApplyHiddenPreferences({
     type: 'posts',
     data: flatData,
-    // showHidden,
+    hiddenImages: gallerySettings?.hiddenImages,
+    hiddenUsers: gallerySettings?.hiddenUsers.map((x) => x.id),
+    hiddenTags: gallerySettings?.hiddenTags.map((x) => x.id),
+    browsingLevel: intersection,
   });
-
-  // const {
-  //   images: hiddenImages,
-  //   tags: hiddenTags,
-  //   users: hiddenUsers,
-  //   isLoading: isLoadingHidden,
-  // } = useHiddenPreferencesContext();
-
-  const {
-    hiddenImages: galleryHiddenImages,
-    hiddenTags: galleryHiddenTags,
-    hiddenUsers: galleryHiddenUsers,
-    isLoading: loadingGallerySettings,
-  } = useModelGallerySettings({ modelId: model.id });
-
-  const items = useMemo(() => {
-    if (loadingGallerySettings) return [];
-    return preferred
-      .filter((post) => {
-        if (!showHidden && galleryHiddenUsers.get(post.user.id)) return false;
-        return true;
-      })
-      .map(({ images, ...post }) => {
-        const filteredImages = images?.filter((i) => {
-          // show hidden images only
-          if (showHidden) return galleryHiddenImages.get(i.id);
-          if (galleryHiddenImages.get(i.id)) return false;
-          for (const tag of i.tagIds ?? []) {
-            if (galleryHiddenTags.get(tag)) return false;
-          }
-          return true;
-        });
-        return !!filteredImages?.length ? { ...post, images: filteredImages } : null;
-      })
-      .filter(isDefined);
-  }, [
-    loadingGallerySettings,
-    preferred,
-    showHidden,
-    galleryHiddenUsers,
-    galleryHiddenImages,
-    galleryHiddenTags,
-  ]);
-
-  // const items = useMemo(() => {
-  //   // TODO - fetch user reactions for images separately
-  //   if (isLoadingHidden || loadingGallerySettings) return [];
-  //   const arr = data?.pages.flatMap((x) => x.items) ?? [];
-  //   const filtered = arr
-  //     .filter((x) => {
-  //       if (x.user.id === currentUser?.id && browsingMode !== BrowsingMode.SFW) return true;
-  //       if (hiddenUsers.get(x.user.id) || (!showHidden && galleryHiddenUsers.get(x.user.id)))
-  //         return false;
-  //       return true;
-  //     })
-  //     .map(({ images, ...x }) => {
-  //       const filteredImages = images?.filter((i) => {
-  //         // show hidden images only
-  //         if (showHidden) return galleryHiddenImages.get(i.id);
-
-  //         if (i.ingestion !== ImageIngestionStatus.Scanned) return false;
-  //         if (hiddenImages.get(i.id) || galleryHiddenImages.get(i.id)) return false;
-  //         for (const tag of i.tagIds ?? []) {
-  //           if (hiddenTags.get(tag) || galleryHiddenTags.get(tag)) return false;
-  //         }
-  //         return true;
-  //       });
-
-  //       if (!filteredImages?.length) return null;
-
-  //       return {
-  //         ...x,
-  //         images: filteredImages,
-  //       };
-  //     })
-  //     .filter(isDefined);
-  //   return filtered;
-  // }, [
-  //   data,
-  //   currentUser,
-  //   hiddenImages,
-  //   hiddenTags,
-  //   hiddenUsers,
-  //   isLoadingHidden,
-  //   galleryHiddenImages,
-  //   galleryHiddenTags,
-  //   galleryHiddenUsers,
-  //   loadingGallerySettings,
-  //   showHidden,
-  // ]);
 
   const handleAddPostClick = (opts?: { reviewing?: boolean }) => {
     const queryString = QS.stringify({
@@ -230,21 +151,15 @@ export default function ImagesAsPostsInfinite({
   };
 
   useEffect(() => {
-    if (galleryHiddenImages.size === 0) setShowHidden(false);
-  }, [galleryHiddenImages.size]);
+    if (!gallerySettings?.hiddenImages.length) setShowHidden(false);
+  }, [gallerySettings?.hiddenImages]);
 
   const isMuted = currentUser?.muted ?? false;
   const { excludeCrossPosts } = imageFilters;
   const hasModerationPreferences =
-    galleryHiddenImages.size > 0 || galleryHiddenTags.size > 0 || galleryHiddenUsers.size > 0;
-
-  // const adStyle: React.CSSProperties = {
-  //   position: 'sticky',
-  //   top: 0,
-  //   height: '100%',
-  //   // top: '50%',
-  //   // transform: 'translateY(-50%)',
-  // };
+    !!gallerySettings?.hiddenImages.length ||
+    !!gallerySettings?.hiddenUsers.length ||
+    !!gallerySettings?.hiddenTags.length;
 
   return (
     <ImagesAsPostsInfiniteContext.Provider
@@ -312,7 +227,7 @@ export default function ImagesAsPostsInfinite({
                   </ButtonTooltip>
                   {showModerationOptions && (
                     <>
-                      {galleryHiddenImages.size > 0 && (
+                      {!!gallerySettings?.hiddenImages.length && (
                         <ButtonTooltip label={`${showHidden ? 'Hide' : 'Show'} hidden images`}>
                           <ActionIcon
                             variant="light"
@@ -325,7 +240,16 @@ export default function ImagesAsPostsInfinite({
                         </ButtonTooltip>
                       )}
                       <ButtonTooltip label="Gallery Moderation Preferences">
-                        <ActionIcon variant="filled" radius="xl" onClick={() => setOpened(true)}>
+                        <ActionIcon
+                          variant="filled"
+                          radius="xl"
+                          onClick={() =>
+                            dialogStore.trigger({
+                              component: GalleryModerationModal,
+                              props: { modelId: model.id },
+                            })
+                          }
+                        >
                           <IconSettings size={16} />
                         </ActionIcon>
                       </ButtonTooltip>
@@ -362,7 +286,7 @@ export default function ImagesAsPostsInfinite({
                 </Text>
               ) : null}
               {/* <ImageCategories /> */}
-              {isLoading ? (
+              {enabled && isLoading ? (
                 <Paper style={{ minHeight: 200, position: 'relative' }}>
                   <LoadingOverlay visible zIndex={10} />
                 </Paper>
@@ -436,34 +360,7 @@ export default function ImagesAsPostsInfinite({
             </Stack>
           </MasonryContainer>
         </MasonryProvider>
-        {/* <AscendeumAd
-          adunit="StickySidebar_B"
-          sizes={{
-            [theme.breakpoints.md]: '120x600',
-            [2030]: '300x600',
-          }}
-          style={{ ...adStyle }}
-          showRemoveAds
-        /> */}
       </Box>
-
-      {/* {isLoading && (
-        <Paper style={{ minHeight: 200, position: 'relative' }}>
-          <LoadingOverlay visible zIndex={10} />
-        </Paper>
-      )}
-      {!isLoading && !items.length && (
-        <Paper p="xl" sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <Stack>
-            <Text size="xl">There are no images for this model yet.</Text>
-            <Text color="dimmed">
-              Add a post to showcase your images generated from this model.
-            </Text>
-          </Stack>
-        </Paper>
-      )} */}
-
-      <GalleryModerationModal opened={opened} onClose={() => setOpened(false)} />
     </ImagesAsPostsInfiniteContext.Provider>
   );
 }

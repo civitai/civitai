@@ -16,8 +16,6 @@ import {
   CosmeticSource,
   CosmeticType,
   ModelEngagementType,
-  NsfwLevel,
-  OnboardingStep,
   Prisma,
   TagEngagementType,
 } from '@prisma/client';
@@ -34,11 +32,6 @@ import {
 } from '~/server/schema/user.schema';
 import { invalidateSession } from '~/server/utils/session-helpers';
 import { env } from '~/env/server.mjs';
-import {
-  refreshAllHiddenForUser,
-  refreshHiddenModelsForUser,
-  refreshHiddenUsersForUser,
-} from '~/server/services/user-cache.service';
 import { cancelSubscription } from '~/server/services/stripe.service';
 import { playfab } from '~/server/playfab/client';
 import blockedUsernames from '~/utils/blocklist-username.json';
@@ -66,10 +59,11 @@ import { ProfileImage, profileImageSelect } from '../selectors/image.selector';
 import { bustCachedArray, cachedObject } from '~/server/utils/cache-helpers';
 import { constants } from '~/server/common/constants';
 import { REDIS_KEYS } from '~/server/redis/client';
-import { baseS3Client } from '~/utils/s3-client';
-import { isDefined } from '~/utils/type-guards';
 import { removeEmpty } from '~/utils/object-helpers';
 import { purchasableRewardDetails } from '~/server/selectors/purchasableReward.selector';
+import { getNsfwLeveLDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
+import { HiddenModels } from '~/server/services/user-preferences.service';
+import { deleteImageById } from '~/server/services/image.service';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
 export const getUserCreator = async ({
@@ -154,11 +148,11 @@ type GetUsersRow = {
   username: string;
   status: 'active' | 'banned' | 'muted' | 'deleted' | undefined;
   avatarUrl: string | undefined;
-  avatarNsfw: NsfwLevel | undefined;
+  avatarNsfwLevel: number;
 };
 
 // Caution! this query is exposed to the public API, only non-sensitive data should be returned
-export const getUsers = ({ limit, query, email, ids, include }: GetAllUsersInput) => {
+export const getUsers = async ({ limit, query, email, ids, include }: GetAllUsersInput) => {
   const select = ['u.id', 'u.username'];
   if (include?.includes('status'))
     select.push(`
@@ -171,10 +165,10 @@ export const getUsers = ({ limit, query, email, ids, include }: GetAllUsersInput
   if (include?.includes('avatar'))
     select.push(
       'COALESCE(i.url, u.image) AS "avatarUrl"',
-      `COALESCE(i.nsfw, 'None') AS "avatarNsfw"`
+      `COALESCE(i.nsfwLevel, 'None') AS "avatarNsfwLevel"`
     );
 
-  return dbRead.$queryRaw<GetUsersRow[]>`
+  const result = await dbRead.$queryRaw<GetUsersRow[]>`
     SELECT
       ${Prisma.raw(select.join(','))}
     FROM "User" u
@@ -190,6 +184,10 @@ export const getUsers = ({ limit, query, email, ids, include }: GetAllUsersInput
     ${Prisma.raw(query ? 'ORDER BY LENGTH(username) ASC' : '')}
     ${Prisma.raw(limit ? 'LIMIT ' + limit : '')}
   `;
+  return result.map(({ avatarNsfwLevel, ...user }) => ({
+    ...user,
+    avatarNsfw: getNsfwLeveLDeprecatedReverseMapping(avatarNsfwLevel),
+  }));
 };
 
 export const getUserById = <TSelect extends Prisma.UserSelect = Prisma.UserSelect>({
@@ -235,7 +233,6 @@ export const updateUserById = async ({
   }
 
   const user = await dbWrite.user.update({ where: { id }, data });
-  await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
 
   return user;
 };
@@ -266,33 +263,6 @@ export async function getUserSettings(userId: number) {
   `;
   return settings[0]?.settings ?? {};
 }
-
-export const acceptTOS = ({ id }: { id: number }) => {
-  return dbWrite.user.update({
-    where: { id },
-    data: { tos: true },
-  });
-};
-
-// export const completeOnboarding = async ({ id }: { id: number }) => {
-//   return dbWrite.user.update({
-//     where: { id },
-//     data: { onboarded: true },
-//   });
-// };
-
-export const updateOnboardingSteps = async ({
-  id,
-  steps,
-}: {
-  id: number;
-  steps: OnboardingStep[];
-}) => {
-  return dbWrite.user.update({
-    where: { id },
-    data: { onboardingSteps: steps },
-  });
-};
 
 export const getUserEngagedModels = ({ id, type }: { id: number; type?: ModelEngagementType }) => {
   return dbRead.modelEngagement.findMany({
@@ -413,7 +383,7 @@ export const toggleModelEngagement = async ({
       await dbWrite.modelEngagement.delete({
         where: { userId_modelId: { userId, modelId } },
       });
-      if (type === 'Hide') await refreshHiddenModelsForUser({ userId });
+      if (type === 'Hide') await HiddenModels.refreshCache({ userId });
       return false;
     } else if (setTo && engagement.type !== type) {
       await dbWrite.modelEngagement.update({
@@ -426,7 +396,7 @@ export const toggleModelEngagement = async ({
   } else if (setTo === false) return false;
 
   await dbWrite.modelEngagement.create({ data: { type, modelId, userId } });
-  if (type === 'Hide') await refreshHiddenModelsForUser({ userId });
+  if (type === 'Hide') await HiddenModels.refreshCache({ userId });
   return true;
 };
 
@@ -495,7 +465,6 @@ export const toggleHideUser = async ({
 
   await dbWrite.userEngagement.create({ data: { type: 'Hide', targetUserId, userId } });
   await playfab.trackEvent(userId, { eventName: 'user_hide_user', userId: targetUserId });
-  await refreshHiddenUsersForUser({ userId });
   return true;
 };
 
@@ -569,7 +538,6 @@ export const toggleBlockedTag = async ({
     await dbWrite.tagEngagement.create({ data: { userId, tagId, type: 'Hide' } });
     isHidden = true;
   }
-  await refreshAllHiddenForUser({ userId });
   return isHidden;
 };
 
@@ -686,19 +654,8 @@ export const removeAllContent = async ({ id }: { id: number }) => {
   // remove images from s3 buckets before deleting them
   try {
     for (const image of images) {
-      const { items } = await baseS3Client.listObjects({
-        bucket: env.S3_IMAGE_CACHE_BUCKET,
-        prefix: image.url,
-      });
-      await baseS3Client.deleteManyObjects({
-        bucket: env.S3_IMAGE_CACHE_BUCKET,
-        keys: items.map((x) => x.Key).filter(isDefined),
-      });
+      await deleteImageById({ id: image.id });
     }
-    await baseS3Client.deleteManyObjects({
-      bucket: env.S3_IMAGE_UPLOAD_BUCKET,
-      keys: images.map((x) => x.url),
-    });
   } catch (e) {}
   await dbWrite.image.deleteMany({ where: { userId: id } });
 
@@ -805,7 +762,7 @@ export async function getProfilePicturesForUsers(userIds: number[]) {
           i.id,
           i.name,
           i.url,
-          i.nsfw,
+          i."nsfwLevel",
           i.hash,
           i."userId",
           i.ingestion,

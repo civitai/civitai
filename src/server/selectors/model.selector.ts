@@ -11,7 +11,7 @@ export const getAllModelsWithVersionsSelect = Prisma.validator<Prisma.ModelSelec
   type: true,
   // TODO [bw]: do we need uploadType here?
   poi: true,
-  nsfw: true,
+  nsfwLevel: true,
   allowNoCredit: true,
   allowCommercialUse: true,
   allowDerivatives: true,
@@ -41,6 +41,7 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
   name: true,
   description: true,
   poi: true,
+  nsfwLevel: true,
   nsfw: true,
   type: true,
   uploadType: true,
@@ -60,6 +61,7 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
   earlyAccessDeadline: true,
   mode: true,
   availability: true,
+  lockedProperties: true,
   reportStats: {
     select: {
       ownershipProcessing: true,
@@ -180,7 +182,7 @@ export const associatedResourceSelect = Prisma.validator<Prisma.ModelSelect>()({
   id: true,
   name: true,
   type: true,
-  nsfw: true,
+  nsfwLevel: true,
   user: { select: simpleUserSelect },
 });
 const associatedResource = Prisma.validator<Prisma.ModelArgs>()({

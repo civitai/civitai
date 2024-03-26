@@ -12,11 +12,11 @@ import { PostHog, posthog } from 'posthog-js';
 import { env } from '~/env/client.mjs';
 import { isDev } from '~/env/other';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { CivitaiSessionState } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
+import { CivitaiSessionUser } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 
 const PostHogCtx = createContext<PostHogContext>({} as PostHogContext);
 type PostHogContext = {
-  init: (user: CivitaiSessionState | null) => PostHog | undefined;
+  init: (user: CivitaiSessionUser | null) => PostHog | undefined;
 };
 
 export function usePostHog() {
@@ -28,7 +28,7 @@ export function usePostHog() {
 
 let identified = false;
 let initialized = false;
-const init = (user: CivitaiSessionState | null) => {
+const init = (user: CivitaiSessionUser | null) => {
   if (
     !env.NEXT_PUBLIC_POSTHOG_KEY ||
     !env.NEXT_PUBLIC_POSTHOG_HOST ||

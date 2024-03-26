@@ -16,7 +16,6 @@ import {
   ImageGenerationProcess,
   ImageIngestionStatus,
   MediaType,
-  NsfwLevel,
   Prisma,
   PrismaClient,
 } from '@prisma/client';
@@ -31,6 +30,8 @@ import {
   profileImageSelect,
 } from '../selectors/image.selector';
 import { isDefined } from '~/utils/type-guards';
+import { NsfwLevel } from '~/server/common/enums';
+import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { SearchIndexUpdate } from '~/server/search-index/SearchIndexUpdate';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 
@@ -75,6 +76,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'baseModel',
     'generationTool',
     'aspectRatio',
+    'nsfwLevel',
   ];
 
   if (JSON.stringify(searchableAttributes) !== JSON.stringify(settings.searchableAttributes)) {
@@ -127,7 +129,7 @@ type ImageForSearchIndex = {
   height: number | null;
   width: number | null;
   metadata: Prisma.JsonValue;
-  nsfw: NsfwLevel;
+  nsfwLevel: NsfwLevel;
   postId: number | null;
   needsReview: string | null;
   hideMeta: boolean;
@@ -217,7 +219,7 @@ const onFetchItemsToIndex = async ({
     i."postId",
     i."name",
     i."url",
-    i."nsfw",
+    i."nsfwLevel",
     i."width",
     i."height",
     i."hash",
@@ -363,6 +365,7 @@ const onFetchItemsToIndex = async ({
 
         return {
           ...imageRecord,
+          nsfwLevel: parseBitwiseBrowsingLevel(imageRecord.nsfwLevel),
           createdAtUnix: imageRecord.createdAt.getTime(),
           aspectRatio:
             !imageRecord.width || !imageRecord.height

@@ -41,6 +41,7 @@ import { BountyEntryFileMeta } from '~/server/schema/bounty-entry.schema';
 import { Currency } from '@prisma/client';
 import { getReactionsSelectV2 } from '~/server/selectors/reaction.selector';
 import { handleLogError } from '~/server/utils/errorHandling';
+import { NsfwLevel } from '~/server/common/enums';
 
 export const getInfiniteBountiesHandler = async ({
   input,
@@ -64,6 +65,8 @@ export const getInfiniteBountiesHandler = async ({
         type: true,
         complete: true,
         user: { select: userWithCosmeticsSelect },
+        nsfw: true,
+        nsfwLevel: true,
         tags: {
           select: {
             tagId: true,
@@ -110,9 +113,14 @@ export const getInfiniteBountiesHandler = async ({
 
           return {
             ...item,
+            nsfwLevel: item.nsfw ? NsfwLevel.XXX : item.nsfwLevel,
             user,
-            images: itemImages.map((image) => ({ ...image, tagIds: image.tags.map((x) => x.id) })),
-            // tags: tags.map(({ tag }) => ({ id: tag.id, name: tag.name })),
+            images: itemImages.map((image) => ({
+              ...image,
+              tagIds: image.tags.map((x) => x.id),
+              // !important - for feed queries, when `bounty.nsfw === true`, we set all image `nsfwLevel` values to `NsfwLevel.XXX`
+              nsfwLevel: item.nsfw ? NsfwLevel.XXX : image.nsfwLefel,
+            })),
             tags: tags.map(({ tagId }) => tagId),
           };
         })
@@ -184,6 +192,7 @@ export const getBountyEntriesHandler = async ({
         createdAt: true,
         bountyId: true,
         user: { select: userWithCosmeticsSelect },
+        nsfwLevel: true,
         reactions: {
           select: getReactionsSelectV2,
         },

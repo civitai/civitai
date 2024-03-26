@@ -11,15 +11,30 @@ import { z } from 'zod';
 import { useRouter } from 'next/router';
 import { useHotkeys } from '@mantine/hooks';
 import { ImageDetailByProps } from '~/components/Image/Detail/ImageDetailByProps';
-import { ImageGenerationProcess, MediaType, NsfwLevel } from '@prisma/client';
+import { ImageGenerationProcess, MediaType } from '@prisma/client';
 import { SimpleUser } from '~/server/selectors/user.selector';
-import { ImageGuardConnect } from '~/components/ImageGuard/ImageGuard';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { Modal } from '@mantine/core';
+import { NsfwLevel } from '~/server/common/enums';
+
+type ImageGuardConnect = {
+  entityType:
+    | 'model'
+    | 'modelVersion'
+    | 'review'
+    | 'user'
+    | 'post'
+    | 'collectionItem'
+    | 'collection'
+    | 'bounty'
+    | 'bountyEntry'
+    | 'club'
+    | 'article';
+  entityId: string | number;
+};
 
 export interface ImageProps {
   id: number;
-  nsfw: NsfwLevel;
   url: string;
   name: string | null;
   meta: ImageMetaProps | null;
@@ -30,6 +45,7 @@ export interface ImageProps {
   createdAt: Date | null;
   type: MediaType;
   imageNsfw?: boolean;
+  nsfwLevel: NsfwLevel;
   postId?: number | null;
   needsReview?: string | null;
   userId?: number;
@@ -44,7 +60,6 @@ type ImageViewerState = {
   nextImageId: number | null;
   prevImageId: number | null;
   onClose: () => void;
-  setOnDeleteImage: Dispatch<SetStateAction<((imageId: number) => void) | undefined>>;
   onSetImage: (imageId: number) => void;
   setEntityId: (entityId: number | null) => void;
   setEntityType: (entityType: ImageGuardConnect['entityType']) => void;
@@ -65,9 +80,6 @@ const imageViewerQueryParams = z
 export const ImageViewer = ({ children }: { children: React.ReactNode }) => {
   const router = useRouter();
 
-  const [onDeleteImage, setOnDeleteImage] = useState<((imageId: number) => void) | undefined>(
-    undefined
-  );
   const [activeImageId, setActiveImageId] = useState<number | null>(null);
   const [images, setImages] = useState<ImageProps[]>([]);
   const [entityId, setEntityId] = useState<number | null>(null);
@@ -162,7 +174,6 @@ export const ImageViewer = ({ children }: { children: React.ReactNode }) => {
         onClose,
         setEntityType,
         setEntityId,
-        setOnDeleteImage,
       }}
     >
       {activeImageId && (
@@ -181,9 +192,8 @@ export const ImageViewer = ({ children }: { children: React.ReactNode }) => {
             onSetImage={onSetImage}
             image={activeImageRecord}
             // Attempts to have a few fallbacks to go to. Nothing major.
-            entityId={entityId || activeImageRecord?.postId || activeImageId}
-            entityType={entityType || 'post'}
-            onDeleteImage={onDeleteImage}
+            connectId={entityId || activeImageRecord?.postId || activeImageId}
+            connectType={entityType || 'post'}
           />
         </Modal>
       )}

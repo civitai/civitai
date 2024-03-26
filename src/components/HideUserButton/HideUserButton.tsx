@@ -10,7 +10,7 @@ import { showSuccessNotification } from '~/utils/notifications';
 export function HideUserButton({ userId, as = 'button', onToggleHide, ...props }: Props) {
   const currentUser = useCurrentUser();
 
-  const users = useHiddenPreferencesData().user;
+  const users = useHiddenPreferencesData().hiddenUsers;
   const alreadyHiding = users.some((x) => x.id === userId);
   const toggleHiddenMutation = useToggleHiddenPreferences();
 

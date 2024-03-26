@@ -13,7 +13,6 @@ import {
   toggleMuteHandler,
   getUserCosmeticsHandler,
   getUsernameAvailableHandler,
-  acceptTOSHandler,
   completeOnboardingHandler,
   toggleArticleEngagementHandler,
   toggleBountyEngagementHandler,
@@ -56,11 +55,12 @@ import {
   toggleUserBountyEngagementSchema,
   reportProhibitedRequestSchema,
   userByReferralCodeSchema,
-  completeOnboardStepSchema,
   toggleFeatureInputSchema,
   dismissAlertSchema,
   setUserSettingsInput,
+  userOnboardingSchema,
   toggleFavoriteInput,
+  updateBrowsingModeSchema,
 } from '~/server/schema/user.schema';
 import {
   equipCosmetic,
@@ -71,6 +71,7 @@ import {
   getUserBookmarkedArticles,
   toggleBookmarked,
   toggleBookmarkedArticle,
+  updateUserById,
 } from '~/server/services/user.service';
 import {
   guardedProcedure,
@@ -104,26 +105,18 @@ export const userRouter = router({
     .query(getUserCosmeticsHandler),
   checkNotifications: protectedProcedure.query(checkUserNotificationsHandler),
   update: guardedProcedure.input(userUpdateSchema).mutation(updateUserHandler),
+  updateBrowsingMode: guardedProcedure
+    .input(updateBrowsingModeSchema)
+    .mutation(({ input, ctx }) => updateUserById({ id: ctx.user.id, data: input })),
   delete: protectedProcedure.input(deleteUserSchema).mutation(deleteUserHandler),
   toggleFavorite: protectedProcedure.input(toggleFavoriteInput).mutation(toggleFavoriteHandler),
   toggleNotifyModel: protectedProcedure
     .input(toggleModelEngagementInput)
     .mutation(toggleNotifyModelHandler),
-  // toggleHideModel: protectedProcedure
-  //   .input(toggleModelEngagementInput)
-  //   .mutation(toggleHideModelHandler),
-  acceptTOS: protectedProcedure.mutation(acceptTOSHandler),
   completeOnboardingStep: protectedProcedure
-    .input(completeOnboardStepSchema)
+    .input(userOnboardingSchema)
     .mutation(completeOnboardingHandler),
-  completeOnboarding: protectedProcedure // HACK: this is a hack to deal with people having clients behind...
-    .mutation(({ ctx }) => completeOnboardingHandler({ ctx, input: { step: undefined } })),
   toggleFollow: protectedProcedure.input(toggleFollowUserSchema).mutation(toggleFollowUserHandler),
-  // toggleHide: protectedProcedure.input(toggleFollowUserSchema).mutation(toggleHideUserHandler),
-  // toggleBlockedTag: protectedProcedure
-  //   .input(toggleBlockedTagSchema)
-  //   .mutation(toggleBlockedTagHandler),
-  // batchBlockTags: protectedProcedure.input(batchBlockTagsSchema).mutation(batchBlockTagsHandler),
   toggleMute: moderatorProcedure.input(getByIdSchema).mutation(toggleMuteHandler),
   toggleBan: moderatorProcedure.input(getByIdSchema).mutation(toggleBanHandler),
   getToken: protectedProcedure.query(({ ctx }) => ({ token: createToken(ctx.user.id) })),

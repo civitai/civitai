@@ -10,8 +10,8 @@ import { showSuccessNotification } from '~/utils/notifications';
 export function HideModelButton({ modelId, as = 'button', onToggleHide, ...props }: Props) {
   const currentUser = useCurrentUser();
 
-  const models = useHiddenPreferencesData().model;
-  const hiddenModels = models.filter((x) => x.type === 'always');
+  const models = useHiddenPreferencesData().hiddenModels;
+  const hiddenModels = models.filter((x) => x.hidden);
   const alreadyHiding = hiddenModels.some((x) => x.id === modelId);
 
   const toggleHiddenMutation = useToggleHiddenPreferences();

@@ -4,7 +4,6 @@ import { Session } from 'next-auth';
 import { z } from 'zod';
 
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { BrowsingMode } from '~/server/common/enums';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { GetAllModelsInput, getAllModelsSchema } from '~/server/schema/model.schema';
 import { getDownloadFilename } from '~/server/services/file.service';
@@ -12,6 +11,10 @@ import { getModelsWithVersions } from '~/server/services/model.service';
 import { MixedAuthEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { getNextPage, getPagination } from '~/server/utils/pagination-helpers';
+import {
+  allBrowsingLevelsFlag,
+  publicBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import { booleanString } from '~/utils/zod-helpers';
 
 type Metadata = {
@@ -32,7 +35,7 @@ const hashesAsObject = (hashes: { type: ModelHashType; hash: string }[]) =>
 
 const authedOnlyOptions: Array<keyof GetAllModelsInput> = ['favorites', 'hidden'];
 
-const modelsEndpointSchema = getAllModelsSchema.omit({ browsingMode: true }).extend({
+const modelsEndpointSchema = getAllModelsSchema.extend({
   limit: z.preprocess((val) => Number(val), z.number().min(0).max(100)).default(100),
   nsfw: booleanString().optional(),
   primaryFileOnly: booleanString().optional(),
@@ -53,6 +56,7 @@ export default MixedAuthEndpoint(async function handler(
 
   const parsedParams = modelsEndpointSchema.safeParse(req.query);
   if (!parsedParams.success) return res.status(400).json({ error: parsedParams.error });
+  const browsingLevel = !parsedParams.data.nsfw ? publicBrowsingLevelsFlag : allBrowsingLevelsFlag;
 
   // Handle pagination
   const { limit, page, cursor, ...data } = parsedParams.data;
@@ -66,11 +70,10 @@ export default MixedAuthEndpoint(async function handler(
         .status(429)
         .json({ error: "You've requested too many pages, please use cursors instead" });
   }
-  const browsingMode = data.nsfw === false ? BrowsingMode.SFW : BrowsingMode.All;
 
   try {
     const { items, nextCursor } = await getModelsWithVersions({
-      input: { ...data, take: limit, skip, cursor, browsingMode },
+      input: { ...data, take: limit, skip, cursor, browsingLevel },
       user,
     });
 

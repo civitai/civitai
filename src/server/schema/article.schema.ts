@@ -2,8 +2,12 @@ import { MetricTimeframe } from '@prisma/client';
 import { z } from 'zod';
 
 import { constants } from '~/server/common/constants';
-import { ArticleSort, BrowsingMode } from '~/server/common/enums';
-import { infiniteQuerySchema, periodModeSchema } from '~/server/schema/base.schema';
+import { ArticleSort } from '~/server/common/enums';
+import {
+  baseQuerySchema,
+  infiniteQuerySchema,
+  periodModeSchema,
+} from '~/server/schema/base.schema';
 import { baseFileSchema } from '~/server/schema/file.schema';
 import { tagSchema } from '~/server/schema/tag.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
@@ -17,8 +21,7 @@ export const userPreferencesForArticlesSchema = z.object({
 });
 
 export type ArticleQueryInput = z.input<typeof articleWhereSchema>;
-export const articleWhereSchema = z.object({
-  browsingMode: z.nativeEnum(BrowsingMode).default(constants.articleFilterDefaults.browsingMode),
+export const articleWhereSchema = baseQuerySchema.extend({
   query: z.string().optional(),
   tags: z.array(z.number()).optional(),
   favorites: z.boolean().optional(),
@@ -33,6 +36,7 @@ export const articleWhereSchema = z.object({
   collectionId: z.number().optional(),
   followed: z.boolean().optional(),
   clubId: z.number().optional(),
+  pending: z.boolean().optional(),
 });
 
 export type GetInfiniteArticlesSchema = z.infer<typeof getInfiniteArticlesSchema>;
@@ -50,7 +54,8 @@ export const upsertArticleInput = z.object({
   }, 'Cannot be empty'),
   coverImage: imageSchema.nullish(),
   tags: z.array(tagSchema).nullish(),
-  nsfw: z.boolean().optional(),
+  userNsfwLevel: z.number().default(0),
   publishedAt: z.date().nullish(),
   attachments: z.array(baseFileSchema).optional(),
+  lockedProperties: z.string().array().optional(),
 });

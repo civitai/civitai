@@ -90,7 +90,7 @@ export const getCollectionItemReviewData = (collectionItem: CollectionItemExpand
     case 'post': {
       return {
         type: collectionItem.type,
-        image: collectionItem.data.image,
+        image: collectionItem.data.images[0],
         user: collectionItem.data.user,
         url: `/posts/${collectionItem.data.id}`,
         itemAddedAt: collectionItem.createdAt,

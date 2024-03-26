@@ -6,7 +6,6 @@ import { GetByIdInput } from '~/server/schema/base.schema';
 import { CreateReportInput, GetReportsInput, ReportEntity } from '~/server/schema/report.schema';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { addTagVotes } from '~/server/services/tag.service';
-import { refreshHiddenImagesForUser } from '~/server/services/user-cache.service';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 
@@ -85,7 +84,7 @@ const reportTypeConnectionMap = {
   [ReportEntity.User]: 'userId',
   [ReportEntity.Model]: 'modelId',
   [ReportEntity.Comment]: 'commentId',
-  [ReportEntity.CommentV2]: 'commentId',
+  [ReportEntity.CommentV2]: 'commentV2Id',
   [ReportEntity.Image]: 'imageId',
   [ReportEntity.ResourceReview]: 'resourceReviewId',
   [ReportEntity.Article]: 'articleId',
@@ -173,7 +172,6 @@ export const createReport = async ({
               type: ImageEngagementType.Hide,
             },
           });
-          refreshHiddenImagesForUser({ userId });
           break;
       }
 

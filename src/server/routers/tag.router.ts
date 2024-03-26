@@ -1,4 +1,3 @@
-import { BrowsingMode } from '~/server/common/enums';
 import {
   addTagsHandler,
   addTagVotesHandler,
@@ -13,7 +12,7 @@ import {
   deleteTagsHandler,
   getHomeExcludedTagsHandler,
 } from '~/server/controllers/tag.controller';
-import { cacheIt, edgeCacheIt } from '~/server/middleware.trpc';
+import { applyUserPreferences, cacheIt, edgeCacheIt } from '~/server/middleware.trpc';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   addTagVotesSchema,
@@ -27,35 +26,7 @@ import {
   removeTagVotesSchema,
 } from '~/server/schema/tag.schema';
 import { getTag } from '~/server/services/tag.service';
-import { getHiddenTagsForUser } from '~/server/services/user-cache.service';
-import {
-  middleware,
-  moderatorProcedure,
-  protectedProcedure,
-  publicProcedure,
-  router,
-} from '~/server/trpc';
-
-const applyUserPreferences = middleware(async ({ input, ctx, next }) => {
-  if (ctx.browsingMode !== BrowsingMode.All) {
-    const _input = input as { not?: number[] };
-    const hidden = await getHiddenTagsForUser({ userId: ctx.user?.id });
-    _input.not = [...hidden.hiddenTags, ...hidden.moderatedTags, ...(_input.not ?? [])];
-
-    if (ctx.browsingMode === BrowsingMode.SFW) {
-      const systemHidden = await getHiddenTagsForUser({ userId: -1 });
-      _input.not = [
-        ...systemHidden.hiddenTags,
-        ...systemHidden.moderatedTags,
-        ...(_input.not ?? []),
-      ];
-    }
-  }
-
-  return next({
-    ctx: { user: ctx.user },
-  });
-});
+import { moderatorProcedure, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 
 export const tagRouter = router({
   getTagWithModelCount: publicProcedure

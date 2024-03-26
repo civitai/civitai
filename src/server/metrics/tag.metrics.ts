@@ -16,7 +16,7 @@ export const tagMetrics = createMetricProcessor({
     const taskBatches = await Promise.all([
       getEngagementTasks(ctx),
       getModelTasks(ctx),
-      getImageTasks(ctx),
+      // getImageTasks(ctx), // This is too heavy
       getPostTasks(ctx),
       getArticleTasks(ctx),
     ]);

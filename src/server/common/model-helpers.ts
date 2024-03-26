@@ -1,4 +1,4 @@
-import { Image, ImageGenerationProcess, NsfwLevel, Prisma, TrainingStatus } from '@prisma/client';
+import { Image, ImageGenerationProcess, Prisma, TrainingStatus } from '@prisma/client';
 import { ModelFileType } from '~/server/common/constants';
 import { MyDraftModelGetAll, MyTrainingModelGetAll } from '~/types/router';
 import { QS } from '~/utils/qs';
@@ -65,8 +65,4 @@ export function getModelTrainingWizardUrl(model: MyTrainingModelGetAll['items'][
 
   if (!hasTrainingData) return `/models/train?modelId=${model.id}&step=2`;
   return `/models/train?modelId=${model.id}&step=3`;
-}
-
-export function isNsfwImage(image: Pick<Image, 'nsfw'>) {
-  return image?.nsfw !== NsfwLevel.None;
 }

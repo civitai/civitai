@@ -16,6 +16,7 @@ import { SearchIndexDataMap } from '~/components/Search/search.utils2';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { constants } from '~/server/common/constants';
 import { ImageMetaProps } from '~/server/schema/image.schema';
+import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { abbreviateNumber } from '~/utils/number-helpers';
 
 export const BountiesSearchItem = forwardRef<
@@ -26,11 +27,13 @@ export const BountiesSearchItem = forwardRef<
 
   if (!hit) return <ViewMoreItem ref={ref} value={value} {...props} />;
 
-  const { user, images, stats } = hit;
+  const { user, images, nsfwLevel, stats } = hit;
   const [image] = images;
   const alt = truncate((image.meta as ImageMetaProps)?.prompt, {
     length: constants.altTruncateLength,
   });
+
+  const nsfw = !getIsSafeBrowsingLevel(image.nsfwLevel);
 
   return (
     <Group ref={ref} {...props} key={hit.id} spacing="md" align="flex-start" noWrap>
@@ -44,28 +47,26 @@ export const BountiesSearchItem = forwardRef<
         }}
       >
         {image ? (
-          <>
-            {image.nsfw !== 'None' ? (
-              <MediaHash {...image} cropFocus="top" />
-            ) : (
-              <EdgeMedia
-                src={image.url}
-                name={image.name ?? image.id.toString()}
-                type={image.type}
-                alt={alt}
-                anim={false}
-                width={450}
-                style={{
-                  minWidth: '100%',
-                  minHeight: '100%',
-                  objectFit: 'cover',
-                  position: 'absolute',
-                  top: 0,
-                  left: 0,
-                }}
-              />
-            )}
-          </>
+          nsfw ? (
+            <MediaHash {...image} cropFocus="top" />
+          ) : (
+            <EdgeMedia
+              src={image.url}
+              name={image.name ?? image.id.toString()}
+              type={image.type}
+              alt={alt}
+              anim={false}
+              width={450}
+              style={{
+                minWidth: '100%',
+                minHeight: '100%',
+                objectFit: 'cover',
+                position: 'absolute',
+                top: 0,
+                left: 0,
+              }}
+            />
+          )
         ) : (
           <Skeleton width="100px" height="100px" />
         )}

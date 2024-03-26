@@ -699,7 +699,15 @@ export function AppHeader({
   );
 
   const createMenu = !isMuted && (
-    <Menu position="bottom" offset={5} withArrow trigger="hover" openDelay={400}>
+    <Menu
+      position="bottom"
+      offset={5}
+      withArrow
+      trigger="hover"
+      openDelay={400}
+      zIndex={constants.imageGeneration.drawerZIndex + 2}
+      withinPortal
+    >
       <Menu.Target>
         {features.imageGeneration ? (
           <Group spacing={0} noWrap className="hide-mobile">
@@ -828,7 +836,7 @@ export function AppHeader({
                   <CivitaiLinkPopover />
                 </>
               )}
-              {currentUser?.showNsfw && <BrowsingModeIcon />}
+              <BrowsingModeIcon />
               {currentUser && <NotificationBell />}
               {currentUser && features.chat && <ChatButton />}
               {currentUser?.isModerator && <ModerationNav />}
@@ -940,15 +948,18 @@ export function AppHeader({
                     // ref={ref}
                   >
                     {/* Calculate maxHeight based off total viewport height minus header + footer + static menu options inside dropdown sizes */}
-                    <ScrollArea.Autosize maxHeight={'calc(100dvh - 269px)'}>
+                    <ScrollArea.Autosize maxHeight={'calc(100dvh - 135px)'}>
                       <BuzzMenuItem mx={0} mt={0} textSize="sm" withAbbreviation={false} />
                       {burgerMenuItems}
+                      {currentUser && (
+                        <>
+                          <Divider />
+                          <Box px="md" pt="md">
+                            <BrowsingModeMenu />
+                          </Box>
+                        </>
+                      )}
                     </ScrollArea.Autosize>
-                    {currentUser && (
-                      <Box px="md">
-                        <BrowsingModeMenu />
-                      </Box>
-                    )}
 
                     <Group p="md" position="apart" grow>
                       <ActionIcon
@@ -970,7 +981,7 @@ export function AppHeader({
                       </ActionIcon>
                       {currentUser && (
                         <>
-                          {currentUser?.showNsfw && (
+                          {/* {currentUser?.showNsfw && (
                             <BlurToggle iconProps={{ stroke: 1.5 }}>
                               {({ icon, toggle }) => (
                                 <ActionIcon variant="default" size="lg" onClick={() => toggle()}>
@@ -978,7 +989,7 @@ export function AppHeader({
                                 </ActionIcon>
                               )}
                             </BlurToggle>
-                          )}
+                          )} */}
                           <Link href="/user/account">
                             <ActionIcon
                               variant="default"

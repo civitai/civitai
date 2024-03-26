@@ -35,7 +35,6 @@ import {
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React, { useEffect } from 'react';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { TipBuzzButton } from '~/components/Buzz/TipBuzzButton';
 import { ChatUserButton } from '~/components/Chat/ChatUserButton';
@@ -64,7 +63,6 @@ import { sortDomainLinks } from '~/utils/domain-link';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import { invalidateModeratedContent } from '~/utils/query-invalidation-utils';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -78,11 +76,7 @@ export const UserContextMenu = ({ username }: { username: string }) => {
   const isMod = currentUser && currentUser.isModerator;
   const isSameUser =
     !!currentUser && postgresSlugify(currentUser.username) === postgresSlugify(username);
-  const removeContentMutation = trpc.user.removeAllContent.useMutation({
-    onSuccess() {
-      invalidateModeratedContent(queryUtils);
-    },
-  });
+  const removeContentMutation = trpc.user.removeAllContent.useMutation();
   const deleteAccountMutation = trpc.user.delete.useMutation({
     onSuccess() {
       showSuccessNotification({
@@ -322,7 +316,7 @@ function NestedLayout({ children }: { children: React.ReactNode }) {
           )}, Total Likes Received: ${abbreviateNumber(
             stats.thumbsUpCountAllTime
           )}, Total Downloads Received: ${abbreviateNumber(stats.downloadCountAllTime)}. `}
-          image={!user.image ? undefined : getEdgeUrl(user.image, { width: 1200 })}
+          images={user.profilePicture}
           links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/user/${username}`, rel: 'canonical' }]}
         />
       ) : (

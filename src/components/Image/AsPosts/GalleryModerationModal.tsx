@@ -3,65 +3,64 @@ import {
   Autocomplete,
   Badge,
   Card,
-  Chip,
   Group,
   Loader,
   Modal,
+  Paper,
   Stack,
-  Switch,
   Text,
+  createStyles,
 } from '@mantine/core';
-import { useDebouncedValue } from '@mantine/hooks';
-import { IconSearch, IconX } from '@tabler/icons-react';
-import React, { useRef, useState, useMemo } from 'react';
-import { useImagesAsPostsInfiniteContext } from '~/components/Image/AsPosts/ImagesAsPostsInfinite';
-import { moderationCategories, ModerationCategory } from '~/libs/moderation';
+import { useDebouncedValue, useDidUpdate } from '@mantine/hooks';
+import { IconCheck, IconSearch, IconX } from '@tabler/icons-react';
+import React, { useRef, useState } from 'react';
 import { trpc } from '~/utils/trpc';
-import { useModelGallerySettings } from './gallery.utils';
-import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
-import { isDefined } from '~/utils/type-guards';
+import { useToggleGallerySettings } from './gallery.utils';
+import {
+  allBrowsingLevelsFlag,
+  browsingLevelDescriptions,
+  browsingLevelLabels,
+  browsingLevels,
+} from '~/shared/constants/browsingLevel.constants';
+import { Flags } from '~/shared/utils';
+import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { createDebouncer } from '~/utils/debouncer';
 
-export function GalleryModerationModal({ opened, onClose }: Props) {
+export function GalleryModerationModal({ modelId }: { modelId: number }) {
+  const dialog = useDialogContext();
+
   return (
-    <Modal opened={opened} onClose={onClose} title="Gallery Moderation Preferences">
+    <Modal {...dialog} title="Gallery Moderation Preferences">
       <Stack>
-        <HiddenTagsSection />
-        <HiddenUsersSection />
-        <MatureContentSection />
+        <HiddenTagsSection modelId={modelId} />
+        <HiddenUsersSection modelId={modelId} />
+        <MatureContentSection modelId={modelId} />
       </Stack>
     </Modal>
   );
 }
 
-type Props = { opened: boolean; onClose: VoidFunction };
-
-export function HiddenTagsSection() {
-  const { model } = useImagesAsPostsInfiniteContext();
+export function HiddenTagsSection({ modelId }: { modelId: number }) {
+  const { data: gallerySettings } = trpc.model.getGallerySettings.useQuery({ id: modelId });
+  const toggleGallerySettings = useToggleGallerySettings({ modelId: modelId });
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [search, setSearch] = useState('');
   const [debouncedSearch] = useDebouncedValue(search, 300);
 
-  const tags = useHiddenPreferencesData().tag;
-  const moderationTags = tags.filter((x) => x.type === 'moderated');
-  const { data: gallerySettings, toggleGallerySettings } = useModelGallerySettings({
-    modelId: model.id,
-  });
-
   const { data, isLoading } = trpc.tag.getAll.useQuery({
     entityType: ['Image'],
     query: debouncedSearch.toLowerCase().trim(),
-    not: gallerySettings?.hiddenTags.map((x) => x.id),
+    excludedTagIds: gallerySettings?.hiddenTags.map((x) => x.id),
   });
   const options =
     data?.items
       .filter((x) => !gallerySettings?.hiddenTags.some((y) => y.id === x.id))
       .map(({ id, name }) => ({ id, value: name })) ?? [];
 
-  const hiddenTags =
-    gallerySettings?.hiddenTags.filter((tag) => !moderationTags.find((t) => t.id === tag.id)) ?? [];
+  const hiddenTags = gallerySettings?.hiddenTags ?? [];
 
   const handleToggleBlockedTag = async (tag: { id: number; name: string }) => {
-    await toggleGallerySettings({ modelId: model.id, tags: [tag] }).catch(() => null);
+    await toggleGallerySettings({ modelId: modelId, tags: [tag] }).catch(() => null);
     setSearch('');
   };
 
@@ -121,15 +120,12 @@ export function HiddenTagsSection() {
   );
 }
 
-export function HiddenUsersSection() {
-  const { model } = useImagesAsPostsInfiniteContext();
+export function HiddenUsersSection({ modelId }: { modelId: number }) {
+  const { data: gallerySettings } = trpc.model.getGallerySettings.useQuery({ id: modelId });
+  const toggleGallerySettings = useToggleGallerySettings({ modelId: modelId });
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [search, setSearch] = useState('');
   const [debouncedSearch] = useDebouncedValue(search, 300);
-
-  const { data: gallerySettings, toggleGallerySettings } = useModelGallerySettings({
-    modelId: model.id,
-  });
 
   const { data, isLoading, isFetching } = trpc.user.getAll.useQuery(
     { query: debouncedSearch.trim(), limit: 10 },
@@ -140,7 +136,7 @@ export function HiddenUsersSection() {
     [];
 
   const handleToggleBlocked = async (user: { id: number; username: string | null }) => {
-    await toggleGallerySettings({ modelId: model.id, users: [user] }).catch(() => null);
+    await toggleGallerySettings({ modelId: modelId, users: [user] }).catch(() => null);
     setSearch('');
   };
 
@@ -200,94 +196,79 @@ export function HiddenUsersSection() {
   );
 }
 
-function MatureContentSection() {
-  const { model } = useImagesAsPostsInfiniteContext();
+function MatureContentSection({ modelId }: { modelId: number }) {
+  const { data: gallerySettings } = trpc.model.getGallerySettings.useQuery({ id: modelId });
+  if (!gallerySettings) return null;
+  return <BrowsingLevelsStacked level={gallerySettings.level} modelId={modelId} />;
+}
 
-  const tags = useHiddenPreferencesData().tag;
-  const moderationTags = tags.filter((x) => x.type === 'moderated');
-  const { hiddenTags, toggleGallerySettings } = useModelGallerySettings({ modelId: model.id });
-  const preferences = useMemo(
-    () =>
-      moderationTags.reduce<Record<string, boolean>>(
-        (acc, value) => ({ ...acc, [value.name]: !hiddenTags.get(value.id) }),
-        {}
-      ) ?? {},
-    [moderationTags, hiddenTags]
-  );
-
-  const handleAllToggle = async () => {
-    await toggleGallerySettings({ modelId: model.id, tags: moderationTags }).catch(() => null);
+const debouncer = createDebouncer(1000);
+function BrowsingLevelsStacked({
+  level = allBrowsingLevelsFlag,
+  modelId,
+}: {
+  level?: number;
+  modelId: number;
+}) {
+  const { classes, cx } = useStyles();
+  const toggleGallerySettings = useToggleGallerySettings({ modelId: modelId });
+  const [browsingLevel, setBrowsingLevel] = useState(level);
+  const toggleBrowsingLevel = (level: number) => {
+    setBrowsingLevel((state) => {
+      return Flags.hasFlag(state, level)
+        ? Flags.removeFlag(state, level)
+        : Flags.addFlag(state, level);
+    });
   };
 
-  const handleCategoryToggle = async (name: string, children?: ModerationCategory[]) => {
-    if (!children) return;
-
-    const childValues = children.map((x) => x.value);
-    const valueTag = moderationTags.find((x) => x.name === name);
-    const data = [valueTag, ...moderationTags.filter((x) => childValues.includes(x.name))].filter(
-      isDefined
-    );
-
-    await toggleGallerySettings({ modelId: model.id, tags: data }).catch(() => null);
-  };
-
-  const handleChipToggle = async (name: string) => {
-    const tag = moderationTags.find((x) => x.name === name);
-    if (!!tag) await toggleGallerySettings({ modelId: model.id, tags: [tag] }).catch(() => null);
-  };
+  useDidUpdate(() => {
+    debouncer(() => toggleGallerySettings({ modelId, level: browsingLevel }));
+  }, [browsingLevel]);
 
   return (
-    <Card key="nsfw" withBorder pb={0}>
-      <Card.Section withBorder inheritPadding py="xs">
-        <Group position="apart">
-          <Text weight={500}>Mature Content</Text>
-          <Switch
-            checked={moderationTags.some((x) => preferences[x.name])}
-            onChange={handleAllToggle}
-          />
-        </Group>
-      </Card.Section>
-      {moderationCategories
-        .filter((x) => !x.hidden)
-        .map((category) => {
-          const categoryChecked = category.children?.some((x) => preferences[x.value]);
+    <div>
+      <Text weight={500}>Allowed Browsing Levels</Text>
+      <Paper withBorder p={0} className={classes.root}>
+        {browsingLevels.map((level) => {
+          const isSelected = Flags.hasFlag(browsingLevel, level);
           return (
-            <React.Fragment key={category.value}>
-              <Card.Section withBorder inheritPadding py="xs">
-                <Group position="apart">
-                  <Text weight={500}>{category.label}</Text>
-                  <Switch
-                    checked={categoryChecked}
-                    onChange={() => handleCategoryToggle(category.value, category.children)}
-                  />
-                </Group>
-              </Card.Section>
-              {preferences && categoryChecked && !!category.children?.length && (
-                <Card.Section inheritPadding py="md">
-                  <Text size="xs" weight={500} mb="xs" mt={-8} color="dimmed">
-                    Toggle all that you are comfortable seeing
-                  </Text>
-                  <Group spacing={5}>
-                    {category.children
-                      .filter((x) => !x.hidden)
-                      .map((child) => (
-                        <Chip
-                          variant="filled"
-                          radius="xs"
-                          size="xs"
-                          key={child.value}
-                          onChange={() => handleChipToggle(child.value)}
-                          checked={preferences?.[child.value] ?? false}
-                        >
-                          {child.label}
-                        </Chip>
-                      ))}
-                  </Group>
-                </Card.Section>
-              )}
-            </React.Fragment>
+            <Group
+              key={level}
+              position="apart"
+              p="md"
+              onClick={() => toggleBrowsingLevel(level)}
+              className={cx({ [classes.active]: isSelected })}
+            >
+              <div>
+                <Text weight={700}>{browsingLevelLabels[level]}</Text>
+                <Text>{browsingLevelDescriptions[level]}</Text>
+              </div>
+              <Text color="green" inline style={{ visibility: !isSelected ? 'hidden' : undefined }}>
+                <IconCheck />
+              </Text>
+            </Group>
           );
         })}
-    </Card>
+      </Paper>
+    </div>
   );
 }
+
+const useStyles = createStyles((theme) => ({
+  root: {
+    ['& > div']: {
+      ['&:hover']: {
+        background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[2],
+        cursor: 'pointer',
+      },
+      ['&:not(:last-child)']: {
+        borderBottom: `1px ${
+          theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
+        } solid`,
+      },
+    },
+  },
+  active: {
+    background: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[1],
+  },
+}));

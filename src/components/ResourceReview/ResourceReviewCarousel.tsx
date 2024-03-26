@@ -12,7 +12,6 @@ import {
 } from '@mantine/core';
 import { IconInfoCircle } from '@tabler/icons-react';
 
-import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { Reactions } from '~/components/Reaction/Reactions';
@@ -25,6 +24,8 @@ import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { truncate } from 'lodash-es';
 import { constants } from '~/server/common/constants';
+import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
+import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 
 export function ResourceReviewCarousel({
   username,
@@ -48,7 +49,6 @@ export function ResourceReviewCarousel({
 
   const { data, images } = useQueryImages(filters);
 
-  // const images = data?.pages.flatMap((x) => x.items) ?? [];
   const viewMore = data?.pages.some((x) => x.nextCursor !== undefined) ?? false;
 
   if (!images?.length) return null;
@@ -72,87 +72,84 @@ export function ResourceReviewCarousel({
           slidesToScroll={mobile ? 1 : 2}
           loop
         >
-          <ImageGuard
-            images={images}
-            connect={{ entityId: reviewId, entityType: 'review' }}
-            render={(image) => (
-              <Carousel.Slide>
-                <ImageGuard.Content>
-                  {({ safe }) => (
-                    <Center style={{ height: '100%', width: '100%' }}>
-                      <div style={{ width: '100%', position: 'relative' }}>
-                        <ImageGuard.ToggleConnect position="top-left" />
-                        <ImageGuard.Report />
-                        <RoutedDialogLink name="imageDetail" state={{ imageId: image.id, images }}>
-                          <AspectRatio
-                            ratio={1}
-                            sx={(theme) => ({
-                              width: '100%',
-                              borderRadius: theme.radius.md,
-                              overflow: 'hidden',
-                            })}
-                          >
-                            {!safe ? (
-                              <MediaHash {...image} />
-                            ) : (
-                              <EdgeMedia
-                                src={image.url}
-                                name={image.name ?? image.id.toString()}
-                                alt={
-                                  image.meta
-                                    ? truncate(image.meta.prompt, {
-                                        length: constants.altTruncateLength,
-                                      })
-                                    : image.name ?? undefined
-                                }
-                                type={image.type}
-                                width={450}
-                                placeholder="empty"
-                                style={{ width: '100%', objectPosition: 'top' }}
-                              />
-                            )}
-                          </AspectRatio>
-                        </RoutedDialogLink>
-                        <Reactions
-                          entityId={image.id}
-                          entityType="image"
-                          reactions={image.reactions}
-                          metrics={{
-                            likeCount: image.stats?.likeCountAllTime,
-                            dislikeCount: image.stats?.dislikeCountAllTime,
-                            heartCount: image.stats?.heartCountAllTime,
-                            laughCount: image.stats?.laughCountAllTime,
-                            cryCount: image.stats?.cryCountAllTime,
-                          }}
-                          readonly={!safe}
-                          className={classes.reactions}
-                          targetUserId={image.user.id}
-                        />
-                        {!image.hideMeta && image.meta && (
-                          <ImageMetaPopover
-                            meta={image.meta}
-                            generationProcess={image.generationProcess ?? undefined}
-                            imageId={image.id}
-                            mainResourceId={image.modelVersionId ?? undefined}
-                          >
-                            <ActionIcon className={classes.info} variant="transparent" size="lg">
-                              <IconInfoCircle
-                                color="white"
-                                filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                                opacity={0.8}
-                                strokeWidth={2.5}
-                                size={26}
-                              />
-                            </ActionIcon>
-                          </ImageMetaPopover>
-                        )}
-                      </div>
-                    </Center>
-                  )}
-                </ImageGuard.Content>
-              </Carousel.Slide>
-            )}
-          />
+          {images.map((image, i) => (
+            <Carousel.Slide key={image.id}>
+              <ImageGuard2 image={image} connectType="review" connectId={reviewId}>
+                {(safe) => (
+                  <Center style={{ height: '100%', width: '100%' }}>
+                    <div style={{ width: '100%', position: 'relative' }}>
+                      <ImageGuard2.BlurToggle className="absolute top-2 left-2 z-10" />
+                      <ImageContextMenu image={image} className="absolute top-2 right-2 z-10" />
+
+                      <RoutedDialogLink name="imageDetail" state={{ imageId: image.id, images }}>
+                        <AspectRatio
+                          ratio={1}
+                          sx={(theme) => ({
+                            width: '100%',
+                            borderRadius: theme.radius.md,
+                            overflow: 'hidden',
+                          })}
+                        >
+                          {!safe ? (
+                            <MediaHash {...image} />
+                          ) : (
+                            <EdgeMedia
+                              src={image.url}
+                              name={image.name ?? image.id.toString()}
+                              alt={
+                                image.meta
+                                  ? truncate(image.meta.prompt, {
+                                      length: constants.altTruncateLength,
+                                    })
+                                  : image.name ?? undefined
+                              }
+                              type={image.type}
+                              width={450}
+                              placeholder="empty"
+                              style={{ width: '100%', objectPosition: 'top' }}
+                            />
+                          )}
+                        </AspectRatio>
+                      </RoutedDialogLink>
+                      <Reactions
+                        entityId={image.id}
+                        entityType="image"
+                        reactions={image.reactions}
+                        metrics={{
+                          likeCount: image.stats?.likeCountAllTime,
+                          dislikeCount: image.stats?.dislikeCountAllTime,
+                          heartCount: image.stats?.heartCountAllTime,
+                          laughCount: image.stats?.laughCountAllTime,
+                          cryCount: image.stats?.cryCountAllTime,
+                        }}
+                        readonly={!safe}
+                        className={classes.reactions}
+                        targetUserId={image.user.id}
+                      />
+                      {!image.hideMeta && image.meta && (
+                        <ImageMetaPopover
+                          meta={image.meta}
+                          generationProcess={image.generationProcess ?? undefined}
+                          imageId={image.id}
+                          mainResourceId={image.modelVersionId ?? undefined}
+                        >
+                          <ActionIcon className={classes.info} variant="transparent" size="lg">
+                            <IconInfoCircle
+                              color="white"
+                              filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                              opacity={0.8}
+                              strokeWidth={2.5}
+                              size={26}
+                            />
+                          </ActionIcon>
+                        </ImageMetaPopover>
+                      )}
+                    </div>
+                  </Center>
+                )}
+              </ImageGuard2>
+            </Carousel.Slide>
+          ))}
           {viewMore && (
             <Carousel.Slide style={{ display: 'flex', alignItems: 'center' }}>
               <AspectRatio

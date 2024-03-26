@@ -513,7 +513,6 @@ export function ModelVersionDetails({
           {model.mode !== ModelModifier.TakenDown && (
             <ModelCarousel
               modelId={model.id}
-              nsfw={model.nsfw}
               modelVersionId={version.id}
               modelUserId={model.user.id}
               limit={CAROUSEL_LIMIT}
@@ -834,11 +833,16 @@ export function ModelVersionDetails({
                         </Anchor>
                       </Menu.Target>
                       <Menu.Dropdown>
-                        <Menu.Item component={NextLink} href={`/models/${version.modelId}/edit`}>
+                        <Menu.Item
+                          component={NextLink}
+                          onClick={(e) => e.stopPropagation()}
+                          href={`/models/${version.modelId}/edit`}
+                        >
                           Edit Model Details
                         </Menu.Item>
                         <Menu.Item
                           component={NextLink}
+                          onClick={(e) => e.stopPropagation()}
                           href={`/models/${version.modelId}/model-versions/${version.id}/edit`}
                         >
                           Edit Version Details
@@ -961,7 +965,7 @@ export function ModelVersionDetails({
                         onClick={() =>
                           dialogStore.trigger({
                             component: VersionDescriptionModal,
-                            props: { description: version.description },
+                            props: { description: version.description ?? '' },
                           })
                         }
                         tabIndex={0}
@@ -1087,7 +1091,6 @@ export function ModelVersionDetails({
           {model.mode !== ModelModifier.TakenDown && (
             <ModelCarousel
               modelId={model.id}
-              nsfw={model.nsfw}
               modelVersionId={version.id}
               modelUserId={model.user.id}
               limit={CAROUSEL_LIMIT}

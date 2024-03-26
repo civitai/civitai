@@ -160,7 +160,10 @@ function FileCard({ data: versionFile, index }: { data: FileFromContextProps; in
 
   const deleteFileMutation = trpc.modelFile.delete.useMutation({
     async onSuccess() {
-      await queryUtils.modelVersion.getById.invalidate({ id: versionFile.versionId });
+      await queryUtils.modelVersion.getById.invalidate({
+        id: versionFile.versionId,
+        withFiles: true,
+      });
       if (modelId) await queryUtils.model.getById.invalidate({ id: modelId });
       removeFile(versionFile.uuid);
     },

@@ -12,14 +12,7 @@ import { ModelSort } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
 import { IconBolt, IconCurrencyDollar, TablerIconsProps } from '@tabler/icons-react';
 import { MantineTheme } from '@mantine/core';
-import {
-  ArticleSort,
-  BrowsingMode,
-  CollectionSort,
-  ImageSort,
-  PostSort,
-  QuestionSort,
-} from './enums';
+import { ArticleSort, CollectionSort, ImageSort, PostSort, QuestionSort } from './enums';
 import { Generation } from '~/server/services/generation/generation.types';
 
 export const constants = {
@@ -40,18 +33,15 @@ export const constants = {
   postFilterDefaults: {
     sort: PostSort.MostReactions,
     period: MetricTimeframe.AllTime,
-    browsingMode: BrowsingMode.All,
     limit: 50,
   },
   articleFilterDefaults: {
     sort: ArticleSort.Newest,
     period: MetricTimeframe.AllTime,
-    browsingMode: BrowsingMode.SFW,
     limit: 50,
   },
   collectionFilterDefaults: {
     sort: CollectionSort.Newest,
-    browsingMode: BrowsingMode.SFW,
     limit: 50,
   },
   baseModels: [
@@ -600,12 +590,13 @@ export const getGenerationConfig = (baseModel?: string) => {
   return key && generationConfig[key] ? generationConfig[key] : generationConfig['SD1'];
 };
 
-export const MODELS_SEARCH_INDEX = 'models_v7';
-export const IMAGES_SEARCH_INDEX = 'images_v3';
-export const ARTICLES_SEARCH_INDEX = 'articles_v3';
+
+export const MODELS_SEARCH_INDEX = 'models_v8';
+export const IMAGES_SEARCH_INDEX = 'images_v4';
+export const ARTICLES_SEARCH_INDEX = 'articles_v4';
 export const USERS_SEARCH_INDEX = 'users_v2';
-export const COLLECTIONS_SEARCH_INDEX = 'collections';
-export const BOUNTIES_SEARCH_INDEX = 'bounties';
+export const COLLECTIONS_SEARCH_INDEX = 'collections_v2';
+export const BOUNTIES_SEARCH_INDEX = 'bounties_v2';
 
 export const modelVersionMonetizationTypeOptions: Record<ModelVersionMonetizationType, string> = {
   [ModelVersionMonetizationType.PaidAccess]: 'Paid access',

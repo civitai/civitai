@@ -44,7 +44,6 @@ import { useRouter } from 'next/router';
 import React, { useState } from 'react';
 
 import { BackButton, NavigateBack } from '~/components/BackButton/BackButton';
-import { matureLabel } from '~/components/Post/Edit/EditPostControls';
 import { useFormStorage } from '~/hooks/useFormStorage';
 import {
   Form,

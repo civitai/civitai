@@ -2,6 +2,7 @@ import { createJob, getJobDate } from './job';
 import { dbWrite } from '~/server/db/client';
 import { webhookProcessors } from '~/server/webhooks/utils.webhooks';
 import { createLogger } from '~/utils/logging';
+import { limitConcurrency, Task } from '~/server/utils/concurrency-helpers';
 
 const log = createLogger('jobs', 'green');
 
@@ -13,10 +14,13 @@ export const sendWebhooksJob = createJob('send-webhooks', '*/1 * * * *', async (
     select: { notifyOn: true, url: true },
   });
 
-  const promises: Array<() => Promise<Response>> = [];
+  const prepTime: Record<string, number> = {};
+  const sendingTime: Record<string, number> = {};
+  const tasks: Array<Task> = [];
   if (registeredWebhooks.length > 0) {
     // Enqueue webhook requests
     for (const [type, { getData }] of Object.entries(webhookProcessors)) {
+      const start = Date.now();
       const data = await getData?.({ lastSent, prisma: dbWrite });
       if (!data) continue;
       for (const webhook of registeredWebhooks) {
@@ -35,18 +39,22 @@ export const sendWebhooksJob = createJob('send-webhooks', '*/1 * * * *', async (
         }
 
         for (const item of data) {
-          promises.push(() =>
-            fetch(requestUrl, {
+          tasks.push(async () => {
+            const sendStart = Date.now();
+            await fetch(requestUrl, {
               method: 'POST',
               body: JSON.stringify({
                 event: type,
                 data: item,
               }),
               headers,
-            })
-          );
+            });
+            sendingTime[type] ??= 0;
+            sendingTime[type] += Date.now() - sendStart;
+          });
         }
       }
+      prepTime[type] = Date.now() - start;
     }
   }
 
@@ -56,19 +64,10 @@ export const sendWebhooksJob = createJob('send-webhooks', '*/1 * * * *', async (
 
   // Send webhooks
   // --------------------------------------------
-  if (!promises.length) return;
-  // Break promises into batches and run them in parallel
-  const batchSize = 50;
-  for (let i = 0; i < promises.length; i += batchSize) {
-    const batch = promises.slice(i, i + batchSize);
-    log(`webhooks: sending batch ${i} to ${i + batchSize}`);
-    try {
-      await Promise.all(batch.map((fn) => fn()));
-      await new Promise((res) => setTimeout(res, 500));
-    } catch (err) {
-      log(`webhooks: error sending batch ${i} to ${i + batchSize}`);
-      console.error(err);
-    }
-  }
-  log(`webhooks: sent ${promises.length} webhooks`);
+  await limitConcurrency(tasks, 10);
+
+  return {
+    prepTime,
+    sendingTime,
+  };
 });

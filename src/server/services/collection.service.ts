@@ -25,7 +25,6 @@ import {
   ImageIngestionStatus,
   MediaType,
   MetricTimeframe,
-  NsfwLevel,
   Prisma,
 } from '@prisma/client';
 import {
@@ -42,11 +41,11 @@ import {
 } from '~/server/services/model.service';
 import {
   ArticleSort,
-  BrowsingMode,
   CollectionReviewSort,
   CollectionSort,
   ImageSort,
   ModelSort,
+  NsfwLevel,
   PostSort,
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
@@ -318,7 +317,7 @@ export const getCollectionById = async ({ input }: { input: GetByIdInput }) => {
       write: true,
       type: true,
       user: { select: userWithCosmeticsSelect },
-      nsfw: true,
+      nsfwLevel: true,
       image: { select: imageSelect },
       mode: true,
       metadata: true,
@@ -329,9 +328,13 @@ export const getCollectionById = async ({ input }: { input: GetByIdInput }) => {
 
   return {
     ...collection,
-    nsfw: collection.nsfw ?? false,
+    nsfwLevel: collection.nsfwLevel as NsfwLevel,
     image: collection.image
-      ? { ...collection.image, meta: collection.image.meta as ImageMetaProps | null }
+      ? {
+          ...collection.image,
+          nsfwLevel: collection.image.nsfwLevel as NsfwLevel,
+          meta: collection.image.meta as ImageMetaProps | null,
+        }
       : null,
     metadata: (collection.metadata ?? {}) as CollectionMetadataSchema,
   };
@@ -794,6 +797,7 @@ export const getCollectionItemsByCollectionId = async ({
             favorites: false,
             ...userPreferencesInput,
             ids: modelIds,
+            browsingLevel: input.browsingLevel,
           },
         })
       : { items: [] };
@@ -808,7 +812,7 @@ export const getCollectionItemsByCollectionId = async ({
           periodMode: 'stats',
           sort: ArticleSort.Newest,
           ...userPreferencesInput,
-          browsingMode: userPreferencesInput.browsingMode || BrowsingMode.SFW,
+          browsingLevel: input.browsingLevel,
           sessionUser: user,
           ids: articleIds,
         })
@@ -825,8 +829,8 @@ export const getCollectionItemsByCollectionId = async ({
           periodMode: 'stats',
           sort: ImageSort.Newest,
           ...userPreferencesInput,
-          userId: user?.id,
-          isModerator: user?.isModerator,
+          browsingLevel: input.browsingLevel,
+          user,
           ids: imageIds,
           headers: { src: 'getCollectionItemsByCollectionId' },
           includeBaseModel: true,
@@ -844,7 +848,7 @@ export const getCollectionItemsByCollectionId = async ({
           sort: PostSort.Newest,
           ...userPreferencesInput,
           user,
-          browsingMode: userPreferencesInput.browsingMode || BrowsingMode.SFW,
+          browsingLevel: input.browsingLevel,
           ids: postIds,
           include: ['cosmetics'],
         })
@@ -1515,12 +1519,13 @@ type ImageProps = {
   hash: string | null;
   height: number | null;
   width: number | null;
-  nsfw: NsfwLevel;
+  nsfwLevel: NsfwLevel;
   postId: number | null;
   index: number | null;
   scannedAt: Date | null;
   mimeType: string | null;
   meta: Prisma.JsonObject | null;
+  userId: number;
 } | null;
 
 type CollectionImageRaw = {
@@ -1544,6 +1549,7 @@ export const getCollectionCoverImages = async ({
         'name', i."name",
         'url', i."url",
         'nsfw', i."nsfw",
+        'nsfwLevel', i."nsfwLevel",
         'width', i."width",
         'height', i."height",
         'hash', i."hash",
@@ -1552,6 +1558,7 @@ export const getCollectionCoverImages = async ({
         'scannedAt', i."scannedAt",
         'type', i."type",
         'meta', i."meta"
+        'userId', i."userId"
       ) image
   `;
 

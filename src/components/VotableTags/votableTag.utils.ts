@@ -1,5 +1,5 @@
 import { TagType } from '@prisma/client';
-import { useUpdateHiddenPreferences } from '~/hooks/hidden-preferences';
+import { useUpdateHiddenPreferences, useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { VotableTagModel } from '~/libs/tags';
 import { trpc } from '~/utils/trpc';
 import produce from 'immer';
@@ -22,6 +22,7 @@ export const useVoteForTags = ({
 }) => {
   const queryUtils = trpc.useContext();
   const updateHiddenPreferences = useUpdateHiddenPreferences();
+  const { hiddenTags } = useHiddenPreferencesData();
   const setVote = useVotableTagStore((state) => state.setVote);
 
   const { mutate: addVotes } = trpc.tag.addTagVotes.useMutation();
@@ -73,7 +74,12 @@ export const useVoteForTags = ({
     if (vote == 0) removeVotes({ tags, type: entityType, id: entityId });
     else addVotes({ tags, vote, type: entityType, id: entityId });
     handleTagMutation(tags, vote, tagType);
-    updateHiddenPreferences({ kind: entityType, data: [{ id: entityId }], hidden: vote > 0 });
+    if (
+      entityType === 'image' &&
+      hiddenTags.filter((x) => x.hidden).some((x) => tags.includes(x.name))
+    ) {
+      updateHiddenPreferences({ kind: entityType, data: [{ id: entityId }], hidden: vote > 0 });
+    }
   };
 
   return handleVote;

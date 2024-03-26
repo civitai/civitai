@@ -44,6 +44,9 @@ import { UnblockImage } from '~/components/Image/UnblockImage/UnblockImage';
 import { useImageStore } from '~/store/image.store';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { useRouter } from 'next/router';
+import { getIsPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { BrowsingLevelBadge } from '~/components/ImageGuard/ImageGuard2';
+import { openSetBrowsingLevelModal } from '~/components/Dialog/dialog-registry';
 
 export function EditPostImages({ max = POST_IMAGE_LIMIT }: { max?: number }) {
   const currentUser = useCurrentUser();
@@ -94,8 +97,18 @@ export function EditPostImages({ max = POST_IMAGE_LIMIT }: { max?: number }) {
 }
 
 function ImageController({ image }: { image: PostEditImage }) {
-  const { id, url, previewUrl, name, meta, resourceHelper, blockedFor, type, ingestion } =
-    useImageStore(image);
+  const {
+    id,
+    url,
+    previewUrl,
+    name,
+    meta,
+    resourceHelper,
+    blockedFor,
+    type,
+    ingestion,
+    nsfwLevel,
+  } = useImageStore(image);
 
   const currentUser = useCurrentUser();
   const { classes, cx } = useStyles();
@@ -203,7 +216,13 @@ function ImageController({ image }: { image: PostEditImage }) {
 
       {isScanned && <VotableTags entityType="image" entityId={id} p="xs" canAdd />}
 
-      <Group className={classes.actions}>
+      <Group className="absolute top-2 right-2 z-10">
+        <BrowsingLevelBadge
+          browsingLevel={nsfwLevel}
+          size="lg"
+          onClick={() => openSetBrowsingLevelModal({ imageId: id, nsfwLevel })}
+          className="cursor-pointer"
+        />
         {meta ? (
           <Badge {...readyBadgeProps} onClick={handleSelectImageClick}>
             Generation Data
@@ -360,7 +379,7 @@ function ImageBlocked({ blockedFor, tags, uuid }: ImageBlocked) {
                     <Code color="red">{blockedFor}</Code>
                     <Group spacing="xs">
                       {tags
-                        ?.filter((x) => x.type === 'Moderation')
+                        ?.filter((x) => !getIsPublicBrowsingLevel(x.nsfwLevel))
                         .map((x) => (
                           <Badge key={x.name} color="red">
                             {x.name}

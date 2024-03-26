@@ -15,13 +15,15 @@ import { constants } from '~/server/common/constants';
 import CustomParseFormat from 'dayjs/plugin/customParseFormat';
 dayjs.extend(CustomParseFormat);
 
-import { BrowsingMode, ModelSort } from '~/server/common/enums';
+import { ModelSort } from '~/server/common/enums';
 import { UnpublishReason, unpublishReasons } from '~/server/common/moderation-helpers';
 import {
+  baseQuerySchema,
   getByIdSchema,
   infiniteQuerySchema,
   paginationSchema,
   periodModeSchema,
+  userPreferencesSchema,
 } from '~/server/schema/base.schema';
 import { modelVersionUpsertSchema } from '~/server/schema/model-version.schema';
 import { tagSchema } from '~/server/schema/tag.schema';
@@ -36,74 +38,72 @@ const licensingSchema = z.object({
   allowDifferentLicense: z.boolean().optional(),
 });
 
-export type UserPreferencesForModelsInput = z.infer<typeof userPreferencesForModelsSchema>;
-export const userPreferencesForModelsSchema = z.object({
-  excludedIds: z.array(z.number()).optional(),
-  excludedUserIds: z.array(z.number()).optional(),
-  excludedImageTagIds: z.array(z.number()).optional(),
-  excludedTagIds: z.array(z.number()).optional(),
-  excludedImageIds: z.array(z.number()).optional(),
-});
-
-export const getAllModelsSchema = licensingSchema.merge(userPreferencesForModelsSchema).extend({
-  limit: z.preprocess((val) => Number(val), z.number().min(0).max(100)).optional(),
-  page: z.preprocess((val) => Number(val), z.number().min(1)).optional(),
-  cursor: z
-    .union([z.bigint(), z.number(), z.string(), z.date()])
-    .transform((val) =>
-      typeof val === 'string' && dayjs(val, 'YYYY-MM-DDTHH:mm:ss.SSS[Z]', true).isValid()
-        ? new Date(val)
-        : val
-    )
-    .optional(),
-  query: z.string().optional(),
-  tag: z.string().optional(),
-  tagname: z.string().optional(),
-  user: z.string().optional(),
-  username: z
-    .string()
-    .transform((data) => postgresSlugify(data))
-    .optional(),
-  types: z
-    .union([z.nativeEnum(ModelType), z.nativeEnum(ModelType).array()])
-    .optional()
-    .transform((rel) => (!rel ? undefined : Array.isArray(rel) ? rel : [rel]))
-    .optional(),
-  // TODO [bw]: do we need uploadType in here?
-  status: z
-    .union([z.nativeEnum(ModelStatus), z.nativeEnum(ModelStatus).array()])
-    .optional()
-    .transform((rel) => (!rel ? undefined : Array.isArray(rel) ? rel : [rel]))
-    .optional(),
-  checkpointType: z.nativeEnum(CheckpointType).optional(),
-  baseModels: z
-    .union([z.enum(constants.baseModels), z.enum(constants.baseModels).array()])
-    .optional()
-    .transform((rel) => {
-      if (!rel) return undefined;
-      return Array.isArray(rel) ? rel : [rel];
-    }),
-  browsingMode: z.nativeEnum(BrowsingMode).optional(),
-  sort: z.nativeEnum(ModelSort).default(constants.modelFilterDefaults.sort),
-  period: z.nativeEnum(MetricTimeframe).default(constants.modelFilterDefaults.period),
-  periodMode: periodModeSchema,
-  favorites: z.coerce.boolean().optional().default(false),
-  hidden: z.coerce.boolean().optional().default(false),
-  needsReview: z.coerce.boolean().optional(),
-  earlyAccess: z.coerce.boolean().optional(),
-  ids: commaDelimitedNumberArray({ message: 'ids should be a number array' }).optional(),
-  modelVersionIds: commaDelimitedNumberArray({
-    message: 'modelVersionIds should be a number array',
-  }).optional(),
-  supportsGeneration: z.coerce.boolean().optional(),
-  fromPlatform: z.coerce.boolean().optional(),
-  followed: z.coerce.boolean().optional(),
-  archived: z.coerce.boolean().optional(),
-  collectionId: z.number().optional(),
-  collectionItemStatus: z.array(z.nativeEnum(CollectionItemStatus)).optional(),
-  fileFormats: z.enum(constants.modelFileFormats).array().optional(),
-  clubId: z.number().optional(),
-});
+export const getAllModelsSchema = baseQuerySchema
+  .merge(licensingSchema)
+  .merge(userPreferencesSchema)
+  .extend({
+    limit: z.preprocess((val) => Number(val), z.number().min(0).max(100)).optional(),
+    page: z.preprocess((val) => Number(val), z.number().min(1)).optional(),
+    cursor: z
+      .union([z.bigint(), z.number(), z.string(), z.date()])
+      .transform((val) =>
+        typeof val === 'string' && dayjs(val, 'YYYY-MM-DDTHH:mm:ss.SSS[Z]', true).isValid()
+          ? new Date(val)
+          : val
+      )
+      .optional(),
+    query: z.string().optional(),
+    tag: z.string().optional(),
+    tagname: z.string().optional(),
+    user: z.string().optional(),
+    username: z
+      .string()
+      .transform((data) => postgresSlugify(data))
+      .optional(),
+    types: z
+      .union([z.nativeEnum(ModelType), z.nativeEnum(ModelType).array()])
+      .optional()
+      .transform((rel) => (!rel ? undefined : Array.isArray(rel) ? rel : [rel]))
+      .optional(),
+    // TODO [bw]: do we need uploadType in here?
+    status: z
+      .union([z.nativeEnum(ModelStatus), z.nativeEnum(ModelStatus).array()])
+      .optional()
+      .transform((rel) => (!rel ? undefined : Array.isArray(rel) ? rel : [rel]))
+      .optional(),
+    checkpointType: z.nativeEnum(CheckpointType).optional(),
+    baseModels: z
+      .union([z.enum(constants.baseModels), z.enum(constants.baseModels).array()])
+      .optional()
+      .transform((rel) => {
+        if (!rel) return undefined;
+        return Array.isArray(rel) ? rel : [rel];
+      }),
+    sort: z.nativeEnum(ModelSort).default(constants.modelFilterDefaults.sort),
+    period: z.nativeEnum(MetricTimeframe).default(constants.modelFilterDefaults.period),
+    periodMode: periodModeSchema,
+    rating: z
+      .preprocess((val) => Number(val), z.number())
+      .transform((val) => Math.floor(val))
+      .optional(),
+    favorites: z.coerce.boolean().optional().default(false),
+    hidden: z.coerce.boolean().optional().default(false),
+    needsReview: z.coerce.boolean().optional(),
+    earlyAccess: z.coerce.boolean().optional(),
+    ids: commaDelimitedNumberArray({ message: 'ids should be a number array' }).optional(),
+    modelVersionIds: commaDelimitedNumberArray({
+      message: 'modelVersionIds should be a number array',
+    }).optional(),
+    supportsGeneration: z.coerce.boolean().optional(),
+    fromPlatform: z.coerce.boolean().optional(),
+    followed: z.coerce.boolean().optional(),
+    archived: z.coerce.boolean().optional(),
+    collectionId: z.number().optional(),
+    collectionItemStatus: z.array(z.nativeEnum(CollectionItemStatus)).optional(),
+    fileFormats: z.enum(constants.modelFileFormats).array().optional(),
+    clubId: z.number().optional(),
+    pending: z.boolean().optional(),
+  });
 
 export type GetAllModelsInput = z.input<typeof getAllModelsSchema>;
 export type GetAllModelsOutput = z.infer<typeof getAllModelsSchema>;
@@ -149,6 +149,7 @@ export const modelGallerySettingsSchema = z.object({
   users: z.number().array().optional(),
   tags: z.number().array().optional(),
   images: z.number().array().optional(),
+  level: z.number().optional(),
 });
 
 export type ModelGallerySettingsInput = z.infer<typeof modelGallerySettingsInput>;
@@ -156,6 +157,7 @@ export const modelGallerySettingsInput = z.object({
   hiddenUsers: z.object({ id: z.number(), username: z.string().nullable() }).array(),
   hiddenTags: z.object({ id: z.number(), name: z.string() }).array(),
   hiddenImages: z.number().array(),
+  level: z.number().optional(),
 });
 
 export type ModelUpsertInput = z.infer<typeof modelUpsertSchema>;
@@ -168,11 +170,12 @@ export const modelUpsertSchema = licensingSchema.extend({
   status: z.nativeEnum(ModelStatus),
   checkpointType: z.nativeEnum(CheckpointType).nullish(),
   tagsOnModels: z.array(tagSchema).nullish(),
-  nsfw: z.boolean().optional(),
   poi: z.boolean().optional(),
   locked: z.boolean().optional(),
   templateId: z.number().optional(),
   bountyId: z.number().optional(),
+  nsfw: z.boolean().optional(),
+  lockedProperties: z.string().array().optional(),
 });
 
 export type UpdateGallerySettingsInput = z.infer<typeof updateGallerySettingsSchema>;
@@ -235,55 +238,6 @@ export const declineReviewSchema = z.object({
   reason: z.string().optional(),
 });
 
-export type GetModelsByCategoryInput = z.infer<typeof getModelsByCategorySchema>;
-export const getModelsByCategorySchema = z.object({
-  limit: z.number().min(1).max(30).optional(),
-  modelLimit: z.number().min(1).max(30).optional(),
-  cursor: z.preprocess((val) => Number(val), z.number()).optional(),
-  tag: z.string().optional(),
-  tagname: z.string().optional(),
-  types: z
-    .union([z.nativeEnum(ModelType), z.nativeEnum(ModelType).array()])
-    .optional()
-    .transform((rel) => (!rel ? undefined : Array.isArray(rel) ? rel : [rel]))
-    .optional(),
-  status: z
-    .union([z.nativeEnum(ModelStatus), z.nativeEnum(ModelStatus).array()])
-    .optional()
-    .transform((rel) => (!rel ? undefined : Array.isArray(rel) ? rel : [rel]))
-    .optional(),
-  checkpointType: z.nativeEnum(CheckpointType).optional(),
-  baseModels: z
-    .union([z.enum(constants.baseModels), z.enum(constants.baseModels).array()])
-    .optional()
-    .transform((rel) => {
-      if (!rel) return undefined;
-      return Array.isArray(rel) ? rel : [rel];
-    }),
-  browsingMode: z.nativeEnum(BrowsingMode).optional(),
-  sort: z.nativeEnum(ModelSort).default(constants.modelFilterDefaults.sort),
-  period: z.nativeEnum(MetricTimeframe).default(constants.modelFilterDefaults.period),
-  periodMode: periodModeSchema,
-  rating: z
-    .preprocess((val) => Number(val), z.number())
-    .transform((val) => Math.floor(val))
-    .optional(),
-  favorites: z.preprocess(
-    (val) => val === true || val === 'true',
-    z.boolean().optional().default(false)
-  ),
-  hidden: z.preprocess(
-    (val) => val === true || val === 'true',
-    z.boolean().optional().default(false)
-  ),
-  excludedIds: z.array(z.number()).optional(),
-  excludedUserIds: z.array(z.number()).optional(),
-  excludedImageTagIds: z.array(z.number()).optional(),
-  excludedTagIds: z.array(z.number()).optional(),
-  excludedImageIds: z.array(z.number()).optional(),
-  earlyAccess: z.boolean().optional(),
-});
-
 export type GetModelsWithCategoriesSchema = z.infer<typeof getModelsWithCategoriesSchema>;
 export const getModelsWithCategoriesSchema = paginationSchema.extend({
   userId: z.number().optional(),
@@ -303,7 +257,7 @@ export const findResourcesToAssociateSchema = z.object({
 });
 
 export type GetAssociatedResourcesInput = z.infer<typeof getAssociatedResourcesSchema>;
-export const getAssociatedResourcesSchema = z.object({
+export const getAssociatedResourcesSchema = baseQuerySchema.extend({
   fromId: z.number(),
   type: z.nativeEnum(AssociationType),
 });

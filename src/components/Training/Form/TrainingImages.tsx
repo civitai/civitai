@@ -34,12 +34,14 @@ import {
   IconAlertTriangle,
   IconCheck,
   IconChevronDown,
+  IconFileDownload,
   IconReplace,
   IconSearch,
   IconTags,
   IconTrash,
   IconX,
 } from '@tabler/icons-react';
+import { saveAs } from 'file-saver';
 import JSZip from 'jszip';
 import { isEqual } from 'lodash-es';
 import React, { useEffect, useState } from 'react';
@@ -463,7 +465,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     setImageList(model.id, newImageList);
   };
 
-  const handleNextAfterCheck = async () => {
+  const handleNextAfterCheck = async (dlOnly = false) => {
     setZipping(true);
     const zip = new JSZip();
 
@@ -481,9 +483,15 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     );
     // TODO [bw] handle error
     zip.generateAsync({ type: 'blob' }).then(async (content) => {
-      // saveAs(content, 'example.zip');
+      const fileName = `${thisModelVersion.id}_training_data.zip`;
 
-      const blobFile = new File([content], `${thisModelVersion.id}_training_data.zip`, {
+      if (dlOnly) {
+        saveAs(content, fileName);
+        setZipping(false);
+        return;
+      }
+
+      const blobFile = new File([content], fileName, {
         type: 'application/zip',
       });
 
@@ -594,7 +602,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
           onConfirm: handleNextAfterCheck,
         });
       } else {
-        handleNextAfterCheck();
+        await handleNextAfterCheck();
       }
     } else {
       // no images given. could show a takeover or form inline error instead.
@@ -651,86 +659,97 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         </div>
 
         {imageList.length > 0 && (
-          <Group mt="md" position="apart">
-            <Group>
-              <Paper
-                shadow="xs"
-                radius="sm"
-                px={8}
-                py={2}
-                style={{
-                  backgroundColor:
-                    theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-                }}
+          <Group my="md">
+            <Paper
+              shadow="xs"
+              radius="sm"
+              px={8}
+              py={2}
+              style={{
+                backgroundColor:
+                  theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
+              }}
+            >
+              <Text
+                style={{ lineHeight: '22px' }}
+                color={
+                  totalCaptioned === 0
+                    ? theme.colors.red[5]
+                    : totalCaptioned < imageList.length
+                    ? theme.colors.orange[5]
+                    : theme.colors.green[5]
+                }
               >
-                <Text
-                  style={{ lineHeight: '22px' }}
-                  color={
-                    totalCaptioned === 0
-                      ? theme.colors.red[5]
-                      : totalCaptioned < imageList.length
-                      ? theme.colors.orange[5]
-                      : theme.colors.green[5]
-                  }
-                >
-                  {`${totalCaptioned} / ${imageList.length} captioned`}
-                </Text>
-              </Paper>
-              <Tooltip
-                label="Not connected - will not receive updates. Please try refreshing the page."
-                disabled={connected}
-              >
-                <Button
-                  compact
-                  disabled={autoCaptioning.isRunning || !connected}
-                  style={!connected ? { pointerEvents: 'initial' } : undefined}
-                  onClick={() =>
-                    dialogStore.trigger({
-                      component: AutoTagModal,
-                      props: {
-                        imageList,
-                        modelId: model.id,
-                        setAutoCaptioning,
-                      },
-                    })
-                  }
-                >
-                  <IconTags size={16} />
-                  <Text inline ml={4}>
-                    Auto Tag
-                  </Text>
-                </Button>
-              </Tooltip>
-
+                {`${totalCaptioned} / ${imageList.length} captioned`}
+              </Text>
+            </Paper>
+            <Tooltip
+              label="Not connected - will not receive updates. Please try refreshing the page."
+              disabled={connected}
+            >
               <Button
                 compact
-                color="red"
-                disabled={autoCaptioning.isRunning}
-                onClick={() => {
-                  openConfirmModal({
-                    title: 'Remove all images?',
-                    children: 'This cannot be undone.',
-                    labels: { cancel: 'Cancel', confirm: 'Confirm' },
-                    centered: true,
-                    onConfirm: () => setImageList(model.id, []),
-                  });
-                }}
+                disabled={autoCaptioning.isRunning || !connected}
+                style={!connected ? { pointerEvents: 'initial' } : undefined}
+                onClick={() =>
+                  dialogStore.trigger({
+                    component: AutoTagModal,
+                    props: {
+                      imageList,
+                      modelId: model.id,
+                      setAutoCaptioning,
+                    },
+                  })
+                }
               >
-                <IconTrash size={16} />
+                <IconTags size={16} />
                 <Text inline ml={4}>
-                  Reset
+                  Auto Tag
                 </Text>
               </Button>
-            </Group>
+            </Tooltip>
+            <Button
+              compact
+              color="cyan"
+              loading={zipping}
+              onClick={() => handleNextAfterCheck(true)}
+            >
+              <IconFileDownload size={16} />
+              <Text inline ml={4}>
+                Download
+              </Text>
+            </Button>
 
-            {filteredImages.length > maxImgPerPage && (
-              <Pagination
-                page={page}
-                onChange={setPage}
-                total={Math.ceil(filteredImages.length / maxImgPerPage)}
-              />
-            )}
+            <Button
+              compact
+              color="red"
+              disabled={autoCaptioning.isRunning}
+              onClick={() => {
+                openConfirmModal({
+                  title: 'Remove all images?',
+                  children: 'This cannot be undone.',
+                  labels: { cancel: 'Cancel', confirm: 'Confirm' },
+                  centered: true,
+                  onConfirm: () => setImageList(model.id, []),
+                });
+              }}
+            >
+              <IconTrash size={16} />
+              <Text inline ml={4}>
+                Reset
+              </Text>
+            </Button>
           </Group>
+        )}
+
+        {filteredImages.length > maxImgPerPage && (
+          <Pagination
+            withEdges
+            mb="md"
+            page={page}
+            onChange={setPage}
+            total={Math.ceil(filteredImages.length / maxImgPerPage)}
+          />
         )}
 
         {autoCaptioning.isRunning && (
@@ -994,6 +1013,16 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                 );
               })}
           </SimpleGrid>
+        )}
+
+        {filteredImages.length > maxImgPerPage && (
+          <Pagination
+            withEdges
+            mt="md"
+            page={page}
+            onChange={setPage}
+            total={Math.ceil(filteredImages.length / maxImgPerPage)}
+          />
         )}
 
         {imageList.length > 0 && (

@@ -9,20 +9,18 @@ import {
   getModeratorReviewQueueHandler,
 } from './../controllers/image.controller';
 import {
-  updateImageSchema,
   getInfiniteImagesSchema,
   imageModerationSchema,
   getImageSchema,
   getEntitiesCoverImage,
   imageReviewQueueInputSchema,
-  imageSchema,
   createImageSchema,
+  updateImageNsfwLevelSchema,
 } from './../schema/image.schema';
 import {
   deleteImageHandler,
   setTosViolationHandler,
   moderateImageHandler,
-  updateImageHandler,
 } from '~/server/controllers/image.controller';
 import { dbRead } from '~/server/db/client';
 import { getByIdSchema } from '~/server/schema/base.schema';
@@ -34,7 +32,6 @@ import {
   router,
 } from '~/server/trpc';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
-import { applyUserPreferences } from '~/server/middleware.trpc';
 import {
   ingestImageById,
   removeImageResource,
@@ -44,6 +41,8 @@ import {
   createImage,
   createArticleCoverImage,
   ingestArticleCoverImages,
+  getImagesForModelVersionCache,
+  updateImageNsfwLevel,
 } from '~/server/services/image.service';
 import { CacheTTL } from '~/server/common/constants';
 import { z } from 'zod';
@@ -89,20 +88,18 @@ export const imageRouter = router({
     .use(isOwnerOrModerator)
     .mutation(deleteImageHandler),
   setTosViolation: moderatorProcedure.input(getByIdSchema).mutation(setTosViolationHandler),
-  update: protectedProcedure
-    .input(updateImageSchema)
-    .use(isOwnerOrModerator)
-    .mutation(updateImageHandler),
+  // Unused
+  // update: protectedProcedure
+  //   .input(updateImageSchema)
+  //   .use(isOwnerOrModerator)
+  //   .mutation(updateImageHandler),
   getDetail: publicProcedure.input(getByIdSchema).query(getImageDetailHandler),
-  getInfinite: publicProcedure
-    .input(getInfiniteImagesSchema)
-    // .use(applyUserPreferences())
-    // .use(applyBrowsingMode())
-    .query(getInfiniteImagesHandler),
+  getInfinite: publicProcedure.input(getInfiniteImagesSchema).query(getInfiniteImagesHandler),
+  getImagesForModelVersion: publicProcedure
+    .input(getByIdSchema)
+    .query(({ input }) => getImagesForModelVersionCache([input.id])),
   getImagesAsPostsInfinite: publicProcedure
     .input(getInfiniteImagesSchema)
-    // .use(applyUserPreferences())
-    // .use(applyBrowsingMode())
     .query(getImagesAsPostsInfiniteHandler),
   get: publicProcedure.input(getImageSchema).query(getImageHandler),
   getResources: publicProcedure
@@ -134,4 +131,7 @@ export const imageRouter = router({
     .mutation(({ input: imageIds, ctx }) =>
       reportCsamImages({ imageIds, user: ctx.user, ip: ctx.ip })
     ),
+  updateImageNsfwLevel: protectedProcedure
+    .input(updateImageNsfwLevelSchema)
+    .mutation(({ input, ctx }) => updateImageNsfwLevel({ ...input, user: ctx.user })),
 });

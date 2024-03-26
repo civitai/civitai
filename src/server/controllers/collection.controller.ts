@@ -65,6 +65,7 @@ export const getAllCollectionsInfiniteHandler = async ({
         read: true,
         type: true,
         userId: true,
+        nsfwLevel: true,
         image: { select: imageSelect },
         mode: true,
         _count: {

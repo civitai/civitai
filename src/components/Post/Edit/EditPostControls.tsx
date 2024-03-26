@@ -3,6 +3,7 @@ import {
   Button,
   Checkbox,
   Group,
+  List,
   Stack,
   Text,
   ThemeIcon,
@@ -26,7 +27,6 @@ import { ContentPolicyLink } from '~/components/ContentPolicyLink/ContentPolicyL
 
 const publishText = 'Publish';
 export const hiddenLabel = `Click the '${publishText}' button to make your post Public to share with the Civitai community for comments and reactions.`;
-export const matureLabel = 'Mature content may include content that is suggestive or provocative';
 const tooltipProps: Partial<TooltipProps> = {
   maw: 300,
   multiline: true,
@@ -38,7 +38,7 @@ export function EditPostControls() {
   return (
     <Stack>
       <ManagePostStatus />
-      <ManagePostMaturity />
+      {/* <ManagePostMaturity /> */}
       <ReorderImagesButton />
     </Stack>
   );
@@ -163,34 +163,34 @@ export function ManagePostStatus() {
   );
 }
 
-export function ManagePostMaturity() {
-  const id = useEditPostContext((state) => state.id);
-  const nsfw = useEditPostContext((state) => state.nsfw);
-  const toggleNsfw = useEditPostContext((state) => state.toggleNsfw);
+// export function ManagePostMaturity() {
+//   const id = useEditPostContext((state) => state.id);
+//   const nsfw = useEditPostContext((state) => state.nsfw);
+//   const toggleNsfw = useEditPostContext((state) => state.toggleNsfw);
 
-  const { mutate, isLoading } = trpc.post.update.useMutation();
+//   const { mutate, isLoading } = trpc.post.update.useMutation();
 
-  const toggleCheckbox = () => {
-    toggleNsfw();
-    mutate({ id, nsfw: !nsfw }, { onError: () => toggleNsfw(false) });
-  };
+//   const toggleCheckbox = () => {
+//     toggleNsfw();
+//     mutate({ id, nsfw }, { onError: () => toggleNsfw(false) });
+//   };
 
-  return (
-    <Checkbox
-      checked={nsfw}
-      onChange={toggleCheckbox}
-      disabled={isLoading}
-      label={
-        <Group spacing={4}>
-          Mature
-          <Tooltip label={matureLabel} {...tooltipProps}>
-            <ThemeIcon radius="xl" size="xs" color="gray">
-              <IconQuestionMark />
-            </ThemeIcon>
-          </Tooltip>
-          <ContentPolicyLink size="xs" variant="text" color="dimmed" td="underline" />
-        </Group>
-      }
-    />
-  );
-}
+//   return (
+//     <Checkbox
+//       checked={false}
+//       onChange={toggleCheckbox}
+//       disabled={isLoading}
+//       label={
+//         <Group spacing={4}>
+//           Mature
+//           <Tooltip label={matureLabel} {...tooltipProps}>
+//             <ThemeIcon radius="xl" size="xs" color="gray">
+//               <IconQuestionMark />
+//             </ThemeIcon>
+//           </Tooltip>
+//           <ContentPolicyLink size="xs" variant="text" color="dimmed" td="underline" />
+//         </Group>
+//       }
+//     />
+//   );
+// }

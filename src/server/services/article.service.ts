@@ -13,7 +13,7 @@ import { ManipulateType } from 'dayjs';
 import { truncate } from 'lodash-es';
 import { SessionUser } from 'next-auth';
 
-import { ArticleSort, BrowsingMode } from '~/server/common/enums';
+import { ArticleSort, NsfwLevel } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
 import {
@@ -47,7 +47,8 @@ type ArticleRaw = {
   coverId?: number | null;
   title: string;
   publishedAt: Date | null;
-  nsfw: boolean;
+  userNsfwLevel: number;
+  nsfwLevel: number;
   availability: Availability;
   userId: number | null;
   stats:
@@ -111,12 +112,15 @@ export const getArticles = async ({
   includeDrafts,
   ids,
   collectionId,
-  browsingMode,
   followed,
   clubId,
+  pending,
+  browsingLevel,
 }: GetInfiniteArticlesSchema & {
   sessionUser?: { id: number; isModerator?: boolean; username?: string };
 }) => {
+  const userId = sessionUser?.id;
+  const isModerator = sessionUser?.isModerator ?? false;
   try {
     const take = limit + 1;
     const isMod = sessionUser?.isModerator ?? false;
@@ -160,9 +164,21 @@ export const getArticles = async ({
     if (!!ids?.length) {
       AND.push(Prisma.sql`a.id IN (${Prisma.join(ids, ',')})`);
     }
-    if (browsingMode === BrowsingMode.SFW) {
-      AND.push(Prisma.sql`a."nsfw" = false`);
+
+    if (browsingLevel) {
+      if (pending && (isModerator || userId)) {
+        if (isModerator) {
+          AND.push(Prisma.sql`((a."nsfwLevel" & ${browsingLevel}) != 0 OR a."nsfwLevel" = 0)`);
+        } else if (userId) {
+          AND.push(
+            Prisma.sql`((a."nsfwLevel" & ${browsingLevel}) != 0 OR (a."nsfwLevel" = 0 AND a."userId" = ${userId}))`
+          );
+        }
+      } else {
+        AND.push(Prisma.sql`(a."nsfwLevel" & ${browsingLevel}) != 0`);
+      }
     }
+
     if (username) {
       const targetUser = await dbRead.user.findUnique({
         where: { username: username ?? '' },
@@ -327,7 +343,8 @@ export const getArticles = async ({
         a."coverId",
         a.title,
         a."publishedAt",
-        a.nsfw,
+        a."nsfwLevel",
+        a."userNsfwLevel",
         a."userId",
         a."createdAt",
         a."updatedAt",
@@ -444,6 +461,11 @@ export const getArticles = async ({
           coverImage: coverImage
             ? {
                 ...coverImage,
+                // !important - when article `userNsfwLevel` equals article `nsfwLevel`, it's possible that the article `userNsfwLevel` is higher than the cover image `nsfwLevel`. In this case, we update the image to the higher `nsfwLevel` so that it will still pass through front end filters
+                nsfwLevel:
+                  article.nsfwLevel === article.userNsfwLevel
+                    ? article.nsfwLevel
+                    : coverImage.nsfwLevel,
                 meta: coverImage.meta as ImageMetaProps,
                 metadata: coverImage.metadata as any,
                 tags: coverImage?.tags.flatMap((x) => x.tag.id),
@@ -562,6 +584,7 @@ export const getArticleById = async ({ id, user }: GetByIdInput & { user?: Sessi
 
     return {
       ...article,
+      nsfwLevel: article.nsfwLevel as NsfwLevel,
       attachments,
       tags: article.tags.map(({ tag }) => ({
         ...tag,
@@ -570,6 +593,7 @@ export const getArticleById = async ({ id, user }: GetByIdInput & { user?: Sessi
       coverImage: article.coverImage
         ? {
             ...article.coverImage,
+            nsfwLevel: article.coverImage.nsfwLevel as NsfwLevel,
             meta: article.coverImage.meta as ImageMetaProps,
             metadata: article.coverImage.metadata as any,
             tags: article.coverImage?.tags.flatMap((x) => x.tag.id),

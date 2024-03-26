@@ -15,9 +15,10 @@ import {
 } from './model.service';
 import { ArticleGetAllRecord, getArticles } from './article.service';
 import { PostsInfiniteModel, getPostsInfinite } from './post.service';
-import { ArticleSort, BrowsingMode, ModelSort, PostSort } from '../common/enums';
+import { ArticleSort, ModelSort, PostSort } from '../common/enums';
 import { clubMetrics } from '../metrics';
-import { isDefined } from '../../utils/type-guards';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { SessionUser } from 'next-auth';
 
 export const getAllClubPosts = async <TSelect extends Prisma.ClubPostSelect>({
   input: { cursor, limit: take, clubId, isModerator, userId },
@@ -262,17 +263,13 @@ export type ClubPostData = {
 
 export const getClubPostResourceData = async ({
   clubPosts,
-  userId,
-  isModerator,
-  username,
+  user,
 }: {
   clubPosts: {
     entityId: number;
     entityType: SupportedClubPostEntities;
   }[];
-  userId?: number;
-  isModerator?: boolean;
-  username?: string;
+  user?: SessionUser;
 }) => {
   const modelIds = clubPosts.filter((x) => x.entityType === 'Model').map((x) => x.entityId);
   const postIds = clubPosts.filter((x) => x.entityType === 'Post').map((x) => x.entityId);
@@ -280,8 +277,6 @@ export const getClubPostResourceData = async ({
   const modelVersionIds = clubPosts
     .filter((x) => x.entityType === 'ModelVersion')
     .map((x) => x.entityId);
-
-  const user = userId ? { id: userId, isModerator, username } : undefined;
 
   const models =
     modelIds.length > 0
@@ -292,10 +287,10 @@ export const getClubPostResourceData = async ({
             sort: ModelSort.Newest,
             period: MetricTimeframe.AllTime,
             periodMode: 'stats',
-            browsingMode: BrowsingMode.All,
             favorites: false,
             hidden: false,
             ids: modelIds,
+            browsingLevel: allBrowsingLevelsFlag,
           },
         })
       : { items: [] };
@@ -307,9 +302,9 @@ export const getClubPostResourceData = async ({
           period: MetricTimeframe.AllTime,
           periodMode: 'stats',
           sort: ArticleSort.Newest,
-          browsingMode: BrowsingMode.All,
           ids: articleIds,
           sessionUser: user,
+          browsingLevel: allBrowsingLevelsFlag,
         })
       : { items: [] };
 
@@ -321,7 +316,7 @@ export const getClubPostResourceData = async ({
           periodMode: 'published',
           sort: PostSort.Newest,
           user,
-          browsingMode: BrowsingMode.All,
+          browsingLevel: allBrowsingLevelsFlag,
           ids: postIds,
           include: ['cosmetics', 'detail'],
         })
@@ -331,7 +326,7 @@ export const getClubPostResourceData = async ({
     postIds.length > 0
       ? await getImagesForPosts({
           postIds: postIds,
-          userId: user?.id,
+          user: user,
           coverOnly: false,
         })
       : [];
@@ -345,7 +340,7 @@ export const getClubPostResourceData = async ({
             sort: ModelSort.Newest,
             period: MetricTimeframe.AllTime,
             periodMode: 'stats',
-            browsingMode: BrowsingMode.All,
+            browsingLevel: allBrowsingLevelsFlag,
             favorites: false,
             hidden: false,
             modelVersionIds,
@@ -397,9 +392,7 @@ export const getClubPostResourceData = async ({
 
 export const getResourceDetailsForClubPostCreation = async ({
   entities,
-  userId,
-  isModerator,
-  username,
+  user,
 }: {
   entities: [
     {
@@ -407,9 +400,8 @@ export const getResourceDetailsForClubPostCreation = async ({
       entityType: SupportedClubPostEntities;
     }
   ];
-  userId?: number;
-  isModerator?: boolean;
-  username?: string;
+
+  user?: SessionUser;
 }) => {
   const postData = await dbRead.$queryRaw<
     {
@@ -424,7 +416,7 @@ export const getResourceDetailsForClubPostCreation = async ({
         "entityType" VARCHAR
       )
     )
-    SELECT  
+    SELECT
       e."entityId",
       e."entityType",
       COALESCE(
@@ -433,19 +425,17 @@ export const getResourceDetailsForClubPostCreation = async ({
         p.title,
         mmv.name || ' - ' || mv.name
       ) AS title
-    FROM entities e 
-    LEFT JOIN "Model" m ON m.id = e."entityId" AND e."entityType" = 'Model' 
+    FROM entities e
+    LEFT JOIN "Model" m ON m.id = e."entityId" AND e."entityType" = 'Model'
     LEFT JOIN "Article" a ON a.id = e."entityId" AND e."entityType" = 'Article'
     LEFT JOIN "Post" p ON p.id = e."entityId" AND e."entityType" = 'Post'
     LEFT JOIN "ModelVersion" mv ON mv.id = e."entityId" AND e."entityType" = 'ModelVersion'
-    LEFT JOIN "Model" mmv ON mmv.id = mv."modelId" 
+    LEFT JOIN "Model" mmv ON mmv.id = mv."modelId"
   `;
 
   const data = await getClubPostResourceData({
     clubPosts: entities,
-    userId,
-    isModerator,
-    username,
+    user,
   });
 
   return postData.map((d) => {

@@ -1,4 +1,3 @@
-import { OnboardingStep } from '@prisma/client';
 import type { DefaultSession } from 'next-auth';
 import { UserTier } from '~/server/schema/user.schema';
 
@@ -7,12 +6,12 @@ interface ExtendedUser {
   showNsfw: boolean;
   blurNsfw: boolean; // client only
   username: string;
-  // feedbackToken?: string;
+  browsingLevel: number;
+  onboarding: number;
   image?: string;
   email?: string;
   emailVerified?: Date;
   createdAt?: Date;
-  tos?: boolean; // client only
   isModerator?: boolean;
   customerId?: string; // could be fetched
   subscriptionId?: string; // could be fetched
@@ -20,7 +19,6 @@ interface ExtendedUser {
   muted?: boolean;
   bannedAt?: Date;
   autoplayGifs?: boolean; // client only - could be cookie setting
-  onboardingSteps?: OnboardingStep[]; // client only
   permissions?: string[];
   filePreferences?: UserFilePreferences;
   leaderboardShowcase?: string; // client only

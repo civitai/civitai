@@ -74,7 +74,7 @@ export function ToggleSearchableMenuItem({ entityType, entityId }: Props) {
         });
       }}
     >
-      {isSearchable ? 'Remove from search' : 'Add to search'}
+      {isSearchable ? `Remove ${entityType} from search` : `Add ${entityType} to search`}
     </Menu.Item>
   );
 }

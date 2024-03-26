@@ -43,8 +43,8 @@ export const articlesInstantSearchRoutingParser: InstantSearchRoutingParser = {
     const articles: ArticleSearchParams = (routeState[ARTICLES_SEARCH_INDEX] ||
       {}) as ArticleSearchParams;
     const refinementList: Record<string, string[]> = removeEmpty({
-      'tags.name': articles.tags,
-      'user.username': articles.users,
+      'tags.name': articles.tags as string[],
+      'user.username': articles.users as string[],
     });
 
     const { query, sortBy } = articles;

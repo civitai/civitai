@@ -1,16 +1,14 @@
-import { MediaType, MetricTimeframe, NsfwLevel } from '@prisma/client';
+import { MediaType, MetricTimeframe } from '@prisma/client';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
-import { BrowsingMode, PostSort } from '~/server/common/enums';
-import { periodModeSchema } from '~/server/schema/base.schema';
+import { PostSort } from '~/server/common/enums';
+import { baseQuerySchema, periodModeSchema } from '~/server/schema/base.schema';
 import { imageMetaSchema } from '~/server/schema/image.schema';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
-import { clubResourceSchema } from './club.schema';
 
 export type PostsFilterInput = z.infer<typeof postsFilterSchema>;
 export const postsFilterSchema = z.object({
-  browsingMode: z.nativeEnum(BrowsingMode).default(constants.postFilterDefaults.browsingMode),
   period: z.nativeEnum(MetricTimeframe).default(constants.postFilterDefaults.period),
   periodMode: periodModeSchema,
   sort: z.nativeEnum(PostSort).default(constants.postFilterDefaults.sort),
@@ -20,25 +18,28 @@ export const postsFilterSchema = z.object({
 const postInclude = z.enum(['cosmetics']);
 export type ImageInclude = z.infer<typeof postInclude>;
 export type PostsQueryInput = z.infer<typeof postsQuerySchema>;
-export const postsQuerySchema = postsFilterSchema.extend({
-  limit: z.preprocess((val) => Number(val), z.number().min(0).max(200)).default(100),
-  cursor: z.preprocess((val) => Number(val), z.number()).optional(),
-  query: z.string().optional(),
-  excludedTagIds: z.array(z.number()).optional(),
-  excludedUserIds: z.array(z.number()).optional(),
-  excludedImageIds: z.array(z.number()).optional(),
-  tags: z.number().array().optional(),
-  username: z
-    .string()
-    .transform((data) => postgresSlugify(data))
-    .nullish(),
-  modelVersionId: z.number().optional(),
-  ids: z.array(z.number()).optional(),
-  collectionId: z.number().optional(),
-  include: z.array(postInclude).default(['cosmetics']).optional(),
-  followed: z.boolean().optional(),
-  clubId: z.number().optional(),
-});
+export const postsQuerySchema = baseQuerySchema.merge(
+  postsFilterSchema.extend({
+    limit: z.preprocess((val) => Number(val), z.number().min(0).max(200)).default(100),
+    cursor: z.preprocess((val) => Number(val), z.number()).optional(),
+    query: z.string().optional(),
+    excludedTagIds: z.array(z.number()).optional(),
+    excludedUserIds: z.array(z.number()).optional(),
+    excludedImageIds: z.array(z.number()).optional(),
+    tags: z.number().array().optional(),
+    username: z
+      .string()
+      .transform((data) => postgresSlugify(data))
+      .nullish(),
+    modelVersionId: z.number().optional(),
+    ids: z.array(z.number()).optional(),
+    collectionId: z.number().optional(),
+    include: z.array(postInclude).default(['cosmetics']).optional(),
+    followed: z.boolean().optional(),
+    clubId: z.number().optional(),
+    pending: z.boolean().optional(),
+  })
+);
 
 export type PostCreateInput = z.infer<typeof postCreateSchema>;
 export const postCreateSchema = z.object({
@@ -52,7 +53,6 @@ export const postCreateSchema = z.object({
 export type PostUpdateInput = z.infer<typeof postUpdateSchema>;
 export const postUpdateSchema = z.object({
   id: z.number(),
-  nsfw: z.boolean().optional(),
   title: z.string().optional(),
   detail: z.string().optional(),
   publishedAt: z.date().optional(),
@@ -81,7 +81,6 @@ export const addPostImageSchema = z.object({
   hash: z.string().nullish(),
   height: z.number().nullish(),
   width: z.number().nullish(),
-  nsfw: z.nativeEnum(NsfwLevel).optional(),
   postId: z.number(),
   modelVersionId: z.number().optional(),
   index: z.number(),
@@ -104,7 +103,6 @@ export const updatePostImageSchema = z.object({
     return value;
   }, imageMetaSchema.nullish()),
   hideMeta: z.boolean().optional(),
-  nsfw: z.nativeEnum(NsfwLevel).optional(),
   // resources: z.array(imageResourceUpsertSchema),
 });
 

@@ -150,10 +150,11 @@ model User {
   email               String?               @unique @db.Citext
   emailVerified       DateTime?
   image               String?
-  showNsfw            Boolean?              @default(false)
-  blurNsfw            Boolean?              @default(true)
+  showNsfw            Boolean               @default(false)
+  blurNsfw            Boolean               @default(true)
+  browsingLevel       Int                   @default(1)
+  onboarding          Int                   @default(0)
   isModerator         Boolean?              @default(false)
-  tos                 Boolean?              @default(false)
   createdAt           DateTime              @default(now())
   deletedAt           DateTime?
   customerId          String?               @unique
@@ -166,12 +167,12 @@ model User {
   filePreferences     Json                  @default("{\"size\": \"pruned\", \"fp\": \"fp16\", \"format\": \"SafeTensor\"}")
   leaderboardShowcase String?
   referral            UserReferral?
-  onboardingSteps     OnboardingStep[]      @default([Moderation, Buzz])
-  profile             UserProfile?
-  profilePictureId    Int?                  @unique
-  profilePicture      Image?                @relation("profilePicture", fields: [profilePictureId], references: [id], onDelete: SetNull)
-  settings            Json?                 @default("{}")
-  connectedAccount    UserStripeConnect?
+
+  profile          UserProfile?
+  profilePictureId Int?               @unique
+  profilePicture   Image?             @relation("profilePicture", fields: [profilePictureId], references: [id], onDelete: SetNull)
+  settings         Json?              @default("{}")
+  connectedAccount UserStripeConnect?
 
   accounts             Account[]
   sessions             Session[]
@@ -248,13 +249,8 @@ model User {
   builds                     BuildGuide[]
   createdRewards             PurchasableReward[]
   purchasedRewards           UserPurchasedRewards[]
-  vault                      Vault?
-  vaultItems                 VaultItem[]
-}
-
-enum OnboardingStep {
-  Moderation
-  Buzz
+  VaultItem                  VaultItem[]
+  Vault                      Vault[]
 }
 
 model CustomerSubscription {
@@ -495,6 +491,8 @@ model Model {
   unlisted            Boolean         @default(false)
   gallerySettings     Json            @default("{\"users\": [], \"tags\": [], \"images\": []}")
   availability        Availability    @default(Public)
+  nsfwLevel           Int             @default(0)
+  lockedProperties    String[]        @default([])
 
   // Licensing
   allowNoCredit         Boolean         @default(true)
@@ -625,6 +623,7 @@ model ModelVersion {
   requireAuth          Boolean         @default(false)
   settings             Json?
   availability         Availability    @default(Public)
+  nsfwLevel            Int             @default(0)
 
   monetization            ModelVersionMonetization?
   metrics                 ModelVersionMetric[]
@@ -1083,6 +1082,7 @@ model Post {
   collection     Collection?   @relation(fields: [collectionId], references: [id], onDelete: Cascade)
   unlisted       Boolean       @default(false)
   availability   Availability  @default(Public)
+  nsfwLevel      Int           @default(0)
 
   images          Image[]
   tags            TagsOnPost[]
@@ -1163,6 +1163,8 @@ model Image {
   type              MediaType               @default(image)
   metadata          Json                    @default("{}") // file metadata
   nsfw              NsfwLevel               @default(None)
+  nsfwLevel         Int                     @default(0)
+  nsfwLevelLocked   Boolean                 @default(false)
   tosViolation      Boolean                 @default(false)
   analysis          Json?
   generationProcess ImageGenerationProcess?
@@ -1272,6 +1274,16 @@ model ImageMetric {
   @@id([imageId, timeframe])
 }
 
+model ImageRatingRequest {
+  userId    Int
+  imageId   Int
+  createdAt DateTime     @default(now())
+  nsfwLevel Int
+  status    ReportStatus @default(Pending)
+
+  @@id([imageId, userId])
+}
+
 model CollectionMetric {
   collection       Collection      @relation(fields: [collectionId], references: [id], onDelete: Cascade)
   collectionId     Int
@@ -1315,6 +1327,7 @@ model Tag {
   target     TagTarget[]
   type       TagType     @default(UserGenerated)
   nsfw       NsfwLevel   @default(None)
+  nsfwLevel  Int         @default(1)
   unlisted   Boolean     @default(false)
   unfeatured Boolean     @default(false)
   isCategory Boolean     @default(false)
@@ -1888,6 +1901,7 @@ model ArticleReaction {
 enum TagEngagementType {
   Hide
   Follow
+  // Depracated (don't use Allow)
   Allow
 }
 
@@ -1971,22 +1985,25 @@ model BuzzClaim {
 }
 
 model Article {
-  id           Int          @id @default(autoincrement())
-  createdAt    DateTime?    @default(now())
-  updatedAt    DateTime?    @updatedAt
-  nsfw         Boolean      @default(false)
-  tosViolation Boolean      @default(false)
-  metadata     Json?
-  title        String
-  content      String
-  cover        String?
-  coverId      Int?         @unique
-  coverImage   Image?       @relation(fields: [coverId], references: [id], onDelete: NoAction)
-  publishedAt  DateTime?
-  userId       Int
-  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  availability Availability @default(Public)
-  unlisted     Boolean      @default(false)
+  id               Int          @id @default(autoincrement())
+  createdAt        DateTime?    @default(now())
+  updatedAt        DateTime?    @updatedAt
+  nsfw             Boolean      @default(false)
+  tosViolation     Boolean      @default(false)
+  metadata         Json?
+  title            String
+  content          String
+  cover            String?
+  coverId          Int?         @unique
+  coverImage       Image?       @relation(fields: [coverId], references: [id], onDelete: NoAction)
+  publishedAt      DateTime?
+  userId           Int
+  user             User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  availability     Availability @default(Public)
+  unlisted         Boolean      @default(false)
+  nsfwLevel        Int          @default(0)
+  userNsfwLevel    Int          @default(0)
+  lockedProperties String[]     @default([])
 
   thread          Thread?
   reactions       ArticleReaction[]
@@ -2155,6 +2172,7 @@ model Collection {
   mode         CollectionMode?
   metadata     Json                         @default("{}")
   availability Availability                 @default(Public)
+  nsfwLevel    Int                          @default(0)
 
   items        CollectionItem[]
   contributors CollectionContributor[]
@@ -2321,6 +2339,8 @@ model Bounty {
   complete                Boolean         @default(false)
   refunded                Boolean         @default(false)
   availability            Availability    @default(Public)
+  nsfwLevel               Int             @default(0)
+  lockedProperties        String[]        @default([])
 
   tags        TagsOnBounty[]
   entries     BountyEntry[]
@@ -2347,6 +2367,7 @@ model BountyEntry {
   updatedAt   DateTime @updatedAt
   locked      Boolean  @default(false)
   description String?
+  nsfwLevel   Int      @default(0)
 
   benefactors BountyBenefactor[]
   thread      Thread?
@@ -2775,6 +2796,33 @@ model UserPurchasedRewards {
   // We should store the product name & details in the meta at the time or purchase in case the reward is later on deleted - will be a good safeguard
   meta                Json               @default("{}")
   code                String
+}
+
+enum EntityType {
+  Image
+  Post
+  Article
+  Bounty
+  BountyEntry
+  ModelVersion
+  Model
+  Collection
+}
+
+enum JobQueueType {
+  CleanUp
+  UpdateMetrics
+  UpdateNsfwLevel
+  UpdateSearchIndex
+}
+
+model JobQueue {
+  type       JobQueueType
+  entityType EntityType
+  entityId   Int
+  createdAt  DateTime     @default(now())
+
+  @@id([entityType, entityId, type])
 }
 
 enum VaultItemStatus {
@@ -3479,22 +3527,23 @@ model CollectionRank {
 
 /// @view
 model ImageTag {
-  imageId     Int
-  image       Image     @relation(fields: [imageId], references: [id], onDelete: Cascade)
-  tagId       Int
-  tag         Tag       @relation(fields: [tagId], references: [id], onDelete: Cascade)
-  tagName     String
-  tagType     TagType
-  tagNsfw     NsfwLevel
-  automated   Boolean
-  confidence  Int?
-  score       Int
-  upVotes     Int
-  downVotes   Int
-  needsReview Boolean
-  concrete    Boolean
-  lastUpvote  DateTime?
-  source      TagSource
+  imageId      Int
+  image        Image     @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  tagId        Int
+  tag          Tag       @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  tagName      String
+  tagType      TagType
+  tagNsfw      NsfwLevel
+  tagNsfwLevel Int
+  automated    Boolean
+  confidence   Int?
+  score        Int
+  upVotes      Int
+  downVotes    Int
+  needsReview  Boolean
+  concrete     Boolean
+  lastUpvote   DateTime?
+  source       TagSource
 
   @@id([imageId, tagId])
 }

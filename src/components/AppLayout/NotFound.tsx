@@ -14,7 +14,7 @@ export function NotFound() {
   });
 
   const image = useMemo(() => {
-    if (!images) return;
+    if (!images || !images.length) return;
 
     const [username, url, alt] = images[Math.floor(Math.random() * images.length)];
     return { username, url, alt };
@@ -22,7 +22,7 @@ export function NotFound() {
 
   return (
     <>
-      <Meta title="Page Not Found" deIndex="noindex, nofollow" />
+      <Meta title="Page Not Found" deIndex />
 
       <Container size="md">
         <Stack align="center" spacing={0}>

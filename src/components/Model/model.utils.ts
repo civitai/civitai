@@ -15,6 +15,7 @@ import { constants } from '~/server/common/constants';
 import { isEqual } from 'lodash-es';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useFiltersContext } from '~/providers/FiltersProvider';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 
 const modelQueryParamSchema = z
   .object({
@@ -95,26 +96,34 @@ export const useQueryModels = (
 ) => {
   const _filters = filters ?? {};
   const queryUtils = trpc.useUtils();
-  const { data, isLoading, ...rest } = trpc.model.getAll.useInfiniteQuery(_filters, {
-    getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
-    getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),
-    trpc: { context: { skipBatch: true } },
-    keepPreviousData: true,
-    onError: (error) => {
-      queryUtils.model.getAll.setInfiniteData(_filters, (oldData) => oldData ?? data);
-      showErrorNotification({
-        title: 'Failed to fetch data',
-        error: new Error(`Something went wrong: ${error.message}`),
-      });
-    },
-    ...options,
-  });
+  const browsingLevel = useBrowsingLevelDebounced();
+  const { data, isLoading, ...rest } = trpc.model.getAll.useInfiniteQuery(
+    { ..._filters, browsingLevel },
+    {
+      getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
+      getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),
+      trpc: { context: { skipBatch: true } },
+      keepPreviousData: true,
+      onError: (error) => {
+        queryUtils.model.getAll.setInfiniteData(
+          { ..._filters, browsingLevel },
+          (oldData) => oldData ?? data
+        );
+        showErrorNotification({
+          title: 'Failed to fetch data',
+          error: new Error(`Something went wrong: ${error.message}`),
+        });
+      },
+      ...options,
+    }
+  );
 
   const flatData = useMemo(() => data?.pages.flatMap((x) => (!!x ? x.items : [])), [data]);
   const { items, loadingPreferences } = useApplyHiddenPreferences({
     type: 'models',
     data: flatData,
     showHidden: !!_filters.hidden,
+    isRefetching: rest.isRefetching,
   });
 
   return { data, models: items, isLoading: isLoading || loadingPreferences, ...rest };

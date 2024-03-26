@@ -10,9 +10,9 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { slugit } from '~/utils/string-helpers';
 import { ArticleContextMenu } from '../ArticleContextMenu';
-import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { AssociatedResourceArticleCardData } from '~/server/controllers/model.controller';
+import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 
 export function ArticleAltCard({ data, height, ...props }: Props) {
   const { classes } = useStyles();
@@ -49,21 +49,11 @@ export function ArticleAltCard({ data, height, ...props }: Props) {
           }}
         />
         {coverImage && (
-          <ImageGuard
-            connect={{ entityId: id, entityType: 'article' }}
-            images={[coverImage]}
-            render={(image) => (
-              <div style={{ position: 'relative', flex: 1, overflow: 'hidden', height: '100%' }}>
-                <Group
-                  spacing={4}
-                  sx={(theme) => ({
-                    position: 'absolute',
-                    top: theme.spacing.xs,
-                    left: theme.spacing.xs,
-                    zIndex: 1,
-                  })}
-                >
-                  <ImageGuard.ToggleConnect position="static" />
+          <ImageGuard2 image={coverImage}>
+            {(safe) => (
+              <div className="relative flex-1 overflow-hidden h-full">
+                <Group spacing={4} className="absolute top-2 left-2 z-10">
+                  <ImageGuard2.BlurToggle />
                   <Badge
                     size="sm"
                     sx={{
@@ -81,20 +71,20 @@ export function ArticleAltCard({ data, height, ...props }: Props) {
                     </Badge>
                   )}
                 </Group>
-                <ImageGuard.Content>
-                  {({ safe }) =>
-                    !safe ? (
-                      <MediaHash {...image} />
-                    ) : (
-                      <EdgeMedia className={classes.image} src={image.url} width={450} />
-                    )
-                  }
-                </ImageGuard.Content>
+                {!safe ? (
+                  <MediaHash {...coverImage} />
+                ) : (
+                  <EdgeMedia
+                    className={classes.image}
+                    src={coverImage.url}
+                    width={450}
+                    loading="lazy"
+                  />
+                )}
               </div>
             )}
-          />
+          </ImageGuard2>
         )}
-
         <Stack className={classes.info} spacing={8}>
           {data.user.image && (
             <CivitaiTooltip

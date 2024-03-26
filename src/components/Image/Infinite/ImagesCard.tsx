@@ -17,7 +17,6 @@ import { IconInfoCircle, IconBrush, IconAlertTriangle, IconClock2 } from '@table
 import { useMemo } from 'react';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { useImagesContext } from '~/components/Image/Providers/ImagesProvider';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
@@ -34,6 +33,9 @@ import { HolidayFrame } from '~/components/Decorations/HolidayFrame';
 import { truncate } from 'lodash-es';
 import { constants } from '~/server/common/constants';
 import { useImageStore } from '~/store/image.store';
+import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
+import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
+import { getIsPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 
 export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height: number }) {
   const { ref, inView } = useInView({ rootMargin: '200% 0px' });
@@ -49,7 +51,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
 
   const tags = useMemo(() => {
     if (!image.tags) return undefined;
-    return image.tags.filter((x) => x.type === 'Moderation');
+    return image.tags.filter((x) => !getIsPublicBrowsingLevel(x.nsfwLevel));
   }, [image.tags]);
 
   const showVotes = !!tags?.length && isScanned;
@@ -79,183 +81,160 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
             {inView && (
               <>
                 {onSite && <OnsiteIndicator />}
-                <ImageGuard
-                  images={[image]}
-                  render={(image) => (
-                    <ImageGuard.Content>
-                      {({ safe }) => (
-                        <>
-                          <Group
-                            position="apart"
-                            align="start"
-                            spacing={4}
-                            style={{
-                              position: 'absolute',
-                              top: 0,
-                              left: 0,
-                              width: '100%',
-                              zIndex: 10,
-                              padding: 8,
-                            }}
-                          >
-                            <ImageGuard.ToggleImage position="static" />
-                            {safe && (
-                              <Stack spacing="xs" ml="auto">
-                                {!isBlocked && (
-                                  <ImageGuard.Report
-                                    context="image"
-                                    position="static"
-                                    withinPortal
-                                  />
-                                )}
-                                {features.imageGeneration && image.meta && (
-                                  <HoverActionButton
-                                    label="Remix"
-                                    size={30}
-                                    color="white"
-                                    variant="filled"
-                                    data-activity="remix:image-card"
-                                    onClick={(e) => {
-                                      e.preventDefault();
-                                      e.stopPropagation();
-                                      generationPanel.open({
-                                        type: 'image',
-                                        id: image.id,
-                                      });
-                                    }}
-                                  >
-                                    <IconBrush stroke={2.5} size={16} />
-                                  </HoverActionButton>
-                                )}
-                                {scheduled && (
-                                  <Tooltip label="Scheduled">
-                                    <ThemeIcon size={30} radius="xl" variant="filled" color="blue">
-                                      <IconClock2 size={16} strokeWidth={2.5} />
-                                    </ThemeIcon>
-                                  </Tooltip>
-                                )}
-                                {notPublished && (
-                                  <Tooltip label="Not published">
-                                    <ThemeIcon
-                                      size={30}
-                                      radius="xl"
-                                      variant="filled"
-                                      color="yellow"
-                                    >
-                                      <IconAlertTriangle size={16} strokeWidth={2.5} />
-                                    </ThemeIcon>
-                                  </Tooltip>
-                                )}
-                              </Stack>
-                            )}
-                          </Group>
-                          {safe && (
-                            <EdgeMedia
-                              src={image.url}
-                              className={cx({ [classes.blocked]: isBlocked })}
-                              name={image.name ?? image.id.toString()}
-                              alt={
-                                image.meta
-                                  ? truncate(image.meta.prompt, {
-                                      length: constants.altTruncateLength,
-                                    })
-                                  : image.name ?? undefined
-                              }
-                              type={image.type}
-                              width={450}
-                              placeholder="empty"
-                              style={{ width: '100%' }}
-                              fadeIn
-                            />
-                          )}
-
-                          <div className="footer-abs">
-                            {showVotes ? (
-                              <div className={classes.footer}>
-                                <VotableTags entityType="image" entityId={image.id} tags={tags} />
-                              </div>
-                            ) : !isBlocked ? (
-                              isPending ? (
-                                <Box className={classes.footer} p="xs" sx={{ width: '100%' }}>
-                                  <Stack spacing={4}>
-                                    <Group spacing={8} noWrap>
-                                      <Loader size={20} />
-                                      <Badge size="xs" color="yellow">
-                                        Analyzing
-                                      </Badge>
-                                    </Group>
-                                    <Text size="sm" inline>
-                                      This image will be available to the community once processing
-                                      is done.
-                                    </Text>
-                                  </Stack>
-                                </Box>
-                              ) : (
-                                // TODO.Briant - don't use group since group prevents clicking smaller images, or change pointer event?
-                                <Group className={classes.info} spacing={4} position="apart" noWrap>
-                                  <Reactions
-                                    entityId={image.id}
-                                    entityType="image"
-                                    reactions={image.reactions}
-                                    metrics={{
-                                      likeCount: image.stats?.likeCountAllTime,
-                                      dislikeCount: image.stats?.dislikeCountAllTime,
-                                      heartCount: image.stats?.heartCountAllTime,
-                                      laughCount: image.stats?.laughCountAllTime,
-                                      cryCount: image.stats?.cryCountAllTime,
-                                      tippedAmountCount: image.stats?.tippedAmountCountAllTime,
-                                    }}
-                                    targetUserId={image.user.id}
-                                    readonly={!safe}
-                                    className={classes.reactions}
-                                  />
-                                  {!image.hideMeta && image.meta && (
-                                    <ImageMetaPopover
-                                      meta={image.meta}
-                                      generationProcess={image.generationProcess ?? undefined}
-                                      imageId={image.id}
-                                      mainResourceId={image.modelVersionId ?? undefined}
-                                    >
-                                      <ActionIcon variant="transparent" size="lg">
-                                        <IconInfoCircle
-                                          color="white"
-                                          filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                                          opacity={0.8}
-                                          strokeWidth={2.5}
-                                          size={26}
-                                        />
-                                      </ActionIcon>
-                                    </ImageMetaPopover>
-                                  )}
-                                </Group>
-                              )
-                            ) : (
-                              <Alert
-                                color="red"
+                <ImageGuard2 image={image}>
+                  {(safe) => (
+                    <>
+                      <Group
+                        position="apart"
+                        align="start"
+                        spacing={4}
+                        className="absolute top-2 left-2 right-2 z-10"
+                        style={{ pointerEvents: 'none' }}
+                      >
+                        <ImageGuard2.BlurToggle sx={{ pointerEvents: 'auto' }} />
+                        {safe && (
+                          <Stack spacing="xs" ml="auto" sx={{ pointerEvents: 'auto' }}>
+                            {!isBlocked && <ImageContextMenu image={image} />}
+                            {features.imageGeneration && image.meta && (
+                              <HoverActionButton
+                                label="Remix"
+                                size={30}
+                                color="white"
                                 variant="filled"
-                                radius={0}
-                                className={classes.info}
-                                title={
-                                  <Group spacing={4}>
-                                    <IconInfoCircle />
-                                    <Text inline>TOS Violation</Text>
-                                  </Group>
-                                }
+                                data-activity="remix:image-card"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  generationPanel.open({
+                                    type: 'image',
+                                    id: image.id,
+                                  });
+                                }}
                               >
-                                <Stack align="flex-end" spacing={0}>
-                                  <Text size="sm" inline>
-                                    The image you uploaded was determined to violate our TOS and
-                                    will be completely removed from our service.
-                                  </Text>
-                                </Stack>
-                              </Alert>
+                                <IconBrush stroke={2.5} size={16} />
+                              </HoverActionButton>
                             )}
-                          </div>
-                        </>
+                            {scheduled && (
+                              <Tooltip label="Scheduled">
+                                <ThemeIcon size={30} radius="xl" variant="filled" color="blue">
+                                  <IconClock2 size={16} strokeWidth={2.5} />
+                                </ThemeIcon>
+                              </Tooltip>
+                            )}
+                            {notPublished && (
+                              <Tooltip label="Not published">
+                                <ThemeIcon size={30} radius="xl" variant="filled" color="yellow">
+                                  <IconAlertTriangle size={16} strokeWidth={2.5} />
+                                </ThemeIcon>
+                              </Tooltip>
+                            )}
+                          </Stack>
+                        )}
+                      </Group>
+                      {safe && (
+                        <EdgeMedia
+                          src={image.url}
+                          className={cx({ [classes.blocked]: isBlocked })}
+                          name={image.name ?? image.id.toString()}
+                          alt={
+                            image.meta
+                              ? truncate(image.meta.prompt, {
+                                  length: constants.altTruncateLength,
+                                })
+                              : image.name ?? undefined
+                          }
+                          type={image.type}
+                          width={450}
+                          placeholder="empty"
+                          style={{ width: '100%' }}
+                          fadeIn
+                        />
                       )}
-                    </ImageGuard.Content>
+
+                      <div className="footer-abs">
+                        {showVotes ? (
+                          <div className={classes.footer}>
+                            <VotableTags entityType="image" entityId={image.id} tags={tags} />
+                          </div>
+                        ) : !isBlocked ? (
+                          isPending ? (
+                            <Box className={classes.footer} p="xs" sx={{ width: '100%' }}>
+                              <Stack spacing={4}>
+                                <Group spacing={8} noWrap>
+                                  <Loader size={20} />
+                                  <Badge size="xs" color="yellow">
+                                    Analyzing
+                                  </Badge>
+                                </Group>
+                                <Text size="sm" inline>
+                                  This image will be available to the community once processing is
+                                  done.
+                                </Text>
+                              </Stack>
+                            </Box>
+                          ) : (
+                            <Group className={classes.info} spacing={4} position="apart" noWrap>
+                              <Reactions
+                                entityId={image.id}
+                                entityType="image"
+                                reactions={image.reactions}
+                                metrics={{
+                                  likeCount: image.stats?.likeCountAllTime,
+                                  dislikeCount: image.stats?.dislikeCountAllTime,
+                                  heartCount: image.stats?.heartCountAllTime,
+                                  laughCount: image.stats?.laughCountAllTime,
+                                  cryCount: image.stats?.cryCountAllTime,
+                                  tippedAmountCount: image.stats?.tippedAmountCountAllTime,
+                                }}
+                                targetUserId={image.user.id}
+                                readonly={!safe}
+                                className={classes.reactions}
+                              />
+                              {!image.hideMeta && image.meta && (
+                                <ImageMetaPopover
+                                  meta={image.meta}
+                                  generationProcess={image.generationProcess ?? undefined}
+                                  imageId={image.id}
+                                  mainResourceId={image.modelVersionId ?? undefined}
+                                >
+                                  <ActionIcon variant="transparent" size="lg">
+                                    <IconInfoCircle
+                                      color="white"
+                                      filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                                      opacity={0.8}
+                                      strokeWidth={2.5}
+                                      size={26}
+                                    />
+                                  </ActionIcon>
+                                </ImageMetaPopover>
+                              )}
+                            </Group>
+                          )
+                        ) : (
+                          <Alert
+                            color="red"
+                            variant="filled"
+                            radius={0}
+                            className={classes.info}
+                            title={
+                              <Group spacing={4}>
+                                <IconInfoCircle />
+                                <Text inline>TOS Violation</Text>
+                              </Group>
+                            }
+                          >
+                            <Stack align="flex-end" spacing={0}>
+                              <Text size="sm" inline>
+                                The image you uploaded was determined to violate our TOS and will be
+                                completely removed from our service.
+                              </Text>
+                            </Stack>
+                          </Alert>
+                        )}
+                      </div>
+                    </>
                   )}
-                />
+                </ImageGuard2>
               </>
             )}
           </div>

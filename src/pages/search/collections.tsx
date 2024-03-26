@@ -2,6 +2,7 @@ import { Stack, Text, Box, Center, Loader, Title, ThemeIcon } from '@mantine/cor
 import { useInstantSearch } from 'react-instantsearch';
 
 import {
+  BrowsingLevelFilter,
   ChipRefinementList,
   SearchableMultiSelectRefinementList,
   SortBy,
@@ -36,6 +37,7 @@ export default function CollectionSearch() {
 const RenderFilters = () => {
   return (
     <>
+      <BrowsingLevelFilter attributeName="nsfwLevel" />
       <SortBy
         title="Sort collections by"
         items={[

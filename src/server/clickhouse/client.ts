@@ -2,7 +2,6 @@ import { ClickHouseClient, createClient } from '@clickhouse/client';
 import {
   ArticleEngagementType,
   BountyEngagementType,
-  NsfwLevel,
   ReportReason,
   ReportStatus,
   ReviewReactions,
@@ -15,6 +14,7 @@ import { env } from '~/env/server.mjs';
 import { ProhibitedSources } from '~/server/schema/user.schema';
 import { createLogger } from '~/utils/logging';
 import { getServerAuthSession } from '../utils/get-server-auth-session';
+import { NsfwLevelDeprecated } from '~/shared/constants/browsingLevel.constants';
 
 export type CustomClickHouseClient = ClickHouseClient & {
   $query: <T extends object>(
@@ -297,7 +297,7 @@ export class Tracker {
     type: ReactionType;
     entityId: number;
     reaction: ReviewReactions;
-    nsfw: NsfwLevel;
+    nsfw: NsfwLevelDeprecated;
   }) {
     return this.track('reactions', values);
   }
@@ -329,7 +329,7 @@ export class Tracker {
   public image(values: {
     type: ImageActivityType;
     imageId: number;
-    nsfw: NsfwLevel;
+    nsfw: NsfwLevelDeprecated;
     tags: string[];
     ownerId: number;
   }) {

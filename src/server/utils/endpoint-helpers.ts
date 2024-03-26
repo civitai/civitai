@@ -128,7 +128,7 @@ export function PartnerEndpoint(
 }
 
 export function ModEndpoint(
-  handler: (req: AxiomAPIRequest, res: NextApiResponse) => Promise<void>,
+  handler: (req: AxiomAPIRequest, res: NextApiResponse, user: SessionUser) => Promise<void>,
   allowedMethods: string[] = ['GET']
 ) {
   return withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
@@ -136,10 +136,10 @@ export function ModEndpoint(
       return res.status(405).json({ error: 'Method not allowed' });
 
     const session = await getServerAuthSession({ req, res });
-    const { isModerator, bannedAt } = session?.user ?? {};
-    if (!isModerator || bannedAt) return res.status(401).json({ error: 'Unauthorized' });
+    if (!session || !session.user?.isModerator || !!session.user.bannedAt)
+      return res.status(401).json({ error: 'Unauthorized' });
 
-    await handler(req, res);
+    await handler(req, res, session.user);
   });
 }
 
