@@ -15,7 +15,7 @@ const log = createLogger('leaderboard', 'blue');
 const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async (jobContext) => {
   const [lastRun, setLastRun] = await getJobDate('prepare-leaderboard');
 
-  // await setCoverImageNsfwLevel();
+  await setCoverImageNsfwLevel();
 
   const leaderboards = await dbWrite.leaderboard.findMany({
     where: {
