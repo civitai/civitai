@@ -162,6 +162,7 @@ export default function UserMembership() {
                                   component: CancelMembershipFeedbackModal,
                                 });
                               }}
+                              closeMenuOnClick={true}
                             >
                               Cancel Membership
                             </Menu.Item>
