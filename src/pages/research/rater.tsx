@@ -1,48 +1,50 @@
 import {
-  Chip,
-  Group,
-  Stack,
-  Card,
-  Title,
-  Text,
-  Badge,
-  Button,
-  Loader,
-  Box,
-  Kbd,
-  HoverCard,
   ActionIcon,
-  Tooltip,
-  Popover,
-  ThemeIcon,
+  Badge,
+  Box,
+  Button,
+  Card,
+  Chip,
   createStyles,
+  Group,
+  HoverCard,
+  Kbd,
+  Loader,
+  Popover,
+  Stack,
+  Text,
+  ThemeIcon,
+  Title,
+  Tooltip,
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
-import { useEffect, useState } from 'react';
-import { setPageOptions } from '~/components/AppLayout/AppLayout';
-import { RaterImage } from '~/server/routers/research.router';
-import { trpc } from '~/utils/trpc';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import Lottie from 'react-lottie';
-import * as levelAnimation from '~/utils/lotties/level-up-animation.json';
+import { NextLink } from '@mantine/next';
 import {
   IconArrowBackUp,
+  IconCrown,
+  IconExternalLink,
+  IconFlag,
+  IconHelpHexagon,
+  IconStarFilled,
   IconVolume,
   IconVolumeOff,
-  IconFlag,
-  IconStarFilled,
-  IconHelpHexagon,
-  IconExternalLink,
-  IconCrown,
   IconX,
 } from '@tabler/icons-react';
-import { calculateLevelProgression } from '~/server/utils/research-utils';
-import { NextLink } from '@mantine/next';
-import { useGameSounds } from '~/hooks/useGameSounds';
-import { getRandomBool } from '~/utils/boolean-helpers';
-import { getRandom } from '~/utils/array-helpers';
-import { numberWithCommas } from '~/utils/number-helpers';
+import { useEffect, useState } from 'react';
+import Lottie from 'react-lottie';
+import { setPageOptions } from '~/components/AppLayout/AppLayout';
 import { openBrowsingLevelGuide } from '~/components/Dialog/dialog-registry';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { useGameSounds } from '~/hooks/useGameSounds';
+import { RaterImage } from '~/server/routers/research.router';
+import { calculateLevelProgression } from '~/server/utils/research-utils';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { getRandom } from '~/utils/array-helpers';
+import { getRandomBool } from '~/utils/boolean-helpers';
+import { getLoginLink } from '~/utils/login-helpers';
+import * as levelAnimation from '~/utils/lotties/level-up-animation.json';
+import { numberWithCommas } from '~/utils/number-helpers';
+import { trpc } from '~/utils/trpc';
 
 const NsfwLevel = {
   PG: 1,
@@ -80,7 +82,24 @@ let levelTimeout: any;
 let ratingTimeout: any;
 const pendingImages: RaterImage[] = [];
 const prevImages: RaterImage[] = [];
+const defaultNsfwLevel = NsfwLevel.PG13;
 type SanityStatus = 'clear' | 'challenge' | 'assessing' | 'insane';
+
+export const getServerSideProps = createServerSideProps({
+  useSession: true,
+  resolver: async ({ session, ctx }) => {
+    if (!session)
+      return {
+        redirect: {
+          destination: getLoginLink({
+            returnUrl: ctx.req.url,
+            reason: 'rater',
+          }),
+          permanent: false,
+        },
+      };
+  },
+});
 
 export default function Rater() {
   const { classes } = useStyles();
@@ -97,8 +116,8 @@ export default function Rater() {
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const storedLevel = localStorage.getItem('rater-level');
-    if (storedLevel) setLevel(parseInt(storedLevel));
-    else setLevel(NsfwLevel.PG13);
+    if (storedLevel && storedLevel !== '1') setLevel(parseInt(storedLevel));
+    else setLevel(defaultNsfwLevel);
   }, []);
 
   // Prep Sounds
@@ -271,11 +290,9 @@ export default function Rater() {
 
     setLevel((prev) => {
       if (!prev) return level;
-      if (prev & level) {
-        return prev & ~level;
-      } else {
-        return prev | level;
-      }
+      let newLevel = prev & level ? prev & ~level : prev | level;
+      if (newLevel === 0) newLevel = defaultNsfwLevel;
+      return newLevel;
     });
     pendingImages.length = 0;
     setImage(undefined);
