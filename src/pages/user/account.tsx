@@ -18,6 +18,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { UserReferralCodesCard } from '~/components/Account/UserReferralCodesCard';
 import { PaymentMethodsCard } from '~/components/Account/PaymentMethodsCard';
 import { StripeConnectCard } from '../../components/Account/StripeConnectCard';
+import { ContentControlsCard } from '~/components/Account/ContentControlsCard';
 
 export default function Account({ providers }: Props) {
   const { apiKeys, buzz } = useFeatureFlags();
@@ -42,6 +43,7 @@ export default function Account({ providers }: Props) {
           {buzz && <UserReferralCodesCard />}
           <SocialProfileCard />
           <SettingsCard />
+          <ContentControlsCard />
           <ModerationCard />
           {currentUser?.subscriptionId && <SubscriptionCard />}
           <NotificationsCard />

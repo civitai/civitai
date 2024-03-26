@@ -109,7 +109,14 @@ export const toggleableBrowsingCategories = [
     relatedTags: [
       { id: 4, name: 'anime' },
       { id: 413, name: 'manga' },
-      { id: 5218, name: 'hentai' },
+      // { id: 5218, name: 'hentai' },
+    ],
+  },
+  {
+    title: 'Furry',
+    relatedTags: [
+      { id: 5139, name: 'anthro' },
+      { id: 5140, name: 'furry' },
     ],
   },
   {

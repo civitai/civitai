@@ -3,6 +3,7 @@ import { useDebouncedValue } from '@mantine/hooks';
 import { IconSearch, IconX } from '@tabler/icons-react';
 import { uniqBy } from 'lodash-es';
 import { useMemo, useRef, useState } from 'react';
+import { ContentControls } from '~/components/Account/ContentControls';
 import { useHiddenPreferencesContext } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import { useHiddenPreferencesData, useToggleHiddenPreferences } from '~/hooks/hidden-preferences';
 import { TagSort } from '~/server/common/enums';
@@ -18,19 +19,19 @@ export function HiddenTagsSection({ withTitle = true }: { withTitle?: boolean })
 
   const tags = useHiddenPreferencesData().hiddenTags;
   const hiddenTags = useMemo(() => {
-    let uniqueTags = uniqBy(
+    const uniqueTags = uniqBy(
       tags.filter((x) => x.hidden && !x.parentId && !moderatedTags.some((y) => y.id === x.id)),
       'id'
     );
 
-    const categoryTagIds = toggleableBrowsingCategories.map((category) =>
-      category.relatedTags.map((t) => t.id)
-    );
-    for (const tagIds of categoryTagIds) {
-      if (tagIds.every((id) => uniqueTags.find((tag) => tag.id === id))) {
-        uniqueTags = uniqueTags.filter((tag) => !tagIds.includes(tag.id));
-      }
-    }
+    // const categoryTagIds = toggleableBrowsingCategories.map((category) =>
+    //   category.relatedTags.map((t) => t.id)
+    // );
+    // for (const tagIds of categoryTagIds) {
+    //   if (tagIds.every((id) => uniqueTags.find((tag) => tag.id === id))) {
+    //     uniqueTags = uniqueTags.filter((tag) => !tagIds.includes(tag.id));
+    //   }
+    // }
 
     return uniqueTags;
   }, [moderatedTags, tags]);
@@ -55,62 +56,65 @@ export function HiddenTagsSection({ withTitle = true }: { withTitle?: boolean })
   };
 
   return (
-    <Card withBorder>
-      {withTitle && (
-        <Card.Section withBorder inheritPadding py="xs">
-          <Text weight={500}>Hidden Tags</Text>
+    <Stack>
+      <ContentControls />
+      <Card withBorder>
+        {withTitle && (
+          <Card.Section withBorder inheritPadding py="xs">
+            <Text weight={500}>Hidden Tags</Text>
+          </Card.Section>
+        )}
+        <Card.Section withBorder sx={{ marginTop: -1 }}>
+          <Autocomplete
+            name="tag"
+            ref={searchInputRef}
+            placeholder="Search tags to hide"
+            data={modelTags}
+            value={search}
+            onChange={setSearch}
+            icon={isLoading ? <Loader size="xs" /> : <IconSearch size={14} />}
+            onItemSubmit={(item: { value: string; id: number }) => {
+              handleToggleBlockedTag({ id: item.id, name: item.value });
+              searchInputRef.current?.focus();
+            }}
+            withinPortal
+            variant="unstyled"
+            zIndex={400}
+            limit={20}
+            maxDropdownHeight={250}
+          />
         </Card.Section>
-      )}
-      <Card.Section withBorder sx={{ marginTop: -1 }}>
-        <Autocomplete
-          name="tag"
-          ref={searchInputRef}
-          placeholder="Search tags to hide"
-          data={modelTags}
-          value={search}
-          onChange={setSearch}
-          icon={isLoading ? <Loader size="xs" /> : <IconSearch size={14} />}
-          onItemSubmit={(item: { value: string; id: number }) => {
-            handleToggleBlockedTag({ id: item.id, name: item.value });
-            searchInputRef.current?.focus();
-          }}
-          withinPortal
-          variant="unstyled"
-          zIndex={400}
-          limit={20}
-          maxDropdownHeight={250}
-        />
-      </Card.Section>
-      <Card.Section inheritPadding py="md">
-        <Stack spacing={5}>
-          {hiddenTags.length > 0 && (
-            <Group spacing={4}>
-              {hiddenTags.map((tag) => (
-                <Badge
-                  key={tag.id}
-                  sx={{ paddingRight: 3 }}
-                  rightSection={
-                    <ActionIcon
-                      size="xs"
-                      color="blue"
-                      radius="xl"
-                      variant="transparent"
-                      onClick={() => handleToggleBlockedTag(tag)}
-                    >
-                      <IconX size={10} />
-                    </ActionIcon>
-                  }
-                >
-                  {tag.name}
-                </Badge>
-              ))}
-            </Group>
-          )}
-          <Text color="dimmed" size="xs">
-            {`We'll hide content with these tags throughout the site.`}
-          </Text>
-        </Stack>
-      </Card.Section>
-    </Card>
+        <Card.Section inheritPadding py="md">
+          <Stack spacing={5}>
+            {hiddenTags.length > 0 && (
+              <Group spacing={4}>
+                {hiddenTags.map((tag) => (
+                  <Badge
+                    key={tag.id}
+                    sx={{ paddingRight: 3 }}
+                    rightSection={
+                      <ActionIcon
+                        size="xs"
+                        color="blue"
+                        radius="xl"
+                        variant="transparent"
+                        onClick={() => handleToggleBlockedTag(tag)}
+                      >
+                        <IconX size={10} />
+                      </ActionIcon>
+                    }
+                  >
+                    {tag.name}
+                  </Badge>
+                ))}
+              </Group>
+            )}
+            <Text color="dimmed" size="xs">
+              {`We'll hide content with these tags throughout the site.`}
+            </Text>
+          </Stack>
+        </Card.Section>
+      </Card>
+    </Stack>
   );
 }

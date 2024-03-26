@@ -25,7 +25,7 @@ export function MatureContentSettings() {
             <div>
               <Text weight={500}>Show mature content</Text>
               <Text size="sm">
-                {`By enabling Mature Content, you confirm you are over the age of 18.`}
+                {`By enabling mature content, you confirm you are over the age of 18.`}
               </Text>
             </div>
             <Switch checked={showNsfw} onChange={(e) => toggleShowNsfw(e.target.checked)} />

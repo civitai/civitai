@@ -56,17 +56,25 @@ export function BrowsingModeMenu() {
           <Checkbox
             checked={!disableHidden}
             onChange={(e) => toggleDisableHidden(!e.target.checked)}
-            label="Apply hidden tags filter"
+            label={
+              <Text>
+                Apply{' '}
+                <Text
+                  component="span"
+                  variant="link"
+                  underline
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    openHiddenTagsModal();
+                  }}
+                >
+                  my filters
+                </Text>
+              </Text>
+            }
             size="md"
           />
-          <Text
-            variant="link"
-            className="hover:cursor-pointer"
-            underline
-            onClick={openHiddenTagsModal}
-          >
-            My filters
-          </Text>
         </Group>
       </Stack>
     </div>
