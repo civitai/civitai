@@ -1,6 +1,9 @@
 import { TrainingStatus } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
-import { isTrainingCustomModel } from '~/components/Training/Form/TrainingCommon';
+import {
+  blockedCustomModels,
+  isTrainingCustomModel,
+} from '~/components/Training/Form/TrainingCommon';
 import { trainingSettings } from '~/components/Training/Form/TrainingSubmit';
 import { env } from '~/env/server.mjs';
 import { constants } from '~/server/common/constants';
@@ -203,6 +206,11 @@ export const createTrainingRequest = async ({
   if (!trainingParams) throw throwBadRequestError('Missing training params');
   const baseModel = modelVersion.trainingDetails.baseModel;
   if (!baseModel) throw throwBadRequestError('Missing base model');
+  if (blockedCustomModels.includes(baseModel))
+    throw throwBadRequestError(
+      'This model has been blocked from training - please try another one.'
+    );
+
   const samplePrompts = modelVersion.trainingDetails.samplePrompts;
   const baseModelType = modelVersion.trainingDetails.baseModelType ?? 'sd15';
 
@@ -376,7 +384,7 @@ CreateTrainingRequestDryRunInput) => {
     return null;
   }
 
-  return response.data?.jobs?.[0].serviceProviders?.['RunPods']?.queuePosition?.estimatedStartDate;
+  return response.data?.jobs?.[0]?.serviceProviders?.['RunPods']?.queuePosition?.estimatedStartDate;
 };
 
 export type TagDataResponse = {

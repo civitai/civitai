@@ -35,11 +35,6 @@ export type ModelWithTags = Omit<ModelById, 'tagsOnModels'> & {
   tagsOnModels: Array<{ isCategory: boolean; id: number; name: string }>;
 };
 
-type WizardState = {
-  step: number;
-  selectedTemplate?: { id: number; name: string };
-};
-
 const querySchema = z.object({
   id: z.coerce.number().optional(),
   templateId: z.coerce.number().optional(),
@@ -51,7 +46,6 @@ const CreateSteps = ({
   step,
   model,
   modelVersion,
-  hasVersions,
   goBack,
   goNext,
   modelId,
@@ -61,7 +55,6 @@ const CreateSteps = ({
   step: number;
   model?: ModelWithTags;
   modelVersion?: ModelWithTags['modelVersions'][number];
-  hasVersions: boolean | undefined;
   goBack: () => void;
   goNext: () => void;
   modelId: number | undefined;
@@ -73,6 +66,7 @@ const CreateSteps = ({
     (file) => file.meta?.versionId === modelVersion?.id
   );
   const editing = !!model;
+  const hasVersions = model && model.modelVersions.length > 0;
 
   const result = querySchema.safeParse(router.query);
   const templateId = result.success ? result.data.templateId : undefined;
@@ -305,9 +299,11 @@ export function ModelWizard() {
   const templateId = result.success ? result.data.templateId : undefined;
   const bountyId = result.success ? result.data.bountyId : undefined;
   const src = result.success ? result.data.src : undefined;
+  // Not using zod schema here cause we don't want it failing if step is not a number
+  const routeStep = router.query.step ? Number(router.query.step) : 1;
+  const step = isNumber(routeStep) && routeStep >= 1 && routeStep <= MAX_STEPS ? routeStep : 1;
 
   const isNew = router.pathname.includes('/create');
-  const [state, setState] = useState<WizardState>({ step: 1 });
   const [opened, setOpened] = useState(false);
   const isTransitioning = useIsChangingLocation();
 
@@ -317,32 +313,22 @@ export function ModelWizard() {
     isError: modelError,
   } = trpc.model.getById.useQuery({ id: Number(id) }, { enabled: !!id });
 
-  const hasVersions = model && model.modelVersions.length > 0;
-  const modelVersion = hasVersions ? model.modelVersions[0] : undefined;
-  const hasFiles =
-    model &&
-    model.modelVersions.some((version) =>
-      model.uploadType === ModelUploadType.Trained
-        ? version.files.filter((f) => f.type === 'Model' || f.type === 'Pruned Model').length > 0
-        : version.files.length > 0
-    );
+  const modelVersion = model?.modelVersions?.[0];
 
   const goNext = () => {
     if (isTransitioning) return;
-    if (state.step < MAX_STEPS) {
+    if (step < MAX_STEPS) {
       // TODO does bountyId need to be here?
-      router.replace(getWizardUrl({ id, step: state.step + 1, templateId, src }), undefined, {
-        shallow: true,
-        scroll: true,
+      router.replace(getWizardUrl({ id, step: step + 1, templateId, src }), undefined, {
+        shallow: !isNew,
       });
     }
   };
 
   const goBack = () => {
-    if (state.step > 1) {
-      router.replace(getWizardUrl({ id, step: state.step - 1, templateId, src }), undefined, {
-        shallow: true,
-        scroll: true,
+    if (step > 1) {
+      router.replace(getWizardUrl({ id, step: step - 1, templateId, src }), undefined, {
+        shallow: !isNew,
       });
     }
   };
@@ -352,10 +338,11 @@ export function ModelWizard() {
   useEffect(() => {
     // redirect to correct step if missing values
     if (!isNew) {
-      if (!model) return;
+      // don't redirect for trained type or if model is not loaded
+      if (showTraining || !model) return;
 
-      // don't redirect for Trained type
-      if (showTraining) return;
+      const hasVersions = model.modelVersions.length > 0;
+      const hasFiles = model.modelVersions.some((version) => version.files.length > 0);
 
       if (!hasVersions)
         router.replace(getWizardUrl({ id, step: 2, templateId, bountyId, src }), undefined, {
@@ -371,18 +358,7 @@ export function ModelWizard() {
         });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasFiles, hasVersions, id, isNew, model, templateId, bountyId, src]);
-
-  useEffect(() => {
-    // set current step based on query param
-    if (state.step.toString() !== router.query.step) {
-      const rawStep = router.query.step;
-      const step = Number(rawStep);
-      const validStep = isNumber(step) && step >= 1 && step <= MAX_STEPS;
-
-      setState((current) => ({ ...current, step: validStep ? step : 1 }));
-    }
-  }, [isNew, router.query.step, state.step]);
+  }, [id, isNew, model, templateId, bountyId, src]);
 
   const postId = modelVersion?.posts[0]?.id;
 
@@ -420,7 +396,7 @@ export function ModelWizard() {
                 >
                   <Popover.Target>
                     <Button variant="subtle" onClick={() => setOpened(true)}>
-                      {state.selectedTemplate || templateId ? 'Swap template' : 'Use a template'}
+                      {templateId ? 'Swap template' : 'Use a template'}
                     </Button>
                   </Popover.Target>
                   <Popover.Dropdown p={4}>
@@ -437,7 +413,7 @@ export function ModelWizard() {
                 goBack={goBack}
                 goNext={goNext}
                 modelId={id}
-                step={state.step}
+                step={step}
                 router={router}
                 postId={postId}
               />
@@ -445,11 +421,10 @@ export function ModelWizard() {
               <CreateSteps
                 model={modelFlatTags}
                 modelVersion={modelVersion}
-                hasVersions={hasVersions}
                 goBack={goBack}
                 goNext={goNext}
                 modelId={id}
-                step={state.step}
+                step={step}
                 router={router}
                 postId={postId}
               />

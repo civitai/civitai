@@ -218,7 +218,7 @@ async function getEngagementTasks(ctx: MetricProcessorRunContext) {
 }
 
 type ArticleViews = {
-  articleId: number;
+  entityId: number;
   day: number;
   week: number;
   month: number;
@@ -235,7 +235,7 @@ async function getViewTasks(ctx: MetricProcessorRunContext) {
         AND time >= parseDateTimeBestEffortOrNull('${clickhouseSince}')
     )
     SELECT
-      entityId AS articleId,
+      entityId,
       SUM(if(uv.time >= subtractDays(now(), 1), 1, null)) AS day,
       SUM(if(uv.time >= subtractDays(now(), 7), 1, null)) AS week,
       SUM(if(uv.time >= subtractMonths(now(), 1), 1, null)) AS month,
@@ -246,7 +246,7 @@ async function getViewTasks(ctx: MetricProcessorRunContext) {
       AND entityId IN (select entityId FROM targets)
     GROUP BY entityId;
   `;
-  ctx.addAffected(viewed.map((x) => x.articleId));
+  ctx.addAffected(viewed.map((x) => x.entityId));
 
   const tasks = chunk(viewed, 1000).map((batch, i) => async () => {
     ctx.jobContext.checkIfCanceled();

@@ -56,6 +56,7 @@ import { paypalRouter } from './paypal.router';
 import { buildGuideRouter } from './build-guide.router';
 import { purchasableRewardRouter } from './purchasable-reward.router';
 import { vaultRouter } from './vault.router';
+import { researchRouter } from '~/server/routers/research.router';
 
 export const appRouter = router({
   account: accountRouter,
@@ -114,6 +115,7 @@ export const appRouter = router({
   buildGuide: buildGuideRouter,
   purchasableReward: purchasableRewardRouter,
   vault: vaultRouter,
+  research: researchRouter,
 });
 
 // export type definition of API

@@ -1,19 +1,16 @@
-import { Group, Stack, Text, ThemeIcon, UnstyledButton, Tooltip } from '@mantine/core';
+import { Group, Stack, Text, UnstyledButton } from '@mantine/core';
 import React from 'react';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { ImageGuard, ImageGuardReportContext } from '~/components/ImageGuard/ImageGuard';
+import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { PostsInfiniteModel } from '~/server/services/post.service';
 import { useRouter } from 'next/router';
-import { IconClubs, IconPhoto } from '@tabler/icons-react';
+import { IconPhoto } from '@tabler/icons-react';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
-import { useCurrentUser } from '../../hooks/useCurrentUser';
-import { AddToClubMenuItem } from '../Club/AddToClubMenuItem';
-import { useFeatureFlags } from '../../providers/FeatureFlagsProvider';
 import { truncate } from 'lodash-es';
 import { constants } from '~/server/common/constants';
 
@@ -22,8 +19,6 @@ const IMAGE_CARD_WIDTH = 332;
 export function PostCard({ data }: Props) {
   const { classes, cx } = useCardStyles({ aspectRatio: 1 });
   const router = useRouter();
-  const currentUser = useCurrentUser();
-  const features = useFeatureFlags();
 
   return (
     <FeedCard href={`/posts/${data.id}`} aspectRatio="square">
@@ -40,9 +35,10 @@ export function PostCard({ data }: Props) {
                     align="start"
                     spacing={4}
                     className={cx(classes.contentOverlay, classes.top)}
+                    style={{ pointerEvents: 'none' }}
                   >
-                    <ImageGuard.ToggleConnect position="static" />
-                    <Stack spacing="xs" ml="auto">
+                    <ImageGuard.ToggleConnect position="static" sx={{ pointerEvents: 'auto' }} />
+                    <Stack spacing="xs" ml="auto" style={{ pointerEvents: 'auto' }}>
                       <ImageGuard.Report context="post" position="static" withinPortal />
                     </Stack>
                   </Group>

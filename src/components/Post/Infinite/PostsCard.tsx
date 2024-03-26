@@ -1,7 +1,7 @@
-import { AspectRatio, Group, Stack, ThemeIcon, Tooltip, createStyles } from '@mantine/core';
+import { AspectRatio, Group, Stack, createStyles } from '@mantine/core';
 
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { ImageGuard, ImageGuardReportContext } from '~/components/ImageGuard/ImageGuard';
+import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
 import { PostsInfiniteModel } from '~/server/services/post.service';
@@ -9,15 +9,11 @@ import { PostReactions } from '~/components/Reaction/Reactions';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { OnsiteIndicator } from '~/components/Image/Indicators/OnsiteIndicator';
 import { useInView } from '~/hooks/useInView';
-import { IconClubs } from '@tabler/icons-react';
-import { useCurrentUser } from '../../../hooks/useCurrentUser';
-import { useFeatureFlags } from '../../../providers/FeatureFlagsProvider';
-import { AddToClubMenuItem } from '../../Club/AddToClubMenuItem';
 import { truncate } from 'lodash-es';
 import { constants } from '~/server/common/constants';
 
 export function PostsCard({
-  data: { image, id, stats, imageCount, user, modelVersionId },
+  data: { image, id, stats, imageCount },
   height,
 }: {
   data: PostsInfiniteModel;
@@ -25,8 +21,6 @@ export function PostsCard({
 }) {
   const { ref, inView } = useInView({ rootMargin: '600px' });
   const { classes, theme } = useStyles();
-  const currentUser = useCurrentUser();
-  const features = useFeatureFlags();
 
   return (
     <MasonryCard withBorder shadow="sm" p={0} height={height} ref={ref}>
@@ -42,25 +36,6 @@ export function PostsCard({
                     {image.meta && 'civitaiResources' in (image.meta as object) && (
                       <OnsiteIndicator />
                     )}
-                    <Group
-                      position="apart"
-                      align="start"
-                      spacing={4}
-                      style={{
-                        position: 'absolute',
-                        top: 0,
-                        width: '100%',
-                        left: 0,
-                        zIndex: 10,
-                        padding: theme.spacing.sm,
-                      }}
-                    >
-                      <ImageGuard.ToggleConnect position="static" />
-
-                      <Stack spacing="xs" ml="auto">
-                        <ImageGuard.Report context="post" position="static" withinPortal />
-                      </Stack>
-                    </Group>
 
                     <RoutedDialogLink name="postDetail" state={{ postId: id }}>
                       {!safe ? (
@@ -85,6 +60,25 @@ export function PostsCard({
                         />
                       )}
                     </RoutedDialogLink>
+                    <Group
+                      position="apart"
+                      align="start"
+                      spacing={4}
+                      style={{
+                        position: 'absolute',
+                        top: 0,
+                        width: '100%',
+                        left: 0,
+                        padding: theme.spacing.sm,
+                        pointerEvents: 'none',
+                      }}
+                    >
+                      <ImageGuard.ToggleConnect position="static" sx={{ pointerEvents: 'auto' }} />
+
+                      <Stack spacing="xs" ml="auto" style={{ pointerEvents: 'auto' }}>
+                        <ImageGuard.Report context="post" position="static" withinPortal />
+                      </Stack>
+                    </Group>
                     <PostReactions
                       className={classes.reactions}
                       imageCount={imageCount}

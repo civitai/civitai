@@ -35,7 +35,6 @@ import { ImageV2Model } from '~/server/selectors/imagev2.selector';
 import { imageTagCompositeSelect, simpleTagSelect } from '~/server/selectors/tag.selector';
 import { bustCachesForPost, updatePostNsfwLevel } from '~/server/services/post.service';
 import { getModerationTags, getTagsNeedingReview } from '~/server/services/system-cache';
-import { getTypeCategories } from '~/server/services/tag.service';
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
 import {
   throwAuthorizationError,
@@ -44,8 +43,6 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { logToDb } from '~/utils/logging';
-import { deleteObject } from '~/utils/s3-utils';
-import { hashifyObject } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import {
   GetImageInput,
@@ -441,24 +438,24 @@ export function applyUserPreferencesSql(
 
 type GetAllImagesRaw = {
   id: number;
-  name: string;
+  name: string | null;
   url: string;
   nsfw: NsfwLevel;
-  width: number;
-  height: number;
-  hash: string;
-  meta: ImageMetaProps;
+  width: number | null;
+  height: number | null;
+  hash: string | null;
+  meta: ImageMetaProps | null;
   hideMeta: boolean;
-  generationProcess: ImageGenerationProcess;
+  generationProcess: ImageGenerationProcess | null;
   createdAt: Date;
-  mimeType: string;
-  scannedAt: Date;
+  mimeType: string | null;
+  scannedAt: Date | null;
   ingestion: ImageIngestionStatus;
   needsReview: string | null;
   userId: number;
-  index: number;
-  postId: number;
-  postTitle: string;
+  index: number | null;
+  postId: number | null;
+  postTitle: string | null;
   modelVersionId: number | null;
   imageId: number | null;
   publishedAt: Date | null;
@@ -2022,7 +2019,8 @@ export const getEntityCoverImage = async ({
       t."entityId",
       t."entityType"
     FROM targets t
-    JOIN "Image" i ON i.id = t."imageId"`;
+    JOIN "Image" i ON i.id = t."imageId"
+    WHERE i."ingestion" = 'Scanned' AND i."needsReview" IS NULL`;
 
   let tagsVar: (VotableTagModel & { imageId: number })[] | undefined = [];
   if (include && include.includes('tags')) {

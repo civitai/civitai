@@ -57,10 +57,15 @@ export function UnroutedImageCard({ data }: Props) {
                         align="start"
                         spacing={4}
                         className={cx(sharedClasses.contentOverlay, sharedClasses.top)}
+                        style={{ pointerEvents: 'none' }}
                       >
-                        <ImageGuard.ToggleImage className={sharedClasses.chip} position="static" />
+                        <ImageGuard.ToggleImage
+                          className={sharedClasses.chip}
+                          position="static"
+                          sx={{ pointerEvents: 'auto' }}
+                        />
                         {safe && (
-                          <Stack spacing="xs" ml="auto">
+                          <Stack spacing="xs" ml="auto" style={{ pointerEvents: 'auto' }}>
                             <ImageGuard.Report context="image" position="static" withinPortal />
                             {features.imageGeneration && image.meta && (
                               <HoverActionButton

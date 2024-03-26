@@ -96,11 +96,15 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                               width: '100%',
                               zIndex: 10,
                               padding: 8,
+                              pointerEvents: 'none',
                             }}
                           >
-                            <ImageGuard.ToggleImage position="static" />
+                            <ImageGuard.ToggleImage
+                              position="static"
+                              sx={{ pointerEvents: 'auto' }}
+                            />
                             {safe && (
-                              <Stack spacing="xs" ml="auto">
+                              <Stack spacing="xs" ml="auto" style={{ pointerEvents: 'auto' }}>
                                 {!isBlocked && (
                                   <ImageGuard.Report
                                     context="image"
