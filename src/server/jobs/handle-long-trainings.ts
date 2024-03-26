@@ -9,7 +9,7 @@ import { getOrchestratorCaller } from '../http/orchestrator/orchestrator.caller'
 import { createJob, getJobDate } from './job';
 
 const SUBMITTED_CHECK_INTERVAL = 10;
-// const PROCESSING_CHECK_INTERVAL = 40;
+const PROCESSING_CHECK_INTERVAL = 45;
 const REJECTED_CHECK_INTERVAL = 4 * 60;
 
 const logJob = (data: MixedObject) => {
@@ -113,14 +113,14 @@ async function handleJob({
     }
   }
 
-  // if (status === 'Processing') {
-  //   // - if it hasn't gotten an update in 20 minutes, mark failed
-  //   if (minsDiff > PROCESSING_CHECK_INTERVAL) {
-  //     log(`Have not received an update in allotted time, failing.`);
-  //     await updateStatus('Failed');
-  //     return await refund();
-  //   }
-  // }
+  if (status === 'Processing') {
+    // - if it hasn't gotten an update in a while, mark failed
+    if (minsDiff > PROCESSING_CHECK_INTERVAL) {
+      log(`Have not received an update in allotted time (${minsDiff} mins), failing.`);
+      await updateStatus('Failed');
+      return await refund();
+    }
+  }
 
   return true;
 
