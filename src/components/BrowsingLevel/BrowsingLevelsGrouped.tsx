@@ -1,8 +1,10 @@
 import { Chip, Group, GroupProps, createStyles } from '@mantine/core';
 import {
+  useBrowsingLevel,
   useBrowsingModeContext,
   useIsBrowsingLevelSelected,
 } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { NsfwLevel } from '~/server/common/enums';
 import {
   browsingLevels,
   browsingLevelLabels,
@@ -21,10 +23,19 @@ export function BrowsingLevelsGrouped(props: GroupProps) {
 
 function BrowsingLevelLabel({ level }: { level: BrowsingLevel }) {
   const isSelected = useIsBrowsingLevelSelected(level);
-  const { toggleBrowsingLevel } = useBrowsingModeContext();
+  const { toggleBrowsingLevel, useStore } = useBrowsingModeContext();
   const { classes } = useStyles();
+
+  const browsingLevel = useStore((x) => x.browsingLevel);
+  const isDefaultBrowsingLevel = browsingLevel === 0 && level === NsfwLevel.PG;
+
   return (
-    <Chip classNames={classes} checked={isSelected} onChange={() => toggleBrowsingLevel(level)}>
+    <Chip
+      classNames={classes}
+      checked={isSelected || isDefaultBrowsingLevel}
+      onChange={() => toggleBrowsingLevel(level)}
+      variant={!isDefaultBrowsingLevel ? 'outline' : 'filled'}
+    >
       {browsingLevelLabels[level]}
     </Chip>
   );

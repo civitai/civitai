@@ -153,7 +153,7 @@ export function BrowsingModeOverrideProvider({
 }
 
 /** returns the user selected browsing level or the system default browsing level */
-function useBrowsingLevel() {
+export function useBrowsingLevel() {
   const { browsingLevelOverride } = useBrowsingModeOverrideContext();
   const { useStore } = useBrowsingModeContext();
   const browsingLevel = useStore((x) => x.browsingLevel);
