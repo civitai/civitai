@@ -119,7 +119,7 @@ export function ImageGuard2({
       {!show && explain && (
         <BlurToggle>
           {(toggle) => (
-            <Center className="absolute z-10 transform -translate-x-1/2 -translate-y-[60%] top-1/2 left-1/2 flex flex-col text-white">
+            <Center className="absolute z-20 transform -translate-x-1/2 -translate-y-[60%] top-1/2 left-1/2 flex flex-col text-white">
               <Stack align="center" spacing="sm" w="100%">
                 <Text size="sm" className="text-shadow-sm shadow-black/50">
                   This image is rated
