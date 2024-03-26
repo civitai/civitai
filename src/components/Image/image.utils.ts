@@ -52,6 +52,7 @@ export const useImageQueryParams = () => useZodRouteParams(imagesQueryParamSchem
 export const useImageFilters = (type: FilterKeys<'images' | 'modelImages' | 'videos'>) => {
   const storeFilters = useFiltersContext((state) => state[type]);
   const { query } = useImageQueryParams(); // router params are the overrides
+
   return removeEmpty({ ...storeFilters, ...query });
 };
 
@@ -60,7 +61,7 @@ export const useDumbImageFilters = (defaultFilters?: Partial<GetInfiniteImagesIn
   const filtersUpdated = !isEqual(filters, defaultFilters);
 
   return {
-    filters,
+    filters: { ...filters },
     setFilters,
     filtersUpdated,
   };
@@ -73,7 +74,9 @@ export const useQueryImages = (
   const { applyHiddenPreferences = true, ...queryOptions } = options ?? {};
   filters ??= {};
   const { data, isLoading, ...rest } = trpc.image.getInfinite.useInfiniteQuery(
-    { ...filters },
+    {
+      ...filters,
+    },
     {
       getNextPageParam: (lastPage) => lastPage.nextCursor,
       trpc: { context: { skipBatch: true } },
@@ -87,6 +90,7 @@ export const useQueryImages = (
     data: flatData,
     showHidden: !!filters.hidden,
     disabled: !applyHiddenPreferences,
+    isRefetching: rest.isRefetching,
   });
 
   return {
@@ -95,6 +99,36 @@ export const useQueryImages = (
     images: items,
     removedImages: hiddenCount,
     fetchedImages: flatData?.length,
+    isLoading: isLoading || loadingPreferences,
+    ...rest,
+  };
+};
+
+export const useQueryModelVersionImages = (
+  modelVersionId: number,
+  options?: { keepPreviousData?: boolean; enabled?: boolean }
+) => {
+  const { data, isLoading, ...rest } = trpc.image.getImagesForModelVersion.useQuery(
+    {
+      id: modelVersionId,
+    },
+    options
+  );
+
+  const images = data?.[modelVersionId]?.images;
+
+  const { items, loadingPreferences, hiddenCount } = useApplyHiddenPreferences({
+    type: 'images',
+    data: images,
+    isRefetching: rest.isRefetching,
+  });
+
+  return {
+    data,
+    flatData: images,
+    images: items,
+    removedImages: hiddenCount,
+    fetchedImages: images?.length,
     isLoading: isLoading || loadingPreferences,
     ...rest,
   };

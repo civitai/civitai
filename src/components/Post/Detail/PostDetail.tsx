@@ -9,25 +9,31 @@ import {
   Group,
   Stack,
   Text,
+  ThemeIcon,
   Title,
   createStyles,
   useMantineTheme,
+  Paper,
+  Center,
 } from '@mantine/core';
 import { Availability, CollectionType } from '@prisma/client';
+import { IconPhotoOff } from '@tabler/icons-react';
 import { IconDotsVertical, IconBookmark, IconShare3 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
 import Link from 'next/link';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { Adunit } from '~/components/Ads/AdUnit';
-import { adsRegistry } from '~/components/Ads/adsRegistry';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { NavigateBack } from '~/components/BackButton/BackButton';
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
+import { BrowsingModeOverrideProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { TipBuzzButton } from '~/components/Buzz/TipBuzzButton';
 import { ChatUserButton } from '~/components/Chat/ChatUserButton';
 import { Collection } from '~/components/Collection/Collection';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
+import {
+  ExplainHiddenImages,
+  useExplainHiddenImages,
+} from '~/components/Image/ExplainHiddenImages/ExplainHiddenImages';
 import { useQueryImages } from '~/components/Image/image.utils';
 import { Meta } from '~/components/Meta/Meta';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
@@ -42,12 +48,23 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { env } from '~/env/client.mjs';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
+import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { toStringList } from '~/utils/array-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
-export function PostDetail({ postId }: { postId: number }) {
+type Props = { postId: number };
+
+export function PostDetail(props: Props) {
+  return (
+    <BrowsingModeOverrideProvider>
+      <PostDetailContent {...props} />
+    </BrowsingModeOverrideProvider>
+  );
+}
+
+export function PostDetailContent({ postId }: Props) {
   const { classes } = useStyles();
   const currentUser = useCurrentUser();
   const { query } = useBrowserRouter();
@@ -57,13 +74,9 @@ export function PostDetail({ postId }: { postId: number }) {
     flatData: unfilteredImages,
     images,
     isLoading: imagesLoading,
-  } = useQueryImages(
-    { postId, limit: post?.hasAccess ? undefined : 1 },
-    // Haivng this be enabled only when the post is available is a bit slower for the user
-    // but prevents users with no access from looking at all the images in the post
-    { enabled: !!post }
-  );
+  } = useQueryImages({ postId, pending: true, browsingLevel: undefined });
   const { data: postResources = [] } = trpc.post.getResources.useQuery({ id: postId });
+  const hiddenExplained = useExplainHiddenImages(unfilteredImages);
 
   const meta = (
     <Meta
@@ -73,20 +86,16 @@ export function PostDetail({ postId }: { postId: number }) {
           post?.tags.map((x) => x.name) ?? []
         )}.` + (post?.detail ? ' ' + truncate(removeTags(post?.detail ?? ''), { length: 100 }) : '')
       }
-      image={
-        post?.nsfw || images[0]?.url == null
-          ? undefined
-          : getEdgeUrl(images[0].url, { width: 1200 })
-      }
+      images={images}
       links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/posts/${postId}`, rel: 'canonical' }]}
-      deIndex={post?.availability === Availability.Unsearchable ? 'noindex, nofollow' : undefined}
+      deIndex={post?.availability === Availability.Unsearchable}
     />
   );
 
   if (postLoading) return <PageLoader />;
   if (!post) return <NotFound />;
 
-  if (post.nsfw && !currentUser)
+  if (!getIsSafeBrowsingLevel(post.nsfwLevel) && !currentUser)
     return (
       <>
         {meta}
@@ -247,7 +256,14 @@ export function PostDetail({ postId }: { postId: number }) {
             {!imagesLoading && !unfilteredImages?.length ? (
               <Alert>Unable to load images</Alert>
             ) : (
-              <PostImages postId={post.id} images={images} isLoading={imagesLoading} />
+              <>
+                <PostImages postId={post.id} images={images} isLoading={imagesLoading} />
+                {hiddenExplained.hasHidden && !imagesLoading && (
+                  <Paper component={Center} p="xl" mih={300} withBorder>
+                    <ExplainHiddenImages {...hiddenExplained} />
+                  </Paper>
+                )}
+              </>
             )}
             <Stack spacing="xl" mt="xl" id="comments" mb={90}>
               {post.detail && <RenderHtml html={post.detail} withMentions />}
@@ -255,17 +271,10 @@ export function PostDetail({ postId }: { postId: number }) {
             </Stack>
           </Stack>
         </div>
-        <div className={classes.sidebar}>
+        {/* <div className={classes.sidebar}>
           <Adunit showRemoveAds {...adsRegistry.postDetailSidebar} />
-        </div>
+        </div> */}
       </div>
-      <Adunit
-        py={30}
-        sx={(theme) => ({
-          background: theme.colorScheme === 'light' ? theme.colors.gray[2] : theme.colors.dark[6],
-        })}
-        {...adsRegistry.postDetailFooter}
-      />
     </>
   );
 }

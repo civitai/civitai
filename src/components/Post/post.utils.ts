@@ -1,6 +1,7 @@
 import { MetricTimeframe } from '@prisma/client';
 import { useMemo } from 'react';
 import { z } from 'zod';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
 import { useFiltersContext } from '~/providers/FiltersProvider';
@@ -16,7 +17,8 @@ export const usePostQueryParams = () => useZodRouteParams(postQueryParamSchema);
 export const usePostFilters = () => {
   const storeFilters = useFiltersContext((state) => state.posts);
   const { query } = usePostQueryParams();
-  return removeEmpty({ ...storeFilters, ...query });
+  const browsingLevel = useBrowsingLevelDebounced();
+  return removeEmpty({ browsingLevel, ...storeFilters, ...query });
 };
 
 const postQueryParamSchema = z
@@ -39,9 +41,9 @@ export const useQueryPosts = (
   options?: { keepPreviousData?: boolean; enabled?: boolean }
 ) => {
   filters ??= {};
-  const browsingMode = useFiltersContext((state) => state.browsingMode);
+  const browsingLevel = useBrowsingLevelDebounced();
   const { data, isLoading, ...rest } = trpc.post.getInfinite.useInfiniteQuery(
-    { ...filters, browsingMode, include: [] },
+    { ...filters, include: [], browsingLevel },
     {
       getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
       getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),
@@ -54,6 +56,7 @@ export const useQueryPosts = (
   const { items: posts, loadingPreferences } = useApplyHiddenPreferences({
     type: 'posts',
     data: flatData,
+    isRefetching: rest.isRefetching,
   });
   return { data, posts, isLoading: isLoading || loadingPreferences, ...rest };
 };

@@ -33,7 +33,6 @@ import React, { useState } from 'react';
 
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { BackButton, NavigateBack } from '~/components/BackButton/BackButton';
-import { matureLabel } from '~/components/Post/Edit/EditPostControls';
 import { useFormStorage } from '~/hooks/useFormStorage';
 import {
   Form,
@@ -49,6 +48,7 @@ import {
   InputTags,
   InputText,
   useForm,
+  InputFlag,
 } from '~/libs/form';
 import { upsertBountyInputSchema } from '~/server/schema/bounty.schema';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
@@ -200,7 +200,6 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
       description: bounty?.description ?? '',
       tags: bounty?.tags ?? [],
       unitAmount: bounty?.benefactors[0].unitAmount ?? constants.bounties.minCreateAmount,
-      nsfw: bounty?.nsfw ?? false,
       currency: Currency.BUZZ,
       type: bounty?.type ?? BountyType.LoraCreation,
       mode: bounty?.mode ?? BountyMode.Individual,
@@ -218,6 +217,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
         !!bounty &&
         bounty.files.length > 0 &&
         bounty.files.every((f) => f.metadata?.ownRights === true),
+      nsfw: bounty?.nsfw ?? false,
     },
     shouldUnregister: false,
   });
@@ -230,10 +230,9 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
     form,
     timeout: 1000,
     key: `bounty_new`,
-    watch: ({ mode, name, type, nsfw, currency, description, entryMode, unitAmount }) => ({
+    watch: ({ mode, name, type, currency, description, entryMode, unitAmount }) => ({
       mode,
       name,
-      nsfw,
       currency,
       description,
       entryMode,
@@ -245,7 +244,8 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
   const mode = form.watch('mode');
   const currency = form.watch('currency');
   const unitAmount = form.watch('unitAmount');
-  const nsfwPoi = form.watch(['nsfw', 'poi']);
+  const [nsfw, poi] = form.watch(['nsfw', 'poi']);
+  const hasPoiInNsfw = nsfw && poi;
   const expiresAt = form.watch('expiresAt');
   const files = form.watch('files');
 
@@ -274,7 +274,6 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
 
   const { upsertBounty, upserting } = useMutateBounty({ bountyId: bounty?.id });
 
-  const hasPoiInNsfw = nsfwPoi.every((item) => !!item);
   const alreadyStarted = !!bounty && bounty.startsAt < new Date();
   const images = [...bountyImages, ...imageFiles];
 
@@ -808,34 +807,16 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                   </Stack>
                 }
               />
-              <InputSwitch
-                name="nsfw"
-                label={
-                  <Stack spacing={4}>
-                    <Group spacing={4}>
-                      <Text inline>Mature theme</Text>
-                      <Tooltip label={matureLabel} {...tooltipProps}>
-                        <ThemeIcon radius="xl" size="xs" color="gray">
-                          <IconQuestionMark />
-                        </ThemeIcon>
-                      </Tooltip>
-                    </Group>
-                    <Text size="xs" color="dimmed">
-                      This bounty is intended to produce mature content.
-                    </Text>
-                  </Stack>
-                }
-              />
+              <InputSwitch name="nsfw" label="Is intended to produce sexual themes" />
+
               {hasPoiInNsfw && (
-                <>
-                  <AlertWithIcon color="red" pl={10} iconColor="red" icon={<IconExclamationMark />}>
-                    <Text>
-                      Mature content depicting actual people is not permitted. Please revise the
-                      content of this listing to ensure no actual person is depicted in an mature
-                      context out of respect for the individual.
-                    </Text>
-                  </AlertWithIcon>
-                </>
+                <AlertWithIcon color="red" pl={10} iconColor="red" icon={<IconExclamationMark />}>
+                  <Text>
+                    Mature content depicting actual people is not permitted. Please revise the
+                    content of this listing to ensure no actual person is depicted in an mature
+                    context out of respect for the individual.
+                  </Text>
+                </AlertWithIcon>
               )}
               <Text size="xs">
                 Bounty requests MUST adhere to the content rules defined in our{' '}

@@ -18,7 +18,7 @@ import {
 } from '@prisma/client';
 import { IconExclamationMark } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { z } from 'zod';
 
 import {
@@ -41,6 +41,9 @@ import { trpc } from '~/utils/trpc';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
+
+import { ModelById } from '~/types/router';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 const schema = modelUpsertSchema
   .extend({
@@ -70,6 +73,10 @@ const commercialUseOptions: Array<{ value: CommercialUse; label: string }> = [
 export function ModelUpsertForm({ model, children, onSubmit }: Props) {
   const router = useRouter();
   const result = querySchema.safeParse(router.query);
+  const currentUser = useCurrentUser();
+
+  const lockedPropertiesRef = useRef<string[]>(model?.lockedProperties ?? []);
+  const canEditNsfw = !currentUser?.isModerator ? !model?.lockedProperties?.includes('nsfw') : true;
 
   const defaultCategory = result.success ? result.data.category : undefined;
   const defaultValues: z.infer<typeof schema> = {
@@ -94,11 +101,13 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
     allowDifferentLicense: model?.allowDifferentLicense ?? true,
     category: model?.tagsOnModels?.find((tag) => !!tag.isCategory)?.id ?? defaultCategory,
   };
+
   const form = useForm({ schema, mode: 'onChange', defaultValues, shouldUnregister: false });
   const queryUtils = trpc.useUtils();
 
   const [type, allowDerivatives] = form.watch(['type', 'allowDerivatives']);
-  const nsfwPoi = form.watch(['nsfw', 'poi']);
+  const [nsfw, poi] = form.watch(['nsfw', 'poi']);
+  const hasPoiInNsfw = nsfw && poi;
   const { isDirty, errors } = form.formState;
 
   const { data, isLoading: loadingCategories } = trpc.tag.getAll.useQuery({
@@ -140,9 +149,24 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
       const selectedCategory = data?.items.find((cat) => cat.id === category);
       const tags =
         tagsOnModels && selectedCategory ? tagsOnModels.concat([selectedCategory]) : tagsOnModels;
-      upsertModelMutation.mutate({ ...rest, tagsOnModels: tags, templateId, bountyId });
+      upsertModelMutation.mutate({
+        ...rest,
+        nsfw: canEditNsfw ? rest?.nsfw : undefined,
+        tagsOnModels: tags,
+        templateId,
+        bountyId,
+        lockedProperties: lockedPropertiesRef.current,
+      });
     } else onSubmit(defaultValues);
   };
+
+  useEffect(() => {
+    if (currentUser?.isModerator) {
+      if (nsfw)
+        lockedPropertiesRef.current = [...new Set([...lockedPropertiesRef.current, 'nsfw'])];
+      else lockedPropertiesRef.current = lockedPropertiesRef.current.filter((x) => x !== 'nsfw');
+    }
+  }, [nsfw]);
 
   useEffect(() => {
     if (model)
@@ -323,7 +347,7 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
               </ContainerGrid>
             </Paper>
             <Paper radius="md" p="xl" withBorder>
-              <Stack>
+              <Stack spacing="xs">
                 <Text size="md" weight={500}>
                   This resource:
                 </Text>
@@ -332,10 +356,14 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                   label="Depicts an actual person"
                   description="For Example: Tom Cruise or Tom Cruise as Maverick"
                 />
-                <InputCheckbox name="nsfw" label="Is intended to produce mature themes only" />
+                <InputCheckbox
+                  name="nsfw"
+                  label="Is intended to produce mature themes"
+                  disabled={!canEditNsfw}
+                />
               </Stack>
             </Paper>
-            {nsfwPoi.every((item) => item === true) && (
+            {hasPoiInNsfw && (
               <>
                 <Alert color="red" pl={10}>
                   <Group noWrap spacing={10}>
@@ -366,5 +394,5 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
 type Props = {
   onSubmit: (data: { id?: number }) => void;
   children: React.ReactNode | ((data: { loading: boolean }) => React.ReactNode);
-  model?: Partial<ModelUpsertInput>;
+  model?: Partial<Omit<ModelById, 'tagsOnModels'> & ModelUpsertInput>;
 };

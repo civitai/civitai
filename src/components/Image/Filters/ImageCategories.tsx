@@ -1,8 +1,8 @@
 import { TagScroller } from '~/components/Tags/TagScroller';
-import { TagSort } from '~/server/common/enums';
-import { trpc } from '~/utils/trpc';
 import { useRouter } from 'next/router';
 import { parseNumericStringArray } from '~/utils/query-string-helpers';
+import { useCategoryTags } from '~/components/Tags/tag.utils';
+import { TagTarget } from '@prisma/client';
 
 export function ImageCategories() {
   const router = useRouter();
@@ -25,13 +25,7 @@ export function DumbImageCategories({
   value: number[];
   onChange: (ids: number[]) => void;
 }) {
-  const { data: { items } = { items: [] } } = trpc.tag.getAll.useQuery({
-    entityType: ['Image'],
-    sort: TagSort.MostImages,
-    unlisted: false,
-    categories: true,
-    limit: 100,
-  });
+  const { data: items } = useCategoryTags({ entityType: TagTarget.Image });
 
   return <TagScroller data={items} value={value} onChange={onChange} />;
 }

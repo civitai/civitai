@@ -2,14 +2,13 @@ import {
   ImageGenerationProcess,
   MediaType,
   MetricTimeframe,
-  NsfwLevel,
+  ReportStatus,
   ReviewReactions,
 } from '@prisma/client';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
-import { periodModeSchema } from '~/server/schema/base.schema';
-import { postgresSlugify } from '~/utils/string-helpers';
-import { BrowsingMode, ImageSort } from './../common/enums';
+import { baseQuerySchema, paginationSchema, periodModeSchema } from '~/server/schema/base.schema';
+import { ImageSort, NsfwLevel } from './../common/enums';
 import { SearchIndexEntityTypes } from '~/components/Search/parsers/base';
 import { zc } from '~/utils/schema-helpers';
 
@@ -41,19 +40,9 @@ export const imageGenerationSchema = z.object({
   steps: stringToNumber,
   sampler: undefinedString,
   seed: stringToNumber,
-  'Clip skip': z.coerce.number().optional(),
-  clipSkip: z.coerce.number().optional(),
-  // resources: z
-  //   .object({
-  //     name: z.string().optional(),
-  //     type: z.string().optional(),
-  //     weight: z.number().optional(),
-  //     hash: z.string().optional(),
-  //   })
-  //   .passthrough()
-  //   .array()
-  //   .optional(),
   hashes: z.record(z.string()).optional(),
+  clipSkip: z.coerce.number().optional(),
+  'Clip skip': z.coerce.number().optional(),
   comfy: z.union([z.string().optional(), comfyMetaSchema.optional()]).optional(), // stored as stringified JSON
 });
 
@@ -103,7 +92,6 @@ export const createImageSchema = z.object({
   hash: z.string().nullish(),
   height: z.number().nullish(),
   width: z.number().nullish(),
-  nsfw: z.nativeEnum(NsfwLevel).optional(),
   entityId: z.number().optional(),
   entityType: imageEntitiesSchema.optional(),
   modelVersionId: z.number().optional(),
@@ -133,7 +121,6 @@ export const imageSchema = z.object({
   hash: z.string().nullish(),
   height: z.number().nullish(),
   width: z.number().nullish(),
-  nsfw: z.nativeEnum(NsfwLevel).optional(),
   // analysis: imageAnalysisSchema.optional(),
   // tags: z.array(tagSchema).optional(),
   needsReview: z.string().nullish(),
@@ -160,14 +147,12 @@ export const imageUpdateSchema = z.object({
     .url()
     .or(z.string().uuid('One of the files did not upload properly, please try again').optional())
     .optional(),
-  nsfw: z.boolean().optional(),
   needsReview: z.string().nullish(),
 });
 export type ImageUpdateSchema = z.infer<typeof imageUpdateSchema>;
 
 export const imageModerationSchema = z.object({
   ids: z.number().array(),
-  nsfw: z.nativeEnum(NsfwLevel).optional(),
   needsReview: z.string().nullish(),
   reviewAction: z.enum(['delete', 'removeName', 'mistake']).optional(),
   reviewType: z.enum(['minor', 'poi', 'reported', 'csam', 'blocked']),
@@ -193,7 +178,6 @@ export const updateImageSchema = z.object({
     return value;
   }, imageMetaSchema.nullish()),
   hideMeta: z.boolean().optional(),
-  nsfw: z.nativeEnum(NsfwLevel).optional(),
   resources: z.array(imageResourceUpsertSchema).optional(),
 });
 
@@ -217,14 +201,16 @@ const imageInclude = z.enum([
   'profilePictures',
 ]);
 export type ImageInclude = z.infer<typeof imageInclude>;
-export type GetInfiniteImagesInput = z.infer<typeof getInfiniteImagesSchema>;
+export type GetInfiniteImagesInput = z.input<typeof getInfiniteImagesSchema>;
+export type GetInfiniteImagesOutput = z.output<typeof getInfiniteImagesSchema>;
 
-export const getInfiniteImagesSchema = z
-  .object({
+export const getInfiniteImagesSchema = baseQuerySchema
+  .extend({
     limit: z.number().min(0).max(200).default(100),
     cursor: z.union([z.bigint(), z.number(), z.string(), z.date()]).optional(),
     skip: z.number().optional(),
     postId: z.number().optional(),
+    postIds: z.number().array().optional(),
     collectionId: z.number().optional(),
     modelId: z.number().optional(),
     modelVersionId: z.number().optional(),
@@ -241,7 +227,6 @@ export const getInfiniteImagesSchema = z
     tags: z.array(z.number()).optional(),
     generation: z.nativeEnum(ImageGenerationProcess).array().optional(),
     withTags: z.boolean().optional(),
-    // browsingMode: z.nativeEnum(BrowsingMode).optional(),
     include: z.array(imageInclude).optional().default(['cosmetics']),
     excludeCrossPosts: z.boolean().optional(),
     reactions: z.array(z.nativeEnum(ReviewReactions)).optional(),
@@ -252,6 +237,7 @@ export const getInfiniteImagesSchema = z
     hidden: z.boolean().optional(),
     followed: z.boolean().optional(),
     fromPlatform: z.coerce.boolean().optional(),
+    pending: z.boolean().optional(),
   })
   .transform((value) => {
     if (value.withTags) {
@@ -271,7 +257,6 @@ export const getImageSchema = z.object({
   withoutPost: z.boolean().optional(),
   // excludedTagIds: z.array(z.number()).optional(),
   // excludedUserIds: z.array(z.number()).optional(),
-  // browsingMode: z.nativeEnum(BrowsingMode).optional(),
 });
 // #endregion
 
@@ -309,3 +294,13 @@ export const scanJobsSchema = z
   })
   .passthrough();
 // .catchall(z.string());
+
+export type UpdateImageNsfwLevelOutput = z.output<typeof updateImageNsfwLevelSchema>;
+export const updateImageNsfwLevelSchema = z.object({
+  id: z.number(),
+  nsfwLevel: z.nativeEnum(NsfwLevel),
+});
+
+export const getImageRatingRequestsSchema = paginationSchema.extend({
+  status: z.nativeEnum(ReportStatus).array().optional(),
+});

@@ -26,6 +26,8 @@ export const addViewSchema = z.object({
   ads: z.enum(['Member', 'Blocked', 'Served', 'Off']).optional(),
   nsfw: z.boolean().optional(),
   details: z.object({}).passthrough().optional(),
+  nsfwLevel: z.number().optional(),
+  browsingLevel: z.number().optional(),
 });
 
 export type AddViewSchema = z.infer<typeof addViewSchema>;

@@ -19,19 +19,17 @@ import { useMutateClub } from '~/components/Club/club.utils';
 import { showSuccessNotification } from '~/utils/notifications';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { QuickSearchDropdown } from '~/components/Search/QuickSearchDropdown';
-import { IconTrash } from '@tabler/icons-react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { ModelSearchIndexRecord } from '~/server/search-index/models.search-index';
-import { ArticleSearchIndexRecord } from '~/server/search-index/articles.search-index';
 import { ArticleCard } from '~/components/Cards/ArticleCard';
 import { ModelCard } from '~/components/Cards/ModelCard';
 import { ClubPostUpsertFormModal } from './ClubPost/ClubPostUpsertForm';
 import { dialogStore } from '../Dialog/dialogStore';
+import { SearchIndexDataMap } from '~/components/Search/search.utils2';
 
 const schema = upsertClubResourceInput;
 
 type Props = {
-  resource?: ModelSearchIndexRecord | ArticleSearchIndexRecord;
+  resource?: SearchIndexDataMap['models'] | SearchIndexDataMap['articles'];
   entityType?: SupportedClubEntities;
   entityId?: number;
   clubId?: number;
@@ -41,7 +39,7 @@ export const AddResourceToClubModal = ({ clubId, ...props }: Props) => {
   const utils = trpc.useContext();
   const { upsertClubResource, upsertingResource } = useMutateClub();
   const [resource, setResource] = React.useState<
-    ModelSearchIndexRecord | ArticleSearchIndexRecord | null
+    SearchIndexDataMap['models'] | SearchIndexDataMap['articles'] | null
   >(props?.resource ?? null);
   const currentUser = useCurrentUser();
   const [createClubPost, setCreateClubPost] = React.useState<boolean>(true);
@@ -105,7 +103,7 @@ export const AddResourceToClubModal = ({ clubId, ...props }: Props) => {
     }
 
     if (entityType === 'ModelVersion') {
-      const data = resource as ModelSearchIndexRecord;
+      const data = resource as any;
       return (
         <Box pos="relative" maw="100%" w={250} m="auto" style={{ pointerEvents: 'none' }}>
           <ModelCard
@@ -124,14 +122,14 @@ export const AddResourceToClubModal = ({ clubId, ...props }: Props) => {
 
     switch (entityType) {
       case 'ModelVersion': {
-        const model = resource as ModelSearchIndexRecord;
+        const model = resource as any;
         if (!entityId) {
           return null;
         }
 
         return (
           <Stack spacing="xs">
-            <Select
+            {/* <Select
               label="Select model version"
               onClick={(e) => {
                 e.preventDefault();
@@ -149,7 +147,7 @@ export const AddResourceToClubModal = ({ clubId, ...props }: Props) => {
                 }
                 form.setValue('entityId', parseInt(id, 10));
               }}
-            />
+            /> */}
           </Stack>
         );
       }
@@ -183,12 +181,12 @@ export const AddResourceToClubModal = ({ clubId, ...props }: Props) => {
               supportedIndexes={['models', 'articles']}
               onItemSelected={(item, data) => {
                 if (item.entityType === 'Model') {
-                  const modelData = data as ModelSearchIndexRecord;
+                  const modelData = data as any;
                   setResource(modelData);
                   form.setValue('entityId', modelData.versions[0].id);
                   form.setValue('entityType', 'ModelVersion');
                 } else {
-                  setResource(data as ArticleSearchIndexRecord);
+                  setResource(data as any);
                   form.setValue('entityId', item.entityId);
                   form.setValue('entityType', item.entityType as SupportedClubEntities);
                 }

@@ -1,19 +1,15 @@
+import { TagTarget } from '@prisma/client';
 import { useRouter } from 'next/router';
 
 import { TagScroller } from '~/components/Tags/TagScroller';
+import { useCategoryTags } from '~/components/Tags/tag.utils';
 import { TagSort } from '~/server/common/enums';
 import { parseNumericStringArray } from '~/utils/query-string-helpers';
 import { trpc } from '~/utils/trpc';
 
 export function ArticleCategories() {
   const router = useRouter();
-  const { data: { items } = { items: [] } } = trpc.tag.getAll.useQuery({
-    entityType: ['Article'],
-    sort: TagSort.MostArticles,
-    unlisted: false,
-    categories: true,
-    limit: 100,
-  });
+  const { data: items } = useCategoryTags({ entityType: TagTarget.Article });
 
   const tagIds = parseNumericStringArray(router.query.tags);
   const handleChange = (ids: number[]) => {

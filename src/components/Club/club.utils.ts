@@ -15,7 +15,7 @@ import {
 } from '~/server/schema/club.schema';
 import { GetInfiniteBountySchema } from '~/server/schema/bounty.schema';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useHiddenPreferencesContext } from '~/providers/HiddenPreferencesProvider';
+import { useHiddenPreferencesContext } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import { useMemo } from 'react';
 import {
   applyUserPreferencesClub,
@@ -643,10 +643,10 @@ export const useQueryClubPosts = (
   );
   const currentUser = useCurrentUser();
   const {
-    users: hiddenUsers,
-    images: hiddenImages,
-    tags: hiddenTags,
-    isLoading: isLoadingHidden,
+    hiddenUsers: hiddenUsers,
+    hiddenImages: hiddenImages,
+    hiddenTags: hiddenTags,
+    hiddenLoading: isLoadingHidden,
   } = useHiddenPreferencesContext();
 
   const clubPosts = useMemo(() => {
@@ -761,35 +761,28 @@ export const useQueryClubs = (
     ...options,
   });
   const currentUser = useCurrentUser();
-  const browsingMode = useFiltersContext((state) => state.browsingMode);
+  const showNsfw = currentUser?.showNsfw;
 
   const {
-    images: hiddenImages,
-    tags: hiddenTags,
-    users: hiddenUsers,
-    isLoading: isLoadingHidden,
+    hiddenImages: hiddenImages,
+    hiddenTags: hiddenTags,
+    hiddenUsers: hiddenUsers,
+    hiddenLoading: isLoadingHidden,
   } = useHiddenPreferencesContext();
 
   const clubs = useMemo(() => {
     if (isLoadingHidden) return [];
     const items = data?.pages.flatMap((x) => x.items) ?? [];
-    return applyUserPreferencesClub<ClubGetAll[number]>({
-      items,
-      currentUserId: currentUser?.id,
-      hiddenImages,
-      hiddenTags,
-      hiddenUsers,
-      browsingMode,
-    });
-  }, [
-    data?.pages,
-    hiddenImages,
-    hiddenTags,
-    hiddenUsers,
-    currentUser,
-    isLoadingHidden,
-    browsingMode,
-  ]);
+    return [];
+    // return applyUserPreferencesClub<ClubGetAll[number]>({
+    //   items,
+    //   currentUserId: currentUser?.id,
+    //   hiddenImages,
+    //   hiddenTags,
+    //   hiddenUsers,
+    //   showNsfw,
+    // });
+  }, [data?.pages, hiddenImages, hiddenTags, hiddenUsers, currentUser, isLoadingHidden, showNsfw]);
 
   return { data, clubs, ...rest };
 };

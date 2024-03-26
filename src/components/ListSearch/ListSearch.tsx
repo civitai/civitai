@@ -5,6 +5,7 @@ import { TagTarget } from '@prisma/client';
 import { IconSearch } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useRef, useEffect, useMemo, forwardRef } from 'react';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 
 import { ClearableAutoComplete } from '~/components/ClearableAutoComplete/ClearableAutoComplete';
 import { useModelQueryParams } from '~/components/Model/model.utils';
@@ -63,8 +64,9 @@ export function ListSearch({ onSearch }: Props) {
   );
 
   const canQueryModels = !value.startsWith('#') && !value.startsWith('@');
+  const browsingLevel = useBrowsingLevelDebounced();
   const { data: models, isFetching: fetchingModels } = trpc.model.getAllPagedSimple.useQuery(
-    { query: parseTagQuery(value), limit },
+    { query: parseTagQuery(value), limit, browsingLevel },
     { enabled: !!value.length && canQueryModels }
   );
 

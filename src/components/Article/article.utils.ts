@@ -1,6 +1,8 @@
 import { MetricTimeframe } from '@prisma/client';
 import { useMemo } from 'react';
 import { z } from 'zod';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
 
 import { useFiltersContext } from '~/providers/FiltersProvider';
@@ -9,7 +11,6 @@ import { GetInfiniteArticlesSchema } from '~/server/schema/article.schema';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
 import { booleanString, numericString, numericStringArray } from '~/utils/zod-helpers';
-import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 
 export const useArticleFilters = () => {
   const storeFilters = useFiltersContext((state) => state.articles);
@@ -54,9 +55,9 @@ export const useQueryArticles = (
 ) => {
   filters ??= {};
   const { applyHiddenPreferences = true, ...queryOptions } = options ?? {};
-  const browsingMode = useFiltersContext((state) => state.browsingMode);
+  const browsingLevel = useBrowsingLevelDebounced();
   const { data, isLoading, ...rest } = trpc.article.getInfinite.useInfiniteQuery(
-    { ...filters, browsingMode },
+    { ...filters, browsingLevel },
     {
       getNextPageParam: (lastPage) => lastPage.nextCursor,
       trpc: { context: { skipBatch: true } },
@@ -70,6 +71,7 @@ export const useQueryArticles = (
     data: flatData,
     showHidden: !!filters.hidden,
     disabled: !applyHiddenPreferences,
+    isRefetching: rest.isRefetching,
   });
 
   return {

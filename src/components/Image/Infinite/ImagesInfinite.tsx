@@ -5,7 +5,7 @@ import { useEffect } from 'react';
 
 import { ImagesCard } from '~/components/Image/Infinite/ImagesCard';
 import { removeEmpty } from '~/utils/object-helpers';
-import { BrowsingMode, ImageSort } from '~/server/common/enums';
+import { ImageSort } from '~/server/common/enums';
 import { useImageFilters, useQueryImages } from '~/components/Image/image.utils';
 import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
 import { MediaType, MetricTimeframe, ReviewReactions } from '@prisma/client';
@@ -17,6 +17,9 @@ import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { NoContent } from '~/components/NoContent/NoContent';
 import Link from 'next/link';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { FeedWrapper } from '~/components/Feed/FeedWrapper';
+import { Feed } from '~/components/ImageGeneration/Feed';
 
 type ImageFilters = {
   modelId?: number;
@@ -32,9 +35,9 @@ type ImageFilters = {
   types?: MediaType[];
   withMeta?: boolean;
   followed?: boolean;
-  browsingMode?: BrowsingMode;
   hidden?: boolean;
   fromPlatform?: boolean;
+  pending?: boolean;
 };
 
 type ImagesInfiniteProps = {
@@ -47,7 +50,15 @@ type ImagesInfiniteProps = {
   showEmptyCta?: boolean;
 };
 
-export default function ImagesInfinite({
+export default function ImagesInfinite(props: ImagesInfiniteProps) {
+  return (
+    <FeedWrapper>
+      <ImagesInfiniteContent {...props} />
+    </FeedWrapper>
+  );
+}
+
+export function ImagesInfiniteContent({
   withTags,
   filters: filterOverrides = {},
   showEof = false,
@@ -61,8 +72,9 @@ export default function ImagesInfinite({
   showEof = showEof && filters.period !== MetricTimeframe.AllTime;
   const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
 
+  const browsingLevel = useBrowsingLevelDebounced();
   const { images, isLoading, fetchNextPage, hasNextPage, isRefetching } = useQueryImages(
-    debouncedFilters,
+    { ...debouncedFilters, browsingLevel },
     { keepPreviousData: true }
   );
 

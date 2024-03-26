@@ -2,6 +2,7 @@ import { Stack, Box, Center, Loader, Title, Text, ThemeIcon } from '@mantine/cor
 import { useInstantSearch } from 'react-instantsearch';
 
 import {
+  BrowsingLevelFilter,
   ChipRefinementList,
   ClearRefinements,
   DateRangeRefinement,
@@ -42,6 +43,7 @@ export default function ModelsSearch() {
 const RenderFilters = () => {
   return (
     <>
+      <BrowsingLevelFilter attributeName="nsfwLevel" />
       <SortBy
         title="Sort models by"
         items={[

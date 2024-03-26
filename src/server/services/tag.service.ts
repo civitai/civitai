@@ -1,4 +1,4 @@
-import { NsfwLevel, Prisma, TagSource, TagTarget, TagType } from '@prisma/client';
+import { Prisma, TagSource, TagTarget, TagType } from '@prisma/client';
 import { TagVotableEntityType, VotableTagModel } from '~/libs/tags';
 import { constants } from '~/server/common/constants';
 import { TagSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
@@ -15,8 +15,13 @@ import {
 import { tagsSearchIndex } from '~/server/search-index';
 import { imageTagCompositeSelect, modelTagCompositeSelect } from '~/server/selectors/tag.selector';
 import { getCategoryTags, getSystemTags } from '~/server/services/system-cache';
-import { userCache } from '~/server/services/user-cache.service';
+import {
+  HiddenImages,
+  HiddenModels,
+  ImplicitHiddenImages,
+} from '~/server/services/user-preferences.service';
 import { clearImageTagIdsCache } from '~/server/services/image.service';
+import { removeEmpty } from '~/utils/object-helpers';
 
 export const getTagWithModelCount = ({ name }: { name: string }) => {
   return dbRead.$queryRaw<[{ id: number; name: string; count: number }]>`
@@ -69,12 +74,15 @@ export const getTags = async ({
   entityType,
   query,
   modelId,
-  not,
+  excludedTagIds,
   unlisted = false,
   categories,
   sort,
   withModels = false,
   includeAdminTags = false,
+  nsfwLevel,
+  include,
+  moderation,
 }: Omit<GetTagsInput, 'limit' | 'page'> & {
   take?: number;
   skip?: number;
@@ -94,12 +102,12 @@ export const getTags = async ({
     AND.push(
       Prisma.sql`EXISTS (SELECT 1 FROM "TagsOnModels" tom WHERE tom."tagId" = t."id" AND tom."modelId" = ${modelId})`
     );
-  if (not && not.length > 0 && !query) {
-    AND.push(Prisma.sql`t."id" NOT IN (${Prisma.join(not)})`);
+  if (excludedTagIds && excludedTagIds.length > 0 && !query) {
+    AND.push(Prisma.sql`t."id" NOT IN (${Prisma.join(excludedTagIds)})`);
     AND.push(Prisma.sql`NOT EXISTS (
       SELECT 1 FROM "TagsOnTags" tot
       WHERE tot."toTagId" = t."id"
-      AND tot."fromTagId" IN (${Prisma.join(not)})
+      AND tot."fromTagId" IN (${Prisma.join(excludedTagIds)})
       AND tot.type = 'Parent'
     )`);
   }
@@ -121,7 +129,12 @@ export const getTags = async ({
     AND.push(Prisma.sql`t."adminOnly" = false`);
   }
 
-  let orderBy = `t."name" ASC`;
+  if (moderation === false) {
+    AND.push(Prisma.sql`t.type != 'Moderation'`);
+  }
+
+  if (nsfwLevel) AND.push(Prisma.sql`(t."nsfwLevel" & ${nsfwLevel}) != 0`);
+
   if (!sort) {
     if (entityType?.includes(TagTarget.Model)) sort = TagSort.MostModels;
     else if (entityType?.includes(TagTarget.Image)) sort = TagSort.MostImages;
@@ -129,15 +142,16 @@ export const getTags = async ({
     else if (entityType?.includes(TagTarget.Article)) sort = TagSort.MostArticles;
   }
 
-  if (query) {
-    orderBy = `LENGTH(t."name")`;
-    if (entityType?.includes(TagTarget.Model)) orderBy += `, r."modelCountAllTimeRank"`;
-    if (entityType?.includes(TagTarget.Image)) orderBy += `, r."imageCountAllTimeRank"`;
-    if (entityType?.includes(TagTarget.Post)) orderBy += `, r."postCountAllTimeRank"`;
-  } else if (sort === TagSort.MostImages) orderBy = `r."imageCountAllTimeRank"`;
-  else if (sort === TagSort.MostModels) orderBy = `r."modelCountAllTimeRank"`;
-  else if (sort === TagSort.MostPosts) orderBy = `r."postCountAllTimeRank"`;
-  else if (sort === TagSort.MostArticles) orderBy = `r."articleCountAllTimeRank"`;
+  const tagsOrderBy: string[] = [];
+  if (query) tagsOrderBy.push(`LENGTH(t."name")`);
+  if (sort === TagSort.MostImages) tagsOrderBy.push(`r."imageCountAllTimeRank"`);
+  else if (sort === TagSort.MostModels) tagsOrderBy.push(`r."modelCountAllTimeRank"`);
+  else if (sort === TagSort.MostPosts) tagsOrderBy.push(`r."postCountAllTimeRank"`);
+  else if (sort === TagSort.MostArticles) tagsOrderBy.push(`r."articleCountAllTimeRank"`);
+  else if (sort === TagSort.MostHidden) {
+    tagsOrderBy.push(`r."hiddenCountAllTimeRank"`);
+  }
+  const orderBy = tagsOrderBy.length ? tagsOrderBy.join(', ') : `t."name" ASC`;
 
   const isCategory =
     !categories && !!categoryTags?.length
@@ -148,15 +162,29 @@ export const getTags = async ({
       ) "isCategory"`
       : Prisma.sql``;
 
-  const tagsRaw = await dbRead.$queryRaw<{ id: number; name: string; isCategory?: boolean }[]>`
+  const isNsfwLevel = include?.includes('nsfwLevel')
+    ? Prisma.sql`, COALESCE(
+      (
+          SELECT MAX(pt."nsfwLevel")
+          FROM "TagsOnTags" tot
+          JOIN "Tag" pt ON tot."fromTagId" = pt.id
+          WHERE tot."toTagId" = t.id
+      ),
+      t."nsfwLevel") "nsfwLevel"`
+    : Prisma.sql``;
+
+  const tagsRaw = await dbRead.$queryRaw<
+    { id: number; name: string; isCategory?: boolean; nsfwLevel?: number }[]
+  >`
     SELECT
       t."id",
       t."name"
       ${isCategory}
+      ${isNsfwLevel}
     FROM "Tag" t
     ${Prisma.raw(orderBy.includes('r.') ? `LEFT JOIN "TagRank" r ON r."tagId" = t."id"` : '')}
     WHERE ${Prisma.join(AND, ' AND ')}
-    ORDER BY ${Prisma.raw(orderBy)}
+    ORDER BY ${Prisma.raw(tagsOrderBy.join(', '))}
     LIMIT ${take} OFFSET ${skip}
   `;
 
@@ -172,10 +200,12 @@ export const getTags = async ({
     }
   }
 
-  const items = tagsRaw.map((t) => ({
-    ...t,
-    models: withModels ? models[t.id] ?? [] : undefined,
-  }));
+  const items = tagsRaw.map((t) =>
+    removeEmpty({
+      ...t,
+      models: withModels ? models[t.id] ?? [] : undefined,
+    })
+  );
   const [{ count }] = await dbRead.$queryRaw<{ count: number }[]>`
     SELECT COUNT(*)::int count FROM "Tag" t
     WHERE ${Prisma.join(AND, ' AND ')}
@@ -205,7 +235,7 @@ export const getVotableTags = async ({
         ...tag,
         id: tagId,
         type: tagType,
-        nsfw: NsfwLevel.None,
+        nsfwLevel: 0,
         name: tagName,
       }))
     );
@@ -239,11 +269,11 @@ export const getVotableTags = async ({
           }
           return true;
         })
-        .map(({ tagId, tagName, tagType, tagNsfw, source, ...tag }) => ({
+        .map(({ tagId, tagName, tagType, tagNsfwLevel, source, ...tag }) => ({
           ...tag,
           id: tagId,
           type: tagType,
-          nsfw: tagNsfw,
+          nsfwLevel: tagNsfwLevel,
           name: tagName,
         }))
     );
@@ -278,8 +308,11 @@ type TagVotingInput = {
   isModerator?: boolean;
 };
 const clearCache = async (userId: number, entityType: TagVotableEntityType) => {
-  if (entityType === 'model') await userCache(userId).hidden.models.refresh();
-  else if (entityType === 'image') await userCache(userId).hidden.images.refresh();
+  if (entityType === 'model') await HiddenModels.refreshCache({ userId });
+  else if (entityType === 'image') {
+    await HiddenImages.refreshCache({ userId });
+    await ImplicitHiddenImages.refreshCache({ userId });
+  }
 };
 
 export const removeTagVotes = async ({ userId, type, id, tags }: TagVotingInput) => {

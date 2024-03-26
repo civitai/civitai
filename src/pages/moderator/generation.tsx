@@ -65,7 +65,7 @@ export default function GenerationPage() {
 
   return (
     <>
-      <Meta title="Generation" deIndex="noindex, nofollow" />
+      <Meta title="Generation" deIndex />
       <Container size="md">
         <Stack spacing="xl">
           <Group position="apart">

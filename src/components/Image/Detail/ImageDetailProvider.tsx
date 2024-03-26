@@ -1,11 +1,11 @@
 import { useMantineTheme } from '@mantine/core';
 import { useHotkeys, useLocalStorage } from '@mantine/hooks';
+import { ImageGuardConnect } from '~/components/ImageGuard/ImageGuard2';
+import { useQueryImages } from '~/components/Image/image.utils';
 import { ReviewReactions } from '@prisma/client';
 import { useRouter } from 'next/router';
 import { createContext, useContext, useEffect, useMemo } from 'react';
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
-import { useQueryImages } from '~/components/Image/image.utils';
-import { ImageGuardConnect } from '~/components/ImageGuard/ImageGuard';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { ImagesInfiniteModel } from '~/server/services/image.service';
@@ -14,13 +14,14 @@ import { ImageGetById, ImageGetInfinite } from '~/types/router';
 import { QS } from '~/utils/qs';
 import { trpc } from '~/utils/trpc';
 import { removeEmpty } from '../../../utils/object-helpers';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 
 type ImageDetailState = {
   images: ImageGetInfinite;
   image?: ImageGetInfinite[number] | ImageGetById;
   isLoading: boolean;
   active: boolean;
-  connect?: ImageGuardConnect;
+  connect: ImageGuardConnect;
   isMod?: boolean;
   isOwner?: boolean;
   shareUrl: string;
@@ -78,9 +79,10 @@ export function ImageDetailProvider({
   const postId = queryPostId ?? filterPostId;
   // #region [data fetching]
   const shouldFetchMany = !initialImages?.length && (Object.keys(filters).length > 0 || !!postId);
+  const browsingLevel = useBrowsingLevelDebounced();
   const { images: queryImages = [], isInitialLoading: imagesLoading } = useQueryImages(
     // TODO: Hacky way to prevent sending the username when filtering by reactions
-    { ...filters, username: !!reactions?.length ? undefined : username, postId },
+    { ...filters, username: !!reactions?.length ? undefined : username, postId, browsingLevel },
     {
       enabled: shouldFetchMany,
     }
@@ -184,13 +186,14 @@ export function ImageDetailProvider({
 
   const isMod = currentUser?.isModerator ?? false;
   const isOwner = currentUser?.id === image?.user.id;
-  const connect: ImageGuardConnect | undefined = username
-    ? { entityType: 'user', entityId: username }
+
+  const connect: ImageGuardConnect = modelId
+    ? { connectType: 'model', connectId: modelId }
     : postId
-    ? { entityType: 'post', entityId: postId }
-    : modelId
-    ? { entityType: 'model', entityId: modelId }
-    : undefined;
+    ? { connectType: 'post', connectId: postId }
+    : username
+    ? { connectType: 'user', connectId: username }
+    : ({} as any);
 
   return (
     <ImageDetailContext.Provider

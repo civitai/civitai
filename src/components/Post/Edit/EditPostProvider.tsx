@@ -9,6 +9,7 @@ import { useCFUploadStore } from '~/store/cf-upload.store';
 import { PostImage } from '~/server/selectors/post.selector';
 import { getDataFromFile } from '~/utils/metadata';
 import { MediaType } from '@prisma/client';
+import { NsfwLevel } from '~/server/common/enums';
 
 //https://github.com/pmndrs/zustand/blob/main/docs/guides/initialize-state-with-props.md
 export type ImageUpload = {
@@ -30,7 +31,7 @@ export type ImageUpload = {
 export type ImageBlocked = {
   uuid: string;
   blockedFor?: string[];
-  tags?: { type: string; name: string }[];
+  tags?: { type: string; name: string; nsfwLevel: NsfwLevel }[];
 };
 type ImageProps =
   | { discriminator: 'image'; data: PostEditImage }
@@ -43,7 +44,8 @@ type EditPostProps = {
   modelVersionId?: number;
   title?: string;
   detail?: string;
-  nsfw: boolean;
+  nsfw?: boolean;
+  nsfwLevel?: number;
   publishedAt?: Date;
   tags: TagProps[];
   images: ImageProps[];
@@ -85,7 +87,7 @@ const processPost = (post?: PostEditDetail) => {
     id: post?.id ?? 0,
     title: post?.title ?? undefined,
     detail: post?.detail ?? undefined,
-    nsfw: post?.nsfw ?? false,
+    nsfwLevel: post?.nsfwLevel,
     publishedAt: post?.publishedAt ?? undefined,
     tags: post?.tags ?? [],
     images: post?.images ? prepareImages(post.images) : [],
@@ -237,7 +239,7 @@ const createEditPostStore = ({
               const data = processPost(post);
               state.id = data.id;
               state.title = data.title;
-              state.nsfw = data.nsfw;
+              state.nsfwLevel = data.nsfwLevel;
               state.tags = data.tags;
               state.images = data.images;
               state.objectUrls = [];

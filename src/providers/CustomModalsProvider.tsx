@@ -18,9 +18,6 @@ import { openUnpublishModal } from '~/components/Modals/UnpublishModal';
 import { openUserProfileEditModal } from '~/components/Modals/UserProfileEditModal';
 import { openResourceReviewEditModal } from '~/components/ResourceReview/EditResourceReviewModal';
 
-const DynamicOnboardingModal = dynamic(
-  () => import('~/components/OnboardingModal/OnboardingModal')
-);
 const QuestionsInfoModal = dynamic(() => import('~/components/Questions/QuestionInfoModal'));
 const BlockModelTagsModal = dynamic(() => import('~/components/Modals/BlockModelTagsModal'));
 const ReportModal = dynamic(() => import('~/components/Modals/ReportModal'));
@@ -136,7 +133,6 @@ export const CustomModalsProvider = ({ children }: { children: React.ReactNode }
       }}
       modals={
         {
-          onboarding: DynamicOnboardingModal,
           questionsInfo: QuestionsInfoModal,
           resourceSelectModal: ResourceSelectModal,
           boostModal: BoostModal,

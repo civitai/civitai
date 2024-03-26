@@ -1,7 +1,10 @@
 import { useCivitaiSessionContext } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 import { postgresSlugify } from '~/utils/string-helpers';
 
-export const useCurrentUser = () => useCivitaiSessionContext();
+export function useCurrentUser() {
+  const user = useCivitaiSessionContext();
+  return user;
+}
 
 export const useIsSameUser = (username?: string | string[]) => {
   const currentUser = useCurrentUser();

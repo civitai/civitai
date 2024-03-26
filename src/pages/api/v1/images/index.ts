@@ -1,4 +1,11 @@
-import { MetricTimeframe, NsfwLevel } from '@prisma/client';
+import {
+  nsfwLevelMapDeprecated,
+  NsfwLevelDeprecated,
+  getNsfwLeveLDeprecatedReverseMapping,
+  nsfwBrowsingLevelsFlag,
+  publicBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
+import { MetricTimeframe } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import { NextApiRequest, NextApiResponse } from 'next';
@@ -32,13 +39,15 @@ const imagesEndpointSchema = z.object({
   period: z.nativeEnum(MetricTimeframe).default(constants.galleryFilterDefaults.period),
   sort: z.nativeEnum(ImageSort).default(constants.galleryFilterDefaults.sort),
   nsfw: z
-    .union([z.nativeEnum(NsfwLevel), booleanString()])
+    .union([z.nativeEnum(NsfwLevelDeprecated), booleanString()])
     .optional()
     .transform((value) => {
       if (!value) return undefined;
-      if (typeof value === 'boolean') return value ? NsfwLevel.X : NsfwLevel.None;
-      return value;
+      if (typeof value === 'boolean')
+        return value ? nsfwBrowsingLevelsFlag : publicBrowsingLevelsFlag;
+      return nsfwLevelMapDeprecated[value] as number;
     }),
+  browsingLevel: z.number().optional(),
   tags: commaDelimitedNumberArray({ message: 'tags should be a number array' }).optional(),
   cursor: numericString().optional(),
 });
@@ -49,7 +58,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
     if (!reqParams.success) return res.status(400).json({ error: reqParams.error });
 
     // Handle pagination
-    const { limit, page, cursor, ...data } = reqParams.data;
+    const { limit, page, cursor, nsfw, browsingLevel, ...data } = reqParams.data;
     let skip: number | undefined;
     const usingPaging = page && !cursor;
     if (usingPaging) {
@@ -61,6 +70,8 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
           .json({ error: "You've requested too many pages, please use cursors instead" });
     }
 
+    const _browsingLevel = browsingLevel ?? nsfw ?? publicBrowsingLevelsFlag;
+
     const { items, nextCursor } = await getAllImages({
       ...data,
       limit,
@@ -69,6 +80,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
       periodMode: 'published',
       include: ['count'],
       headers: { src: '/api/v1/images' },
+      browsingLevel: _browsingLevel,
     });
 
     const metadata: Metadata = {
@@ -81,27 +93,31 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
     metadata.nextPage = getNextPage({ req, ...metadata });
 
     res.status(200).json({
-      items: items.map((image) => ({
-        id: image.id,
-        url: getEdgeUrl(image.url, { width: image.width ?? 450 }),
-        hash: image.hash,
-        width: image.width,
-        height: image.height,
-        nsfwLevel: image.nsfw,
-        nsfw: image.nsfw !== NsfwLevel.None,
-        createdAt: image.createdAt,
-        postId: image.postId,
-        stats: {
-          cryCount: image.stats?.cryCountAllTime ?? 0,
-          laughCount: image.stats?.laughCountAllTime ?? 0,
-          likeCount: image.stats?.likeCountAllTime ?? 0,
-          dislikeCount: image.stats?.dislikeCountAllTime ?? 0,
-          heartCount: image.stats?.heartCountAllTime ?? 0,
-          commentCount: image.stats?.commentCountAllTime ?? 0,
-        },
-        meta: image.meta,
-        username: image.user.username,
-      })),
+      items: items.map((image) => {
+        const nsfw = getNsfwLeveLDeprecatedReverseMapping(image.nsfwLevel);
+
+        return {
+          id: image.id,
+          url: getEdgeUrl(image.url, { width: image.width ?? 450 }),
+          hash: image.hash,
+          width: image.width,
+          height: image.height,
+          nsfwLevel: nsfw,
+          nsfw: nsfw !== NsfwLevelDeprecated.None,
+          createdAt: image.createdAt,
+          postId: image.postId,
+          stats: {
+            cryCount: image.stats?.cryCountAllTime ?? 0,
+            laughCount: image.stats?.laughCountAllTime ?? 0,
+            likeCount: image.stats?.likeCountAllTime ?? 0,
+            dislikeCount: image.stats?.dislikeCountAllTime ?? 0,
+            heartCount: image.stats?.heartCountAllTime ?? 0,
+            commentCount: image.stats?.commentCountAllTime ?? 0,
+          },
+          meta: image.meta,
+          username: image.user.username,
+        };
+      }),
       metadata,
     });
   } catch (error) {

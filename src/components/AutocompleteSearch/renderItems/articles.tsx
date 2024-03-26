@@ -18,6 +18,7 @@ import {
 } from '~/components/AutocompleteSearch/renderItems/common';
 import { SearchIndexDataMap } from '~/components/Search/search.utils2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 
 export const ArticlesSearchItem = forwardRef<
   HTMLDivElement,
@@ -27,7 +28,7 @@ export const ArticlesSearchItem = forwardRef<
 
   if (!hit) return <ViewMoreItem ref={ref} value={value} {...props} />;
 
-  const { coverImage, user, nsfw, tags, stats, title } = hit;
+  const { coverImage, user, tags, stats, title } = hit;
   const { commentCount, viewCount, favoriteCount, ...reactionStats } = stats || {
     commentCount: 0,
     viewCount: 0,
@@ -35,6 +36,7 @@ export const ArticlesSearchItem = forwardRef<
     likeCount: 0,
   };
   const reactionCount = Object.values(reactionStats).reduce((a, b) => a + b, 0);
+  const nsfw = !getIsSafeBrowsingLevel(coverImage.nsfwLevel);
 
   return (
     <Group ref={ref} {...props} key={hit.id} spacing="md" align="flex-start" noWrap>
@@ -48,7 +50,7 @@ export const ArticlesSearchItem = forwardRef<
         }}
       >
         {coverImage ? (
-          nsfw || coverImage.nsfw !== 'None' ? (
+          nsfw ? (
             <MediaHash {...coverImage} cropFocus="top" />
           ) : (
             <EdgeMedia

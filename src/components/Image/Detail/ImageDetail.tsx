@@ -13,7 +13,7 @@ import {
   Stack,
   Text,
 } from '@mantine/core';
-import { Availability, CollectionType, NsfwLevel } from '@prisma/client';
+import { Availability, CollectionType } from '@prisma/client';
 import {
   IconAlertTriangle,
   IconBookmark,
@@ -22,7 +22,6 @@ import {
   IconFlag,
   IconX,
 } from '@tabler/icons-react';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { adsRegistry } from '~/components/Ads/adsRegistry';
 import { Adunit } from '~/components/Ads/AdUnit';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
@@ -49,38 +48,28 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { env } from '~/env/client.mjs';
 import { openContext } from '~/providers/CustomModalsProvider';
-import { BrowsingMode } from '~/server/common/enums';
 import { ReportEntity } from '~/server/schema/report.schema';
+import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { useImageStore } from '~/store/image.store';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 
-const UNFURLABLE: NsfwLevel[] = [NsfwLevel.None, NsfwLevel.Soft];
 export function ImageDetail() {
   const { classes, cx, theme } = useStyles();
-  const { image, isLoading, active, close, toggleInfo } = useImageDetailContext();
+  const { image: image, isLoading, active, close, toggleInfo } = useImageDetailContext();
   const { query } = useBrowserRouter();
 
   if (isLoading) return <PageLoader />;
   if (!image) return <NotFound />;
 
-  const nsfw = image.nsfw !== 'None';
+  const nsfw = !getIsSafeBrowsingLevel(image.nsfwLevel);
 
   return (
     <>
       <Meta
         title={`Image posted by ${image.user.username}`}
-        image={
-          image.url == null || !UNFURLABLE.includes(image.nsfw)
-            ? undefined
-            : getEdgeUrl(image.url, { width: 1200 })
-        }
+        images={image}
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/images/${image.id}`, rel: 'canonical' }]}
-        deIndex={
-          image.nsfw !== NsfwLevel.None ||
-          !!image.needsReview ||
-          image.availability === Availability.Unsearchable
-            ? 'noindex, nofollow'
-            : undefined
-        }
+        deIndex={nsfw || !!image.needsReview || image.availability === Availability.Unsearchable}
       />
       <TrackView entityId={image.id} entityType="Image" type="ImageView" nsfw={nsfw} />
       <MantineProvider theme={{ colorScheme: 'dark' }} inherit>
@@ -270,7 +259,14 @@ export function ImageDetail() {
                     {`This image won't be visible to other users until it's reviewed by our moderators.`}
                   </AlertWithIcon>
                 )}
-                <VotableTags entityType="image" entityId={image.id} canAdd collapsible px="sm" />
+                <VotableTags
+                  entityType="image"
+                  entityId={image.id}
+                  canAdd
+                  collapsible
+                  px="sm"
+                  nsfwLevel={image.nsfwLevel}
+                />
                 <div>
                   <Divider
                     label="Discussion"
@@ -302,11 +298,7 @@ export function ImageDetail() {
                     </Stack>
                   </Paper>
                 </div>
-                <Adunit
-                  browsingModeOverride={!nsfw ? BrowsingMode.SFW : undefined}
-                  showRemoveAds
-                  {...adsRegistry.imageDetail}
-                />
+                <Adunit showRemoveAds {...adsRegistry.imageDetail} />
                 <Stack spacing="md" mt="auto">
                   <Divider label="Resources Used" labelPosition="center" />
 

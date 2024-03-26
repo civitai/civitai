@@ -3,7 +3,7 @@ import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import { ActionIcon, Badge, Group, HoverCard, useMantineTheme, Text, Divider } from '@mantine/core';
 import { useCallback, useRef } from 'react';
-import { TagType, NsfwLevel } from '@prisma/client';
+import { TagType } from '@prisma/client';
 import {
   IconArrowBigDown,
   IconArrowBigUp,
@@ -14,17 +14,20 @@ import {
 } from '@tabler/icons-react';
 import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
 import { getTagDisplayName } from '~/libs/tags';
-import Link from 'next/link';
-import { nsfwLevelUI } from '~/libs/moderation';
 import { constants } from '~/server/common/constants';
 import { NextLink } from '@mantine/next';
 import { Countdown } from '~/components/Countdown/Countdown';
+import { NsfwLevel } from '~/server/common/enums';
+import {
+  votableTagColors,
+  getIsSafeBrowsingLevel,
+} from '~/shared/constants/browsingLevel.constants';
 
 type VotableTagProps = VotableTagConnectorInput & {
   tagId: number;
   initialVote?: number;
   type: TagType;
-  nsfw: NsfwLevel;
+  nsfwLevel: NsfwLevel;
   name: string;
   score: number;
   needsReview?: boolean;
@@ -67,8 +70,7 @@ export function VotableTag({
   entityId,
   tagId,
   initialVote = 0,
-  type,
-  nsfw,
+  nsfwLevel,
   name,
   score,
   needsReview = false,
@@ -82,12 +84,12 @@ export function VotableTag({
   const upvoteDate = useVotableTagStore(useCallback((state) => state.upvoteDates[key], [key]));
 
   const theme = useMantineTheme();
-  const isModeration = type === 'Moderation';
-  const nsfwUI = isModeration ? nsfwLevelUI[nsfw] : undefined;
-  const voteColor = nsfwUI ? theme.colors[nsfwUI.color][nsfwUI.shade] : theme.colors.blue[5];
+  const isNsfw = !getIsSafeBrowsingLevel(nsfwLevel);
+  const { color, shade } = votableTagColors[nsfwLevel];
+  const voteColor = isNsfw ? theme.colors[color][shade] : theme.colors.blue[5];
   const badgeColor = theme.fn.variant({
-    color: nsfwUI?.color ?? 'gray',
-    variant: !!nsfwUI ? 'light' : 'filled',
+    color: color,
+    variant: isNsfw ? 'light' : 'filled',
   });
   const badgeBorder = theme.fn.lighten(
     needsReview || !concrete
@@ -98,7 +100,7 @@ export function VotableTag({
   const badgeBg = theme.fn.rgba(badgeColor.background ?? theme.colors.gray[4], 0.3);
   const progressBg = theme.fn.rgba(
     badgeColor.background ?? theme.colors.gray[4],
-    isModeration ? 0.4 : 0.8
+    isNsfw ? 0.4 : 0.8
   );
   const opacity = 0.2 + (Math.max(Math.min(score, 10), 0) / 10) * 0.8;
 

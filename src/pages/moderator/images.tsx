@@ -40,7 +40,6 @@ import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import PromptHighlight from '~/components/Image/PromptHighlight/PromptHighlight';
-import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { NoContent } from '~/components/NoContent/NoContent';
@@ -63,6 +62,7 @@ import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useMergedRef } from '@mantine/hooks';
+import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 
 type StoreState = {
   selected: Record<number, boolean>;
@@ -299,89 +299,81 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
                   zIndex: 9,
                 }}
               />
-              <ImageGuard
-                images={[image]}
-                render={(image) => (
+              <ImageGuard2 image={image}>
+                {(safe) => (
                   <Box
                     sx={{ position: 'relative', height: '100%', overflow: 'hidden' }}
                     onClick={() => toggleSelected(image.id)}
                   >
-                    <ImageGuard.ToggleImage
-                      sx={(theme) => ({
-                        position: 'absolute',
-                        top: theme.spacing.xs,
-                        left: theme.spacing.xs,
-                        zIndex: 10,
-                      })}
-                      position="static"
-                    />
-                    <ImageGuard.Unsafe>
+                    <ImageGuard2.BlurToggle className="absolute top-2 left-2 z-10" />
+                    {!safe ? (
                       <AspectRatio ratio={(image.width ?? 1) / (image.height ?? 1)}>
                         <MediaHash {...image} />
                       </AspectRatio>
-                    </ImageGuard.Unsafe>
-                    <ImageGuard.Safe>
-                      <EdgeMedia
-                        src={image.url}
-                        name={image.name ?? image.id.toString()}
-                        alt={image.name ?? undefined}
-                        type={image.type}
-                        width={450}
-                        placeholder="empty"
-                      />
-                      {!!entityUrl && (
-                        <Link href={entityUrl} passHref>
-                          <ActionIcon
-                            component="a"
-                            variant="transparent"
-                            style={{ position: 'absolute', bottom: '5px', left: '5px' }}
-                            size="lg"
-                            target="_blank"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                            }}
+                    ) : (
+                      <>
+                        <EdgeMedia
+                          src={image.url}
+                          name={image.name ?? image.id.toString()}
+                          alt={image.name ?? undefined}
+                          type={image.type}
+                          width={450}
+                          placeholder="empty"
+                        />
+                        {!!entityUrl && (
+                          <Link href={entityUrl} passHref>
+                            <ActionIcon
+                              component="a"
+                              variant="transparent"
+                              style={{ position: 'absolute', bottom: '5px', left: '5px' }}
+                              size="lg"
+                              target="_blank"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                              }}
+                            >
+                              <IconExternalLink
+                                color="white"
+                                filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                                opacity={0.8}
+                                strokeWidth={2.5}
+                                size={26}
+                              />
+                            </ActionIcon>
+                          </Link>
+                        )}
+                        {image.meta ? (
+                          <ImageMetaPopover
+                            meta={image.meta as ImageMetaProps}
+                            generationProcess={image.generationProcess ?? 'txt2img'}
                           >
-                            <IconExternalLink
-                              color="white"
-                              filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                              opacity={0.8}
-                              strokeWidth={2.5}
-                              size={26}
-                            />
-                          </ActionIcon>
-                        </Link>
-                      )}
-                      {image.meta ? (
-                        <ImageMetaPopover
-                          meta={image.meta as ImageMetaProps}
-                          generationProcess={image.generationProcess ?? 'txt2img'}
-                        >
-                          <ActionIcon
-                            variant="transparent"
-                            style={{ position: 'absolute', bottom: '5px', right: '5px' }}
-                            size="lg"
+                            <ActionIcon
+                              variant="transparent"
+                              style={{ position: 'absolute', bottom: '5px', right: '5px' }}
+                              size="lg"
+                            >
+                              <IconInfoCircle
+                                color="white"
+                                filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                                opacity={0.8}
+                                strokeWidth={2.5}
+                                size={26}
+                              />
+                            </ActionIcon>
+                          </ImageMetaPopover>
+                        ) : image.metadata?.profilePicture ? (
+                          <Badge
+                            variant="filled"
+                            style={{ position: 'absolute', bottom: '10px', right: '5px' }}
                           >
-                            <IconInfoCircle
-                              color="white"
-                              filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                              opacity={0.8}
-                              strokeWidth={2.5}
-                              size={26}
-                            />
-                          </ActionIcon>
-                        </ImageMetaPopover>
-                      ) : image.metadata?.profilePicture ? (
-                        <Badge
-                          variant="filled"
-                          style={{ position: 'absolute', bottom: '10px', right: '5px' }}
-                        >
-                          Profile Picture
-                        </Badge>
-                      ) : null}
-                    </ImageGuard.Safe>
+                            Profile Picture
+                          </Badge>
+                        ) : null}
+                      </>
+                    )}
                   </Box>
                 )}
-              />
+              </ImageGuard2>
             </>
           )}
         </Card.Section>
@@ -500,7 +492,6 @@ function ModerationControls({
       if (input.reviewAction === 'delete') actions.push('deleted');
       else if (input.reviewAction === 'removeName') actions.push('name removed');
       else if (!input.needsReview) actions.push('approved');
-      else if (input.nsfw) actions.push('marked as NSFW');
 
       showSuccessNotification({ message: `The images have been ${actions.join(', ')}` });
     },

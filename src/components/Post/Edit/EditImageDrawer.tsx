@@ -36,6 +36,7 @@ import { constants } from '~/server/common/constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import { auditImageMeta } from '~/utils/media-preprocessors';
 import { useState } from 'react';
+import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 
 // const matureLabel = 'Mature content may include content that is suggestive or provocative';
 // const tooltipProps: Partial<TooltipProps> = {
@@ -104,7 +105,7 @@ export function EditImage({ imageId, onClose }: { imageId: number; onClose: () =
     if (!image) return;
     const meta = removeEmpty({ ...(image.meta as z.infer<typeof imageMetaSchema>), ...data.meta });
     const payload = { ...image, ...data, meta };
-    const { blockedFor } = await auditImageMeta(meta, image.nsfw !== 'None');
+    const { blockedFor } = await auditImageMeta(meta, !getIsSafeBrowsingLevel(image.nsfwLevel));
     setBlockedFor(blockedFor);
     if (!blockedFor)
       mutate(payload, {

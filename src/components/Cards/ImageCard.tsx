@@ -4,14 +4,11 @@ import { useRouter } from 'next/router';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { DEFAULT_EDGE_IMAGE_WIDTH, constants } from '~/server/common/constants';
-import { ImageGetInfinite } from '~/types/router';
-import { ImageSearchIndexRecord } from '~/server/search-index/images.search-index';
 import HoverActionButton from './components/HoverActionButton';
 import { generationPanel } from '~/store/generation.store';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -21,8 +18,11 @@ import { OnsiteIndicator } from '~/components/Image/Indicators/OnsiteIndicator';
 import { CosmeticType } from '@prisma/client';
 import { HolidayFrame } from '../Decorations/HolidayFrame';
 import { truncate } from 'lodash-es';
+import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
+import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
+import { ImagesInfiniteModel } from '~/server/services/image.service';
 
-export function UnroutedImageCard({ data }: Props) {
+function UnroutedImageCard({ data }: Props) {
   const { classes: sharedClasses, cx } = useCardStyles({
     aspectRatio: data.width && data.height ? data.width / data.height : 1,
   });
@@ -35,89 +35,77 @@ export function UnroutedImageCard({ data }: Props) {
     data?: { lights?: number; upgradedLights?: number };
   };
 
+  const originalAspectRatio = data.width && data.height ? data.width / data.height : 1;
+  const onSite = data.meta && 'civitaiResources' in data.meta;
+  const imageWidth =
+    originalAspectRatio > 1
+      ? DEFAULT_EDGE_IMAGE_WIDTH * originalAspectRatio
+      : DEFAULT_EDGE_IMAGE_WIDTH;
+
   return (
     <HolidayFrame {...cardDecoration}>
       <FeedCard className={sharedClasses.link}>
         <div className={sharedClasses.root}>
-          <ImageGuard
-            images={[data]}
-            render={(image) => (
-              <ImageGuard.Content>
-                {({ safe }) => {
-                  // Small hack to prevent blurry landscape images
-                  const originalAspectRatio =
-                    image.width && image.height ? image.width / image.height : 1;
-                  const onSite = image.meta && 'civitaiResources' in image.meta;
-
-                  return (
-                    <>
-                      {onSite && <OnsiteIndicator />}
-                      <Group
-                        position="apart"
-                        align="start"
-                        spacing={4}
-                        className={cx(sharedClasses.contentOverlay, sharedClasses.top)}
-                        style={{ pointerEvents: 'none' }}
-                      >
-                        <ImageGuard.ToggleImage
-                          className={sharedClasses.chip}
-                          position="static"
-                          sx={{ pointerEvents: 'auto' }}
-                        />
-                        {safe && (
-                          <Stack spacing="xs" ml="auto" style={{ pointerEvents: 'auto' }}>
-                            <ImageGuard.Report context="image" position="static" withinPortal />
-                            {features.imageGeneration && image.meta && (
-                              <HoverActionButton
-                                label="Remix"
-                                size={30}
-                                color="white"
-                                variant="filled"
-                                data-activity="remix:image-card"
-                                onClick={(e) => {
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                  generationPanel.open({
-                                    type: 'image',
-                                    id: image.id,
-                                  });
-                                }}
-                              >
-                                <IconBrush stroke={2.5} size={16} />
-                              </HoverActionButton>
-                            )}
-                          </Stack>
-                        )}
-                      </Group>
-                      {safe ? (
-                        <EdgeMedia
-                          src={image.url}
-                          name={image.name ?? image.id.toString()}
-                          alt={
-                            image.meta
-                              ? truncate(image.meta.prompt, { length: constants.altTruncateLength })
-                              : image.name ?? undefined
-                          }
-                          type={image.type}
-                          width={
-                            originalAspectRatio > 1
-                              ? DEFAULT_EDGE_IMAGE_WIDTH * originalAspectRatio
-                              : DEFAULT_EDGE_IMAGE_WIDTH
-                          }
-                          className={sharedClasses.image}
-                          wrapperProps={{ style: { height: '100%', width: '100%' } }}
-                          loading="lazy"
-                          contain
-                        />
-                      ) : (
-                        <MediaHash {...image} />
+          <ImageGuard2 image={data}>
+            {(safe) => (
+              <>
+                {onSite && <OnsiteIndicator />}
+                <Group
+                  position="apart"
+                  align="start"
+                  spacing={4}
+                  className="absolute top-2 left-2 right-2 z-10"
+                  style={{ pointerEvents: 'none' }}
+                >
+                  <ImageGuard2.BlurToggle radius="xl" h={26} sx={{ pointerEvents: 'auto' }} />
+                  {safe && (
+                    <Stack spacing="xs" ml="auto" style={{ pointerEvents: 'auto' }}>
+                      <ImageContextMenu image={data} />
+                      {features.imageGeneration && data.meta && (
+                        <HoverActionButton
+                          label="Remix"
+                          size={30}
+                          color="white"
+                          variant="filled"
+                          data-activity="remix:image-card"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            generationPanel.open({
+                              type: 'image',
+                              id: data.id,
+                            });
+                          }}
+                        >
+                          <IconBrush stroke={2.5} size={16} />
+                        </HoverActionButton>
                       )}
-                    </>
-                  );
-                }}
-              </ImageGuard.Content>
+                    </Stack>
+                  )}
+                </Group>
+                {safe ? (
+                  <EdgeMedia
+                    src={data.url}
+                    name={data.name ?? data.id.toString()}
+                    alt={
+                      data.meta
+                        ? truncate(data.meta.prompt, { length: constants.altTruncateLength })
+                        : data.name ?? undefined
+                    }
+                    type={data.type}
+                    width={imageWidth}
+                    className={sharedClasses.image}
+                    wrapperProps={{ style: { height: '100%', width: '100%' } }}
+                    loading="lazy"
+                    contain
+                  />
+                ) : (
+                  <MediaHash {...data} />
+                )}
+              </>
             )}
-          />
+          </ImageGuard2>
+
           <Stack
             className={cx(
               'footer',
@@ -139,7 +127,7 @@ export function UnroutedImageCard({ data }: Props) {
               >
                 <UserAvatar
                   // Explicit casting to comply with ts
-                  user={data.user as ImageGetInfinite[number]['user']}
+                  user={data.user as ImagesInfiniteModel['user']}
                   avatarProps={{ radius: 'md', size: 32 }}
                   withUsername
                 />
@@ -190,4 +178,4 @@ export function ImageCard({ data }: Props) {
   );
 }
 
-type Props = { data: ImageGetInfinite[number] | ImageSearchIndexRecord };
+type Props = { data: ImagesInfiniteModel };

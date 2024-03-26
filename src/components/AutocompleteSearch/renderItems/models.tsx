@@ -16,6 +16,7 @@ import { truncate } from 'lodash-es';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { constants } from '~/server/common/constants';
 import { SearchIndexDataMap } from '~/components/Search/search.utils2';
+import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { getDisplayName } from '~/utils/string-helpers';
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 
@@ -28,11 +29,13 @@ export const ModelSearchItem = forwardRef<
 
   if (!hit) return <ViewMoreItem ref={ref} value={value} {...props} />;
 
-  const { images, user, nsfw, type, category, metrics, version } = hit;
+  const { images, user, nsfwLevel, type, category, metrics, version } = hit;
   const coverImage = images[0];
   const alt = truncate((coverImage.meta as ImageMetaProps)?.prompt, {
     length: constants.altTruncateLength,
   });
+
+  const nsfw = !getIsSafeBrowsingLevel(nsfwLevel);
 
   return (
     <Group ref={ref} {...props} key={hit.id} spacing="md" align="flex-start" noWrap>
@@ -46,7 +49,7 @@ export const ModelSearchItem = forwardRef<
         }}
       >
         {coverImage ? (
-          nsfw || coverImage.nsfw !== 'None' ? (
+          nsfw ? (
             <MediaHash {...coverImage} cropFocus="top" />
           ) : (
             <EdgeMedia

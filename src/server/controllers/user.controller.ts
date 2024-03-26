@@ -3,7 +3,6 @@ import {
   ModelEngagementType,
   ModelVersionEngagementType,
   NotificationCategory,
-  OnboardingStep,
 } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { orderBy } from 'lodash-es';
@@ -16,7 +15,6 @@ import * as rewards from '~/server/rewards';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import {
   BatchBlockTagsSchema,
-  CompleteOnboardingStepInput,
   DeleteUserInput,
   GetAllUsersInput,
   GetByUsernameSchema,
@@ -33,13 +31,12 @@ import {
   ToggleUserArticleEngagementsInput,
   ToggleUserBountyEngagementsInput,
   UserByReferralCodeSchema,
+  UserOnboardingSchema,
   UserUpdateInput,
 } from '~/server/schema/user.schema';
 import { BadgeCosmetic, NamePlateCosmetic } from '~/server/selectors/cosmetic.selector';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
-import { refreshAllHiddenForUser } from '~/server/services/user-cache.service';
 import {
-  acceptTOS,
   claimCosmetic,
   createUserReferral,
   deleteUser,
@@ -62,7 +59,6 @@ import {
   toggleUserArticleEngagement,
   toggleUserBountyEngagement,
   updateLeaderboardRank,
-  updateOnboardingSteps,
   updateUserById,
   userByReferralCode,
   equipCosmetic,
@@ -104,7 +100,10 @@ import { getUserNotificationCount } from '~/server/services/notification.service
 import { createRecaptchaAssesment } from '../recaptcha/client';
 import { FeatureAccess, toggleableFeatures } from '../services/feature-flags.service';
 import { isDefined } from '~/utils/type-guards';
+import { OnboardingSteps, SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { Flags } from '~/shared/utils';
 import { getResourceReviewsByUserId } from '~/server/services/resourceReview.service';
+import { usersSearchIndex } from '~/server/search-index';
 
 export const getAllUsersHandler = async ({
   input,
@@ -231,76 +230,69 @@ const verifyAvatar = (avatar: string) => {
   return false;
 };
 
-export const acceptTOSHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
-  try {
-    const { id } = ctx.user;
-    const updatedUser = await acceptTOS({ id });
-    if (!updatedUser) throw throwNotFoundError(`No user with id ${id}`);
-
-    return updatedUser;
-  } catch (e) {
-    throw throwDbError(e);
-  }
-};
-
-const temp_onboardingOrder: OnboardingStep[] = [OnboardingStep.Moderation, OnboardingStep.Buzz];
 export const completeOnboardingHandler = async ({
   input,
   ctx,
 }: {
-  input: CompleteOnboardingStepInput;
+  input: UserOnboardingSchema;
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
     const { id } = ctx.user;
-    const user = await dbWrite.user.findUnique({
-      where: { id },
-      select: { onboardingSteps: true, email: true, username: true },
-    });
+    const onboarding = Flags.addFlag(ctx.user.onboarding, input.step);
 
-    if (!user) throw throwNotFoundError(`No user with id ${id}`);
-    if (!user?.email) throw throwBadRequestError('User must have an email to complete onboarding');
-    if (!user?.username)
-      throw throwBadRequestError('User must have a username to complete onboarding');
+    switch (input.step) {
+      case OnboardingSteps.TOS:
+        const { recaptchaToken } = input;
+        if (!recaptchaToken) throw throwAuthorizationError('recaptchaToken required');
 
-    if (!input.step) {
-      input.step = temp_onboardingOrder.find((step) => user.onboardingSteps.includes(step));
+        const riskScore = await createRecaptchaAssesment({
+          token: recaptchaToken,
+          recaptchaAction: RECAPTCHA_ACTIONS.COMPLETE_ONBOARDING,
+        });
+
+        if (!riskScore || riskScore < 0.5)
+          throw throwAuthorizationError(
+            'We are unable to complete onboarding right now. Please try again later'
+          );
+
+        await dbWrite.user.update({ where: { id }, data: { onboarding } });
+        break;
+      case OnboardingSteps.Profile:
+        await dbWrite.user.update({
+          where: { id },
+          data: { onboarding, username: input.username, email: input.email },
+        });
+        break;
+      case OnboardingSteps.BrowsingLevels:
+        await dbWrite.user.update({
+          where: { id },
+          data: { onboarding },
+        });
+        break;
+      case OnboardingSteps.Buzz:
+        await dbWrite.user.update({ where: { id }, data: { onboarding } });
+        if (input.userReferralCode || input.source) {
+          await createUserReferral({
+            id,
+            userReferralCode: input.userReferralCode,
+            source: input.source,
+            ip: ctx.ip,
+          });
+        }
+
+        await withRetries(() =>
+          createBuzzTransaction({
+            fromAccountId: 0,
+            toAccountId: ctx.user.id,
+            amount: getUserBuzzBonusAmount(ctx.user),
+            description: 'Onboarding bonus',
+            type: TransactionType.Reward,
+            externalTransactionId: `${ctx.user.id}-onboarding-bonus`,
+          })
+        ).catch(handleLogError);
+        break;
     }
-
-    // Check recaptcha for Buzz step
-    if (input.step === 'Buzz') {
-      const { recaptchaToken } = input;
-      if (!recaptchaToken) throw throwAuthorizationError('recaptchaToken required');
-
-      const riskScore = await createRecaptchaAssesment({
-        token: recaptchaToken,
-        recaptchaAction: RECAPTCHA_ACTIONS.COMPLETE_ONBOARDING,
-      });
-
-      if (!riskScore || riskScore < 0.5)
-        throw throwAuthorizationError(
-          'We are unable to complete onboarding right now. Please try again later'
-        );
-    }
-
-    const steps = !input.step ? [] : user.onboardingSteps.filter((step) => step !== input.step);
-    const updatedUser = await updateOnboardingSteps({ id, steps });
-
-    // There are no more onboarding steps, so we can reward the user
-    if (updatedUser.onboardingSteps.length === 0) {
-      await withRetries(() =>
-        createBuzzTransaction({
-          fromAccountId: 0,
-          toAccountId: updatedUser.id,
-          amount: getUserBuzzBonusAmount(ctx.user),
-          description: 'Onboarding bonus',
-          type: TransactionType.Reward,
-          externalTransactionId: `${updatedUser.id}-onboarding-bonus`,
-        })
-      ).catch(handleLogError);
-    }
-
-    return updatedUser;
   } catch (e) {
     if (e instanceof TRPCError) throw e;
     throw throwDbError(e);
@@ -374,6 +366,8 @@ export const updateUserHandler = async ({
       },
     });
 
+    await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+
     // Delete old profilePic and ingest new one
     if (user.profilePictureId && profilePicture && user.profilePictureId !== profilePicture.id) {
       await deleteImageById({ id: user.profilePictureId });
@@ -408,7 +402,6 @@ export const updateUserHandler = async ({
         ip: ctx.ip,
       });
     }
-    if (ctx.user.showNsfw !== showNsfw) await refreshAllHiddenForUser({ userId: id });
 
     return updatedUser;
   } catch (error) {

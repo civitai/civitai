@@ -23,3 +23,8 @@ export const toggleHiddenSchema = z.discriminatedUnion('kind', [
     hidden: z.boolean().optional(),
   }),
 ]);
+
+export const toggleHiddenTagsSchema = z.object({
+  addedIds: z.number().array().optional(),
+  removedIds: z.number().array().optional(),
+});

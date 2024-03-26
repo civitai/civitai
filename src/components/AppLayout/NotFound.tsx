@@ -22,7 +22,7 @@ export function NotFound() {
 
   return (
     <>
-      <Meta title="Page Not Found" deIndex="noindex, nofollow" />
+      <Meta title="Page Not Found" deIndex />
 
       <Container size="md">
         <Stack align="center" spacing={0}>

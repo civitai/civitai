@@ -3,12 +3,11 @@ import {
   BountyEngagementType,
   MediaType,
   ModelEngagementType,
-  NsfwLevel,
-  OnboardingStep,
   TagEngagementType,
 } from '@prisma/client';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
+import { OnboardingSteps } from '~/server/common/enums';
 import { getAllQuerySchema } from '~/server/schema/base.schema';
 import { userSettingsChat } from '~/server/schema/chat.schema';
 import { featureFlagKeys } from '~/server/services/feature-flags.service';
@@ -60,7 +59,6 @@ export const getAllUsersInput = getAllQuerySchema
   .partial();
 export type GetAllUsersInput = z.infer<typeof getAllUsersInput>;
 
-export type ProfilePictureSchema = z.infer<typeof profilePictureSchema>;
 export const profilePictureSchema = z.object({
   id: z.number().optional(),
   name: z.string().nullish(),
@@ -69,7 +67,6 @@ export const profilePictureSchema = z.object({
   height: z.number().nullish(),
   width: z.number().nullish(),
   sizeKB: z.number().optional(),
-  nsfw: z.nativeEnum(NsfwLevel).optional(),
   mimeType: z.string().optional(),
   metadata: z.object({}).passthrough().optional(),
   type: z.nativeEnum(MediaType).default(MediaType.image),
@@ -80,8 +77,7 @@ export const userUpdateSchema = z.object({
   username: usernameInputSchema.optional(),
   showNsfw: z.boolean().optional(),
   blurNsfw: z.boolean().optional(),
-  tos: z.boolean().optional(),
-  onboardingStep: z.nativeEnum(OnboardingStep).array().optional(),
+  browsingLevel: z.number().optional(),
   email: z.string().email().optional(),
   image: z.string().nullish(),
   profilePicture: profilePictureSchema.nullish(),
@@ -102,6 +98,12 @@ export const userUpdateSchema = z.object({
   landingPage: z.string().optional(),
 });
 export type UserUpdateInput = z.input<typeof userUpdateSchema>;
+
+export const updateBrowsingModeSchema = z.object({
+  showNsfw: z.boolean().optional(),
+  blurNsfw: z.boolean().optional(),
+  browsingLevel: z.number().optional(),
+});
 
 export const toggleFavoriteInput = z.object({
   modelId: z.number(),
@@ -177,12 +179,6 @@ export const reportProhibitedRequestSchema = z.object({
 export const userByReferralCodeSchema = z.object({ userReferralCode: z.string().min(3) });
 export type UserByReferralCodeSchema = z.infer<typeof userByReferralCodeSchema>;
 
-export type CompleteOnboardingStepInput = z.infer<typeof completeOnboardStepSchema>;
-export const completeOnboardStepSchema = z.object({
-  step: z.nativeEnum(OnboardingStep).optional(),
-  recaptchaToken: z.string().nullish(),
-});
-
 export type UserSettingsSchema = z.infer<typeof userSettingsSchema>;
 export const userSettingsSchema = z.object({
   newsletterDialogLastSeenAt: z.date().nullish(),
@@ -207,3 +203,15 @@ export const setUserSettingsInput = z.object({
 });
 
 export const dismissAlertSchema = z.object({ alertId: z.string() });
+
+export type UserOnboardingSchema = z.infer<typeof userOnboardingSchema>;
+export const userOnboardingSchema = z.discriminatedUnion('step', [
+  z.object({ step: z.literal(OnboardingSteps.TOS), recaptchaToken: z.string() }),
+  z.object({ step: z.literal(OnboardingSteps.Profile), username: z.string(), email: z.string() }),
+  z.object({ step: z.literal(OnboardingSteps.BrowsingLevels) }),
+  z.object({
+    step: z.literal(OnboardingSteps.Buzz),
+    userReferralCode: z.string().optional(),
+    source: z.string().optional(),
+  }),
+]);

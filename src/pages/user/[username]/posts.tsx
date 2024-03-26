@@ -89,7 +89,7 @@ export default function UserPostsPage() {
               </Group>
             </Group>
             <PostsInfinite
-              filters={{ ...query, followed, period, sort, draftOnly: viewingDraft }}
+              filters={{ ...query, followed, period, sort, draftOnly: viewingDraft, pending: true }}
             />
           </Stack>
         </MasonryContainer>

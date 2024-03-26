@@ -1,6 +1,6 @@
 import { Availability } from '@prisma/client';
 import { z } from 'zod';
-import { BrowsingMode } from '~/server/common/enums';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { parseNumericString } from '~/utils/query-string-helpers';
 
 export const getByIdSchema = z.object({ id: z.number() });
@@ -29,14 +29,9 @@ export type GetAllSchema = z.infer<typeof getAllQuerySchema>;
 export const periodModeSchema = z.enum(['stats', 'published']).default('published');
 export type PeriodMode = z.infer<typeof periodModeSchema>;
 
-// type BaseInterface = {
-//   id?: number;
-// } & Record<string, unknown>;
-// type OmitId<T extends BaseInterface> = Omit<T, 'id'>;
-
-// export const isEntity = <T extends BaseInterface>(
-//   entity: T
-// ): entity is OmitId<T> & { id: number } => !!entity.id;
+export const baseQuerySchema = z.object({
+  browsingLevel: z.number().default(allBrowsingLevelsFlag),
+});
 
 export type InfiniteQueryInput = z.infer<typeof infiniteQuerySchema>;
 export const infiniteQuerySchema = z.object({
@@ -45,14 +40,13 @@ export const infiniteQuerySchema = z.object({
 });
 
 export type UserPreferencesInput = z.infer<typeof userPreferencesSchema>;
-export const userPreferencesSchema = z
-  .object({
-    browsingMode: z.nativeEnum(BrowsingMode).default(BrowsingMode.SFW),
-    excludedTagIds: z.array(z.number()),
-    excludedUserIds: z.array(z.number()),
-    excludedImageIds: z.array(z.number()),
-  })
-  .partial();
+export const userPreferencesSchema = z.object({
+  browsingLevel: z.number().optional(),
+  excludedModelIds: z.array(z.number()).optional(),
+  excludedUserIds: z.array(z.number()).optional(),
+  excludedTagIds: z.array(z.number()).optional(),
+  excludedImageIds: z.array(z.number()).optional(),
+});
 
 export const getByEntitySchema = z.object({
   entityType: z.string(),

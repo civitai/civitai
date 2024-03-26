@@ -3,7 +3,6 @@ import { Container, Text } from '@mantine/core';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
-import { BountyCreateForm } from '~/components/Bounty/BountyCreateForm';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { BountyUpsertForm } from '~/components/Bounty/BountyUpsertForm';
 

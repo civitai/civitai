@@ -35,16 +35,15 @@ import { SignalProvider } from '~/components/Signals/SignalsProvider';
 import { isDev } from '~/env/other';
 import { CivitaiPosthogProvider } from '~/hooks/usePostHog';
 import { ActivityReportingProvider } from '~/providers/ActivityReportingProvider';
-import { CookiesContext, CookiesProvider, parseCookies } from '~/providers/CookiesProvider';
+import { CookiesProvider } from '~/providers/CookiesProvider';
 import { CustomModalsProvider } from '~/providers/CustomModalsProvider';
 // import { ImageProcessingProvider } from '~/components/ImageProcessing';
 import { FeatureFlagsProvider } from '~/providers/FeatureFlagsProvider';
-import { CookiesState, FiltersProvider, parseFilterCookies } from '~/providers/FiltersProvider';
-import { HiddenPreferencesProvider } from '~/providers/HiddenPreferencesProvider';
+import { FiltersProvider } from '~/providers/FiltersProvider';
+import { HiddenPreferencesProvider } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import { IsClientProvider } from '~/providers/IsClientProvider';
 import { PaypalProvider } from '~/providers/PaypalProvider';
 import { StripeSetupSuccessProvider } from '~/providers/StripeProvider';
-import { TosProvider } from '~/providers/TosProvider';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { UpdateRequiredWatcher } from '~/components/UpdateRequiredWatcher/UpdateRequiredWatcher';
@@ -52,6 +51,8 @@ import { RegisterCatchNavigation } from '~/store/catch-navigation.store';
 import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 import { trpc } from '~/utils/trpc';
 import '~/styles/globals.css';
+import { BrowsingModeProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { ParsedCookies, parseCookies } from '~/shared/utils';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -69,15 +70,14 @@ type CustomAppProps = {
 } & AppProps<{
   session: Session | null;
   colorScheme: ColorScheme;
-  cookies: CookiesContext;
-  filters: CookiesState;
+  cookies: ParsedCookies;
   flags: FeatureAccess;
 }>;
 
 function MyApp(props: CustomAppProps) {
   const {
     Component,
-    pageProps: { session, colorScheme: initialColorScheme, cookies, filters, flags, ...pageProps },
+    pageProps: { session, colorScheme: initialColorScheme, cookies, flags, ...pageProps },
   } = props;
   const [colorScheme, setColorScheme] = useState<ColorScheme | undefined>(initialColorScheme);
   const toggleColorScheme = useCallback(
@@ -123,6 +123,7 @@ function MyApp(props: CustomAppProps) {
               Modal: {
                 styles: {
                   modal: { maxWidth: '100%' },
+                  inner: { paddingLeft: 0, paddingRight: 0 },
                 },
                 // defaultProps: {
                 //   target:
@@ -231,46 +232,46 @@ function MyApp(props: CustomAppProps) {
                 refetchWhenOffline={false}
               >
                 <FeatureFlagsProvider flags={flags}>
-                  <CivitaiSessionProvider>
-                    <SignalProvider>
-                      <ActivityReportingProvider>
-                        <CivitaiPosthogProvider>
-                          <CookiesProvider value={cookies}>
-                            <ReferralsProvider>
-                              <FiltersProvider value={filters}>
-                                <AdsProvider>
-                                  <PaypalProvider>
-                                    <HiddenPreferencesProvider>
-                                      <CivitaiLinkProvider>
-                                        <NotificationsProvider zIndex={9999}>
-                                          <BrowserRouterProvider>
-                                            <RecaptchaWidgetProvider>
-                                              <ChatContextProvider>
-                                                <BaseLayout>
-                                                  <CustomModalsProvider>
-                                                    <TosProvider>
+                  <CookiesProvider value={cookies}>
+                    <BrowsingModeProvider>
+                      <CivitaiSessionProvider>
+                        <SignalProvider>
+                          <ActivityReportingProvider>
+                            <CivitaiPosthogProvider>
+                              <ReferralsProvider>
+                                <FiltersProvider>
+                                  <AdsProvider>
+                                    <PaypalProvider>
+                                      <HiddenPreferencesProvider>
+                                        <CivitaiLinkProvider>
+                                          <NotificationsProvider zIndex={9999}>
+                                            <BrowserRouterProvider>
+                                              <RecaptchaWidgetProvider>
+                                                <ChatContextProvider>
+                                                  <BaseLayout>
+                                                    <CustomModalsProvider>
                                                       {getLayout(<Component {...pageProps} />)}
-                                                    </TosProvider>
-                                                    <StripeSetupSuccessProvider />
-                                                    <DialogProvider />
-                                                    <RoutedDialogProvider />
-                                                  </CustomModalsProvider>
-                                                </BaseLayout>
-                                              </ChatContextProvider>
-                                            </RecaptchaWidgetProvider>
-                                          </BrowserRouterProvider>
-                                        </NotificationsProvider>
-                                      </CivitaiLinkProvider>
-                                    </HiddenPreferencesProvider>
-                                  </PaypalProvider>
-                                </AdsProvider>
-                              </FiltersProvider>
-                            </ReferralsProvider>
-                          </CookiesProvider>
-                        </CivitaiPosthogProvider>
-                      </ActivityReportingProvider>
-                    </SignalProvider>
-                  </CivitaiSessionProvider>
+                                                      <StripeSetupSuccessProvider />
+                                                      <DialogProvider />
+                                                      <RoutedDialogProvider />
+                                                    </CustomModalsProvider>
+                                                  </BaseLayout>
+                                                </ChatContextProvider>
+                                              </RecaptchaWidgetProvider>
+                                            </BrowserRouterProvider>
+                                          </NotificationsProvider>
+                                        </CivitaiLinkProvider>
+                                      </HiddenPreferencesProvider>
+                                    </PaypalProvider>
+                                  </AdsProvider>
+                                </FiltersProvider>
+                              </ReferralsProvider>
+                            </CivitaiPosthogProvider>
+                          </ActivityReportingProvider>
+                        </SignalProvider>
+                      </CivitaiSessionProvider>
+                    </BrowsingModeProvider>
+                  </CookiesProvider>
                 </FeatureFlagsProvider>
               </SessionProvider>
             </IsClientProvider>
@@ -291,16 +292,17 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   const colorScheme = getCookie('mantine-color-scheme', appContext.ctx) ?? 'dark';
   const cookies = getCookies(appContext.ctx);
   const parsedCookies = parseCookies(cookies);
-  const filters = parseFilterCookies(cookies);
 
   const hasAuthCookie = !isClient && Object.keys(cookies).some((x) => x.endsWith('civitai-token'));
   const session = hasAuthCookie ? await getSession(appContext.ctx) : null;
   const flags = getFeatureFlags({ user: session?.user });
+
   // Pass this via the request so we can use it in SSR
   if (session) {
     (appContext.ctx.req as any)['session'] = session;
     (appContext.ctx.req as any)['flags'] = flags;
   }
+
   return {
     pageProps: {
       ...pageProps,
@@ -308,7 +310,6 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       cookies: parsedCookies,
       session,
       flags,
-      filters,
     },
     ...appProps,
   };

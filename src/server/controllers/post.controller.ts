@@ -36,15 +36,8 @@ import { dbRead, dbWrite } from '../db/client';
 import { firstDailyPostReward, imagePostedToModelReward } from '~/server/rewards';
 import { eventEngine } from '~/server/events';
 import dayjs from 'dayjs';
-import {
-  getClubDetailsForResource,
-  upsertClubResource,
-  userContributingClubs,
-} from '../services/club.service';
-import { ClubAdminPermission } from '@prisma/client';
 import { hasEntityAccess } from '../services/common.service';
-import { bustCacheTag } from '../utils/cache-helpers';
-import { NsfwLevel } from '@prisma/client';
+import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 
 export const getPostsInfiniteHandler = async ({
   input,
@@ -90,7 +83,7 @@ export const createPostHandler = async ({
 
     await ctx.track.post({
       type: 'Create',
-      nsfw: post.nsfw,
+      nsfw: !getIsSafeBrowsingLevel(post.nsfwLevel),
       postId: post.id,
       tags,
     });
@@ -106,7 +99,7 @@ export const createPostHandler = async ({
 
       await ctx.track.post({
         type: 'Publish',
-        nsfw: post.nsfw,
+        nsfw: !getIsSafeBrowsingLevel(post.nsfwLevel),
         postId: post.id,
         tags,
       });
@@ -163,7 +156,7 @@ export const updatePostHandler = async ({
       if (isScheduled) tags.push('scheduled');
       await ctx.track.post({
         type: 'Publish',
-        nsfw: updatedPost.nsfw,
+        nsfw: !getIsSafeBrowsingLevel(updatedPost.nsfwLevel),
         postId: updatedPost.id,
         tags,
       });

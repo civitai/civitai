@@ -6,17 +6,15 @@ import {
   ModelStatus,
   ModelType,
 } from '@prisma/client';
-import { createContext, useCallback, useContext, useEffect, useRef } from 'react';
+import { createContext, useCallback, useContext, useRef } from 'react';
 import { z } from 'zod';
 import { createStore, useStore } from 'zustand';
 import { devtools } from 'zustand/middleware';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';
 import {
   ArticleSort,
   BountySort,
   BountyStatus,
-  BrowsingMode,
   ClubSort,
   CollectionSort,
   ImageSort,
@@ -28,12 +26,8 @@ import {
 } from '~/server/common/enums';
 import { periodModeSchema } from '~/server/schema/base.schema';
 import { getInfiniteBountySchema } from '~/server/schema/bounty.schema';
-import { setCookie } from '~/utils/cookies-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { getInfiniteClubSchema } from '~/server/schema/club.schema';
-
-type BrowsingModeSchema = z.infer<typeof browsingModeSchema>;
-const browsingModeSchema = z.nativeEnum(BrowsingMode).default(BrowsingMode.NSFW);
 
 export type ModelFilterSchema = z.infer<typeof modelFilterSchema>;
 const modelFilterSchema = z.object({
@@ -43,7 +37,6 @@ const modelFilterSchema = z.object({
   types: z.nativeEnum(ModelType).array().optional(),
   checkpointType: z.nativeEnum(CheckpointType).optional(),
   baseModels: z.enum(constants.baseModels).array().optional(),
-  browsingMode: z.nativeEnum(BrowsingMode).optional(),
   status: z.nativeEnum(ModelStatus).array().optional(),
   earlyAccess: z.boolean().optional(),
   supportsGeneration: z.boolean().optional(),
@@ -52,6 +45,7 @@ const modelFilterSchema = z.object({
   archived: z.boolean().optional(),
   hidden: z.boolean().optional(),
   fileFormats: z.enum(constants.modelFileFormats).array().optional(),
+  pending: z.boolean().optional(),
 });
 
 type QuestionFilterSchema = z.infer<typeof questionFilterSchema>;
@@ -150,10 +144,6 @@ const threadFilterSchema = z.object({
   sort: z.nativeEnum(ThreadSort).default(ThreadSort.Newest),
 });
 
-export type CookiesState = {
-  browsingMode: BrowsingModeSchema;
-};
-
 type StorageState = {
   models: ModelFilterSchema;
   questions: QuestionFilterSchema;
@@ -173,11 +163,10 @@ const periodModeTypes = ['models', 'images', 'posts', 'articles', 'bounties'] as
 export type PeriodModeType = (typeof periodModeTypes)[number];
 export const hasPeriodMode = (type: string) => periodModeTypes.includes(type as PeriodModeType);
 
-type FilterState = CookiesState & StorageState;
+type FilterState = StorageState;
 export type FilterKeys<K extends keyof FilterState> = keyof Pick<FilterState, K>;
 
 type StoreState = FilterState & {
-  setBrowsingMode: (browsingMode: BrowsingMode) => void;
   setModelFilters: (filters: Partial<ModelFilterSchema>) => void;
   setQuestionFilters: (filters: Partial<QuestionFilterSchema>) => void;
   setImageFilters: (filters: Partial<ImageFilterSchema>) => void;
@@ -189,11 +178,6 @@ type StoreState = FilterState & {
   setClubFilters: (filters: Partial<ClubFilterSchema>) => void;
   setVideoFilters: (filters: Partial<VideoFilterSchema>) => void;
   setThreadFilters: (filters: Partial<ThreadFilterSchema>) => void;
-};
-
-type CookieStorageSchema = Record<keyof CookiesState, { key: string; schema: z.ZodTypeAny }>;
-const cookieKeys: CookieStorageSchema = {
-  browsingMode: { key: 'mode', schema: browsingModeSchema },
 };
 
 type LocalStorageSchema = Record<keyof StorageState, { key: string; schema: z.AnyZodObject }>;
@@ -209,16 +193,6 @@ const localStorageSchemas: LocalStorageSchema = {
   clubs: { key: 'clubs-filters', schema: clubFilterSchema },
   videos: { key: 'videos-filters', schema: videoFilterSchema },
   threads: { key: 'thread-filters', schema: threadFilterSchema },
-};
-
-export const parseFilterCookies = (cookies: Partial<{ [key: string]: string }>) => {
-  return Object.entries(cookieKeys).reduce<Record<string, unknown>>((acc, [key, storage]) => {
-    const cookieValue = cookies[storage.key];
-    const parsedValue = cookieValue ? deserializeJSON(cookieValue) : undefined;
-    const result = storage.schema.safeParse(parsedValue);
-    const value = result.success ? result.data : storage.schema.parse(undefined);
-    return { ...acc, [key]: value };
-  }, {}) as CookiesState;
 };
 
 const getInitialValues = <TSchema extends z.AnyZodObject>({
@@ -265,15 +239,10 @@ function handleLocalStorageChange<TKey extends keyof StorageState>({
 }
 
 type FilterStore = ReturnType<typeof createFilterStore>;
-const createFilterStore = (initialValues: CookiesState) =>
+const createFilterStore = () =>
   createStore<StoreState>()(
     devtools((set) => ({
-      ...initialValues,
       ...getInitialLocalStorageValues(),
-      setBrowsingMode: (browsingMode) => {
-        setCookie(cookieKeys.browsingMode.key, browsingMode);
-        set({ browsingMode });
-      },
       setModelFilters: (data) =>
         set((state) => handleLocalStorageChange({ key: 'models', data, state })),
       setQuestionFilters: (data) =>
@@ -306,27 +275,9 @@ export function useFiltersContext<T>(selector: (state: StoreState) => T) {
   return useStore(store, selector);
 }
 
-export const FiltersProvider = ({
-  children,
-  value,
-}: {
-  children: React.ReactNode;
-  value: CookiesState;
-}) => {
+export const FiltersProvider = ({ children }: { children: React.ReactNode }) => {
   const storeRef = useRef<FilterStore>();
-  const currentUser = useCurrentUser();
-  const showNsfw = (currentUser && currentUser.showNsfw) ?? false;
-  if (!storeRef.current)
-    storeRef.current = createFilterStore({
-      ...value,
-      browsingMode: !showNsfw ? BrowsingMode.SFW : value.browsingMode,
-    });
-
-  useEffect(() => {
-    storeRef.current?.setState({
-      browsingMode: !showNsfw ? BrowsingMode.SFW : value.browsingMode,
-    });
-  }, [showNsfw]);
+  if (!storeRef.current) storeRef.current = createFilterStore();
 
   return <FiltersContext.Provider value={storeRef.current}>{children}</FiltersContext.Provider>;
 };

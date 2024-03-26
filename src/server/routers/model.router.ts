@@ -1,7 +1,6 @@
 import { z } from 'zod';
 
 import { env } from '~/env/server.mjs';
-import { BrowsingMode } from '~/server/common/enums';
 import {
   toggleCheckpointCoverageHandler,
   changeModelModifierHandler,
@@ -33,7 +32,7 @@ import {
   upsertModelHandler,
 } from '~/server/controllers/model.controller';
 import { dbRead } from '~/server/db/client';
-import { cacheIt, edgeCacheIt } from '~/server/middleware.trpc';
+import { applyUserPreferences, cacheIt, edgeCacheIt } from '~/server/middleware.trpc';
 import { getAllQuerySchema, getByIdSchema } from '~/server/schema/base.schema';
 import {
   GetAllModelsOutput,
@@ -67,7 +66,6 @@ import {
   setAssociatedResources,
   setModelsCategory,
 } from '~/server/services/model.service';
-import { getAllHiddenForUser, getHiddenTagsForUser } from '~/server/services/user-cache.service';
 import {
   guardedProcedure,
   middleware,
@@ -122,36 +120,6 @@ const checkFilesExistence = middleware(async ({ input, ctx, next }) => {
   });
 });
 
-const applyUserPreferences = middleware(async ({ input, ctx, next }) => {
-  const _input = input as GetAllModelsOutput;
-  _input.browsingMode ??= ctx.browsingMode;
-  if (_input.browsingMode !== BrowsingMode.All) {
-    const hidden = await getAllHiddenForUser({ userId: ctx.user?.id });
-    _input.excludedImageTagIds = [
-      ...hidden.tags.moderatedTags,
-      ...hidden.tags.hiddenTags,
-      ...(_input.excludedImageTagIds ?? []),
-    ];
-    _input.excludedTagIds = [...hidden.tags.hiddenTags, ...(_input.excludedTagIds ?? [])];
-    _input.excludedIds = [...hidden.models, ...(_input.excludedIds ?? [])];
-    _input.excludedUserIds = [...hidden.users, ...(_input.excludedUserIds ?? [])];
-    _input.excludedImageIds = [...hidden.images, ...(_input.excludedImageIds ?? [])];
-    if (_input.browsingMode === BrowsingMode.SFW) {
-      const systemHidden = await getHiddenTagsForUser({ userId: -1 });
-      _input.excludedImageTagIds = [
-        ...systemHidden.moderatedTags,
-        ...systemHidden.hiddenTags,
-        ...(_input.excludedImageTagIds ?? []),
-      ];
-      _input.excludedTagIds = [...systemHidden.hiddenTags, ...(_input.excludedTagIds ?? [])];
-    }
-  }
-
-  return next({
-    ctx: { user: ctx.user },
-  });
-});
-
 const skipEdgeCache = middleware(async ({ input, ctx, next }) => {
   const _input = input as GetAllModelsOutput;
 
@@ -164,7 +132,7 @@ export const modelRouter = router({
   getById: publicProcedure.input(getByIdSchema).query(getModelHandler),
   getAll: publicProcedure
     .input(getAllModelsSchema.extend({ page: z.never().optional() }))
-    // .use(applyUserPreferences)
+
     .use(skipEdgeCache)
     .use(edgeCacheIt({ ttl: 60, tags: () => ['models'] }))
     .query(getModelsInfiniteHandler),

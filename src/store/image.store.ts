@@ -1,13 +1,14 @@
-import { ImageIngestionStatus, NsfwLevel } from '@prisma/client';
+import { ImageIngestionStatus } from '@prisma/client';
 import { useCallback } from 'react';
 import { create } from 'zustand';
 import { removeEmpty } from '~/utils/object-helpers';
 
 type ImageProps = {
-  nsfw?: NsfwLevel;
   tosViolation?: boolean;
   ingestion?: ImageIngestionStatus;
   blockedFor?: string | null;
+  needsReview?: string | null;
+  nsfwLevel?: number;
 };
 
 type ImageStore = {
@@ -24,6 +25,13 @@ export const imageStore = {
 };
 
 export const useImageStore = <T extends { id: number } & ImageProps>(image: T) => {
-  const storedImage = useStore(useCallback((state) => state[image.id] ?? {}, [image.id]));
-  return { ...image, ...removeEmpty(storedImage) };
+  return useStore(
+    useCallback(
+      (state) => {
+        const storeImage = state[image.id] ?? {};
+        return { ...image, ...removeEmpty(storeImage) };
+      },
+      [image]
+    )
+  );
 };

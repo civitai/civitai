@@ -15,6 +15,7 @@ import { truncate } from 'lodash-es';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { constants } from '~/server/common/constants';
 import { SearchIndexDataMap } from '~/components/Search/search.utils2';
+import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 
 export const CollectionsSearchItem = forwardRef<
   HTMLDivElement,
@@ -30,6 +31,8 @@ export const CollectionsSearchItem = forwardRef<
     length: constants.altTruncateLength,
   });
 
+  const nsfw = !getIsSafeBrowsingLevel(image.nsfwLevel);
+
   return (
     <Group ref={ref} {...props} key={hit.id} spacing="md" align="flex-start" noWrap>
       <Center
@@ -41,7 +44,7 @@ export const CollectionsSearchItem = forwardRef<
           borderRadius: '10px',
         }}
       >
-        {image.nsfw !== 'None' ? (
+        {nsfw ? (
           <MediaHash {...image} cropFocus="top" />
         ) : (
           <EdgeMedia
