@@ -784,7 +784,7 @@ export const getAllImages = async ({
     AND.push(Prisma.sql`i."needsReview" IS NULL`);
     AND.push(
       browsingLevel
-        ? Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`
+        ? Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0 AND i."nsfwLevel" != 0`
         : Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`
     );
   }
@@ -2627,4 +2627,31 @@ export async function updateImageNsfwLevel({
       update: { nsfwLevel },
     });
   }
+}
+
+type ImageRatingRequestResponse = {
+  imageId: number;
+  votes: {
+    [NsfwLevel.PG]: NsfwLevel.PG;
+    [NsfwLevel.PG13]: NsfwLevel.PG13;
+    [NsfwLevel.R]: NsfwLevel.R;
+    [NsfwLevel.X]: NsfwLevel.X;
+    [NsfwLevel.XXX]: NsfwLevel.XXX;
+  };
+};
+
+export async function getImageRatingRequests() {
+  const results = await dbRead.$queryRaw<ImageRatingRequestResponse>`
+    SELECT
+      DISTINCT ON ("imageId") "imageId",
+      jsonb_build_object(
+        ${NsfwLevel.PG}, count("nsfwLevel" = ${NsfwLevel.PG}),
+        ${NsfwLevel.PG13}, count("nsfwLevel" = ${NsfwLevel.PG13}),
+        ${NsfwLevel.R}, count("nsfwLevel" = ${NsfwLevel.R}),
+        ${NsfwLevel.X}, count("nsfwLevel" = ${NsfwLevel.X}),
+        ${NsfwLevel.XXX}, count("nsfwLevel" = ${NsfwLevel.XXX}6)
+      ) "votes"
+    FROM "ImageRatingRequest"
+    GROUP BY "imageId"
+  `;
 }

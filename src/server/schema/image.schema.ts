@@ -2,11 +2,12 @@ import {
   ImageGenerationProcess,
   MediaType,
   MetricTimeframe,
+  ReportStatus,
   ReviewReactions,
 } from '@prisma/client';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
-import { baseQuerySchema, periodModeSchema } from '~/server/schema/base.schema';
+import { baseQuerySchema, paginationSchema, periodModeSchema } from '~/server/schema/base.schema';
 import { ImageSort, NsfwLevel } from './../common/enums';
 import { SearchIndexEntityTypes } from '~/components/Search/parsers/base';
 import { zc } from '~/utils/schema-helpers';
@@ -298,4 +299,8 @@ export type UpdateImageNsfwLevelOutput = z.output<typeof updateImageNsfwLevelSch
 export const updateImageNsfwLevelSchema = z.object({
   id: z.number(),
   nsfwLevel: z.nativeEnum(NsfwLevel),
+});
+
+export const getImageRatingRequestsSchema = paginationSchema.extend({
+  status: z.nativeEnum(ReportStatus).array().optional(),
 });
