@@ -105,7 +105,7 @@ export const votableTagColors = {
 
 export const toggleableBrowsingCategories = [
   {
-    title: 'Anime',
+    title: 'Hide anime',
     relatedTags: [
       { id: 4, name: 'anime' },
       { id: 413, name: 'manga' },
@@ -113,14 +113,21 @@ export const toggleableBrowsingCategories = [
     ],
   },
   {
-    title: 'Furry',
+    title: 'Hide furry',
     relatedTags: [
       { id: 5139, name: 'anthro' },
       { id: 5140, name: 'furry' },
     ],
   },
   {
-    title: 'Political',
+    title: 'Hide gore',
+    relatedTags: [
+      { id: 1282, name: 'gore' },
+      { id: 789, name: 'body horror' },
+    ],
+  },
+  {
+    title: 'Hide political',
     relatedTags: [{ id: 2470, name: 'political' }],
   },
 ];

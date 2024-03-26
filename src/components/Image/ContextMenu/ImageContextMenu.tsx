@@ -115,7 +115,7 @@ export function ImageContextMenu({
     </Menu>
   );
 
-  if (image.needsReview)
+  if (image.needsReview || image.ingestion === 'Blocked')
     return (
       <Group spacing={4} className={className}>
         <NeedsReviewBadge {...props} isModerator={isModerator} isOwner={isOwner} />
