@@ -27,10 +27,11 @@ type BrowsingModeIconProps = {
 };
 
 export function BrowsingModeMenu() {
-  const { toggleBlurNsfw, toggleDisableHidden } = useBrowsingModeContext();
+  const { toggleBlurNsfw, toggleDisableHidden, useStore } = useBrowsingModeContext();
+  const { blurNsfw } = useStore((state) => state);
   const currentUser = useCurrentUser();
   const showNsfw = currentUser?.showNsfw;
-  const blurNsfw = currentUser?.blurNsfw;
+  // const blurNsfw = currentUser?.blurNsfw;
   const disableHidden = currentUser?.disableHidden;
 
   return (

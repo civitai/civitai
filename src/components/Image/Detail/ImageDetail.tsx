@@ -55,13 +55,11 @@ import { containerQuery } from '~/utils/mantine-css-helpers';
 
 export function ImageDetail() {
   const { classes, cx, theme } = useStyles();
-  const { image: _image, isLoading, active, close, toggleInfo } = useImageDetailContext();
+  const { image: image, isLoading, active, close, toggleInfo } = useImageDetailContext();
   const { query } = useBrowserRouter();
 
-  const image = useImageStore(_image);
-
   if (isLoading) return <PageLoader />;
-  if (!_image) return <NotFound />;
+  if (!image) return <NotFound />;
 
   const nsfw = !getIsSafeBrowsingLevel(image.nsfwLevel);
 

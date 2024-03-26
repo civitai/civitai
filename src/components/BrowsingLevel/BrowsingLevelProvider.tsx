@@ -13,9 +13,6 @@ import { useDebouncer } from '~/utils/debouncer';
 import { useSession } from 'next-auth/react';
 import { useDebouncedValue, useDidUpdate } from '@mantine/hooks';
 import { deleteCookie } from 'cookies-next';
-import { useRouter } from 'next/router';
-import { z } from 'zod';
-import { numericStringArray } from '~/utils/zod-helpers';
 
 type StoreState = {
   showNsfw: boolean;

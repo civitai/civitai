@@ -1,6 +1,5 @@
 import { CollectionItemStatus, ImageIngestionStatus, Prisma } from '@prisma/client';
 import { NextApiRequest, NextApiResponse } from 'next';
-import { NsfwLevel } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import { pgDbWrite } from '~/server/db/pgDb';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
@@ -40,42 +39,42 @@ export default WebhookEndpoint(async (req, res) => {
     type: MigrationType;
     fn: (req: NextApiRequest, res: NextApiResponse) => Promise<void>;
   }> = [
-    // {
-    //   type: 'users',
-    //   fn: migrateUsers,
-    // },
     {
-      type: 'images',
-      fn: migrateImages,
+      type: 'users',
+      fn: migrateUsers,
     },
     // {
-    //   type: 'posts',
-    //   fn: migratePosts,
+    //   type: 'images',
+    //   fn: migrateImages,
     // },
-    // {
-    //   type: 'articles',
-    //   fn: migrateArticles,
-    // },
-    // {
-    //   type: 'bounties',
-    //   fn: migrateBounties,
-    // },
-    // {
-    //   type: 'bountyEntries',
-    //   fn: migrateBountyEntries,
-    // },
-    // {
-    //   type: 'modelVersions',
-    //   fn: migrateModelVersions,
-    // },
-    // {
-    //   type: 'models',
-    //   fn: migrateModels,
-    // },
-    // {
-    //   type: 'collections',
-    //   fn: migrateCollections,
-    // },
+    {
+      type: 'posts',
+      fn: migratePosts,
+    },
+    {
+      type: 'articles',
+      fn: migrateArticles,
+    },
+    {
+      type: 'bounties',
+      fn: migrateBounties,
+    },
+    {
+      type: 'bountyEntries',
+      fn: migrateBountyEntries,
+    },
+    {
+      type: 'modelVersions',
+      fn: migrateModelVersions,
+    },
+    {
+      type: 'models',
+      fn: migrateModels,
+    },
+    {
+      type: 'collections',
+      fn: migrateCollections,
+    },
   ];
 
   const migrations = params.type

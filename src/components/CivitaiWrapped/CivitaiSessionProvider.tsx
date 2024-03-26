@@ -7,6 +7,7 @@ import { Flags } from '~/shared/utils';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import dynamic from 'next/dynamic';
 import { useBrowsingModeContext } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 const OnboardingModal = dynamic(() => import('~/components/Onboarding/OnboardingWizard'));
 
 export function CivitaiSessionProvider({ children }: { children: React.ReactNode }) {
@@ -24,6 +25,9 @@ export function CivitaiSessionProvider({ children }: { children: React.ReactNode
       isMember: data.user.tier != null,
       refresh: update,
       ...browsingModeState,
+      blurNsfw: !Flags.intersection(browsingModeState.browsingLevel, nsfwBrowsingLevelsFlag)
+        ? true
+        : browsingModeState.blurNsfw,
     };
   }, [data?.user, update, browsingModeState]);
 
