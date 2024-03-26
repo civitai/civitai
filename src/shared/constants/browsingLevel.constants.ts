@@ -33,7 +33,7 @@ export const browsingLevelDescriptions = {
   [NsfwLevel.PG13]: 'Revealing clothing, violence, and light gore ',
   [NsfwLevel.R]: 'Adult themes and situations, partial nudity, graphic violence and death',
   [NsfwLevel.X]: 'Graphic nudity, adult objects and settings',
-  [NsfwLevel.XXX]: 'Sexual content and activity',
+  [NsfwLevel.XXX]: 'Overtly sexual or disturbing graphic content',
 } as const;
 
 // public browsing levels
