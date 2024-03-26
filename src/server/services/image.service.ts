@@ -2621,6 +2621,10 @@ export async function updateImageNsfwLevel({
       activity: 'setNsfwLevel',
     });
   } else {
-    await dbWrite.imageRatingRequest.create({ data: { nsfwLevel, imageId: id, userId: user.id } });
+    await dbWrite.imageRatingRequest.upsert({
+      where: { imageId_userId: { imageId: id, userId: user.id } },
+      create: { nsfwLevel, imageId: id, userId: user.id },
+      update: { nsfwLevel },
+    });
   }
 }

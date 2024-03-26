@@ -29,7 +29,6 @@ CREATE TABLE "JobQueue" (
     CONSTRAINT "JobQueue_pkey" PRIMARY KEY ("entityType","entityId","type")
 );
 
---  TODO.nsfwLevels - apply these migrations just before adding nsfw level triggers
 ALTER TABLE "CollectionItem"
 	DROP CONSTRAINT "CollectionItem_articleId_fkey",
 	DROP CONSTRAINT "CollectionItem_imageId_fkey",

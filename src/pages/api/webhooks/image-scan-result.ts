@@ -318,6 +318,7 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
 
     // Set nsfw level
     // do this before updating the image with the new ingestion status
+    // TODO.nsfwLevel - determine if this should be done only if ingestion is 'Scanned'
     await dbWrite.$executeRaw`SELECT update_nsfw_level(${id}::int);`;
     if (image.postId) await updatePostNsfwLevel(image.postId);
 
