@@ -96,7 +96,7 @@ export async function updateByStripeConnectAccount({
     chargesEnabled: stripeAccount.charges_enabled,
   };
 
-  if (stripeAccount.payouts_enabled && userStripeConnect.status !== StripeConnectStatus.Approved) {
+  if (stripeAccount.payouts_enabled && stripeAccount.details_submitted) {
     // If we're here, user is good to go!
 
     updated = await dbWrite.userStripeConnect.update({
@@ -107,15 +107,14 @@ export async function updateByStripeConnectAccount({
       },
     });
 
-    await createNotification({
-      userId: userStripeConnect.userId,
-      type: 'creators-program-payments-enabled',
-      category: 'System',
-    }).catch();
-  } else if (
-    stripeAccount.requirements?.disabled_reason &&
-    userStripeConnect.status !== StripeConnectStatus.Rejected
-  ) {
+    if (userStripeConnect.status !== StripeConnectStatus.Approved) {
+      await createNotification({
+        userId: userStripeConnect.userId,
+        type: 'creators-program-payments-enabled',
+        category: 'System',
+      }).catch();
+    }
+  } else if (stripeAccount.requirements?.disabled_reason) {
     // If we're here, user is not good to go!
     updated = await dbWrite.userStripeConnect.update({
       where: { connectedAccountId: stripeAccount.id },
@@ -125,12 +124,14 @@ export async function updateByStripeConnectAccount({
       },
     });
 
-    await createNotification({
-      userId: userStripeConnect.userId,
-      type: 'creators-program-rejected-stripe',
-      category: 'System',
-    }).catch();
-  } else {
+    if (userStripeConnect.status !== StripeConnectStatus.Rejected) {
+      await createNotification({
+        userId: userStripeConnect.userId,
+        type: 'creators-program-rejected-stripe',
+        category: 'System',
+      }).catch();
+    }
+  } else if (stripeAccount.details_submitted) {
     updated = await dbWrite.userStripeConnect.update({
       where: { connectedAccountId: stripeAccount.id },
       data: {

@@ -31,7 +31,7 @@ const filtersBySection = {
   videos: <VideoFeedFilters ml="auto" />,
   posts: <PostFeedFilters ml="auto" />,
   articles: <ArticleFeedFilters ml="auto" />,
-  // bounties: <BountyFeedFilters ml="auto" />,
+  bounties: <BountyFeedFilters ml="auto" />,
   events: null,
 } as const;
 type HomeSection = keyof typeof filtersBySection;
