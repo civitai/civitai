@@ -3,7 +3,7 @@ import { Dropzone, DropzoneProps } from '@mantine/dropzone';
 import { IconPhoto, IconUpload, IconX } from '@tabler/icons-react';
 import { DragEvent, useState } from 'react';
 import { constants } from '~/server/common/constants';
-import { IMAGE_MIME_TYPE, MIME_TYPES } from '~/server/common/mime-types';
+import { IMAGE_MIME_TYPE, MIME_TYPES, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
 import { fetchBlob } from '~/utils/file-utils';
 import { formatBytes } from '~/utils/number-helpers';
 
@@ -32,6 +32,7 @@ export function ImageDropzone({
   const fileExtensions = accept
     .filter((t) => t !== MIME_TYPES.xZipCompressed && t !== MIME_TYPES.xZipMultipart)
     .map((type) => type.replace(/.*\//, '.'));
+  const allowsVideo = VIDEO_MIME_TYPE.some((a) => accept.includes(a));
 
   const handleDrop = (files: File[]) => {
     const hasLargeImageFiles = files.some(
@@ -116,9 +117,11 @@ export function ImageDropzone({
             <Text size="sm" color="dimmed" inline>
               {`Images cannot exceed ${formatBytes(maxSize)} `}
             </Text>
-            <Text size="sm" color="dimmed" inline>
-              {`Videos cannot exceed 4k resolution or ${constants.mediaUpload.maxVideoDurationSeconds} seconds in duration`}
-            </Text>
+            {allowsVideo && (
+              <Text size="sm" color="dimmed" inline>
+                {`Videos cannot exceed 4k resolution or ${constants.mediaUpload.maxVideoDurationSeconds} seconds in duration`}
+              </Text>
+            )}
           </Stack>
         </Group>
       </Dropzone>
