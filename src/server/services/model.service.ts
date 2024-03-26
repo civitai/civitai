@@ -503,10 +503,10 @@ export const getModelsRaw = async ({
     const browsingLevelQuery = Prisma.sql`(lmv."nsfwLevel" & ${browsingLevel}) != 0`;
     if (pending && (isModerator || userId)) {
       if (isModerator) {
-        AND.push(Prisma.sql`${browsingLevelQuery} OR lmv."nsfwLevel" = 0`);
+        AND.push(Prisma.sql`(${browsingLevelQuery} OR lmv."nsfwLevel" = 0)`);
       } else if (userId) {
         AND.push(
-          Prisma.sql`${browsingLevelQuery} OR (lmv."nsfwLevel" = 0 AND m."userId" = ${userId})`
+          Prisma.sql`(${browsingLevelQuery} OR (lmv."nsfwLevel" = 0 AND m."userId" = ${userId}))`
         );
       }
     } else {
