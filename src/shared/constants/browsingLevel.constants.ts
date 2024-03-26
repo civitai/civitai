@@ -120,6 +120,13 @@ export const toggleableBrowsingCategories = [
     ],
   },
   {
+    title: 'Hide gore',
+    relatedTags: [
+      { id: 1282, name: 'gore' },
+      { id: 789, name: 'body horror' },
+    ],
+  },
+  {
     title: 'Hide political',
     relatedTags: [{ id: 2470, name: 'political' }],
   },
