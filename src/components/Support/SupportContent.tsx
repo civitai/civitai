@@ -1,7 +1,7 @@
-import { Grid, Card, Loader, Center, Text, Anchor, Stack, Group } from '@mantine/core';
+import { Grid, Card, Text, Anchor, Stack, Group } from '@mantine/core';
 import { IconBug, IconQuestionMark, IconWand, TablerIconsProps } from '@tabler/icons-react';
 import { IconBook, IconBrandDiscord } from '@tabler/icons-react';
-import { env } from '~/env/client.mjs';
+import { AssistantChat } from '~/components/Assistant/AssistantChat';
 import { trpc } from '~/utils/trpc';
 
 const SUPPORT_OPTIONS = [
@@ -71,21 +71,7 @@ export function SupportContent() {
         </Stack>
       </Grid.Col>
       <Grid.Col xs={12} md={6}>
-        <Card shadow="md" withBorder h="100%" radius={12} p={0}>
-          {!token ? (
-            <Center h="100%">
-              <Loader />
-            </Center>
-          ) : (
-            env.NEXT_PUBLIC_GPTT_UUID && (
-              <iframe
-                src={`https://app.gpt-trainer.com/gpt-trainer-widget/${env.NEXT_PUBLIC_GPTT_UUID}?token=${token}`}
-                width="100%"
-                height="100%"
-              />
-            )
-          )}
-        </Card>
+        <AssistantChat token={token} width="100%" height="100%" sx={{ height: '100%' }} />
       </Grid.Col>
       <Grid.Col>
         <Text size="md">
