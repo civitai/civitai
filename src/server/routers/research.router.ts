@@ -160,7 +160,7 @@ export const researchRouter = router({
         AND p."publishedAt" IS NOT NULL
         AND ${Prisma.join(where, ' AND ')}
       ORDER BY i.id
-      LIMIT 10;
+      LIMIT 30;
     `;
 
     return {
