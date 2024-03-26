@@ -2645,6 +2645,7 @@ type ImageRatingRequestResponse = {
     [NsfwLevel.X]: NsfwLevel.X;
     [NsfwLevel.XXX]: NsfwLevel.XXX;
   };
+  url: string;
   nsfwLevel: number;
   width: number | null;
   height: number | null;
@@ -2696,9 +2697,9 @@ export async function getImageRatingRequests({ cursor, limit }: InfiniteQueryInp
   const imageIds = results.map((x) => x.id);
   const tagsOnImage = await dbRead.tagsOnImage.findMany({
     where: {
-      tagId: { in: imageIds },
+      imageId: { in: imageIds },
       disabled: { not: true },
-      tag: { nsfwLevel: { in: nsfwBrowsingLevelsArray } },
+      // tag: { nsfwLevel: { in: nsfwBrowsingLevelsArray } },
     },
     select: { imageId: true, tag: { select: { id: true, name: true, nsfwLevel: true } } },
   });

@@ -105,7 +105,7 @@ export default function ArticleDetailsPage({
   if (isLoading) return <PageLoader />;
   if (!article) return <NotFound />;
 
-  if (!getIsSafeBrowsingLevel(article.nsfwLevel) && !currentUser)
+  if (hasPublicBrowsingLevel(article.nsfwLevel) && !currentUser)
     return (
       <>
         {meta}

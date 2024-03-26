@@ -111,7 +111,10 @@ import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { HowToButton } from '~/components/Model/HowToUseModel/HowToUseModel';
 import { Adunit } from '~/components/Ads/AdUnit';
 import { adsRegistry } from '~/components/Ads/adsRegistry';
-import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import {
+  getIsSafeBrowsingLevel,
+  hasPublicBrowsingLevel,
+} from '~/shared/constants/browsingLevel.constants';
 import { ToggleModelNotification } from '~/components/Model/Actions/ToggleModelNotification';
 import { useToggleFavoriteMutation } from '~/components/ResourceReview/resourceReview.utils';
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
@@ -492,7 +495,7 @@ export default function ModelDetailsV2({
     />
   );
 
-  if (!getIsSafeBrowsingLevel(model.nsfwLevel) && !currentUser)
+  if (hasPublicBrowsingLevel(selectedVersion.nsfwLevel ?? model.nsfwLevel) && !currentUser)
     return (
       <>
         {meta}
