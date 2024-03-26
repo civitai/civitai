@@ -34,6 +34,7 @@ import { InlineSocialLinkInput } from '~/components/Profile/InlineSocialLinkInpu
 import { ShowcaseItemsInput } from '~/components/Profile/ShowcaseItemsInput';
 import { ProfileSectionsSettingsInput } from '~/components/Profile/ProfileSectionsSettingsInput';
 import { ClubResourceManagementInput } from '~/components/Club/ClubResourceManagementInput';
+import { FlagInput } from '~/libs/form/components/FlagInput';
 
 export * from './Form';
 
@@ -91,3 +92,4 @@ export const InputCheckbox = withWatcher(
     checked: field.value ?? false,
   }))
 );
+export const InputFlag = withWatcher(withController(FlagInput));

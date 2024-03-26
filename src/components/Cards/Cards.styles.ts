@@ -10,8 +10,7 @@ export const useCardStyles = createStyles<string, { aspectRatio: number }>(
 
     return {
       root: {
-        position: 'relative',
-        overflow: 'hidden',
+        height: '100%',
         color: 'white',
         '&:hover': {
           [`& .${imageRef}`]: {
@@ -34,21 +33,6 @@ export const useCardStyles = createStyles<string, { aspectRatio: number }>(
         padding: '12px',
         background: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[2],
         width: '100%',
-      },
-
-      withHeader: {
-        flexDirection: 'column',
-        justifyContent: 'flex-start',
-
-        [`& .${headerRef}`]: {
-          height: '60px',
-        },
-        [`& .${imageRef}`]: {
-          height: 'calc(100% - 60px)',
-        },
-        [`& .${topRef}`]: {
-          top: '60px',
-        },
       },
 
       blurHash: {

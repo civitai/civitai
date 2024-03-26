@@ -1,12 +1,13 @@
-import React, { createContext, useContext, useState, useRef, useEffect, useCallback } from 'react';
-import { useFiltersContext } from '~/providers/FiltersProvider';
-import { BrowsingMode } from '~/server/common/enums';
+import React, { createContext, useContext, useState } from 'react';
+
+import { NsfwLevel } from '~/server/common/enums';
 import { useGenerationStore } from '~/store/generation.store';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { env } from '~/env/client.mjs';
 import { isProd } from '~/env/other';
 import Script from 'next/script';
 import { useConsentManager } from '~/components/Ads/ads.utils';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 
 type AdProvider = 'ascendeum' | 'exoclick' | 'adsense';
 const adProviders: AdProvider[] = ['ascendeum'];
@@ -45,9 +46,8 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
   });
 
   // derived value from browsingMode and nsfwOverride
-  const nsfw = useFiltersContext(
-    useCallback((state) => nsfwOverride ?? state.browsingMode !== BrowsingMode.SFW, [nsfwOverride])
-  );
+  const browsingLevel = useBrowsingLevelDebounced();
+  const nsfw = browsingLevel > NsfwLevel.PG;
 
   // const readyRef = useRef(false);
   // useEffect(() => {

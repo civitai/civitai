@@ -117,6 +117,7 @@ export default function UserModelsPage() {
                     ...queryFilters,
                     sort,
                     period,
+                    pending: true,
                     hidden,
                     followed,
                   }}

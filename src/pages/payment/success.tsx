@@ -35,7 +35,7 @@ export default function PaymentSuccess() {
 
   return (
     <>
-      <Meta title="Successful Payment | Civitai" deIndex="noindex, nofollow" />
+      <Meta title="Successful Payment | Civitai" deIndex />
       <Container size="xs" mb="lg">
         <Stack>
           <Alert radius="sm" color="green" sx={{ zIndex: 10 }}>

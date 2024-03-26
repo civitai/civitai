@@ -33,14 +33,21 @@ import { ResourceReviewDetailModel } from '~/server/services/resourceReview.serv
 import { formatDate } from '~/utils/date-helpers';
 import { removeTags, slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 
 export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
   const router = useRouter();
   const isModelPage = !!router.query.id && !router.pathname.includes('/reviews');
 
   const { data, isLoading } = trpc.resourceReview.get.useQuery({ id: reviewId });
+  const browsingLevel = useBrowsingLevelDebounced();
   const { data: relatedPosts, isLoading: loadingRelatedPosts } = trpc.post.getInfinite.useQuery(
-    { username: data?.user.username, modelVersionId: data?.modelVersion.id, sort: PostSort.Newest },
+    {
+      username: data?.user.username,
+      modelVersionId: data?.modelVersion.id,
+      sort: PostSort.Newest,
+      browsingLevel,
+    },
     { enabled: !!data }
   );
 

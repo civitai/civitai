@@ -23,7 +23,6 @@ import { IconTrash } from '@tabler/icons-react';
 import { GetPaginatedClubResourcesSchema } from '~/server/schema/club.schema';
 import { ClubResourceGetPaginatedItem } from '~/types/router';
 import { trpc } from '~/utils/trpc';
-import { matureLabel } from '~/components/Post/Edit/EditPostControls';
 import { ClubResourcePagedUpdateForm } from '~/components/Club/ClubResourcePagedUpdateForm';
 import { showSuccessNotification } from '~/utils/notifications';
 

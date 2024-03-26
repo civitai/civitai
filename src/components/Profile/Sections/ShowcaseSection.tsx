@@ -20,7 +20,7 @@ export const ShowcaseSection = ({ user }: ProfileSectionProps) => {
   });
   const showcaseItems = user.profile.showcaseItems as ShowcaseItemSchema[];
   const {
-    data: _coverImages = [],
+    data: _coverImages,
     isLoading,
     isRefetching,
   } = trpc.image.getEntitiesCoverImage.useQuery(
@@ -36,10 +36,10 @@ export const ShowcaseSection = ({ user }: ProfileSectionProps) => {
 
   const transformed = useMemo(
     () =>
-      _coverImages.map((image) => ({
+      _coverImages?.map((image) => ({
         ...image,
         tagIds: image.tags?.map((x) => x.id),
-      })),
+      })) ?? [],
     [_coverImages]
   );
 

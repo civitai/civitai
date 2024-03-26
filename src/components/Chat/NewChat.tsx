@@ -5,9 +5,9 @@ import React, { useState } from 'react';
 import { ChatActions } from '~/components/Chat/ChatActions';
 import { useChatContext } from '~/components/Chat/ChatProvider';
 import { QuickSearchDropdown } from '~/components/Search/QuickSearchDropdown';
+import { SearchIndexDataMap } from '~/components/Search/search.utils2';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { UserSearchIndexRecord } from '~/server/search-index/users.search-index';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -142,7 +142,7 @@ export function NewChat() {
           disableInitialSearch
           supportedIndexes={['users']}
           onItemSelected={(_entity, item) => {
-            const newUsers = [...state.selectedUsers, item as UserSearchIndexRecord];
+            const newUsers = [...state.selectedUsers, item as SearchIndexDataMap['users'][number]];
             // TODO make this a constant
             if (newUsers.length > 9) {
               showErrorNotification({

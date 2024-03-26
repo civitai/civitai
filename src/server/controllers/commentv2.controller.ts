@@ -22,11 +22,11 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { commentV2Select } from '~/server/selectors/commentv2.selector';
-import { getHiddenUsersForUser } from '~/server/services/user-cache.service';
 import { TRPCError } from '@trpc/server';
 import { dbRead } from '../db/client';
 import { ToggleHideCommentInput } from '~/server/schema/commentv2.schema';
 import { hasEntityAccess } from '../services/common.service';
+import { HiddenUsers } from '~/server/services/user-preferences.service';
 
 export type InfiniteCommentResults = AsyncReturnType<typeof getInfiniteCommentsV2Handler>;
 export type InfiniteCommentV2Model = InfiniteCommentResults['comments'][0];
@@ -40,7 +40,9 @@ export const getInfiniteCommentsV2Handler = async ({
   try {
     const limit = input.limit + 1;
 
-    const excludedUserIds = await getHiddenUsersForUser({ userId: ctx.user?.id });
+    const excludedUserIds = (await HiddenUsers.getCached({ userId: ctx.user?.id })).map(
+      (x) => x.id
+    );
     const comments = await getComments({
       ...input,
       excludedUserIds,

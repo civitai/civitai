@@ -39,20 +39,26 @@ export const AlertDialog = ({ type, ...props }: Props) => {
 
   return (
     <Modal {...dialog} size="sm" withCloseButton={false} radius="md">
-      <Stack align="center">
-        <Group spacing="xs">
-          {icon}
-          {typeof title === 'string' ? (
-            <Text size="lg" weight="bold">
-              {title}
-            </Text>
-          ) : (
-            title
-          )}
-        </Group>
-        <Divider mx="-lg" />
-        <Stack>{typeof children === 'function' ? children({ handleClose }) : children}</Stack>
-      </Stack>
+      {title ? (
+        <Stack align="center">
+          <Group spacing="xs">
+            {icon}
+            {typeof title === 'string' ? (
+              <Text size="lg" weight="bold">
+                {title}
+              </Text>
+            ) : (
+              title
+            )}
+          </Group>
+          <Divider mx="-lg" />
+          <Stack>{typeof children === 'function' ? children({ handleClose }) : children}</Stack>
+        </Stack>
+      ) : typeof children === 'function' ? (
+        children({ handleClose })
+      ) : (
+        children
+      )}
     </Modal>
   );
 };

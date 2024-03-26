@@ -15,10 +15,9 @@ import {
 } from '~/server/schema/comment.schema';
 import { getAllCommentsSelect } from '~/server/selectors/comment.selector';
 import { getReactionsSelect } from '~/server/selectors/reaction.selector';
-import { getHiddenUsersForUser } from '~/server/services/user-cache.service';
+import { HiddenUsers } from '~/server/services/user-preferences.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
-import { CommentGetById } from '~/types/router';
 
 export const getComments = async <TSelect extends Prisma.CommentSelect>({
   input: {
@@ -42,7 +41,7 @@ export const getComments = async <TSelect extends Prisma.CommentSelect>({
   const isMod = user?.isModerator ?? false;
   // const canViewNsfw = user?.showNsfw ?? env.UNAUTHENTICATED_LIST_NSFW;
 
-  const excludedUserIds = await getHiddenUsersForUser({ userId: user?.id });
+  const excludedUserIds = (await HiddenUsers.getCached({ userId: user?.id })).map((x) => x.id);
 
   if (filterBy?.includes(ReviewFilter.IncludesImages)) return [];
 

@@ -38,7 +38,7 @@ export default function ModelLicensePage({
 
   return (
     <>
-      <Meta title={`${data.model.name} License`} deIndex="noindex, nofollow" />
+      <Meta title={`${data.model.name} License`} deIndex />
       <Container size="md" p="xl">
         <Stack>
           <Group>

@@ -11,7 +11,7 @@ import {
   Text,
   Title,
 } from '@mantine/core';
-import { ArticleEngagementType, Availability, NsfwLevel } from '@prisma/client';
+import { ArticleEngagementType, Availability } from '@prisma/client';
 import { IconBolt, IconBookmark, IconShare3 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
 import { InferGetServerSidePropsType } from 'next';
@@ -51,8 +51,11 @@ import { removeTags, slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
-import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
+import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
+import { getIsSafeBrowsingLevel } from '../../../shared/constants/browsingLevel.constants';
+import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 
 const querySchema = z.object({
   id: z.preprocess(parseNumericString, z.number()),
@@ -84,39 +87,25 @@ export default function ArticleDetailsPage({
   const { data: article, isLoading } = trpc.article.getById.useQuery({ id });
   const tippedAmount = useBuzzTippingStore({ entityType: 'Article', entityId: id });
 
-  const meta = (
+  const meta = article ? (
     <Meta
-      title={`${article?.title} | Civitai`}
-      description={
-        article?.content ? truncate(removeTags(article.content), { length: 150 }) : undefined
-      }
-      image={
-        article?.nsfw || article?.cover == null
-          ? undefined
-          : getEdgeUrl(article.cover, { width: 1200 })
-      }
-      links={
-        article
-          ? [
-              {
-                href: `${env.NEXT_PUBLIC_BASE_URL}/articles/${article.id}/${slugit(article.title)}`,
-                rel: 'canonical',
-              },
-            ]
-          : undefined
-      }
-      deIndex={
-        !article?.publishedAt || article?.availability === Availability.Unsearchable
-          ? 'noindex'
-          : undefined
-      }
+      title={`${article.title} | Civitai`}
+      description={truncate(removeTags(article.content), { length: 150 })}
+      images={article?.coverImage}
+      links={[
+        {
+          href: `${env.NEXT_PUBLIC_BASE_URL}/articles/${article.id}/${slugit(article.title)}`,
+          rel: 'canonical',
+        },
+      ]}
+      deIndex={!article?.publishedAt || article?.availability === Availability.Unsearchable}
     />
-  );
+  ) : null;
 
   if (isLoading) return <PageLoader />;
   if (!article) return <NotFound />;
 
-  if (article.nsfw && !currentUser)
+  if (!getIsSafeBrowsingLevel(article.nsfwLevel) && !currentUser)
     return (
       <>
         {meta}
@@ -178,7 +167,7 @@ export default function ArticleDetailsPage({
     </Group>
   );
 
-  const coverImage = article.coverImage;
+  const image = article.coverImage;
   const maxWidth = 1320;
 
   return (
@@ -255,47 +244,34 @@ export default function ArticleDetailsPage({
                   },
                 })}
               >
-                {/* TODO.Briant - ImageGuard */}
-                {coverImage && (
-                  <ImageGuard
-                    connect={{ entityId: article.id, entityType: 'article' }}
-                    images={[coverImage]}
-                    render={(image) => {
-                      const width = image.width ?? maxWidth;
-                      return (
-                        <>
-                          <ImageGuard.ToggleConnect position="top-left" />
-                          <ImageGuard.Report />
-                          <ImageGuard.Content>
-                            {({ safe }) =>
-                              !safe ? (
-                                <div
-                                  className="hashWrapper"
-                                  style={{
-                                    position: 'relative',
-                                    // aspectRatio: (image.width ?? 0) / (image.height ?? 0),
-                                    // maxWidth: image.width ?? undefined,
-                                    // maxHeight: image.height ?? undefined,
-                                  }}
-                                >
-                                  <MediaHash {...image} />
-                                </div>
-                              ) : (
-                                <EdgeMedia
-                                  src={image.url}
-                                  name={image.name}
-                                  alt={article.title}
-                                  type={image.type}
-                                  width={maxWidth}
-                                  anim={safe}
-                                />
-                              )
-                            }
-                          </ImageGuard.Content>
-                        </>
-                      );
-                    }}
-                  />
+                {image && (
+                  <ImageGuard2 image={image} connectType="article" connectId={article.id}>
+                    {(safe) => (
+                      <RoutedDialogLink name="imageDetail" state={{ imageId: image.id }}>
+                        <ImageGuard2.BlurToggle className="absolute top-2 left-2 z-10" />
+                        <ImageContextMenu image={image} className="absolute top-2 right-2 z-10" />
+                        {!safe ? (
+                          <div
+                            className="hashWrapper"
+                            style={{
+                              position: 'relative',
+                            }}
+                          >
+                            <MediaHash {...image} />
+                          </div>
+                        ) : (
+                          <EdgeMedia
+                            src={image.url}
+                            name={image.name}
+                            alt={article.title}
+                            type={image.type}
+                            width={maxWidth}
+                            anim={safe}
+                          />
+                        )}
+                      </RoutedDialogLink>
+                    )}
+                  </ImageGuard2>
                 )}
               </Box>
               {article.content && (

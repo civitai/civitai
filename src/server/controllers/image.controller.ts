@@ -1,7 +1,7 @@
 import {
   GetEntitiesCoverImage,
   GetImageInput,
-  GetInfiniteImagesInput,
+  GetInfiniteImagesOutput,
   ImageModerationSchema,
   ImageReviewQueueInput,
 } from './../schema/image.schema';
@@ -14,7 +14,7 @@ import {
   getImageResources,
   moderateImages,
 } from './../services/image.service';
-import { NsfwLevel, ReportReason, ReportStatus } from '@prisma/client';
+import { ReportReason, ReportStatus } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -34,21 +34,9 @@ import {
 import { BlockedReason, ImageSort } from '~/server/common/enums';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { hasEntityAccess } from '../services/common.service';
-import { isDefined } from '../../utils/type-guards';
 import { getGallerySettingsByModelId } from '~/server/services/model.service';
-
-type SortableImage = {
-  nsfw: NsfwLevel;
-  createdAt: Date;
-  connections: {
-    index: number | null;
-  } | null;
-};
-const sortByIndex = (a: SortableImage, b: SortableImage) => {
-  const aIndex = a.connections?.index ?? 0;
-  const bIndex = b.connections?.index ?? 0;
-  return aIndex - bIndex;
-};
+import { Flags } from '~/shared/utils';
+import { getNsfwLeveLDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
 
 export const moderateImageHandler = async ({
   input,
@@ -94,7 +82,7 @@ export const deleteImageHandler = async ({
       await ctx.track.image({
         type: 'Delete',
         imageId: input.id,
-        nsfw: image.nsfw,
+        nsfw: getNsfwLeveLDeprecatedReverseMapping(image.nsfwLevel),
         tags: imageTags.map((x) => x.tagName),
         ownerId: image.userId,
       });
@@ -123,7 +111,7 @@ export const setTosViolationHandler = async ({
     const image = await dbRead.image.findFirst({
       where: { id },
       select: {
-        nsfw: true,
+        nsfwLevel: true,
         tags: {
           select: {
             tag: {
@@ -181,7 +169,7 @@ export const setTosViolationHandler = async ({
     await ctx.track.image({
       type: 'DeleteTOS',
       imageId: id,
-      nsfw: image.nsfw,
+      nsfw: getNsfwLeveLDeprecatedReverseMapping(image.nsfwLevel),
       tags: image.tags.map((x) => x.tag.name),
       ownerId: image.userId,
     });
@@ -215,14 +203,13 @@ export const getInfiniteImagesHandler = async ({
   input,
   ctx,
 }: {
-  input: GetInfiniteImagesInput;
+  input: GetInfiniteImagesOutput;
   ctx: Context;
 }) => {
   try {
     return await getAllImages({
       ...input,
-      userId: ctx.user?.id,
-      isModerator: ctx.user?.isModerator,
+      user: ctx.user,
       headers: { src: 'getInfiniteImagesHandler' },
       include: [...input.include, 'tagIds'],
     });
@@ -250,7 +237,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
   input: { limit, cursor, hidden, ...input },
   ctx,
 }: {
-  input: GetInfiniteImagesInput;
+  input: GetInfiniteImagesOutput;
   ctx: Context;
 }) => {
   try {
@@ -269,7 +256,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
         cursor,
         ids: fetchHidden ? hiddenImagesIds : undefined,
         limit: Math.ceil(limit * 3), // Overscan so that I can merge by postId
-        userId: ctx.user?.id,
+        user: ctx.user,
         headers: { src: 'getImagesAsPostsInfiniteHandler' },
         include: [...input.include, 'tagIds'],
       });
@@ -309,14 +296,6 @@ export const getImagesAsPostsInfiniteHandler = async ({
       orderBy: { rating: 'desc' },
     });
 
-    const postIds = Object.keys(posts).filter(isDefined).map(Number);
-    const entityAccess = await hasEntityAccess({
-      userId: ctx?.user?.id,
-      isModerator: ctx?.user?.isModerator,
-      entityIds: postIds,
-      entityType: 'Post',
-    });
-
     // Prepare the results
     const results = Object.values(posts).map((images) => {
       const [image] = images;
@@ -325,17 +304,21 @@ export const getImagesAsPostsInfiniteHandler = async ({
       const createdAt = images.map((image) => image.createdAt).sort()[0];
 
       if (input.sort === ImageSort.Newest) images.sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
-
-      const access = entityAccess.find((x) => x.entityId === image.postId);
+      const imageNsfwLevels = images.map((x) => x.nsfwLevel);
+      let nsfwLevel = 0;
+      for (const imageNsfwLevel of imageNsfwLevels) {
+        nsfwLevel = Flags.addFlag(nsfwLevel, imageNsfwLevel);
+      }
 
       return {
         postId: image.postId as number,
         postTitle: image.postTitle,
+        nsfwLevel,
         modelVersionId: image.modelVersionId,
         publishedAt: image.publishedAt,
         createdAt,
         user,
-        images: access?.hasAccess ?? true ? images : [images[0]],
+        images: images,
         review: review
           ? {
               rating: review.rating,

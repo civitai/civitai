@@ -9,8 +9,12 @@ import {
   CollectionWriteConfiguration,
 } from '@prisma/client';
 import { imageSchema } from '~/server/schema/image.schema';
-import { infiniteQuerySchema, userPreferencesSchema } from '~/server/schema/base.schema';
-import { BrowsingMode, CollectionReviewSort, CollectionSort } from '~/server/common/enums';
+import {
+  baseQuerySchema,
+  infiniteQuerySchema,
+  userPreferencesSchema,
+} from '~/server/schema/base.schema';
+import { CollectionReviewSort, CollectionSort } from '~/server/common/enums';
 import { constants } from '~/server/common/constants';
 import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
 
@@ -162,18 +166,15 @@ export const followCollectionInputSchema = z.object({
 });
 
 export type GetAllCollectionItemsSchema = z.infer<typeof getAllCollectionItemsSchema>;
-export const getAllCollectionItemsSchema = z
-  .object({
-    limit: z.number().min(0).max(100),
-    page: z.number(),
-    cursor: z.number(),
-    collectionId: z.number(),
-    statuses: z.array(z.nativeEnum(CollectionItemStatus)),
-    forReview: z.boolean().optional(),
-    reviewSort: z.nativeEnum(CollectionReviewSort).optional(),
-  })
-  .partial()
-  .required({ collectionId: true });
+export const getAllCollectionItemsSchema = baseQuerySchema.extend({
+  limit: z.number().min(0).max(100).optional(),
+  page: z.number().optional(),
+  cursor: z.number().optional(),
+  collectionId: z.number(),
+  statuses: z.array(z.nativeEnum(CollectionItemStatus)).optional(),
+  forReview: z.boolean().optional(),
+  reviewSort: z.nativeEnum(CollectionReviewSort).optional(),
+});
 
 export type UpdateCollectionItemsStatusInput = z.infer<typeof updateCollectionItemsStatusInput>;
 export const updateCollectionItemsStatusInput = z.object({
@@ -191,9 +192,6 @@ export const addSimpleImagePostInput = z.object({
 export type GetAllCollectionsInfiniteSchema = z.infer<typeof getAllCollectionsInfiniteSchema>;
 export const getAllCollectionsInfiniteSchema = infiniteQuerySchema
   .extend({
-    browsingMode: z
-      .nativeEnum(BrowsingMode)
-      .default(constants.collectionFilterDefaults.browsingMode),
     userId: z.number(),
     types: z.array(z.nativeEnum(CollectionType)),
     privacy: z.array(z.nativeEnum(CollectionReadConfiguration)),

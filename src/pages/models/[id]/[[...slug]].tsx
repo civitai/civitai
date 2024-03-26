@@ -111,6 +111,7 @@ import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { HowToButton } from '~/components/Model/HowToUseModel/HowToUseModel';
 import { Adunit } from '~/components/Ads/AdUnit';
 import { adsRegistry } from '~/components/Ads/adsRegistry';
+import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { ToggleModelNotification } from '~/components/Model/Actions/ToggleModelNotification';
 import { useToggleFavoriteMutation } from '~/components/ResourceReview/resourceReview.utils';
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
@@ -144,7 +145,7 @@ export const getServerSideProps = createServerSideProps({
           period: 'AllTime',
           sort: ImageSort.MostReactions,
           limit: CAROUSEL_LIMIT,
-          // browsingMode: parseBrowsingMode(ctx.req.cookies, session),
+          pending: true,
         });
 
       if (modelVersionIdParsed) {
@@ -231,6 +232,7 @@ export default function ModelDetailsV2({
       period: 'AllTime',
       sort: ImageSort.MostReactions,
       limit: CAROUSEL_LIMIT,
+      pending: true,
     },
     {
       enabled: !!latestVersion,
@@ -451,8 +453,8 @@ export default function ModelDetailsV2({
     );
   if (modelDoesntExist || (modelDeleted && !isModerator) || modelNotVisible) return <NotFound />;
 
-  const userNotBlurringNsfw = currentUser?.blurNsfw !== false;
-  const nsfw = userNotBlurringNsfw && model.nsfw === true;
+  const image = versionImages.find((image) => getIsSafeBrowsingLevel(image.nsfwLevel));
+  const imageUrl = image ? getEdgeUrl(image.url, { width: 1200 }) : undefined;
   const metaSchema = {
     '@context': 'https://schema.org',
     '@type': 'SoftwareApplication',
@@ -460,10 +462,7 @@ export default function ModelDetailsV2({
     applicationSubCategory: 'Stable Diffusion Model',
     description: model.description,
     name: model.name,
-    image:
-      nsfw || versionImages[0]?.url == null
-        ? undefined
-        : getEdgeUrl(versionImages[0].url, { width: 1200 }),
+    image: imageUrl,
     author: model.user.username,
     datePublished: model.publishedAt,
     aggregateRating: {
@@ -479,11 +478,7 @@ export default function ModelDetailsV2({
         selectedVersion ? ' - ' + selectedVersion.name : ''
       } | Stable Diffusion ${getDisplayName(model.type)} | Civitai`}
       description={truncate(removeTags(model.description ?? ''), { length: 150 })}
-      image={
-        nsfw || versionImages[0]?.url == null
-          ? undefined
-          : getEdgeUrl(versionImages[0].url, { width: 1200 })
-      }
+      images={versionImages}
       links={[
         {
           href: `${env.NEXT_PUBLIC_BASE_URL}/models/${model.id}/${slugit(model.name)}`,
@@ -493,13 +488,11 @@ export default function ModelDetailsV2({
       schema={metaSchema}
       deIndex={
         model.status !== ModelStatus.Published || model.availability === Availability.Unsearchable
-          ? 'noindex'
-          : undefined
       }
     />
   );
 
-  if (model.nsfw && !currentUser)
+  if (!getIsSafeBrowsingLevel(model.nsfwLevel) && !currentUser)
     return (
       <>
         {meta}

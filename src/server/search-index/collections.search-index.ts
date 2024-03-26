@@ -17,7 +17,6 @@ import {
   CosmeticSource,
   CosmeticType,
   MediaType,
-  NsfwLevel,
   Prisma,
   PrismaClient,
 } from '@prisma/client';
@@ -27,6 +26,7 @@ import { isDefined } from '~/utils/type-guards';
 import { uniqBy } from 'lodash-es';
 import { dbRead } from '~/server/db/client';
 import { imageGenerationSchema, ImageMetaProps } from '~/server/schema/image.schema';
+import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { SearchIndexUpdate } from '~/server/search-index/SearchIndexUpdate';
 
 const READ_BATCH_SIZE = 250; // 10 items per collection are fetched for images. Careful with this number
@@ -78,7 +78,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     console.log('onIndexSetup :: updateRankingRulesTask created', updateRankingRulesTask);
   }
 
-  const filterableAttributes = ['user.username', 'type'];
+  const filterableAttributes = ['user.username', 'type', 'nsfwLevel'];
 
   if (
     // Meilisearch stores sorted.
@@ -108,12 +108,13 @@ type ImageProps = {
   hash: string | null;
   height: number | null;
   width: number | null;
-  nsfw: NsfwLevel;
+  nsfwLevel: number;
   postId: number | null;
   index: number | null;
   scannedAt: Date | null;
   mimeType: string | null;
   meta: Prisma.JsonObject | null;
+  userId: number;
 } | null;
 
 type CollectionForSearchIndex = {
@@ -126,6 +127,7 @@ type CollectionForSearchIndex = {
   write: CollectionWriteConfiguration;
   userId: number;
   mode: CollectionMode | null;
+  nsfwLevel: number;
   metrics: {
     followerCount: number;
     itemCount: number;
@@ -200,7 +202,7 @@ const onFetchItemsToIndex = async ({
         'postId', i."postId",
         'name', i."name",
         'url', i."url",
-        'nsfw', i."nsfw",
+        'nsfwLevel', i."nsfwLevel",
         'width', i."width",
         'height', i."height",
         'hash', i."hash",
@@ -208,6 +210,7 @@ const onFetchItemsToIndex = async ({
         'mimeType', i."mimeType",
         'scannedAt', i."scannedAt",
         'type', i."type",
+        'userId', i."userId",
         'meta', i."meta"
       ) image
   `;
@@ -225,7 +228,8 @@ const onFetchItemsToIndex = async ({
     c."type",
     c."read",
     c."write",
-    c."mode"
+    c."mode",
+    c."nsfwLevel"   
     FROM "Collection" c
     WHERE ${Prisma.join(WHERE, ' AND ')}
     OFFSET ${offset} LIMIT ${READ_BATCH_SIZE}
@@ -422,6 +426,7 @@ const onFetchItemsToIndex = async ({
 
     return {
       ...collection,
+      nsfwLevel: parseBitwiseBrowsingLevel(collection.nsfwLevel),
       image: collectionImage,
       metrics: collection.metrics || {},
       user: {

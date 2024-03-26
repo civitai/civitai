@@ -217,7 +217,7 @@ export default function Reports() {
 
   return (
     <>
-      <Meta title="Reports" deIndex="noindex, nofollow" />
+      <Meta title="Reports" deIndex />
       <Container size="xl" pb="xl">
         <Stack>
           <Group align="flex-end">

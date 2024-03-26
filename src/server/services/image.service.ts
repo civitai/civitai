@@ -3,7 +3,6 @@ import {
   ImageGenerationProcess,
   ImageIngestionStatus,
   MediaType,
-  NsfwLevel,
   Prisma,
   ReportReason,
   ReportStatus,
@@ -13,20 +12,21 @@ import {
 import { TRPCError } from '@trpc/server';
 import { chunk, truncate } from 'lodash-es';
 import { SessionUser } from 'next-auth';
-import { isDev, isProd } from '~/env/other';
+import { isProd } from '~/env/other';
 import { env } from '~/env/server.mjs';
-import { nsfwLevelOrder } from '~/libs/moderation';
 import { VotableTagModel } from '~/libs/tags';
-import { BlockedReason, ImageScanType, ImageSort } from '~/server/common/enums';
+import { BlockedReason, ImageScanType, ImageSort, NsfwLevel } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
 import {
   CreateImageSchema,
   GetEntitiesCoverImage,
+  GetInfiniteImagesOutput,
   ImageEntityType,
   ImageReviewQueueInput,
   ImageUploadProps,
+  UpdateImageNsfwLevelOutput,
   UpdateImageInput,
 } from '~/server/schema/image.schema';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
@@ -34,7 +34,7 @@ import { articlesSearchIndex, imagesSearchIndex } from '~/server/search-index';
 import { ImageV2Model } from '~/server/selectors/imagev2.selector';
 import { imageTagCompositeSelect, simpleTagSelect } from '~/server/selectors/tag.selector';
 import { bustCachesForPost, updatePostNsfwLevel } from '~/server/services/post.service';
-import { getModerationTags, getTagsNeedingReview } from '~/server/services/system-cache';
+import { getModeratedTags, getTagsNeedingReview } from '~/server/services/system-cache';
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
 import {
   throwAuthorizationError,
@@ -46,7 +46,6 @@ import { logToDb } from '~/utils/logging';
 import { isDefined } from '~/utils/type-guards';
 import {
   GetImageInput,
-  GetInfiniteImagesInput,
   ImageMetaProps,
   ImageModerationSchema,
   IngestImageInput,
@@ -65,6 +64,7 @@ import { bulkSetReportStatus } from '~/server/services/report.service';
 import { baseS3Client } from '~/utils/s3-client';
 import { pgDbRead, pgDbWrite } from '~/server/db/pgDb';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
+import { trackModActivity } from '~/server/services/moderator.service';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -87,9 +87,9 @@ export const deleteImageById = async ({
 }: GetByIdInput & { updatePost?: boolean }) => {
   updatePost ??= true;
   try {
-    const image = await dbRead.image.findUnique({
+    const image = await dbWrite.image.delete({
       where: { id },
-      select: { url: true, postId: true, nsfw: true, userId: true },
+      select: { url: true, postId: true, nsfwLevel: true, userId: true },
     });
     if (!image) return;
 
@@ -140,7 +140,6 @@ export const updateImageById = async ({
 
 export const moderateImages = async ({
   ids,
-  nsfw,
   needsReview,
   reviewType,
   reviewAction,
@@ -149,7 +148,6 @@ export const moderateImages = async ({
     await dbWrite.image.updateMany({
       where: { id: { in: ids } },
       data: {
-        nsfw,
         needsReview: null,
         ingestion: 'Blocked',
         blockedFor: BlockedReason.Moderated,
@@ -171,7 +169,7 @@ export const moderateImages = async ({
     // Approve
     await dbWrite.image.updateMany({
       where: { id: { in: ids } },
-      data: { nsfw, needsReview, ingestion: 'Scanned' },
+      data: { needsReview, ingestion: 'Scanned' },
     });
 
     // Remove tags that triggered review
@@ -179,7 +177,7 @@ export const moderateImages = async ({
 
     // And moderated tags for POI review (since no NSFW allowed)
     if (reviewType === 'poi') {
-      const moderatedTags = await getModerationTags();
+      const moderatedTags = await getModeratedTags();
       tagIds.push(...moderatedTags.map((x) => x.id));
     }
 
@@ -440,12 +438,14 @@ type GetAllImagesRaw = {
   id: number;
   name: string | null;
   url: string;
-  nsfw: NsfwLevel;
+  nsfwLevel: NsfwLevel;
   width: number | null;
   height: number | null;
   hash: string | null;
   meta: ImageMetaProps | null;
   hideMeta: boolean;
+  hasMeta: boolean;
+  onSite: boolean;
   generationProcess: ImageGenerationProcess | null;
   createdAt: Date;
   mimeType: string | null;
@@ -484,23 +484,20 @@ export const getAllImages = async ({
   cursor,
   skip,
   postId,
+  postIds,
   collectionId,
   modelId,
   modelVersionId,
   imageId,
   username,
-  // excludedImageIds,
   period,
   periodMode,
   sort,
-  userId,
-  isModerator,
   tags,
   generation,
   reviewId,
   prioritizedUserIds,
   include,
-  nsfw,
   excludeCrossPosts,
   reactions,
   ids,
@@ -509,10 +506,12 @@ export const getAllImages = async ({
   hidden,
   followed,
   fromPlatform,
-}: GetInfiniteImagesInput & {
+  browsingLevel,
+  user,
+  pending,
+}: GetInfiniteImagesOutput & {
   userId?: number;
-  isModerator?: boolean;
-  nsfw?: NsfwLevel;
+  user?: SessionUser;
   headers?: Record<string, string>; // does this do anything?
 }) => {
   const AND: Prisma.Sql[] = [Prisma.sql`i."postId" IS NOT NULL`];
@@ -520,8 +519,16 @@ export const getAllImages = async ({
   let orderBy: string;
   const cacheTags: string[] = [];
   let cacheTime = CacheTTL.xs;
+  const userId = user?.id;
+  const isModerator = user?.isModerator ?? false;
 
-  const showClubPosts = !!postId || !!collectionId || !!modelId || !!modelVersionId || !!reviewId;
+  // Filter to specific user content
+  let targetUserId: number | undefined;
+  if (username) {
+    const targetUser = await dbRead.user.findUnique({ where: { username }, select: { id: true } });
+    if (!targetUser) throw new Error('User not found');
+    targetUserId = targetUser.id;
+  }
 
   if (hidden) {
     if (!userId) throw throwAuthorizationError();
@@ -583,15 +590,12 @@ export const getAllImages = async ({
     }
   }
 
-  // Filter to specific user content
-  if (username) {
-    const targetUser = await dbRead.user.findUnique({ where: { username }, select: { id: true } });
-    if (!targetUser) throw new Error('User not found');
-    AND.push(Prisma.sql`u."id" = ${targetUser.id}`);
+  if (targetUserId) {
+    AND.push(Prisma.sql`u."id" = ${targetUserId}`);
     // Don't cache self queries
-    if (targetUser.id !== userId) {
+    if (targetUserId !== userId) {
       cacheTime = CacheTTL.day;
-      cacheTags.push(`images-user:${targetUser.id}`);
+      cacheTags.push(`images-user:${targetUserId}`);
     } else cacheTime = 0;
   }
 
@@ -624,6 +628,7 @@ export const getAllImages = async ({
 
   // Filter to a specific post
   if (postId) AND.push(Prisma.sql`i."postId" = ${postId}`);
+  if (!!postIds?.length) AND.push(Prisma.sql`i."postId" IN (${Prisma.join(postIds)})`);
 
   // Filter to a specific image
   if (imageId) AND.push(Prisma.sql`i.id = ${imageId}`);
@@ -715,12 +720,6 @@ export const getAllImages = async ({
   //   AND.push(Prisma.sql`i."id" IN (${Prisma.join(excludedImageIds ?? [])})`);
   // }
 
-  if (nsfw === NsfwLevel.None) AND.push(Prisma.sql`i."nsfw" = 'None'`);
-  else if (nsfw !== undefined) {
-    const nsfwLevels = nsfwLevelOrder.slice(1, nsfwLevelOrder.indexOf(nsfw) + 1);
-    AND.push(Prisma.sql`i."nsfw" = ANY(ARRAY[${Prisma.join(nsfwLevels)}]::"NsfwLevel"[])`);
-  }
-
   // Limit to images created since period start
   const sortingByMetrics = orderBy.includes('im.');
   if (sortingByMetrics && period !== 'AllTime' && periodMode !== 'stats') {
@@ -773,10 +772,22 @@ export const getAllImages = async ({
     );
   }
 
-  // TODO: Availability query seems to be killing us. Need to figure out how to optimize this.
-  // At the moment, club-required images will show up in the feed.
-  if (!showClubPosts) {
-    AND.push(Prisma.sql`p."availability" != 'Private'`);
+  if (pending && (isModerator || userId)) {
+    if (isModerator) {
+      AND.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`);
+    } else if (userId) {
+      AND.push(Prisma.sql`(i."needsReview" IS NULL OR i."userId" = ${userId})`);
+      AND.push(
+        Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR (i."nsfwLevel" = 0 AND i."userId" = ${userId}))`
+      );
+    }
+  } else {
+    AND.push(Prisma.sql`i."needsReview" IS NULL`);
+    AND.push(
+      browsingLevel
+        ? Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0 AND i."nsfwLevel" != 0`
+        : Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`
+    );
   }
 
   // TODO: Adjust ImageMetric
@@ -797,12 +808,26 @@ export const getAllImages = async ({
       i.id,
       i.name,
       i.url,
-      i.nsfw,
+      i."nsfwLevel",
       i.width,
       i.height,
       i.hash,
       i.meta,
       i."hideMeta",
+      (
+        CASE
+          WHEN i.meta IS NOT NULL AND NOT i."hideMeta"
+          THEN TRUE
+          ELSE FALSE
+        END
+      ) AS "hasMeta",
+      (
+        CASE
+          WHEN i.meta->>'civitaiResources' IS NOT NULL
+          THEN TRUE
+          ELSE FALSE
+        END
+      ) as "onSite",
       i."generationProcess",
       i."createdAt",
       i."mimeType",
@@ -890,7 +915,7 @@ export const getAllImages = async ({
         tagId: true,
         tagName: true,
         tagType: true,
-        tagNsfw: true,
+        tagNsfwLevel: true,
         score: true,
         automated: true,
         upVotes: true,
@@ -899,11 +924,11 @@ export const getAllImages = async ({
       },
     });
 
-    tagsVar = rawTags.map(({ tagId, tagName, tagType, tagNsfw, ...tag }) => ({
+    tagsVar = rawTags.map(({ tagId, tagName, tagType, tagNsfwLevel, ...tag }) => ({
       ...tag,
       id: tagId,
       type: tagType,
-      nsfw: tagNsfw,
+      nsfwLevel: tagNsfwLevel as NsfwLevel,
       name: tagName,
     }));
 
@@ -922,32 +947,31 @@ export const getAllImages = async ({
     }
   }
 
-  // Get user cosmetics
   const userIds = rawImages.map((i) => i.userId);
-  const userCosmetics = include?.includes('cosmetics')
-    ? await getCosmeticsForUsers(userIds)
-    : undefined;
-  const profilePictures = include?.includes('profilePictures')
-    ? await getProfilePicturesForUsers(userIds)
-    : undefined;
+  const [userCosmetics, profilePictures] = await Promise.all([
+    include?.includes('cosmetics') ? await getCosmeticsForUsers(userIds) : undefined,
+    include?.includes('profilePictures') ? await getProfilePicturesForUsers(userIds) : undefined,
+  ]);
 
   const now = new Date();
   const images: Array<
-    ImageV2Model & {
+    Omit<ImageV2Model, 'nsfwLevel'> & {
+      meta: ImageMetaProps | null;
+      hideMeta: boolean;
       tags?: VotableTagModel[] | undefined;
       tagIds?: number[];
       publishedAt?: Date | null;
       modelVersionId?: number | null;
       baseModel?: string | null;
       availability?: Availability;
+      nsfwLevel: NsfwLevel;
     }
   > = rawImages
     .filter((x) => {
       if (isModerator) return true;
-      if (x.needsReview && x.userId !== userId) return false;
-      if ((!x.publishedAt || x.publishedAt > now || !!x.unpublishedAt) && x.userId !== userId)
-        return false;
-      if (x.ingestion !== 'Scanned' && x.userId !== userId) return false;
+      // if (x.needsReview && x.userId !== userId) return false;
+      if ((!x.publishedAt || x.publishedAt > now || !!x.unpublishedAt) && x.userId !== userId) return false;
+      // if (x.ingestion !== 'Scanned' && x.userId !== userId) return false;
       return true;
     })
     .map(
@@ -1076,7 +1100,6 @@ export const getImage = async ({
       i.id,
       i.name,
       i.url,
-      i.nsfw,
       i.height,
       i.width,
       i.index,
@@ -1092,6 +1115,7 @@ export const getImage = async ({
       i.ingestion,
       i.type,
       i.metadata,
+      i."nsfwLevel",
       COALESCE(im."cryCount", 0) "cryCount",
       COALESCE(im."laughCount", 0) "laughCount",
       COALESCE(im."likeCount", 0) "likeCount",
@@ -1219,7 +1243,7 @@ type ImagesForModelVersions = {
   userId: number;
   name: string;
   url: string;
-  nsfw: NsfwLevel;
+  nsfwLevel: NsfwLevel;
   width: number;
   height: number;
   hash: string;
@@ -1231,46 +1255,41 @@ type ImagesForModelVersions = {
   availability: Availability;
   sizeKB?: number;
 };
+
 export const getImagesForModelVersion = async ({
   modelVersionIds,
   excludedTagIds,
   excludedIds,
   excludedUserIds,
-  currentUserId,
   imagesPerVersion = 1,
   include = [],
+  user,
+  pending,
+  browsingLevel,
 }: {
   modelVersionIds: number | number[];
   excludedTagIds?: number[];
   excludedIds?: number[];
   excludedUserIds?: number[];
-  currentUserId?: number;
   imagesPerVersion?: number;
   include?: Array<'meta' | 'tags'>;
+  user?: SessionUser;
+  pending?: boolean;
+  browsingLevel?: number;
 }) => {
   if (!Array.isArray(modelVersionIds)) modelVersionIds = [modelVersionIds];
   if (!modelVersionIds.length) return [] as ImagesForModelVersions[];
 
-  const imageWhere: Prisma.Sql[] = [
-    // Use this to return models that are live on the site, and have images, but are now owned by Civitai.
-    Prisma.sql`(p."userId" = m."userId" OR m."userId" = -1)`,
-    Prisma.sql`p."modelVersionId" IN (${Prisma.join(modelVersionIds)})`,
-    Prisma.sql`i."needsReview" IS NULL`,
-  ];
+  const userId = user?.id;
+  const isModerator = user?.isModerator ?? false;
 
-  // ensure that only scanned images make it to the main feed
-  // nb: if image ingestion fails, models will not make it to any model feed (including the user published tab)
-  if (isProd) {
-    imageWhere.push(
-      Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`
-    );
-  }
+  const imageWhere: Prisma.Sql[] = [Prisma.sql`p."publishedAt" IS NOT NULL`];
 
   if (!!excludedTagIds?.length) {
     const excludedTagsOr: Prisma.Sql[] = [
       Prisma.join(
         [
-          Prisma.sql`i."ingestion" = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`,
+          Prisma.sql`i."nsfwLevel" != 0`,
           Prisma.sql`NOT EXISTS (SELECT 1 FROM "TagsOnImage" toi WHERE toi."imageId" = i.id AND toi.disabled = false AND toi."tagId" IN (${Prisma.join(
             excludedTagIds
           )}) )`,
@@ -1278,7 +1297,7 @@ export const getImagesForModelVersion = async ({
         ' AND '
       ),
     ];
-    if (currentUserId) excludedTagsOr.push(Prisma.sql`i."userId" = ${currentUserId}`);
+    if (userId) excludedTagsOr.push(Prisma.sql`i."userId" = ${userId}`);
     imageWhere.push(Prisma.sql`(${Prisma.join(excludedTagsOr, ' OR ')})`);
   }
   if (!!excludedIds?.length) {
@@ -1286,6 +1305,24 @@ export const getImagesForModelVersion = async ({
   }
   if (!!excludedUserIds?.length) {
     imageWhere.push(Prisma.sql`i."userId" NOT IN (${Prisma.join(excludedUserIds)})`);
+  }
+
+  if (pending && (isModerator || userId) && browsingLevel) {
+    if (isModerator) {
+      imageWhere.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`);
+    } else if (userId) {
+      imageWhere.push(Prisma.sql`(i."needsReview" IS NULL OR i."userId" = ${userId})`);
+      imageWhere.push(
+        Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR (i."nsfwLevel" = 0 AND i."userId" = ${userId}))`
+      );
+    }
+  } else {
+    imageWhere.push(Prisma.sql`i."needsReview" IS NULL`);
+    imageWhere.push(
+      browsingLevel
+        ? Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`
+        : Prisma.sql`i."nsfwLevel" != 0`
+    );
   }
 
   const query = Prisma.sql`
@@ -1302,7 +1339,11 @@ export const getImagesForModelVersion = async ({
         JOIN "Post" p ON p.id = i."postId"
         JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
         JOIN "Model" m ON m.id = mv."modelId"
-        WHERE ${Prisma.join(imageWhere, ' AND ')}
+        WHERE m."userId" != -1
+          AND (p."userId" = m."userId" OR m."userId" = -1)
+          AND p."modelVersionId" IN (${Prisma.join(modelVersionIds)})
+          AND ${Prisma.join(imageWhere, ' AND ')}
+
       ) ranked
       WHERE ranked.row_num <= ${imagesPerVersion}
     )
@@ -1311,23 +1352,68 @@ export const getImagesForModelVersion = async ({
       i."userId",
       i.name,
       i.url,
-      i.nsfw,
+      i."nsfwLevel",
       i.width,
       i.height,
       i.hash,
       i.type,
       i.metadata,
       t."modelVersionId",
-      p."availability",
-      i."sizeKB"
+      p."availability"
       ${Prisma.raw(include.includes('meta') ? ', i.meta' : '')}
     FROM targets t
     JOIN "Image" i ON i.id = t.id
     JOIN "Post" p ON p.id = i."postId"
     ORDER BY i."postId", i."index"
   `;
-  // const { rows: images } = await pgDbRead.query<ImagesForModelVersions>(query);
-  const images = await dbRead.$queryRaw<ImagesForModelVersions[]>(query);
+  let images = await dbRead.$queryRaw<ImagesForModelVersions[]>(query);
+
+  const remainingModelVersionIds = modelVersionIds.filter(
+    (x) => !images.some((i) => i.modelVersionId === x)
+  );
+
+  if (remainingModelVersionIds.length) {
+    const communityImages = await dbRead.$queryRaw<ImagesForModelVersions[]>`
+        WITH targets AS (
+          SELECT
+            id,
+            "modelVersionId",
+            row_num
+          FROM (
+            SELECT
+              ir."imageId" id,
+              ir."modelVersionId",
+              row_number() OVER (PARTITION BY ir."modelVersionId" ORDER BY im."reactionCount" DESC) row_num
+            FROM "ImageResource" ir
+            JOIN "Image" i ON i.id = ir."imageId"
+            JOIN "Post" p ON p.id = i."postId"
+            JOIN "ImageMetric" im ON im."imageId" = ir."imageId" AND im.timeframe = 'AllTime'::"MetricTimeframe"
+            WHERE ir."modelVersionId" IN (${Prisma.join(remainingModelVersionIds)})
+              AND ${Prisma.join(imageWhere, ' AND ')}
+          ) ranked
+          WHERE ranked.row_num <= 20
+        )
+        SELECT
+          i.id,
+          i."userId",
+          i.name,
+          i.url,
+          i."nsfwLevel",
+          i.width,
+          i.height,
+          i.hash,
+          i.type,
+          i.metadata,
+          t."modelVersionId",
+          p."availability"
+          ${Prisma.raw(include.includes('meta') ? ', i.meta' : '')}
+        FROM targets t
+        JOIN "Image" i ON i.id = t.id
+        JOIN "Post" p ON p.id = i."postId"
+        ORDER BY t.row_num
+      `;
+    images = [...images, ...communityImages];
+  }
 
   if (include.includes('tags')) {
     const imageIds = images.map((i) => i.id);
@@ -1351,59 +1437,7 @@ export async function getImagesForModelVersionCache(modelVersionIds: number[]) {
     ids: modelVersionIds,
     ttl: CacheTTL.sm,
     lookupFn: async (ids) => {
-      const imageWhere: Prisma.Sql[] = [
-        // Use this to return models that are live on the site, and have images, but are now owned by Civitai.
-        Prisma.sql`(p."userId" = m."userId" OR m."userId" = -1)`,
-        Prisma.sql`p."modelVersionId" IN (${Prisma.join(ids)})`,
-        Prisma.sql`i."needsReview" IS NULL`,
-      ];
-
-      // ensure that only scanned images make it to the main feed
-      // nb: if image ingestion fails, models will not make it to any model feed (including the user published tab)
-      if (isProd) {
-        imageWhere.push(
-          Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`
-        );
-      }
-
-      const query = Prisma.sql`
-        WITH targets AS (
-          SELECT
-            id,
-            "modelVersionId"
-          FROM (
-            SELECT
-              i.id,
-              p."modelVersionId",
-              row_number() OVER (PARTITION BY p."modelVersionId" ORDER BY i."postId", i.index) row_num
-            FROM "Image" i
-            JOIN "Post" p ON p.id = i."postId"
-            JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
-            JOIN "Model" m ON m.id = mv."modelId"
-            WHERE ${Prisma.join(imageWhere, ' AND ')}
-          ) ranked
-          WHERE ranked.row_num <= 10
-        )
-        SELECT
-          i.id,
-          i."userId",
-          i.name,
-          i.url,
-          i.nsfw,
-          i.width,
-          i.height,
-          i.hash,
-          i.type,
-          i.metadata,
-          t."modelVersionId",
-          p."availability"
-        FROM targets t
-        JOIN "Image" i ON i.id = t.id
-        JOIN "Post" p ON p.id = i."postId"
-        ORDER BY i."postId", i."index"
-      `;
-      // const { rows: images } = await pgDbRead.query<ImagesForModelVersions>(query);
-      const images = await dbRead.$queryRaw<ImagesForModelVersions[]>(query);
+      const images = await getImagesForModelVersion({ modelVersionIds: ids, imagesPerVersion: 20 });
 
       const records: Record<number, CachedImagesForModelVersions> = {};
       for (const image of images) {
@@ -1433,30 +1467,47 @@ export async function deleteImagesForModelVersionCache(modelVersionId: number) {
 export const getImagesForPosts = async ({
   postIds,
   excludedIds,
-  userId,
-  isOwnerRequest,
+  user,
   coverOnly = true,
+  browsingLevel,
+  pending,
 }: {
   postIds: number | number[];
   excludedIds?: number[];
-  userId?: number;
-  isOwnerRequest?: boolean;
   coverOnly?: boolean;
+  browsingLevel?: number;
+  user?: SessionUser;
+  pending?: boolean;
 }) => {
+  const userId = user?.id;
+  const isModerator = user?.isModerator ?? false;
+
   if (!Array.isArray(postIds)) postIds = [postIds];
   const imageWhere: Prisma.Sql[] = [
     Prisma.sql`i."postId" IN (${Prisma.join(postIds)})`,
     Prisma.sql`i."needsReview" IS NULL`,
   ];
 
-  if (!isOwnerRequest) {
-    // ensure that only scanned images make it to the main feed
-    imageWhere.push(
-      Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`
-    );
+  //   if (!!excludedIds?.length)
+  //     imageWhere.push(Prisma.sql`i."id" NOT IN (${Prisma.join(excludedIds)})`);
+  // }
 
-    if (!!excludedIds?.length)
-      imageWhere.push(Prisma.sql`i."id" NOT IN (${Prisma.join(excludedIds)})`);
+  if (pending && (isModerator || userId) && browsingLevel) {
+    if (isModerator) {
+      imageWhere.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`);
+    } else if (userId) {
+      imageWhere.push(Prisma.sql`(i."needsReview" IS NULL OR i."userId" = ${userId})`);
+      imageWhere.push(
+        Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR (i."nsfwLevel" = 0 AND i."userId" = ${userId}))`
+      );
+    }
+  } else {
+    imageWhere.push(Prisma.sql`i."needsReview" IS NULL`);
+    imageWhere.push(
+      browsingLevel
+        ? Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`
+        : Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`
+    );
   }
 
   const images = await dbRead.$queryRaw<
@@ -1465,14 +1516,13 @@ export const getImagesForPosts = async ({
       userId: number;
       name: string;
       url: string;
-      nsfw: NsfwLevel;
+      nsfwLevel: NsfwLevel;
       width: number;
       height: number;
       hash: string;
       createdAt: Date;
       generationProcess: ImageGenerationProcess | null;
       postId: number;
-      imageCount: number;
       cryCount: number;
       laughCount: number;
       likeCount: number;
@@ -1486,31 +1536,33 @@ export const getImagesForPosts = async ({
       reactions?: ReviewReactions[];
     }[]
   >`
-    WITH targets AS (
-      SELECT
-        i."postId",
-        ${Prisma.raw(coverOnly ? 'MIN(i.index) "index",' : '')}
-        COUNT(*) "count"
-      FROM "Image" i
-      WHERE ${Prisma.join(imageWhere, ' AND ')}
-      GROUP BY i."postId"
-    )
     SELECT
       i.id,
       i."userId",
       i.name,
       i.url,
-      i.nsfw,
+      i."nsfwLevel",
       i.width,
       i.height,
       i.hash,
       i.type,
       i.metadata,
-      i.meta,
       i."createdAt",
       i."generationProcess",
-      t."postId",
-      t.count "imageCount",
+      i."postId",
+      ${Prisma.raw(`
+        jsonb_build_object(
+          'prompt', i.meta->>'prompt',
+          'negativePrompt', i.meta->>'negativePrompt',
+          'cfgScale', i.meta->>'cfgScale',
+          'steps', i.meta->>'steps',
+          'sampler', i.meta->>'sampler',
+          'seed', i.meta->>'seed',
+          'hashes', i.meta->>'hashes',
+          'clipSkip', i.meta->>'clipSkip',
+          'Clip skip', i.meta->>'Clip skip'
+        ) as "meta",
+      `)}
       COALESCE(im."cryCount", 0) "cryCount",
       COALESCE(im."laughCount", 0) "laughCount",
       COALESCE(im."likeCount", 0) "likeCount",
@@ -1524,11 +1576,10 @@ export const getImagesForPosts = async ({
         WHERE "imageId" = i.id
         AND "userId" = ${userId}
       ) reactions
-    FROM targets t
-    JOIN "Image" i ON i."postId" = t."postId" ${Prisma.raw(
-      coverOnly ? 'AND i.index = t.index' : ''
-    )}
+    FROM "Image" i
     LEFT JOIN "ImageMetric" im ON im."imageId" = i.id AND im.timeframe = 'AllTime'
+    WHERE ${Prisma.join(imageWhere, ' AND ')}
+    ORDER BY i.index ASC
   `;
   const imageIds = images.map((i) => i.id);
   const rawTags =
@@ -1617,11 +1668,11 @@ export const getIngestionResults = async ({ ids, userId }: { ids: number[]; user
   >((acc, value) => {
     const { id, ingestion, blockedFor, tagComposites } = value;
     const tags: VotableTagModel[] = tagComposites.map(
-      ({ tagId, tagName, tagType, tagNsfw, ...tag }) => ({
+      ({ tagId, tagName, tagType, tagNsfwLevel, ...tag }) => ({
         ...tag,
         id: tagId,
         type: tagType,
-        nsfw: tagNsfw,
+        nsfwLevel: tagNsfwLevel as NsfwLevel,
         name: tagName,
       })
     );
@@ -1658,7 +1709,7 @@ type GetImageConnectionRaw = {
   id: number;
   name: string;
   url: string;
-  nsfw: NsfwLevel;
+  nsfwLevel: NsfwLevel;
   width: number;
   height: number;
   hash: string;
@@ -1737,7 +1788,7 @@ export const getImagesByEntity = async ({
       i.id,
       i.name,
       i.url,
-      i.nsfw,
+      i."nsfwLevel",
       i.width,
       i.height,
       i.hash,
@@ -1767,7 +1818,7 @@ export const getImagesByEntity = async ({
         tagId: true,
         tagName: true,
         tagType: true,
-        tagNsfw: true,
+        tagNsfwLevel: true,
         score: true,
         automated: true,
         upVotes: true,
@@ -1776,11 +1827,11 @@ export const getImagesByEntity = async ({
       },
     });
 
-    tagsVar = rawTags.map(({ tagId, tagName, tagType, tagNsfw, ...tag }) => ({
+    tagsVar = rawTags.map(({ tagId, tagName, tagType, tagNsfwLevel, ...tag }) => ({
       ...tag,
       id: tagId,
       type: tagType,
-      nsfw: tagNsfw,
+      nsfwLevel: tagNsfwLevel as NsfwLevel,
       name: tagName,
     }));
   }
@@ -1908,7 +1959,7 @@ type GetEntityImageRaw = {
   id: number;
   name: string;
   url: string;
-  nsfw: NsfwLevel;
+  nsfwLevel: NsfwLevel;
   width: number;
   height: number;
   hash: string;
@@ -2001,7 +2052,7 @@ export const getEntityCoverImage = async ({
       i.id,
       i.name,
       i.url,
-      i.nsfw,
+      i."nsfwLevel",
       i.width,
       i.height,
       i.hash,
@@ -2032,7 +2083,7 @@ export const getEntityCoverImage = async ({
         tagId: true,
         tagName: true,
         tagType: true,
-        tagNsfw: true,
+        tagNsfwLevel: true,
         score: true,
         automated: true,
         upVotes: true,
@@ -2041,11 +2092,11 @@ export const getEntityCoverImage = async ({
       },
     });
 
-    tagsVar = rawTags.map(({ tagId, tagName, tagType, tagNsfw, ...tag }) => ({
+    tagsVar = rawTags.map(({ tagId, tagName, tagType, tagNsfwLevel, ...tag }) => ({
       ...tag,
       id: tagId,
       type: tagType,
-      nsfw: tagNsfw,
+      nsfwLevel: tagNsfwLevel as NsfwLevel,
       name: tagName,
     }));
   }
@@ -2138,7 +2189,7 @@ type GetImageModerationReviewQueueRaw = {
   id: number;
   name: string;
   url: string;
-  nsfw: NsfwLevel;
+  nsfwLevel: NsfwLevel;
   width: number;
   height: number;
   hash: string;
@@ -2245,7 +2296,7 @@ export const getImageModerationReviewQueue = async ({
       i.id,
       i.name,
       i.url,
-      i.nsfw,
+      i."nsfwLevel",
       i.width,
       i.height,
       i.hash,
@@ -2300,7 +2351,7 @@ export const getImageModerationReviewQueue = async ({
         tagId: true,
         tagName: true,
         tagType: true,
-        tagNsfw: true,
+        tagNsfwLevel: true,
         score: true,
         automated: true,
         upVotes: true,
@@ -2309,11 +2360,11 @@ export const getImageModerationReviewQueue = async ({
       },
     });
 
-    tagsVar = rawTags.map(({ tagId, tagName, tagType, tagNsfw, ...tag }) => ({
+    tagsVar = rawTags.map(({ tagId, tagName, tagType, tagNsfwLevel, ...tag }) => ({
       ...tag,
       id: tagId,
       type: tagType,
-      nsfw: tagNsfw,
+      nsfwLevel: tagNsfwLevel as NsfwLevel,
       name: tagName,
     }));
   }
@@ -2418,7 +2469,7 @@ export async function get404Images() {
       AND c.name = '404 Contest'
       AND i."ingestion" = 'Scanned'
       AND i."needsReview" IS NULL
-      AND i.nsfw = 'None'
+      AND i."nsfwLevel" = 0
       AND ci.status = 'ACCEPTED';
   `;
 
@@ -2561,4 +2612,52 @@ export async function ingestArticleCoverImages(array: { imageId: number; article
   );
 
   await ingestImageBulk({ images, lowPriority: true });
+}
+
+export async function updateImageNsfwLevel({
+  id,
+  nsfwLevel,
+  user,
+}: UpdateImageNsfwLevelOutput & { user: SessionUser }) {
+  if (user.isModerator) {
+    await dbWrite.image.update({ where: { id }, data: { nsfwLevel, nsfwLevelLocked: true } });
+    await trackModActivity(user.id, {
+      entityType: 'image',
+      entityId: id,
+      activity: 'setNsfwLevel',
+    });
+  } else {
+    await dbWrite.imageRatingRequest.upsert({
+      where: { imageId_userId: { imageId: id, userId: user.id } },
+      create: { nsfwLevel, imageId: id, userId: user.id },
+      update: { nsfwLevel },
+    });
+  }
+}
+
+type ImageRatingRequestResponse = {
+  imageId: number;
+  votes: {
+    [NsfwLevel.PG]: NsfwLevel.PG;
+    [NsfwLevel.PG13]: NsfwLevel.PG13;
+    [NsfwLevel.R]: NsfwLevel.R;
+    [NsfwLevel.X]: NsfwLevel.X;
+    [NsfwLevel.XXX]: NsfwLevel.XXX;
+  };
+};
+
+export async function getImageRatingRequests() {
+  const results = await dbRead.$queryRaw<ImageRatingRequestResponse>`
+    SELECT
+      DISTINCT ON ("imageId") "imageId",
+      jsonb_build_object(
+        ${NsfwLevel.PG}, count("nsfwLevel" = ${NsfwLevel.PG}),
+        ${NsfwLevel.PG13}, count("nsfwLevel" = ${NsfwLevel.PG13}),
+        ${NsfwLevel.R}, count("nsfwLevel" = ${NsfwLevel.R}),
+        ${NsfwLevel.X}, count("nsfwLevel" = ${NsfwLevel.X}),
+        ${NsfwLevel.XXX}, count("nsfwLevel" = ${NsfwLevel.XXX}6)
+      ) "votes"
+    FROM "ImageRatingRequest"
+    GROUP BY "imageId"
+  `;
 }

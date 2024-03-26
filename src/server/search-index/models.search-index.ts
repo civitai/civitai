@@ -1,14 +1,7 @@
 import { client, updateDocs } from '~/server/meilisearch/client';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { modelHashSelect } from '~/server/selectors/modelHash.selector';
-import {
-  Availability,
-  MetricTimeframe,
-  ModelHashType,
-  ModelStatus,
-  Prisma,
-  PrismaClient,
-} from '@prisma/client';
+import { Availability, MetricTimeframe, ModelStatus, Prisma, PrismaClient } from '@prisma/client';
 import { isEqual } from 'lodash';
 import { MODELS_SEARCH_INDEX, ModelFileType } from '~/server/common/constants';
 import { getOrCreateIndex, onSearchIndexDocumentsCleanup } from '~/server/meilisearch/util';
@@ -24,6 +17,8 @@ import { ModelFileMetadata } from '~/server/schema/model-file.schema';
 import { withRetries } from '~/server/utils/errorHandling';
 import { getModelVersionsForSearchIndex } from '../selectors/modelVersion.selector';
 import { getUnavailableResources } from '../services/generation/generation.service';
+import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { NsfwLevel } from '../common/enums';
 import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import { SearchIndexUpdate } from '~/server/search-index/SearchIndexUpdate';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
@@ -100,7 +95,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
 
   const filterableAttributes = [
     'hashes',
-    'nsfw',
+    'nsfwLevel',
     'type',
     'checkpointType',
     'tags.name',
@@ -185,7 +180,7 @@ const onFetchItemsToIndex = async ({
           id: true,
           name: true,
           type: true,
-          nsfw: true,
+          nsfwLevel: true,
           status: true,
           createdAt: true,
           lastVersionAt: true,
@@ -262,6 +257,8 @@ const onFetchItemsToIndex = async ({
         ? await getImagesForModelVersion({
             modelVersionIds,
             imagesPerVersion: 10,
+            browsingLevel:
+              NsfwLevel.PG + NsfwLevel.PG13 + NsfwLevel.R + NsfwLevel.X + NsfwLevel.XXX, // Avoid blocked.
           })
         : [];
 
@@ -326,6 +323,7 @@ const onFetchItemsToIndex = async ({
 
           return {
             ...model,
+            nsfwLevel: parseBitwiseBrowsingLevel(model.nsfwLevel),
             lastVersionAtUnix: model.lastVersionAt?.getTime() ?? model.createdAt.getTime(),
             user,
             category: category?.tag,

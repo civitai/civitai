@@ -5,7 +5,10 @@ export const useQueryHiddenPreferences = () => {
   const { data, isLoading } = trpc.hiddenPreferences.getHidden.useQuery(undefined, {
     trpc: { context: { skipBatch: true } },
   });
-  const _data = useMemo(() => data ?? { model: [], image: [], tag: [], user: [] }, [data]);
+  const _data = useMemo(
+    () => data ?? { hiddenModels: [], hiddenImages: [], hiddenTags: [], hiddenUsers: [] },
+    [data]
+  );
   return { data: _data, isLoading: isLoading };
 };
 

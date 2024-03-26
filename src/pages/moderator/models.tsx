@@ -23,6 +23,7 @@ import Link from 'next/link';
 import { useState } from 'react';
 
 import { unpublishReasons } from '~/server/common/moderation-helpers';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { ModelGetAllPagedSimple } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
@@ -50,6 +51,7 @@ export default function ModeratorModels() {
     status: [ModelStatus.UnpublishedViolation, ModelStatus.Published],
     page: state.page,
     limit: 20,
+    browsingLevel: allBrowsingLevelsFlag,
   });
 
   const { items, ...pagination } = data || {

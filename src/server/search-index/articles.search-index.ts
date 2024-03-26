@@ -12,6 +12,7 @@ import { ARTICLES_SEARCH_INDEX } from '~/server/common/constants';
 import { isDefined } from '~/utils/type-guards';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { SearchIndexUpdate } from '~/server/search-index/SearchIndexUpdate';
+import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 
 const READ_BATCH_SIZE = 1000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 1000;
@@ -54,7 +55,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
 
   console.log('onIndexSetup :: sortableFieldsAttributesTask created', sortableFieldsAttributesTask);
 
-  const filterableAttributes = ['tags.name', 'user.username'];
+  const filterableAttributes = ['tags.name', 'user.username', 'nsfwLevel'];
 
   if (
     // Meilisearch stores sorted.
@@ -145,6 +146,7 @@ const onFetchItemsToIndex = async ({
       if (!coverImage) return null;
       return {
         ...articleRecord,
+        nsfwLevel: parseBitwiseBrowsingLevel(articleRecord.nsfwLevel),
         stats: stats
           ? {
               favoriteCount: stats.favoriteCountAllTime,

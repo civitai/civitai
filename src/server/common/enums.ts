@@ -65,12 +65,6 @@ export enum PostSort {
   Newest = 'Newest',
 }
 
-export enum BrowsingMode {
-  All = 'All',
-  SFW = 'SFW',
-  NSFW = 'NSFW',
-}
-
 export enum ImageType {
   txt2img = 'txt2img',
   img2img = 'img2img',
@@ -87,6 +81,7 @@ export enum TagSort {
   MostImages = 'Most Images',
   MostPosts = 'Most Posts',
   MostArticles = 'Most Articles',
+  MostHidden = 'Most Hidden',
 }
 
 export enum ImageScanType {
@@ -198,6 +193,22 @@ export enum ThreadSort {
   MostReactions = 'Most Reactions',
 }
 
+export enum NsfwLevel {
+  PG = 1,
+  PG13 = 2,
+  R = 4,
+  X = 8,
+  XXX = 16,
+  Blocked = 32,
+}
+
+export enum OnboardingSteps {
+  TOS = 1,
+  Profile = 2,
+  BrowsingLevels = 4,
+  Buzz = 8,
+}
+
 export enum PurchasableRewardViewMode {
   Available = 'Available',
   Purchased = 'Purchased',
@@ -207,6 +218,11 @@ export enum PurchasableRewardModeratorViewMode {
   Available = 'Available',
   History = 'History',
   Purchased = 'Purchased',
+}
+
+export enum ImageConnectionType {
+  Bounty = 'Bounty',
+  BountyEntry = 'BountyEntry',
 }
 
 export enum SearchIndexUpdateQueueAction {

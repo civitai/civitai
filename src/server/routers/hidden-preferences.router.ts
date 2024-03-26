@@ -1,4 +1,7 @@
-import { toggleHiddenSchema } from '~/server/schema/user-preferences.schema';
+import {
+  toggleHiddenSchema,
+  toggleHiddenTagsSchema,
+} from '~/server/schema/user-preferences.schema';
 import { getAllHiddenForUser, toggleHidden } from '~/server/services/user-preferences.service';
 import { protectedProcedure, publicProcedure, router } from '~/server/trpc';
 

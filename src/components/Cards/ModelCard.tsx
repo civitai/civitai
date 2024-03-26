@@ -1,12 +1,14 @@
 import {
   ActionIcon,
   Badge,
+  Center,
   Divider,
   Group,
   Menu,
   Stack,
   Text,
   UnstyledButton,
+  Button,
 } from '@mantine/core';
 import {
   IconDownload,
@@ -28,7 +30,6 @@ import { useCardStyles } from '~/components/Cards/Cards.styles';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
-import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionMenuItem';
 import { ReportMenuItem } from '~/components/MenuItems/ReportMenuItem';
@@ -60,7 +61,9 @@ import { HolidayFrame } from '../Decorations/HolidayFrame';
 import { truncate } from 'lodash-es';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { ToggleSearchableMenuItem } from '../MenuItems/ToggleSearchableMenuItem';
+import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
+import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
 
 const IMAGE_CARD_WIDTH = 450;
 
@@ -218,184 +221,173 @@ export function ModelCard({ data, forceInView }: Props) {
             {inView && (
               <>
                 {image && (
-                  <ImageGuard
-                    images={[image]}
-                    connect={{ entityId: data.id, entityType: 'model' }}
-                    render={(image) => (
-                      <ImageGuard.Content>
-                        {({ safe }) => {
-                          // Small hack to prevent blurry landscape images
-                          const originalAspectRatio =
-                            image.width && image.height ? image.width / image.height : 1;
-
-                          return (
-                            <>
-                              <Group
-                                spacing={4}
-                                position="apart"
-                                align="start"
-                                className={cx(classes.contentOverlay, classes.top)}
-                                noWrap
+                  <ImageGuard2 image={image} connectType="model" connectId={data.id}>
+                    {(safe) => {
+                      // Small hack to prevent blurry landscape images
+                      const originalAspectRatio =
+                        image.width && image.height ? image.width / image.height : 1;
+                      return (
+                        <>
+                          <Group
+                            spacing={4}
+                            position="apart"
+                            align="start"
+                            className={cx(classes.contentOverlay, classes.top)}
+                            noWrap
+                          >
+                            <Group spacing={4}>
+                              <ImageGuard2.BlurToggle className={classes.chip} />
+                              <Badge
+                                className={cx(classes.infoChip, classes.chip)}
+                                variant="light"
+                                radius="xl"
                               >
-                                <Group spacing={4}>
-                                  <ImageGuard.ToggleConnect
-                                    className={classes.chip}
-                                    position="static"
-                                  />
-                                  <Badge
-                                    className={cx(classes.infoChip, classes.chip)}
-                                    variant="light"
-                                    radius="xl"
-                                  >
-                                    <Text color="white" size="xs" transform="capitalize">
-                                      {getDisplayName(data.type)}
-                                    </Text>
-                                    {isSDXL && (
-                                      <>
-                                        <Divider orientation="vertical" />
-                                        {isPony ? (
-                                          <IconHorse size={16} strokeWidth={2.5} />
-                                        ) : (
-                                          <Text color="white" size="xs">
-                                            XL
-                                          </Text>
-                                        )}
-                                      </>
-                                    )}
-                                  </Badge>
-
-                                  {(isNew || isUpdated) && (
-                                    <Badge
-                                      className={classes.chip}
-                                      variant="filled"
-                                      radius="xl"
-                                      sx={(theme) => ({
-                                        backgroundColor: isUpdated
-                                          ? theme.colors.success[5]
-                                          : theme.colors.blue[theme.fn.primaryShade()],
-                                      })}
-                                    >
-                                      <Text color="white" size="xs" transform="capitalize">
-                                        {isUpdated ? 'Updated' : 'New'}
+                                <Text color="white" size="xs" transform="capitalize">
+                                  {getDisplayName(data.type)}
+                                </Text>
+                                {isSDXL && (
+                                  <>
+                                    <Divider orientation="vertical" />
+                                    {isPony ? (
+                                      <IconHorse size={16} strokeWidth={2.5} />
+                                    ) : (
+                                      <Text color="white" size="xs">
+                                        XL
                                       </Text>
-                                    </Badge>
-                                  )}
-                                  {isArchived && (
-                                    <Badge
-                                      className={cx(classes.infoChip, classes.chip)}
-                                      variant="light"
-                                      radius="xl"
-                                    >
-                                      <IconArchiveFilled size={16} />
-                                    </Badge>
-                                  )}
-                                </Group>
-                                <Stack spacing="xs">
-                                  {contextMenuItems.length > 0 && (
-                                    <Menu position="left-start" withArrow offset={-5} withinPortal>
-                                      <Menu.Target>
-                                        <ActionIcon
-                                          variant="transparent"
-                                          p={0}
-                                          onClick={(e) => {
-                                            e.preventDefault();
-                                            e.stopPropagation();
-                                          }}
-                                        >
-                                          <IconDotsVertical
-                                            size={24}
-                                            color="#fff"
-                                            style={{ filter: `drop-shadow(0 0 2px #000)` }}
-                                          />
-                                        </ActionIcon>
-                                      </Menu.Target>
-                                      <Menu.Dropdown>
-                                        {contextMenuItems.map((el) => el)}
-                                      </Menu.Dropdown>
-                                    </Menu>
-                                  )}
+                                    )}
+                                  </>
+                                )}
+                              </Badge>
 
-                                  {features.imageGeneration && data.canGenerate && (
-                                    <HoverActionButton
-                                      label="Create"
-                                      size={30}
-                                      color="white"
-                                      variant="filled"
-                                      data-activity="create:model-card"
+                              {(isNew || isUpdated) && (
+                                <Badge
+                                  className={classes.chip}
+                                  variant="filled"
+                                  radius="xl"
+                                  sx={(theme) => ({
+                                    backgroundColor: isUpdated
+                                      ? theme.colors.success[5]
+                                      : theme.colors.blue[theme.fn.primaryShade()],
+                                  })}
+                                >
+                                  <Text color="white" size="xs" transform="capitalize">
+                                    {isUpdated ? 'Updated' : 'New'}
+                                  </Text>
+                                </Badge>
+                              )}
+                              {isArchived && (
+                                <Badge
+                                  className={cx(classes.infoChip, classes.chip)}
+                                  variant="light"
+                                  radius="xl"
+                                >
+                                  <IconArchiveFilled size={16} />
+                                </Badge>
+                              )}
+                            </Group>
+                            <Stack spacing="xs">
+                              {contextMenuItems.length > 0 && (
+                                <Menu position="left-start" withArrow offset={-5} withinPortal>
+                                  <Menu.Target>
+                                    <ActionIcon
+                                      variant="transparent"
+                                      p={0}
                                       onClick={(e) => {
                                         e.preventDefault();
                                         e.stopPropagation();
-                                        generationPanel.open({
-                                          type: 'modelVersion',
-                                          id: data.version.id,
-                                        });
                                       }}
                                     >
-                                      <IconBrush stroke={2.5} size={16} />
-                                    </HoverActionButton>
-                                  )}
-                                  <CivitaiLinkManageButton
-                                    modelId={data.id}
-                                    modelName={data.name}
-                                    modelType={data.type}
-                                    hashes={data.hashes}
-                                    noTooltip
-                                    iconSize={16}
+                                      <IconDotsVertical
+                                        size={24}
+                                        color="#fff"
+                                        style={{ filter: `drop-shadow(0 0 2px #000)` }}
+                                      />
+                                    </ActionIcon>
+                                  </Menu.Target>
+                                  <Menu.Dropdown>{contextMenuItems.map((el) => el)}</Menu.Dropdown>
+                                </Menu>
+                              )}
+
+                              {features.imageGeneration && data.canGenerate && (
+                                <HoverActionButton
+                                  label="Create"
+                                  size={30}
+                                  color="white"
+                                  variant="filled"
+                                  data-activity="create:model-card"
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    generationPanel.open({
+                                      type: 'modelVersion',
+                                      id: data.version.id,
+                                    });
+                                  }}
+                                >
+                                  <IconBrush stroke={2.5} size={16} />
+                                </HoverActionButton>
+                              )}
+                              <CivitaiLinkManageButton
+                                modelId={data.id}
+                                modelName={data.name}
+                                modelType={data.type}
+                                hashes={data.hashes}
+                                noTooltip
+                                iconSize={16}
+                              >
+                                {({ color, onClick, icon, label }) => (
+                                  <HoverActionButton
+                                    onClick={onClick}
+                                    label={label}
+                                    size={30}
+                                    color={color}
+                                    variant="filled"
+                                    keepIconOnHover
                                   >
-                                    {({ color, onClick, icon, label }) => (
-                                      <HoverActionButton
-                                        onClick={onClick}
-                                        label={label}
-                                        size={30}
-                                        color={color}
-                                        variant="filled"
-                                        keepIconOnHover
-                                      >
-                                        {icon}
-                                      </HoverActionButton>
-                                    )}
-                                  </CivitaiLinkManageButton>
-                                </Stack>
-                              </Group>
-                              {image ? (
-                                <>
-                                  {safe && (
-                                    <EdgeMedia
-                                      src={image.url}
-                                      name={image.name ?? image.id.toString()}
-                                      alt={
-                                        image.meta
-                                          ? truncate((image.meta as ImageMetaProps).prompt, {
-                                              length: 125,
-                                            })
-                                          : undefined
-                                      }
-                                      type={image.type}
-                                      width={
-                                        originalAspectRatio > 1
-                                          ? IMAGE_CARD_WIDTH * originalAspectRatio
-                                          : IMAGE_CARD_WIDTH
-                                      }
-                                      placeholder="empty"
-                                      className={classes.image}
-                                      // loading="lazy"
-                                      wrapperProps={{ style: { height: '100%', width: '100%' } }}
-                                      contain
-                                    />
-                                  )}
-                                </>
-                              ) : (
-                                <>
-                                  <Text color="dimmed">This model has no images</Text>
-                                </>
+                                    {icon}
+                                  </HoverActionButton>
+                                )}
+                              </CivitaiLinkManageButton>
+                            </Stack>
+                          </Group>
+                          {image ? (
+                            <>
+                              {safe && (
+                                <EdgeMedia
+                                  src={image.url}
+                                  name={image.name ?? image.id.toString()}
+                                  alt={
+                                    image.meta
+                                      ? truncate((image.meta as ImageMetaProps).prompt, {
+                                          length: 125,
+                                        })
+                                      : undefined
+                                  }
+                                  type={image.type}
+                                  width={
+                                    originalAspectRatio > 1
+                                      ? IMAGE_CARD_WIDTH * originalAspectRatio
+                                      : IMAGE_CARD_WIDTH
+                                  }
+                                  placeholder="empty"
+                                  className={classes.image}
+                                  // loading="lazy"
+                                  wrapperProps={{ style: { height: '100%', width: '100%' } }}
+                                  contain
+                                />
                               )}
                             </>
-                          );
-                        }}
-                      </ImageGuard.Content>
-                    )}
-                  />
+                          ) : (
+                            <>
+                              <Text color="dimmed">This model has no images</Text>
+                            </>
+                          )}
+                        </>
+                      );
+                    }}
+                  </ImageGuard2>
                 )}
+
                 <Stack
                   className={cx(
                     'footer',

@@ -1,5 +1,5 @@
 import { GetServerSideProps } from 'next';
-import { getServerSideSitemapLegacy, ISitemapField } from 'next-sitemap';
+import { ISitemapField, getServerSideSitemapLegacy } from 'next-sitemap';
 import { pgDbRead } from '~/server/db/pgDb';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { slugit } from '~/utils/string-helpers';
@@ -9,7 +9,7 @@ export const getServerSideProps: GetServerSideProps = async (ctx) => {
     SELECT id, name, COALESCE("lastVersionAt", "publishedAt") as "updatedAt"
     FROM "Model" m
     JOIN "ModelMetric" mm ON mm."modelId" = m.id AND mm.timeframe = 'AllTime'
-    WHERE "status" = 'Published' AND nsfw = false
+    WHERE m."status" = 'Published' AND m."nsfwLevel" = 1
     ORDER BY mm."thumbsUpCount" DESC, mm."downloadCount" DESC, mm."modelId"
     LIMIT 1000;
   `);

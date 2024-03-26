@@ -50,10 +50,10 @@ export const bountiesInstantSearchRoutingParser: InstantSearchRoutingParser = {
     const bounties: BountySearchParams = (routeState[BOUNTIES_SEARCH_INDEX] ||
       {}) as BountySearchParams;
     const refinementList: Record<string, string[]> = removeEmpty({
-      'details.baseModel': bounties.baseModel,
-      type: bounties.type,
-      'tags.name': bounties.tags,
-      'user.username': bounties.users,
+      'details.baseModel': bounties.baseModel as string[],
+      type: bounties.type as string[],
+      'tags.name': bounties.tags as string[],
+      'user.username': bounties.users as string[],
     });
     const { query, sortBy } = bounties;
 

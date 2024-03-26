@@ -20,7 +20,6 @@ import {
 } from '@mantine/core';
 import { ImageCSSAspectRatioWrap } from '~/components/Profile/ImageCSSAspectRatioWrap';
 import { constants } from '~/server/common/constants';
-import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { IconClock, IconClubs, IconPlus, IconSettings } from '@tabler/icons-react';
@@ -222,7 +221,7 @@ export const FeedLayout = ({ children }: { children: React.ReactNode }) => {
         />
       )}
       <Container fluid p={0} mt={club.headerImage ? '-md' : ''}>
-        {club.headerImage && (
+        {/* {club.headerImage && (
           <ImageCSSAspectRatioWrap
             aspectRatio={constants.clubs.headerImageAspectRatio}
             style={{ borderRadius: 0 }}
@@ -256,9 +255,9 @@ export const FeedLayout = ({ children }: { children: React.ReactNode }) => {
               }}
             />
           </ImageCSSAspectRatioWrap>
-        )}
+        )} */}
         <Container size="xl" className={classes.mainContainer}>
-          {club.avatar && (
+          {/* {club.avatar && (
             <ImageCSSAspectRatioWrap aspectRatio={1} className={classes.avatar}>
               <ImageGuard
                 images={[club.avatar]}
@@ -290,7 +289,7 @@ export const FeedLayout = ({ children }: { children: React.ReactNode }) => {
                 }}
               />
             </ImageCSSAspectRatioWrap>
-          )}
+          )} */}
           <Stack spacing="md" mt="md">
             <Grid>
               <Grid.Col xs={12} md={9}>

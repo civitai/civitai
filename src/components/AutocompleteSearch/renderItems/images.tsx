@@ -14,6 +14,7 @@ import { truncate } from 'lodash-es';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { constants } from '~/server/common/constants';
 import { SearchIndexDataMap } from '~/components/Search/search.utils2';
+import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 
 export const ImagesSearchItem = forwardRef<
   HTMLDivElement,
@@ -41,6 +42,8 @@ export const ImagesSearchItem = forwardRef<
     variant: theme.colorScheme === 'dark' ? 'filled' : 'light',
   };
 
+  const nsfw = !getIsSafeBrowsingLevel(hit.nsfwLevel);
+
   return (
     <Group ref={ref} {...props} key={hit.id} spacing="md" align="flex-start" noWrap>
       <Center
@@ -52,7 +55,7 @@ export const ImagesSearchItem = forwardRef<
           borderRadius: '10px',
         }}
       >
-        {hit.nsfw !== 'None' ? (
+        {nsfw ? (
           <MediaHash {...hit} cropFocus="top" />
         ) : (
           <EdgeMedia

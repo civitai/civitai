@@ -1,27 +1,11 @@
 import produce from 'immer';
-import { useMemo } from 'react';
 
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
-export const useModelGallerySettings = ({ modelId }: { modelId: number }) => {
+export const useToggleGallerySettings = ({ modelId }: { modelId: number }) => {
   const queryUtils = trpc.useUtils();
-
-  const { data = { hiddenTags: [], hiddenUsers: [], hiddenImages: [] }, isLoading } =
-    trpc.model.getGallerySettings.useQuery({ id: modelId });
-
-  const hiddenTags = useMemo(
-    () => new Map(data?.hiddenTags.map((x) => [x.id, true])) ?? [],
-    [data?.hiddenTags]
-  );
-  const hiddenUsers = useMemo(
-    () => new Map(data?.hiddenUsers.map((x) => [x.id, true])) ?? [],
-    [data?.hiddenUsers]
-  );
-  const hiddenImages = useMemo(
-    () => new Map(data?.hiddenImages.map((x) => [x, true])) ?? [],
-    [data?.hiddenImages]
-  );
+  const { data } = trpc.model.getGallerySettings.useQuery({ id: modelId });
 
   const updateGallerySettingsMutation = trpc.model.updateGallerySettings.useMutation({
     onMutate: async (payload) => {
@@ -46,51 +30,42 @@ export const useModelGallerySettings = ({ modelId }: { modelId: number }) => {
     },
   });
 
-  const handleUpdateGallerySettings = async ({
+  return async function ({
     modelId,
     images,
     tags,
     users,
+    level,
   }: {
     modelId: number;
     images?: Array<{ id: number }>;
     tags?: Array<{ id: number; name: string }>;
     users?: Array<{ id: number; username: string | null }>;
-  }) => {
+    level?: number;
+  }) {
+    if (!data) return;
     const updatedSettings = {
-      hiddenImages:
-        images && data?.hiddenImages
-          ? images.some((x) => hiddenImages.get(x.id))
-            ? data.hiddenImages.filter((x) => !images.find((i) => i.id === x))
-            : [...data.hiddenImages, ...images.map((x) => x.id)]
-          : data?.hiddenImages ?? [],
-      hiddenTags:
-        tags && data?.hiddenTags
-          ? tags.some((x) => hiddenTags.get(x.id))
-            ? data.hiddenTags.filter((x) => !tags.find((t) => t.id === x.id))
-            : [...data.hiddenTags, ...tags]
-          : data?.hiddenTags ?? [],
-      hiddenUsers:
-        users && data?.hiddenUsers
-          ? users.some((x) => hiddenUsers.get(x.id))
-            ? data.hiddenUsers.filter((x) => !users.find((u) => u.id === x.id))
-            : [...data.hiddenUsers, ...users]
-          : data?.hiddenUsers ?? [],
+      hiddenImages: images
+        ? images.some((x) => data.hiddenImages.includes(x.id))
+          ? data.hiddenImages.filter((x) => !images.find((i) => i.id === x))
+          : [...data.hiddenImages, ...images.map((x) => x.id)]
+        : data?.hiddenImages ?? [],
+      hiddenTags: tags
+        ? tags.some((x) => data.hiddenTags.map((x) => x.id).includes(x.id))
+          ? data.hiddenTags.filter((x) => !tags.find((t) => t.id === x.id))
+          : [...data.hiddenTags, ...tags]
+        : data?.hiddenTags ?? [],
+      hiddenUsers: users
+        ? users.some((x) => data.hiddenUsers.map((x) => x.id).includes(x.id))
+          ? data.hiddenUsers.filter((x) => !users.find((u) => u.id === x.id))
+          : [...data.hiddenUsers, ...users]
+        : data?.hiddenUsers ?? [],
+      level: level ?? data?.level,
     };
 
     return updateGallerySettingsMutation.mutateAsync({
       id: modelId,
       gallerySettings: updatedSettings,
     });
-  };
-
-  return {
-    data,
-    isLoading,
-    hiddenTags,
-    hiddenUsers,
-    hiddenImages,
-    toggleGallerySettings: handleUpdateGallerySettings,
-    updating: updateGallerySettingsMutation.isLoading,
   };
 };

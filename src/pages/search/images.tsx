@@ -1,6 +1,7 @@
 import { Box, Center, Loader, Stack, Text, ThemeIcon, Title } from '@mantine/core';
 import { useInstantSearch } from 'react-instantsearch';
 import {
+  BrowsingLevelFilter,
   ChipRefinementList,
   DateRangeRefinement,
   SearchableMultiSelectRefinementList,
@@ -37,6 +38,7 @@ export default function ImageSearch() {
 function RenderFilters() {
   return (
     <>
+      <BrowsingLevelFilter attributeName="nsfwLevel" />
       <SortBy
         title="Sort images by"
         items={[

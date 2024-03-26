@@ -11,13 +11,13 @@ import {
 import { TRPCError } from '@trpc/server';
 import { CommandResourcesAdd, ResourceType } from '~/components/CivitaiLink/shared-types';
 import { BaseModel, BaseModelType, ModelFileType, constants } from '~/server/common/constants';
-import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { ModelSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { Context } from '~/server/createContext';
 
 import { dbRead, dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
 import { getInfiniteArticlesSchema } from '~/server/schema/article.schema';
-import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
+import { GetAllSchema, GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
 import {
   ModelVersionMeta,
   RecommendedSettingsSchema,
@@ -42,12 +42,12 @@ import {
   ToggleModelLockInput,
   UnpublishModelSchema,
   UpdateGallerySettingsInput,
-  UserPreferencesForModelsInput,
   getAllModelsSchema,
 } from '~/server/schema/model.schema';
 import { modelsSearchIndex } from '~/server/search-index';
 import {
   associatedResourceSelect,
+  getAllModelsWithVersionsSelect,
   modelWithDetailsSelect,
 } from '~/server/selectors/model.selector';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
@@ -77,7 +77,6 @@ import {
 } from '~/server/services/model.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { getCategoryTags } from '~/server/services/system-cache';
-import { getHiddenImagesForUser } from '~/server/services/user-cache.service';
 import { getEarlyAccessDeadline } from '~/server/utils/early-access-helpers';
 import {
   handleLogError,
@@ -97,6 +96,11 @@ import {
   getUnavailableResources,
 } from '../services/generation/generation.service';
 import { BountyDetailsSchema } from '../schema/bounty.schema';
+import {
+  allBrowsingLevelsFlag,
+  getIsSafeBrowsingLevel,
+} from '~/shared/constants/browsingLevel.constants';
+import { Flags } from '~/shared/utils';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
@@ -353,6 +357,11 @@ export const upsertModelHandler = async ({
 }) => {
   try {
     const { id: userId } = ctx.user;
+    const { nsfw, poi } = input;
+
+    if (nsfw && poi)
+      throw throwBadRequestError('Mature content depicting actual people is not permitted.');
+
     // Check tags for multiple categories
     const { tagsOnModels } = input;
     if (tagsOnModels?.length) {
@@ -375,7 +384,7 @@ export const upsertModelHandler = async ({
     await ctx.track.modelEvent({
       type: input.id ? 'Update' : 'Create',
       modelId: model.id,
-      nsfw: model.nsfw,
+      nsfw: !getIsSafeBrowsingLevel(model.nsfwLevel),
     });
 
     return model;
@@ -493,7 +502,7 @@ export const deleteModelHandler = async ({
     await ctx.track.modelEvent({
       type: permanently ? 'PermanentDelete' : 'Delete',
       modelId: model.id,
-      nsfw: model.nsfw,
+      nsfw: !getIsSafeBrowsingLevel(model.nsfwLevel),
     });
 
     return model;
@@ -501,6 +510,122 @@ export const deleteModelHandler = async ({
     if (error instanceof TRPCError) throw error;
     else throwDbError(error);
   }
+};
+
+/** WEBHOOKS CONTROLLERS */
+export const getModelsWithVersionsHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetAllModelsOutput & { ids?: number[] };
+  ctx: Context;
+}) => {
+  const { limit = DEFAULT_PAGE_SIZE, page, cursor, ...queryInput } = input;
+  const { take, skip } = getPagination(limit, page);
+  try {
+    // TODO.manuel: Make this use the getModelsRaw instead...
+    const rawResults = await getModels({
+      input: { ...queryInput, take, skip },
+      user: ctx.user,
+      select: getAllModelsWithVersionsSelect,
+      count: true,
+    });
+
+    const modelVersionIds = rawResults.items.flatMap(({ modelVersions }) =>
+      modelVersions.map(({ id }) => id)
+    );
+    const images = await getImagesForModelVersion({
+      modelVersionIds,
+      imagesPerVersion: 10,
+      include: [],
+      excludedTagIds: input.excludedTagIds,
+      excludedIds: input.excludedImageIds,
+      excludedUserIds: input.excludedUserIds,
+      user: ctx.user,
+      browsingLevel: input.browsingLevel,
+      pending: input.pending,
+    });
+
+    const vaeIds = rawResults.items
+      .flatMap(({ modelVersions }) => modelVersions.map(({ vaeId }) => vaeId))
+      .filter(isDefined);
+    const vaeFiles = await getVaeFiles({ vaeIds });
+
+    const modelIds = rawResults.items.map(({ id }) => id);
+    const metrics = await dbRead.modelMetric.findMany({
+      where: { modelId: { in: modelIds }, timeframe: MetricTimeframe.AllTime },
+    });
+
+    function getStatsForModel(modelId: number) {
+      const stats = metrics.find((x) => x.modelId === modelId);
+      return {
+        downloadCount: stats?.downloadCount ?? 0,
+        favoriteCount: stats?.favoriteCount ?? 0,
+        thumbsUpCount: stats?.thumbsUpCount ?? 0,
+        thumbsDownCount: stats?.thumbsDownCount ?? 0,
+        commentCount: stats?.commentCount ?? 0,
+        ratingCount: stats?.ratingCount ?? 0,
+        rating: Number(stats?.rating?.toFixed(2) ?? 0),
+        tippedAmountCount: stats?.tippedAmountCount ?? 0,
+      };
+    }
+
+    const results = {
+      count: rawResults.count,
+      items: rawResults.items.map(({ modelVersions, ...model }) => ({
+        ...model,
+        modelVersions: modelVersions.map(({ metrics, files, ...modelVersion }) => {
+          const vaeFile = vaeFiles.filter((x) => x.modelVersionId === modelVersion.vaeId);
+          files.push(...vaeFile);
+          return {
+            ...modelVersion,
+            files,
+            stats: {
+              downloadCount: metrics[0]?.downloadCount ?? 0,
+              ratingCount: metrics[0]?.ratingCount ?? 0,
+              rating: Number(metrics[0]?.rating?.toFixed(2) ?? 0),
+              thumbsUpCount: metrics[0]?.thumbsUpCount ?? 0,
+              thumbsDownCount: metrics[0]?.thumbsDownCount ?? 0,
+            },
+            images: images
+              .filter((image) => image.modelVersionId === modelVersion.id)
+              .map(({ modelVersionId, name, userId, ...image }) => ({
+                ...image,
+              })),
+          };
+        }),
+        stats: getStatsForModel(model.id),
+      })),
+    };
+
+    return getPagingData(results, take, page);
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const getModelWithVersionsHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: Context;
+}) => {
+  const results = await getModelsWithVersionsHandler({
+    input: {
+      ids: [input.id],
+      sort: ModelSort.HighestRated,
+      favorites: false,
+      hidden: false,
+      period: 'AllTime',
+      periodMode: 'published',
+      browsingLevel: allBrowsingLevelsFlag,
+    },
+    ctx,
+  });
+  if (!results.items.length) throw throwNotFoundError(`No model with id ${input.id}`);
+
+  return results.items[0];
 };
 
 // TODO - TEMP HACK for reporting modal
@@ -1002,7 +1127,7 @@ export const getAssociatedResourcesCardDataHandler = async ({
   input,
   ctx,
 }: {
-  input: GetAssociatedResourcesInput & UserPreferencesForModelsInput;
+  input: GetAssociatedResourcesInput & UserPreferencesInput;
   ctx: Context;
 }) => {
   try {
@@ -1050,7 +1175,6 @@ export const getAssociatedResourcesCardDataHandler = async ({
               id: true,
               name: true,
               type: true,
-              nsfw: true,
               status: true,
               createdAt: true,
               lastVersionAt: true,
@@ -1058,6 +1182,7 @@ export const getAssociatedResourcesCardDataHandler = async ({
               locked: true,
               earlyAccessDeadline: true,
               mode: true,
+              nsfwLevel: true,
               metrics: {
                 select: {
                   downloadCount: true,
@@ -1104,10 +1229,12 @@ export const getAssociatedResourcesCardDataHandler = async ({
     const images = !!modelVersionIds.length
       ? await getImagesForModelVersion({
           modelVersionIds,
-          excludedTagIds: modelInput.excludedImageTagIds,
-          excludedIds: await getHiddenImagesForUser({ userId: user?.id }),
+          excludedTagIds: modelInput.excludedTagIds,
+          excludedIds: input.excludedImageIds,
           excludedUserIds: modelInput.excludedUserIds,
-          currentUserId: user?.id,
+          user,
+          pending: modelInput.pending,
+          browsingLevel: modelInput.browsingLevel,
         })
       : [];
 
@@ -1365,6 +1492,7 @@ export const updateGallerySettingsHandler = async ({
           images: gallerySettings.hiddenImages,
           users: gallerySettings.hiddenUsers.map(({ id }) => id),
           tags: gallerySettings.hiddenTags.map(({ id }) => id),
+          level: gallerySettings.level,
         }
       : null;
     const updatedModel = await updateModelById({

@@ -24,10 +24,9 @@ export function RecaptchaWidgetProvider({ children }: { children: React.ReactNod
   };
 
   useEffect(() => {
-    if (window.grecaptcha)
-      window.grecaptcha.enterprise.ready(() => {
-        setReady(true);
-      });
+    if (window.grecaptcha) {
+      window.grecaptcha.enterprise.ready(() => setReady(true));
+    }
   }, []);
 
   return (
@@ -40,11 +39,7 @@ export function RecaptchaWidgetProvider({ children }: { children: React.ReactNod
     >
       <Script
         src={`https://www.google.com/recaptcha/enterprise.js?render=${env.NEXT_PUBLIC_RECAPTCHA_KEY}`}
-        onLoad={() => {
-          window.grecaptcha.enterprise.ready(() => {
-            setReady(true);
-          });
-        }}
+        onLoad={() => window.grecaptcha.enterprise.ready(() => setReady(true))}
       />
       {children}
     </RecaptchaContext.Provider>

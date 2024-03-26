@@ -38,7 +38,6 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
-import { matureLabel } from '~/components/Post/Edit/EditPostControls';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { useFormStorage } from '~/hooks/useFormStorage';
 import {
@@ -68,6 +67,7 @@ import { getMinMaxDates, useMutateBounty } from './bounty.utils';
 import { DaysFromNow } from '../Dates/DaysFromNow';
 import { stripTime } from '~/utils/date-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+import { openBrowsingLevelGuide } from '~/components/Dialog/dialog-registry';
 
 const tooltipProps: Partial<TooltipProps> = {
   maw: 300,
@@ -192,7 +192,6 @@ export function BountyCreateForm() {
       description: '',
       tags: [],
       unitAmount: constants.bounties.minCreateAmount,
-      nsfw: false,
       currency: Currency.BUZZ,
       type: BountyType.LoraCreation,
       mode: BountyMode.Individual,
@@ -204,6 +203,7 @@ export function BountyCreateForm() {
       expiresAt: dayjs().add(7, 'day').endOf('day').toDate(),
       startsAt: new Date(),
       details: { baseModel: 'SD 1.5' },
+      nsfw: false,
     },
     shouldUnregister: false,
   });
@@ -216,10 +216,9 @@ export function BountyCreateForm() {
     form,
     timeout: 1000,
     key: `bounty_new`,
-    watch: ({ mode, name, type, nsfw, currency, description, entryMode, unitAmount }) => ({
+    watch: ({ mode, name, type, currency, description, entryMode, unitAmount }) => ({
       mode,
       name,
-      nsfw,
       currency,
       description,
       entryMode,
@@ -231,7 +230,8 @@ export function BountyCreateForm() {
   const mode = form.watch('mode');
   const currency = form.watch('currency');
   const unitAmount = form.watch('unitAmount');
-  const nsfwPoi = form.watch(['nsfw', 'poi']);
+  const [nsfw, poi] = form.watch(['nsfw', 'poi']);
+  const hasPoiInNsfw = nsfw && poi;
   const files = form.watch('files');
   const expiresAt = form.watch('expiresAt');
   const requireBaseModelSelection = [
@@ -281,8 +281,6 @@ export function BountyCreateForm() {
       performTransaction();
     }
   };
-
-  const hasPoiInNsfw = nsfwPoi.every((item) => !!item);
 
   return (
     <Form form={form} onSubmit={handleSubmit}>
@@ -619,11 +617,9 @@ export function BountyCreateForm() {
                   <Stack spacing={4}>
                     <Group spacing={4}>
                       <Text inline>Mature theme</Text>
-                      <Tooltip label={matureLabel} {...tooltipProps}>
-                        <ThemeIcon radius="xl" size="xs" color="gray">
-                          <IconQuestionMark />
-                        </ThemeIcon>
-                      </Tooltip>
+                      <ActionIcon radius="xl" size="xs" onClick={openBrowsingLevelGuide}>
+                        <IconQuestionMark />
+                      </ActionIcon>
                     </Group>
                     <Text size="xs" color="dimmed">
                       This bounty is intended to produce mature content.

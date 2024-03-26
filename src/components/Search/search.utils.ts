@@ -1,7 +1,4 @@
-import { ModelSearchIndexRecord } from '~/server/search-index/models.search-index';
 import { isDefined } from '~/utils/type-guards';
-import { ImageSearchIndexRecord } from '~/server/search-index/images.search-index';
-import { BrowsingMode } from '~/server/common/enums';
 
 // export const applyUserPreferencesModels = <
 //   T extends {
@@ -356,14 +353,14 @@ export const applyUserPreferencesClub = <
   hiddenImages,
   hiddenUsers,
   hiddenTags,
-  browsingMode,
+  showNsfw,
 }: {
   items: T[];
   hiddenImages: Map<number, boolean>;
   hiddenUsers: Map<number, boolean>;
   hiddenTags: Map<number, boolean>;
   currentUserId?: number | null;
-  browsingMode: BrowsingMode;
+  showNsfw: boolean;
 }) => {
   const filtered = items
     .filter((x) => {
@@ -384,7 +381,7 @@ export const applyUserPreferencesClub = <
         }
       }
 
-      if (browsingMode === BrowsingMode.SFW && x.nsfw) return false;
+      if (!showNsfw && x.nsfw) return false;
 
       return true;
     })

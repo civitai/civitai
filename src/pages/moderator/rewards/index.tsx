@@ -42,7 +42,7 @@ export default function Rewards() {
 
   return (
     <>
-      <Meta title="Rewards" deIndex="noindex, nofollow" />
+      <Meta title="Rewards" deIndex />
       <Container size="lg">
         <Stack spacing={0} mb="xl">
           <Title order={1}>Purchasable Rewards</Title>

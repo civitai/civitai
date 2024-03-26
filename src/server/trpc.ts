@@ -3,6 +3,8 @@ import { SessionUser } from 'next-auth';
 import superjson from 'superjson';
 import { FeatureAccess, getFeatureFlags } from '~/server/services/feature-flags.service';
 import type { Context } from './createContext';
+import { Flags } from '~/shared/utils';
+import { OnboardingSteps } from '~/server/common/enums';
 import { REDIS_KEYS, redis } from '~/server/redis/client';
 import semver from 'semver';
 import { NextApiRequest } from 'next';
@@ -117,11 +119,12 @@ export const isFlagProtected = (flag: keyof FeatureAccess) =>
 const isOnboarded = t.middleware(({ ctx, next }) => {
   const { user } = ctx;
   if (!user) throw new TRPCError({ code: 'UNAUTHORIZED' });
-  if (user.onboardingSteps && user.onboardingSteps.length > 0)
+  if (!Flags.hasFlag(user.onboarding, OnboardingSteps.TOS)) {
     throw new TRPCError({
       code: 'FORBIDDEN',
-      message: 'You must complete the onboarding process before performing this action',
+      message: 'You must accept our terms of service before performing this action',
     });
+  }
   return next({ ctx: { ...ctx, user } });
 });
 

@@ -1,4 +1,5 @@
 import {
+  ActionIcon,
   Avatar,
   AvatarProps,
   BadgeProps,
@@ -23,9 +24,9 @@ import { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { getInitials } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { EdgeMedia } from '../EdgeMedia/EdgeMedia';
-import { ImageGuard } from '../ImageGuard/ImageGuard';
 import { MediaHash } from '../ImageHash/ImageHash';
-import { IconUser } from '@tabler/icons-react';
+import { IconEye, IconEyeOff, IconUser } from '@tabler/icons-react';
+import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 
 const mapAvatarTextSize: Record<MantineSize, { textSize: MantineSize; subTextSize: MantineSize }> =
   {
@@ -112,6 +113,8 @@ export function UserAvatar({
   const avatarBgColor =
     theme.colorScheme === 'dark' ? 'rgba(255,255,255,0.31)' : 'rgba(0,0,0,0.31)';
 
+  const image = avatarUser.profilePicture;
+
   return (
     <Group align="center" spacing={spacing} noWrap>
       {includeAvatar && (
@@ -138,53 +141,72 @@ export function UserAvatar({
                   borderRadius: imageRadius,
                 }}
               >
-                <ImageGuard
-                  images={[avatarUser.profilePicture]}
-                  render={(image) => (
-                    <ImageGuard.Content>
-                      {({ safe }) =>
-                        !image ? (
-                          <Text size={textSize}>
-                            {avatarUser.username ? (
-                              getInitials(avatarUser.username)
+                {!image ? (
+                  <Text size={textSize}>
+                    {avatarUser.username ? (
+                      getInitials(avatarUser.username)
+                    ) : (
+                      <IconUser size={imageSize} />
+                    )}
+                  </Text>
+                ) : (
+                  <ImageGuard2 image={image} explain={false}>
+                    {(safe) => (
+                      <Center h="100%">
+                        <ImageGuard2.BlurToggle>
+                          {(toggle) =>
+                            !safe ? (
+                              <ActionIcon
+                                color="red"
+                                radius="xl"
+                                sx={(theme) => ({
+                                  backgroundColor: theme.fn.rgba(theme.colors.red[9], 0.6),
+                                  color: 'white',
+                                  backdropFilter: 'blur(7px)',
+                                  boxShadow: '1px 2px 3px -1px rgba(37,38,43,0.2)',
+                                })}
+                                onClick={toggle}
+                              >
+                                {safe ? (
+                                  <IconEyeOff size={14} strokeWidth={2.5} />
+                                ) : (
+                                  <IconEye size={14} strokeWidth={2.5} />
+                                )}
+                              </ActionIcon>
                             ) : (
-                              <IconUser size={imageSize} />
-                            )}
-                          </Text>
+                              <></>
+                            )
+                          }
+                        </ImageGuard2.BlurToggle>
+                        {safe || isSelf ? (
+                          <EdgeMedia
+                            src={image.url}
+                            width={450}
+                            name={image.name ?? image.id.toString()}
+                            alt={
+                              avatarUser.username && !userDeleted
+                                ? `${avatarUser.username}'s Avatar`
+                                : undefined
+                            }
+                            type={image.type}
+                            loading="lazy"
+                            anim={
+                              currentUser
+                                ? !currentUser.autoplayGifs
+                                  ? false
+                                  : undefined
+                                : undefined
+                            }
+                            wrapperProps={{ style: { width: '100%', height: '100%' } }}
+                            contain
+                          />
                         ) : (
-                          <Center h="100%">
-                            <ImageGuard.ToggleImageButton position="static" />
-                            {safe || isSelf ? (
-                              <EdgeMedia
-                                src={image.url}
-                                width={450}
-                                name={image.name ?? image.id.toString()}
-                                alt={
-                                  avatarUser.username && !userDeleted
-                                    ? `${avatarUser.username}'s Avatar`
-                                    : undefined
-                                }
-                                type={image.type}
-                                loading="lazy"
-                                anim={
-                                  currentUser
-                                    ? !currentUser.autoplayGifs
-                                      ? false
-                                      : undefined
-                                    : undefined
-                                }
-                                wrapperProps={{ style: { width: '100%', height: '100%' } }}
-                                contain
-                              />
-                            ) : (
-                              <MediaHash {...image} style={{ borderRadius: imageRadius }} />
-                            )}
-                          </Center>
-                        )
-                      }
-                    </ImageGuard.Content>
-                  )}
-                />
+                          <MediaHash {...image} style={{ borderRadius: imageRadius }} />
+                        )}
+                      </Center>
+                    )}
+                  </ImageGuard2>
+                )}
               </Paper>
             ) : (
               <Avatar

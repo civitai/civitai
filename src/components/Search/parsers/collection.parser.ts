@@ -43,8 +43,8 @@ export const collectionsInstantSearchRoutingParser: InstantSearchRoutingParser =
     const collections: CollectionSearchParams = (routeState[COLLECTIONS_SEARCH_INDEX] ||
       {}) as CollectionSearchParams;
     const refinementList: Record<string, string[]> = removeEmpty({
-      type: collections.type,
-      'user.username': collections.users,
+      type: collections.type as string[],
+      'user.username': collections.users as string[],
     });
     const { query, sortBy } = collections;
 

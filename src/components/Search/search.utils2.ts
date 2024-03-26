@@ -1,3 +1,4 @@
+import { flagifyBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import type { Hit, TransformItemsMetadata } from 'instantsearch.js';
 import { useHits, useInfiniteHits } from 'react-instantsearch';
 import { ArticleSearchIndexRecord } from '~/server/search-index/articles.search-index';
@@ -15,6 +16,7 @@ type ModelsTransformed = ReturnType<typeof modelsTransform>;
 function modelsTransform(items: Hit<ModelSearchIndexRecord>[]) {
   return items.map((item) => ({
     ...item,
+    nsfwLevel: flagifyBrowsingLevel(item.nsfwLevel),
     tags: item.tags.map((t) => t.id),
     images: item.images.map((image) => ({
       ...image,
@@ -27,6 +29,7 @@ type ImagesTransformed = ReturnType<typeof imagesTransform>;
 function imagesTransform(items: Hit<ImageSearchIndexRecord>[]) {
   return items.map((item) => ({
     ...item,
+    nsfwLevel: flagifyBrowsingLevel(item.nsfwLevel),
     tagIds: item.tags?.map((t) => t.id),
     ingestion: ImageIngestionStatus.Scanned,
   }));
@@ -36,6 +39,7 @@ type ArticlesTransformed = ReturnType<typeof articlesTransform>;
 function articlesTransform(items: Hit<ArticleSearchIndexRecord>[]) {
   return items.map((article) => ({
     ...article,
+    nsfwLevel: flagifyBrowsingLevel(article.nsfwLevel),
     coverImage: { ...article.coverImage, tags: article.coverImage.tags.map((x) => x.id) },
   }));
 }
@@ -44,6 +48,7 @@ type BountiesTransformed = ReturnType<typeof bountiesTransform>;
 function bountiesTransform(items: Hit<BountySearchIndexRecord>[]) {
   return items.map((bounty) => ({
     ...bounty,
+    nsfwLevel: flagifyBrowsingLevel(bounty.nsfwLevel),
     tags: bounty.tags.map((x) => x.id),
     images: bounty.images.map((image) => ({ ...image, tagIds: image.tags.map((x) => x.id) })),
   }));
@@ -53,6 +58,7 @@ type CollectionsTransformed = ReturnType<typeof collectionsTransform>;
 function collectionsTransform(items: Hit<CollectionSearchIndexRecord>[]) {
   return items.map((collection) => ({
     ...collection,
+    nsfwLevel: flagifyBrowsingLevel(collection.nsfwLevel),
     userId: collection.user.id,
     image: collection.image
       ? {

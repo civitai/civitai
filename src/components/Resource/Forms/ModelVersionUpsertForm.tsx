@@ -575,7 +575,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
               </Stack>
             </Stack>
           )}
-          <Stack spacing={4}>
+          <Stack spacing={8}>
             <Divider label="Additional options" />
 
             <InputSwitch

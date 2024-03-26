@@ -151,7 +151,7 @@ export default function ClaimCosmeticPage({ id }: { id: number }) {
       <Meta
         title={`Claim ${cosmetic.name} | Civitai`}
         description={`Claim the ${cosmetic.name}. Awarded for ${cosmetic.description} while you can`}
-        image={getEdgeUrl(cosmeticImage, { width: 256 })}
+        imageUrl={getEdgeUrl(cosmeticImage, { width: 256 })}
       />
       <Container size="xs" mb="lg">
         <Stack spacing={0}>

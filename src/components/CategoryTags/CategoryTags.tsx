@@ -6,6 +6,8 @@ import { useModelQueryParams } from '~/components/Model/model.utils';
 import { TagSort } from '~/server/common/enums';
 import { trpc } from '~/utils/trpc';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+import { useCategoryTags } from '~/components/Tags/tag.utils';
+import { TagTarget } from '@prisma/client';
 
 const useStyles = createStyles((theme) => ({
   tagsContainer: {
@@ -97,13 +99,7 @@ export function CategoryTags({
   const viewportRef = useRef<HTMLDivElement>(null);
   const [scrollPosition, setScrollPosition] = useState({ x: 0, y: 0 });
 
-  const { data: { items: categories } = { items: [] } } = trpc.tag.getAll.useQuery({
-    entityType: ['Model'],
-    sort: TagSort.MostModels,
-    unlisted: false,
-    categories: true,
-    limit: 100,
-  });
+  const { data: categories } = useCategoryTags({ entityType: TagTarget.Post });
 
   if (!categories.length) return null;
 

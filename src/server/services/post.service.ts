@@ -2,20 +2,16 @@ import {
   Availability,
   CollectionContributorPermission,
   CollectionReadConfiguration,
-  ImageGenerationProcess,
-  ImageIngestionStatus,
-  MediaType,
-  NsfwLevel,
   Prisma,
   TagTarget,
   TagType,
 } from '@prisma/client';
 import { SessionUser } from 'next-auth';
-import { BrowsingMode, PostSort } from '~/server/common/enums';
+import { NsfwLevel, PostSort } from '~/server/common/enums';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
-import { ImageMetaProps } from '~/server/schema/image.schema';
+import { ImageMetaProps, getInfiniteImagesSchema } from '~/server/schema/image.schema';
 import { editPostImageSelect } from '~/server/selectors/post.selector';
 import { simpleTagSelect } from '~/server/selectors/tag.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
@@ -43,17 +39,13 @@ import {
 } from './../schema/post.schema';
 import { editPostSelect } from './../selectors/post.selector';
 import { postgresSlugify } from '~/utils/string-helpers';
-import { profileImageSelect } from '../selectors/image.selector';
 import { bustCacheTag, queryCache } from '~/server/utils/cache-helpers';
-import { getClubDetailsForResource, upsertClubResource } from './club.service';
-import { hasEntityAccess } from './common.service';
 import { env } from 'process';
 import { CacheTTL } from '../common/constants';
-import { getPrivateEntityAccessForUser } from './user-cache.service';
 
 type GetAllPostsRaw = {
   id: number;
-  nsfw: boolean;
+  nsfwLevel: number;
   title: string | null;
   userId: number;
   username: string | null;
@@ -94,15 +86,18 @@ export const getPostsInfinite = async ({
   draftOnly,
   followed,
   clubId,
-  browsingMode,
+  browsingLevel,
+  pending,
 }: Omit<PostsQueryInput, 'include'> & {
-  user?: { id: number; isModerator?: boolean; username?: string };
+  user?: SessionUser;
   include?: string[];
 }) => {
   const AND = [Prisma.sql`1 = 1`];
   const WITH: Prisma.Sql[] = [];
   const cacheTags: string[] = [];
   let cacheTime = CacheTTL.xs;
+  const userId = user?.id;
+  const isModerator = user?.isModerator ?? false;
 
   const isOwnerRequest =
     !!user?.username && !!username && postgresSlugify(user.username) === postgresSlugify(username);
@@ -155,11 +150,6 @@ export const getPostsInfinite = async ({
     AND.push(Prisma.sql`p."publishedAt" < now()`);
     AND.push(Prisma.sql`p.metadata->>'unpublishedAt' IS NULL`);
 
-    // We could techically do this on the FE.
-    if (browsingMode === BrowsingMode.SFW) {
-      AND.push(Prisma.sql`p."nsfw" = false`);
-    }
-
     if (period !== 'AllTime' && periodMode !== 'stats') {
       AND.push(Prisma.raw(`p."publishedAt" > now() - INTERVAL '1 ${period.toLowerCase()}'`));
     }
@@ -177,6 +167,20 @@ export const getPostsInfinite = async ({
     if (draftOnly) AND.push(Prisma.sql`p."publishedAt" IS NULL`);
     else AND.push(Prisma.sql`p."publishedAt" IS NOT NULL`);
     AND.push(Prisma.sql`p.metadata->>'unpublishedAt' IS NULL`);
+  }
+
+  if (browsingLevel) {
+    if (pending && (isModerator || userId)) {
+      if (isModerator) {
+        AND.push(Prisma.sql`((p."nsfwLevel" & ${browsingLevel}) != 0 OR p."nsfwLevel" = 0)`);
+      } else if (userId) {
+        AND.push(
+          Prisma.sql`((p."nsfwLevel" & ${browsingLevel}) != 0 OR (p."nsfwLevel" = 0 AND p."userId" = ${userId}))`
+        );
+      }
+    } else {
+      AND.push(Prisma.sql`(p."nsfwLevel" & ${browsingLevel}) != 0`);
+    }
   }
 
   if (ids) AND.push(Prisma.sql`p.id IN (${Prisma.join(ids)})`);
@@ -255,7 +259,7 @@ export const getPostsInfinite = async ({
     ${queryWith}
     SELECT
       p.id,
-      p.nsfw,
+      p."nsfwLevel",
       p.title,
       p."userId",
       u.username,
@@ -313,9 +317,10 @@ export const getPostsInfinite = async ({
   const images = postsRaw.length
     ? await getImagesForPosts({
         postIds: postsRaw.map((x) => x.id),
-        excludedIds: excludedImageIds,
-        userId: user?.id,
-        isOwnerRequest,
+        // excludedIds: excludedImageIds,
+        user,
+        browsingLevel,
+        pending,
       })
     : [];
 
@@ -326,11 +331,6 @@ export const getPostsInfinite = async ({
     : undefined;
 
   const profilePictures = await getProfilePicturesForUsers(userIds);
-
-  const userEntityAccess = await getPrivateEntityAccessForUser({ userId: user?.id });
-  const privatePostAccessIds = userEntityAccess
-    .filter((x) => x.entityType === 'Post')
-    .map((x) => x.entityId);
 
   // Filter to published model versions:
   const filterByPermissionContent = !isOwnerRequest && !user?.isModerator;
@@ -396,12 +396,11 @@ export const getPostsInfinite = async ({
         return true;
       })
       .map(({ stats, username, userId: creatorId, userImage, deletedAt, ...post }) => {
-        const { imageCount, ...image } =
-          images.find((x) => x.postId === post.id) ?? ({ imageCount: 0 } as (typeof images)[0]);
+        const _images = images.filter((x) => x.postId === post.id);
 
         return {
           ...post,
-          imageCount: Number(imageCount ?? 0),
+          imageCount: _images.length,
           user: {
             id: creatorId,
             username,
@@ -411,7 +410,7 @@ export const getPostsInfinite = async ({
             profilePicture: profilePictures[creatorId] ?? null,
           },
           stats,
-          image,
+          images: _images,
         };
       })
       .filter((x) => x.imageCount !== 0),
@@ -434,7 +433,7 @@ export const getPostDetail = async ({ id, user }: GetByIdInput & { user?: Sessio
     },
     select: {
       id: true,
-      nsfw: true,
+      nsfwLevel: true,
       title: true,
       detail: true,
       modelVersionId: true,
@@ -447,18 +446,10 @@ export const getPostDetail = async ({ id, user }: GetByIdInput & { user?: Sessio
 
   if (!post) throw throwNotFoundError();
 
-  const [access] = await hasEntityAccess({
-    userId: user?.id,
-    isModerator: user?.isModerator,
-    entityIds: [id],
-    entityType: 'Post',
-  });
-
   return {
     ...post,
-    detail: access?.hasAccess ?? true ? post.detail : null,
+    detail: post.detail,
     tags: post.tags.flatMap((x) => x.tag),
-    hasAccess: access.hasAccess,
   };
 };
 
@@ -560,9 +551,18 @@ export const getPostTags = async ({
     SELECT
       t.id,
       t.name,
+      (
+        SELECT COALESCE(
+        (
+            SELECT MAX(pt."nsfwLevel")
+            FROM "TagsOnTags" tot
+            JOIN "Tag" pt ON tot."fromTagId" = pt.id
+            WHERE tot."toTagId" = t.id
+        ), t."nsfwLevel") "nsfwLevel"
+      ) "nsfwLevel",
       t."isCategory",
       COALESCE(${
-        showTrending ? Prisma.sql`s."postCountDay"` : Prisma.sql`s."postCountAllTime"`
+        showTrending ? Prisma.sql`s."postCountWeek"` : Prisma.sql`s."postCountAllTime"`
       }, 0)::int AS "postCount"
     FROM "Tag" t
     LEFT JOIN "TagStat" s ON s."tagId" = t.id
@@ -570,7 +570,7 @@ export const getPostTags = async ({
     WHERE
       ${showTrending ? Prisma.sql`t."isCategory" = true` : Prisma.sql`t.name ILIKE ${query + '%'}`}
     ORDER BY ${Prisma.raw(
-      showTrending ? `r."postCountDayRank" ASC` : `r."postCountAllTimeRank" ASC`
+      showTrending ? `r."postCountWeekRank" ASC` : `r."postCountAllTimeRank" ASC`
     )}
     LIMIT ${limit}
   `;

@@ -1,38 +1,32 @@
 import { Carousel } from '@mantine/carousel';
 import {
   ActionIcon,
-  AspectRatio,
   Box,
-  Button,
+  Card,
   Center,
   createStyles,
-  Group,
   Indicator,
   Loader,
-  Paper,
   Stack,
-  Text,
-  ThemeIcon,
 } from '@mantine/core';
-import { IconBrush, IconInfoCircle, IconPhotoOff } from '@tabler/icons-react';
-import Link from 'next/link';
-import { useRouter } from 'next/router';
+import { IconBrush, IconInfoCircle } from '@tabler/icons-react';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { generationPanel } from '~/store/generation.store';
-
 import { useQueryImages } from '~/components/Image/image.utils';
-import { ImageGuard } from '~/components/ImageGuard/ImageGuard';
-import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { Reactions } from '~/components/Reaction/Reactions';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ImageSort } from '~/server/common/enums';
-import { ImageMetaProps } from '~/server/schema/image.schema';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
+import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
+import {
+  ExplainHiddenImages,
+  useExplainHiddenImages,
+} from '~/components/Image/ExplainHiddenImages/ExplainHiddenImages';
+import { BrowsingModeOverrideProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 
 const useStyles = createStyles((theme) => ({
   control: {
@@ -110,28 +104,36 @@ const useStyles = createStyles((theme) => ({
   top: { top: 0 },
 }));
 
-export function ModelCarousel({
+export function ModelCarousel(props: Props) {
+  return (
+    <BrowsingModeOverrideProvider>
+      <ModelCarouselContent {...props} />
+    </BrowsingModeOverrideProvider>
+  );
+}
+
+function ModelCarouselContent({
   modelId,
   modelVersionId,
   modelUserId,
   // images,
-  nsfw,
   mobile = false,
   limit = 10,
   onBrowseClick,
 }: Props) {
-  const router = useRouter();
-  const currentUser = useCurrentUser();
   const features = useFeatureFlags();
   const { classes, cx } = useStyles();
 
-  const { images, isLoading } = useQueryImages({
+  const { images, flatData, isLoading } = useQueryImages({
     modelVersionId: modelVersionId,
     prioritizedUserIds: [modelUserId],
     period: 'AllTime',
     sort: ImageSort.MostReactions,
     limit,
+    pending: true,
   });
+
+  const hiddenExplained = useExplainHiddenImages(flatData);
 
   if (isLoading)
     return (
@@ -150,51 +152,6 @@ export function ModelCarousel({
       </Box>
     );
 
-  if (!isLoading && !images.length) {
-    return (
-      <Paper
-        p="sm"
-        radius="md"
-        className={cx(!mobile && classes.carousel, mobile && classes.mobileBlock)}
-        sx={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          minHeight: mobile ? 300 : 500,
-        }}
-        withBorder
-      >
-        <Stack align="center" maw={380}>
-          <Stack spacing={4} align="center">
-            <ThemeIcon color="gray" size={64} radius={100}>
-              <IconPhotoOff size={32} />
-            </ThemeIcon>
-            <Text size="lg">No showcase images available</Text>
-            <Text size="sm" color="dimmed" ta="center">
-              {currentUser
-                ? `No images from this creator match your content preferences. Adjust your settings or explore the community gallery below.`
-                : `No images from this creator match the default content preferences. Log in to adjust your settings or explore the community gallery below.`}
-            </Text>
-          </Stack>
-          <Group grow w="100%">
-            {currentUser ? (
-              <Link href="/user/account#content-moderation">
-                <Button variant="outline">Adjust Settings</Button>
-              </Link>
-            ) : (
-              <Link href={`/login?returnUrl=${router.asPath}`}>
-                <Button variant="outline">Log In</Button>
-              </Link>
-            )}
-            <Button onClick={onBrowseClick} variant="outline">
-              Browse Gallery
-            </Button>
-          </Group>
-        </Stack>
-      </Paper>
-    );
-  }
-
   return (
     <Carousel
       key={modelId}
@@ -209,78 +166,56 @@ export function ModelCarousel({
       controlSize={mobile ? 32 : 56}
       loop
     >
-      <ImageGuard
-        images={images}
-        nsfw={nsfw}
-        connect={{ entityId: modelId, entityType: 'model' }}
-        render={(image) => {
-          const fromCommunity = image.user.id !== modelUserId;
-
-          return (
-            <Carousel.Slide>
-              <ImageGuard.Content>
-                {({ safe }) => (
-                  <Center style={{ height: '100%', width: '100%' }}>
-                    <div style={{ width: '100%', position: 'relative' }}>
-                      <RoutedDialogLink name="imageDetail" state={{ imageId: image.id, images }}>
-                        <Group
-                          position="apart"
-                          align="start"
-                          spacing={4}
-                          className={cx(classes.contentOverlay, classes.top)}
-                        >
-                          <ImageGuard.ToggleConnect position="top-left" />
-                          <Stack spacing="xs" ml="auto" align="flex-end">
-                            <ImageGuard.Report context="image" position="static" withinPortal />
-                            {features.imageGeneration && image.meta && (
-                              <HoverActionButton
-                                label="Remix"
-                                size={30}
-                                color="white"
-                                variant="filled"
-                                data-activity="remix:model-carousel"
-                                onClick={(e) => {
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                  generationPanel.open({
-                                    type: 'image',
-                                    id: image.id,
-                                  });
-                                }}
-                              >
-                                <IconBrush stroke={2.5} size={16} />
-                              </HoverActionButton>
-                            )}
-                          </Stack>
-                        </Group>
-                        {!safe ? (
-                          <AspectRatio
-                            ratio={(image.width ?? 1) / (image.height ?? 1)}
-                            sx={(theme) => ({
-                              width: '100%',
-                              borderRadius: theme.radius.md,
-                              overflow: 'hidden',
-                            })}
+      {images.map((image) => {
+        const fromCommunity = image.user.id !== modelUserId;
+        return (
+          <Carousel.Slide key={image.id}>
+            <Center h="100%" w="100%">
+              <div style={{ width: '100%', position: 'relative' }}>
+                <ImageGuard2 image={image} connectType="model" connectId={modelId}>
+                  {(safe) => (
+                    <>
+                      <ImageGuard2.BlurToggle className="absolute top-2 left-2 z-10" />
+                      <Stack spacing="xs" align="flex-end" className="absolute top-2 right-2 z-10">
+                        <ImageContextMenu image={image} />
+                        {features.imageGeneration && image.meta && (
+                          <HoverActionButton
+                            label="Remix"
+                            size={30}
+                            color="white"
+                            variant="filled"
+                            data-activity="remix:model-carousel"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              generationPanel.open({
+                                type: 'image',
+                                id: image.id,
+                              });
+                            }}
                           >
-                            <MediaHash {...image} />
-                          </AspectRatio>
-                        ) : (
-                          <Indicator
-                            label="From Community"
-                            radius="sm"
-                            position="top-center"
-                            size={24}
-                            disabled={!fromCommunity}
-                            withBorder
-                          >
-                            <ImagePreview
-                              image={image}
-                              edgeImageProps={{ width: 450 }}
-                              radius="md"
-                              style={{ width: '100%' }}
-                            />
-                          </Indicator>
+                            <IconBrush stroke={2.5} size={16} />
+                          </HoverActionButton>
                         )}
+                      </Stack>
+                      <RoutedDialogLink name="imageDetail" state={{ imageId: image.id, images }}>
+                        <Indicator
+                          label="From Community"
+                          radius="sm"
+                          position="top-center"
+                          size={24}
+                          disabled={!fromCommunity}
+                          withBorder
+                        >
+                          <ImagePreview
+                            image={image}
+                            edgeImageProps={{ width: 450 }}
+                            aspectRatio={(image.width ?? 1) / (image.height ?? 1)}
+                            radius="md"
+                            style={{ width: '100%' }}
+                            nsfw={!safe}
+                          />
+                        </Indicator>
                       </RoutedDialogLink>
                       <Reactions
                         entityId={image.id}
@@ -297,32 +232,39 @@ export function ModelCarousel({
                         className={classes.reactions}
                         targetUserId={image.user.id}
                       />
-                      {!image.hideMeta && image.meta && (
-                        <ImageMetaPopover
-                          meta={image.meta}
-                          generationProcess={image.generationProcess ?? undefined}
-                          imageId={image.id}
-                          mainResourceId={modelVersionId}
-                        >
-                          <ActionIcon className={classes.info} variant="transparent" size="lg">
-                            <IconInfoCircle
-                              color="white"
-                              filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                              opacity={0.8}
-                              strokeWidth={2.5}
-                              size={26}
-                            />
-                          </ActionIcon>
-                        </ImageMetaPopover>
-                      )}
-                    </div>
-                  </Center>
+                    </>
+                  )}
+                </ImageGuard2>
+                {!image.hideMeta && image.meta && (
+                  <ImageMetaPopover
+                    meta={image.meta}
+                    generationProcess={image.generationProcess ?? undefined}
+                    imageId={image.id}
+                    mainResourceId={modelVersionId}
+                  >
+                    <ActionIcon className={classes.info} variant="transparent" size="lg">
+                      <IconInfoCircle
+                        color="white"
+                        filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                        opacity={0.8}
+                        strokeWidth={2.5}
+                        size={26}
+                      />
+                    </ActionIcon>
+                  </ImageMetaPopover>
                 )}
-              </ImageGuard.Content>
-            </Carousel.Slide>
-          );
-        }}
-      />
+              </div>
+            </Center>
+          </Carousel.Slide>
+        );
+      })}
+      {hiddenExplained.hasHidden && (
+        <Carousel.Slide>
+          <Card withBorder component={Center} mih={450} h="100%" w="100%">
+            <ExplainHiddenImages {...hiddenExplained} />
+          </Card>
+        </Carousel.Slide>
+      )}
     </Carousel>
   );
 }
@@ -331,7 +273,6 @@ type Props = {
   modelVersionId: number;
   modelId: number;
   modelUserId: number;
-  nsfw: boolean;
   mobile?: boolean;
   limit?: number;
   onBrowseClick?: VoidFunction;

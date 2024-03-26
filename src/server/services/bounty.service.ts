@@ -13,7 +13,7 @@ import { TransactionType } from '~/server/schema/buzz.schema';
 import { createBuzzTransaction, getUserBuzzAccount } from '~/server/services/buzz.service';
 import { createEntityImages, updateEntityImages } from '~/server/services/image.service';
 import { decreaseDate, startOfDay, toUtc } from '~/utils/date-helpers';
-import { BountySort, BountyStatus } from '../common/enums';
+import { BountySort, BountyStatus, NsfwLevel } from '../common/enums';
 import { dbRead, dbWrite } from '../db/client';
 import { GetByIdInput } from '../schema/base.schema';
 import {
@@ -445,7 +445,11 @@ export const getBountyImages = async ({
     select: { image: { select: imageSelect } },
   });
 
-  return connections.map(({ image }) => ({ ...image, tags: image.tags.map((t) => t.tag) }));
+  return connections.map(({ image }) => ({
+    ...image,
+    nsfwLevel: image.nsfwLevel as NsfwLevel,
+    tags: image.tags.map((t) => t.tag),
+  }));
 };
 
 export const getBountyFiles = async ({ id }: GetByIdInput) => {
@@ -575,6 +579,7 @@ export const getImagesForBounties = async ({
   const groupedImages = groupBy(
     connections.map(({ entityId, image }) => ({
       ...image,
+      nsfwLefel: image.nsfwLevel as NsfwLevel,
       tags: image.tags.map((t) => ({ id: t.tag.id, name: t.tag.name })),
       entityId,
     })),

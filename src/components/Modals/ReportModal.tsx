@@ -163,7 +163,7 @@ const { openModal, Modal } = createContextModal<{ entityType: ReportEntity; enti
                 produce((old) => {
                   if (old) {
                     if (variables.reason === ReportReason.NSFW) {
-                      old.nsfw = true;
+                      // old.nsfw = true; // don't think this is used anywhere
                     } else if (variables.reason === ReportReason.Ownership) {
                       old.reportStats = { ...old.reportStats, ownershipProcessing: 1 };
                     }
@@ -188,7 +188,7 @@ const { openModal, Modal } = createContextModal<{ entityType: ReportEntity; enti
                 queryUtils.article.getById.setData(
                   { id: variables.id },
                   produce((old) => {
-                    if (old) old.nsfw = true;
+                    // if (old) old.nsfw = true; // don't think this is used anywhere
                   })
                 );
               }
@@ -199,7 +199,7 @@ const { openModal, Modal } = createContextModal<{ entityType: ReportEntity; enti
                 queryUtils.bounty.getById.setData(
                   { id: variables.id },
                   produce((old) => {
-                    if (old) old.nsfw = true;
+                    // if (old) old.nsfw = true; // don't think this is used anywhere
                   })
                 );
               }
