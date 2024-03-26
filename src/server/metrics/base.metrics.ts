@@ -48,7 +48,7 @@ export function createMetricProcessor({
       if (isFirstOfDay) await clearDay?.(ctx);
 
       // Check if update is needed
-      const shouldUpdate = lastUpdate.getTime() + updateInterval < Date.now();
+      const shouldUpdate = true;
       const metricUpdateAllowed =
         ((await redis.hGet(REDIS_KEYS.SYSTEM.FEATURES, `metric:${name.toLowerCase()}`)) ??
           'true') === 'true';
