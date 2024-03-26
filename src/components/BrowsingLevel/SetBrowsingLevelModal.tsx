@@ -20,14 +20,15 @@ export default function SetBrowsingLevelModal({
   const currentUser = useCurrentUser();
   const dialog = useDialogContext();
   const { classes, cx } = useStyles();
+  const isModerator = currentUser?.isModerator;
 
   const updateImageNsfwLevel = trpc.image.updateImageNsfwLevel.useMutation({
     onSuccess: () => {
-      if (!currentUser?.isModerator)
+      if (!isModerator)
         showSuccessNotification({ message: 'Succesfully requested image rating update' });
     },
     onError: (error) => {
-      if (currentUser?.isModerator) {
+      if (isModerator) {
         imageStore.setImage(imageId, { nsfwLevel });
         showErrorNotification({ title: 'There was an error updating the image nsfwLevel', error });
       } else {
@@ -37,13 +38,13 @@ export default function SetBrowsingLevelModal({
   });
 
   const handleClick = (level: number) => {
-    if (currentUser?.isModerator) imageStore.setImage(imageId, { nsfwLevel: level });
+    if (isModerator) imageStore.setImage(imageId, { nsfwLevel: level });
     updateImageNsfwLevel.mutate({ id: imageId, nsfwLevel: level });
     dialog.onClose();
   };
 
   return (
-    <Modal title="Nsfw Levels" {...dialog}>
+    <Modal title={isModerator ? 'Image ratings' : 'Request image rating update'} {...dialog}>
       <Paper withBorder p={0} className={classes.root}>
         {browsingLevels.map((level) => (
           <UnstyledButton
