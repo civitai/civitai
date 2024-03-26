@@ -23,7 +23,7 @@ import {
   moderateImageHandler,
 } from '~/server/controllers/image.controller';
 import { dbRead } from '~/server/db/client';
-import { getByIdSchema } from '~/server/schema/base.schema';
+import { getByIdSchema, infiniteQuerySchema } from '~/server/schema/base.schema';
 import {
   middleware,
   moderatorProcedure,
@@ -43,6 +43,7 @@ import {
   ingestArticleCoverImages,
   getImagesForModelVersionCache,
   updateImageNsfwLevel,
+  getImageRatingRequests,
 } from '~/server/services/image.service';
 import { CacheTTL } from '~/server/common/constants';
 import { z } from 'zod';
@@ -134,4 +135,7 @@ export const imageRouter = router({
   updateImageNsfwLevel: protectedProcedure
     .input(updateImageNsfwLevelSchema)
     .mutation(({ input, ctx }) => updateImageNsfwLevel({ ...input, user: ctx.user })),
+  getImageRatingRequests: moderatorProcedure
+    .input(infiniteQuerySchema)
+    .query(({ input }) => getImageRatingRequests(input)),
 });

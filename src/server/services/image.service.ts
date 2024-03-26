@@ -18,7 +18,12 @@ import { VotableTagModel } from '~/libs/tags';
 import { BlockedReason, ImageScanType, ImageSort, NsfwLevel } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
-import { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
+import {
+  GetByIdInput,
+  InfiniteQueryInput,
+  PaginationInput,
+  UserPreferencesInput,
+} from '~/server/schema/base.schema';
 import {
   CreateImageSchema,
   GetEntitiesCoverImage,
@@ -56,7 +61,7 @@ import { ImageResourceHelperModel } from '~/server/selectors/image.selector';
 import { purgeCache } from '~/server/cloudflare/client';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { promptWordReplace } from '~/utils/metadata/audit';
-import { getCursor } from '~/server/utils/pagination-helpers';
+import { getCursor, getPagination } from '~/server/utils/pagination-helpers';
 import { bustCachedArray, cachedObject, queryCache } from '~/server/utils/cache-helpers';
 import { CacheTTL, constants } from '~/server/common/constants';
 import { getPeriods } from '~/server/utils/enum-helpers';
@@ -65,6 +70,7 @@ import { baseS3Client } from '~/utils/s3-client';
 import { pgDbRead, pgDbWrite } from '~/server/db/pgDb';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { trackModActivity } from '~/server/services/moderator.service';
+import { nsfwBrowsingLevelsArray } from '~/shared/constants/browsingLevel.constants';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -2631,7 +2637,7 @@ export async function updateImageNsfwLevel({
 }
 
 type ImageRatingRequestResponse = {
-  imageId: number;
+  id: number;
   votes: {
     [NsfwLevel.PG]: NsfwLevel.PG;
     [NsfwLevel.PG13]: NsfwLevel.PG13;
@@ -2639,24 +2645,69 @@ type ImageRatingRequestResponse = {
     [NsfwLevel.X]: NsfwLevel.X;
     [NsfwLevel.XXX]: NsfwLevel.XXX;
   };
+  nsfwLevel: number;
+  width: number | null;
+  height: number | null;
+  type: MediaType;
 };
 
-export async function getImageRatingRequests() {
-  const results = await dbRead.$queryRaw<ImageRatingRequestResponse>`
+export async function getImageRatingRequests({ cursor, limit }: InfiniteQueryInput) {
+  const results = await dbRead.$queryRaw<ImageRatingRequestResponse[]>`
+    WITH CTE_Requests AS (
+      SELECT
+        DISTINCT ON (irr."imageId") irr."imageId", MIN(irr."createdAt") "createdAt",
+        jsonb_build_object(
+          ${NsfwLevel.PG}, count(irr."nsfwLevel")
+            FILTER (where irr."nsfwLevel" = ${NsfwLevel.PG}),
+          ${NsfwLevel.PG13}, count(irr."nsfwLevel")
+            FILTER (where irr."nsfwLevel" = ${NsfwLevel.PG13}),
+          ${NsfwLevel.R}, count(irr."nsfwLevel")
+            FILTER (where irr."nsfwLevel" = ${NsfwLevel.R}),
+          ${NsfwLevel.X}, count(irr."nsfwLevel")
+            FILTER (where irr."nsfwLevel" = ${NsfwLevel.X}),
+          ${NsfwLevel.XXX}, count(irr."nsfwLevel")
+            FILTER (where irr."nsfwLevel" = ${NsfwLevel.XXX})
+        ) "votes"
+        FROM "ImageRatingRequest" irr
+        WHERE irr.status = ${ReportStatus.Pending}::"ReportStatus"
+        GROUP BY irr."imageId"
+    )
     SELECT
-      DISTINCT ON (irr."imageId") irr."imageId",
-      jsonb_build_object(
-        ${NsfwLevel.PG}, count(irr."nsfwLevel" = ${NsfwLevel.PG}),
-        ${NsfwLevel.PG13}, count(irr."nsfwLevel" = ${NsfwLevel.PG13}),
-        ${NsfwLevel.R}, count(irr."nsfwLevel" = ${NsfwLevel.R}),
-        ${NsfwLevel.X}, count(irr."nsfwLevel" = ${NsfwLevel.X}),
-        ${NsfwLevel.XXX}, count(irr."nsfwLevel" = ${NsfwLevel.XXX}6)
-      ) "votes",
+      i.id,
       i.url,
-      i."nsfwLevel"
-      i.id
-    JOIN "Image" ON i.id = irr."imageId"
-    FROM "ImageRatingRequest" irr
-    GROUP BY irr."imageId"
+      i."nsfwLevel",
+      i.type,
+      i.height,
+      i.width,
+      r.votes
+    FROM CTE_Requests r
+    JOIN "Image" i ON i.id = r."imageId"
+    ${!!cursor ? Prisma.sql`WHERE i.id >= ${cursor}` : Prisma.sql``}
+    ORDER BY r."createdAt"
+    LIMIT ${limit + 1}
   `;
+
+  let nextCursor: number | undefined;
+  if (limit && results.length > limit) {
+    const nextItem = results.pop();
+    nextCursor = nextItem?.id || undefined;
+  }
+
+  const imageIds = results.map((x) => x.id);
+  const tagsOnImage = await dbRead.tagsOnImage.findMany({
+    where: {
+      tagId: { in: imageIds },
+      disabled: { not: true },
+      tag: { nsfwLevel: { in: nsfwBrowsingLevelsArray } },
+    },
+    select: { imageId: true, tag: { select: { id: true, name: true, nsfwLevel: true } } },
+  });
+
+  return {
+    nextCursor,
+    items: results.map((item) => {
+      const tags = tagsOnImage.filter((x) => x.imageId === item.id).map((x) => x.tag);
+      return { ...item, tags };
+    }),
+  };
 }
