@@ -2644,15 +2644,19 @@ type ImageRatingRequestResponse = {
 export async function getImageRatingRequests() {
   const results = await dbRead.$queryRaw<ImageRatingRequestResponse>`
     SELECT
-      DISTINCT ON ("imageId") "imageId",
+      DISTINCT ON (irr."imageId") irr."imageId",
       jsonb_build_object(
-        ${NsfwLevel.PG}, count("nsfwLevel" = ${NsfwLevel.PG}),
-        ${NsfwLevel.PG13}, count("nsfwLevel" = ${NsfwLevel.PG13}),
-        ${NsfwLevel.R}, count("nsfwLevel" = ${NsfwLevel.R}),
-        ${NsfwLevel.X}, count("nsfwLevel" = ${NsfwLevel.X}),
-        ${NsfwLevel.XXX}, count("nsfwLevel" = ${NsfwLevel.XXX}6)
-      ) "votes"
-    FROM "ImageRatingRequest"
-    GROUP BY "imageId"
+        ${NsfwLevel.PG}, count(irr."nsfwLevel" = ${NsfwLevel.PG}),
+        ${NsfwLevel.PG13}, count(irr."nsfwLevel" = ${NsfwLevel.PG13}),
+        ${NsfwLevel.R}, count(irr."nsfwLevel" = ${NsfwLevel.R}),
+        ${NsfwLevel.X}, count(irr."nsfwLevel" = ${NsfwLevel.X}),
+        ${NsfwLevel.XXX}, count(irr."nsfwLevel" = ${NsfwLevel.XXX}6)
+      ) "votes",
+      i.url,
+      i."nsfwLevel"
+      i.id
+    JOIN "Image" ON i.id = irr."imageId"
+    FROM "ImageRatingRequest" irr
+    GROUP BY irr."imageId"
   `;
 }
