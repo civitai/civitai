@@ -85,7 +85,7 @@ const reportTypeConnectionMap = {
   [ReportEntity.User]: 'userId',
   [ReportEntity.Model]: 'modelId',
   [ReportEntity.Comment]: 'commentId',
-  [ReportEntity.CommentV2]: 'commentId',
+  [ReportEntity.CommentV2]: 'commentV2Id',
   [ReportEntity.Image]: 'imageId',
   [ReportEntity.ResourceReview]: 'resourceReviewId',
   [ReportEntity.Article]: 'articleId',
