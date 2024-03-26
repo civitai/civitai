@@ -17,7 +17,11 @@ import {
   getUserBuzzAccount,
   getUserBuzzTransactions,
 } from '~/server/services/buzz.service';
-import { throwAuthorizationError, throwBadRequestError } from '../utils/errorHandling';
+import {
+  handleLogError,
+  throwAuthorizationError,
+  throwBadRequestError,
+} from '../utils/errorHandling';
 import { DEFAULT_PAGE_SIZE } from '../utils/pagination-helpers';
 import { dbRead } from '~/server/db/client';
 import { userContributingClubs } from '../services/club.service';
@@ -252,8 +256,10 @@ export const getUserMultipliersHandler = async ({ ctx }: { ctx: DeepNonNullable<
 
 export const claimDailyBoostRewardHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
   try {
-    await dailyBoostReward.apply({ userId: ctx.user.id });
+    await dailyBoostReward.apply({ userId: ctx.user.id }, ctx.ip);
   } catch (error) {
-    throw getTRPCErrorFromUnknown(error);
+    const parsedError = getTRPCErrorFromUnknown(error);
+    handleLogError(parsedError);
+    throw parsedError;
   }
 };
