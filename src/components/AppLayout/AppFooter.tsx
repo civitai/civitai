@@ -12,6 +12,7 @@ import {
 import { NextLink } from '@mantine/next';
 import { useState } from 'react';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
+import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { SocialLinks } from '~/components/SocialLinks/SocialLinks';
 import { env } from '~/env/client.mjs';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -172,6 +173,11 @@ export function AppFooter({ fixed = true }: { fixed?: boolean }) {
           <SocialLinks />
         </Group>
         <Group ml="auto" spacing={4} sx={{ flexWrap: 'nowrap' }}>
+          <RoutedDialogLink name="support" state={{}} passHref>
+            <Button component="a" {...buttonProps} pl={4} pr="xs">
+              🛟 Support
+            </Button>
+          </RoutedDialogLink>
           <Button
             component="a"
             href="/bugs"
