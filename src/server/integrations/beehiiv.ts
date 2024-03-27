@@ -1,4 +1,6 @@
 import { env } from '~/env/server.mjs';
+import { CacheTTL } from '~/server/common/constants';
+import { redis } from '~/server/redis/client';
 import { createLogger } from '~/utils/logging';
 
 const connected = !!env.NEWSLETTER_KEY && !!env.NEWSLETTER_ID;
@@ -78,12 +80,18 @@ type Subscription = {
 };
 
 const getSubscription = newsletterHandler(async (email: string) => {
+  const subscriptionCache = await redis.get(`newsletter:${email}`);
+  if (subscriptionCache) return JSON.parse(subscriptionCache) as Subscription;
+
   const subscriptions = await beehiivRequest({
     endpoint: `publications/${env.NEWSLETTER_ID}/subscriptions`,
     method: 'GET',
     body: { email },
   });
   const subscription = subscriptions?.data[0] as Subscription | undefined;
+  await redis.set(`newsletter:${email}`, JSON.stringify(subscription), {
+    EX: CacheTTL.day,
+  });
   return subscription;
 });
 
@@ -116,6 +124,7 @@ const setSubscription = newsletterHandler(
         },
       });
     }
+    await redis.del(`newsletter:${email}`);
   }
 );
 
