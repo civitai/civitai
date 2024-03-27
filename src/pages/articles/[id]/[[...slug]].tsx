@@ -54,10 +54,7 @@ import { useContainerSmallerThan } from '~/components/ContainerProvider/useConta
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
-import {
-  getIsSafeBrowsingLevel,
-  hasPublicBrowsingLevel,
-} from '../../../shared/constants/browsingLevel.constants';
+import { hasPublicBrowsingLevel } from '../../../shared/constants/browsingLevel.constants';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 
 const querySchema = z.object({
@@ -240,7 +237,7 @@ export default function ArticleDetailsPage({
                 sx={(theme) => ({
                   position: 'relative',
                   height: 'calc(100vh / 3)',
-                  '& > img, & > .hashWrapper': {
+                  'img, .hashWrapper': {
                     height: '100%',
                     objectFit: 'cover',
                     borderRadius: theme.radius.md,

@@ -123,7 +123,6 @@ function filterPreferences<
   const { hiddenModels, hiddenImages, hiddenTags, hiddenUsers, moderatedTags } = hiddenPreferences;
   const maxSelectedLevel = Math.max(...parseBitwiseBrowsingLevel(browsingLevel));
   const maxBrowsingLevel = Flags.maxValue(browsingLevel);
-  console.log({ maxBrowsingLevel });
 
   switch (key) {
     case 'models':
