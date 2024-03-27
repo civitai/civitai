@@ -67,7 +67,6 @@ function updateCookieValues({ browsingLevel, blurNsfw, showNsfw, disableHidden }
   setCookie('blur', blurNsfw);
   setCookie('nsfw', showNsfw);
   setCookie('disableHidden', disableHidden);
-  // setCookie('mode', 'NSFW');
   deleteCookie('mode');
 }
 
@@ -83,8 +82,8 @@ export function BrowsingModeProvider({ children }: { children: React.ReactNode }
   function getStoreInitialValues() {
     if (!currentUser) return { showNsfw: false, blurNsfw: true, browsingLevel: 0 };
 
-    let showNsfw = cookies.showNsfw ?? currentUser.showNsfw;
-    let browsingLevel = cookies.browsingLevel ?? currentUser.browsingLevel;
+    let showNsfw = currentUser.showNsfw;
+    let browsingLevel = currentUser.browsingLevel;
     // if cookies.mode is present, then this is the user's first time accessing this feature
     if (cookies.mode) {
       showNsfw = false;
@@ -93,7 +92,7 @@ export function BrowsingModeProvider({ children }: { children: React.ReactNode }
 
     return {
       showNsfw,
-      blurNsfw: cookies.blurNsfw ?? currentUser.blurNsfw,
+      blurNsfw: currentUser.blurNsfw,
       browsingLevel,
       disableHidden: cookies.disableHidden,
     };
