@@ -33,6 +33,7 @@ import {
   ImageUploadProps,
   UpdateImageNsfwLevelOutput,
   UpdateImageInput,
+  ImageRatingReviewOutput,
 } from '~/server/schema/image.schema';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { articlesSearchIndex, imagesSearchIndex } from '~/server/search-index';
@@ -2620,13 +2621,16 @@ export async function updateImageNsfwLevel({
   id,
   nsfwLevel,
   user,
+  status,
 }: UpdateImageNsfwLevelOutput & { user: SessionUser }) {
   if (user.isModerator) {
     await dbWrite.image.update({ where: { id }, data: { nsfwLevel, nsfwLevelLocked: true } });
-    await dbWrite.imageRatingRequest.updateMany({
-      where: { imageId: id, status: 'Pending' },
-      data: { status: 'Actioned' },
-    });
+    if (status) {
+      await dbWrite.imageRatingRequest.updateMany({
+        where: { imageId: id, status: 'Pending' },
+        data: { status },
+      });
+    }
     await trackModActivity(user.id, {
       entityType: 'image',
       entityId: id,
@@ -2652,20 +2656,29 @@ type ImageRatingRequestResponse = {
   };
   url: string;
   nsfwLevel: number;
+  nsfwLevelLocked: boolean;
   width: number | null;
   height: number | null;
   type: MediaType;
   total: number;
+  ownerVote: number;
+  createdAt: Date;
 };
 
-export async function getImageRatingRequests({ cursor, limit }: InfiniteQueryInput) {
+export async function getImageRatingRequests({ cursor, limit }: ImageRatingReviewOutput) {
   const results = await dbRead.$queryRaw<ImageRatingRequestResponse[]>`
     WITH CTE_Requests AS (
       SELECT
-        DISTINCT ON (irr."imageId") irr."imageId",
+        DISTINCT ON (irr."imageId") irr."imageId" as id,
         MIN(irr."createdAt") "createdAt",
-        COUNT(*)::INT "total",
-        (SELECT irr."nsfwLevel" FROM "Image" i WHERE i.id = irr."imageId" AND i."userId" = irr."userId") "ownerVote",
+        COUNT(CASE WHEN i."nsfwLevel" != irr."nsfwLevel" THEN i.id END)::INT "total",
+        COALESCE(SUM(CASE WHEN irr."userId" = i."userId" THEN irr."nsfwLevel" ELSE 0 END))::INT "ownerVote",
+        i.url,
+        i."nsfwLevel",
+        i."nsfwLevelLocked",
+        i.type,
+        i.height,
+        i.width,
         jsonb_build_object(
           ${NsfwLevel.PG}, count(irr."nsfwLevel")
             FILTER (where irr."nsfwLevel" = ${NsfwLevel.PG}),
@@ -2679,31 +2692,23 @@ export async function getImageRatingRequests({ cursor, limit }: InfiniteQueryInp
             FILTER (where irr."nsfwLevel" = ${NsfwLevel.XXX})
         ) "votes"
         FROM "ImageRatingRequest" irr
-        -- JOIN "Image" i on i.id = irr."imageId"
+        JOIN "Image" i on i.id = irr."imageId"
         WHERE irr.status = ${ReportStatus.Pending}::"ReportStatus"
-        GROUP BY irr."imageId"
+        GROUP BY irr."imageId", i.id
     )
     SELECT
-      i.id,
-      i.url,
-      i."nsfwLevel",
-      i.type,
-      i.height,
-      i.width,
-      r.votes,
-      r.total,
+      r.*
     FROM CTE_Requests r
-    JOIN "Image" i ON i.id = r."imageId"
-    WHERE r.total > 4
-    ${!!cursor ? Prisma.sql` AND i.id >= ${cursor}` : Prisma.sql``}
+    WHERE (r.total >= 3 OR r."ownerVote" != 0)
+    ${!!cursor ? Prisma.sql` AND r."createdAt" >= ${new Date(cursor)}` : Prisma.sql``}
     ORDER BY r."createdAt"
     LIMIT ${limit + 1}
   `;
 
-  let nextCursor: number | undefined;
+  let nextCursor: string | undefined;
   if (limit && results.length > limit) {
     const nextItem = results.pop();
-    nextCursor = nextItem?.id || undefined;
+    nextCursor = nextItem?.createdAt.toISOString() || undefined;
   }
 
   const imageIds = results.map((x) => x.id);
@@ -2711,7 +2716,7 @@ export async function getImageRatingRequests({ cursor, limit }: InfiniteQueryInp
     where: {
       imageId: { in: imageIds },
       disabled: { not: true },
-      // tag: { nsfwLevel: { in: nsfwBrowsingLevelsArray } },
+      tag: { nsfwLevel: { in: nsfwBrowsingLevelsArray } },
     },
     select: { imageId: true, tag: { select: { id: true, name: true, nsfwLevel: true } } },
   });
