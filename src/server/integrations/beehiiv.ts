@@ -85,7 +85,10 @@ const getSubscription = newsletterHandler(async (email: string) => {
   if (!email) return undefined;
 
   const subscriptionCache = await redis.get(getRedisKey(email));
-  if (subscriptionCache) return JSON.parse(subscriptionCache) as Subscription | undefined;
+  if (subscriptionCache) {
+    if (subscriptionCache === 'not-subscribed') return undefined;
+    return JSON.parse(subscriptionCache) as Subscription | undefined;
+  }
 
   const subscriptions = await beehiivRequest({
     endpoint: `publications/${env.NEWSLETTER_ID}/subscriptions`,
@@ -93,7 +96,7 @@ const getSubscription = newsletterHandler(async (email: string) => {
     body: { email },
   });
   const subscription = subscriptions?.data?.[0] as Subscription | undefined;
-  await redis.set(getRedisKey(email), JSON.stringify(subscription), {
+  await redis.set(getRedisKey(email), JSON.stringify(subscription ?? 'not-subscribed'), {
     EX: CacheTTL.day,
   });
   return subscription;
