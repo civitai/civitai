@@ -2623,6 +2623,10 @@ export async function updateImageNsfwLevel({
 }: UpdateImageNsfwLevelOutput & { user: SessionUser }) {
   if (user.isModerator) {
     await dbWrite.image.update({ where: { id }, data: { nsfwLevel, nsfwLevelLocked: true } });
+    await dbWrite.imageRatingRequest.updateMany({
+      where: { imageId: id, status: 'Pending' },
+      data: { status: 'Actioned' },
+    });
     await trackModActivity(user.id, {
       entityType: 'image',
       entityId: id,
@@ -2651,13 +2655,17 @@ type ImageRatingRequestResponse = {
   width: number | null;
   height: number | null;
   type: MediaType;
+  total: number;
 };
 
 export async function getImageRatingRequests({ cursor, limit }: InfiniteQueryInput) {
   const results = await dbRead.$queryRaw<ImageRatingRequestResponse[]>`
     WITH CTE_Requests AS (
       SELECT
-        DISTINCT ON (irr."imageId") irr."imageId", MIN(irr."createdAt") "createdAt",
+        DISTINCT ON (irr."imageId") irr."imageId",
+        MIN(irr."createdAt") "createdAt",
+        COUNT(*)::INT "total",
+        (SELECT irr."nsfwLevel" FROM "Image" i WHERE i.id = irr."imageId" AND i."userId" = irr."userId") "ownerVote",
         jsonb_build_object(
           ${NsfwLevel.PG}, count(irr."nsfwLevel")
             FILTER (where irr."nsfwLevel" = ${NsfwLevel.PG}),
@@ -2671,6 +2679,7 @@ export async function getImageRatingRequests({ cursor, limit }: InfiniteQueryInp
             FILTER (where irr."nsfwLevel" = ${NsfwLevel.XXX})
         ) "votes"
         FROM "ImageRatingRequest" irr
+        -- JOIN "Image" i on i.id = irr."imageId"
         WHERE irr.status = ${ReportStatus.Pending}::"ReportStatus"
         GROUP BY irr."imageId"
     )
@@ -2681,10 +2690,12 @@ export async function getImageRatingRequests({ cursor, limit }: InfiniteQueryInp
       i.type,
       i.height,
       i.width,
-      r.votes
+      r.votes,
+      r.total,
     FROM CTE_Requests r
     JOIN "Image" i ON i.id = r."imageId"
-    ${!!cursor ? Prisma.sql`WHERE i.id >= ${cursor}` : Prisma.sql``}
+    WHERE r.total > 4
+    ${!!cursor ? Prisma.sql` AND i.id >= ${cursor}` : Prisma.sql``}
     ORDER BY r."createdAt"
     LIMIT ${limit + 1}
   `;

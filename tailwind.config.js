@@ -9,6 +9,7 @@ module.exports = {
         sm: '0 1px 2px var(--tw-shadow-color)',
         default: '0 2px 4px var(--tw-shadow-color)',
       },
+
     },
     screens: {
       xs: '576px',
@@ -16,7 +17,7 @@ module.exports = {
       md: '992px',
       lg: '1200px',
       xl: '1400px',
-    }
+    },
   },
   plugins: [
     plugin(function ({ matchUtilities, theme }) {

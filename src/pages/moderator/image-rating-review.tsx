@@ -40,8 +40,8 @@ export default function ImageRatingReview() {
       ) : (
         <>
           <div
-            className="grid gap-6 m-4 grid-cols-1 lg:grid-cols-2"
-            // style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(500px, 1fr))' }}
+            className="grid gap-6 m-4 justify-center"
+            style={{ gridTemplateColumns: 'repeat(auto-fit, 300px' }}
           >
             {flatData?.map((item) => (
               <ImageRatingCard key={item.id} {...item} />
@@ -51,7 +51,6 @@ export default function ImageRatingReview() {
             <InViewLoader
               loadFn={fetchNextPage}
               loadCondition={!isRefetching && hasNextPage}
-              // Forces a re-render whenever the amount of images fetched changes. Forces load-more if available.
               style={{ gridColumn: '1/-1' }}
             >
               <Center p="xl" sx={{ height: 36 }} mt="md">
@@ -70,10 +69,10 @@ function ImageRatingCard(item: AsyncReturnType<typeof getImageRatingRequests>['i
   const maxRating = Math.max(...Object.values(item.votes));
 
   return (
-    <div className="flex items-start gap-1">
-      <EdgeMedia src={item.url} type={item.type} width={450} />
-      <div className="flex flex-col gap-4">
-        <div className="flex-1 grid gap-1" style={{ gridTemplateColumns: `min-content 1fr` }}>
+    <div className="flex flex-col items-center card">
+      <EdgeMedia src={item.url} type={item.type} width={450} className="w-full" />
+      <div className="flex flex-col gap-4 p-4">
+        <div className="grid gap-1" style={{ gridTemplateColumns: `min-content 1fr` }}>
           {browsingLevels.map((level) => {
             const count = item.votes[level];
             const percentage = count / maxRating;
@@ -86,7 +85,7 @@ function ImageRatingCard(item: AsyncReturnType<typeof getImageRatingRequests>['i
                 >
                   {browsingLevelLabels[level]}
                 </Button>
-                <Progress value={percentage * 100} />
+                <Progress value={percentage * 100} label={`${count}`} size={26} />
               </>
             );
           })}
