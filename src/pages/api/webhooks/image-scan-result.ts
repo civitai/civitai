@@ -22,6 +22,7 @@ import { SignalMessages, SearchIndexUpdateQueueAction } from '~/server/common/en
 import { scanJobsSchema } from '~/server/schema/image.schema';
 import { getTagRules } from '~/server/services/system-cache';
 import { uniqBy } from 'lodash-es';
+import { NsfwLevel } from '~/server/common/enums';
 
 const REQUIRED_SCANS = [TagSource.WD14, TagSource.Rekognition];
 
@@ -51,10 +52,17 @@ const schema = z.object({
   vectors: z.array(z.number().array()).nullish(),
   status: z.nativeEnum(Status),
   source: z.nativeEnum(TagSource),
+  context: z
+    .object({
+      movie_rating: z.string().optional(),
+    })
+    .optional(),
 });
 
-function shouldIgnore(tag: string) {
-  return tagsToIgnore.includes(tag) || topLevelModerationCategories.includes(tag);
+function shouldIgnore(tag: string, source: TagSource) {
+  return (
+    (tagsToIgnore[source]?.includes(tag) ?? false) || topLevelModerationCategories.includes(tag)
+  );
 }
 
 export default WebhookEndpoint(async function imageTags(req, res) {
@@ -112,7 +120,7 @@ export default WebhookEndpoint(async function imageTags(req, res) {
 });
 
 type Tag = { tag: string; confidence: number; id?: number; source?: TagSource };
-async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps) {
+async function handleSuccess({ id, tags: incomingTags = [], source, context }: BodyProps) {
   if (!incomingTags) return;
 
   const image = await dbWrite.image.findUnique({
@@ -130,10 +138,14 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
     throw new Error('Image not found');
   }
 
-  // Add to scanJobs
+  // Add to scanJobs and update aiRating
+  let aiRating: NsfwLevel | undefined;
+  if (source === TagSource.WD14 && !!context?.movie_rating)
+    aiRating = NsfwLevel[context.movie_rating as keyof typeof NsfwLevel];
   await dbWrite.$executeRawUnsafe(`
-    UPDATE "Image"
-      SET "scanJobs" = jsonb_set(COALESCE("scanJobs", '{}'), '{scans}', COALESCE("scanJobs"->'scans', '{}') || '{"${source}": ${Date.now()}}'::jsonb)
+    UPDATE "Image" SET
+      "scanJobs" = jsonb_set(COALESCE("scanJobs", '{}'), '{scans}', COALESCE("scanJobs"->'scans', '{}') || '{"${source}": ${Date.now()}}'::jsonb)
+      ${aiRating ? `, "aiNsfwLevel" = ${aiRating}` : ''}
     WHERE id = ${id};
   `);
 
@@ -235,9 +247,10 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
           .filter((x) => x.id)
           .map(
             (x) =>
-              `(${id}, ${x.id}, ${x.confidence}, true, ${shouldIgnore(x.tag)}, '${
+              `(${id}, ${x.id}, ${x.confidence}, true, ${shouldIgnore(
+                x.tag,
                 x.source ?? source
-              }')`
+              )}, '${x.source ?? source}')`
           )
           .join(', ')}
         ON CONFLICT ("imageId", "tagId") DO UPDATE SET "confidence" = EXCLUDED."confidence";
