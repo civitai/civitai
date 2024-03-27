@@ -19,7 +19,7 @@ import {
   Prisma,
   TagEngagementType,
 } from '@prisma/client';
-import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { SearchIndexUpdateQueueAction, NsfwLevel } from '~/server/common/enums';
 import { dbWrite, dbRead } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
@@ -507,7 +507,12 @@ export async function softDeleteUser({ id }: { id: number }) {
   });
   await dbWrite.image.updateMany({
     where: { userId: id },
-    data: { ingestion: 'Blocked', blockedFor: 'CSAM', needsReview: 'blocked' },
+    data: {
+      ingestion: 'Blocked',
+      nsfwLevel: NsfwLevel.Blocked,
+      blockedFor: 'CSAM',
+      needsReview: 'blocked',
+    },
   });
   await cancelSubscription({ userId: id });
   await dbWrite.user.update({ where: { id }, data: { bannedAt: new Date() } });

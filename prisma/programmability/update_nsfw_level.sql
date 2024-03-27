@@ -25,7 +25,7 @@ BEGIN
   )
   UPDATE "Image" i SET nsfw = il.nsfw, "nsfwLevel" = il."nsfwLevel"
   FROM image_level il
-  WHERE il."imageId" = i.id AND NOT i."nsfwLevelLocked" AND (il."nsfwLevel" != i."nsfwLevel" OR il.nsfw != i.nsfw) AND i.ingestion = 'Scanned';
+  WHERE il."imageId" = i.id AND NOT i."nsfwLevelLocked" AND (il."nsfwLevel" != i."nsfwLevel" OR il.nsfw != i.nsfw) AND i.ingestion = 'Scanned' AND i."nsfwLevel" != 32;
 END;
 $$ LANGUAGE plpgsql;
 ---
