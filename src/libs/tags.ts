@@ -50,5 +50,5 @@ export function getTagDisplayName(name: string) {
 
 export const tagsNeedingReview = ['child', 'teen', 'baby', 'girl', 'boy'];
 export const tagsToIgnore: Partial<Record<TagSource, string[]>> = {
-  Rekognition: ['baby', 'emaciated bodies', 'weapons', 'female swimwear or underwear'],
+  Rekognition: ['baby', 'emaciated bodies', 'weapons'],
 };
