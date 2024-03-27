@@ -153,11 +153,14 @@ const defaultsByTier: Record<string, GenerationLimits> = {
     resources: 9,
   },
   founder: {
-    quantity: 10,
-    queue: 10,
+    quantity: 8,
+    queue: 8,
     steps: 60,
-    resources: 12,
+    resources: 9,
   },
+  bronze: { quantity: 8, queue: 8, steps: 60, resources: 12 },
+  silver: { quantity: 10, queue: 10, steps: 60, resources: 12 },
+  gold: { quantity: 12, queue: 10, steps: 60, resources: 12 },
 };
 
 export const generationStatusSchema = z.object({

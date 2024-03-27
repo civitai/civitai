@@ -716,11 +716,15 @@ export const createGenerationRequest = async ({
         })
       : undefined;
 
-  const response = await fetch(`${env.SCHEDULER_ENDPOINT}/requests?charge=true`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(generationRequest),
-  });
+  const chargesEnabled = true;
+  const response = await fetch(
+    `${env.SCHEDULER_ENDPOINT}/requests${chargesEnabled ? '?charge=true' : ''}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(generationRequest),
+    }
+  );
 
   // console.log('________');
   // console.log(response);
@@ -817,6 +821,8 @@ export async function getGenerationStatus() {
   const status = generationStatusSchema.parse(
     JSON.parse((await redis.hGet(REDIS_KEYS.SYSTEM.FEATURES, REDIS_KEYS.GENERATION.STATUS)) ?? '{}')
   );
+
+  status;
 
   return status as GenerationStatus;
 }
@@ -1079,6 +1085,8 @@ export const textToImage = async ({
     },
     isTestRun,
   });
+
+  console.log(data.job, response);
 
   if (!response.ok) throw new Error('An unknown error occurred. Please try again later');
 

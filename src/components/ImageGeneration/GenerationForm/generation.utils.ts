@@ -132,7 +132,10 @@ export const useEstimateTextToImageJobCost = () => {
 
     return {
       resources: _resources.filter((x) => x.covered !== false),
-      params: { ...params, baseModel: model?.baseModel },
+      params: {
+        ...params,
+        baseModel: model?.baseModel ? getBaseModelSetKey(model.baseModel) : undefined,
+      },
     };
   }, [
     /* eslint-disable react-hooks/exhaustive-deps */
@@ -155,12 +158,10 @@ export const useEstimateTextToImageJobCost = () => {
   );
 
   const totalCost = imageGenerationBuzz
-    ? Math.ceil(
-        (result?.jobs ?? []).reduce((acc, job) => {
-          acc += job.cost;
-          return acc;
-        }, 0)
-      )
+    ? (result?.jobs ?? []).reduce((acc, job) => {
+        acc += Math.ceil(job.cost);
+        return acc;
+      }, 0)
     : 0;
 
   return {
