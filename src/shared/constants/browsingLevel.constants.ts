@@ -79,9 +79,9 @@ export enum NsfwLevelDeprecated {
 }
 export const nsfwLevelMapDeprecated = {
   None: NsfwLevel.PG,
-  Soft: NsfwLevel.PG13,
-  Mature: NsfwLevel.R,
-  X: flagifyBrowsingLevel([NsfwLevel.X, NsfwLevel.XXX]),
+  Soft: flagifyBrowsingLevel([NsfwLevel.PG, NsfwLevel.PG13]),
+  Mature: flagifyBrowsingLevel([NsfwLevel.PG, NsfwLevel.PG13, NsfwLevel.R]),
+  X: flagifyBrowsingLevel([NsfwLevel.PG, NsfwLevel.PG13, NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX]),
   Blocked: NsfwLevel.Blocked,
 };
 const nsfwLevelReverseMapDeprecated = {
