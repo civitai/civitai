@@ -3,11 +3,12 @@ import { z } from 'zod';
 import { CacheTTL } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
-import { protectedProcedure, router } from '~/server/trpc';
+import { moderatorProcedure, protectedProcedure, router } from '~/server/trpc';
 import { cachedCounter } from '~/server/utils/cache-helpers';
 import { calculateLevelProgression } from '~/server/utils/research-utils';
 import { queueNewRaterLevelWebhook } from '~/server/webhooks/research.webhooks';
 import { getRandomInt } from '~/utils/number-helpers';
+import { NsfwLevel } from '~/server/common/enums';
 
 const raterGetImagesSchema = z.object({
   level: z.number().transform((val) => val & ~32), // Remove the "Blocked" bit (32)
@@ -18,6 +19,11 @@ const raterGetImagesSchema = z.object({
 const raterSetRatingsSchema = z.object({
   ratings: z.record(z.string(), z.number()),
   trackId: z.string().optional(),
+});
+
+const raterUpdateSanityImagesSchema = z.object({
+  add: z.number().array().optional(),
+  remove: z.number().array().optional(),
 });
 
 const trackSchema = z.object({
@@ -47,13 +53,27 @@ async function getUserPosition(userId: number) {
 }
 
 export type RaterImage = { id: number; url: string; nsfwLevel: number | null };
+export type SanityImage = {
+  id: number;
+  url: string;
+  width: number;
+  height: number;
+  hash: string;
+  nsfwLevel: NsfwLevel;
+};
 export const ratingsCounter = cachedCounter(
   REDIS_KEYS.RESEARCH.RATINGS_COUNT,
   async (userId: number) => {
     const [{ count }] = await dbRead.$queryRaw<{ count: number }[]>`
+    WITH last_reset AS (
+      SELECT COALESCE(MAX("createdAt"), '2024-03-01') date
+      FROM research_ratings_resets
+      WHERE "userId" = ${userId}
+    )
     SELECT COUNT(*) as count
-    FROM "research_ratings"
-    WHERE "userId" = ${userId};
+    FROM "research_ratings" rr
+    JOIN last_reset lr ON rr."createdAt" > lr.date
+    WHERE rr."userId" = ${userId};
   `;
     return Number(count ?? 0);
   }
@@ -79,8 +99,14 @@ async function getUserSanity(userId: number, sanityIds?: number[], refresh = fal
 
   if (!sanityIds) sanityIds = await getSanityIds();
   const [{ strikes }] = await dbWrite.$queryRaw<{ strikes: number }[]>`
+    WITH last_reset AS (
+      SELECT COALESCE(MAX("createdAt"), '2024-03-01') date
+      FROM research_ratings_resets
+      WHERE "userId" = ${userId}
+    )
     SELECT COUNT(*) as strikes
     FROM "research_ratings" rr
+    JOIN last_reset lr ON rr."createdAt" > lr.date
     JOIN "Image" i ON rr."imageId" = i.id
     WHERE i."nsfwLevel" != rr."nsfwLevel"
       AND rr."imageId" IN (${Prisma.join(sanityIds)})
@@ -182,7 +208,7 @@ export const researchRouter = router({
       const results = await dbWrite.$queryRawUnsafe<{ imageId: number }[]>(`
         INSERT INTO "research_ratings" ("userId", "imageId", "nsfwLevel", "sane")
         VALUES ${values.join(', ')}
-        ON CONFLICT ("userId", "imageId") DO UPDATE SET "nsfwLevel" = EXCLUDED."nsfwLevel"
+        ON CONFLICT ("userId", "imageId") DO UPDATE SET "nsfwLevel" = EXCLUDED."nsfwLevel", "createdAt" = NOW()
         RETURNING "imageId";
       `);
 
@@ -210,6 +236,34 @@ export const researchRouter = router({
         const lastImageId = results[results.length - 1].imageId;
         await redis.hSet(progressKey, `track:${input.trackId}`, lastImageId.toString());
         await redis.expire(progressKey, CacheTTL.week);
+      }
+    }),
+  raterReset: protectedProcedure.mutation(async ({ ctx }) => {
+    await dbWrite.$queryRaw`
+      INSERT INTO research_ratings_resets ("userId")
+      VALUES (${ctx.user.id});
+    `;
+    await redis.del(REDIS_KEYS.RESEARCH.RATINGS_PROGRESS + ':' + ctx.user.id);
+    ratingsCounter.clear(ctx.user.id);
+  }),
+  raterGetSanityImages: moderatorProcedure.query(async () => {
+    const sanityIds = await getSanityIds();
+    const sanityImages = await dbRead.$queryRaw<SanityImage[]>`
+      SELECT i.id, i.url, i.width, i.height, i.hash, i."nsfwLevel"
+      FROM "Image" i
+      WHERE i.id IN (${Prisma.join(sanityIds)});
+    `;
+    return sanityImages;
+  }),
+  raterUpdateSanityImages: moderatorProcedure
+    .input(raterUpdateSanityImagesSchema)
+    .mutation(async ({ input }) => {
+      if (input.add?.length) {
+        await redis.sAdd(REDIS_KEYS.RESEARCH.RATINGS_SANITY_IDS, input.add.map(String));
+      }
+
+      if (input.remove?.length) {
+        await redis.sRem(REDIS_KEYS.RESEARCH.RATINGS_SANITY_IDS, input.remove.map(String));
       }
     }),
 });

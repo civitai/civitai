@@ -1,4 +1,4 @@
-import { TagType } from '@prisma/client';
+import { TagSource, TagType } from '@prisma/client';
 import { z } from 'zod';
 import { moderationDisplayNames } from '~/libs/moderation';
 import { NsfwLevel } from '~/server/common/enums';
@@ -49,4 +49,6 @@ export function getTagDisplayName(name: string) {
 }
 
 export const tagsNeedingReview = ['child', 'teen', 'baby', 'girl', 'boy'];
-export const tagsToIgnore = ['baby', 'emaciated bodies', 'weapons'];
+export const tagsToIgnore: Partial<Record<TagSource, string[]>> = {
+  Rekognition: ['baby', 'emaciated bodies', 'weapons', 'female swimwear or underwear'],
+};

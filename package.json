@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "2.0.7",
+  "version": "2.0.10",
   "private": true,
   "scripts": {
     "start": "next start",
@@ -28,7 +28,8 @@
     "db:deploy": "node scripts/prisma-migrate-with-views-workaround.mjs -p && npm run db:program",
     "db:program": "node scripts/prisma-prepare-programmability.mjs",
     "db:generate": "prisma generate",
-    "db:seed": "prisma db seed"
+    "db:seed": "prisma db seed",
+    "share": "ngrok http 3000"
   },
   "prisma": {
     "seed": "ts-node --compiler-options {\"module\":\"CommonJS\"} prisma/seed.ts"

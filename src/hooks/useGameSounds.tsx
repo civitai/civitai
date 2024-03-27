@@ -9,6 +9,8 @@ type GameSound =
   | 'point'
   | 'undo';
 export function useGameSounds() {
+  // return (id: GameSound, playbackRate = 1) => {};
+
   const [playSound] = useSound('/sounds/game.mp3', {
     volume: 0.5,
     sprite: {
