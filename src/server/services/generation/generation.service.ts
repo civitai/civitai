@@ -17,6 +17,7 @@ import {
   handleLogError,
   throwAuthorizationError,
   throwBadRequestError,
+  throwInsufficientFundsError,
   throwNotFoundError,
   throwRateLimitError,
   withRetries,
@@ -715,7 +716,7 @@ export const createGenerationRequest = async ({
         })
       : undefined;
 
-  const response = await fetch(`${env.SCHEDULER_ENDPOINT}/requests`, {
+  const response = await fetch(`${env.SCHEDULER_ENDPOINT}/requests?charge=true`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(generationRequest),
@@ -728,6 +729,10 @@ export const createGenerationRequest = async ({
   if (response.status === 429) {
     // too many requests
     throw throwRateLimitError();
+  }
+
+  if (response.status === 403) {
+    throw throwInsufficientFundsError();
   }
 
   if (!response.ok) {
