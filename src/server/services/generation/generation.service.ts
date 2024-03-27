@@ -693,30 +693,7 @@ export const createGenerationRequest = async ({
   // console.log(JSON.stringify(generationRequest));
   // console.log('________');
 
-  // TODO.imageGenerationBuzzCharge - Remove all cost calculation from the front-end. This is done by the orchestrator. Charge happens there too.
-  const totalCost = calculateGenerationBill({
-    baseModel: params.baseModel,
-    quantity: params.quantity,
-    steps: params.steps,
-    aspectRatio: params.aspectRatio,
-  });
-
-  const buzzTransaction =
-    totalCost > 0
-      ? await createBuzzTransaction({
-          fromAccountId: userId,
-          type: TransactionType.Generation,
-          amount: totalCost,
-          details: {
-            resources,
-            params,
-          },
-          toAccountId: 0,
-          description: 'Image generation',
-        })
-      : undefined;
-
-  const chargesEnabled = true;
+  const chargesEnabled = status.chargesEnabled;
   const response = await fetch(
     `${env.SCHEDULER_ENDPOINT}/requests${chargesEnabled ? '?charge=true' : ''}`,
     {
@@ -740,15 +717,6 @@ export const createGenerationRequest = async ({
   }
 
   if (!response.ok) {
-    if (buzzTransaction) {
-      await withRetries(async () =>
-        refundTransaction(
-          buzzTransaction.transactionId,
-          'Refund due to an error submitting the training job.'
-        )
-      );
-    }
-
     const message = await response.json();
     throw throwBadRequestError(message);
   }

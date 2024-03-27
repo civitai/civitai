@@ -113,10 +113,10 @@ export const useGenerationStatus = () => {
 export const useEstimateTextToImageJobCost = () => {
   const generationForm = useGenerationFormStore.getState();
   const [debouncedGenerationForm] = useDebouncedValue(generationForm, 500);
-  const { imageGenerationBuzz } = useFeatureFlags();
+  const status = useGenerationStatus();
 
   const input = useMemo(() => {
-    if (!imageGenerationBuzz) {
+    if (!status.chargesEnabled) {
       return null;
     }
 
@@ -146,18 +146,18 @@ export const useEstimateTextToImageJobCost = () => {
     debouncedGenerationForm.resources,
     debouncedGenerationForm.sampler,
     debouncedGenerationForm.vae,
-    imageGenerationBuzz,
+    status.chargesEnabled,
     /* eslint-enable react-hooks/exhaustive-deps */
   ]);
 
   const { data: result, isLoading } = trpc.generation.estimateTextToImage.useQuery(
     input as CreateGenerationRequestInput,
     {
-      enabled: !!input && imageGenerationBuzz,
+      enabled: !!input && status.chargesEnabled,
     }
   );
 
-  const totalCost = imageGenerationBuzz
+  const totalCost = status.chargesEnabled
     ? (result?.jobs ?? []).reduce((acc, job) => {
         acc += Math.ceil(job.cost);
         return acc;
@@ -166,7 +166,7 @@ export const useEstimateTextToImageJobCost = () => {
 
   return {
     totalCost,
-    isCalculatingCost: !imageGenerationBuzz ? false : input ? isLoading : false,
+    isCalculatingCost: !status.chargesEnabled ? false : input ? isLoading : false,
   };
 };
 

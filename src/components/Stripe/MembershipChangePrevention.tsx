@@ -250,8 +250,8 @@ export const VaultStorageDowngrade = ({
   onContinue,
 }: {
   onContinue: () => void;
-  continueLabel: string;
-  cancelLabel: string;
+  continueLabel?: string;
+  cancelLabel?: string;
 }) => {
   const features = useFeatureFlags();
   const dialog = useDialogContext();
