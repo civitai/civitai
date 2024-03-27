@@ -29,6 +29,10 @@ export abstract class Flags {
     return instance & ~flag;
   }
 
+  static maxValue(flag: number) {
+    return Math.max(...this.instanceToArray(flag));
+  }
+
   static toggleFlag(instance: number, flag: number) {
     return this.hasFlag(instance, flag)
       ? this.removeFlag(instance, flag)

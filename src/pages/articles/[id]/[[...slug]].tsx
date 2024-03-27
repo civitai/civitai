@@ -54,7 +54,10 @@ import { useContainerSmallerThan } from '~/components/ContainerProvider/useConta
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
-import { getIsSafeBrowsingLevel } from '../../../shared/constants/browsingLevel.constants';
+import {
+  getIsSafeBrowsingLevel,
+  hasPublicBrowsingLevel,
+} from '../../../shared/constants/browsingLevel.constants';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 
 const querySchema = z.object({

@@ -39,7 +39,7 @@ export default function ImageRatingReview() {
         <>
           <div
             className="grid gap-6 m-4"
-            style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(350px, 1fr))' }}
+            style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(500px, 1fr))' }}
           >
             {flatData?.map((item) => (
               <ImageRatingCard key={item.id} {...item} />
@@ -71,20 +71,26 @@ const browsingLevelOptions = browsingLevels.map((level) => ({
 function ImageRatingCard(item: AsyncReturnType<typeof getImageRatingRequests>['items'][number]) {
   return (
     <div className="flex gap-2 items-center justify-center w-full">
-      <div className="flex-1">
+      <div className="flex-1 flex flex-col gap-1">
         <EdgeMedia src={item.url} type={item.type} width={450} />
-        <div className="flex">
+        <div className="flex gap-1">
           {browsingLevels.map((level) => {
+            const count = item.votes[level];
             return (
-              <Chip key={level} checked={item.nsfwLevel === level}>
+              <Badge
+                key={level}
+                variant={item.nsfwLevel === level ? 'filled' : 'outline'}
+                size="lg"
+              >
                 {browsingLevelLabels[level]}
-              </Chip>
+                {!!count ? `: ${count}` : ''}
+              </Badge>
             );
           })}
         </div>
       </div>
       {!!item.tags.length && (
-        <div className="flex flex-col gap-1">
+        <div className="flex gap-1">
           {item.tags.map((tag) => (
             <Badge key={tag.id} size="xs">
               {tag.name}

@@ -495,7 +495,7 @@ export default function ModelDetailsV2({
     />
   );
 
-  if (hasPublicBrowsingLevel(selectedVersion.nsfwLevel ?? model.nsfwLevel) && !currentUser)
+  if (hasPublicBrowsingLevel(selectedVersion?.nsfwLevel ?? model.nsfwLevel) && !currentUser)
     return (
       <>
         {meta}

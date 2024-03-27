@@ -24,6 +24,7 @@ export function useApplyHiddenPreferences<
   hiddenUsers,
   hiddenTags,
   browsingLevel: browsingLevelOverride,
+  allowLowerLevels,
 }: {
   type: T;
   data?: TData;
@@ -34,6 +35,7 @@ export function useApplyHiddenPreferences<
   hiddenUsers?: number[];
   hiddenTags?: number[];
   browsingLevel?: number;
+  allowLowerLevels?: boolean;
 }) {
   const currentUser = useCurrentUser();
   const [previous, setPrevious] = useState<any[]>([]);
@@ -67,6 +69,7 @@ export function useApplyHiddenPreferences<
         browsingLevel,
         hiddenPreferences,
         currentUser,
+        allowLowerLevels,
       });
     },
     // eslint-disable-next-line
@@ -97,6 +100,7 @@ type FilterPreferencesProps<TKey, TData> = {
   showHidden?: boolean;
   disabled?: boolean;
   currentUser: CivitaiSessionUser | null;
+  allowLowerLevels?: boolean;
 };
 
 function filterPreferences<
@@ -110,6 +114,7 @@ function filterPreferences<
   showHidden,
   disabled,
   currentUser,
+  allowLowerLevels,
 }: FilterPreferencesProps<TKey, TData>) {
   if (!data || disabled || hiddenPreferences.hiddenLoading) return [];
 
@@ -117,6 +122,8 @@ function filterPreferences<
   const { key, value } = paired<BaseDataTypeMap>(type, data);
   const { hiddenModels, hiddenImages, hiddenTags, hiddenUsers, moderatedTags } = hiddenPreferences;
   const maxSelectedLevel = Math.max(...parseBitwiseBrowsingLevel(browsingLevel));
+  const maxBrowsingLevel = Flags.maxValue(browsingLevel);
+  console.log({ maxBrowsingLevel });
 
   switch (key) {
     case 'models':
@@ -165,7 +172,12 @@ function filterPreferences<
         const userId = image.userId ?? image.user?.id;
         const isOwner = userId && userId === currentUser?.id;
         if ((isOwner || isModerator) && image.nsfwLevel === 0) return true;
-        if (!Flags.intersects(image.nsfwLevel, browsingLevel)) return false;
+        if (
+          allowLowerLevels
+            ? image.nsfwLevel > maxBrowsingLevel
+            : !Flags.intersects(image.nsfwLevel, browsingLevel)
+        )
+          return false;
         if (userId && hiddenUsers.get(userId)) return false;
         if (hiddenImages.get(image.id) && !showHidden) return false;
         for (const tag of image.tagIds ?? []) if (hiddenTags.get(tag)) return false;

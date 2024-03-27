@@ -40,7 +40,10 @@ export function BrowsingModeMenu() {
         {showNsfw && (
           <Stack spacing="lg">
             <Stack spacing={4}>
-              <Text>Browsing Level</Text>
+              <Stack spacing={0}>
+                <Text sx={{ lineHeight: 1 }}>Browsing Level</Text>
+                <Text color="dimmed">Select the level(s) of content you want to see</Text>
+              </Stack>
               <BrowsingLevelsGrouped />
             </Stack>
             <Checkbox
