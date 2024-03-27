@@ -298,7 +298,7 @@ export const createTrainingRequest = async ({
   const { url: trainingUrl } = await getGetUrl(modelVersion.trainingUrl);
   const generationRequest: Orchestrator.Training.ImageResourceTrainingJobPayload = {
     // priority: 10,
-    callbackUrl: `${env.GENERATION_CALLBACK_HOST}/api/webhooks/resource-training?token=${env.WEBHOOK_TOKEN}`,
+    callbackUrl: `${env.WEBHOOK_URL}/resource-training?token=${env.WEBHOOK_TOKEN}`,
     properties: { userId, transactionId, modelFileId: modelVersion.fileId },
     model: baseModel in modelMap ? modelMap[baseModel] : baseModel,
     trainingData: trainingUrl,

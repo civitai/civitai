@@ -704,30 +704,30 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
       return openConfirmModal({
         title: 'Confirm Buzz Transaction',
         children: (
-          <Stack>
-            <div>
+          <Stack pt="md">
+            <Group>
               <Text span inline>
                 The cost for this training run is:{' '}
               </Text>
-              <Text style={{ marginTop: '1px' }} color="accent.5" span inline>
+              <Group spacing={2}>
                 <CurrencyIcon currency={Currency.BUZZ} size={12} />
-              </Text>
-              <Text span inline>
-                {(buzzCost ?? 0).toLocaleString()}.
-              </Text>
-            </div>
-            <div>
+                <Text span inline>
+                  {(buzzCost ?? 0).toLocaleString()}
+                </Text>
+              </Group>
+            </Group>
+            <Group>
               <Text span inline>
                 Your remaining balance will be:{' '}
               </Text>
-              <Text style={{ marginTop: '1px' }} color="accent.5" span inline>
+              <Group spacing={2}>
                 <CurrencyIcon currency={Currency.BUZZ} size={12} />
-              </Text>
-              <Text span inline>
-                {(balance - (buzzCost ?? 0)).toLocaleString()}.
-              </Text>
-            </div>
-            <Text>Proceed?</Text>
+                <Text span inline>
+                  {(balance - (buzzCost ?? 0)).toLocaleString()}
+                </Text>
+              </Group>
+            </Group>
+            <Text mt="md">Proceed?</Text>
           </Stack>
         ),
         labels: { cancel: 'Cancel', confirm: 'Confirm' },
