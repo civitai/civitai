@@ -97,7 +97,7 @@ function ImageRatingCard(item: AsyncReturnType<typeof getImageRatingRequests>['i
 
   return (
     <div
-      className={`flex flex-col items-stretch card overflow-hidden !border-green-600 ${
+      className={`flex flex-col items-stretch card overflow-hidden ${
         updated ? '!border-green-600' : ''
       }`}
     >
