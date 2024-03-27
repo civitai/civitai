@@ -138,5 +138,5 @@ export const imageRouter = router({
     .mutation(({ input, ctx }) => updateImageNsfwLevel({ ...input, user: ctx.user })),
   getImageRatingRequests: moderatorProcedure
     .input(imageRatingReviewInput)
-    .query(({ input }) => getImageRatingRequests(input)),
+    .query(({ input, ctx }) => getImageRatingRequests({ ...input, user: ctx.user })),
 });

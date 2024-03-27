@@ -15,6 +15,7 @@ import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { NoContent } from '~/components/NoContent/NoContent';
+import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { getImageRatingRequests } from '~/server/services/image.service';
 import { browsingLevelLabels, browsingLevels } from '~/shared/constants/browsingLevel.constants';
 import { showErrorNotification } from '~/utils/notifications';
@@ -146,13 +147,14 @@ function ImageRatingCard(item: AsyncReturnType<typeof getImageRatingRequests>['i
           })}
         </div>
         {!!item.tags.length && (
-          <div className="flex flex-wrap gap-1">
-            {item.tags.map((tag) => (
-              <Badge key={tag.id} size="xs" color="red">
-                {tag.name}
-              </Badge>
-            ))}
-          </div>
+          <VotableTags entityType="image" entityId={item.id} tags={item.tags} canAdd />
+          // <div className="flex flex-wrap gap-1">
+          //   {item.tags.map((tag) => (
+          //     <Badge key={tag.id} size="xs" color="red">
+          //       {tag.name}
+          //     </Badge>
+          //   ))}
+          // </div>
         )}
       </div>
     </div>

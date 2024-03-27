@@ -7,6 +7,8 @@ import {
   ReportReason,
   ReportStatus,
   ReviewReactions,
+  TagSource,
+  TagType,
 } from '@prisma/client';
 
 import { TRPCError } from '@trpc/server';
@@ -2665,7 +2667,11 @@ type ImageRatingRequestResponse = {
   createdAt: Date;
 };
 
-export async function getImageRatingRequests({ cursor, limit }: ImageRatingReviewOutput) {
+export async function getImageRatingRequests({
+  cursor,
+  limit,
+  user,
+}: ImageRatingReviewOutput & { user: SessionUser }) {
   const results = await dbRead.$queryRaw<ImageRatingRequestResponse[]>`
     WITH CTE_Requests AS (
       SELECT
@@ -2712,19 +2718,55 @@ export async function getImageRatingRequests({ cursor, limit }: ImageRatingRevie
   }
 
   const imageIds = results.map((x) => x.id);
-  const tagsOnImage = await dbRead.tagsOnImage.findMany({
+  const voteCutoff = new Date(Date.now() + constants.tagVoting.voteDuration);
+  const imageTags = await dbRead.imageTag.findMany({
     where: {
       imageId: { in: imageIds },
-      disabled: { not: true },
-      tag: { nsfwLevel: { in: nsfwBrowsingLevelsArray } },
+      tagNsfwLevel: { in: [NsfwLevel.PG13, NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX] },
     },
-    select: { imageId: true, tag: { select: { id: true, name: true, nsfwLevel: true } } },
+    select: { ...imageTagCompositeSelect, imageId: true },
+    orderBy: { score: 'desc' },
   });
+  const hasWDTags = imageTags.some((x) => x.source === TagSource.WD14);
+  const tags = imageTags
+    .filter((x) => {
+      if (x.source === TagSource.Rekognition && hasWDTags) {
+        if (x.tagType === TagType.Moderation) return true;
+        if (constants.imageTags.styles.includes(x.tagName)) return true;
+        return false;
+      }
+      return true;
+    })
+    .map(({ tagId, tagName, tagType, tagNsfwLevel, source, ...tag }) => ({
+      ...tag,
+      id: tagId,
+      type: tagType,
+      nsfwLevel: tagNsfwLevel,
+      name: tagName,
+    })) as (VotableTagModel & { imageId: number })[];
+
+  const userVotes = await dbRead.tagsOnImageVote.findMany({
+    where: { imageId: { in: imageIds }, userId: user.id },
+    select: { tagId: true, vote: true },
+  });
+
+  for (const tag of tags) {
+    const userVote = userVotes.find((vote) => vote.tagId === tag.id);
+    if (userVote) tag.vote = userVote.vote > 0 ? 1 : -1;
+  }
+
+  const filteredTags = tags.filter(
+    (tag) =>
+      tag.concrete ||
+      (tag.lastUpvote && tag.lastUpvote > voteCutoff) ||
+      (tag.vote && tag.vote > 0) ||
+      (tag.needsReview && user.isModerator)
+  );
 
   return {
     nextCursor,
     items: results.map((item) => {
-      const tags = tagsOnImage.filter((x) => x.imageId === item.id).map((x) => x.tag);
+      const tags: VotableTagModel[] = filteredTags.filter((x) => x.imageId === item.id);
       return { ...item, tags };
     }),
   };
