@@ -499,20 +499,20 @@ export const getModelsRaw = async ({
     modelVersionWhere.push(Prisma.sql`mv."availability" = 'Public'::"Availability"`);
   }
 
-  if (!includeDetails) {
-    const browsingLevelQuery = Prisma.sql`(lmv."nsfwLevel" & ${browsingLevel}) != 0`;
-    if (pending && (isModerator || userId)) {
-      if (isModerator) {
-        AND.push(Prisma.sql`(${browsingLevelQuery} OR lmv."nsfwLevel" = 0)`);
-      } else if (userId) {
-        AND.push(
-          Prisma.sql`(${browsingLevelQuery} OR (lmv."nsfwLevel" = 0 AND m."userId" = ${userId}))`
-        );
-      }
-    } else {
-      AND.push(browsingLevelQuery);
+  // if (!includeDetails) {
+  const browsingLevelQuery = Prisma.sql`(lmv."nsfwLevel" & ${browsingLevel}) != 0`;
+  if (pending && (isModerator || userId)) {
+    if (isModerator) {
+      AND.push(Prisma.sql`(${browsingLevelQuery} OR lmv."nsfwLevel" = 0)`);
+    } else if (userId) {
+      AND.push(
+        Prisma.sql`(${browsingLevelQuery} OR (lmv."nsfwLevel" = 0 AND m."userId" = ${userId}))`
+      );
     }
+  } else {
+    AND.push(browsingLevelQuery);
   }
+  // }
 
   const WITH: Prisma.Sql[] = [
     Prisma.sql`"CTE_ModelVersionDetails" AS NOT MATERIALIZED (
