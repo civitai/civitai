@@ -1,10 +1,12 @@
 import {
   Badge,
+  Button,
   Center,
   Chip,
   Container,
   Group,
   Loader,
+  Progress,
   SegmentedControl,
   Stack,
   Text,
@@ -38,8 +40,8 @@ export default function ImageRatingReview() {
       ) : (
         <>
           <div
-            className="grid gap-6 m-4"
-            style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(500px, 1fr))' }}
+            className="grid gap-6 m-4 grid-cols-1 lg:grid-cols-2"
+            // style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(500px, 1fr))' }}
           >
             {flatData?.map((item) => (
               <ImageRatingCard key={item.id} {...item} />
@@ -64,40 +66,41 @@ export default function ImageRatingReview() {
   );
 }
 
-const browsingLevelOptions = browsingLevels.map((level) => ({
-  label: browsingLevelLabels[level],
-  value: level,
-}));
 function ImageRatingCard(item: AsyncReturnType<typeof getImageRatingRequests>['items'][number]) {
+  const maxRating = Math.max(...Object.values(item.votes));
+
   return (
-    <div className="flex gap-2 items-center justify-center w-full">
-      <div className="flex-1 flex flex-col gap-1">
-        <EdgeMedia src={item.url} type={item.type} width={450} />
-        <div className="flex gap-1">
+    <div className="flex items-start gap-1">
+      <EdgeMedia src={item.url} type={item.type} width={450} />
+      <div className="flex flex-col gap-4">
+        <div className="flex-1 grid gap-1" style={{ gridTemplateColumns: `min-content 1fr` }}>
           {browsingLevels.map((level) => {
             const count = item.votes[level];
+            const percentage = count / maxRating;
             return (
-              <Badge
-                key={level}
-                variant={item.nsfwLevel === level ? 'filled' : 'outline'}
-                size="lg"
-              >
-                {browsingLevelLabels[level]}
-                {!!count ? `: ${count}` : ''}
-              </Badge>
+              <>
+                <Button
+                  key={level}
+                  variant={item.nsfwLevel === level ? 'filled' : 'outline'}
+                  compact
+                >
+                  {browsingLevelLabels[level]}
+                </Button>
+                <Progress value={percentage * 100} />
+              </>
             );
           })}
         </div>
+        {!!item.tags.length && (
+          <div className="flex flex-wrap gap-1">
+            {item.tags.map((tag) => (
+              <Badge key={tag.id} size="xs">
+                {tag.name}
+              </Badge>
+            ))}
+          </div>
+        )}
       </div>
-      {!!item.tags.length && (
-        <div className="flex gap-1">
-          {item.tags.map((tag) => (
-            <Badge key={tag.id} size="xs">
-              {tag.name}
-            </Badge>
-          ))}
-        </div>
-      )}
     </div>
   );
 }
