@@ -98,7 +98,7 @@ export function PostDetailContent({ postId }: Props) {
   if (postLoading) return <PageLoader />;
   if (!post) return <NotFound />;
 
-  if (hasPublicBrowsingLevel(post.nsfwLevel) && !currentUser)
+  if (!currentUser && !hasPublicBrowsingLevel(post.nsfwLevel))
     return (
       <>
         {meta}

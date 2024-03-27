@@ -182,7 +182,7 @@ export default function BountyDetailsPage({
   if (loading) return <PageLoader />;
   if (!bounty) return <NotFound />;
 
-  if (hasPublicBrowsingLevel(bounty.nsfwLevel) && !currentUser) {
+  if (!currentUser && !hasPublicBrowsingLevel(bounty.nsfwLevel)) {
     return (
       <>
         {meta}
