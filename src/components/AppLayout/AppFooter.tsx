@@ -174,34 +174,17 @@ export function AppFooter({ fixed = true }: { fixed?: boolean }) {
         </Group>
         <Group ml="auto" spacing={4} sx={{ flexWrap: 'nowrap' }}>
           <RoutedDialogLink name="support" state={{}} passHref>
-            <Button component="a" {...buttonProps} pl={4} pr="xs">
+            <Button
+              component="a"
+              pl={4}
+              pr="xs"
+              color="yellow"
+              variant="light"
+              size={!fixed ? 'xs' : undefined}
+            >
               🛟 Support
             </Button>
           </RoutedDialogLink>
-          <Button
-            component="a"
-            href="/bugs"
-            {...buttonProps}
-            target="_blank"
-            pl={4}
-            pr="xs"
-            rel="nofollow noreferrer"
-          >
-            🪲 Bugs
-          </Button>
-          <Button
-            component="a"
-            href="/feedback"
-            variant="light"
-            color="yellow"
-            target="_blank"
-            size={!fixed ? 'xs' : undefined}
-            pl={4}
-            pr="xs"
-            rel="nofollow noreferrer"
-          >
-            💡 Feature Requests
-          </Button>
         </Group>
       </Group>
     </Footer>
