@@ -1054,8 +1054,6 @@ export const textToImage = async ({
     isTestRun,
   });
 
-  console.log(data.job, response);
-
   if (!response.ok) throw new Error('An unknown error occurred. Please try again later');
 
   return response.data;

@@ -214,6 +214,18 @@ export const createGenerationRequestSchema = z.object({
   params: sharedGenerationParamsSchema,
 });
 
+export type GenerationRequestTestRunSchema = z.infer<typeof generationRequestTestRunSchema>;
+export const generationRequestTestRunSchema = createGenerationRequestSchema.merge(
+  z.object({
+    params: sharedGenerationParamsSchema.merge(
+      z.object({
+        prompt: z.string().default(''),
+        negativePrompt: z.string().default(''),
+      })
+    ),
+  })
+);
+
 export type CheckResourcesCoverageSchema = z.infer<typeof checkResourcesCoverageSchema>;
 export const checkResourcesCoverageSchema = z.object({
   id: z.number(),

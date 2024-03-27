@@ -1,4 +1,5 @@
 import { Button } from '@mantine/core';
+import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 
@@ -16,8 +17,9 @@ export const DailyBoostRewardClaim = () => {
       await queryUtils.user.userRewardDetails.invalidate();
     },
   });
+  const status = useGenerationStatus();
 
-  if (!currentUser || loadingRewards) {
+  if (!currentUser || loadingRewards || !status?.chargesEnabled) {
     return null;
   }
 

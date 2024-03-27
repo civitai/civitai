@@ -207,7 +207,6 @@ export const getPlanDetails: (
   features: FeatureAccess
 ) => PlanMeta = (product: Pick<StripePlan, 'metadata' | 'name'>, features: FeatureAccess) => {
   const metadata = (product.metadata ?? {}) as ProductMetadata;
-  const generationLimit = (metadata.generationLimit ?? 1) * 10000;
   const planMeta = {
     name: product?.name ?? 'Supporter Tier',
     image:
@@ -215,7 +214,7 @@ export const getPlanDetails: (
     benefits: [
       {
         icon: <IconBolt size={benefitIconSize} />,
-        iconColor: 'yellow',
+        iconColor: (metadata?.monthlyBuzz ?? 0) === 0 ? 'gray' : 'yellow',
         iconVariant: 'light' as ThemeIconVariant,
         content: (
           <Text>
@@ -259,7 +258,8 @@ export const getPlanDetails: (
           ) : (
             <Text>
               <Text span color="yellow.7">
-                Rewards give you {metadata?.rewardsMultiplier ?? 1}x more Buzz!
+                Rewards give you {(((metadata?.rewardsMultiplier ?? 1) - 1) * 100).toFixed(0)}% more
+                Buzz!
               </Text>
             </Text>
           ),

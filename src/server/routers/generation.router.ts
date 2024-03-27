@@ -3,6 +3,7 @@ import {
   bulkDeleteGeneratedImagesSchema,
   checkResourcesCoverageSchema,
   createGenerationRequestSchema,
+  generationRequestTestRunSchema,
   getGenerationRequestsSchema,
   getGenerationResourcesSchema,
   sendFeedbackSchema,
@@ -118,7 +119,7 @@ export const generationRouter = router({
       });
     }),
   estimateTextToImage: protectedProcedure
-    .input(createGenerationRequestSchema)
+    .input(generationRequestTestRunSchema)
     .query(({ input, ctx }) => {
       return textToImage({
         input: {
