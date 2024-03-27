@@ -2875,16 +2875,6 @@ model Vault {
   @@id([userId])
 }
 
-model RedeemableCode {
-  code      String   @id @default(cuid())
-  unitValue Int
-  userId    Int?
-  createdAt DateTime
-
-  expiresAt  DateTime?
-  redeemedAt DateTime?
-}
-
 /// @view
 model QuestionRank {
   questionId              Int      @id
