@@ -56,7 +56,7 @@ const schema = z.object({
     .object({
       movie_rating: z.string().optional(),
     })
-    .optional(),
+    .nullish(),
 });
 
 function shouldIgnore(tag: string, source: TagSource) {
