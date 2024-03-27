@@ -25,6 +25,7 @@ import {
   IconExternalLink,
   IconFlag,
   IconHelpHexagon,
+  IconRotate,
   IconStarFilled,
   IconVolume,
   IconVolumeOff,
@@ -124,7 +125,11 @@ export default function Rater() {
   const playSound = useGameSounds();
 
   // Get Status
-  const { data: status, isLoading } = trpc.research.raterGetStatus.useQuery();
+  const {
+    data: status,
+    isLoading,
+    refetch: refetchStatus,
+  } = trpc.research.raterGetStatus.useQuery();
   const isSane = (isLoading || status?.sane === true) && sanityStatus !== 'insane';
   function incrementCount(incrementBy = 1) {
     setRated((prev) => prev + incrementBy);
@@ -262,6 +267,23 @@ export default function Rater() {
     sendRatingsWithDebounce();
   }
 
+  // Handle Restart
+  const restartMutation = trpc.research.raterReset.useMutation({
+    onSuccess: () => {
+      refetchStatus();
+      setCursor(undefined);
+      setImage(undefined);
+      setSanityStatus('clear');
+      setRated(0);
+      setStrikes(0);
+      pendingImages.length = 0;
+      prevImages.length = 0;
+    },
+  });
+  function handleRestart() {
+    restartMutation.mutate();
+  }
+
   // Handle Undo
   function undoRating() {
     if (isSanityCheck) return;
@@ -318,6 +340,9 @@ export default function Rater() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [image]);
 
+  // Handle Loading
+  const loading = isLoading ?? restartMutation.isLoading;
+
   return (
     <Box className={classes.container}>
       {isLevelingUp && (
@@ -367,9 +392,20 @@ export default function Rater() {
               </Text>
               .
             </Text>
-            <Button mt="sm" component={NextLink} href="/leaderboard/rater" fullWidth>
-              Check the Leaderboard
-            </Button>
+            <Button.Group mt="sm">
+              <Button variant="default" leftIcon={<IconRotate />} onClick={handleRestart} fullWidth>
+                Restart
+              </Button>
+              <Button
+                component={NextLink}
+                color="yellow"
+                variant="light"
+                rightIcon={<IconCrown />}
+                href="/leaderboard/rater"
+              >
+                Check the Leaderboard
+              </Button>
+            </Button.Group>
           </Card>
         ) : sanityStatus === 'assessing' ? (
           <Loader size="xl" color="yellow" />
@@ -388,7 +424,7 @@ export default function Rater() {
         >
           PG
         </Card>
-        {!isLoading && image && sanityStatus !== 'assessing' && (
+        {!loading && image && sanityStatus !== 'assessing' && (
           <>
             <ActionIcon
               className={classes.link}
@@ -437,7 +473,7 @@ export default function Rater() {
             </HoverCard.Dropdown>
           </HoverCard>
         )}
-        {!isLoading && (
+        {!loading && (
           <HoverCard withArrow>
             <HoverCard.Target>
               <Group spacing={4}>
@@ -475,7 +511,7 @@ export default function Rater() {
         )}
       </Group>
 
-      {isSane && !isLoading && (
+      {isSane && !loading && (
         <>
           <Group ml="auto" spacing={4} className={classes.browsing}>
             <Text weight="bold" size="xs">

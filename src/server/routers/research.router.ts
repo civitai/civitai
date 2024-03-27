@@ -51,9 +51,15 @@ export const ratingsCounter = cachedCounter(
   REDIS_KEYS.RESEARCH.RATINGS_COUNT,
   async (userId: number) => {
     const [{ count }] = await dbRead.$queryRaw<{ count: number }[]>`
+    WITH last_reset AS (
+      SELECT COALESCE(MAX("createdAt"), '2024-03-01') date
+      FROM research_ratings_resets
+      WHERE "userId" = ${userId}
+    )
     SELECT COUNT(*) as count
-    FROM "research_ratings"
-    WHERE "userId" = ${userId};
+    FROM "research_ratings" rr
+    JOIN last_reset lr ON rr."createdAt" > lr.date
+    WHERE rr."userId" = ${userId};
   `;
     return Number(count ?? 0);
   }
@@ -79,8 +85,14 @@ async function getUserSanity(userId: number, sanityIds?: number[], refresh = fal
 
   if (!sanityIds) sanityIds = await getSanityIds();
   const [{ strikes }] = await dbWrite.$queryRaw<{ strikes: number }[]>`
+    WITH last_reset AS (
+      SELECT COALESCE(MAX("createdAt"), '2024-03-01') date
+      FROM research_ratings_resets
+      WHERE "userId" = ${userId}
+    )
     SELECT COUNT(*) as strikes
     FROM "research_ratings" rr
+    JOIN last_reset lr ON rr."createdAt" > lr.date
     JOIN "Image" i ON rr."imageId" = i.id
     WHERE i."nsfwLevel" != rr."nsfwLevel"
       AND rr."imageId" IN (${Prisma.join(sanityIds)})
@@ -182,7 +194,7 @@ export const researchRouter = router({
       const results = await dbWrite.$queryRawUnsafe<{ imageId: number }[]>(`
         INSERT INTO "research_ratings" ("userId", "imageId", "nsfwLevel", "sane")
         VALUES ${values.join(', ')}
-        ON CONFLICT ("userId", "imageId") DO UPDATE SET "nsfwLevel" = EXCLUDED."nsfwLevel"
+        ON CONFLICT ("userId", "imageId") DO UPDATE SET "nsfwLevel" = EXCLUDED."nsfwLevel", "createdAt" = NOW()
         RETURNING "imageId";
       `);
 
@@ -212,4 +224,12 @@ export const researchRouter = router({
         await redis.expire(progressKey, CacheTTL.week);
       }
     }),
+  raterReset: protectedProcedure.mutation(async ({ ctx }) => {
+    await dbWrite.$queryRaw`
+      INSERT INTO research_ratings_resets ("userId")
+      VALUES (${ctx.user.id});
+    `;
+    await redis.del(REDIS_KEYS.RESEARCH.RATINGS_PROGRESS + ':' + ctx.user.id);
+    ratingsCounter.clear(ctx.user.id);
+  }),
 });

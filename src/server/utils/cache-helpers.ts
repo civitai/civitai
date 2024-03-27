@@ -166,6 +166,10 @@ export function cachedCounter<T extends string | number>(
       await redis.incrBy(key, amount);
       return count + amount;
     },
+    async clear(id: T) {
+      const key = `${rootKey}:${id}`;
+      await redis.del(key);
+    },
   };
 
   return counter;
