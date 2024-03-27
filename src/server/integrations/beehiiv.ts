@@ -79,17 +79,22 @@ type Subscription = {
   referral_code: string;
 };
 
+const getRedisKey = (email: string) => `newsletter:${email.replace(/[^a-z0-9]/gi, '_')}`;
+
 const getSubscription = newsletterHandler(async (email: string) => {
-  const subscriptionCache = await redis.get(`newsletter:${email}`);
-  if (subscriptionCache) return JSON.parse(subscriptionCache) as Subscription;
+  if (!email) return undefined;
+
+  console.log('getSubscription', email, getRedisKey(email));
+  const subscriptionCache = await redis.get(getRedisKey(email));
+  if (subscriptionCache) return JSON.parse(subscriptionCache) as Subscription | undefined;
 
   const subscriptions = await beehiivRequest({
     endpoint: `publications/${env.NEWSLETTER_ID}/subscriptions`,
     method: 'GET',
     body: { email },
   });
-  const subscription = subscriptions?.data[0] as Subscription | undefined;
-  await redis.set(`newsletter:${email}`, JSON.stringify(subscription), {
+  const subscription = subscriptions?.data?.[0] as Subscription | undefined;
+  await redis.set(getRedisKey(email), JSON.stringify(subscription), {
     EX: CacheTTL.day,
   });
   return subscription;
@@ -124,7 +129,7 @@ const setSubscription = newsletterHandler(
         },
       });
     }
-    await redis.del(`newsletter:${email}`);
+    await redis.del(getRedisKey(email));
   }
 );
 
