@@ -11,6 +11,7 @@ import {
 import { usePrevious } from '@mantine/hooks';
 import { ReportStatus } from '@prisma/client';
 import React, { useMemo, useState } from 'react';
+import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { NoContent } from '~/components/NoContent/NoContent';
@@ -79,6 +80,7 @@ function ImageRatingCard(item: AsyncReturnType<typeof getImageRatingRequests>['i
   const maxRating = Math.max(...Object.values(item.votes));
   const [nsfwLevel, setNsfwLevel] = useState(item.nsfwLevel);
   const previous = usePrevious(nsfwLevel);
+  const [updated, setUpdated] = useState(false);
 
   const { mutate } = trpc.image.updateImageNsfwLevel.useMutation({
     onError: (error) => {
@@ -90,11 +92,18 @@ function ImageRatingCard(item: AsyncReturnType<typeof getImageRatingRequests>['i
   const handleSetLevel = (level: number) => {
     setNsfwLevel(level);
     mutate({ id: item.id, nsfwLevel: level, status: ReportStatus.Actioned });
+    setUpdated(true);
   };
 
   return (
-    <div className="flex flex-col items-stretch card">
-      <EdgeMedia src={item.url} type={item.type} width={450} className="w-full" />
+    <div
+      className={`flex flex-col items-stretch card overflow-hidden !border-green-600 ${
+        updated ? '!border-green-600' : ''
+      }`}
+    >
+      <RoutedDialogLink name="imageDetail" state={{ imageId: item.id }}>
+        <EdgeMedia src={item.url} type={item.type} width={450} className="w-full" />
+      </RoutedDialogLink>
       <div className="flex flex-col gap-4 p-4">
         <div className="grid gap-1" style={{ gridTemplateColumns: `min-content 1fr` }}>
           {browsingLevels.map((level) => {
@@ -121,7 +130,13 @@ function ImageRatingCard(item: AsyncReturnType<typeof getImageRatingRequests>['i
                   variant={nsfwLevel === level ? 'filled' : 'outline'}
                   compact
                   onClick={() => handleSetLevel(level)}
-                  color={item.nsfwLevelLocked && item.nsfwLevel === level ? 'red' : 'blue'}
+                  color={
+                    item.nsfwLevelLocked && item.nsfwLevel === level
+                      ? 'red'
+                      : updated && nsfwLevel === level
+                      ? 'green'
+                      : 'blue'
+                  }
                 >
                   {browsingLevelLabels[level]}
                 </Button>

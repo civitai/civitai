@@ -2699,7 +2699,7 @@ export async function getImageRatingRequests({ cursor, limit }: ImageRatingRevie
     SELECT
       r.*
     FROM CTE_Requests r
-    WHERE (r.total >= 3 OR r."ownerVote" != 0)
+    WHERE (r.total >= 3 OR (r."ownerVote" != 0 AND r."ownerVote" != r."nsfwLevel"))
     ${!!cursor ? Prisma.sql` AND r."createdAt" >= ${new Date(cursor)}` : Prisma.sql``}
     ORDER BY r."createdAt"
     LIMIT ${limit + 1}
