@@ -84,7 +84,6 @@ const getRedisKey = (email: string) => `newsletter:${email.replace(/[^a-z0-9]/gi
 const getSubscription = newsletterHandler(async (email: string) => {
   if (!email) return undefined;
 
-  console.log('getSubscription', email, getRedisKey(email));
   const subscriptionCache = await redis.get(getRedisKey(email));
   if (subscriptionCache) return JSON.parse(subscriptionCache) as Subscription | undefined;
 
