@@ -16,6 +16,7 @@ const CommentEditModal = dynamic(
 const CommentThreadModal = dynamic(
   () => import('~/components/Model/Discussion/CommentThreadModal')
 );
+const SupportModal = dynamic(() => import('~/components/Support/SupportModal'));
 
 type Url = UrlObject | string;
 type DialogItem<T> = {
@@ -84,6 +85,13 @@ export const dialogs = createDialogDictionary({
     component: CommentThreadModal,
     resolve: (query, { commentId, highlight }) => ({
       query: { ...query, commentId, highlight },
+    }),
+  },
+  support: {
+    component: SupportModal,
+    resolve: (query) => ({
+      query,
+      asPath: '/support',
     }),
   },
 });
