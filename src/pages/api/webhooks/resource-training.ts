@@ -77,7 +77,6 @@ const logWebhook = (data: MixedObject) => {
     {
       name: 'resource-training',
       type: 'error',
-      pod: env.PODNAME,
       ...data,
     },
     'webhooks'
