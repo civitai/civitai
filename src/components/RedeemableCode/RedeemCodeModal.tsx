@@ -68,7 +68,7 @@ export function RedeemCodeModal({ onSubmit }: { onSubmit?: VoidFunction }) {
       ) : (
         <Form form={form} onSubmit={handleSubmit}>
           <Stack>
-            <InputText name="code" label="Code" placeholder="AB12-34CD" autoFocus />
+            <InputText name="code" label="Code" placeholder="AB12-34CD" maxLength={9} autoFocus />
             <Group position="right">
               <Button
                 className={classes.cancelButton}
