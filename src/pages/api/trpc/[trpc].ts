@@ -55,7 +55,7 @@ export default withAxiom(
             input: req.method === 'GET' ? input : undefined,
           },
           'civitai-prod'
-        ).catch();
+        ).then();
       } else {
         console.error(`❌ tRPC failed on ${path}`);
         console.error(error);
