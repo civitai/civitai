@@ -10,7 +10,7 @@ import {
 } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { ManipulateType } from 'dayjs';
-import { isEmpty, groupBy } from 'lodash-es';
+import { isEmpty } from 'lodash-es';
 import { SessionUser } from 'next-auth';
 
 import { env } from '~/env/server.mjs';
@@ -35,7 +35,7 @@ import {
   UnpublishModelSchema,
 } from '~/server/schema/model.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
-import { modelsSearchIndex } from '~/server/search-index';
+import { imagesSearchIndex, modelsSearchIndex } from '~/server/search-index';
 import { associatedResourceSelect } from '~/server/selectors/model.selector';
 import { modelFileSelect } from '~/server/selectors/modelFile.selector';
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
@@ -1129,13 +1129,19 @@ export const deleteModelById = async ({
     if (!model) return null;
 
     // TODO - account for case that a user restores a model and doesn't want all posts to be re-published
-    await tx.post.updateMany({
-      where: {
-        userId: model.userId,
-        modelVersionId: { in: model.modelVersions.map(({ id }) => id) },
-      },
-      data: { publishedAt: null },
-    });
+    await tx.$executeRaw`
+      UPDATE "Post"
+      SET "metadata" = "metadata" || jsonb_build_object(
+        'unpublishedAt', ${new Date().toISOString()},
+        'unpublishedBy', ${userId}
+      )
+      WHERE "publishedAt" IS NOT NULL
+      AND "userId" = ${model.userId}
+      AND "modelVersionId" IN (${Prisma.join(
+        model.modelVersions.map(({ id }) => id),
+        ','
+      )})
+    `;
 
     await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
 
@@ -1355,10 +1361,12 @@ export const publishModelById = async ({
       });
 
       if (includeVersions) {
-        await tx.post.updateMany({
-          where: { modelVersionId: { in: versionIds } },
-          data: { publishedAt },
-        });
+        await tx.$executeRaw`
+          UPDATE "Post"
+          SET "metadata" = "metadata" - 'unpublishedAt' - 'unpublishedBy'
+          WHERE "userId" = ${model.userId}
+          AND "modelVersionId" IN (${Prisma.join(versionIds, ',')})
+        `;
       }
       if (!republishing && !meta?.unpublishedBy) await updateModelLastVersionAt({ id, tx });
 
@@ -1375,7 +1383,23 @@ export const publishModelById = async ({
       )
     );
   }
+
+  // Fetch affected posts to update their images in search index
+  const posts = await dbRead.post.findMany({
+    where: { modelVersionId: { in: model.modelVersions.map((x) => x.id) }, userId: model.userId },
+    select: { id: true },
+  });
+  const images = await dbRead.image.findMany({
+    where: { postId: { in: posts.map((x) => x.id) } },
+    select: { id: true },
+  });
+
+  // Update search index for model
   await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+  // Update search index for all affected images
+  await imagesSearchIndex.queueUpdate(
+    images.map((x) => ({ id: x.id, action: SearchIndexUpdateQueueAction.Update }))
+  );
 
   return model;
 };
@@ -1392,6 +1416,7 @@ export const unpublishModelById = async ({
 }) => {
   const model = await dbWrite.$transaction(
     async (tx) => {
+      const unpublishedAt = new Date().toISOString();
       const updatedMeta = {
         ...meta,
         ...(reason
@@ -1400,7 +1425,7 @@ export const unpublishModelById = async ({
               customMessage,
             }
           : {}),
-        unpublishedAt: new Date().toISOString(),
+        unpublishedAt,
         unpublishedBy: user.id,
       };
       const updatedModel = await tx.model.update({
@@ -1418,22 +1443,41 @@ export const unpublishModelById = async ({
         select: { userId: true, modelVersions: { select: { id: true } } },
       });
 
-      await tx.post.updateMany({
-        where: {
-          modelVersionId: { in: updatedModel.modelVersions.map((x) => x.id) },
-          userId: updatedModel.userId,
-          publishedAt: { not: null },
-        },
-        data: { publishedAt: null },
-      });
+      await tx.$executeRaw`
+        UPDATE "Post"
+        SET "metadata" = "metadata" || jsonb_build_object(
+          'unpublishedAt', ${unpublishedAt},
+          'unpublishedBy', ${user.id}
+        )
+        WHERE "publishedAt" IS NOT NULL
+        AND "userId" = ${updatedModel.userId}
+        AND "modelVersionId" IN (${Prisma.join(
+          updatedModel.modelVersions.map((x) => x.id),
+          ','
+        )})
+      `;
 
       return updatedModel;
     },
     { timeout: 10000 }
   );
 
+  // Fetch affected posts to remove their images from search index
+  const posts = await dbRead.post.findMany({
+    where: { modelVersionId: { in: model.modelVersions.map((x) => x.id) }, userId: model.userId },
+    select: { id: true },
+  });
+  const images = await dbRead.image.findMany({
+    where: { postId: { in: posts.map((x) => x.id) } },
+    select: { id: true },
+  });
+
   // Remove this model from search index as it's been unpublished.
   await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
+  // Remove all affected images from search index
+  await imagesSearchIndex.queueUpdate(
+    images.map((x) => ({ id: x.id, action: SearchIndexUpdateQueueAction.Delete }))
+  );
 
   return model;
 };

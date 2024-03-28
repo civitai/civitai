@@ -25,7 +25,7 @@ import {
 import { updateModelLastVersionAt } from './model.service';
 import { prepareModelInOrchestrator } from './generation/generation.service';
 import { isDefined } from '~/utils/type-guards';
-import { modelsSearchIndex } from '~/server/search-index';
+import { imagesSearchIndex, modelsSearchIndex } from '~/server/search-index';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
 import dayjs from 'dayjs';
 import { clickhouse } from '~/server/clickhouse/client';
@@ -340,24 +340,52 @@ export const publishModelVersionById = async ({
   if (publishedAt && publishedAt > new Date()) status = ModelStatus.Scheduled;
   else publishedAt = new Date();
 
-  const version = await dbWrite.modelVersion.update({
-    where: { id },
-    data: {
-      status,
-      publishedAt: !republishing ? publishedAt : undefined,
-      meta,
-      posts:
-        status !== ModelStatus.Scheduled
-          ? { updateMany: { where: { publishedAt: null }, data: { publishedAt } } }
-          : undefined,
+  const version = await dbWrite.$transaction(
+    async (tx) => {
+      const updatedVersion = await dbWrite.modelVersion.update({
+        where: { id },
+        data: {
+          status,
+          publishedAt: !republishing ? publishedAt : undefined,
+          meta,
+        },
+        select: {
+          id: true,
+          modelId: true,
+          baseModel: true,
+          model: { select: { userId: true, id: true, type: true, nsfw: true } },
+        },
+      });
+
+      await tx.$executeRaw`
+        UPDATE "Post"
+        SET "metadata" = "metadata" - 'unpublishedAt' - 'unpublishedBy'
+        WHERE "userId" = ${updatedVersion.model.userId}
+        AND "modelVersionId" = ${updatedVersion.id}
+      `;
+
+      return updatedVersion;
     },
-    select: {
-      id: true,
-      modelId: true,
-      baseModel: true,
-      model: { select: { userId: true, id: true, type: true, nsfw: true } },
-    },
+    { timeout: 10000 }
+  );
+
+  // Fetch all posts and images related to the model version to update in search index
+  const posts = await dbRead.post.findMany({
+    where: { modelVersionId: version.id, userId: version.model.userId },
+    select: { id: true },
   });
+  const images = await dbRead.image.findMany({
+    where: { postId: { in: posts.map((x) => x.id) } },
+    select: { id: true },
+  });
+
+  // Update search index for model and images
+  await modelsSearchIndex.queueUpdate([
+    { id: version.model.id, action: SearchIndexUpdateQueueAction.Update },
+  ]);
+  await imagesSearchIndex.queueUpdate(
+    images.map((image) => ({ id: image.id, action: SearchIndexUpdateQueueAction.Update }))
+  );
 
   if (!republishing && !meta?.unpublishedBy)
     await updateModelLastVersionAt({ id: version.modelId });
@@ -375,6 +403,7 @@ export const unpublishModelVersionById = async ({
   meta,
   user,
 }: UnpublishModelSchema & { meta?: ModelMeta; user: SessionUser }) => {
+  const unpublishedAt = new Date().toISOString();
   const version = await dbWrite.$transaction(
     async (tx) => {
       const updatedVersion = await tx.modelVersion.update({
@@ -389,21 +418,23 @@ export const unpublishModelVersionById = async ({
                   customMessage,
                 }
               : {}),
-            unpublishedAt: new Date().toISOString(),
+            unpublishedAt,
             unpublishedBy: user.id,
           },
         },
         select: { id: true, model: { select: { id: true, userId: true, nsfw: true } } },
       });
 
-      await tx.post.updateMany({
-        where: {
-          modelVersionId: updatedVersion.id,
-          userId: updatedVersion.model.userId,
-          publishedAt: { not: null },
-        },
-        data: { publishedAt: null },
-      });
+      await tx.$executeRaw`
+        UPDATE "Post"
+        SET "metadata" = "metadata" || jsonb_build_object(
+          'unpublishedAt', ${unpublishedAt},
+          'unpublishedBy', ${user.id}
+        )
+        WHERE "publishedAt" IS NOT NULL
+        AND "userId" = ${updatedVersion.model.userId}
+        AND "modelVersionId" = ${updatedVersion.id}
+      `;
 
       await preventReplicationLag('model', updatedVersion.model.id);
       await preventReplicationLag('modelVersion', updatedVersion.id);
@@ -413,9 +444,22 @@ export const unpublishModelVersionById = async ({
     { timeout: 10000 }
   );
 
+  // Fetch all posts and images related to the model version to remove from search index
+  const posts = await dbRead.post.findMany({
+    where: { modelVersionId: version.id, userId: version.model.userId },
+    select: { id: true },
+  });
+  const images = await dbRead.image.findMany({
+    where: { postId: { in: posts.map((x) => x.id) } },
+    select: { id: true },
+  });
+
   await modelsSearchIndex.queueUpdate([
     { id: version.model.id, action: SearchIndexUpdateQueueAction.Update },
   ]);
+  await imagesSearchIndex.queueUpdate(
+    images.map((image) => ({ id: image.id, action: SearchIndexUpdateQueueAction.Delete }))
+  );
   await updateModelLastVersionAt({ id: version.model.id });
 
   return version;

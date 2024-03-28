@@ -470,6 +470,7 @@ type GetAllImagesRaw = {
   modelVersionId: number | null;
   imageId: number | null;
   publishedAt: Date | null;
+  unpublishedAt?: Date | null;
   username: string | null;
   userImage: string | null;
   deletedAt: Date | null;
@@ -851,6 +852,7 @@ export const getAllImages = async ({
       p."title" "postTitle",
       i."index",
       p."publishedAt",
+      p.metadata->>'unpublishedAt' "unpublishedAt",
       p."modelVersionId",
       u.username,
       u.image "userImage",
@@ -977,10 +979,9 @@ export const getAllImages = async ({
     }
   > = rawImages
     .filter((x) => {
-      // Filter out images that shouldn't be seen by user
       if (isModerator) return true;
       // if (x.needsReview && x.userId !== userId) return false;
-      if ((!x.publishedAt || x.publishedAt > now) && x.userId !== userId) return false;
+      if ((!x.publishedAt || x.publishedAt > now || !!x.unpublishedAt) && x.userId !== userId) return false;
       // if (x.ingestion !== 'Scanned' && x.userId !== userId) return false;
       return true;
     })
@@ -1000,6 +1001,7 @@ export const getAllImages = async ({
         tippedAmountCount,
         viewCount,
         cursorId,
+        unpublishedAt,
         ...i
       }) => ({
         ...i,
@@ -1140,7 +1142,10 @@ export const getImage = async ({
       u."profilePictureId",
       ${
         !withoutPost
-          ? Prisma.sql`p."availability" "availability",`
+          ? Prisma.sql`
+            p."availability" "availability",
+            p."publishedAt" "publishedAt",
+          `
           : Prisma.sql`'Public' "availability",`
       }
       (
