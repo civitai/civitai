@@ -49,7 +49,7 @@ export default withAxiom(
             message: error.message,
             stack: error.stack,
             path,
-            type,
+            // type,
             user: ctx?.user?.id,
             browser: req.headers['user-agent'],
             input: req.method === 'GET' ? input : undefined,
