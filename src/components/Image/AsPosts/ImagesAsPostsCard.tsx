@@ -108,7 +108,8 @@ export function ImagesAsPostsCard({
               user={data.user}
               subText={
                 <>
-                  <DaysFromNow date={data.publishedAt} /> - {modelVersionName ?? 'Cross-post'}
+                  {data.publishedAt ? <DaysFromNow date={data.publishedAt} /> : 'Not published'} -{' '}
+                  {modelVersionName ?? 'Cross-post'}
                 </>
               }
               subTextForce

@@ -111,7 +111,13 @@ export function ImageDetail() {
                   size="sm"
                   subText={
                     <Text size="xs" color="dimmed">
-                      Uploaded <DaysFromNow date={image.publishedAt} />
+                      {image.publishedAt ? (
+                        <>
+                          Uploaded <DaysFromNow date={image.publishedAt} />
+                        </>
+                      ) : (
+                        'Not published'
+                      )}
                     </Text>
                   }
                   subTextForce
