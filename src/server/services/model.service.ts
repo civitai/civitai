@@ -1363,7 +1363,9 @@ export const publishModelById = async ({
       if (includeVersions) {
         await tx.$executeRaw`
           UPDATE "Post"
-          SET "metadata" = "metadata" - 'unpublishedAt' - 'unpublishedBy'
+          SET
+            "metadata" = "metadata" - 'unpublishedAt' - 'unpublishedBy',
+            "publishedAt" = ${publishedAt}
           WHERE "userId" = ${model.userId}
           AND "modelVersionId" IN (${Prisma.join(versionIds, ',')})
         `;
@@ -1443,18 +1445,18 @@ export const unpublishModelById = async ({
         select: { userId: true, modelVersions: { select: { id: true } } },
       });
 
+      const versionIds = updatedModel.modelVersions.map((x) => x.id);
       await tx.$executeRaw`
         UPDATE "Post"
-        SET "metadata" = "metadata" || jsonb_build_object(
-          'unpublishedAt', ${unpublishedAt},
-          'unpublishedBy', ${user.id}
-        )
+        SET
+          "metadata" = "metadata" || jsonb_build_object(
+            'unpublishedAt', ${unpublishedAt},
+            'unpublishedBy', ${user.id}
+          ),
+          "publishedAt" = NULL
         WHERE "publishedAt" IS NOT NULL
         AND "userId" = ${updatedModel.userId}
-        AND "modelVersionId" IN (${Prisma.join(
-          updatedModel.modelVersions.map((x) => x.id),
-          ','
-        )})
+        AND "modelVersionId" IN (${Prisma.join(versionIds)})
       `;
 
       return updatedModel;
