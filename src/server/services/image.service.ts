@@ -178,16 +178,24 @@ export const moderateImages = async ({
     });
   } else {
     // Approve
-    await dbWrite.image.updateMany({
-      where: { id: { in: ids } },
-      data: { needsReview, ingestion: 'Scanned' },
-    });
+    const results = await dbWrite.$queryRaw<{ id: number; nsfwLevel: number }[]>`
+      UPDATE "Image" SET
+        "needsReview" = ${needsReview},
+        "ingestion" = 'Scanned',
+        "nsfwLevel" = CASE
+          WHEN "nsfwLevel" = ${NsfwLevel.Blocked}::int THEN 0
+          ELSE "nsfwLevel"
+        END
+      WHERE id IN (${Prisma.join(ids)})
+      RETURNING id, "nsfwLevel";
+    `;
 
     // Remove tags that triggered review
     const tagIds = (await getTagsNeedingReview()).map((x) => x.id);
 
     // And moderated tags for POI review (since no NSFW allowed)
-    if (reviewType === 'poi') {
+    const changeTags = reviewType === 'poi';
+    if (changeTags) {
       const moderatedTags = await getModeratedTags();
       tagIds.push(...moderatedTags.map((x) => x.id));
     }
@@ -198,10 +206,17 @@ export const moderateImages = async ({
     });
 
     // Update nsfw level of image
-    if (reviewType === 'poi')
-      await dbWrite.$executeRawUnsafe(`SELECT update_nsfw_levels('{${ids.join(',')}}'::int[]);`);
+    const resetLevels = results.filter((x) => x.nsfwLevel === 0).map((x) => x.id);
+    if (resetLevels) await updateNsfwLevel(resetLevels);
+    else if (changeTags) await updateNsfwLevel(ids);
   }
 };
+
+export async function updateNsfwLevel(ids: number | number[]) {
+  if (!Array.isArray(ids)) ids = [ids];
+  ids = [...new Set(ids)]; // dedupe
+  await dbWrite.$executeRawUnsafe(`SELECT update_nsfw_levels(ARRAY[${ids.join(',')}])`);
+}
 
 export const updateImageReportStatusByReason = ({
   id,
@@ -981,7 +996,8 @@ export const getAllImages = async ({
     .filter((x) => {
       if (isModerator) return true;
       // if (x.needsReview && x.userId !== userId) return false;
-      if ((!x.publishedAt || x.publishedAt > now || !!x.unpublishedAt) && x.userId !== userId) return false;
+      if ((!x.publishedAt || x.publishedAt > now || !!x.unpublishedAt) && x.userId !== userId)
+        return false;
       // if (x.ingestion !== 'Scanned' && x.userId !== userId) return false;
       return true;
     })
