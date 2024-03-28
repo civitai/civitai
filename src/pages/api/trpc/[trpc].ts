@@ -38,11 +38,6 @@ export default withAxiom(
 
       return {};
     },
-    // onError: isDev
-    //   ? ({ path, error }) => {
-    //       console.error(`❌ tRPC failed on ${path}: ${error}`);
-    //     }
-    //   : undefined,
     onError: ({ error, type, path, input, ctx, req }) => {
       handleTRPCError(error);
 
@@ -54,12 +49,13 @@ export default withAxiom(
             message: error.message,
             stack: error.stack,
             path,
+            type,
             user: ctx?.user?.id,
             browser: req.headers['user-agent'],
             input: req.method === 'GET' ? input : undefined,
           },
           'civitai-prod'
-        ).then();
+        ).catch();
       } else {
         console.error(`❌ tRPC failed on ${path}`);
         console.error(error);

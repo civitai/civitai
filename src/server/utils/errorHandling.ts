@@ -1,7 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { TRPC_ERROR_CODE_KEY } from '@trpc/server/rpc';
-import { log } from 'next-axiom';
 import { isProd } from '~/env/other';
 import { logToAxiom } from '../logging/client';
 
@@ -147,7 +146,12 @@ export function handleLogError(e: Error) {
   const error = new Error(e.message ?? 'Unexpected error occurred', { cause: e });
   if (isProd)
     logToAxiom(
-      { name: error.name, message: error.message, stack: error.stack, cause: error.cause },
+      {
+        name: error.name,
+        message: error.message,
+        stack: error.stack,
+        cause: error.cause,
+      },
       'civitai-prod'
     ).catch();
   else console.error(error);
