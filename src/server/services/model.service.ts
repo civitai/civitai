@@ -624,17 +624,17 @@ export const getModelsRaw = async ({
       ${
         includeDetails
           ? Prisma.sql`(
-          SELECT jsonb_agg(data)
-          FROM (SELECT row_to_json(lmv) AS data) as t
-          ) as "modelVersions",`
+            SELECT jsonb_agg(data)
+              FROM (
+                SELECT row_to_json(lmv) as data
+                FROM "CTE_ModelVersionDetails" mvd
+                WHERE mvd."modelId" = m.id
+              ) as t
+            ) as "modelVersions",`
           : Prisma.sql`(
-          SELECT jsonb_agg(data)
-          FROM (
-            SELECT row_to_json(lmv) as data
-            FROM "CTE_ModelVersionDetails" mvd
-            WHERE mvd."modelId" = m.id
-          ) as t
-        ) as "modelVersions",`
+            SELECT jsonb_agg(data)
+            FROM (SELECT row_to_json(lmv) AS data) as t
+            ) as "modelVersions",`
       }
       jsonb_build_object(
         'id', u."id",
