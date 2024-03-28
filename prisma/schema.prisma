@@ -375,6 +375,7 @@ enum ModelType {
   AestheticGradient
   LORA
   LoCon
+  DoRA
   Controlnet
   Upscaler
   MotionModule
