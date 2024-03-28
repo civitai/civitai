@@ -74,6 +74,7 @@ import { pgDbRead, pgDbWrite } from '~/server/db/pgDb';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { nsfwBrowsingLevelsArray } from '~/shared/constants/browsingLevel.constants';
+import { getVotableTags2 } from '~/server/services/tag.service';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -2625,6 +2626,7 @@ export async function updateImageNsfwLevel({
   user,
   status,
 }: UpdateImageNsfwLevelOutput & { user: SessionUser }) {
+  if (!nsfwLevel) throw throwBadRequestError();
   if (user.isModerator) {
     await dbWrite.image.update({ where: { id }, data: { nsfwLevel, nsfwLevelLocked: true } });
     if (status) {
@@ -2718,56 +2720,10 @@ export async function getImageRatingRequests({
   }
 
   const imageIds = results.map((x) => x.id);
-  const voteCutoff = new Date(Date.now() + constants.tagVoting.voteDuration);
-  const imageTags = await dbRead.imageTag.findMany({
-    where: {
-      imageId: { in: imageIds },
-      tagNsfwLevel: { in: [NsfwLevel.PG13, NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX] },
-    },
-    select: { ...imageTagCompositeSelect, imageId: true },
-    orderBy: { score: 'desc' },
-  });
-  const hasWDTags = imageTags.some((x) => x.source === TagSource.WD14);
-  const tags = imageTags
-    .filter((x) => {
-      if (x.source === TagSource.Rekognition && hasWDTags) {
-        if (x.tagType === TagType.Moderation) return true;
-        if (constants.imageTags.styles.includes(x.tagName)) return true;
-        return false;
-      }
-      return true;
-    })
-    .map(({ tagId, tagName, tagType, tagNsfwLevel, source, ...tag }) => ({
-      ...tag,
-      id: tagId,
-      type: tagType,
-      nsfwLevel: tagNsfwLevel,
-      name: tagName,
-    })) as (VotableTagModel & { imageId: number })[];
-
-  const userVotes = await dbRead.tagsOnImageVote.findMany({
-    where: { imageId: { in: imageIds }, userId: user.id },
-    select: { tagId: true, vote: true },
-  });
-
-  for (const tag of tags) {
-    const userVote = userVotes.find((vote) => vote.tagId === tag.id);
-    if (userVote) tag.vote = userVote.vote > 0 ? 1 : -1;
-  }
-
-  const filteredTags = tags.filter(
-    (tag) =>
-      tag.concrete ||
-      (tag.lastUpvote && tag.lastUpvote > voteCutoff) ||
-      (tag.vote && tag.vote > 0) ||
-      (tag.needsReview && user.isModerator)
-  );
+  const tags = await getVotableTags2({ ids: imageIds, user, type: 'image' });
 
   return {
     nextCursor,
-    items: results.map((item) => {
-      const tags: VotableTagModel[] = filteredTags.filter((x) => x.imageId === item.id);
-      return { ...item, tags };
-    }),
+    items: results.map((item) => ({ ...item, tags: tags.filter((x) => x.imageId === item.id) })),
   };
 }

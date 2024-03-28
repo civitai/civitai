@@ -1,7 +1,7 @@
 import { Prisma, TagSource, TagTarget, TagType } from '@prisma/client';
 import { TagVotableEntityType, VotableTagModel } from '~/libs/tags';
 import { constants } from '~/server/common/constants';
-import { TagSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { TagSort, SearchIndexUpdateQueueAction, NsfwLevel } from '~/server/common/enums';
 
 import { dbRead, dbWrite } from '~/server/db/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
@@ -10,6 +10,7 @@ import {
   DeleteTagsSchema,
   GetTagsInput,
   GetVotableTagsSchema,
+  GetVotableTagsSchema2,
   ModerateTagsSchema,
 } from '~/server/schema/tag.schema';
 import { tagsSearchIndex } from '~/server/search-index';
@@ -22,6 +23,7 @@ import {
 } from '~/server/services/user-preferences.service';
 import { clearImageTagIdsCache } from '~/server/services/image.service';
 import { removeEmpty } from '~/utils/object-helpers';
+import { SessionUser } from 'next-auth';
 
 export const getTagWithModelCount = ({ name }: { name: string }) => {
   return dbRead.$queryRaw<[{ id: number; name: string; count: number }]>`
@@ -299,6 +301,64 @@ export const getVotableTags = async ({
 
   return results;
 };
+
+async function getVotableImageTags({ ids, user }: GetVotableTagsSchema2 & { user: SessionUser }) {
+  const imageTags = await dbRead.imageTag.findMany({
+    where: {
+      imageId: { in: ids },
+      tagNsfwLevel: { in: [NsfwLevel.PG13, NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX] },
+    },
+    select: { ...imageTagCompositeSelect, imageId: true },
+    orderBy: { score: 'desc' },
+  });
+  const hasWDTags = imageTags.some((x) => x.source === TagSource.WD14);
+  const tags = imageTags
+    .filter((x) => {
+      if (x.source === TagSource.Rekognition && hasWDTags) {
+        if (x.tagType === TagType.Moderation) return true;
+        if (constants.imageTags.styles.includes(x.tagName)) return true;
+        return false;
+      }
+      return true;
+    })
+    .map(({ tagId, tagName, tagType, tagNsfwLevel, source, ...tag }) => ({
+      ...tag,
+      id: tagId,
+      type: tagType,
+      nsfwLevel: tagNsfwLevel,
+      name: tagName,
+    })) as (VotableTagModel & { imageId: number })[];
+
+  const userVotes = await dbRead.tagsOnImageVote.findMany({
+    where: { imageId: { in: ids }, userId: user.id },
+    select: { tagId: true, vote: true },
+  });
+
+  for (const tag of tags) {
+    const userVote = userVotes.find((vote) => vote.tagId === tag.id);
+    if (userVote) tag.vote = userVote.vote > 0 ? 1 : -1;
+  }
+
+  return tags;
+}
+
+// TODO - create function for getting model tag votes and then finish abstracting this fuction - replaces `getVotableTags`
+export async function getVotableTags2({
+  ids,
+  user,
+  type,
+}: GetVotableTagsSchema2 & { user: SessionUser }) {
+  const voteCutoff = new Date(Date.now() + constants.tagVoting.voteDuration);
+  const tagsFn = type === 'image' ? getVotableImageTags : getVotableImageTags;
+  const tags = await tagsFn({ ids, type, user });
+  return tags.filter(
+    (tag) =>
+      tag.concrete ||
+      (tag.lastUpvote && tag.lastUpvote > voteCutoff) ||
+      (tag.vote && tag.vote > 0) ||
+      (tag.needsReview && user.isModerator)
+  );
+}
 
 type TagVotingInput = {
   userId: number;
