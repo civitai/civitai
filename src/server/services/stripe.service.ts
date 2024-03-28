@@ -21,7 +21,11 @@ import { formatPriceForDisplay } from '~/utils/number-helpers';
 import { TransactionType } from '../schema/buzz.schema';
 import * as Schema from '../schema/stripe.schema';
 import { PaymentMethodDeleteInput } from '../schema/stripe.schema';
-import { completeStripeBuzzTransaction, createBuzzTransaction } from './buzz.service';
+import {
+  completeStripeBuzzTransaction,
+  createBuzzTransaction,
+  getMultipliersForUser,
+} from './buzz.service';
 import { getOrCreateVault } from '~/server/services/vault.service';
 
 const baseUrl = getBaseUrl();
@@ -46,6 +50,9 @@ export const getPlans = async () => {
           currency: true,
           metadata: true,
         },
+        where: {
+          active: true,
+        },
       },
     },
   });
@@ -57,7 +64,7 @@ export const getPlans = async () => {
     })
     .map((product) => {
       const prices = product.prices.map((x) => ({ ...x, unitAmount: x.unitAmount ?? 0 }));
-      const price = prices.filter((x) => x.id === product.defaultPriceId)[0];
+      const price = prices.filter((x) => x.id === product.defaultPriceId)[0] ?? prices[0];
 
       return {
         ...product,
@@ -142,15 +149,49 @@ export const createSubscribeSession = async ({
     customerId = await createCustomer(user);
   }
 
+  const products = await dbRead.product.findMany({});
+  const membershipProducts = products.filter(({ metadata }) => {
+    return !!(metadata as any)?.[env.STRIPE_METADATA_KEY];
+  });
+
   // Check to see if this user has a subscription with Stripe
   const { data: subscriptions } = await stripe.subscriptions.list({
     customer: customerId,
   });
+  const price = await stripe.prices.retrieve(priceId);
 
-  if (subscriptions.filter((x) => x.status !== 'canceled').length > 0) {
-    const { url } = await createManageSubscriptionSession({ customerId });
-    await invalidateSession(user.id);
-    return { sessionId: null, url };
+  if (!price || !membershipProducts.find((x) => x.id === (price.product as string))) {
+    throw throwNotFoundError(`The product you are trying to purchase does not exists`);
+  }
+
+  const activeSubscription = subscriptions.find((x) => x.status !== 'canceled');
+
+  if (activeSubscription) {
+    const subscriptionItem = activeSubscription.items.data.find((d) =>
+      membershipProducts.some((p) => p.id === (d.price.product as string))
+    );
+
+    if (!subscriptionItem) {
+      throw throwBadRequestError(
+        `Your subscription does not have a main plan. Please contact administration`
+      );
+    }
+
+    const isActivePrice = subscriptionItem.price.id === price.id;
+    if (!isActivePrice) {
+      const { url } = await createSubscriptionChangeSession({
+        customerId,
+        priceId,
+        subscriptionId: activeSubscription.id,
+        subscriptionItemId: subscriptionItem.id,
+      });
+      await invalidateSession(user.id);
+      return { sessionId: null, url };
+    } else {
+      const { url } = await createManageSubscriptionSession({ customerId });
+      await invalidateSession(user.id);
+      return { sessionId: null, url };
+    }
   }
 
   // array of items we are charging the customer
@@ -221,6 +262,75 @@ export const createManageSubscriptionSession = async ({ customerId }: { customer
   return { url: session.url };
 };
 
+export const createSubscriptionChangeSession = async ({
+  customerId,
+  subscriptionId,
+  priceId,
+  subscriptionItemId,
+}: {
+  customerId: string;
+  subscriptionId: string;
+  subscriptionItemId: string;
+  priceId: string;
+}) => {
+  const stripe = await getServerStripe();
+
+  const session = await stripe.billingPortal.sessions.create({
+    customer: customerId,
+    return_url: `${baseUrl}/user/account`,
+    flow_data: {
+      // @ts-ignore This is valid as per stripe's documentation
+      type: 'subscription_update_confirm',
+      subscription_update_confirm: {
+        subscription: subscriptionId,
+        items: [
+          {
+            id: subscriptionItemId,
+            quantity: 1,
+            price: priceId,
+          },
+        ],
+      },
+      after_completion: {
+        type: 'redirect',
+        redirect: {
+          return_url: `${baseUrl}/payment/success?cid=${customerId.slice(-8)}`,
+        },
+      },
+    },
+  });
+
+  return { url: session.url };
+};
+
+export const createCancelSubscriptionSession = async ({ customerId }: { customerId: string }) => {
+  const stripe = await getServerStripe();
+
+  // Check to see if this user has a subscription with Stripe
+  const { data: subscriptions } = await stripe.subscriptions.list({
+    customer: customerId,
+  });
+
+  const activeSubscription = subscriptions.find((x) => x.status !== 'canceled');
+  if (!activeSubscription) {
+    throw throwBadRequestError(`No active subscription found`);
+  }
+
+  const session = await stripe.billingPortal.sessions.create({
+    customer: customerId,
+    return_url: `${baseUrl}/user/account`,
+    flow_data: {
+      // @ts-ignore This is valid as per stripe's documentation
+      type: 'subscription_cancel',
+      subscription_cancel: {
+        subscription: activeSubscription.id,
+      },
+    },
+  });
+
+  return { url: session.url };
+};
+
 export const createBuzzSession = async ({
   customerId,
   user,
@@ -241,6 +351,7 @@ export const createBuzzSession = async ({
     where: { id: priceId },
     select: { productId: true, currency: true, type: true },
   });
+
   if (!price)
     throw throwNotFoundError(`The product you are trying to purchase does not exists: ${priceId}`);
 
@@ -356,6 +467,7 @@ export const upsertSubscription = async (
     }
   }
 
+  await getMultipliersForUser(user.id, true);
   await invalidateSession(user.id);
 };
 
@@ -448,9 +560,10 @@ export const manageInvoicePaid = async (invoice: Stripe.Invoice) => {
   // Check if user exists and has a customerId
   // Use write db to avoid replication lag between webhook requests
   const user = await dbWrite.user.findUnique({
-    where: { email: invoice.customer_email as string },
+    where: { customerId: invoice.customer as string },
     select: { id: true, customerId: true },
   });
+
   if (user && !user.customerId) {
     // Since we're handling an invoice, we assume that the user
     // is already created in stripe. We just update in our records
@@ -470,15 +583,30 @@ export const manageInvoicePaid = async (invoice: Stripe.Invoice) => {
   await dbWrite.purchase.createMany({ data: purchases });
 
   // Don't check for subscription active because there is a chance it hasn't been updated yet
-  if (invoice.subscription && user) {
+  if (
+    invoice.subscription &&
+    user &&
+    invoice.billing_reason &&
+    ['subscription_cycle', 'subscription_create'].includes(invoice.billing_reason)
+  ) {
+    const products = (await dbRead.product.findMany()).filter(
+      (p) => !!(p.metadata as any)?.[env.STRIPE_METADATA_KEY]
+    );
+
+    const billedProduct = products.find((p) =>
+      invoice.lines.data.some((l) => l.price?.product === p.id)
+    );
+
+    const billedProductMeta = (billedProduct?.metadata ?? {}) as Schema.ProductMetadata;
+
     await withRetries(() =>
       createBuzzTransaction({
         fromAccountId: 0,
         toAccountId: user.id,
         type: TransactionType.Reward,
         externalTransactionId: invoice.id,
-        amount: 5000, // Hardcoded for now cause we only have one subscription option
-        description: 'Membership bonus',
+        amount: billedProductMeta.monthlyBuzz ?? 3000, // assume a min of 3000.
+        description: `Membership bonus.`,
         details: { invoiceId: invoice.id },
       })
     ).catch(handleLogError);

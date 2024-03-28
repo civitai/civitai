@@ -213,10 +213,12 @@ export const addModelVersionToVault = async ({
   const totalKb = modelSizeKb; // Images and details are added later and are fairly small
 
   if (vault.usedStorageKb + totalKb > vault.storageKb) {
+    // If you update this error message, check the `ToggleVaultButton.tsx` component as it expects the string 'Vault storage limit exceeded'
     throw throwBadRequestError(
       `Vault storage limit exceeded. You are trying to store ${formatKBytes(
         totalKb
-      )} but you have only ${formatKBytes(vault.storageKb - vault.usedStorageKb)} available.`
+      )} but you have only ${formatKBytes(vault.storageKb - vault.usedStorageKb)} available.`,
+      new Error('STORAGE_LIMIT_EXCEEDED')
     );
   }
 

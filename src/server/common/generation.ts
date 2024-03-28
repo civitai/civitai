@@ -1,6 +1,7 @@
 import { GenerateFormModel } from '~/server/schema/generation.schema';
 import { generation, getGenerationConfig } from '~/server/common/constants';
 
+// TODO.imageGenerationBuzzCharge - Remove all cost calculation from the front-end. This is done by the orchestrator.
 export const calculateGenerationBill = (data: Partial<GenerateFormModel>) => {
   const {
     quantity = generation.defaultValues.quantity,

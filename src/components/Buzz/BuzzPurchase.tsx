@@ -11,6 +11,8 @@ import {
   Accordion,
   ThemeIcon,
   Divider,
+  Anchor,
+  Alert,
 } from '@mantine/core';
 import { Currency, Price } from '@prisma/client';
 import {
@@ -29,7 +31,11 @@ import { useQueryBuzzPackages } from '../Buzz/buzz.utils';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 import { openStripeTransactionModal } from '~/components/Modals/StripeTransactionModal';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { formatCurrencyForDisplay, formatPriceForDisplay } from '~/utils/number-helpers';
+import {
+  formatCurrencyForDisplay,
+  formatPriceForDisplay,
+  numberWithCommas,
+} from '~/utils/number-helpers';
 import { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
@@ -39,6 +45,8 @@ import { BuzzPaypalButton } from './BuzzPaypalButton';
 import { closeAllModals, openConfirmModal, openModal } from '@mantine/modals';
 import { dialogStore } from '../Dialog/dialogStore';
 import { AlertDialog } from '../Dialog/Common/AlertDialog';
+import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
+import { useUserMultipliers } from '~/components/Buzz/useBuzz';
 
 const useStyles = createStyles((theme) => ({
   chipGroup: {
@@ -139,6 +147,10 @@ export const BuzzPurchase = ({
   const [customAmount, setCustomAmount] = useState<number | undefined>();
   const [activeControl, setActiveControl] = useState<string | null>(null);
   const ctaEnabled = !!selectedPrice?.unitAmount || (!selectedPrice && customAmount);
+  const { multipliers, multipliersLoading } = useUserMultipliers();
+  const purchasesMultiplier = multipliers.purchasesMultiplier ?? 1;
+  const isMember = currentUser?.isMember;
+
   const {
     packages = [],
     isLoading,
@@ -286,7 +298,7 @@ export const BuzzPurchase = ({
       <Stack spacing={0}>
         <Text>Buy buzz as a one-off purchase. No commitment, no strings attached.</Text>
       </Stack>
-      {isLoading || processing ? (
+      {isLoading || processing || multipliersLoading ? (
         <Center py="xl">
           <Loader variant="bars" />
         </Center>
@@ -431,6 +443,35 @@ export const BuzzPurchase = ({
                 ${formatCurrencyForDisplay(unitAmount)}
               </Text>
             </Text>
+            {purchasesMultiplier > 1 && (
+              <Alert color="yellow" title="Your membership gets you more!" icon={<IconBolt />}>
+                <Text>
+                  Thanks to your membership you will get an extra{' '}
+                  <Text component="span" weight="bold">
+                    {numberWithCommas(Math.floor(buzzAmount * purchasesMultiplier - buzzAmount))}{' '}
+                    Buzz
+                  </Text>{' '}
+                  for a total of{' '}
+                  <Text component="span" weight="bold">
+                    {numberWithCommas(Math.floor(buzzAmount * purchasesMultiplier))} Buzz
+                  </Text>{' '}
+                  for the same price!
+                </Text>
+              </Alert>
+            )}
+            {purchasesMultiplier === 1 && !isMember && (
+              <Alert color="yellow" title="Did you know?" icon={<IconBolt />}>
+                <Stack>
+                  <Text>
+                    Memberships allow you to get a better bang for your buck by giving you extra
+                    buzz per purchase, a reward multiplier and more!
+                  </Text>
+                  <Anchor href="/pricing" onClick={onCancel}>
+                    Check out our memberships now!
+                  </Anchor>{' '}
+                </Stack>
+              </Alert>
+            )}
           </>
         )}
         <Button disabled={!ctaEnabled} onClick={handleSubmit} leftIcon={<IconBrandStripe />}>
@@ -453,6 +494,17 @@ export const BuzzPurchase = ({
           Stripe supports Credit cards, Bank transfer, Google Pay, Apple Pay, and more.
         </Text>
       </Stack>
+      <DismissibleAlert
+        id="rewards-program-notice"
+        content={
+          <Text align="center">
+            Want to get free Buzz? Check out our{' '}
+            <Anchor href="/user/buzz-dashboard#rewards" target="_blank">
+              rewards program
+            </Anchor>
+          </Text>
+        }
+      />
     </Stack>
   );
 };

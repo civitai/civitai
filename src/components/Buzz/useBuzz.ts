@@ -52,3 +52,17 @@ export const useBuzzSignalUpdate = () => {
 
   useSignalConnection(SignalMessages.BuzzUpdate, onBalanceUpdate);
 };
+
+export const useUserMultipliers = () => {
+  const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
+  const { data = { purchasesMultiplier: 1, rewardsMultiplier: 1 }, isLoading } =
+    trpc.buzz.getUserMultipliers.useQuery(undefined, {
+      enabled: !!currentUser && features.buzz,
+    });
+
+  return {
+    multipliersLoading: isLoading,
+    multipliers: data,
+  };
+};

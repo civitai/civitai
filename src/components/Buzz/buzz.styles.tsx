@@ -35,6 +35,12 @@ export const useBuzzDashboardStyles = createStyles((theme) => ({
     animation: `${moveBackground} 5s ease infinite`,
     backgroundSize: '200% 200%',
   },
+  goldText: {
+    background: theme.fn.linearGradient(45, theme.colors.yellow[4], theme.colors.yellow[1]),
+    fontWeight: 800,
+    backgroundClip: 'text',
+    color: 'transparent',
+  },
   lifetimeBuzzBadge: {
     background: theme.colors.dark[6],
     borderRadius: '22px',

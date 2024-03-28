@@ -180,6 +180,8 @@ export const ActionType = [
   'PurchaseFunds_Cancel',
   'PurchaseFunds_Confirm',
   'LoginRedirect',
+  'Membership_Cancel',
+  'Membership_Downgrade',
 ] as const;
 export type ActionType = (typeof ActionType)[number];
 

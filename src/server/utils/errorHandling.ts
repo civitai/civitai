@@ -99,11 +99,15 @@ export function throwAuthorizationError(message: string | null = null) {
   });
 }
 
-export function throwBadRequestError(message: string | null = null, error?: unknown) {
-  message ??= 'Your request is invalid';
+export function throwBadRequestError(
+  message: string | null = null,
+  error?: unknown,
+  overwriteMessage = true
+) {
+  message = overwriteMessage ? message ?? 'Your request is invalid' : message;
   throw new TRPCError({
     code: 'BAD_REQUEST',
-    message,
+    message: message ?? undefined,
     cause: error,
   });
 }

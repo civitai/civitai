@@ -6,19 +6,19 @@ import { getDisplayName } from '~/utils/string-helpers';
 // --------------------------
 // Feature Availability
 // --------------------------
-const featureAvailability = ['dev', 'mod', 'public', 'user', 'founder', 'granted'] as const;
+const featureAvailability = ['dev', 'mod', 'public', 'user', 'member', 'granted'] as const;
 const featureFlags = createFeatureFlags({
   earlyAccessModel: ['dev'],
   apiKeys: ['public'],
   ambientCard: ['public'],
-  gallery: ['mod', 'founder'],
-  posts: ['mod', 'founder'],
+  gallery: ['mod', 'member'],
+  posts: ['mod', 'member'],
   articles: ['public'],
   articleCreate: ['public'],
   adminTags: ['mod', 'granted'],
-  civitaiLink: ['mod', 'founder'],
+  civitaiLink: ['mod', 'member'],
   stripe: ['mod'],
-  imageTraining: ['dev', 'mod', 'founder'],
+  imageTraining: ['dev', 'mod', 'member'],
   imageTrainingResults: ['user'],
   sdxlGeneration: ['public'],
   questions: ['dev', 'mod'],
@@ -61,7 +61,7 @@ const featureFlags = createFeatureFlags({
     default: true,
     displayName: 'CivBot Assistant (Alpha)',
     description: `A helpful chat assistant that can answer questions about Stable Diffusion, Civitai, and more! We're still training it, so please report any issues you find!`,
-    availability: ['mod', 'founder'],
+    availability: ['mod', 'member'],
   },
   bounties: ['public'],
   newsroom: ['public'],
@@ -80,7 +80,7 @@ const featureFlags = createFeatureFlags({
   chat: ['user'],
   creatorsProgram: ['mod', 'granted'],
   buzzWithdrawalTransfer: ['granted'],
-  vault: ['mod'],
+  vault: ['public'],
 });
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
 
@@ -99,6 +99,8 @@ export const hasFeature = (key: FeatureFlagKey, user?: SessionUser) => {
   if (!roleAccess && roles.length !== 0 && !!user) {
     if (roles.includes('user')) roleAccess = true;
     else if (roles.includes('mod') && user.isModerator) roleAccess = true;
+    else if (!!user.tier && user.tier != 'free' && roles.includes('member'))
+      roleAccess = true; // Gives access to any tier
     else if (user.tier && roles.includes(user.tier as FeatureAvailability)) roleAccess = true;
   }
 

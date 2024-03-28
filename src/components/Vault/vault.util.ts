@@ -15,6 +15,7 @@ export const useMutateVault = () => {
 
   const onError = (error: any, message = 'There was an error while performing your request') => {
     try {
+      console.log(JSON.stringify(error));
       // If failed in the FE - TRPC error is a JSON string that contains an array of errors.
       const parsedError = JSON.parse(error.message);
       showErrorNotification({

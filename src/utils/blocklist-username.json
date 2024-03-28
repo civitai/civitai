@@ -541,6 +541,7 @@
     "zlib",
     "buzz-dashboard",
     "transactions",
-    "vault"
+    "vault",
+    "membership"
   ]
 }
