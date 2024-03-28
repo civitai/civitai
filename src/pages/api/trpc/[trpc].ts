@@ -39,7 +39,7 @@ export default withAxiom(
       return {};
     },
     onError: ({ error, type, path, input, ctx, req }) => {
-      handleTRPCError(error);
+      // handleTRPCError(error);
 
       if (isProd) {
         logToAxiom(

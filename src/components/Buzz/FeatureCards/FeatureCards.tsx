@@ -12,10 +12,9 @@ import {
 import {
   IconArrowRight,
   IconBarbell,
+  IconBarcode,
   IconCoin,
   IconCoins,
-  IconGif,
-  IconGift,
   IconHighlight,
   IconMoneybag,
   IconShoppingBag,
@@ -28,6 +27,8 @@ import { useBuzz } from '~/components/Buzz/useBuzz';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import { RedeemCodeModal } from '~/components/RedeemableCode/RedeemCodeModal';
 
 const useStyles = createStyles((theme) => ({
   featureCard: {
@@ -74,6 +75,18 @@ const getEarnings = (): (FeatureCardProps & { key: string })[] => [
     btnProps: {
       href: '/posts/create',
       children: 'Create post',
+    },
+  },
+  {
+    key: 'redeem',
+    icon: <IconBarcode size={32} />,
+    title: 'Redeemable code',
+    description: 'Redeem a code in exchange for Buzz',
+    btnProps: {
+      children: 'Redeem now',
+      onClick: () => {
+        dialogStore.trigger({ component: RedeemCodeModal });
+      },
     },
   },
 ];
