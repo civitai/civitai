@@ -1,4 +1,5 @@
-import { Modal, Stack, Group, Button, createStyles } from '@mantine/core';
+import { Modal, Stack, Group, Button, createStyles, Text } from '@mantine/core';
+import { useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { Form, InputText, useForm } from '~/libs/form';
 import {
@@ -6,8 +7,9 @@ import {
   consumeRedeemableCodeSchema,
 } from '~/server/schema/redeemableCode.schema';
 import { containerQuery } from '~/utils/mantine-css-helpers';
-import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { SuccessAnimation } from '~/components/Animations/SuccesAnimation';
 
 const useStyles = createStyles(() => ({
   cancelButton: {
@@ -30,14 +32,15 @@ export function RedeemCodeModal({ onSubmit }: { onSubmit?: VoidFunction }) {
   const { classes } = useStyles();
   const queryUtils = trpc.useUtils();
 
+  const [playAnimation, setPlayAnimation] = useState(false);
+
   const form = useForm({ schema: consumeRedeemableCodeSchema, defaultValues: { code: '' } });
 
   const redeemCodeMutation = trpc.redeemableCode.consume.useMutation({
     onSuccess: async () => {
+      setPlayAnimation(true);
       await queryUtils.buzz.getAccountTransactions.invalidate();
-      dialog.onClose();
       onSubmit?.();
-      showSuccessNotification({ message: 'Successfully redeemed code' });
     },
     onError: (error) => {
       showErrorNotification({ title: 'Error redeeming code', error: new Error(error.message) });
@@ -49,33 +52,43 @@ export function RedeemCodeModal({ onSubmit }: { onSubmit?: VoidFunction }) {
 
   return (
     <Modal {...dialog} title="Redeem a Code">
-      <Form form={form} onSubmit={handleSubmit}>
+      {playAnimation ? (
         <Stack>
-          <InputText
-            name="code"
-            label="Code"
-            placeholder="6d0885f6-34e9-4333-9a8a-75ab2bd2cf5c"
-            autoFocus
-          />
+          <SuccessAnimation gap={8} lottieProps={{ width: 120 }} align="center" justify="center">
+            <Text size="xl" weight={500}>
+              Code redeemed successfully
+            </Text>
+          </SuccessAnimation>
           <Group position="right">
-            <Button
-              className={classes.cancelButton}
-              variant="light"
-              color="gray"
-              onClick={dialog.onClose}
-            >
-              Cancel
-            </Button>
-            <Button
-              className={classes.submitButton}
-              type="submit"
-              loading={redeemCodeMutation.isLoading}
-            >
-              Redeem
+            <Button className={classes.submitButton} onClick={dialog.onClose}>
+              Close
             </Button>
           </Group>
         </Stack>
-      </Form>
+      ) : (
+        <Form form={form} onSubmit={handleSubmit}>
+          <Stack>
+            <InputText name="code" label="Code" placeholder="AB12-34CD" autoFocus />
+            <Group position="right">
+              <Button
+                className={classes.cancelButton}
+                variant="light"
+                color="gray"
+                onClick={dialog.onClose}
+              >
+                Cancel
+              </Button>
+              <Button
+                className={classes.submitButton}
+                type="submit"
+                loading={redeemCodeMutation.isLoading}
+              >
+                Redeem
+              </Button>
+            </Group>
+          </Stack>
+        </Form>
+      )}
     </Modal>
   );
 }

@@ -15,6 +15,11 @@ export const deleteRedeemableCodeSchema = z.object({
 
 export type ConsumeRedeemableCodeInput = z.infer<typeof consumeRedeemableCodeSchema>;
 export const consumeRedeemableCodeSchema = z.object({
-  code: z.string().trim().length(36),
+  code: z
+    .string()
+    .trim()
+    .length(9)
+    .toUpperCase()
+    .regex(/^[A-Z0-9]{4}-[A-Z0-9]{4}$/),
   userId: z.number().optional(),
 });
