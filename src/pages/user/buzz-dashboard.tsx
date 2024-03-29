@@ -14,7 +14,7 @@ import {
 } from '@mantine/core';
 import { Currency } from '@prisma/client';
 import { IconInfoCircle } from '@tabler/icons-react';
-import React from 'react';
+import React, { useEffect } from 'react';
 import { EarningBuzz, SpendingBuzz } from '~/components/Buzz/FeatureCards/FeatureCards';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Meta } from '~/components/Meta/Meta';
@@ -28,6 +28,9 @@ import { OwnedBuzzWithdrawalRequestsPaged } from '../../components/Buzz/Withdraw
 import { EarlyAccessRewards } from '~/components/Buzz/Rewards/EarlyAccessRewards';
 import { GeneratedImagesReward } from '~/components/Buzz/Rewards/GeneratedImagesRewards';
 import { PurchasableRewards } from '~/components/PurchasableRewards/PurchasableRewards';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import { RedeemCodeModal } from '~/components/RedeemableCode/RedeemCodeModal';
+import { useRouter } from 'next/router';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -47,6 +50,17 @@ const useStyles = createStyles((theme) => ({
 export default function UserBuzzDashboard() {
   const currentUser = useCurrentUser();
   const { classes } = useStyles();
+  const { query } = useRouter();
+
+  // Handle direct redemption
+  useEffect(() => {
+    if (!query?.redeem || typeof window === 'undefined') return;
+    dialogStore.trigger({
+      id: 'redeem-code',
+      component: RedeemCodeModal,
+      props: { code: query.redeem as string },
+    });
+  }, []);
 
   const { data: rewards = [], isLoading: loadingRewards } = trpc.user.userRewardDetails.useQuery(
     undefined,

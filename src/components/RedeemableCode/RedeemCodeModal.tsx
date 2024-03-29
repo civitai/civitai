@@ -27,14 +27,15 @@ const useStyles = createStyles(() => ({
   },
 }));
 
-export function RedeemCodeModal({ onSubmit }: { onSubmit?: VoidFunction }) {
+export function RedeemCodeModal({ onSubmit, code }: { onSubmit?: VoidFunction; code?: string }) {
   const dialog = useDialogContext();
   const { classes } = useStyles();
   const queryUtils = trpc.useUtils();
 
   const [playAnimation, setPlayAnimation] = useState(false);
 
-  const form = useForm({ schema: consumeRedeemableCodeSchema, defaultValues: { code: '' } });
+  console.log(code);
+  const form = useForm({ schema: consumeRedeemableCodeSchema, defaultValues: { code } });
 
   const redeemCodeMutation = trpc.redeemableCode.consume.useMutation({
     onSuccess: async () => {
