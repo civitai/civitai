@@ -14,6 +14,7 @@ const typeUrnMap: Partial<Record<ModelType, string>> = {
   [ModelType.Upscaler]: 'upscaler',
   [ModelType.VAE]: 'vae',
   [ModelType.LORA]: 'lora',
+  [ModelType.DoRA]: 'dora',
   [ModelType.LoCon]: 'lycoris',
   [ModelType.Controlnet]: 'controlnet',
 };
