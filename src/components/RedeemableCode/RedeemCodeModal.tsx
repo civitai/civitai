@@ -34,7 +34,6 @@ export function RedeemCodeModal({ onSubmit, code }: { onSubmit?: VoidFunction; c
 
   const [playAnimation, setPlayAnimation] = useState(false);
 
-  console.log(code);
   const form = useForm({ schema: consumeRedeemableCodeSchema, defaultValues: { code } });
 
   const redeemCodeMutation = trpc.redeemableCode.consume.useMutation({
