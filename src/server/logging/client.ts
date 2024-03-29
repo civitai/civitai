@@ -11,16 +11,17 @@ const axiom = shouldConnect
   : null;
 
 export async function logToAxiom(data: MixedObject, datastream?: string) {
-  const sendData = { pod: env.PODNAME, ...data };
+  // would like to do this....but axiom isn't happy
+  // const sendData = { pod: env.PODNAME, ...data };
   if (isProd) {
     if (!axiom) return;
     datastream ??= env.AXIOM_DATASTREAM;
     if (!datastream) return;
 
-    await axiom.ingestEvents(datastream, sendData);
-    // await axiom.ingestEvents(datastream, data);
+    // await axiom.ingestEvents(datastream, sendData);
+    await axiom.ingestEvents(datastream, data);
   } else {
-    console.log('logToAxiom', sendData);
-    // console.log('logToAxiom', data);
+    // console.log('logToAxiom', sendData);
+    console.log('logToAxiom', data);
   }
 }
