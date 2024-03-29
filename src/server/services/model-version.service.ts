@@ -359,7 +359,8 @@ export const publishModelVersionById = async ({
 
       await tx.$executeRaw`
         UPDATE "Post"
-        SET "metadata" = "metadata" - 'unpublishedAt' - 'unpublishedBy'
+        SET "metadata" = "metadata" - 'unpublishedAt' - 'unpublishedBy',
+          "publishedAt" = ${publishedAt}
         WHERE "userId" = ${updatedVersion.model.userId}
         AND "modelVersionId" = ${updatedVersion.id}
       `;
