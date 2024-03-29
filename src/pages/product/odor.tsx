@@ -54,8 +54,9 @@ export default function CivitaiVault() {
               color="blue"
               size="lg"
               radius="xl"
-              component={NextLink}
+              component="a"
               href="https://community-content.civitai.com/odor_whitepaper.pdf"
+              target="_blank"
               rel="nofollow noreferrer"
               fullWidth={isMobile}
             >
