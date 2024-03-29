@@ -475,6 +475,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   const [buzzCost, setBuzzCost] = useState<number | undefined>(undefined);
   const [awaitInvalidate, setAwaitInvalidate] = useState<boolean>(false);
   const status = useTrainingServiceStatus();
+  const blockedModels = status.blockedModels ?? [blockedCustomModels];
 
   const { classes } = useStyles();
   const theme = useMantineTheme();
@@ -664,7 +665,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
       return;
     }
 
-    if (blockedCustomModels.includes(formBaseModel)) {
+    if (blockedModels.includes(formBaseModel)) {
       showErrorNotification({
         error: new Error('This model has been blocked from training - please try another one.'),
         autoClose: false,
@@ -1019,6 +1020,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                       ],
                     }}
                     allowRemove={true}
+                    isTraining={true}
                     onChange={(val) => {
                       const gVal = val as Generation.Resource;
                       const mId = gVal?.modelId;
@@ -1052,7 +1054,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                       ? 'Custom model selected.'
                       : baseModelDescriptions[formBaseModel]?.description ?? 'No description.'}
                   </Text>
-                  {blockedCustomModels.includes(formBaseModel) ? (
+                  {blockedModels.includes(formBaseModel) ? (
                     <AlertWithIcon
                       icon={<IconExclamationCircle />}
                       iconColor="default"
@@ -1315,7 +1317,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         <BuzzTransactionButton
           type="submit"
           loading={awaitInvalidate}
-          disabled={blockedCustomModels.includes(formBaseModel ?? '')}
+          disabled={blockedModels.includes(formBaseModel ?? '')}
           label="Submit"
           buzzAmount={buzzCost ?? 0}
         />

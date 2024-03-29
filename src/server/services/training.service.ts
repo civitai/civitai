@@ -1,9 +1,6 @@
 import { TrainingStatus } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
-import {
-  blockedCustomModels,
-  isTrainingCustomModel,
-} from '~/components/Training/Form/TrainingCommon';
+import { isTrainingCustomModel } from '~/components/Training/Form/TrainingCommon';
 import { trainingSettings } from '~/components/Training/Form/TrainingSubmit';
 import { env } from '~/env/server.mjs';
 import { constants } from '~/server/common/constants';
@@ -15,7 +12,6 @@ import {
   AutoTagInput,
   CreateTrainingRequestDryRunInput,
   CreateTrainingRequestInput,
-  defaultTrainingCost,
   MoveAssetInput,
   TrainingServiceStatus,
   trainingServiceStatusSchema,
@@ -166,7 +162,7 @@ export async function getTrainingServiceStatus() {
   const result = trainingServiceStatusSchema.safeParse(
     JSON.parse((await redis.hGet(REDIS_KEYS.SYSTEM.FEATURES, REDIS_KEYS.TRAINING.STATUS)) ?? '{}')
   );
-  if (!result.success) return { available: true, cost: defaultTrainingCost };
+  if (!result.success) return trainingServiceStatusSchema.parse({});
 
   return result.data as TrainingServiceStatus;
 }
@@ -206,7 +202,7 @@ export const createTrainingRequest = async ({
   if (!trainingParams) throw throwBadRequestError('Missing training params');
   const baseModel = modelVersion.trainingDetails.baseModel;
   if (!baseModel) throw throwBadRequestError('Missing base model');
-  if (blockedCustomModels.includes(baseModel))
+  if ((status.blockedModels ?? []).includes(baseModel))
     throw throwBadRequestError(
       'This model has been blocked from training - please try another one.'
     );

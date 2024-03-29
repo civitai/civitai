@@ -1,5 +1,6 @@
 import { defaultsDeep } from 'lodash';
 import { z } from 'zod';
+import { blockedCustomModels } from '~/components/Training/Form/TrainingCommon';
 
 export type CreateTrainingRequestInput = z.infer<typeof createTrainingRequestSchema>;
 export const createTrainingRequestSchema = z.object({
@@ -69,6 +70,7 @@ export const defaultTrainingCost: TrainingCost = {
 export const trainingServiceStatusSchema = z.object({
   available: z.boolean().default(true),
   message: z.string().nullish(),
+  blockedModels: z.array(z.string()).optional().default(blockedCustomModels),
   cost: trainingCostSchema
     .partial()
     .optional()
