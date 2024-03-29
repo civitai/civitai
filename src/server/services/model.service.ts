@@ -514,35 +514,7 @@ export const getModelsRaw = async ({
   }
   // }
 
-  const WITH: Prisma.Sql[] = [
-    Prisma.sql`"CTE_ModelVersionDetails" AS NOT MATERIALIZED (
-      SELECT
-        mv."id",
-        mv.index,
-        mv."modelId",
-        mv."name",
-        mv."earlyAccessTimeFrame",
-        mv."baseModel",
-        mv."baseModelType",
-        mv."createdAt",
-        mv."trainingStatus",
-        mv."publishedAt",
-        mv."status",
-        mv.availability,
-        mv."nsfwLevel",
-        ${ifDetails`
-          mv."description",
-          mv."trainedWords",
-          mv."vaeId",
-        `}
-        COALESCE((
-          SELECT gc.covered
-          FROM "GenerationCoverage" gc
-          WHERE gc."modelVersionId" = mv.id
-        ), false) AS covered
-      FROM "ModelVersion" mv
-    )`,
-  ];
+  const WITH: Prisma.Sql[] = [];
   if (clubId) {
     WITH.push(Prisma.sql`
       "clubModels" AS (
@@ -567,6 +539,39 @@ export const getModelsRaw = async ({
 
     modelVersionWhere.push(Prisma.sql`cm."modelVersionId" = mv."id"`);
   }
+  WITH.push(Prisma.sql`"CTE_ModelVersionDetails" AS NOT MATERIALIZED (
+    SELECT
+      mv."id",
+      mv.index,
+      mv."modelId",
+      mv."name",
+      mv."earlyAccessTimeFrame",
+      mv."baseModel",
+      mv."baseModelType",
+      mv."createdAt",
+      mv."trainingStatus",
+      mv."publishedAt",
+      mv."status",
+      mv.availability,
+      mv."nsfwLevel",
+      ${ifDetails`
+        mv."description",
+        mv."trainedWords",
+        mv."vaeId",
+      `}
+      COALESCE((
+        SELECT gc.covered
+        FROM "GenerationCoverage" gc
+        WHERE gc."modelVersionId" = mv.id
+      ), false) AS covered
+    FROM "ModelVersion" mv
+    WHERE
+      ${
+        modelVersionWhere.length > 0
+          ? Prisma.sql`${Prisma.join(modelVersionWhere, ' AND ')}`
+          : Prisma.sql`1 = 1`
+      }
+  )`);
 
   const queryWith = WITH.length > 0 ? Prisma.sql`WITH ${Prisma.join(WITH, ', ')}` : Prisma.sql``;
 
@@ -626,9 +631,10 @@ export const getModelsRaw = async ({
           ? Prisma.sql`(
             SELECT jsonb_agg(data)
               FROM (
-                SELECT row_to_json(lmv) as data
+                SELECT row_to_json(mvd) as data
                 FROM "CTE_ModelVersionDetails" mvd
                 WHERE mvd."modelId" = m.id
+                ORDER BY index
               ) as t
             ) as "modelVersions",`
           : Prisma.sql`(
@@ -651,11 +657,6 @@ export const getModelsRaw = async ({
         SELECT *
         FROM "CTE_ModelVersionDetails" mv
         WHERE mv."modelId" = m.id
-        ${
-          modelVersionWhere.length > 0
-            ? Prisma.sql`AND ${Prisma.join(modelVersionWhere, ' AND ')}`
-            : Prisma.sql``
-        }
         ORDER BY mv.index ASC
         LIMIT 1
     ) lmv -- LatestModelVersion
