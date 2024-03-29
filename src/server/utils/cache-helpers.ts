@@ -146,7 +146,7 @@ export type CachedCounterOptions = {
 };
 export function cachedCounter<T extends string | number>(
   rootKey: string,
-  fetchFn: (id: T) => Promise<number>,
+  fetchFn?: (id: T) => Promise<number>,
   { ttl }: CachedCounterOptions = {}
 ) {
   ttl ??= CacheTTL.hour;
@@ -156,11 +156,11 @@ export function cachedCounter<T extends string | number>(
       const cachedCount = Number((await redis.get(key)) ?? 0);
       if (cachedCount) return cachedCount;
 
-      const count = await fetchFn(id);
+      const count = (await fetchFn?.(id)) ?? 0;
       await redis.set(key, count, { EX: ttl });
       return count;
     },
-    async incrementBy(id: T, amount: number) {
+    async incrementBy(id: T, amount = 1) {
       const key = `${rootKey}:${id}`;
       const count = await counter.get(id);
       await redis.incrBy(key, amount);

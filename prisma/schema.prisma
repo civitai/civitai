@@ -251,6 +251,7 @@ model User {
   purchasedRewards           UserPurchasedRewards[]
   VaultItem                  VaultItem[]
   Vault                      Vault[]
+  redeemedCodes              RedeemableCode[]
 }
 
 model CustomerSubscription {
@@ -2874,6 +2875,23 @@ model Vault {
   items VaultItem[]
 
   @@id([userId])
+}
+
+enum RedeemableCodeType {
+  Buzz
+  Membership
+}
+
+model RedeemableCode {
+  code          String             @id @default(cuid())
+  unitValue     Int
+  userId        Int?
+  user          User?              @relation(fields: [userId], references: [id], onDelete: SetNull)
+  createdAt     DateTime           @default(now())
+  type          RedeemableCodeType
+  expiresAt     DateTime?
+  redeemedAt    DateTime?
+  transactionId String?
 }
 
 /// @view

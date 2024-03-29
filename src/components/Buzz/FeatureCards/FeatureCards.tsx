@@ -8,14 +8,13 @@ import {
   Text,
   Title,
   createStyles,
+  Group,
 } from '@mantine/core';
 import {
   IconArrowRight,
   IconBarbell,
   IconCoin,
   IconCoins,
-  IconGif,
-  IconGift,
   IconHighlight,
   IconMoneybag,
   IconShoppingBag,
@@ -28,6 +27,8 @@ import { useBuzz } from '~/components/Buzz/useBuzz';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import { RedeemCodeModal } from '~/components/RedeemableCode/RedeemCodeModal';
 
 const useStyles = createStyles((theme) => ({
   featureCard: {
@@ -84,7 +85,20 @@ export const EarningBuzz = ({ asList, withCTA }: Props) => {
   return (
     <Stack spacing={20}>
       <Stack spacing={4}>
-        <Title order={2}>Earn Buzz</Title>
+        <Group spacing="xs" align="center">
+          <Title order={2}>Earn Buzz</Title>
+          <Button
+            compact
+            size="xs"
+            mt={4}
+            onClick={() => {
+              dialogStore.trigger({ component: RedeemCodeModal });
+            }}
+            variant="outline"
+          >
+            Redeem Code
+          </Button>
+        </Group>
         <Text>Need some Buzz? Here&rsquo;s how you can earn it</Text>
       </Stack>
       {asList ? (

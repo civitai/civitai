@@ -4,7 +4,6 @@ import {
   createStyles,
   Divider,
   Group,
-  keyframes,
   Loader,
   Paper,
   RingProgress,
@@ -13,9 +12,9 @@ import {
   Title,
   Tooltip,
 } from '@mantine/core';
-import { Currency, StripeConnectStatus } from '@prisma/client';
+import { Currency } from '@prisma/client';
 import { IconInfoCircle } from '@tabler/icons-react';
-import React, { useMemo } from 'react';
+import React from 'react';
 import { EarningBuzz, SpendingBuzz } from '~/components/Buzz/FeatureCards/FeatureCards';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Meta } from '~/components/Meta/Meta';
