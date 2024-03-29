@@ -106,9 +106,9 @@ export function PostDetailContent({ postId }: Props) {
       </>
     );
 
-  const relatedResource = postResources.find(
-    (resource) => resource.modelVersionId === post.modelVersionId
-  );
+  const relatedResource =
+    post.modelVersionId &&
+    postResources.find((resource) => resource.modelVersionId === post.modelVersionId);
 
   return (
     <>
