@@ -1,9 +1,9 @@
 import { Button, ButtonProps, Input, InputWrapperProps } from '@mantine/core';
 import { IconPlus } from '@tabler/icons-react';
 import React, { useEffect } from 'react';
+import { ResourceSelectOptions } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { ResourceSelectCard } from '~/components/ImageGeneration/GenerationForm/ResourceSelectCard';
 import { openResourceSelectModal } from '~/components/ImageGeneration/GenerationForm/ResourceSelectModal';
-import { ResourceSelectOptions } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { withController } from '~/libs/form/hoc/withController';
 import { Generation } from '~/server/services/generation/generation.types';
 
@@ -14,6 +14,7 @@ function ResourceSelect({
   buttonProps,
   options = {},
   allowRemove = true,
+  isTraining = false,
   ...inputWrapperProps
 }: {
   value?: Generation.Resource;
@@ -22,6 +23,7 @@ function ResourceSelect({
   buttonProps?: Omit<ButtonProps, 'onClick'>;
   options?: ResourceSelectOptions;
   allowRemove?: boolean;
+  isTraining?: boolean;
 } & Omit<InputWrapperProps, 'children'>) {
   const types = options.resources?.map((x) => x.type);
   const _value = types && value && !types.includes(value.modelType) ? undefined : value;
@@ -68,6 +70,7 @@ function ResourceSelect({
       ) : (
         <ResourceSelectCard
           resource={value}
+          isTraining={isTraining}
           onUpdate={handleUpdate}
           onRemove={allowRemove ? handleRemove : undefined}
           onSwap={handleOpenResourceSearch}
