@@ -16,6 +16,7 @@ export function Queue({
   isRefetching,
   isFetchingNextPage,
   isError,
+  isFetching,
 }: ReturnType<typeof useGetGenerationRequests>) {
   if (isError)
     return (
@@ -37,7 +38,7 @@ export function Queue({
           </div>
         ))}
         {hasNextPage && (
-          <InViewLoader loadFn={fetchNextPage} loadCondition={!isRefetching && !isFetchingNextPage}>
+          <InViewLoader loadFn={fetchNextPage} loadCondition={!isFetching && !isFetchingNextPage}>
             <Center sx={{ height: 60 }}>
               <Loader />
             </Center>

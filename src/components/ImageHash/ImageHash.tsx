@@ -14,6 +14,7 @@ export function MediaHash({ hash, height, width, style, cropFocus }: MediaHashPr
   if (!hash || !width || !height) return null;
 
   const size = getClampedSize(width, height, 32);
+  if (!size.height) return null;
 
   return (
     <BlurhashCanvas

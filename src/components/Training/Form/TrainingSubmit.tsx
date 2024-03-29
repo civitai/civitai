@@ -475,6 +475,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   const [buzzCost, setBuzzCost] = useState<number | undefined>(undefined);
   const [awaitInvalidate, setAwaitInvalidate] = useState<boolean>(false);
   const status = useTrainingServiceStatus();
+  const blockedModels = status.blockedModels ?? [blockedCustomModels];
 
   const { classes } = useStyles();
   const theme = useMantineTheme();
@@ -664,7 +665,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
       return;
     }
 
-    if (blockedCustomModels.includes(formBaseModel)) {
+    if (blockedModels.includes(formBaseModel)) {
       showErrorNotification({
         error: new Error('This model has been blocked from training - please try another one.'),
         autoClose: false,
@@ -704,30 +705,30 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
       return openConfirmModal({
         title: 'Confirm Buzz Transaction',
         children: (
-          <Stack>
-            <div>
+          <Stack pt="md">
+            <Group>
               <Text span inline>
                 The cost for this training run is:{' '}
               </Text>
-              <Text style={{ marginTop: '1px' }} color="accent.5" span inline>
+              <Group spacing={2}>
                 <CurrencyIcon currency={Currency.BUZZ} size={12} />
-              </Text>
-              <Text span inline>
-                {(buzzCost ?? 0).toLocaleString()}.
-              </Text>
-            </div>
-            <div>
+                <Text span inline>
+                  {(buzzCost ?? 0).toLocaleString()}
+                </Text>
+              </Group>
+            </Group>
+            <Group>
               <Text span inline>
                 Your remaining balance will be:{' '}
               </Text>
-              <Text style={{ marginTop: '1px' }} color="accent.5" span inline>
+              <Group spacing={2}>
                 <CurrencyIcon currency={Currency.BUZZ} size={12} />
-              </Text>
-              <Text span inline>
-                {(balance - (buzzCost ?? 0)).toLocaleString()}.
-              </Text>
-            </div>
-            <Text>Proceed?</Text>
+                <Text span inline>
+                  {(balance - (buzzCost ?? 0)).toLocaleString()}
+                </Text>
+              </Group>
+            </Group>
+            <Text mt="md">Proceed?</Text>
           </Stack>
         ),
         labels: { cancel: 'Cancel', confirm: 'Confirm' },
@@ -1012,7 +1013,6 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                       styles: { label: { fontSize: 12 } },
                     }}
                     options={{
-                      canGenerate: true,
                       resources: [
                         {
                           type: ModelType.Checkpoint,
@@ -1020,6 +1020,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                       ],
                     }}
                     allowRemove={true}
+                    isTraining={true}
                     onChange={(val) => {
                       const gVal = val as Generation.Resource;
                       const mId = gVal?.modelId;
@@ -1053,7 +1054,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                       ? 'Custom model selected.'
                       : baseModelDescriptions[formBaseModel]?.description ?? 'No description.'}
                   </Text>
-                  {blockedCustomModels.includes(formBaseModel) ? (
+                  {blockedModels.includes(formBaseModel) ? (
                     <AlertWithIcon
                       icon={<IconExclamationCircle />}
                       iconColor="default"
@@ -1316,7 +1317,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         <BuzzTransactionButton
           type="submit"
           loading={awaitInvalidate}
-          disabled={blockedCustomModels.includes(formBaseModel ?? '')}
+          disabled={blockedModels.includes(formBaseModel ?? '')}
           label="Submit"
           buzzAmount={buzzCost ?? 0}
         />

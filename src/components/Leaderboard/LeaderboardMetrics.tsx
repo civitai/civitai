@@ -11,6 +11,7 @@ import {
   ThemeIcon,
 } from '@mantine/core';
 import {
+  IconArrowsHorizontal,
   IconBookmark,
   IconBox,
   IconBrush,
@@ -34,6 +35,7 @@ import {
   IconTargetOff,
   IconThumbUp,
   IconTrophy,
+  IconX,
 } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
@@ -124,6 +126,18 @@ const metricTypes: Record<
   viewCount: () => ({
     tooltip: 'Views',
     icon: <IconEye {...iconProps} />,
+  }),
+  level: () => ({
+    tooltip: 'Level',
+    icon: <IconStar {...iconProps} />,
+  }),
+  strikes: () => ({
+    tooltip: 'Strikes',
+    icon: <IconX {...iconProps} />,
+  }),
+  streak: () => ({
+    tooltip: 'Longest Streak',
+    icon: <IconArrowsHorizontal {...iconProps} />,
   }),
   bookmark: () => ({
     tooltip: 'Bookmarks',

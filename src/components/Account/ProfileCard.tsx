@@ -45,9 +45,10 @@ const schema = z.object({
 });
 
 export function ProfileCard() {
-  const currentUser = useCurrentUser();
   const queryUtils = trpc.useUtils();
+  const session = useCurrentUser();
   const { data } = useSession();
+  const currentUser = data?.user;
 
   const { data: cosmetics, isLoading: loadingCosmetics } = trpc.user.getCosmetics.useQuery(
     undefined,
@@ -71,7 +72,7 @@ export function ProfileCard() {
       showSuccessNotification({ message: 'Your profile has been saved' });
       await queryUtils.user.getById.invalidate({ id: user.id });
       await queryUtils.user.getCosmetics.invalidate({ equipped: true });
-      await currentUser?.refresh();
+      await session?.refresh();
     },
   });
 

@@ -16,6 +16,7 @@ import {
   imageReviewQueueInputSchema,
   createImageSchema,
   updateImageNsfwLevelSchema,
+  imageRatingReviewInput,
 } from './../schema/image.schema';
 import {
   deleteImageHandler,
@@ -136,6 +137,6 @@ export const imageRouter = router({
     .input(updateImageNsfwLevelSchema)
     .mutation(({ input, ctx }) => updateImageNsfwLevel({ ...input, user: ctx.user })),
   getImageRatingRequests: moderatorProcedure
-    .input(infiniteQuerySchema)
-    .query(({ input }) => getImageRatingRequests(input)),
+    .input(imageRatingReviewInput)
+    .query(({ input, ctx }) => getImageRatingRequests({ ...input, user: ctx.user })),
 });

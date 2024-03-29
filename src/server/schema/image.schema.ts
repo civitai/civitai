@@ -299,8 +299,15 @@ export type UpdateImageNsfwLevelOutput = z.output<typeof updateImageNsfwLevelSch
 export const updateImageNsfwLevelSchema = z.object({
   id: z.number(),
   nsfwLevel: z.nativeEnum(NsfwLevel),
+  status: z.nativeEnum(ReportStatus).optional(),
 });
 
 export const getImageRatingRequestsSchema = paginationSchema.extend({
   status: z.nativeEnum(ReportStatus).array().optional(),
+});
+
+export type ImageRatingReviewOutput = z.infer<typeof imageRatingReviewInput>;
+export const imageRatingReviewInput = z.object({
+  limit: z.number(),
+  cursor: z.string().optional(),
 });

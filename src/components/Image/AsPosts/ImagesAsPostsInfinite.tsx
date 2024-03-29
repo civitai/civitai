@@ -117,7 +117,7 @@ export default function ImagesAsPostsInfinite({
     intersection = Flags.intersection(browsingLevel, gallerySettings.level);
   }
   const enabled = !!gallerySettings && intersection > 0;
-  const { data, isLoading, fetchNextPage, hasNextPage, isRefetching } =
+  const { data, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching } =
     trpc.image.getImagesAsPostsInfinite.useInfiniteQuery(
       { ...filters, limit, browsingLevel: intersection },
       {
@@ -335,7 +335,7 @@ export default function ImagesAsPostsInfinite({
                   {hasNextPage && (
                     <InViewLoader
                       loadFn={fetchNextPage}
-                      loadCondition={!isRefetching}
+                      loadCondition={!isFetching}
                       style={{ gridColumn: '1/-1' }}
                     >
                       <Center p="xl" sx={{ height: 36 }} mt="md">

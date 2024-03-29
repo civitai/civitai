@@ -11,6 +11,7 @@ export function Feed({
   hasNextPage,
   isRefetching,
   isFetchingNextPage,
+  isFetching,
 }: ReturnType<typeof useGetGenerationRequests>) {
   const { classes } = useStyles();
 
@@ -32,7 +33,7 @@ export function Feed({
           .filter(isDefined)}
       </div>
       {hasNextPage && (
-        <InViewLoader loadFn={fetchNextPage} loadCondition={!isRefetching && !isFetchingNextPage}>
+        <InViewLoader loadFn={fetchNextPage} loadCondition={!isFetching && !isFetchingNextPage}>
           <Center sx={{ height: 60 }}>
             <Loader />
           </Center>

@@ -22,7 +22,7 @@ import { ModelQueryParams, useModelQueryParams } from '~/components/Model/model.
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ModelFilterSchema, useFiltersContext } from '~/providers/FiltersProvider';
-import { BaseModel, constants } from '~/server/common/constants';
+import { BaseModel, constants, activeBaseModels } from '~/server/common/constants';
 import { getDisplayName, splitUppercase } from '~/utils/string-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useIsMobile } from '~/hooks/useIsMobile';
@@ -30,12 +30,6 @@ import { useIsMobile } from '~/hooks/useIsMobile';
 const availableStatus = Object.values(ModelStatus).filter((status) =>
   ['Draft', 'Deleted', 'Unpublished'].includes(status)
 );
-// If any of these is found within the query params, we should clear the filters
-// to be able to apply the relevant filters.
-const queryFiltersOverwrite: (keyof ModelQueryParams & keyof ModelFilterSchema)[] = [
-  'baseModels',
-  // 'period',
-];
 
 const availableFileFormats = constants.modelFileFormats.filter((format) => format !== 'Other');
 
@@ -54,54 +48,19 @@ export function ModelFiltersDropdown(props: Props) {
     setFilters: state.setModelFilters,
   }));
 
-  const shouldClearFilters = useMemo(
-    () =>
-      queryFiltersOverwrite.some(
-        (key) => !!queryFilters[key] && filters[key] !== queryFilters[key]
-      ),
-    [queryFilters, filters]
-  );
-
-  const clearFilters = useCallback(
-    () =>
-      setFilters({
-        types: undefined,
-        baseModels: undefined,
-        status: undefined,
-        checkpointType: undefined,
-        earlyAccess: false,
-        supportsGeneration: false,
-        fromPlatform: false,
-        followed: false,
-        archived: false,
-        hidden: false,
-        period: MetricTimeframe.AllTime,
-      }),
-    [setFilters]
-  );
-
-  useEffect(() => {
-    // TODO.filters: If we keep filters in the query string instead of local storage
-    // We might be able to bypass all this logic.
-    if (shouldClearFilters) {
-      const keys = queryFiltersOverwrite.filter((key) => queryFilters[key]);
-      const updatedFilters = keys.reduce((acc, key) => {
-        acc[key] = queryFilters[key];
-        return acc;
-      }, {} as any);
-
-      const updatedQueryFilters = keys.reduce((acc, key) => {
-        acc[key] = undefined;
-        return acc;
-      }, {} as any);
-
-      setQueryFilters(updatedQueryFilters);
-      clearFilters();
-      setFilters(updatedFilters);
+  const jointFilters = { ...filters, ...queryFilters };
+  function setFiltersAndQuery(filters: Partial<ModelFilterSchema>) {
+    const newQueryFilters: Record<string, any> = { ...queryFilters };
+    for (const key in filters) {
+      if (newQueryFilters[key]) newQueryFilters[key] = undefined;
     }
-  }, [shouldClearFilters, clearFilters, queryFilters, setFilters, setQueryFilters]);
+    setQueryFilters(newQueryFilters);
+    setFilters(filters);
+  }
 
-  return <DumbModelFiltersDropdown {...props} filters={filters} setFilters={setFilters} />;
+  return (
+    <DumbModelFiltersDropdown {...props} filters={jointFilters} setFilters={setFiltersAndQuery} />
+  );
 }
 
 export function DumbModelFiltersDropdown({
@@ -327,7 +286,7 @@ export function DumbModelFiltersDropdown({
           multiple
           my={4}
         >
-          {constants.baseModels.map((baseModel, index) => (
+          {activeBaseModels.map((baseModel, index) => (
             <Chip key={index} value={baseModel} {...chipProps}>
               {baseModel}
             </Chip>

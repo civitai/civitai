@@ -1,34 +1,51 @@
 import {
   Badge,
+  Button,
   Center,
-  Chip,
-  Container,
-  Group,
   Loader,
-  SegmentedControl,
-  Stack,
-  Text,
+  MantineColor,
+  Progress,
+  Select,
+  Title,
 } from '@mantine/core';
-import { useMemo } from 'react';
+import { usePrevious } from '@mantine/hooks';
+import { ReportStatus } from '@prisma/client';
+import React, { useMemo, useState } from 'react';
+import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
-import { InViewLoader } from '~/components/InView/InViewLoader';
 import { NoContent } from '~/components/NoContent/NoContent';
+import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { getImageRatingRequests } from '~/server/services/image.service';
 import { browsingLevelLabels, browsingLevels } from '~/shared/constants/browsingLevel.constants';
+import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 export default function ImageRatingReview() {
-  const { data, isLoading, hasNextPage, fetchNextPage, isRefetching } =
-    trpc.image.getImageRatingRequests.useInfiniteQuery(
-      { limit: 5 },
-      { getNextPageParam: (lastPage) => lastPage.nextCursor }
-    );
+  const [limit, setLimit] = useState<string>('50');
+  const [cursor, setCursor] = useState<string | undefined>();
+  const { data, isLoading, isFetching } = trpc.image.getImageRatingRequests.useQuery({
+    limit: Number(limit),
+    cursor,
+  });
 
-  const flatData = useMemo(() => data?.pages.flatMap((x) => (!!x ? x.items : [])), [data]);
+  const flatData = useMemo(() => data?.items ?? [], [data]);
+  const fetchNextPage = () => setCursor(data?.nextCursor);
+  const hasNextPage = !!data?.nextCursor;
 
   return (
-    <>
+    <div className="p-4  flex flex-col gap-4">
+      <div className="flex justify-center gap-4 items-center">
+        <Title>Image Rating Review</Title>
+        <Select
+          placeholder="Limit"
+          value={limit}
+          data={['10', '25', '50', '100']}
+          onChange={(limit) => {
+            if (limit) setLimit(limit);
+          }}
+        />
+      </div>
       {isLoading ? (
         <Center p="xl">
           <Loader />
@@ -38,66 +55,108 @@ export default function ImageRatingReview() {
       ) : (
         <>
           <div
-            className="grid gap-6 m-4"
-            style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(500px, 1fr))' }}
+            className="grid gap-6 justify-center"
+            style={{ gridTemplateColumns: 'repeat(auto-fit, 300px' }}
           >
             {flatData?.map((item) => (
               <ImageRatingCard key={item.id} {...item} />
             ))}
           </div>
-          {hasNextPage && (
-            <InViewLoader
-              loadFn={fetchNextPage}
-              loadCondition={!isRefetching && hasNextPage}
-              // Forces a re-render whenever the amount of images fetched changes. Forces load-more if available.
-              style={{ gridColumn: '1/-1' }}
-            >
-              <Center p="xl" sx={{ height: 36 }} mt="md">
-                <Loader />
-              </Center>
-            </InViewLoader>
+          {hasNextPage ? (
+            <div className="flex justify-center">
+              <Button size="lg" onClick={() => fetchNextPage()} loading={isFetching}>
+                Next
+              </Button>
+            </div>
+          ) : (
+            <EndOfFeed />
           )}
-          {!hasNextPage && <EndOfFeed />}
         </>
       )}
-    </>
+    </div>
   );
 }
 
-const browsingLevelOptions = browsingLevels.map((level) => ({
-  label: browsingLevelLabels[level],
-  value: level,
-}));
 function ImageRatingCard(item: AsyncReturnType<typeof getImageRatingRequests>['items'][number]) {
+  const maxRating = Math.max(...Object.values(item.votes));
+  const [nsfwLevel, setNsfwLevel] = useState(item.nsfwLevel);
+  const previous = usePrevious(nsfwLevel);
+  const [updated, setUpdated] = useState(false);
+
+  const { mutate } = trpc.image.updateImageNsfwLevel.useMutation({
+    onError: (error) => {
+      showErrorNotification({ error });
+      if (previous) setNsfwLevel(previous);
+    },
+  });
+
+  const handleSetLevel = (level: number) => {
+    setNsfwLevel(level);
+    mutate({ id: item.id, nsfwLevel: level, status: ReportStatus.Actioned });
+    setUpdated(true);
+  };
+
   return (
-    <div className="flex gap-2 items-center justify-center w-full">
-      <div className="flex-1 flex flex-col gap-1">
-        <EdgeMedia src={item.url} type={item.type} width={450} />
-        <div className="flex gap-1">
+    <div
+      className={`flex flex-col items-stretch card overflow-hidden ${
+        updated ? '!border-green-600' : ''
+      }`}
+    >
+      <RoutedDialogLink name="imageDetail" state={{ imageId: item.id }}>
+        <EdgeMedia src={item.url} type={item.type} width={450} className="w-full" />
+      </RoutedDialogLink>
+      <div className="flex flex-col gap-4 p-4">
+        <div className="grid gap-1" style={{ gridTemplateColumns: `min-content 1fr` }}>
           {browsingLevels.map((level) => {
-            const count = item.votes[level];
+            const votes = item.votes[level];
+            const sections: { value: number; label?: string; color: MantineColor }[] = [];
+            if (votes > 0) {
+              const count = item.ownerVote > 0 ? votes - 1 : votes;
+              const percentage = count / maxRating;
+              sections.unshift({
+                value: percentage * 100,
+                label: String(votes),
+                color: 'blue',
+              });
+            }
+            if (item.ownerVote > 0 && item.ownerVote === level) {
+              sections.unshift({
+                value: (1 / maxRating) * 100,
+                color: 'yellow',
+              });
+            }
             return (
-              <Badge
-                key={level}
-                variant={item.nsfwLevel === level ? 'filled' : 'outline'}
-                size="lg"
-              >
-                {browsingLevelLabels[level]}
-                {!!count ? `: ${count}` : ''}
-              </Badge>
+              <React.Fragment key={level}>
+                <Button
+                  variant={nsfwLevel === level ? 'filled' : 'outline'}
+                  compact
+                  onClick={() => handleSetLevel(level)}
+                  color={
+                    item.nsfwLevelLocked && item.nsfwLevel === level
+                      ? 'red'
+                      : updated && nsfwLevel === level
+                      ? 'green'
+                      : 'blue'
+                  }
+                >
+                  {browsingLevelLabels[level]}
+                </Button>
+                <Progress size={26} sections={sections} />
+              </React.Fragment>
             );
           })}
         </div>
+        {!!item.tags.length && (
+          <VotableTags entityType="image" entityId={item.id} tags={item.tags} canAdd />
+          // <div className="flex flex-wrap gap-1">
+          //   {item.tags.map((tag) => (
+          //     <Badge key={tag.id} size="xs" color="red">
+          //       {tag.name}
+          //     </Badge>
+          //   ))}
+          // </div>
+        )}
       </div>
-      {!!item.tags.length && (
-        <div className="flex gap-1">
-          {item.tags.map((tag) => (
-            <Badge key={tag.id} size="xs">
-              {tag.name}
-            </Badge>
-          ))}
-        </div>
-      )}
     </div>
   );
 }

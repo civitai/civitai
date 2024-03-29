@@ -477,6 +477,11 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     acceptedModelFiles: ['Model', 'Text Encoder', 'Training Data'],
     maxFiles: 4,
   },
+  DoRA: {
+    acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.bin', '.zip', '.yaml', '.yml'],
+    acceptedModelFiles: ['Model', 'Text Encoder', 'Training Data'],
+    maxFiles: 4,
+  },
   LoCon: {
     acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.bin', '.zip', '.yaml', '.yml'],
     acceptedModelFiles: ['Model', 'Text Encoder', 'Training Data'],

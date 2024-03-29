@@ -93,7 +93,7 @@ export const ModelSearchItem = forwardRef<
               NSFW
             </Badge>
           )}
-          <Badge size="xs">{type}</Badge>
+          <Badge size="xs">{getDisplayName(type)}</Badge>
           {category && <Badge size="xs">{getDisplayName(category.name)}</Badge>}
         </Group>
         <Group spacing={4}>

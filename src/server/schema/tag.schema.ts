@@ -58,6 +58,12 @@ export const getVotableTagsSchema = z.object({
 });
 export type GetVotableTagsSchema = z.infer<typeof getVotableTagsSchema>;
 
+export type GetVotableTagsSchema2 = z.infer<typeof getVotableTagsSchema2>;
+export const getVotableTagsSchema2 = z.object({
+  type: tagVotableEntitySchema,
+  ids: z.number().array(),
+});
+
 const tagIdsOrNamesSchema = z.union([
   z
     .string()

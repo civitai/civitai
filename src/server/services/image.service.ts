@@ -7,6 +7,8 @@ import {
   ReportReason,
   ReportStatus,
   ReviewReactions,
+  TagSource,
+  TagType,
 } from '@prisma/client';
 
 import { TRPCError } from '@trpc/server';
@@ -33,6 +35,7 @@ import {
   ImageUploadProps,
   UpdateImageNsfwLevelOutput,
   UpdateImageInput,
+  ImageRatingReviewOutput,
 } from '~/server/schema/image.schema';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { articlesSearchIndex, imagesSearchIndex } from '~/server/search-index';
@@ -71,6 +74,7 @@ import { pgDbRead, pgDbWrite } from '~/server/db/pgDb';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { nsfwBrowsingLevelsArray } from '~/shared/constants/browsingLevel.constants';
+import { getVotableTags2 } from '~/server/services/tag.service';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -174,16 +178,24 @@ export const moderateImages = async ({
     });
   } else {
     // Approve
-    await dbWrite.image.updateMany({
-      where: { id: { in: ids } },
-      data: { needsReview, ingestion: 'Scanned' },
-    });
+    const results = await dbWrite.$queryRaw<{ id: number; nsfwLevel: number }[]>`
+      UPDATE "Image" SET
+        "needsReview" = ${needsReview},
+        "ingestion" = 'Scanned',
+        "nsfwLevel" = CASE
+          WHEN "nsfwLevel" = ${NsfwLevel.Blocked}::int THEN 0
+          ELSE "nsfwLevel"
+        END
+      WHERE id IN (${Prisma.join(ids)})
+      RETURNING id, "nsfwLevel";
+    `;
 
     // Remove tags that triggered review
     const tagIds = (await getTagsNeedingReview()).map((x) => x.id);
 
     // And moderated tags for POI review (since no NSFW allowed)
-    if (reviewType === 'poi') {
+    const changeTags = reviewType === 'poi';
+    if (changeTags) {
       const moderatedTags = await getModeratedTags();
       tagIds.push(...moderatedTags.map((x) => x.id));
     }
@@ -194,10 +206,17 @@ export const moderateImages = async ({
     });
 
     // Update nsfw level of image
-    if (reviewType === 'poi')
-      await dbWrite.$executeRawUnsafe(`SELECT update_nsfw_levels('{${ids.join(',')}}'::int[]);`);
+    const resetLevels = results.filter((x) => x.nsfwLevel === 0).map((x) => x.id);
+    if (resetLevels) await updateNsfwLevel(resetLevels);
+    else if (changeTags) await updateNsfwLevel(ids);
   }
 };
+
+export async function updateNsfwLevel(ids: number | number[]) {
+  if (!Array.isArray(ids)) ids = [ids];
+  ids = [...new Set(ids)]; // dedupe
+  await dbWrite.$executeRawUnsafe(`SELECT update_nsfw_levels(ARRAY[${ids.join(',')}])`);
+}
 
 export const updateImageReportStatusByReason = ({
   id,
@@ -466,6 +485,7 @@ type GetAllImagesRaw = {
   modelVersionId: number | null;
   imageId: number | null;
   publishedAt: Date | null;
+  unpublishedAt?: Date | null;
   username: string | null;
   userImage: string | null;
   deletedAt: Date | null;
@@ -847,6 +867,7 @@ export const getAllImages = async ({
       p."title" "postTitle",
       i."index",
       p."publishedAt",
+      p.metadata->>'unpublishedAt' "unpublishedAt",
       p."modelVersionId",
       u.username,
       u.image "userImage",
@@ -973,10 +994,10 @@ export const getAllImages = async ({
     }
   > = rawImages
     .filter((x) => {
-      // Filter out images that shouldn't be seen by user
       if (isModerator) return true;
       // if (x.needsReview && x.userId !== userId) return false;
-      if ((!x.publishedAt || x.publishedAt > now) && x.userId !== userId) return false;
+      if ((!x.publishedAt || x.publishedAt > now || !!x.unpublishedAt) && x.userId !== userId)
+        return false;
       // if (x.ingestion !== 'Scanned' && x.userId !== userId) return false;
       return true;
     })
@@ -996,6 +1017,7 @@ export const getAllImages = async ({
         tippedAmountCount,
         viewCount,
         cursorId,
+        unpublishedAt,
         ...i
       }) => ({
         ...i,
@@ -1136,7 +1158,10 @@ export const getImage = async ({
       u."profilePictureId",
       ${
         !withoutPost
-          ? Prisma.sql`p."availability" "availability",`
+          ? Prisma.sql`
+            p."availability" "availability",
+            p."publishedAt" "publishedAt",
+          `
           : Prisma.sql`'Public' "availability",`
       }
       (
@@ -2620,9 +2645,17 @@ export async function updateImageNsfwLevel({
   id,
   nsfwLevel,
   user,
+  status,
 }: UpdateImageNsfwLevelOutput & { user: SessionUser }) {
+  if (!nsfwLevel) throw throwBadRequestError();
   if (user.isModerator) {
     await dbWrite.image.update({ where: { id }, data: { nsfwLevel, nsfwLevelLocked: true } });
+    if (status) {
+      await dbWrite.imageRatingRequest.updateMany({
+        where: { imageId: id, status: 'Pending' },
+        data: { status },
+      });
+    }
     await trackModActivity(user.id, {
       entityType: 'image',
       entityId: id,
@@ -2648,16 +2681,33 @@ type ImageRatingRequestResponse = {
   };
   url: string;
   nsfwLevel: number;
+  nsfwLevelLocked: boolean;
   width: number | null;
   height: number | null;
   type: MediaType;
+  total: number;
+  ownerVote: number;
+  createdAt: Date;
 };
 
-export async function getImageRatingRequests({ cursor, limit }: InfiniteQueryInput) {
+export async function getImageRatingRequests({
+  cursor,
+  limit,
+  user,
+}: ImageRatingReviewOutput & { user: SessionUser }) {
   const results = await dbRead.$queryRaw<ImageRatingRequestResponse[]>`
     WITH CTE_Requests AS (
       SELECT
-        DISTINCT ON (irr."imageId") irr."imageId", MIN(irr."createdAt") "createdAt",
+        DISTINCT ON (irr."imageId") irr."imageId" as id,
+        MIN(irr."createdAt") "createdAt",
+        COUNT(CASE WHEN i."nsfwLevel" != irr."nsfwLevel" THEN i.id END)::INT "total",
+        COALESCE(SUM(CASE WHEN irr."userId" = i."userId" THEN irr."nsfwLevel" ELSE 0 END))::INT "ownerVote",
+        i.url,
+        i."nsfwLevel",
+        i."nsfwLevelLocked",
+        i.type,
+        i.height,
+        i.width,
         jsonb_build_object(
           ${NsfwLevel.PG}, count(irr."nsfwLevel")
             FILTER (where irr."nsfwLevel" = ${NsfwLevel.PG}),
@@ -2671,45 +2721,30 @@ export async function getImageRatingRequests({ cursor, limit }: InfiniteQueryInp
             FILTER (where irr."nsfwLevel" = ${NsfwLevel.XXX})
         ) "votes"
         FROM "ImageRatingRequest" irr
+        JOIN "Image" i on i.id = irr."imageId"
         WHERE irr.status = ${ReportStatus.Pending}::"ReportStatus"
-        GROUP BY irr."imageId"
+        GROUP BY irr."imageId", i.id
     )
     SELECT
-      i.id,
-      i.url,
-      i."nsfwLevel",
-      i.type,
-      i.height,
-      i.width,
-      r.votes
+      r.*
     FROM CTE_Requests r
-    JOIN "Image" i ON i.id = r."imageId"
-    ${!!cursor ? Prisma.sql`WHERE i.id >= ${cursor}` : Prisma.sql``}
+    WHERE (r.total >= 3 OR (r."ownerVote" != 0 AND r."ownerVote" != r."nsfwLevel"))
+    ${!!cursor ? Prisma.sql` AND r."createdAt" >= ${new Date(cursor)}` : Prisma.sql``}
     ORDER BY r."createdAt"
     LIMIT ${limit + 1}
   `;
 
-  let nextCursor: number | undefined;
+  let nextCursor: string | undefined;
   if (limit && results.length > limit) {
     const nextItem = results.pop();
-    nextCursor = nextItem?.id || undefined;
+    nextCursor = nextItem?.createdAt.toISOString() || undefined;
   }
 
   const imageIds = results.map((x) => x.id);
-  const tagsOnImage = await dbRead.tagsOnImage.findMany({
-    where: {
-      imageId: { in: imageIds },
-      disabled: { not: true },
-      // tag: { nsfwLevel: { in: nsfwBrowsingLevelsArray } },
-    },
-    select: { imageId: true, tag: { select: { id: true, name: true, nsfwLevel: true } } },
-  });
+  const tags = await getVotableTags2({ ids: imageIds, user, type: 'image' });
 
   return {
     nextCursor,
-    items: results.map((item) => {
-      const tags = tagsOnImage.filter((x) => x.imageId === item.id).map((x) => x.tag);
-      return { ...item, tags };
-    }),
+    items: results.map((item) => ({ ...item, tags: tags.filter((x) => x.imageId === item.id) })),
   };
 }

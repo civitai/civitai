@@ -10,7 +10,7 @@ import {
 } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { ManipulateType } from 'dayjs';
-import { isEmpty, groupBy } from 'lodash-es';
+import { isEmpty } from 'lodash-es';
 import { SessionUser } from 'next-auth';
 
 import { env } from '~/env/server.mjs';
@@ -35,7 +35,7 @@ import {
   UnpublishModelSchema,
 } from '~/server/schema/model.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
-import { modelsSearchIndex } from '~/server/search-index';
+import { imagesSearchIndex, modelsSearchIndex } from '~/server/search-index';
 import { associatedResourceSelect } from '~/server/selectors/model.selector';
 import { modelFileSelect } from '~/server/selectors/modelFile.selector';
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
@@ -499,50 +499,22 @@ export const getModelsRaw = async ({
     modelVersionWhere.push(Prisma.sql`mv."availability" = 'Public'::"Availability"`);
   }
 
-  if (!includeDetails) {
-    const browsingLevelQuery = Prisma.sql`(lmv."nsfwLevel" & ${browsingLevel}) != 0`;
-    if (pending && (isModerator || userId)) {
-      if (isModerator) {
-        AND.push(Prisma.sql`(${browsingLevelQuery} OR lmv."nsfwLevel" = 0)`);
-      } else if (userId) {
-        AND.push(
-          Prisma.sql`(${browsingLevelQuery} OR (lmv."nsfwLevel" = 0 AND m."userId" = ${userId}))`
-        );
-      }
-    } else {
-      AND.push(browsingLevelQuery);
+  // if (!includeDetails) {
+  const browsingLevelQuery = Prisma.sql`(lmv."nsfwLevel" & ${browsingLevel}) != 0`;
+  if (pending && (isModerator || userId)) {
+    if (isModerator) {
+      AND.push(Prisma.sql`(${browsingLevelQuery} OR lmv."nsfwLevel" = 0)`);
+    } else if (userId) {
+      AND.push(
+        Prisma.sql`(${browsingLevelQuery} OR (lmv."nsfwLevel" = 0 AND m."userId" = ${userId}))`
+      );
     }
+  } else {
+    AND.push(browsingLevelQuery);
   }
+  // }
 
-  const WITH: Prisma.Sql[] = [
-    Prisma.sql`"CTE_ModelVersionDetails" AS NOT MATERIALIZED (
-      SELECT
-        mv."id",
-        mv.index,
-        mv."modelId",
-        mv."name",
-        mv."earlyAccessTimeFrame",
-        mv."baseModel",
-        mv."baseModelType",
-        mv."createdAt",
-        mv."trainingStatus",
-        mv."publishedAt",
-        mv."status",
-        mv.availability,
-        mv."nsfwLevel",
-        ${ifDetails`
-          mv."description",
-          mv."trainedWords",
-          mv."vaeId",
-        `}
-        COALESCE((
-          SELECT gc.covered
-          FROM "GenerationCoverage" gc
-          WHERE gc."modelVersionId" = mv.id
-        ), false) AS covered
-      FROM "ModelVersion" mv
-    )`,
-  ];
+  const WITH: Prisma.Sql[] = [];
   if (clubId) {
     WITH.push(Prisma.sql`
       "clubModels" AS (
@@ -567,6 +539,39 @@ export const getModelsRaw = async ({
 
     modelVersionWhere.push(Prisma.sql`cm."modelVersionId" = mv."id"`);
   }
+  WITH.push(Prisma.sql`"CTE_ModelVersionDetails" AS NOT MATERIALIZED (
+    SELECT
+      mv."id",
+      mv.index,
+      mv."modelId",
+      mv."name",
+      mv."earlyAccessTimeFrame",
+      mv."baseModel",
+      mv."baseModelType",
+      mv."createdAt",
+      mv."trainingStatus",
+      mv."publishedAt",
+      mv."status",
+      mv.availability,
+      mv."nsfwLevel",
+      ${ifDetails`
+        mv."description",
+        mv."trainedWords",
+        mv."vaeId",
+      `}
+      COALESCE((
+        SELECT gc.covered
+        FROM "GenerationCoverage" gc
+        WHERE gc."modelVersionId" = mv.id
+      ), false) AS covered
+    FROM "ModelVersion" mv
+    WHERE
+      ${
+        modelVersionWhere.length > 0
+          ? Prisma.sql`${Prisma.join(modelVersionWhere, ' AND ')}`
+          : Prisma.sql`1 = 1`
+      }
+  )`);
 
   const queryWith = WITH.length > 0 ? Prisma.sql`WITH ${Prisma.join(WITH, ', ')}` : Prisma.sql``;
 
@@ -624,17 +629,18 @@ export const getModelsRaw = async ({
       ${
         includeDetails
           ? Prisma.sql`(
-          SELECT jsonb_agg(data)
-          FROM (SELECT row_to_json(lmv) AS data) as t
-          ) as "modelVersions",`
+            SELECT jsonb_agg(data)
+              FROM (
+                SELECT row_to_json(mvd) as data
+                FROM "CTE_ModelVersionDetails" mvd
+                WHERE mvd."modelId" = m.id
+                ORDER BY index
+              ) as t
+            ) as "modelVersions",`
           : Prisma.sql`(
-          SELECT jsonb_agg(data)
-          FROM (
-            SELECT row_to_json(lmv) as data
-            FROM "CTE_ModelVersionDetails" mvd
-            WHERE mvd."modelId" = m.id
-          ) as t
-        ) as "modelVersions",`
+            SELECT jsonb_agg(data)
+            FROM (SELECT row_to_json(lmv) AS data) as t
+            ) as "modelVersions",`
       }
       jsonb_build_object(
         'id', u."id",
@@ -651,11 +657,6 @@ export const getModelsRaw = async ({
         SELECT *
         FROM "CTE_ModelVersionDetails" mv
         WHERE mv."modelId" = m.id
-        ${
-          modelVersionWhere.length > 0
-            ? Prisma.sql`AND ${Prisma.join(modelVersionWhere, ' AND ')}`
-            : Prisma.sql``
-        }
         ORDER BY mv.index ASC
         LIMIT 1
     ) lmv -- LatestModelVersion
@@ -1129,13 +1130,19 @@ export const deleteModelById = async ({
     if (!model) return null;
 
     // TODO - account for case that a user restores a model and doesn't want all posts to be re-published
-    await tx.post.updateMany({
-      where: {
-        userId: model.userId,
-        modelVersionId: { in: model.modelVersions.map(({ id }) => id) },
-      },
-      data: { publishedAt: null },
-    });
+    await tx.$executeRaw`
+      UPDATE "Post"
+      SET "metadata" = "metadata" || jsonb_build_object(
+        'unpublishedAt', ${new Date().toISOString()},
+        'unpublishedBy', ${userId}
+      )
+      WHERE "publishedAt" IS NOT NULL
+      AND "userId" = ${model.userId}
+      AND "modelVersionId" IN (${Prisma.join(
+        model.modelVersions.map(({ id }) => id),
+        ','
+      )})
+    `;
 
     await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
 
@@ -1355,10 +1362,14 @@ export const publishModelById = async ({
       });
 
       if (includeVersions) {
-        await tx.post.updateMany({
-          where: { modelVersionId: { in: versionIds } },
-          data: { publishedAt },
-        });
+        await tx.$executeRaw`
+          UPDATE "Post"
+          SET
+            "metadata" = "metadata" - 'unpublishedAt' - 'unpublishedBy',
+            "publishedAt" = ${publishedAt}
+          WHERE "userId" = ${model.userId}
+          AND "modelVersionId" IN (${Prisma.join(versionIds, ',')})
+        `;
       }
       if (!republishing && !meta?.unpublishedBy) await updateModelLastVersionAt({ id, tx });
 
@@ -1375,7 +1386,23 @@ export const publishModelById = async ({
       )
     );
   }
+
+  // Fetch affected posts to update their images in search index
+  const posts = await dbRead.post.findMany({
+    where: { modelVersionId: { in: model.modelVersions.map((x) => x.id) }, userId: model.userId },
+    select: { id: true },
+  });
+  const images = await dbRead.image.findMany({
+    where: { postId: { in: posts.map((x) => x.id) } },
+    select: { id: true },
+  });
+
+  // Update search index for model
   await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+  // Update search index for all affected images
+  await imagesSearchIndex.queueUpdate(
+    images.map((x) => ({ id: x.id, action: SearchIndexUpdateQueueAction.Update }))
+  );
 
   return model;
 };
@@ -1392,6 +1419,7 @@ export const unpublishModelById = async ({
 }) => {
   const model = await dbWrite.$transaction(
     async (tx) => {
+      const unpublishedAt = new Date().toISOString();
       const updatedMeta = {
         ...meta,
         ...(reason
@@ -1400,7 +1428,7 @@ export const unpublishModelById = async ({
               customMessage,
             }
           : {}),
-        unpublishedAt: new Date().toISOString(),
+        unpublishedAt,
         unpublishedBy: user.id,
       };
       const updatedModel = await tx.model.update({
@@ -1418,22 +1446,41 @@ export const unpublishModelById = async ({
         select: { userId: true, modelVersions: { select: { id: true } } },
       });
 
-      await tx.post.updateMany({
-        where: {
-          modelVersionId: { in: updatedModel.modelVersions.map((x) => x.id) },
-          userId: updatedModel.userId,
-          publishedAt: { not: null },
-        },
-        data: { publishedAt: null },
-      });
+      const versionIds = updatedModel.modelVersions.map((x) => x.id);
+      await tx.$executeRaw`
+        UPDATE "Post"
+        SET
+          "metadata" = "metadata" || jsonb_build_object(
+            'unpublishedAt', ${unpublishedAt},
+            'unpublishedBy', ${user.id}
+          ),
+          "publishedAt" = NULL
+        WHERE "publishedAt" IS NOT NULL
+        AND "userId" = ${updatedModel.userId}
+        AND "modelVersionId" IN (${Prisma.join(versionIds)})
+      `;
 
       return updatedModel;
     },
     { timeout: 10000 }
   );
 
+  // Fetch affected posts to remove their images from search index
+  const posts = await dbRead.post.findMany({
+    where: { modelVersionId: { in: model.modelVersions.map((x) => x.id) }, userId: model.userId },
+    select: { id: true },
+  });
+  const images = await dbRead.image.findMany({
+    where: { postId: { in: posts.map((x) => x.id) } },
+    select: { id: true },
+  });
+
   // Remove this model from search index as it's been unpublished.
   await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
+  // Remove all affected images from search index
+  await imagesSearchIndex.queueUpdate(
+    images.map((x) => ({ id: x.id, action: SearchIndexUpdateQueueAction.Delete }))
+  );
 
   return model;
 };

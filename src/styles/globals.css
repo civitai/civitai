@@ -262,3 +262,14 @@ iframe {
 .grecaptcha-badge {
   visibility: hidden;
 }
+
+.card {
+  @apply bg-white border border-gray-200 rounded-lg shadow  dark:bg-zinc-800 dark:border-zinc-700;
+}
+
+ul {
+  @apply list-disc;
+}
+ol {
+  @apply list-decimal;
+}

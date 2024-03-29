@@ -63,7 +63,7 @@ import { ImageMetaProps } from '~/server/schema/image.schema';
 import { ToggleSearchableMenuItem } from '../MenuItems/ToggleSearchableMenuItem';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
-import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
+import { IconNose } from '~/components/SVG/IconNose';
 
 const IMAGE_CARD_WIDTH = 450;
 
@@ -190,6 +190,7 @@ export function ModelCard({ data, forceInView }: Props) {
     data.version?.baseModel as BaseModel
   );
   const isPony = data.version?.baseModel === 'Pony';
+  const isOdor = data.version?.baseModel === 'ODOR';
   const isArchived = data.mode === ModelModifier.Archived;
   const onSite = !!data.version.trainingStatus;
 
@@ -255,6 +256,12 @@ export function ModelCard({ data, forceInView }: Props) {
                                         XL
                                       </Text>
                                     )}
+                                  </>
+                                )}
+                                {isOdor && (
+                                  <>
+                                    <Divider orientation="vertical" />
+                                    <IconNose size={16} strokeWidth={2} />
                                   </>
                                 )}
                               </Badge>

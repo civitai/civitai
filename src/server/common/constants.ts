@@ -45,6 +45,7 @@ export const constants = {
     limit: 50,
   },
   baseModels: [
+    'ODOR',
     'SD 1.4',
     'SD 1.5',
     'SD 1.5 LCM',
@@ -67,6 +68,7 @@ export const constants = {
     'PixArt a',
     'Other',
   ],
+  hiddenBaseModels: ['ODOR'] as string[],
   modelFileTypes: [
     'Model',
     'Text Encoder',
@@ -279,6 +281,9 @@ export const constants = {
   },
   supporterBadge: '020f374d-f165-4f45-9082-371e696a44ff',
 } as const;
+export const activeBaseModels = constants.baseModels.filter(
+  (model) => !constants.hiddenBaseModels.includes(model)
+);
 
 export const zipModelFileTypes: ModelFileFormat[] = ['Core ML', 'Diffusers', 'ONNX'];
 export type ZipModelFileType = (typeof zipModelFileTypes)[number];
@@ -298,6 +303,7 @@ export const baseModelSetTypes = [
   'SDXLDistilled',
   'SCascade',
   'Pony',
+  'ODOR',
 ] as const;
 export type BaseModelSetType = (typeof baseModelSetTypes)[number];
 export const baseModelSets: Record<BaseModelSetType, BaseModel[]> = {
@@ -307,6 +313,7 @@ export const baseModelSets: Record<BaseModelSetType, BaseModel[]> = {
   SDXLDistilled: ['SDXL Distilled'],
   SCascade: ['Stable Cascade'],
   Pony: ['Pony'],
+  ODOR: ['ODOR'],
 };
 
 type LicenseDetails = {
@@ -376,6 +383,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'PixArt a': baseLicenses['agpl'],
   'Stable Cascade': baseLicenses['SAI NCRC'],
   Pony: baseLicenses['openrail++'],
+  ODOR: undefined,
   Other: undefined,
 };
 
@@ -567,7 +575,6 @@ export const getGenerationConfig = (baseModel?: string) => {
   const key = baseModel as keyof typeof generationConfig | undefined;
   return key && generationConfig[key] ? generationConfig[key] : generationConfig['SD1'];
 };
-
 
 export const MODELS_SEARCH_INDEX = 'models_v8';
 export const IMAGES_SEARCH_INDEX = 'images_v4';
