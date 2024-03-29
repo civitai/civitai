@@ -55,7 +55,7 @@ import {
   InputText,
   useForm,
 } from '~/libs/form';
-import { constants } from '~/server/common/constants';
+import { constants, activeBaseModels } from '~/server/common/constants';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
 import { createBountyInputSchema } from '~/server/schema/bounty.schema';
 import { numberWithCommas } from '~/utils/number-helpers';
@@ -336,7 +336,7 @@ export function BountyCreateForm() {
                       label="Base model"
                       placeholder="Please select a base model"
                       withAsterisk
-                      data={[...constants.baseModels]}
+                      data={[...activeBaseModels]}
                     />
                   )}
                 </Group>

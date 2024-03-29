@@ -158,7 +158,7 @@ export default function CivitaiVault() {
             size="lg"
             radius="xl"
             component={NextLink}
-            href="/models?base model=ODOR"
+            href="/models?baseModels=ODOR"
             rel="nofollow noreferrer"
             fullWidth
           >

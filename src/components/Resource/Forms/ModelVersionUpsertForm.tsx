@@ -24,6 +24,7 @@ import {
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
   constants,
+  activeBaseModels,
   modelVersionMonetizationTypeOptions,
   modelVersionSponsorshipSettingsTypeOptions,
 } from '~/server/common/constants';
@@ -307,7 +308,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
               placeholder="Base Model"
               withAsterisk
               style={{ flex: 1 }}
-              data={constants.baseModels.map((x) => ({ value: x, label: x }))}
+              data={activeBaseModels.map((x) => ({ value: x, label: x }))}
             />
             {hasBaseModelType && (
               <InputSelect

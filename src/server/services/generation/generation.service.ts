@@ -394,6 +394,7 @@ const baseModelToOrchestration: Record<BaseModelSetType, string | undefined> = {
   SDXLDistilled: 'SDXL_Distilled',
   SCascade: 'SCascade',
   Pony: 'SDXL',
+  ODOR: undefined,
 };
 
 async function checkResourcesAccess(
