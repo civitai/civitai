@@ -21,14 +21,16 @@ export const processScheduledPublishing = createJob(
         id,
         "userId"
       FROM "Model"
-      WHERE status = 'Scheduled' AND "publishedAt" <= ${now};`;
+      WHERE status = 'Scheduled' AND "publishedAt" <= ${now};
+    `;
     const scheduledModelVersions = await dbWrite.$queryRaw<ScheduledEntity[]>`
       SELECT
         mv.id,
         m."userId"
       FROM "ModelVersion" mv
       JOIN "Model" m ON m.id = mv."modelId"
-      WHERE mv.status = 'Scheduled' AND mv."publishedAt" <= ${now};`;
+      WHERE mv.status = 'Scheduled' AND mv."publishedAt" <= ${now};
+    `;
     const scheduledPosts = await dbWrite.$queryRaw<ScheduledEntity[]>`
       SELECT
         p.id,
@@ -38,7 +40,8 @@ export const processScheduledPublishing = createJob(
       JOIN "Model" m ON m.id = mv."modelId"
       WHERE
         (p."publishedAt" IS NULL OR p.metadata->>'unpublishedAt' IS NOT NULL)
-      AND mv.status = 'Scheduled' AND mv."publishedAt" <=  ${now};`;
+      AND mv.status = 'Scheduled' AND mv."publishedAt" <=  ${now};
+    `;
 
     // Publish things
     const transaction = [
@@ -53,41 +56,40 @@ export const processScheduledPublishing = createJob(
       );`,
     ];
 
-    if (scheduledModels.length)
+    if (scheduledModels.length) {
+      const scheduledModelIds = scheduledModels.map(({ id }) => id);
       transaction.push(dbWrite.$executeRaw`
-    -- Make scheduled models published
-    UPDATE "Model" SET status = 'Published'
-    WHERE id IN (${Prisma.join(
-      scheduledModels.map(({ id }) => id),
-      ','
-    )}) AND status = 'Scheduled' AND "publishedAt" <= ${now};`);
+        -- Make scheduled models published
+        UPDATE "Model" SET status = 'Published'
+        WHERE id IN (${Prisma.join(scheduledModelIds)})
+          AND status = 'Scheduled'
+          AND "publishedAt" <= ${now};
+      `);
+    }
 
-    if (scheduledPosts.length)
-      transaction.push(
-        dbWrite.$executeRaw`
+    if (scheduledPosts.length) {
+      const scheduledPostIds = scheduledPosts.map(({ id }) => id);
+      transaction.push(dbWrite.$executeRaw`
         -- Update scheduled versions posts
         UPDATE "Post" p SET "publishedAt" = mv."publishedAt"
         FROM "ModelVersion" mv
         JOIN "Model" m ON m.id = mv."modelId"
-        WHERE p.id IN (${Prisma.join(
-          scheduledPosts.map(({ id }) => id),
-          ','
-        )})
-        AND (p."publishedAt" IS NULL OR p.metadata->>'unpublishedAt' IS NOT NULL)
-        AND mv.id = p."modelVersionId" AND m."userId" = p."userId"
-        AND mv.status = 'Scheduled' AND mv."publishedAt" <=  ${now};`
-      );
+        WHERE p.id IN (${Prisma.join(scheduledPostIds)})
+          AND (p."publishedAt" IS NULL OR p.metadata->>'unpublishedAt' IS NOT NULL)
+          AND mv.id = p."modelVersionId" AND m."userId" = p."userId"
+          AND mv.status = 'Scheduled' AND mv."publishedAt" <=  ${now};
+      `);
+    }
 
-    if (scheduledPosts.length)
-      transaction.push(
-        dbWrite.$executeRaw`
+    if (scheduledModelVersions.length) {
+      const scheduledModelVersionIds = scheduledModelVersions.map(({ id }) => id);
+      transaction.push(dbWrite.$executeRaw`
         -- Update scheduled versions published
         UPDATE "ModelVersion" SET status = 'Published'
-        WHERE id IN (${Prisma.join(
-          scheduledModelVersions.map(({ id }) => id),
-          ','
-        )}) AND status = 'Scheduled' AND "publishedAt" <= ${now};`
-      );
+        WHERE id IN (${Prisma.join(scheduledModelVersionIds)})
+          AND status = 'Scheduled' AND "publishedAt" <= ${now};
+      `);
+    }
 
     await dbWrite.$transaction(transaction);
 
