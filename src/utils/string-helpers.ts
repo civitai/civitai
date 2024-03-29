@@ -44,6 +44,7 @@ const nameOverrides: Record<string, string> = {
   BenefactorsOnly: 'Supporters Only',
   ModelVersion: 'Model Version',
   ClubMembership: 'Club Memebership',
+  Redeemable: 'Redeemed Code',
 };
 
 export function getDisplayName(value: string, options?: { splitNumbers?: boolean }) {

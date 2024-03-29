@@ -8,11 +8,11 @@ import {
   Text,
   Title,
   createStyles,
+  Group,
 } from '@mantine/core';
 import {
   IconArrowRight,
   IconBarbell,
-  IconBarcode,
   IconCoin,
   IconCoins,
   IconHighlight,
@@ -77,18 +77,6 @@ const getEarnings = (): (FeatureCardProps & { key: string })[] => [
       children: 'Create post',
     },
   },
-  {
-    key: 'redeem',
-    icon: <IconBarcode size={32} />,
-    title: 'Redeemable code',
-    description: 'Redeem a code in exchange for Buzz',
-    btnProps: {
-      children: 'Redeem now',
-      onClick: () => {
-        dialogStore.trigger({ component: RedeemCodeModal });
-      },
-    },
-  },
 ];
 
 export const EarningBuzz = ({ asList, withCTA }: Props) => {
@@ -97,7 +85,20 @@ export const EarningBuzz = ({ asList, withCTA }: Props) => {
   return (
     <Stack spacing={20}>
       <Stack spacing={4}>
-        <Title order={2}>Earn Buzz</Title>
+        <Group spacing="xs" align="center">
+          <Title order={2}>Earn Buzz</Title>
+          <Button
+            compact
+            size="xs"
+            mt={4}
+            onClick={() => {
+              dialogStore.trigger({ component: RedeemCodeModal });
+            }}
+            variant="outline"
+          >
+            Redeem Code
+          </Button>
+        </Group>
         <Text>Need some Buzz? Here&rsquo;s how you can earn it</Text>
       </Stack>
       {asList ? (

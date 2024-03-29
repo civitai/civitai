@@ -9,9 +9,20 @@ import {
 } from '~/server/schema/redeemableCode.schema';
 import { createBuzzTransaction } from '~/server/services/buzz.service';
 import { throwDbCustomError, withRetries } from '~/server/utils/errorHandling';
+import { generateToken } from '~/utils/string-helpers';
 
-export function createRedeemableCode({ unitValue, type, expiresAt }: CreateRedeemableCodeInput) {
-  return dbWrite.redeemableCode.create({ data: { unitValue, expiresAt, type } });
+export async function createRedeemableCodes({
+  unitValue,
+  type,
+  expiresAt,
+  quantity = 1,
+}: CreateRedeemableCodeInput) {
+  const codes = Array.from({ length: quantity }, () => {
+    const code = `CS-${generateToken(4)}-${generateToken(4)}`.toUpperCase();
+    return { code, unitValue, expiresAt, type };
+  });
+  await dbWrite.redeemableCode.createMany({ data: codes });
+  return codes.map((code) => code.code);
 }
 
 export function deleteRedeemableCode({ code }: DeleteRedeemableCodeInput) {
