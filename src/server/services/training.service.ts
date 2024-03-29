@@ -202,7 +202,7 @@ export const createTrainingRequest = async ({
   if (!trainingParams) throw throwBadRequestError('Missing training params');
   const baseModel = modelVersion.trainingDetails.baseModel;
   if (!baseModel) throw throwBadRequestError('Missing base model');
-  if (status.blockedModels.includes(baseModel))
+  if ((status.blockedModels ?? []).includes(baseModel))
     throw throwBadRequestError(
       'This model has been blocked from training - please try another one.'
     );
