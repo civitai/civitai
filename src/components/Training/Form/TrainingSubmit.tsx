@@ -1012,7 +1012,6 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                       styles: { label: { fontSize: 12 } },
                     }}
                     options={{
-                      canGenerate: true,
                       resources: [
                         {
                           type: ModelType.Checkpoint,
