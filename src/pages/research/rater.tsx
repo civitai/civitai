@@ -9,6 +9,7 @@ import {
   Group,
   HoverCard,
   Kbd,
+  keyframes,
   Loader,
   Popover,
   Stack,
@@ -86,6 +87,36 @@ const prevImages: RaterImage[] = [];
 const defaultNsfwLevel = NsfwLevel.PG13;
 type SanityStatus = 'clear' | 'challenge' | 'assessing' | 'insane';
 
+const FORCED_DELAY = 200;
+const imgState = {
+  ready: false,
+  timeout: undefined as any,
+  failedCount: 0,
+  readyTime: new Date(),
+};
+function imgReady(set?: boolean) {
+  if (set === undefined) {
+    if (imgState.ready === false) imgState.failedCount++;
+    return imgState.ready;
+  }
+
+  if (set === true && !imgState.ready) {
+    if (imgState.timeout) clearTimeout(imgState.timeout);
+    const waitEl = document.getElementById('waitIndicator')!;
+    const delay = FORCED_DELAY * (imgState.failedCount + 1);
+    if (delay > FORCED_DELAY) {
+      waitEl.style.display = 'block';
+      waitEl.style.setProperty('--animation-duration', `${delay}ms`);
+    }
+    imgState.timeout = setTimeout(() => {
+      imgState.ready = set;
+      imgState.failedCount = Math.max(0, imgState.failedCount - 1);
+      waitEl.style.display = 'none';
+    }, delay);
+  } else imgState.ready = set;
+  return set;
+}
+
 export const getServerSideProps = createServerSideProps({
   useSession: true,
   resolver: async ({ session, ctx }) => {
@@ -104,6 +135,15 @@ export const getServerSideProps = createServerSideProps({
 
 export default function Rater() {
   const { classes } = useStyles();
+
+  // Image Ref
+  const imageRef = useState<HTMLImageElement | null>(null);
+  useEffect(() => {
+    const [ref] = imageRef;
+    if (!ref) return;
+    ref.onload = () => imgReady(true);
+    if (ref.complete) imgReady(true);
+  }, [imageRef]);
 
   // Keep track of rater state
   const [muted, setMuted] = useLocalStorage<boolean>({ key: 'rater-muted', defaultValue: false });
@@ -194,6 +234,12 @@ export default function Rater() {
   // Handle level setting
   const setRatingsMutation = trpc.research.raterSetRatings.useMutation();
   function handleSetLevel(level: number) {
+    if (!imgReady()) {
+      playSound('buzz');
+      return;
+    }
+    imgReady(false);
+
     if (!image) return;
     if (isSanityCheck) {
       sendRatings();
@@ -410,7 +456,7 @@ export default function Rater() {
         ) : sanityStatus === 'assessing' ? (
           <Loader size="xl" color="yellow" />
         ) : image ? (
-          <EdgeMedia src={image.url} width={700} />
+          <EdgeMedia src={image.url} width={700} mediaRef={imageRef} />
         ) : (
           <Loader size="xl" />
         )}
@@ -532,6 +578,16 @@ export default function Rater() {
               ))}
           </Group>
           <Stack spacing="xs" align="center" className={classes.actionBar}>
+            <Card
+              id="waitIndicator"
+              withBorder
+              shadow="sm"
+              radius="sm"
+              className={classes.waitNotice}
+              style={{ display: 'none' }}
+            >
+              Wait...
+            </Card>
             <Group spacing={4}>
               <Tooltip label="Undo" position="top" withArrow>
                 <Button
@@ -692,6 +748,31 @@ const useStyles = createStyles((theme) => ({
     textAlign: 'center',
     fontWeight: 500,
   },
+  waitNotice: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    width: '100%',
+    zIndex: 10,
+    fontSize: 24,
+    padding: '4px 10px 6px !important',
+    lineHeight: 1,
+    textAlign: 'center',
+    fontWeight: 500,
+    [`&:before`]: {
+      content: '""',
+      position: 'absolute',
+      zIndex: 2,
+      top: 0,
+      left: 0,
+      height: '100%',
+      width: 0,
+      backgroundColor: theme.colors.blue[6],
+      opacity: 0,
+      animation: `${fillEffect} linear forwards`,
+      animationDuration: `var(--animation-duration, ${FORCED_DELAY}ms)`,
+    },
+  },
   gameover: {
     position: 'absolute',
     top: '50%',
@@ -711,5 +792,12 @@ const useStyles = createStyles((theme) => ({
     zIndex: 10,
   },
 }));
+
+const fillEffect = keyframes({
+  to: {
+    width: '100%',
+    opacity: 0.3,
+  },
+});
 
 setPageOptions(Rater, { withScrollArea: false });
