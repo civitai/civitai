@@ -95,9 +95,7 @@ export const generationRouter = router({
   getUnstableResources: publicProcedure
     .use(edgeCacheIt({ ttl: CacheTTL.sm }))
     .query(() => getUnstableResources()),
-  getUnavailableResources: publicProcedure
-    .use(edgeCacheIt({ ttl: CacheTTL.sm }))
-    .query(() => getUnavailableResources()),
+  getUnavailableResources: publicProcedure.query(() => getUnavailableResources()),
   toggleUnavailableResource: protectedProcedure
     .input(getByIdSchema)
     .mutation(({ input, ctx }) =>

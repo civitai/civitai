@@ -207,7 +207,7 @@ export const moderateImages = async ({
 
     // Update nsfw level of image
     const resetLevels = results.filter((x) => x.nsfwLevel === 0).map((x) => x.id);
-    if (resetLevels) await updateNsfwLevel(resetLevels);
+    if (resetLevels.length) await updateNsfwLevel(resetLevels);
     else if (changeTags) await updateNsfwLevel(ids);
   }
 };
@@ -215,7 +215,8 @@ export const moderateImages = async ({
 export async function updateNsfwLevel(ids: number | number[]) {
   if (!Array.isArray(ids)) ids = [ids];
   ids = [...new Set(ids)]; // dedupe
-  await dbWrite.$executeRawUnsafe(`SELECT update_nsfw_levels(ARRAY[${ids.join(',')}])`);
+  if (!ids.length) return;
+  await dbWrite.$executeRawUnsafe(`SELECT update_nsfw_levels(ARRAY[${ids.join(',')}]::integer[])`);
 }
 
 export const updateImageReportStatusByReason = ({

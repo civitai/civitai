@@ -46,7 +46,7 @@ BEGIN
   IF (TG_OP = 'DELETE') THEN
 
     -- If the post has a model version, create a job to update the nsfw level of the model version
-    IF (OLD."modelVersionId" IS NOT NULL AND p."publishedAt" IS NOT NULL) THEN
+    IF (OLD."modelVersionId" IS NOT NULL AND OLD."publishedAt" IS NOT NULL) THEN
       PERFORM create_job_queue_record(OLD."modelVersionId", 'ModelVersion', 'UpdateNsfwLevel');
     END IF;
 
