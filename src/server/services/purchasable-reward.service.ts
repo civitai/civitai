@@ -303,6 +303,7 @@ export const purchasableRewardPurchase = async ({
         coverImageId: reward.coverImageId,
       },
     },
+    select: { code: true, meta: true, purchasableReward: { select: purchasableRewardDetails } },
   });
 
   if (reward.usage === PurchasableRewardUsage.SingleUse) {

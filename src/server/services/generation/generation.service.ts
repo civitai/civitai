@@ -205,7 +205,9 @@ export const getGenerationResources = async (
             : ''
         )}
         ${Prisma.raw(
-          orderBy.startsWith('mm') ? `JOIN "ModelMetric" mm ON mm."modelId" = m.id` : ''
+          orderBy.startsWith('mm')
+            ? `JOIN "ModelMetric" mm ON mm."modelId" = m.id AND mm.timeframe = 'AllTime'`
+            : ''
         )}
         WHERE ${Prisma.join(sqlAnd, ' AND ')}
         ORDER BY ${Prisma.raw(orderBy)}
@@ -920,7 +922,7 @@ export async function getUnavailableResources() {
     .then((data) => (data ? fromJson<number[]>(data) : ([] as number[])))
     .catch(() => [] as number[]); // fallback to empty array if redis fails
 
-  return cachedData ?? [];
+  return [...new Set(cachedData)] ?? [];
 }
 
 export async function toggleUnavailableResource({

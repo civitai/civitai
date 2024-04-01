@@ -27,6 +27,7 @@ import {
   IconCheck,
   IconCircleCheck,
   IconExclamationCircle,
+  IconExclamationMark,
   IconExternalLink,
   IconFileDescription,
   IconSend,
@@ -193,15 +194,24 @@ export default function UserTrainingModels() {
 
   return (
     <Stack>
+      {!status.available && (
+        <AlertWithIcon
+          icon={<IconExclamationMark size={18} />}
+          iconColor="red"
+          color="red"
+          size="sm"
+        >
+          {status.message ?? 'Training is currently disabled.'}
+        </AlertWithIcon>
+      )}
       <AlertWithIcon
         icon={<IconExclamationCircle size={16} />}
         iconColor="yellow"
         color="yellow"
-        size="md"
-        iconSize="md"
+        size="sm"
       >
-        Due to high load, LoRA Trainings are not always successful, they may fail or get stuck in
-        processing. Not to worry though, If your LoRA training fails your buzz will be refunded
+        Due to high load, LoRA Trainings are not always successful - they may fail or get stuck in
+        processing. Not to worry though, if your LoRA training fails your buzz will be refunded
         within 24 hours. If your training has been processing for more than 24 hours it will be auto
         failed and a refund will be issued to you. If your training fails it&apos;s recommended that
         you try again.
