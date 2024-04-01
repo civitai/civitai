@@ -1,5 +1,5 @@
 import { createStyles, Text } from '@mantine/core';
-import { useRef } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { EdgeUrlProps, getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { EdgeVideo } from '~/components/EdgeMedia/EdgeVideo';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -10,6 +10,7 @@ export type EdgeMediaProps = EdgeUrlProps &
     wrapperProps?: React.ComponentPropsWithoutRef<'div'>;
     contain?: boolean;
     fadeIn?: boolean;
+    mediaRef?: [HTMLImageElement | null, (ref: HTMLImageElement | null) => void];
   };
 
 export function EdgeMedia({
@@ -29,6 +30,7 @@ export function EdgeMedia({
   wrapperProps,
   contain,
   fadeIn = false,
+  mediaRef,
   ...imgProps
 }: EdgeMediaProps) {
   const { classes, cx } = useStyles({ maxWidth: width === 'original' ? undefined : width });
@@ -36,6 +38,9 @@ export function EdgeMedia({
 
   const imgRef = useRef<HTMLImageElement>(null);
   if (fadeIn && imgRef.current?.complete) imgRef?.current?.style?.setProperty('opacity', '1');
+  useEffect(() => {
+    mediaRef?.[1](imgRef.current);
+  }, [mediaRef]);
 
   if (width && typeof width === 'number') width = Math.min(width, 4096);
   let transcode = false;

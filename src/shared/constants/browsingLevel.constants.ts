@@ -30,9 +30,9 @@ export const browsingLevelLabels = {
 
 export const browsingLevelDescriptions = {
   [NsfwLevel.PG]: 'Safe for work. No naughty stuff',
-  [NsfwLevel.PG13]: 'Revealing clothing, violence, and light gore ',
-  [NsfwLevel.R]: 'Adult themes and situations, partial nudity, graphic violence and death',
-  [NsfwLevel.X]: 'Graphic nudity, adult objects and settings',
+  [NsfwLevel.PG13]: 'Revealing clothing, violence, or light gore',
+  [NsfwLevel.R]: 'Adult themes and situations, partial nudity, graphic violence, or death',
+  [NsfwLevel.X]: 'Graphic nudity, adult objects, or settings',
   [NsfwLevel.XXX]: 'Overtly sexual or disturbing graphic content',
 } as const;
 
@@ -59,6 +59,10 @@ export function getIsSafeBrowsingLevel(level: number) {
   return level !== 0 && !Flags.intersects(level, nsfwBrowsingLevelsFlag);
 }
 
+export function hasPublicBrowsingLevel(level: number) {
+  return level !== 0 && Flags.intersects(publicBrowsingLevelsFlag, level);
+}
+
 export const browsingLevelOr = (array: (number | undefined)[]) => {
   for (const item of array) {
     if (!!item) return item;
@@ -75,9 +79,9 @@ export enum NsfwLevelDeprecated {
 }
 export const nsfwLevelMapDeprecated = {
   None: NsfwLevel.PG,
-  Soft: NsfwLevel.PG13,
-  Mature: NsfwLevel.R,
-  X: flagifyBrowsingLevel([NsfwLevel.X, NsfwLevel.XXX]),
+  Soft: flagifyBrowsingLevel([NsfwLevel.PG, NsfwLevel.PG13]),
+  Mature: flagifyBrowsingLevel([NsfwLevel.PG, NsfwLevel.PG13, NsfwLevel.R]),
+  X: flagifyBrowsingLevel([NsfwLevel.PG, NsfwLevel.PG13, NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX]),
   Blocked: NsfwLevel.Blocked,
 };
 const nsfwLevelReverseMapDeprecated = {
@@ -105,7 +109,7 @@ export const votableTagColors = {
 
 export const toggleableBrowsingCategories = [
   {
-    title: 'Anime',
+    title: 'Hide anime',
     relatedTags: [
       { id: 4, name: 'anime' },
       { id: 413, name: 'manga' },
@@ -113,14 +117,21 @@ export const toggleableBrowsingCategories = [
     ],
   },
   {
-    title: 'Furry',
+    title: 'Hide furry',
     relatedTags: [
       { id: 5139, name: 'anthro' },
       { id: 5140, name: 'furry' },
     ],
   },
   {
-    title: 'Political',
+    title: 'Hide gore',
+    relatedTags: [
+      { id: 1282, name: 'gore' },
+      { id: 789, name: 'body horror' },
+    ],
+  },
+  {
+    title: 'Hide political',
     relatedTags: [{ id: 2470, name: 'political' }],
   },
 ];

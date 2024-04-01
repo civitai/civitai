@@ -36,10 +36,12 @@ function BrowsingLevelItem({ level }: { level: BrowsingLevel }) {
       className={cx({ [classes.active]: isSelected })}
       noWrap
     >
-      <div>
-        <Text weight={700}>{browsingLevelLabels[level]}</Text>
-        <Text>{browsingLevelDescriptions[level]}</Text>
-      </div>
+      <Text weight={700} w={50} ta="center">
+        {browsingLevelLabels[level]}
+      </Text>
+      <Text lh={1.2} size="sm" ta="left" sx={{ flex: '1 1' }}>
+        {browsingLevelDescriptions[level]}
+      </Text>
       <Switch checked={isSelected} onClick={() => toggleBrowsingLevel(level)} />
     </Group>
   );

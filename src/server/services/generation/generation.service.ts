@@ -396,6 +396,7 @@ const baseModelToOrchestration: Record<BaseModelSetType, string | undefined> = {
   SDXLDistilled: 'SDXL_Distilled',
   SCascade: 'SCascade',
   Pony: 'SDXL',
+  ODOR: undefined,
 };
 
 async function checkResourcesAccess(
@@ -913,6 +914,11 @@ const getImageGenerationData = async (id: number): Promise<Generation.Data> => {
         v.includes(model.baseModel as BaseModel)
       )?.[0] as BaseModelSetType)
     : undefined;
+
+  // Clean-up bad values
+  if (meta.cfgScale == 0) meta.cfgScale = 7;
+  if (meta.steps == 0) meta.steps = 30;
+  if (meta.seed == 0) meta.seed = undefined;
 
   return {
     resources: deduped.map((resource) => ({

@@ -31,7 +31,7 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { BlockedReason, ImageSort } from '~/server/common/enums';
+import { BlockedReason, ImageSort, NsfwLevel } from '~/server/common/enums';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { hasEntityAccess } from '../services/common.service';
 import { getGallerySettingsByModelId } from '~/server/services/model.service';
@@ -162,6 +162,7 @@ export const setTosViolationHandler = async ({
         needsReview: null,
         ingestion: 'Blocked',
         nsfw: 'Blocked',
+        nsfwLevel: NsfwLevel.Blocked,
         blockedFor: BlockedReason.Moderated,
       },
     });

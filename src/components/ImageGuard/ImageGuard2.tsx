@@ -69,6 +69,7 @@ const ImageGuardCtx = createContext<{
   imageId: number;
   key: string | null;
   nsfw: boolean;
+  userId?: number;
 } | null>(null);
 
 function useImageGuardContext() {
@@ -114,12 +115,13 @@ export function ImageGuard2({
         imageId: image.id,
         key,
         nsfw,
+        userId,
       }}
     >
       {!show && explain && (
         <BlurToggle>
           {(toggle) => (
-            <Center className="absolute z-10 transform -translate-x-1/2 -translate-y-[60%] top-1/2 left-1/2 flex flex-col text-white">
+            <Center className="absolute z-20 transform -translate-x-1/2 -translate-y-[60%] top-1/2 left-1/2 flex flex-col text-white">
               <Stack align="center" spacing="sm" w="100%">
                 <Text size="sm" className="text-shadow-sm shadow-black/50">
                   This image is rated
@@ -205,7 +207,7 @@ function BlurToggle({
   nsfwClassName?: string;
 }) {
   const currentUser = useCurrentUser();
-  const { safe, show, browsingLevel, imageId, key, nsfw } = useImageGuardContext();
+  const { safe, show, browsingLevel, imageId, key, nsfw, userId } = useImageGuardContext();
   const { classes, cx } = useBadgeStyles({ browsingLevel });
 
   const toggle = (event: React.MouseEvent<HTMLElement, MouseEvent>) =>
@@ -222,8 +224,9 @@ function BlurToggle({
     [nsfwClassName ? nsfwClassName : '']: nsfw,
   });
 
-  if (safe)
-    return currentUser?.isModerator ? (
+  if (safe) {
+    const isOwnerOrModerator = currentUser?.isModerator || (userId && currentUser?.id === userId);
+    return isOwnerOrModerator ? (
       <Badge
         classNames={classes}
         className={badgeClass}
@@ -237,12 +240,7 @@ function BlurToggle({
         {browsingLevelLabels[browsingLevel]}
       </Badge>
     ) : null;
-
-  const Icon = show ? (
-    <IconEyeOff size={14} strokeWidth={2.5} />
-  ) : (
-    <IconEye size={14} strokeWidth={2.5} />
-  );
+  }
 
   return (
     <Badge
@@ -252,7 +250,7 @@ function BlurToggle({
       {...badgeProps}
       onClick={toggle}
     >
-      {Icon}
+      {show ? <IconEyeOff size={14} strokeWidth={2.5} /> : <IconEye size={14} strokeWidth={2.5} />}
     </Badge>
   );
 }

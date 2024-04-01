@@ -16,7 +16,7 @@ const { openModal, Modal } = createContextModal<{
   name: 'buyBuzz',
   withCloseButton: false,
   centered: true,
-  size: 'lg',
+  size: 'xl',
   radius: 'lg',
   zIndex: 400,
   Element: ({
@@ -30,7 +30,7 @@ const { openModal, Modal } = createContextModal<{
     };
 
     return (
-      <Stack spacing="md">
+      <Stack spacing="lg">
         <Group position="apart" noWrap>
           <Text size="lg" weight={700}>
             Buy Buzz
@@ -41,16 +41,18 @@ const { openModal, Modal } = createContextModal<{
           </Group>
         </Group>
         <Divider mx="-lg" />
-        <BuzzPurchase
-          message={message}
-          onPurchaseSuccess={() => {
-            context.close();
-            onPurchaseSuccess?.();
-          }}
-          minBuzzAmount={minBuzzAmount}
-          purchaseSuccessMessage={purchaseSuccessMessage}
-          onCancel={handleClose}
-        />
+        <Group>
+          <BuzzPurchase
+            message={message}
+            onPurchaseSuccess={() => {
+              context.close();
+              onPurchaseSuccess?.();
+            }}
+            minBuzzAmount={minBuzzAmount}
+            purchaseSuccessMessage={purchaseSuccessMessage}
+            onCancel={handleClose}
+          />
+        </Group>
       </Stack>
     );
   },

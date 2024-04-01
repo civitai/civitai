@@ -32,19 +32,18 @@ export const loginRedirectReasons = {
   'join-club': 'You need to be logged in to join a club',
   'civitai-vault': 'You need to be logged in to access your Civitai Vault',
   'favorite-model': 'You need to be logged in to favorite a model',
+  rater: 'You need to be logged in to play the rating game',
 };
 
 export type LoginRedirectReason = keyof typeof loginRedirectReasons;
+export type LoginLinkOptions = {
+  returnUrl?: string;
+  reason?: LoginRedirectReason;
+};
 
 export const trackedReasons = ['image-gen', 'train-model', 'blur-toggle'] as const;
 
-export function getLoginLink({
-  returnUrl,
-  reason,
-}: {
-  returnUrl?: string;
-  reason?: LoginRedirectReason;
-}) {
+export function getLoginLink({ returnUrl, reason }: LoginLinkOptions) {
   return `/login?${QS.stringify({ returnUrl, reason })}`;
   // return `/login?returnUrl=${encodeURIComponent(returnUrl)}`;
 }

@@ -40,7 +40,7 @@ export const useDerivedGenerationState = () => {
   const selectedResources = useGenerationFormStore(({ resources = [], model }) => {
     return model ? resources.concat([model]).filter(isDefined) : resources.filter(isDefined);
   });
-  const { unstableResources: allUnstableResources } = useUnsupportedResources();
+  const { unstableResources: allUnstableResources } = useUnstableResources();
 
   const { baseModel } = useGenerationFormStore(
     useCallback(
@@ -170,9 +170,7 @@ export const useEstimateTextToImageJobCost = () => {
   };
 };
 
-export const useUnsupportedResources = () => {
-  const queryUtils = trpc.useUtils();
-
+export const useUnstableResources = () => {
   const { data: unstableResources = [] } = trpc.generation.getUnstableResources.useQuery(
     undefined,
     {
@@ -181,6 +179,15 @@ export const useUnsupportedResources = () => {
       trpc: { context: { skipBatch: true } },
     }
   );
+
+  return {
+    unstableResources,
+  };
+};
+
+export const useUnsupportedResources = () => {
+  const queryUtils = trpc.useUtils();
+
   const { data: unavailableResources = [] } = trpc.generation.getUnavailableResources.useQuery(
     undefined,
     {
@@ -209,7 +216,6 @@ export const useUnsupportedResources = () => {
   );
 
   return {
-    unstableResources,
     unavailableResources,
     toggleUnavailableResource: handleToggleUnavailableResource,
     toggling: toggleUnavailableResourceMutation.isLoading,

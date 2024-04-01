@@ -29,7 +29,7 @@ export function CivitaiSessionProvider({ children }: { children: React.ReactNode
         ? true
         : browsingModeState.blurNsfw,
     };
-  }, [data?.user, update, browsingModeState]);
+  }, [data?.expires, update, browsingModeState]); // eslint-disable-line
 
   useEffect(() => {
     if (data?.error === 'RefreshAccessTokenError') signIn();

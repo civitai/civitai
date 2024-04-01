@@ -53,6 +53,7 @@ import { trpc } from '~/utils/trpc';
 import '~/styles/globals.css';
 import { BrowsingModeProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { ParsedCookies, parseCookies } from '~/shared/utils';
+import ChadGPT from '~/components/ChadGPT/ChadGPT';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -226,6 +227,7 @@ function MyApp(props: CustomAppProps) {
               <RegisterCatchNavigation />
               <RouterTransition />
               <UpdateRequiredWatcher />
+              <ChadGPT isAuthed={!!session} />
               <SessionProvider
                 session={session}
                 refetchOnWindowFocus={false}

@@ -37,12 +37,14 @@ export function getStripeCurrencyDisplay(unitAmount: number, currency: string) {
 const nameOverrides: Record<string, string> = {
   LoCon: 'LyCORIS',
   LORA: 'LoRA',
+  DoRA: 'DoRA',
   scheduler: 'Sampler',
   TextualInversion: 'Embedding',
   MotionModule: 'Motion',
   BenefactorsOnly: 'Supporters Only',
   ModelVersion: 'Model Version',
   ClubMembership: 'Club Memebership',
+  Redeemable: 'Redeemed Code',
 };
 
 export function getDisplayName(value: string, options?: { splitNumbers?: boolean }) {

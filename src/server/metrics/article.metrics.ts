@@ -156,7 +156,7 @@ async function getBuzzTasks(ctx: MetricProcessorRunContext) {
     -- get recent article tips
     SELECT "entityId" as id
     FROM "BuzzTip"
-    WHERE "entityType" = 'Article' AND "createdAt" > '${ctx.lastUpdate}'
+    WHERE "entityType" = 'Article' AND ("createdAt" > '${ctx.lastUpdate}' OR "updatedAt" > '${ctx.lastUpdate}')
   `;
 
   const tasks = chunk(affected, 1000).map((ids, i) => async () => {

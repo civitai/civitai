@@ -73,7 +73,14 @@ const mapTrainingStatus = {
 } as const;
 
 const logWebhook = (data: MixedObject) => {
-  logToAxiom({ name: 'resource-training', type: 'error', ...data }, 'webhooks').catch();
+  logToAxiom(
+    {
+      name: 'resource-training',
+      type: 'error',
+      ...data,
+    },
+    'webhooks'
+  ).catch();
 };
 
 export default WebhookEndpoint(async (req, res) => {

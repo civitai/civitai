@@ -1,5 +1,11 @@
-import { Group, Text, Stack, Popover, ActionIcon, Checkbox } from '@mantine/core';
-import { IconEyeExclamation, TablerIconsProps } from '@tabler/icons-react';
+import { Group, Text, Stack, Popover, ActionIcon, Checkbox, Button, Tooltip } from '@mantine/core';
+import { NextLink } from '@mantine/next';
+import {
+  IconCaretRightFilled,
+  IconDeviceGamepad,
+  IconEyeExclamation,
+  TablerIconsProps,
+} from '@tabler/icons-react';
 import { useBrowsingModeContext } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { BrowsingLevelsGrouped } from '~/components/BrowsingLevel/BrowsingLevelsGrouped';
 import { openHiddenTagsModal } from '~/components/Dialog/dialog-registry';
@@ -40,7 +46,29 @@ export function BrowsingModeMenu() {
         {showNsfw && (
           <Stack spacing="lg">
             <Stack spacing={4}>
-              <Text>Browsing Level</Text>
+              <Stack spacing={0}>
+                <Group align="flex-start">
+                  <Text sx={{ lineHeight: 1 }}>Browsing Level</Text>
+                  {showNsfw && (
+                    <Tooltip label="Help us improve by playing!" withArrow color="dark">
+                      <Button
+                        component={NextLink}
+                        href="/research/rater"
+                        compact
+                        size="xs"
+                        ml="auto"
+                        variant="outline"
+                      >
+                        <Group spacing={4}>
+                          Rating Game
+                          <IconCaretRightFilled size={14} />
+                        </Group>
+                      </Button>
+                    </Tooltip>
+                  )}
+                </Group>
+                <Text color="dimmed">Select the levels of content you want to see</Text>
+              </Stack>
               <BrowsingLevelsGrouped />
             </Stack>
             <Checkbox

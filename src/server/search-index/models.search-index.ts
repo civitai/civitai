@@ -314,7 +314,7 @@ const onFetchItemsToIndex = async ({
           }
 
           const canGenerate = modelVersions.some(
-            (x) => x.generationCoverage?.covered && unavailableGenResources.indexOf(x.id) === -1
+            (x) => x.generationCoverage?.covered && !unavailableGenResources.includes(x.id)
           );
 
           const category = tagsOnModels.find((tagOnModel) =>

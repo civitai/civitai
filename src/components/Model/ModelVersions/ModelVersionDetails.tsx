@@ -268,20 +268,28 @@ export function ModelVersionDetails({
     { label: 'Uploaded', value: formatDate(version.createdAt) },
     {
       label: 'Base Model',
-      value: (
-        <Group spacing={8} position="apart" noWrap>
-          <Text>
-            {version.baseModel}{' '}
-            {version.baseModelType && version.baseModelType === 'Standard'
-              ? ''
-              : version.baseModelType}
-          </Text>
-          <HowToButton
-            href="https://youtu.be/IIy3YwsXtTE?si=YiJDxMODCOTkUUM4&t=417"
-            tooltip="What is this?"
-          />
-        </Group>
-      ),
+      value:
+        version.baseModel === 'ODOR' ? (
+          <Group spacing={8} position="apart" noWrap>
+            <Text component={NextLink} href="/product/odor" target="_blank">
+              {version.baseModel}{' '}
+            </Text>
+            <HowToButton href="https://youtu.be/7j_sakwGK8M" tooltip="What is this?" />
+          </Group>
+        ) : (
+          <Group spacing={8} position="apart" noWrap>
+            <Text>
+              {version.baseModel}{' '}
+              {version.baseModelType && version.baseModelType === 'Standard'
+                ? ''
+                : version.baseModelType}
+            </Text>
+            <HowToButton
+              href="https://youtu.be/IIy3YwsXtTE?si=YiJDxMODCOTkUUM4&t=417"
+              tooltip="What is this?"
+            />
+          </Group>
+        ),
     },
     {
       label: 'Training',

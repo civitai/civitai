@@ -115,7 +115,7 @@ export function ImageContextMenu({
     </Menu>
   );
 
-  if (image.needsReview)
+  if (image.needsReview || image.ingestion === 'Blocked')
     return (
       <Group spacing={4} className={className}>
         <NeedsReviewBadge {...props} isModerator={isModerator} isOwner={isOwner} />
@@ -267,6 +267,7 @@ function NeedsReviewBadge({
     ingestion: initialIngestion,
   });
   const moderateImagesMutation = trpc.image.moderate.useMutation();
+  if (!needsReview && ingestion !== 'Blocked') return null;
 
   const handleModerate = (action: 'accept' | 'delete' | 'removeName' | 'mistake') => {
     if (!isModerator) return;
@@ -276,7 +277,7 @@ function NeedsReviewBadge({
       reviewAction: action !== 'accept' ? action : undefined,
       reviewType: 'minor',
     });
-    imageStore.setImage(imageId, { needsReview: null });
+    imageStore.setImage(imageId, { needsReview: null, ingestion: 'Scanned' });
   };
 
   const Badge = (

@@ -25,7 +25,7 @@ export const serverSchema = z.object({
     // Since NextAuth automatically uses the VERCEL_URL if present.
     (str) => process.env.VERCEL_URL ?? str,
     // VERCEL_URL doesnt include `https` so it cant be validated as a URL
-    process.env.VERCEL ? z.string() : z.string().url()
+    process.env.VERCEL ? z.string() : z.string().url(),
   ),
   CLICKHOUSE_HOST: z.string().optional(),
   CLICKHOUSE_USERNAME: z.string().optional(),
@@ -65,6 +65,7 @@ export const serverSchema = z.object({
   CF_API_TOKEN: z.string().optional(),
   CF_ZONE_ID: z.string().optional(),
   JOB_TOKEN: z.string(),
+  WEBHOOK_URL: z.string().url().optional(),
   WEBHOOK_TOKEN: z.string(),
   SCANNING_ENDPOINT: z.string(),
   SCANNING_TOKEN: z.string(),
@@ -128,7 +129,7 @@ export const serverSchema = z.object({
     return { start, end };
   }, z.object({
     start: z.date().optional(),
-    end: z.date().optional()
+    end: z.date().optional(),
   })).optional(),
   REPLICATION_LAG_DELAY: z.coerce.number().default(0),
   RECAPTCHA_PROJECT_ID: z.string(),
@@ -174,7 +175,7 @@ export const clientSchema = z.object({
   NEXT_PUBLIC_LOG_TRPC: zc.booleanString.default(false),
   NEXT_PUBLIC_RECAPTCHA_KEY: z.string(),
   NEXT_PUBLIC_ADS: zc.booleanString.default(false),
-  NEXT_PUBLIC_PAYPAL_CLIENT_ID: z.string().optional()
+  NEXT_PUBLIC_PAYPAL_CLIENT_ID: z.string().optional(),
 });
 
 /**
@@ -210,5 +211,5 @@ export const clientEnv = {
   NEXT_PUBLIC_LOG_TRPC: process.env.NEXT_PUBLIC_LOG_TRPC !== 'false',
   NEXT_PUBLIC_RECAPTCHA_KEY: process.env.NEXT_PUBLIC_RECAPTCHA_KEY,
   NEXT_PUBLIC_ADS: process.env.NEXT_PUBLIC_ADS === 'true',
-  NEXT_PUBLIC_PAYPAL_CLIENT_ID: process.env.NEXT_PUBLIC_PAYPAL_CLIENT_ID
+  NEXT_PUBLIC_PAYPAL_CLIENT_ID: process.env.NEXT_PUBLIC_PAYPAL_CLIENT_ID,
 };

@@ -13,6 +13,7 @@ import {
 import { IconCircleCheck } from '@tabler/icons-react';
 import { z } from 'zod';
 import { Meta } from '~/components/Meta/Meta';
+import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { enterFall, jelloVertical } from '~/libs/animations';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
@@ -64,7 +65,7 @@ export default function ClaimBuzzPage({ id }: { id: string }) {
 
   const handleClaim = () => claimMutation.mutate({ id });
 
-  if (claimLoading || !claim) return <Loader />;
+  if (claimLoading || !claim) return <PageLoader />;
 
   return (
     <>

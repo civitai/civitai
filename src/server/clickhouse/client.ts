@@ -253,6 +253,10 @@ export class Tracker {
     return this.track('modelEvents', values);
   }
 
+  public redeemableCode(activity: string, details: { quantity?: number; code?: string }) {
+    return this.track('redeemableCodes', { activity, ...details });
+  }
+
   public modelVersionEvent(values: {
     type: ModelVersionActivty;
     modelId: number;

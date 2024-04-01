@@ -40,7 +40,7 @@ export function ModelsInfinite({
   );
   const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
 
-  const { models, isLoading, fetchNextPage, hasNextPage, isRefetching } =
+  const { models, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching } =
     useQueryModels(debouncedFilters);
 
   //#region [useEffect] cancel debounced filters
@@ -87,7 +87,7 @@ export function ModelsInfinite({
           {hasNextPage && (
             <InViewLoader
               loadFn={fetchNextPage}
-              loadCondition={!isRefetching}
+              loadCondition={!isFetching}
               style={{ gridColumn: '1/-1' }}
             >
               <Center p="xl" sx={{ height: 36 }} mt="md">

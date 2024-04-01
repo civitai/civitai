@@ -14,11 +14,12 @@ import { ModelType } from '@prisma/client';
 import { IconAlertTriangle, IconReplace, IconX } from '@tabler/icons-react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { NumberSlider } from '~/libs/form/components/NumberSlider';
-import { generationPanel } from '~/store/generation.store';
 import { GenerationResourceSchema } from '~/server/schema/generation.schema';
+import { generationPanel } from '~/store/generation.store';
 
 type Props = {
   resource: GenerationResourceSchema;
+  isTraining?: boolean;
   onUpdate?: (value: GenerationResourceSchema) => void;
   onRemove?: (id: number) => void;
   onSwap?: VoidFunction;
@@ -30,8 +31,8 @@ export const ResourceSelectCard = (props: Props) => {
   return isCheckpoint ? <CheckpointInfo {...props} /> : <ResourceInfo {...props} />;
 };
 
-function CheckpointInfo({ resource, onRemove, onSwap }: Props) {
-  const unavailable = resource.covered === false;
+function CheckpointInfo({ resource, isTraining, onRemove, onSwap }: Props) {
+  const unavailable = isTraining ? false : resource.covered === false;
 
   return (
     <Card px="sm" py={8} radius="md" withBorder>

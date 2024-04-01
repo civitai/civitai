@@ -39,7 +39,7 @@ import { formatDateMin } from '~/utils/date-helpers';
 import {
   getBaseModelSetKey,
   useGenerationStatus,
-  useUnsupportedResources,
+  useUnstableResources,
 } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 
@@ -64,7 +64,7 @@ export function QueueItem({ request }: Props) {
   const { classes } = useStyle();
 
   const generationStatus = useGenerationStatus();
-  const { unstableResources } = useUnsupportedResources();
+  const { unstableResources } = useUnstableResources();
 
   const { copied, copy } = useClipboard();
   const currentUser = useCurrentUser();
@@ -301,7 +301,7 @@ const useStyle = createStyles((theme) => ({
 }));
 
 const ResourceBadge = (props: Generation.Resource) => {
-  const { unstableResources } = useUnsupportedResources();
+  const { unstableResources } = useUnstableResources();
 
   const { modelId, modelName, id, name } = props;
   const unstable = unstableResources?.includes(id);
