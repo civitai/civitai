@@ -197,7 +197,10 @@ const RewardDetailsModal = ({
           <Tabs.Panel value="about" pt="sm">
             <RenderHtml
               html={purchasableReward.about}
-              sx={(theme) => ({ fontSize: theme.fontSizes.sm })}
+              sx={(theme) => ({
+                fontSize: theme.fontSizes.sm,
+                '[data-youtube-video] iframe': { width: '100% !important', minHeight: 225 },
+              })}
             />
           </Tabs.Panel>
           <Tabs.Panel value="redeemDetails" pt="sm">
