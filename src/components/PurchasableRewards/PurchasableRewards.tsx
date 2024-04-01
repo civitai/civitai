@@ -82,11 +82,15 @@ const RewardDetailsModal = ({
   const isAvailable = isPurchasableRewardActive(purchasableReward);
   const terms = purchasableReward.termsOfUse == '<p>N/A</p>' ? null : purchasableReward.termsOfUse;
 
+  const [selectedTab, setSelectedTab] = useState<string | null>(isPurchased ? 'redeem' : 'about');
+
   const handlePurchase = async () => {
     try {
       await purchasePurchasableReward({
         purchasableRewardId: purchasableReward.id,
       });
+
+      setSelectedTab('redeem');
 
       showSuccessNotification({
         title: 'Reward purchased',
@@ -126,7 +130,10 @@ const RewardDetailsModal = ({
                 <ImageGuard2 image={image}>
                   {(safe) => (
                     <>
-                      <ImageGuard2.BlurToggle className="absolute top-2 left-2 z-10" />
+                      <ImageGuard2.BlurToggle
+                        className="absolute top-2 left-2 z-10"
+                        sfwClassName="hidden"
+                      />
                       {!safe ? (
                         <MediaHash {...image} style={{ width: '100%', height: '100%' }} />
                       ) : (
@@ -179,14 +186,15 @@ const RewardDetailsModal = ({
         <Tabs
           variant="pills"
           radius="xl"
-          defaultValue="about"
+          value={selectedTab}
+          onTabChange={setSelectedTab}
           color="gray"
-          styles={(theme) => ({
+          styles={{
             tab: {
               padding: '6px 12px',
               fontWeight: 500,
             },
-          })}
+          }}
         >
           <Tabs.List>
             <Tabs.Tab value="about">About</Tabs.Tab>
@@ -267,7 +275,10 @@ const PurchasableRewardListItem = ({
             <ImageGuard2 image={image}>
               {(safe) => (
                 <>
-                  <ImageGuard2.BlurToggle className="absolute top-2 left-2 z-10" />
+                  <ImageGuard2.BlurToggle
+                    className="absolute top-2 left-2 z-10"
+                    sfwClassName="hidden"
+                  />
                   {!safe ? (
                     <MediaHash {...image} style={{ width: '100%', height: '100%' }} />
                   ) : (
@@ -349,7 +360,10 @@ const PurchasableRewardCard = ({
               <ImageGuard2 image={image}>
                 {(safe) => (
                   <>
-                    <ImageGuard2.BlurToggle className="absolute top-2 left-2 z-10" />
+                    <ImageGuard2.BlurToggle
+                      className="absolute top-2 left-2 z-10"
+                      sfwClassName="hidden"
+                    />
                     {!safe ? (
                       <MediaHash {...image} style={{ width: '100%', height: '100%' }} />
                     ) : (

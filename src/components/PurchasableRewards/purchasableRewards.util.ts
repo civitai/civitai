@@ -10,7 +10,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { PurchasableRewardGetPaged } from '~/types/router';
 
 export const useMutatePurchasableReward = () => {
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
 
   const onError = (error: any, message = 'There was an error while performing your request') => {
     try {
@@ -40,9 +40,13 @@ export const useMutatePurchasableReward = () => {
   });
 
   const purchasePurchasableReward = trpc.purchasableReward.purchase.useMutation({
-    async onSuccess() {
-      await queryUtils.user.getUserPurchasedRewards.invalidate();
+    async onSuccess(result) {
       await queryUtils.purchasableReward.getPaged.invalidate();
+
+      queryUtils.user.getUserPurchasedRewards.setData(undefined, (old) => {
+        if (!old) return [result];
+        return [...old, result];
+      });
     },
     onError(error) {
       onError(error, 'Failed to purchase reward');
