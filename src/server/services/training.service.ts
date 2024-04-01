@@ -177,7 +177,7 @@ export const createTrainingRequest = async ({
 }) => {
   const status = await getTrainingServiceStatus();
   if (!status.available && !isModerator)
-    throw throwBadRequestError('Training is currently disabled');
+    throw throwBadRequestError(status.message ?? 'Training is currently disabled');
 
   const modelVersions = await dbWrite.$queryRaw<TrainingRequest[]>`
     SELECT mv."trainingDetails",
