@@ -161,7 +161,7 @@ export function QueueItem({ request }: Props) {
                 </ThemeIcon>
               </Tooltip>
             )}
-            {pendingProcessing && request.queuePosition && (
+            {/* {pendingProcessing && request.queuePosition && (
               <Button.Group>
                 {request.queuePosition && (
                   <Button
@@ -195,7 +195,7 @@ export function QueueItem({ request }: Props) {
                   </HoverCard.Dropdown>
                 </HoverCard>
               </Button.Group>
-            )}
+            )} */}
             <Text size="xs" color="dimmed">
               {formatDateMin(request.createdAt)}
             </Text>
