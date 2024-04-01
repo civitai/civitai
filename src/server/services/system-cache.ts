@@ -194,7 +194,7 @@ export async function getHomeExcludedTags() {
 
   log('getting home excluded tags');
   const tags = await dbWrite.tag.findMany({
-    where: { name: { in: ['woman'] } },
+    where: { name: { in: ['woman', 'anime', 'manga'] } },
     select: { id: true, name: true },
   });
   await redis.set(REDIS_KEYS.SYSTEM.HOME_EXCLUDED_TAGS, JSON.stringify(tags), {
