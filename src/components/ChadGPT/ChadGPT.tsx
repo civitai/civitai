@@ -10,7 +10,9 @@ const timeframe = [1711983600000, 1712030400000];
 function handleNavigate() {
   const count = Number(getCookie('chadgpt') ?? 0) + 1;
   if (count <= 3) setCookie('chadgpt', count);
-  if (count === 3) dialogStore.trigger({ id: 'chadgpt', component: ChadGPTModal });
+  if (count === 3) {
+    setTimeout(() => dialogStore.trigger({ id: 'chadgpt', component: ChadGPTModal }), 1000);
+  }
 }
 
 export default function ChadGPT({ isAuthed }: { isAuthed: boolean }) {
@@ -19,10 +21,10 @@ export default function ChadGPT({ isAuthed }: { isAuthed: boolean }) {
     const isTime = Date.now() > timeframe[0] && Date.now() < timeframe[1];
     if (!isTime) return;
 
-    Router.events.on('routeChangeStart', handleNavigate);
+    Router.events.on('routeChangeComplete', handleNavigate);
 
     return () => {
-      Router.events.off('routeChangeStart', handleNavigate);
+      Router.events.off('routeChangeComplete', handleNavigate);
     };
   }, []);
   return null;
