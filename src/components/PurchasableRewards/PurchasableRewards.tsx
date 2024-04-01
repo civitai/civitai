@@ -427,12 +427,10 @@ export function PurchasableRewards() {
 
   return (
     <Stack>
-      <Group noWrap align="flex-end">
-        <Title order={2} lh={1}>
-          Rewards
-        </Title>
-        <IconGift size={24} style={{ marginTop: '8px' }} />
-      </Group>
+      <Stack spacing={4}>
+        <Title order={2}>Rewards</Title>
+        <Text>{`Spend some Buzz to get special deals`}</Text>
+      </Stack>
       <Chip.Group
         spacing={8}
         value={filters.mode}
