@@ -68,7 +68,7 @@ export const constants = {
     'PixArt a',
     'Other',
   ],
-  hiddenBaseModels: ['ODOR'] as string[],
+  hiddenBaseModels: [] as string[],
   modelFileTypes: [
     'Model',
     'Text Encoder',
