@@ -9,9 +9,9 @@ import {
   Title,
 } from '@mantine/core';
 import { usePrevious } from '@mantine/hooks';
+import { NextLink } from '@mantine/next';
 import { ReportStatus } from '@prisma/client';
 import React, { useMemo, useState } from 'react';
-import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { NoContent } from '~/components/NoContent/NoContent';
@@ -97,14 +97,10 @@ function ImageRatingCard(item: AsyncReturnType<typeof getImageRatingRequests>['i
   };
 
   return (
-    <div
-      className={`flex flex-col items-stretch card overflow-hidden ${
-        updated ? '!border-green-600' : ''
-      }`}
-    >
-      <RoutedDialogLink name="imageDetail" state={{ imageId: item.id }}>
+    <div className={`flex flex-col items-stretch card ${updated ? '!border-green-600' : ''}`}>
+      <NextLink href={`/images/${item.id}`} target="_blank">
         <EdgeMedia src={item.url} type={item.type} width={450} className="w-full" />
-      </RoutedDialogLink>
+      </NextLink>
       <div className="flex flex-col gap-4 p-4">
         <div className="grid gap-1" style={{ gridTemplateColumns: `min-content 1fr` }}>
           {browsingLevels.map((level) => {
@@ -146,16 +142,7 @@ function ImageRatingCard(item: AsyncReturnType<typeof getImageRatingRequests>['i
             );
           })}
         </div>
-        {!!item.tags.length && (
-          <VotableTags entityType="image" entityId={item.id} tags={item.tags} canAdd />
-          // <div className="flex flex-wrap gap-1">
-          //   {item.tags.map((tag) => (
-          //     <Badge key={tag.id} size="xs" color="red">
-          //       {tag.name}
-          //     </Badge>
-          //   ))}
-          // </div>
-        )}
+        <VotableTags entityType="image" entityId={item.id} tags={item.tags} canAddModerated />
       </div>
     </div>
   );
