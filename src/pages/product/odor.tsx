@@ -138,18 +138,29 @@ export default function CivitaiVault() {
               </Stack>
             </Group>
           </Stack>
-          <Button
-            variant="filled"
-            color="blue"
-            size="lg"
-            radius="xl"
-            component={NextLink}
-            href="/models?baseModels=ODOR"
-            rel="nofollow noreferrer"
-            fullWidth
-          >
-            View the Models
-          </Button>
+          <Group noWrap>
+            <Button
+              variant="filled"
+              color="blue"
+              size="lg"
+              radius="xl"
+              component={NextLink}
+              href="/claim/cosmetic/292"
+              fullWidth
+            >
+              Grab the Launch Badge
+            </Button>
+            <Button
+              variant="default"
+              size="lg"
+              radius="xl"
+              component={NextLink}
+              href="/models?baseModels=ODOR"
+              fullWidth
+            >
+              View the Models
+            </Button>
+          </Group>
           <Stack spacing={0}>
             <Text
               size="xs"
