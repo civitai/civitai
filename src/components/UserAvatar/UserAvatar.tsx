@@ -109,7 +109,6 @@ export function UserAvatar({
 
   const imageSize = getRawAvatarSize(avatarProps?.size ?? avatarSize ?? size);
   const imageRadius = getRawAvatarRadius(avatarProps?.radius ?? radius, theme);
-  const isSelf = !!currentUser && currentUser.id === avatarUser.id;
   const blockedProfilePicture = avatarUser.profilePicture?.ingestion === 'Blocked';
   const avatarBgColor =
     theme.colorScheme === 'dark' ? 'rgba(255,255,255,0.31)' : 'rgba(0,0,0,0.31)';
@@ -154,7 +153,6 @@ export function UserAvatar({
                   <UserAvatarProfilePicture
                     id={avatarUser.id}
                     username={avatarUser.username}
-                    deletedAt={avatarUser.deletedAt}
                     image={image}
                   />
                 )}

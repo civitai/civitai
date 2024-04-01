@@ -64,6 +64,7 @@ import { ToggleSearchableMenuItem } from '../MenuItems/ToggleSearchableMenuItem'
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { IconNose } from '~/components/SVG/IconNose';
+import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 
 const IMAGE_CARD_WIDTH = 450;
 
@@ -421,6 +422,7 @@ export function ModelCard({ data, forceInView }: Props) {
                         badgeSize={28}
                       />
                     </UnstyledButton>
+                    // <UserAvatarSimple {...data.user} />
                   )}
                   <Text size="xl" weight={700} lineClamp={3} lh={1.2}>
                     {data.name}

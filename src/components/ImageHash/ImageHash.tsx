@@ -34,3 +34,7 @@ export function MediaHash({ hash, height, width, style, cropFocus }: MediaHashPr
     />
   );
 }
+
+export function MediaHash2() {
+  return <></>;
+}
