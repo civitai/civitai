@@ -4,7 +4,6 @@ import {
   Container,
   createStyles,
   Group,
-  Image,
   Stack,
   Text,
   ThemeIcon,
@@ -15,23 +14,16 @@ import {
   Icon3dCubeSphere,
   IconAccessible,
   IconAirConditioning,
-  IconBrandOpenSource,
-  IconCloudPlus,
-  IconDownload,
   IconLungsOff,
-  IconMapSearch,
   IconPepper,
-  IconRadar2,
 } from '@tabler/icons-react';
 import { Meta } from '~/components/Meta/Meta';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { YoutubeEmbed } from '~/components/YoutubeEmbed/YoutubeEmbed';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 
 export default function CivitaiVault() {
   const { classes, cx } = useStyles();
-  const currentUser = useCurrentUser();
-  const isMember = currentUser?.isMember;
   const isMobile = useIsMobile();
 
   return (
@@ -46,7 +38,7 @@ export default function CivitaiVault() {
             <Stack spacing={12}>
               <Title className={classes.heroTitle}>O.D.O.R</Title>
               <Text className={classes.heroText} sx={{ lineHeight: 1.25 }}>
-                Open-source text-to-scent model
+                Optimized Diffusion of Olfactory Representations
               </Text>
             </Stack>
             <Button
@@ -64,13 +56,7 @@ export default function CivitaiVault() {
             </Button>
           </Group>
           <Box className={classes.gradientContainer}>
-            <Image
-              src="/images/product/vault/lp-main.png"
-              alt="check out the vault"
-              width="100%"
-              height="auto"
-            />
-            <Box className={classes.gradientBox} />
+            <YoutubeEmbed videoId="7j_sakwGK8M" />
           </Box>
           <Stack spacing={12}>
             <Title className={classes.heading3} order={3}>
