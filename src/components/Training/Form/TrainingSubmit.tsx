@@ -20,7 +20,12 @@ import {
 import { openConfirmModal } from '@mantine/modals';
 import { showNotification } from '@mantine/notifications';
 import { Currency, ModelType, TrainingStatus } from '@prisma/client';
-import { IconAlertCircle, IconAlertTriangle, IconExclamationCircle } from '@tabler/icons-react';
+import {
+  IconAlertCircle,
+  IconAlertTriangle,
+  IconExclamationCircle,
+  IconExclamationMark,
+} from '@tabler/icons-react';
 import dayjs from 'dayjs';
 import { useRouter } from 'next/router';
 import React, { useEffect, useState } from 'react';
@@ -878,6 +883,16 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   return (
     <Form form={form} onSubmit={handleSubmit}>
       <Stack>
+        {!status.available && (
+          <AlertWithIcon
+            icon={<IconExclamationMark size={18} />}
+            iconColor="red"
+            color="red"
+            size="sm"
+          >
+            {status.message ?? 'Training is currently disabled.'}
+          </AlertWithIcon>
+        )}
         <Accordion
           variant="separated"
           defaultValue={'model-details'}
@@ -1317,7 +1332,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         <BuzzTransactionButton
           type="submit"
           loading={awaitInvalidate}
-          disabled={blockedModels.includes(formBaseModel ?? '')}
+          disabled={blockedModels.includes(formBaseModel ?? '') || !status.available}
           label="Submit"
           buzzAmount={buzzCost ?? 0}
         />
