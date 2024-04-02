@@ -103,7 +103,8 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
     ? subscribeBtnProps.downgrade
     : subscribeBtnProps.subscribe;
 
-  const appliesForDiscount = appliesForFounderDiscount(subscription?.product?.metadata?.tier);
+  const metadata = (subscription?.product?.metadata ?? { tier: 'free' }) as ProductMetadata;
+  const appliesForDiscount = !isActivePlan && appliesForFounderDiscount(metadata?.tier);
 
   return (
     <Card className={classes.card}>
@@ -127,7 +128,8 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
                   <Group position="center" spacing={4} align="flex-end">
                     <Text className={classes.price} align="center" lh={1}>
                       {getStripeCurrencyDisplay(
-                        price.unitAmount * (constants.memberships.discountPercent / 100),
+                        price.unitAmount *
+                          (constants.memberships.founderDiscount.discountPercent / 100),
                         price.currency
                       )}
                     </Text>

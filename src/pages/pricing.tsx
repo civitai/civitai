@@ -42,6 +42,7 @@ import {
   useActiveSubscription,
 } from '~/components/Stripe/memberships.util';
 import { formatDate } from '~/utils/date-helpers';
+import { ProductMetadata } from '~/server/schema/stripe.schema';
 
 export default function Pricing() {
   const router = useRouter();
@@ -63,7 +64,9 @@ export default function Pricing() {
     !(products ?? []).find((p) => p.id === subscription.product.id);
 
   const freePlanDetails = getPlanDetails(constants.freeMembershipDetails, features);
-  const appliesForDiscount = appliesForFounderDiscount(subscription?.product?.metadata?.tier);
+  const metadata = (subscription?.product?.metadata ?? { tier: 'free' }) as ProductMetadata;
+  const appliesForDiscount =
+    (products ?? []).length > 1 && appliesForFounderDiscount(metadata.tier);
 
   return (
     <>
@@ -108,24 +111,21 @@ export default function Pricing() {
               </AlertWithIcon>
             )}
             {appliesForDiscount && (
-              <AlertWithIcon
-                maw={650}
-                mx="auto"
-                icon={<IconHeart size={20} />}
-                iconSize={28}
-                py={4}
-                miw="calc(50% - 8px)"
-              >
-                <Stack spacing={0}>
-                  <Text color="blue" weight="bold">
-                    Supporter Discount
-                  </Text>
-                  <Text>
-                    Get {constants.memberships.discountPercent}% off your first month! Offer ends{' '}
-                    {formatDate(constants.memberships.maxDiscountDate)}.
-                  </Text>
-                </Stack>
-              </AlertWithIcon>
+              <Alert maw={650} mx="auto" py={4} miw="calc(50% - 8px)" pl="sm">
+                <Group spacing="xs">
+                  <EdgeMedia src="df2b3298-7352-40d6-9fbc-17a08e2a43c5" width={48} />
+                  <Stack spacing={0}>
+                    <Text color="blue" weight="bold">
+                      Supporter Offer!
+                    </Text>
+                    <Text>
+                      Get {constants.memberships.founderDiscount.discountPercent}% off your first
+                      month and get a special badge! Offer ends{' '}
+                      {formatDate(constants.memberships.founderDiscount.maxDiscountDate)}.
+                    </Text>
+                  </Stack>
+                </Group>
+              </Alert>
             )}
           </Group>
 

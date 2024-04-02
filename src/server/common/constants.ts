@@ -288,8 +288,11 @@ export const constants = {
       silver: '5844e919-31e3-4dd7-a3c3-f5affdc7af7a',
       gold: '5844e919-31e3-4dd7-a3c3-f5affdc7af7a',
     },
-    maxDiscountDate: new Date('2024-05-01T00:00:00Z'),
-    discountPercent: 50,
+    founderDiscount: {
+      maxDiscountDate: new Date('2024-05-01T00:00:00Z'),
+      discountPercent: 50,
+      tier: 'founder',
+    },
   },
   freeMembershipDetails: {
     name: 'Free',

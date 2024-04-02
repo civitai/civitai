@@ -183,9 +183,9 @@ export const createSubscribeSession = async ({
 
     const isActivePrice = subscriptionItem.price.id === price.id;
     if (!isActivePrice) {
-      console.log(membershipProduct, subscriptionItem);
-      const isFounder = (membershipProduct?.metadata as Schema.ProductMetadata)?.tier === 'founder';
-      console.log(isFounder);
+      const isFounder =
+        (membershipProduct?.metadata as Schema.ProductMetadata)?.tier ===
+        constants.memberships.founderDiscount.tier;
 
       const { url } = await createSubscriptionChangeSession({
         customerId,
@@ -287,11 +287,11 @@ export const createSubscriptionChangeSession = async ({
   const stripe = await getServerStripe();
   const discounts = [];
 
-  if (isFounder && new Date() < constants.memberships.maxDiscountDate) {
+  if (isFounder && new Date() < constants.memberships.founderDiscount.maxDiscountDate) {
     // Create a custom discount for founders to get $5 off
     const coupon = await stripe.coupons.create({
       duration: 'once',
-      percent_off: constants.memberships.discountPercent,
+      percent_off: constants.memberships.founderDiscount.discountPercent,
       max_redemptions: 1,
       metadata: {
         customerId,

@@ -1,6 +1,7 @@
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';
 import { ProductMetadata } from '~/server/schema/stripe.schema';
+import { UserTier } from '~/server/schema/user.schema';
 import { trpc } from '~/utils/trpc';
 
 export const useActiveSubscription = () => {
@@ -39,9 +40,11 @@ export const useCanUpgrade = () => {
   );
 };
 
-export const appliesForFounderDiscount = (tier?: UserTier) => {
+export const appliesForFounderDiscount = (tier?: string) => {
   const appliesForDiscount =
-    !!tier && tier === 'silver' && new Date() < constants.memberships.maxDiscountDate;
+    !!tier &&
+    tier === constants.memberships.founderDiscount.tier &&
+    new Date() < constants.memberships.founderDiscount.maxDiscountDate;
 
   return appliesForDiscount;
 };
