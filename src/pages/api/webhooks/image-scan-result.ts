@@ -55,6 +55,7 @@ const schema = z.object({
   context: z
     .object({
       movie_rating: z.string().optional(),
+      movie_rating_model_id: z.string().optional(),
     })
     .nullish(),
 });
@@ -140,12 +141,16 @@ async function handleSuccess({ id, tags: incomingTags = [], source, context }: B
 
   // Add to scanJobs and update aiRating
   let aiRating: NsfwLevel | undefined;
-  if (source === TagSource.WD14 && !!context?.movie_rating)
+  let aiModel: string | undefined;
+  console.log('context', context);
+  if (source === TagSource.WD14 && !!context?.movie_rating) {
     aiRating = NsfwLevel[context.movie_rating as keyof typeof NsfwLevel];
+    aiModel = context.movie_rating_model_id;
+  }
   await dbWrite.$executeRawUnsafe(`
     UPDATE "Image" SET
       "scanJobs" = jsonb_set(COALESCE("scanJobs", '{}'), '{scans}', COALESCE("scanJobs"->'scans', '{}') || '{"${source}": ${Date.now()}}'::jsonb)
-      ${aiRating ? `, "aiNsfwLevel" = ${aiRating}` : ''}
+      ${aiRating ? `, "aiNsfwLevel" = ${aiRating}, "aiModel" = '${aiModel}'` : ''}
     WHERE id = ${id};
   `);
 
