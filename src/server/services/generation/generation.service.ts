@@ -736,9 +736,9 @@ export const createGenerationRequest = async ({
   // console.log(JSON.stringify(generationRequest));
   // console.log('________');
 
-  const chargesEnabled = status.chargesEnabled;
+  const charge = status.charge;
   const response = await fetch(
-    `${env.SCHEDULER_ENDPOINT}/requests${chargesEnabled ? '?charge=true' : ''}`,
+    `${env.SCHEDULER_ENDPOINT}/requests${charge ? '?charge=true' : ''}`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

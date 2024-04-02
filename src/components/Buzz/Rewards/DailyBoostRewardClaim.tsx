@@ -19,7 +19,7 @@ export const DailyBoostRewardClaim = () => {
   });
   const status = useGenerationStatus();
 
-  if (!currentUser || loadingRewards || !status?.chargesEnabled) {
+  if (!currentUser || loadingRewards || !status?.charge) {
     return null;
   }
 
