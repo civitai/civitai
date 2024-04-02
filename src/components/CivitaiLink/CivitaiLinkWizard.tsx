@@ -5,12 +5,9 @@ import {
   Button,
   Text,
   List,
-  Alert,
   CopyButton,
-  Center,
   Loader,
   Tooltip,
-  Box,
   Title,
   Divider,
   Tabs,
@@ -39,7 +36,7 @@ const { openModal, Modal } = createContextModal({
   size: 800,
   // withCloseButton: false,
   // closeOnClickOutside: false,
-  Element: ({ context, props }) => {
+  Element: ({ context }) => {
     const [active, setActive] = useState(0);
     const nextStep = () => setActive((current) => (current < 2 ? current + 1 : current));
     const prevStep = () => setActive((current) => (current > 0 ? current - 1 : current));
@@ -89,6 +86,7 @@ const { openModal, Modal } = createContextModal({
               <PlanBenefitList
                 benefits={[
                   { content: 'Add & remove resources' },
+                  { content: 'Add & remove vault resources' },
                   {
                     content: 'Generate images (coming soon)',
                     icon: <IconClock size={18} />,
@@ -125,14 +123,17 @@ const { openModal, Modal } = createContextModal({
                       <Text
                         component="a"
                         variant="link"
-                        href="/github/wiki/Civitai-Link-Integration"
+                        href="https://github.com/comfyanonymous/ComfyUI"
                         target="_blank"
+                        rel="nofollow noreferrer"
                       >
-                        Integrate your favorite UI...
+                        ComfyUI
                       </Text>
                     ),
+                  },
+                  {
+                    content: <Text>Connect any models folder</Text>,
                     icon: <IconCirclePlus size={18} />,
-                    iconColor: 'yellow',
                   },
                 ]}
               />
