@@ -241,6 +241,7 @@ export default function Home() {
 
                       <ModelsInfinite
                         showAds
+                        disableStoreFilters
                         filters={{
                           // excludedImageTagIds: homeExcludedTags.map((tag) => tag.id),
                           excludedTagIds: homeExcludedTags.map((tag) => tag.id),
