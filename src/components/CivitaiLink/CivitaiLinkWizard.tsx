@@ -10,9 +10,8 @@ import {
   Tooltip,
   Title,
   Divider,
-  Tabs,
-  Code,
   AspectRatio,
+  Flex,
 } from '@mantine/core';
 import { openContextModal } from '@mantine/modals';
 import {
@@ -21,14 +20,13 @@ import {
   IconCirclePlus,
   IconClock,
   IconCopy,
-  IconPlayerPlay,
 } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
-import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useCivitaiLink } from '~/components/CivitaiLink/CivitaiLinkProvider';
 import { createContextModal } from '~/components/Modals/utils/createContextModal';
 import { PlanBenefitList } from '~/components/Stripe/PlanBenefitList';
 import { YoutubeEmbed } from '~/components/YoutubeEmbed/YoutubeEmbed';
+import { NextLink } from '@mantine/next';
 
 const { openModal, Modal } = createContextModal({
   name: 'civitai-link-wizard',
@@ -146,114 +144,29 @@ const { openModal, Modal } = createContextModal({
             </Group>
           </Stack>
         </Stepper.Step>
-        <Stepper.Step label="Prepare SD" description="Add the extension">
+        <Stepper.Step label="Install Link App" description="Install the Link application">
           <Stack mt="sm">
             <Stack spacing={4}>
               <Title order={3} mb={0} sx={{ lineHeight: 1 }}>
-                Prepare Stable Diffusion for Civitai Link
+                Download the Link desktop application
               </Title>
               <Text mb="md" color="dimmed">
-                Select your Stable Diffusion UI below for installation instructions
+                Run the installer and head to the next step to get a Link key.
               </Text>
-              <Tabs variant="outline" defaultValue="automatic">
-                <Tabs.List>
-                  <Tabs.Tab value="automatic">Automatic 1111</Tabs.Tab>
-                  <Tabs.Tab value="other">Other</Tabs.Tab>
-                </Tabs.List>
-                <Tabs.Panel value="automatic" pt="md">
-                  <AlertWithIcon
-                    py={5}
-                    mb="xs"
-                    size="sm"
-                    title="Prefer video instructions?"
-                    icon={<IconPlayerPlay />}
-                    iconSize="lg"
-                  >
-                    {`We've got you covered! Check out `}
-                    <Text
-                      component="a"
-                      variant="link"
-                      href="https://youtu.be/fs-Zs-fvxb0"
-                      target="_blank"
-                      rel="nofollow noreferrer"
-                    >
-                      our video guide
-                    </Text>
-                    .
-                  </AlertWithIcon>
-
-                  <List type="ordered">
-                    <List.Item>Ensure Automatic 1111 is up to date</List.Item>
-                    <List.Item>Start Automatic 1111 Stable Diffusion Web UI</List.Item>
-                    <List.Item>
-                      Open the{' '}
-                      <Text component="span" td="underline">
-                        Extensions
-                      </Text>{' '}
-                      tab
-                    </List.Item>
-                    <List.Item>
-                      In the{' '}
-                      <Text component="span" td="underline">
-                        Extensions
-                      </Text>{' '}
-                      tab, open the{' '}
-                      <Text component="span" td="underline">
-                        Install From URL
-                      </Text>{' '}
-                      tab
-                    </List.Item>
-                    <List.Item>
-                      Paste the following URL into the{' '}
-                      <Text td="underline" component="span">
-                        URL
-                      </Text>{' '}
-                      field:{' '}
-                      <CopyButton value="https://github.com/civitai/sd_civitai_extension">
-                        {({ copied, copy }) => (
-                          <Code
-                            py={4}
-                            sx={{ cursor: 'pointer' }}
-                            block
-                            onClick={() => copy()}
-                            color={copied ? 'teal' : undefined}
-                          >
-                            <Group>
-                              https://github.com/civitai/sd_civitai_extension
-                              {copied ? <IconCheck size={14} /> : <IconCopy size={14} />}
-                            </Group>
-                          </Code>
-                        )}
-                      </CopyButton>
-                    </List.Item>
-                    <List.Item>
-                      Press the{' '}
-                      <Text component="span" td="underline">
-                        Install
-                      </Text>{' '}
-                      button
-                    </List.Item>
-                    <List.Item>After installation, restart* the Stable Diffusion Web UI</List.Item>
-                  </List>
-                  <Text color="dimmed" size="xs">
-                    *Be sure to restart so that the installation script can run.
-                  </Text>
-                </Tabs.Panel>
-                <Tabs.Panel value="other" pt="md">
-                  <Text>
-                    {`Don't see your preferred Stable Diffusion UI or service on this list? Contact the developer and ask them to `}
-                    <Text
-                      component="a"
-                      variant="link"
-                      href="/github/wiki/Civitai-Link-Integration"
-                      target="_blank"
-                    >
-                      Integrate Civitai Link
-                    </Text>
-                    .
-                  </Text>
-                </Tabs.Panel>
-              </Tabs>
+              <Flex justify="center" w="100%">
+                <Button
+                  variant="filled"
+                  color="blue"
+                  size="lg"
+                  radius="xl"
+                  my={40}
+                  component={NextLink}
+                  href="https://github.com/civitai/civitai-link-desktop/releases/latest"
+                  rel="nofollow noreferrer"
+                >
+                  Download the Link App
+                </Button>
+              </Flex>
             </Stack>
             <Group position="apart" mt="xl">
               <Button variant="default" onClick={prevStep}>
@@ -266,41 +179,16 @@ const { openModal, Modal } = createContextModal({
             </Group>
           </Stack>
         </Stepper.Step>
-        <Stepper.Step label="Connect SD" description="Link your account">
+        <Stepper.Step label="Connect Link App" description="Link your account">
           <Stack mt="sm">
             <Stack spacing={4}>
               <Title order={3} mb={0} sx={{ lineHeight: 1 }}>
                 Link your account
               </Title>
               <Text mb="md" color="dimmed">
-                Time to connect your Stable Diffusion instance to your Civitai Account.
+                In your Link application, paste the code below to link your account and finish the
+                setup.
               </Text>
-              <List type="ordered">
-                <List.Item>
-                  In your{' '}
-                  <Text td="underline" component="span">
-                    SD Settings
-                  </Text>
-                  , open the{' '}
-                  <Text td="underline" component="span">
-                    Civitai
-                  </Text>{' '}
-                  tab
-                </List.Item>
-                <List.Item>
-                  Paste the Link Key below into the{' '}
-                  <Text td="underline" component="span">
-                    Link Key
-                  </Text>{' '}
-                  field
-                </List.Item>
-                <List.Item>
-                  <Text td="underline" component="span">
-                    Save
-                  </Text>{' '}
-                  your settings
-                </List.Item>
-              </List>
               <Stack align="center" spacing={5} my="lg">
                 <Title order={4}>Link Key</Title>
                 {instance?.key ? (
