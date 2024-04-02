@@ -24,7 +24,7 @@ const useStyles = createStyles((theme) => ({
   iconWrapper: { display: 'none' },
 }));
 
-export function PresetOptions({ options, ...chipGroupProps }: Props) {
+export function PresetOptions({ options, disabled, ...chipGroupProps }: Props) {
   const { classes } = useStyles();
 
   if (options.length === 0) return null;
@@ -32,7 +32,7 @@ export function PresetOptions({ options, ...chipGroupProps }: Props) {
   return (
     <Chip.Group {...chipGroupProps} multiple={false} spacing={4}>
       {options.map(({ label, ...chipProps }, index) => (
-        <Chip {...chipProps} key={index} classNames={classes} radius="sm" variant="filled">
+        <Chip {...chipProps} key={index} classNames={classes} radius="sm" variant="filled" disabled>
           {label}
         </Chip>
       ))}
@@ -42,4 +42,5 @@ export function PresetOptions({ options, ...chipGroupProps }: Props) {
 
 export type Props = Omit<ChipGroupProps, 'children'> & {
   options: Array<Omit<ChipProps, 'children' | 'onChange'> & { label: string }>;
+  disabled?: boolean;
 };

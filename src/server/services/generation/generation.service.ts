@@ -444,7 +444,7 @@ export const createGenerationRequest = async ({
   userTier,
   isModerator,
   resources,
-  params: { nsfw, negativePrompt, ...params },
+  params: { nsfw, negativePrompt, draft, ...params },
 }: CreateGenerationRequestInput & {
   userId: number;
   userTier?: UserTier;
@@ -485,6 +485,23 @@ export const createGenerationRequest = async ({
   if (!resources || resources.length === 0) throw throwBadRequestError('No resources provided');
   if (resources.length > 10) throw throwBadRequestError('Too many resources provided');
 
+  // Handle Draft Mode
+  const isSDXL = params.baseModel === 'SDXL' || params.baseModel === 'Pony';
+  if (draft) {
+    // Fix quantity
+    if (params.quantity % 4 !== 0) params.quantity = Math.ceil(params.quantity / 4) * 4;
+    // Fix other params
+    params.steps = isSDXL ? 4 : 6;
+    params.cfgScale = 1;
+    params.sampler = isSDXL ? 'Euler' : 'LCM';
+    // Add speed up resources
+    resources.push({
+      modelType: ModelType.LORA,
+      strength: 1,
+      id: isSDXL ? 391971 : 424706,
+    });
+  }
+
   const resourceData = await getResourceData(resources.map((x) => x.id));
   const allResourcesAvailable = resourceData.every((x) => !!x.generationCoverage?.covered);
   if (!allResourcesAvailable)
@@ -494,7 +511,6 @@ export const createGenerationRequest = async ({
   if (!access)
     throw throwAuthorizationError('You do not have access to some of the selected resources');
 
-  const isSDXL = params.baseModel === 'SDXL' || params.baseModel === 'Pony';
   const checkpoint = resources.find((x) => x.modelType === ModelType.Checkpoint);
   if (!checkpoint)
     throw throwBadRequestError('A checkpoint is required to make a generation request');
@@ -585,6 +601,8 @@ export const createGenerationRequest = async ({
       model: `@civitai/${checkpoint.id}`,
       baseModel: baseModelToOrchestration[params.baseModel as BaseModelSetType],
       quantity: params.quantity,
+      sequential: draft ? true : false,
+      providers: draft ? ['ValdiAI'] : undefined,
       additionalNetworks,
       params: {
         prompt: positivePrompts.join(', '),

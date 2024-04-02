@@ -26,6 +26,7 @@ export function SelectWrapper<T extends string | number>({
   onChange,
   presets,
   label,
+  disabled,
   ...props
 }: SelectWrapperProps<T>) {
   const initialType =
@@ -72,11 +73,13 @@ export function SelectWrapper<T extends string | number>({
       defaultValue={parsedDefaultValue}
       rightSection={loading ? <Loader size={16} /> : null}
       styles={{ label: hasPresets ? { width: '100%', marginBottom: 5 } : undefined }}
+      disabled={disabled}
       label={
         hasPresets ? (
           <Group spacing={8} position="apart" noWrap>
             {label}
             <PresetOptions
+              disabled={disabled}
               color="blue"
               options={presets}
               value={selectedPreset}
