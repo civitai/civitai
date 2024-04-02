@@ -49,6 +49,8 @@ import { AlertDialog } from '../Dialog/Common/AlertDialog';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { useUserMultipliers } from '~/components/Buzz/useBuzz';
 import { MembershipUpsell } from '~/components/Stripe/MembershipUpsell';
+import { BuzzPurchaseMultiplierFeature } from '~/components/Stripe/SubscriptionFeature';
+import { useCanUpgrade } from '~/components/Stripe/memberships.util';
 
 const useStyles = createStyles((theme) => ({
   chipGroup: {
@@ -142,6 +144,7 @@ export const BuzzPurchase = ({
 }: Props) => {
   const { classes, cx, theme } = useStyles();
   const isMobile = useIsMobile();
+  const canUpgradeMembership = useCanUpgrade();
 
   const currentUser = useCurrentUser();
   const [selectedPrice, setSelectedPrice] = useState<SelectablePackage | null>(null);
@@ -289,7 +292,7 @@ export const BuzzPurchase = ({
 
   return (
     <Grid>
-      <Grid.Col span={12} md={6}>
+      <Grid.Col span={12} md={canUpgradeMembership ? 6 : 12}>
         <Stack spacing="md">
           {message && (
             <AlertWithIcon icon={<IconInfoCircle />} iconSize="md" size="md">
@@ -442,7 +445,8 @@ export const BuzzPurchase = ({
             </Input.Wrapper>
           )}
           <Stack spacing="md" mt="md">
-            <Group spacing="xs">
+            {buzzAmount && <BuzzPurchaseMultiplierFeature buzzAmount={buzzAmount} />}
+            <Group spacing="xs" mt="md">
               <Button disabled={!ctaEnabled} onClick={handleSubmit} radius="xl">
                 Pay Now {!!unitAmount ? `- $${formatCurrencyForDisplay(unitAmount)}` : ''}
               </Button>
@@ -478,9 +482,11 @@ export const BuzzPurchase = ({
           />
         </Stack>
       </Grid.Col>
-      <Grid.Col span={12} md={6}>
-        {buzzAmount > 0 && <MembershipUpsell buzzAmount={buzzAmount} />}
-      </Grid.Col>
+      {canUpgradeMembership && (
+        <Grid.Col span={12} md={6}>
+          {buzzAmount > 0 && <MembershipUpsell buzzAmount={buzzAmount} />}
+        </Grid.Col>
+      )}
     </Grid>
   );
 };

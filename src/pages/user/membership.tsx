@@ -31,6 +31,7 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { CancelMembershipFeedbackModal } from '~/components/Stripe/MembershipChangePrevention';
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
 import { ManageSubscriptionButton } from '~/components/Stripe/ManageSubscriptionButton';
+import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -68,10 +69,10 @@ const useStyles = createStyles((theme) => ({
 
 export default function UserMembership() {
   const { classes, theme } = useStyles();
-  const { data: subscription, isLoading } = trpc.stripe.getUserSubscription.useQuery();
+  const { subscription, subscriptionLoading } = useActiveSubscription();
   const features = useFeatureFlags();
 
-  if (isLoading || !subscription) {
+  if (subscriptionLoading || !subscription) {
     return (
       <Container size="lg">
         <Center>

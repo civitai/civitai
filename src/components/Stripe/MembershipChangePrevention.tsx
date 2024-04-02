@@ -18,6 +18,7 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { PlanBenefitList } from '~/components/Stripe/PlanBenefitList';
 import { getPlanDetails } from '~/components/Stripe/PlanCard';
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
+import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { useTrackEvent } from '~/components/TrackView/track.utils';
 import { useQueryVault, useQueryVaultItems } from '~/components/Vault/vault.util';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -184,8 +185,7 @@ export const CancelMembershipBenefitsModal = () => {
   const dialog = useDialogContext();
   const handleClose = dialog.onClose;
   const { vault, isLoading: vaultLoading } = useQueryVault();
-  const { data: subscription, isLoading: subscriptionLoading } =
-    trpc.stripe.getUserSubscription.useQuery();
+  const { subscription, subscriptionLoading } = useActiveSubscription();
   const { mutate, isLoading: connectingToStripe } =
     trpc.stripe.createCancelSubscriptionSession.useMutation({
       async onSuccess({ url }) {
@@ -258,9 +258,7 @@ export const VaultStorageDowngrade = ({
   const handleClose = dialog.onClose;
   const { vault, isLoading: vaultLoading } = useQueryVault();
   const { items, isLoading: loadingVaultItems, pagination } = useQueryVaultItems();
-  const { data: subscription, isLoading: subscriptionLoading } =
-    trpc.stripe.getUserSubscription.useQuery();
-
+  const { subscription, subscriptionLoading } = useActiveSubscription();
   const product = subscription?.product;
   const shownItems = items.filter((i) => !!i.coverImageUrl).slice(0, 3);
 

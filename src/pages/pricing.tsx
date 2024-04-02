@@ -36,6 +36,7 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NextLink } from '@mantine/next';
 import { constants } from '~/server/common/constants';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 
 export default function Pricing() {
   const router = useRouter();
@@ -48,8 +49,7 @@ export default function Pricing() {
   const redirectReason = joinRedirectReasons[reason];
 
   const { data: products, isLoading: productsLoading } = trpc.stripe.getPlans.useQuery();
-  const { data: subscription, isLoading: subscriptionLoading } =
-    trpc.stripe.getUserSubscription.useQuery();
+  const { subscription, subscriptionLoading } = useActiveSubscription();
 
   const isLoading = productsLoading || subscriptionLoading;
   const currentMembershipUnavailable =

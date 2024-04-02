@@ -7,13 +7,15 @@ import {
   Button,
   Anchor,
   Badge,
-  Alert,
+  Loader,
+  Center,
 } from '@mantine/core';
-import { IconBolt, IconCheck, IconDiscount2 } from '@tabler/icons-react';
+import { IconCheck, IconDiscount2 } from '@tabler/icons-react';
 import { capitalize } from 'lodash';
-import { useUserMultipliers } from '~/components/Buzz/useBuzz';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { getPlanDetails } from '~/components/Stripe/PlanCard';
+import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
+import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
@@ -25,7 +27,7 @@ const useStyles = createStyles((theme) => ({
   card: {
     backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[0],
     width: '100%',
-    maxHeight: '100%',
+    height: '100%',
     margin: 0,
     padding: theme.spacing.md,
     borderRadius: theme.radius.md,
@@ -60,117 +62,86 @@ export const MembershipUpsell = ({ buzzAmount }: { buzzAmount: number }) => {
       enabled: !!currentUser,
     }
   );
-  const { data: subscription, isLoading: subscriptionLoading } =
-    trpc.stripe.getUserSubscription.useQuery(undefined, {
-      enabled: !!currentUser,
-    });
-  const { multipliers, multipliersLoading } = useUserMultipliers();
-  const isMember = currentUser?.isMember;
-  const purchasesMultiplier = multipliers.purchasesMultiplier ?? 1;
 
-  if (productsLoading || subscriptionLoading || !currentUser || multipliersLoading) {
-    return null;
+  const { subscription, subscriptionLoading } = useActiveSubscription();
+
+  if (productsLoading || subscriptionLoading || !currentUser) {
+    return (
+      <Paper className={classes.card}>
+        <Center w="100%">
+          <Loader variant="bars" />
+        </Center>
+      </Paper>
+    );
   }
 
+  const subscriptionMetadata = subscription?.product?.metadata as ProductMetadata;
+
   const targetPlan = products.find((product) => {
-    const metadata = (product?.metadata ?? {}) as ProductMetadata;
-    return metadata.monthlyBuzz >= buzzAmount;
+    const metadata = (product?.metadata ?? { monthlyBuzz: 0, tier: 'free' }) as ProductMetadata;
+    if (
+      subscription &&
+      subscriptionMetadata &&
+      constants.memberships.tierOrder.indexOf(subscriptionMetadata.tier) >=
+        constants.memberships.tierOrder.indexOf(metadata.tier)
+    ) {
+      return false;
+    }
+
+    return (metadata.monthlyBuzz ?? 0) >= buzzAmount;
   });
 
   if (!targetPlan) {
     return null;
   }
 
-  if (
-    subscription &&
-    constants.memberships.tierOrder.indexOf(subscription.product.metadata.tier) >=
-      constants.memberships.tierOrder.indexOf(targetPlan.metadata.tier)
-  ) {
-    return (
-      <Stack>
-        {purchasesMultiplier > 1 && (
-          <Alert color="yellow" title="Your membership gets you more!" icon={<IconBolt />}>
-            <Text>
-              Thanks to your membership you will get an extra{' '}
-              <Text component="span" weight="bold">
-                {numberWithCommas(Math.floor(buzzAmount * purchasesMultiplier - buzzAmount))} Buzz
-              </Text>{' '}
-              for a total of{' '}
-              <Text component="span" weight="bold">
-                {numberWithCommas(Math.floor(buzzAmount * purchasesMultiplier))} Buzz
-              </Text>{' '}
-              for the same price!
-            </Text>
-          </Alert>
-        )}
-      </Stack>
-    );
-  }
-
+  const metadata = (targetPlan.metadata ?? {}) as ProductMetadata;
   const { image, benefits } = getPlanDetails(targetPlan, featureFlags);
-  const targetTier = targetPlan.metadata.tier ?? 'free';
-  const monthlyBuzz = targetPlan.metadata.monthlyBuzz ?? 0;
+
+  const targetTier = metadata.tier ?? 'free';
+  const monthlyBuzz = metadata.monthlyBuzz ?? 0;
   const unitAmount = targetPlan.price.unitAmount ?? 0;
+  const priceId = targetPlan.defaultPriceId ?? '';
 
   return (
-    <Stack>
-      <Paper className={classes.card}>
-        <Stack h="100%">
-          <Badge variant="light" size="sm" color="green" ml="auto">
-            <Group spacing={4}>
-              <IconDiscount2 size={13} />
-              <Text>SAVE MORE</Text>
+    <Paper className={classes.card}>
+      <Stack h="100%">
+        <Badge variant="light" size="sm" color="green" ml="auto">
+          <Group spacing={4}>
+            <IconDiscount2 size={13} />
+            <Text>SAVE MORE</Text>
+          </Group>
+        </Badge>
+        {image && <EdgeMedia src={image} width={80} />}
+        <Stack spacing={0}>
+          <Text className={classes.title}>{capitalize(targetTier)} membership</Text>
+          <Text color="yellow.7" className={classes.subtitle}>
+            ${formatPriceForDisplay(unitAmount)} can get you a lot more than{' '}
+            {numberWithCommas(monthlyBuzz)} Buzz:
+          </Text>
+        </Stack>
+        <Stack spacing={4}>
+          {benefits.map((benefit, index) => (
+            <Group spacing="xs" key={index} noWrap>
+              <IconCheck size={18} />
+              <Text key={index} className={classes.listItem} color="faded">
+                {benefit.content}
+              </Text>
             </Group>
-          </Badge>
-          {image && <EdgeMedia src={image} width={80} />}
-          <Stack spacing={0}>
-            <Text className={classes.title}>{capitalize(targetTier)} membership</Text>
-            <Text color="yellow.7" className={classes.subtitle}>
-              ${formatPriceForDisplay(unitAmount)} can get you a lot more than{' '}
-              {numberWithCommas(monthlyBuzz)} Buzz:
-            </Text>
-          </Stack>
-          <Stack spacing={4}>
-            {benefits.map((benefit, index) => (
-              <Group spacing="xs" key={index} noWrap>
-                <IconCheck size={18} />
-                <Text key={index} className={classes.listItem} color="faded">
-                  {benefit.content}
-                </Text>
-              </Group>
-            ))}
-          </Stack>
-          <div>
+          ))}
+        </Stack>
+        <div>
+          <SubscribeButton priceId={priceId}>
             <Button radius="xl" size="md">
               Get {capitalize(targetTier)} - ${formatPriceForDisplay(unitAmount)}
               /Month
             </Button>
-          </div>
-          <Text mt="auto" size="sm">
-            Cancel for free anytime. <Anchor href="/pricing">Learn more</Anchor>
-          </Text>
-        </Stack>
-      </Paper>
-      {purchasesMultiplier > 1 && (
-        <Alert
-          color="yellow"
-          title="Your membership gets you more!"
-          radius="md"
-          icon={<IconBolt />}
-        >
-          <Text>
-            Thanks to your membership you will get an extra{' '}
-            <Text component="span" weight="bold">
-              {numberWithCommas(Math.floor(buzzAmount * purchasesMultiplier - buzzAmount))} Buzz
-            </Text>{' '}
-            for a total of{' '}
-            <Text component="span" weight="bold">
-              {numberWithCommas(Math.floor(buzzAmount * purchasesMultiplier))} Buzz
-            </Text>{' '}
-            for the same price!
-          </Text>
-        </Alert>
-      )}
-    </Stack>
+          </SubscribeButton>
+        </div>
+        <Text mt="auto" size="sm">
+          Cancel for free anytime. <Anchor href="/pricing">Learn more</Anchor>
+        </Text>
+      </Stack>
+    </Paper>
   );
 };

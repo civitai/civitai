@@ -6,18 +6,20 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { CancelMembershipFeedbackModal } from '~/components/Stripe/MembershipChangePrevention';
 import { getPlanDetails } from '~/components/Stripe/PlanCard';
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
+import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { shortenPlanInterval } from '~/components/Stripe/stripe.utils';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { formatDate } from '~/utils/date-helpers';
 import { getStripeCurrencyDisplay } from '~/utils/string-helpers';
-import { trpc } from '~/utils/trpc';
 
 export function SubscriptionCard() {
-  const { data, isLoading } = trpc.stripe.getUserSubscription.useQuery();
+  const { subscription, subscriptionLoading } = useActiveSubscription();
   const features = useFeatureFlags();
-  const price = data?.price;
-  const product = data?.product;
-  const { image } = data ? getPlanDetails(data?.product, features) : { image: null };
+  const price = subscription?.price;
+  const product = subscription?.product;
+  const { image } = subscription
+    ? getPlanDetails(subscription?.product, features)
+    : { image: null };
 
   return (
     <Card withBorder>
@@ -26,8 +28,8 @@ export function SubscriptionCard() {
           <Title id="manage-subscription" order={2}>
             Membership
           </Title>
-          {data?.canceledAt ? (
-            <SubscribeButton priceId={data?.price.id}>
+          {subscription?.canceledAt ? (
+            <SubscribeButton priceId={subscription?.price.id}>
               <Button compact radius="xl" rightIcon={<IconRotateClockwise size={16} />}>
                 Resume
               </Button>
@@ -45,11 +47,11 @@ export function SubscriptionCard() {
             </Button>
           )}
         </Group>
-        {isLoading ? (
+        {subscriptionLoading ? (
           <Center p="xl">
             <Loader />
           </Center>
-        ) : data ? (
+        ) : subscription ? (
           <Group position="apart">
             <Group noWrap>
               {image && (
@@ -70,7 +72,8 @@ export function SubscriptionCard() {
                 </Text>
               )}
               <Text size="sm" color="dimmed">
-                {data.cancelAtPeriodEnd ? 'Ends' : 'Renews'} {formatDate(data.currentPeriodEnd)}
+                {subscription.cancelAtPeriodEnd ? 'Ends' : 'Renews'}{' '}
+                {formatDate(subscription.currentPeriodEnd)}
               </Text>
             </Stack>
           </Group>
