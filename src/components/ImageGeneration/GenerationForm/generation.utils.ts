@@ -150,6 +150,7 @@ export const useEstimateTextToImageJobCost = () => {
     debouncedGenerationForm.sampler,
     debouncedGenerationForm.vae,
     status.chargesEnabled,
+    debouncedGenerationForm.draft,
     /* eslint-enable react-hooks/exhaustive-deps */
   ]);
 

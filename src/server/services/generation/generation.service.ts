@@ -442,7 +442,7 @@ const generationLimiter = createLimiter({
 export const prepareGenerationInput = async ({
   userId,
   resources,
-  params: { nsfw, negativePrompt, ...params },
+  params: { nsfw, negativePrompt, draft, ...params },
 }: CreateGenerationRequestInput & {
   userId: number;
 }) => {
@@ -505,6 +505,22 @@ export const prepareGenerationInput = async ({
 
   if (!checkpoint)
     throw throwBadRequestError('A checkpoint is required to make a generation request');
+
+  const isSDXL = params.baseModel === 'SDXL' || params.baseModel === 'Pony';
+  if (draft) {
+    // Fix quantity
+    if (params.quantity % 4 !== 0) params.quantity = Math.ceil(params.quantity / 4) * 4;
+    // Fix other params
+    params.steps = isSDXL ? 4 : 6;
+    params.cfgScale = 1;
+    params.sampler = isSDXL ? 'Euler' : 'LCM';
+    // Add speed up resources
+    resources.push({
+      modelType: ModelType.LORA,
+      strength: 1,
+      id: isSDXL ? 391971 : 424706,
+    });
+  }
 
   const generationRequest = {
     userId,
