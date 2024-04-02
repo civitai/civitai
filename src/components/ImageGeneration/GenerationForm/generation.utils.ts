@@ -163,10 +163,12 @@ export const useEstimateTextToImageJobCost = () => {
   );
 
   const totalCost = status.charge
-    ? (result?.jobs ?? []).reduce((acc, job) => {
-        acc += Math.ceil(job.cost);
-        return acc;
-      }, 0)
+    ? Math.ceil(
+        (result?.jobs ?? []).reduce((acc, job) => {
+          acc += job.cost;
+          return acc;
+        }, 0)
+      )
     : 0;
 
   return {
