@@ -122,7 +122,7 @@ import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
   useSession: true,
-  resolver: async ({ ssg, ctx }) => {
+  resolver: async ({ ssg, ctx, session }) => {
     const params = (ctx.params ?? {}) as {
       id: string;
       slug: string[];
@@ -164,8 +164,10 @@ export const getServerSideProps = createServerSideProps({
         await ssg.generation.checkResourcesCoverage.prefetch({ id: modelVersionIdParsed });
       }
       await ssg.model.getById.prefetch({ id });
-      await ssg.user.getEngagedModelVersions.prefetch({ id });
-      await ssg.resourceReview.getUserResourceReview.prefetch({ modelId: id });
+      if (session) {
+        await ssg.user.getEngagedModelVersions.prefetch({ id });
+        await ssg.resourceReview.getUserResourceReview.prefetch({ modelId: id });
+      }
     }
 
     return {
