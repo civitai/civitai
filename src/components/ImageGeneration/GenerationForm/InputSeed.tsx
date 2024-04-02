@@ -9,9 +9,10 @@ type Props = {
   onChange?: (value?: number) => void;
   min: number;
   max: number;
+  disabled?: boolean;
 } & Omit<InputWrapperProps, 'children'>;
 
-function SeedInput({ value, onChange, min, max, ...inputWrapperProps }: Props) {
+function SeedInput({ value, onChange, min, max, disabled, ...inputWrapperProps }: Props) {
   const [control, setControl] = useState(value ? 'custom' : 'random');
 
   const previousControl = usePrevious(control);
@@ -36,6 +37,7 @@ function SeedInput({ value, onChange, min, max, ...inputWrapperProps }: Props) {
             { label: 'Random', value: 'random' },
             { label: 'Custom', value: 'custom' },
           ]}
+          disabled={disabled}
         />
         <NumberInputWrapper
           value={value}
@@ -47,6 +49,7 @@ function SeedInput({ value, onChange, min, max, ...inputWrapperProps }: Props) {
           sx={{ flex: 1 }}
           hideControls
           format="default"
+          disabled={disabled}
         />
       </Group>
     </Input.Wrapper>

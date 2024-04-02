@@ -15,6 +15,7 @@ function ResourceSelect({
   options = {},
   allowRemove = true,
   isTraining = false,
+  disabled,
   ...inputWrapperProps
 }: {
   value?: Generation.Resource;
@@ -24,7 +25,7 @@ function ResourceSelect({
   options?: ResourceSelectOptions;
   allowRemove?: boolean;
   isTraining?: boolean;
-} & Omit<InputWrapperProps, 'children'>) {
+} & Omit<InputWrapperProps, 'children'> & { disabled?: boolean }) {
   const types = options.resources?.map((x) => x.type);
   const _value = types && value && !types.includes(value.modelType) ? undefined : value;
 
@@ -63,6 +64,7 @@ function ResourceSelect({
             leftIcon={<IconPlus size={18} />}
             fullWidth
             onClick={handleOpenResourceSearch}
+            disabled={disabled}
             {...buttonProps}
           >
             {buttonLabel}

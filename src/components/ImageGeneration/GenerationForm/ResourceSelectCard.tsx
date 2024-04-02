@@ -8,6 +8,8 @@ import {
   Stack,
   Text,
   ThemeIcon,
+  Overlay,
+  useMantineTheme,
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { ModelType } from '@prisma/client';
@@ -23,12 +25,26 @@ type Props = {
   onUpdate?: (value: GenerationResourceSchema) => void;
   onRemove?: (id: number) => void;
   onSwap?: VoidFunction;
+  disabled?: boolean;
 };
 
 export const ResourceSelectCard = (props: Props) => {
   const isCheckpoint = props.resource.modelType === ModelType.Checkpoint;
+  const theme = useMantineTheme();
 
-  return isCheckpoint ? <CheckpointInfo {...props} /> : <ResourceInfo {...props} />;
+  return (
+    <div className="relative">
+      {props.disabled && (
+        <Overlay
+          blur={3}
+          zIndex={10}
+          color={theme.colorScheme === 'dark' ? theme.colors.dark[7] : '#fff'}
+          opacity={0.8}
+        />
+      )}
+      {isCheckpoint ? <CheckpointInfo {...props} /> : <ResourceInfo {...props} />}
+    </div>
+  );
 };
 
 function CheckpointInfo({ resource, isTraining, onRemove, onSwap }: Props) {

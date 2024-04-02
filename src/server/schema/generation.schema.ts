@@ -66,6 +66,7 @@ const baseGenerationParamsSchema = z.object({
   quantity: z.coerce.number(),
   nsfw: z.boolean().optional(),
   aspectRatio: z.string(),
+  draft: z.boolean().optional(),
 });
 
 export const blockedRequest = (() => {
@@ -134,6 +135,7 @@ const sharedGenerationParamsSchema = z.object({
   clipSkip: z.coerce.number().default(1),
   quantity: z.coerce.number().min(1).max(20),
   nsfw: z.boolean().optional(),
+  draft: z.boolean().optional(),
   baseModel: z.string().optional(),
   aspectRatio: z.string(),
 });

@@ -85,6 +85,8 @@ export const useDerivedGenerationState = () => {
     [selectedResources, allUnstableResources]
   );
 
+  const draft = useGenerationFormStore((x) => x.draft);
+
   return {
     totalCost,
     baseModel,
@@ -96,6 +98,7 @@ export const useDerivedGenerationState = () => {
     isLCM,
     unstableResources,
     isCalculatingCost,
+    draft,
   };
 };
 

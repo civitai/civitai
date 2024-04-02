@@ -137,6 +137,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
     isLCM,
     unstableResources,
     isCalculatingCost,
+    draft,
   } = useDerivedGenerationState();
 
   const { conditionalPerformTransaction } = useBuzzTransaction({
@@ -171,6 +172,17 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
   // #region [mutations]
   const { mutateAsync, isLoading } = useCreateGenerationRequest();
   const handleSubmit = async (data: GenerateFormModel) => {
+    if (data.draft) {
+      const { cfgScale, sampler, steps, quantity } = generation.defaultValues;
+      data.cfgScale = cfgScale;
+      data.sampler = sampler;
+      data.steps = steps;
+      // data.seed = seed ?? -1;
+      // data.clipSkip = clipSkip;
+      data.quantity = quantity;
+      data.vae = undefined;
+    }
+
     const { model, resources = [], vae, ...params } = data;
     const _resources = [model, ...resources, vae].filter(isDefined).map((resource) => {
       if (resource.modelType === 'TextualInversion')
@@ -252,6 +264,14 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
   const pendingProcessingCount = usePollGenerationRequests(requests);
   const reachedRequestLimit = pendingProcessingCount >= limits.queue;
   const disableGenerateButton = reachedRequestLimit || isCalculatingCost;
+
+  const cfgDisabled = !!draft;
+  const samplerDisabled = !!draft;
+  const stepsDisabled = !!draft;
+  // const seedDisabled = !!draft;
+  // const clipSkipDisabled = !!draft;
+  const vaeDisabled = !!draft;
+  const quantityDisabled = !!draft;
 
   // Manually handle error display for prompt box
   const { errors } = form.formState;
@@ -470,6 +490,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
               <InputSegmentedControl name="aspectRatio" data={getAspectRatioControls(baseModel)} />
             </Stack>
             <InputSwitch name="nsfw" label="Mature content" labelPosition="left" />
+            <InputSwitch name="draft" label="Draft Mode" labelPosition="left" />
 
             <PersistentAccordion
               storeKey="generation-form-advanced"
@@ -519,9 +540,11 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                         { label: 'Precise', value: '10' },
                       ]}
                       reverse
+                      disabled={cfgDisabled}
                     />
                     <InputSelect
                       name="sampler"
+                      disabled={samplerDisabled}
                       label={
                         <Group spacing={4} noWrap>
                           <Input.Label>Sampler</Input.Label>
@@ -551,6 +574,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                     />
                     <InputNumberSlider
                       name="steps"
+                      disabled={stepsDisabled}
                       label={
                         <Group spacing={4} noWrap>
                           <Input.Label>Steps</Input.Label>
@@ -608,6 +632,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                     )}
                     <InputResourceSelect
                       name="vae"
+                      disabled={vaeDisabled}
                       label={
                         <Group spacing={4} noWrap>
                           <Input.Label>{getDisplayName(ModelType.VAE)}</Input.Label>
@@ -729,6 +754,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                       min={1}
                       max={limits.quantity}
                       className={classes.generateButtonQuantityInput}
+                      disabled={quantityDisabled}
                     />
                   </Stack>
                 </Card>
