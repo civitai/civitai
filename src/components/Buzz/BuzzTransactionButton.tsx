@@ -28,6 +28,7 @@ type Props = ButtonProps & {
 
 const useButtonStyle = createStyles((theme) => ({
   button: {
+    paddingRight: 8,
     color: theme.colors.dark[8],
     fontWeight: 600,
   },
@@ -87,7 +88,9 @@ export function BuzzTransactionButton({
       }}
     >
       <Group spacing="md" noWrap w="100%">
-        <Text size={size ?? 14}>{label}</Text>
+        <Text size={size ?? 14} ta={!hasCost ? 'center' : undefined}>
+          {label}
+        </Text>
         {(hasCost || loading) && (
           <CurrencyBadge
             currency={Currency.BUZZ}

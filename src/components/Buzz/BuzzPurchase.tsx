@@ -477,9 +477,10 @@ export const BuzzPurchase = ({
               <Text align="center">
                 Want free Buzz? Check out our{' '}
                 <Text
-                  component={Anchor}
+                  component="a"
                   href="/user/buzz-dashboard#rewards"
                   target="_blank"
+                  variant="link"
                   td="underline"
                 >
                   rewards program
