@@ -64,6 +64,7 @@ import dayjs from 'dayjs';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { UserTier } from '~/server/schema/user.schema';
 import { Orchestrator } from '~/server/http/orchestrator/orchestrator.types';
+import { generatorFeedbackReward } from '~/server/rewards';
 
 export function parseModelVersionId(assetId: string) {
   const pattern = /^@civitai\/(\d+)$/;
@@ -267,6 +268,7 @@ export async function deleteResourceDataCache(modelVersionIds: number | number[]
 }
 
 const baseModelSetsEntries = Object.entries(baseModelSets);
+
 const formatGenerationRequests = async (requests: Generation.Api.RequestProps[]) => {
   const modelVersionIds = requests
     .map((x) => parseModelVersionId(x.job.model))
@@ -313,6 +315,7 @@ const formatGenerationRequests = async (requests: Generation.Api.RequestProps[])
       estimatedCompletionDate: x.estimatedCompletedAt,
       status: mapRequestStatus(x.status),
       queuePosition: x.queuePosition,
+      cost: x.cost,
       params: {
         ...params,
         prompt,
@@ -1069,7 +1072,13 @@ export async function toggleUnavailableResource({
   return unavailableResources;
 }
 
-export const sendGenerationFeedback = async ({ jobId, reason, message }: SendFeedbackInput) => {
+export const sendGenerationFeedback = async ({
+  jobId,
+  reason,
+  message,
+  userId,
+  ip,
+}: SendFeedbackInput & { userId: number; ip: string }) => {
   const response = await orchestratorCaller.taintJobById({
     id: jobId,
     payload: { reason, context: { imageHash: jobId, message } },
@@ -1077,6 +1086,16 @@ export const sendGenerationFeedback = async ({ jobId, reason, message }: SendFee
 
   if (response.status === 404) throw throwNotFoundError();
   if (!response.ok) throw new Error('An unknown error occurred. Please try again later');
+
+  await generatorFeedbackReward
+    .apply(
+      {
+        jobId,
+        userId,
+      },
+      ip
+    )
+    .catch(handleLogError);
 
   return response;
 };
@@ -1099,7 +1118,15 @@ export const textToImage = async ({
     isTestRun,
   });
 
-  if (!response.ok) throw new Error('An unknown error occurred. Please try again later');
+  console.log(response);
+
+  if (!response.ok) {
+    if (response.status === 403) {
+      throw throwInsufficientFundsError();
+    }
+
+    throw new Error('An unknown error occurred. Please try again later');
+  }
 
   return response.data;
 };
