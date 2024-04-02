@@ -31,6 +31,7 @@ import {
   InputSegmentedControl,
   InputSelect,
   InputSwitch,
+  InputCheckbox,
   InputTextArea,
 } from '~/libs/form';
 import { trpc } from '~/utils/trpc';
@@ -59,6 +60,8 @@ import {
   Alert,
   ThemeIcon,
   List,
+  Overlay,
+  LoadingOverlay,
 } from '@mantine/core';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
@@ -85,7 +88,7 @@ import { IconLock } from '@tabler/icons-react';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 
 const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
-  const { classes } = useStyles();
+  const { classes, theme } = useStyles();
   const currentUser = useCurrentUser();
   const [promptWarning, setPromptWarning] = useState<string | null>(null);
   const [reviewed, setReviewed] = useLocalStorage({
@@ -268,7 +271,6 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
   // const seedDisabled = !!draft;
   // const clipSkipDisabled = !!draft;
   const vaeDisabled = !!draft;
-  const quantityDisabled = !!draft;
 
   // Manually handle error display for prompt box
   const { errors } = form.formState;
@@ -282,7 +284,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
     >
       <Stack spacing={0} h="100%">
         <ScrollArea scrollRestore={{ key: 'generation-form' }} py={0}>
-          <Stack p="md" pb={0}>
+          <Stack p="md">
             {/* {type === 'remix' && (
               <DismissibleAlert
                 id="image-gen-params"
@@ -486,8 +488,32 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
               <Input.Label>Aspect Ratio</Input.Label>
               <InputSegmentedControl name="aspectRatio" data={getAspectRatioControls(baseModel)} />
             </Stack>
-            <InputSwitch name="nsfw" label="Mature content" labelPosition="left" />
-            <InputSwitch name="draft" label="Draft Mode" labelPosition="left" />
+            <Group position="apart">
+              <InputSwitch name="nsfw" label="Mature content" labelPosition="left" />
+              <InputSwitch
+                name="draft"
+                labelPosition="left"
+                label={
+                  <Group spacing={4} noWrap pos="relative">
+                    <Input.Label>Draft Mode</Input.Label>
+                    <Badge
+                      color="yellow"
+                      size="xs"
+                      sx={{ position: 'absolute', right: 18, top: -8, padding: '0 4px' }}
+                    >
+                      New
+                    </Badge>
+                    <InfoPopover size="xs" iconProps={{ size: 14 }}>
+                      Draft Mode will generate images faster, cheaper, and with slightly less
+                      quality. Use this for exploring concepts quickly.
+                      <Text size="xs" color="dimmed" mt={4}>
+                        Requires generating in batches of 4
+                      </Text>
+                    </InfoPopover>
+                  </Group>
+                }
+              />
+            </Group>
 
             <PersistentAccordion
               storeKey="generation-form-advanced"
@@ -506,113 +532,129 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                 </Accordion.Control>
                 <Accordion.Panel>
                   <Stack>
-                    <InputNumberSlider
-                      name="cfgScale"
-                      label={
-                        <Group spacing={4} noWrap>
-                          <Input.Label>CFG Scale</Input.Label>
-                          <InfoPopover size="xs" iconProps={{ size: 14 }}>
-                            Controls how closely the image generation follows the text prompt.{' '}
-                            <Anchor
-                              href="https://wiki.civitai.com/wiki/Classifier_Free_Guidance"
-                              target="_blank"
-                              rel="nofollow noreferrer"
-                              span
-                            >
-                              Learn more
-                            </Anchor>
-                            .
-                          </InfoPopover>
-                        </Group>
-                      }
-                      min={1}
-                      max={isSDXL ? 10 : 30}
-                      step={0.5}
-                      precision={1}
-                      sliderProps={sharedSliderProps}
-                      numberProps={sharedNumberProps}
-                      presets={[
-                        { label: 'Creative', value: '4' },
-                        { label: 'Balanced', value: '7' },
-                        { label: 'Precise', value: '10' },
-                      ]}
-                      reverse
-                      disabled={cfgDisabled}
-                    />
-                    <InputSelect
-                      name="sampler"
-                      disabled={samplerDisabled}
-                      label={
-                        <Group spacing={4} noWrap>
-                          <Input.Label>Sampler</Input.Label>
-                          <InfoPopover size="xs" iconProps={{ size: 14 }}>
-                            Each will produce a slightly (or significantly) different image result.{' '}
-                            <Anchor
-                              href="https://wiki.civitai.com/wiki/Sampler"
-                              target="_blank"
-                              rel="nofollow noreferrer"
-                              span
-                            >
-                              Learn more
-                            </Anchor>
-                            .
-                          </InfoPopover>
-                        </Group>
-                      }
-                      data={isLCM ? generation.lcmSamplers : generation.samplers}
-                      presets={
-                        isLCM
-                          ? []
-                          : [
-                              { label: 'Fast', value: 'Euler a' },
-                              { label: 'Popular', value: 'DPM++ 2M Karras' },
-                            ]
-                      }
-                    />
-                    <InputNumberSlider
-                      name="steps"
-                      disabled={stepsDisabled}
-                      label={
-                        <Group spacing={4} noWrap>
-                          <Input.Label>Steps</Input.Label>
-                          <InfoPopover size="xs" iconProps={{ size: 14 }}>
-                            The number of iterations spent generating an image.{' '}
-                            <Anchor
-                              href="https://wiki.civitai.com/wiki/Sampling_Steps"
-                              target="_blank"
-                              rel="nofollow noreferrer"
-                              span
-                            >
-                              Learn more
-                            </Anchor>
-                            .
-                          </InfoPopover>
-                        </Group>
-                      }
-                      min={isLCM ? 3 : 10}
-                      max={isLCM ? 12 : limits.steps}
-                      sliderProps={sharedSliderProps}
-                      numberProps={sharedNumberProps}
-                      presets={
-                        isLCM
-                          ? []
-                          : [
-                              {
-                                label: 'Fast',
-                                value: Number(10 + samplerCfgOffset).toString(),
-                              },
-                              {
-                                label: 'Balanced',
-                                value: Number(20 + samplerCfgOffset).toString(),
-                              },
-                              {
-                                label: 'High',
-                                value: Number(30 + samplerCfgOffset).toString(),
-                              },
-                            ]
-                      }
-                      reverse
-                    />
+                    <Stack pos="relative">
+                      <LoadingOverlay
+                        color={theme.colorScheme === 'dark' ? theme.colors.dark[7] : '#fff'}
+                        opacity={0.8}
+                        m={-8}
+                        radius="md"
+                        loader={
+                          <Text color="yellow" weight={500}>
+                            Not available in Draft Mode
+                          </Text>
+                        }
+                        zIndex={2}
+                        visible={!!draft}
+                      />
+                      <InputNumberSlider
+                        name="cfgScale"
+                        label={
+                          <Group spacing={4} noWrap>
+                            <Input.Label>CFG Scale</Input.Label>
+                            <InfoPopover size="xs" iconProps={{ size: 14 }}>
+                              Controls how closely the image generation follows the text prompt.{' '}
+                              <Anchor
+                                href="https://wiki.civitai.com/wiki/Classifier_Free_Guidance"
+                                target="_blank"
+                                rel="nofollow noreferrer"
+                                span
+                              >
+                                Learn more
+                              </Anchor>
+                              .
+                            </InfoPopover>
+                          </Group>
+                        }
+                        min={1}
+                        max={isSDXL ? 10 : 30}
+                        step={0.5}
+                        precision={1}
+                        sliderProps={sharedSliderProps}
+                        numberProps={sharedNumberProps}
+                        presets={[
+                          { label: 'Creative', value: '4' },
+                          { label: 'Balanced', value: '7' },
+                          { label: 'Precise', value: '10' },
+                        ]}
+                        reverse
+                        disabled={cfgDisabled}
+                      />
+                      <InputSelect
+                        name="sampler"
+                        disabled={samplerDisabled}
+                        label={
+                          <Group spacing={4} noWrap>
+                            <Input.Label>Sampler</Input.Label>
+                            <InfoPopover size="xs" iconProps={{ size: 14 }}>
+                              Each will produce a slightly (or significantly) different image
+                              result.{' '}
+                              <Anchor
+                                href="https://wiki.civitai.com/wiki/Sampler"
+                                target="_blank"
+                                rel="nofollow noreferrer"
+                                span
+                              >
+                                Learn more
+                              </Anchor>
+                              .
+                            </InfoPopover>
+                          </Group>
+                        }
+                        data={isLCM ? generation.lcmSamplers : generation.samplers}
+                        presets={
+                          isLCM
+                            ? []
+                            : [
+                                { label: 'Fast', value: 'Euler a' },
+                                { label: 'Popular', value: 'DPM++ 2M Karras' },
+                              ]
+                        }
+                      />
+                      <InputNumberSlider
+                        name="steps"
+                        disabled={stepsDisabled}
+                        label={
+                          <Group spacing={4} noWrap>
+                            <Input.Label>Steps</Input.Label>
+                            <InfoPopover size="xs" iconProps={{ size: 14 }}>
+                              The number of iterations spent generating an image.{' '}
+                              <Anchor
+                                href="https://wiki.civitai.com/wiki/Sampling_Steps"
+                                target="_blank"
+                                rel="nofollow noreferrer"
+                                span
+                              >
+                                Learn more
+                              </Anchor>
+                              .
+                            </InfoPopover>
+                          </Group>
+                        }
+                        min={isLCM ? 3 : 10}
+                        max={isLCM ? 12 : limits.steps}
+                        sliderProps={sharedSliderProps}
+                        numberProps={sharedNumberProps}
+                        presets={
+                          isLCM
+                            ? []
+                            : [
+                                {
+                                  label: 'Fast',
+                                  value: Number(10 + samplerCfgOffset).toString(),
+                                },
+                                {
+                                  label: 'Balanced',
+                                  value: Number(20 + samplerCfgOffset).toString(),
+                                },
+                                {
+                                  label: 'High',
+                                  value: Number(30 + samplerCfgOffset).toString(),
+                                },
+                              ]
+                        }
+                        reverse
+                      />
+                    </Stack>
                     <InputSeed name="seed" label="Seed" min={1} max={generation.maxValues.seed} />
                     {!isSDXL && (
                       <InputNumberSlider
@@ -747,10 +789,10 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                     </Text>
                     <InputNumber
                       name="quantity"
-                      min={1}
+                      min={!!draft ? 4 : 1}
                       max={limits.quantity}
+                      step={!!draft ? 4 : 1}
                       className={classes.generateButtonQuantityInput}
-                      disabled={quantityDisabled}
                     />
                   </Stack>
                 </Card>
