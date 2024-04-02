@@ -442,7 +442,7 @@ export function PurchasableRewards() {
   return (
     <Stack>
       <Stack spacing={4}>
-        <Title order={2}>Rewards</Title>
+        <Title order={2}>Deals</Title>
         <Text>{`Spend some Buzz to get special deals`}</Text>
       </Stack>
       <Chip.Group

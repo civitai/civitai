@@ -232,13 +232,13 @@ export const getPlanDetails: (
           (metadata?.purchasesMultiplier ?? 1) === 1 ? (
             <Text>
               <Text span color="yellow.7">
-                No extra Buzz on purchases
+                No bonus Buzz on purchases
               </Text>
             </Text>
           ) : (
             <Text>
               <Text span color="yellow.7">
-                Extra {(((metadata?.purchasesMultiplier ?? 1) - 1) * 100).toFixed(0)}% Buzz on
+                {(((metadata?.purchasesMultiplier ?? 1) - 1) * 100).toFixed(0)}% Bonus Buzz on
                 purchases
               </Text>
             </Text>

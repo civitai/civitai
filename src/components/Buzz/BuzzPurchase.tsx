@@ -445,10 +445,13 @@ export const BuzzPurchase = ({
             </Input.Wrapper>
           )}
           <Stack spacing="md" mt="md">
-            {buzzAmount && <BuzzPurchaseMultiplierFeature buzzAmount={buzzAmount} />}
-            <Group spacing="xs" mt="md">
-              <Button disabled={!ctaEnabled} onClick={handleSubmit} radius="xl">
-                Pay Now {!!unitAmount ? `- $${formatCurrencyForDisplay(unitAmount)}` : ''}
+            {(buzzAmount ?? 0) > 0 && <BuzzPurchaseMultiplierFeature buzzAmount={buzzAmount} />}
+            <Group spacing="xs" mt="md" noWrap>
+              <Button disabled={!ctaEnabled} onClick={handleSubmit} radius="xl" fullWidth>
+                Pay Now{' '}
+                {!!unitAmount
+                  ? `- $${formatCurrencyForDisplay(unitAmount, undefined, { decimals: false })}`
+                  : ''}
               </Button>
               <BuzzPaypalButton
                 onError={(error) => setError(error.message)}
@@ -464,18 +467,23 @@ export const BuzzPurchase = ({
               )}
             </Group>
 
-            <Text size="xs" align="center" color="dimmed">
-              Stripe supports Credit cards, Bank transfer, Google Pay, Apple Pay, and more.
+            <Text size="xs" align="center" color="dimmed" mt={-10}>
+              Credit card, bank transfer, Google Pay, Apple Pay, and more.
             </Text>
           </Stack>
           <DismissibleAlert
             id="rewards-program-notice"
             content={
               <Text align="center">
-                Want to get free Buzz? Check out our{' '}
-                <Anchor href="/user/buzz-dashboard#rewards" target="_blank">
+                Want free Buzz? Check out our{' '}
+                <Text
+                  component={Anchor}
+                  href="/user/buzz-dashboard#rewards"
+                  target="_blank"
+                  td="underline"
+                >
                   rewards program
-                </Anchor>
+                </Text>
               </Text>
             }
             radius="md"
@@ -484,7 +492,7 @@ export const BuzzPurchase = ({
       </Grid.Col>
       {canUpgradeMembership && (
         <Grid.Col span={12} md={6}>
-          {buzzAmount > 0 && <MembershipUpsell buzzAmount={buzzAmount} />}
+          <MembershipUpsell buzzAmount={buzzAmount ?? 0} />
         </Grid.Col>
       )}
     </Grid>

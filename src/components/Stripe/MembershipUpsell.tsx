@@ -10,7 +10,7 @@ import {
   Loader,
   Center,
 } from '@mantine/core';
-import { IconCheck, IconDiscount2 } from '@tabler/icons-react';
+import { IconCheck, IconDiscountCheck } from '@tabler/icons-react';
 import { capitalize } from 'lodash';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { getPlanDetails } from '~/components/Stripe/PlanCard';
@@ -77,7 +77,7 @@ export const MembershipUpsell = ({ buzzAmount }: { buzzAmount: number }) => {
 
   const subscriptionMetadata = subscription?.product?.metadata as ProductMetadata;
 
-  const targetPlan = products.find((product) => {
+  const targetPlan = products.find((product, index) => {
     const metadata = (product?.metadata ?? { monthlyBuzz: 0, tier: 'free' }) as ProductMetadata;
     if (
       subscription &&
@@ -88,7 +88,7 @@ export const MembershipUpsell = ({ buzzAmount }: { buzzAmount: number }) => {
       return false;
     }
 
-    return (metadata.monthlyBuzz ?? 0) >= buzzAmount;
+    return (metadata.monthlyBuzz ?? 0) >= buzzAmount || index === products.length - 1;
   });
 
   if (!targetPlan) {
@@ -99,25 +99,24 @@ export const MembershipUpsell = ({ buzzAmount }: { buzzAmount: number }) => {
   const { image, benefits } = getPlanDetails(targetPlan, featureFlags);
 
   const targetTier = metadata.tier ?? 'free';
-  const monthlyBuzz = metadata.monthlyBuzz ?? 0;
+  // const monthlyBuzz = metadata.monthlyBuzz ?? 0;
   const unitAmount = targetPlan.price.unitAmount ?? 0;
   const priceId = targetPlan.defaultPriceId ?? '';
 
   return (
     <Paper className={classes.card}>
-      <Stack h="100%">
-        <Badge variant="light" size="sm" color="green" ml="auto">
+      <Stack h="100%" w="100%">
+        <Badge variant="light" size="lg" color="green" ml="auto" mb={-36} px={8}>
           <Group spacing={4}>
-            <IconDiscount2 size={13} />
-            <Text>SAVE MORE</Text>
+            <IconDiscountCheck size={18} />
+            <Text tt="uppercase">Get More</Text>
           </Group>
         </Badge>
         {image && <EdgeMedia src={image} width={80} />}
         <Stack spacing={0}>
           <Text className={classes.title}>{capitalize(targetTier)} membership</Text>
           <Text color="yellow.7" className={classes.subtitle}>
-            ${formatPriceForDisplay(unitAmount)} can get you a lot more than{' '}
-            {numberWithCommas(monthlyBuzz)} Buzz:
+            {subscription ? 'Upgrade to get even more perks:' : 'Get more with a membership:'}
           </Text>
         </Stack>
         <Stack spacing={4}>
@@ -132,8 +131,9 @@ export const MembershipUpsell = ({ buzzAmount }: { buzzAmount: number }) => {
         </Stack>
         <div>
           <SubscribeButton priceId={priceId}>
-            <Button radius="xl" size="md">
-              Get {capitalize(targetTier)} - ${formatPriceForDisplay(unitAmount)}
+            <Button radius="xl" size="md" mt="sm">
+              Get {capitalize(targetTier)} - $
+              {formatPriceForDisplay(unitAmount, undefined, { decimals: false })}
               /Month
             </Button>
           </SubscribeButton>

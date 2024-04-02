@@ -1,6 +1,8 @@
 import { Paper, createStyles, Text, Stack, Group } from '@mantine/core';
+import { IconBolt } from '@tabler/icons-react';
 import { capitalize } from 'lodash';
 import { useUserMultipliers } from '~/components/Buzz/useBuzz';
+import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { getPlanDetails } from '~/components/Stripe/PlanCard';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
@@ -12,7 +14,8 @@ import { trpc } from '~/utils/trpc';
 
 const useStyles = createStyles((theme) => ({
   card: {
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[0],
+    backgroundColor: theme.fn.rgba(theme.colors.yellow[6], 0.2),
+    border: `1px solid ${theme.fn.rgba(theme.colors.yellow[6], 0.5)}`,
     width: '100%',
     maxHeight: '100%',
     margin: 0,
@@ -22,6 +25,7 @@ const useStyles = createStyles((theme) => ({
   },
   title: {
     color: theme.colorScheme === 'dark' ? theme.white : theme.black,
+    fontWeight: 600,
     fontSize: 16,
   },
   subtitle: {
@@ -29,7 +33,13 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
-export const SubscriptionFeature = ({ title, subtitle }: { title: string; subtitle: string }) => {
+export const SubscriptionFeature = ({
+  title,
+  subtitle,
+}: {
+  title: string | React.ReactNode;
+  subtitle: string;
+}) => {
   const { classes } = useStyles();
   const currentUser = useCurrentUser();
   const featureFlags = useFeatureFlags();
@@ -42,12 +52,14 @@ export const SubscriptionFeature = ({ title, subtitle }: { title: string; subtit
   const { image } = getPlanDetails(subscription.product, featureFlags);
 
   return (
-    <Paper className={classes.card}>
+    <Paper className={classes.card} py="xs">
       <Group noWrap>
-        {image && <EdgeMedia src={image} width={40} />}
+        {image && <EdgeMedia src={image} width={50} />}
         <Stack spacing={2}>
           <Text className={classes.title}>{title}</Text>
-          <Text className={classes.subtitle}>{subtitle}</Text>
+          <Text className={classes.subtitle} lh={1.2}>
+            {subtitle}
+          </Text>
         </Stack>
       </Group>
     </Paper>
@@ -68,13 +80,19 @@ export const BuzzPurchaseMultiplierFeature = ({ buzzAmount }: { buzzAmount: numb
 
   return (
     <SubscriptionFeature
-      title={`${numberWithCommas(
-        Math.floor(buzzAmount * purchasesMultiplier - buzzAmount)
-      )} Buzz Free For You!`}
-      subtitle={`${capitalize(metadata.tier)} members get ${(
+      title={
+        <Group noWrap spacing={2}>
+          <CurrencyIcon size={20} />
+          <span>
+            {numberWithCommas(Math.floor(buzzAmount * purchasesMultiplier - buzzAmount))} Bonus Buzz
+            Free!
+          </span>
+        </Group>
+      }
+      subtitle={`As a ${capitalize(metadata.tier)} member you get ${(
         (purchasesMultiplier - 1) *
         100
-      ).toFixed(0)}% extra buzz on each purchase`}
+      ).toFixed(0)}% bonus buzz on each purchase.`}
     />
   );
 };

@@ -11,7 +11,7 @@ export const useActiveSubscription = () => {
     enabled: !!currentUser && isMember,
   });
 
-  return { subscription, subscriptionLoading: isLoading };
+  return { subscription, subscriptionLoading: !isMember ? false : isLoading };
 };
 
 export const useCanUpgrade = () => {
@@ -20,6 +20,10 @@ export const useCanUpgrade = () => {
 
   if (!currentUser || subscriptionLoading) {
     return false;
+  }
+
+  if (!subscription) {
+    return true;
   }
 
   const metadata = subscription?.product?.metadata as ProductMetadata;
