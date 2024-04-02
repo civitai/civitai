@@ -6,6 +6,7 @@ import { UserBuzz } from '../User/UserBuzz';
 import { BuzzPurchase } from '~/components/Buzz/BuzzPurchase';
 import { useTrackEvent } from '../TrackView/track.utils';
 import { AvailableBuzzBadge } from '~/components/Buzz/AvailableBuzzBadge';
+import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 
 const { openModal, Modal } = createContextModal<{
   message?: string;
@@ -40,6 +41,23 @@ const { openModal, Modal } = createContextModal<{
             <CloseButton radius="xl" iconSize={22} onClick={handleClose} />
           </Group>
         </Group>
+        <DismissibleAlert
+          id="rewards-program-notice"
+          content={
+            <Text align="center">
+              <Text
+                component="a"
+                href="/user/buzz-dashboard#rewards"
+                target="_blank"
+                variant="link"
+                td="underline"
+              >
+                Learn how to earn free Buzz daily
+              </Text>
+            </Text>
+          }
+          radius="md"
+        />
         <Divider mx="-lg" />
         <Group>
           <BuzzPurchase

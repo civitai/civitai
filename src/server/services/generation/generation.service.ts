@@ -1118,8 +1118,6 @@ export const textToImage = async ({
     isTestRun,
   });
 
-  console.log(response);
-
   if (!response.ok) {
     if (response.status === 403) {
       throw throwInsufficientFundsError();
