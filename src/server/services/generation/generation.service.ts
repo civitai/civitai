@@ -38,6 +38,7 @@ import {
   BaseModelSetType,
   CacheTTL,
   constants,
+  draftMode,
   getGenerationConfig,
   Sampler,
 } from '~/server/common/constants';
@@ -451,6 +452,33 @@ export const prepareGenerationInput = async ({
   const isPromptNsfw = includesNsfw(params.prompt);
   nsfw ??= isPromptNsfw !== false;
 
+  if (params.aspectRatio.includes('x'))
+    throw throwBadRequestError('Invalid size. Please select your size and try again');
+
+  const { height, width } = aspectRatios[Number(params.aspectRatio)];
+
+  const checkpoint = resources.find((x) => x.modelType === ModelType.Checkpoint);
+
+  if (!checkpoint)
+    throw throwBadRequestError('A checkpoint is required to make a generation request');
+
+  const isSDXL = params.baseModel === 'SDXL' || params.baseModel === 'Pony';
+  if (draft) {
+    const draftModeSettings = draftMode[isSDXL ? 'sdxl' : 'sd1'];
+    // Fix quantity
+    if (params.quantity % 4 !== 0) params.quantity = Math.ceil(params.quantity / 4) * 4;
+    // Fix other params
+    params.steps = draftModeSettings.steps;
+    params.cfgScale = draftModeSettings.cfgScale;
+    params.sampler = draftModeSettings.sampler;
+    // Add speed up resources
+    resources.push({
+      modelType: ModelType.LORA,
+      strength: 1,
+      id: draftModeSettings.resourceId,
+    });
+  }
+
   const additionalNetworks = resources
     .filter((x) => additionalResourceTypes.map((x) => x.type).includes(x.modelType as any))
     .reduce(
@@ -494,32 +522,6 @@ export const prepareGenerationInput = async ({
       };
       negativePrompts.unshift(triggerWord);
     }
-  }
-
-  if (params.aspectRatio.includes('x'))
-    throw throwBadRequestError('Invalid size. Please select your size and try again');
-
-  const { height, width } = aspectRatios[Number(params.aspectRatio)];
-
-  const checkpoint = resources.find((x) => x.modelType === ModelType.Checkpoint);
-
-  if (!checkpoint)
-    throw throwBadRequestError('A checkpoint is required to make a generation request');
-
-  const isSDXL = params.baseModel === 'SDXL' || params.baseModel === 'Pony';
-  if (draft) {
-    // Fix quantity
-    if (params.quantity % 4 !== 0) params.quantity = Math.ceil(params.quantity / 4) * 4;
-    // Fix other params
-    params.steps = isSDXL ? 4 : 6;
-    params.cfgScale = 1;
-    params.sampler = isSDXL ? 'Euler' : 'LCM';
-    // Add speed up resources
-    resources.push({
-      modelType: ModelType.LORA,
-      strength: 1,
-      id: isSDXL ? 391971 : 424706,
-    });
   }
 
   const generationRequest = {
@@ -596,17 +598,18 @@ export const createGenerationRequest = async ({
   // Handle Draft Mode
   const isSDXL = params.baseModel === 'SDXL' || params.baseModel === 'Pony';
   if (draft) {
+    const draftModeSettings = draftMode[isSDXL ? 'sdxl' : 'sd1'];
     // Fix quantity
     if (params.quantity % 4 !== 0) params.quantity = Math.ceil(params.quantity / 4) * 4;
     // Fix other params
-    params.steps = isSDXL ? 4 : 6;
-    params.cfgScale = 1;
-    params.sampler = isSDXL ? 'Euler' : 'LCM';
+    params.steps = draftModeSettings.steps;
+    params.cfgScale = draftModeSettings.cfgScale;
+    params.sampler = draftModeSettings.sampler;
     // Add speed up resources
     resources.push({
       modelType: ModelType.LORA,
       strength: 1,
-      id: isSDXL ? 391971 : 424706,
+      id: draftModeSettings.resourceId,
     });
   }
 

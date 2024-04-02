@@ -6,6 +6,7 @@ import {
   generationConfig,
   getGenerationConfig,
   samplerOffsets,
+  draftMode,
 } from '~/server/common/constants';
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
@@ -327,6 +328,16 @@ export const getFormData = (
   formData.resources = formData.resources?.length
     ? uniqBy(formData.resources, 'id').slice(0, 9)
     : undefined;
+
+  // Look through data for Draft resource.
+  // If we find them, toggle draft and remove the resource.
+  const isSDXL = baseModel === 'SDXL' || baseModel === 'Pony';
+  const draftResourceId = draftMode[isSDXL ? 'sdxl' : 'sd1'].resourceId;
+  const draftResourceIndex = formData.resources?.findIndex((x) => x.id === draftResourceId) ?? -1;
+  if (draftResourceIndex !== -1) {
+    formData.draft = true;
+    formData.resources?.splice(draftResourceIndex, 1);
+  }
 
   return {
     ...formData,

@@ -175,17 +175,6 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
   // #region [mutations]
   const { mutateAsync, isLoading } = useCreateGenerationRequest();
   const handleSubmit = async (data: GenerateFormModel) => {
-    if (data.draft) {
-      const { cfgScale, sampler, steps, quantity } = generation.defaultValues;
-      data.cfgScale = cfgScale;
-      data.sampler = sampler;
-      data.steps = steps;
-      // data.seed = seed ?? -1;
-      // data.clipSkip = clipSkip;
-      data.quantity = quantity;
-      data.vae = undefined;
-    }
-
     const { model, resources = [], vae, ...params } = data;
     const _resources = [model, ...resources, vae].filter(isDefined).map((resource) => {
       if (resource.modelType === 'TextualInversion')
@@ -271,9 +260,6 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
   const cfgDisabled = !!draft;
   const samplerDisabled = !!draft;
   const stepsDisabled = !!draft;
-  // const seedDisabled = !!draft;
-  // const clipSkipDisabled = !!draft;
-  const vaeDisabled = !!draft;
 
   // Manually handle error display for prompt box
   const { errors } = form.formState;
@@ -674,7 +660,6 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                     )}
                     <InputResourceSelect
                       name="vae"
-                      disabled={vaeDisabled}
                       label={
                         <Group spacing={4} noWrap>
                           <Input.Label>{getDisplayName(ModelType.VAE)}</Input.Label>

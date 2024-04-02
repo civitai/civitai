@@ -32,7 +32,14 @@ export function PresetOptions({ options, disabled, ...chipGroupProps }: Props) {
   return (
     <Chip.Group {...chipGroupProps} multiple={false} spacing={4}>
       {options.map(({ label, ...chipProps }, index) => (
-        <Chip {...chipProps} key={index} classNames={classes} radius="sm" variant="filled" disabled>
+        <Chip
+          {...chipProps}
+          key={index}
+          classNames={classes}
+          radius="sm"
+          variant="filled"
+          disabled={disabled}
+        >
           {label}
         </Chip>
       ))}

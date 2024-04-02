@@ -28,7 +28,6 @@ type Props = ButtonProps & {
 
 const useButtonStyle = createStyles((theme) => ({
   button: {
-    paddingRight: 8,
     color: theme.colors.dark[8],
     fontWeight: 600,
   },
@@ -80,14 +79,15 @@ export function BuzzTransactionButton({
       {...buttonProps}
       onClick={loading ? undefined : onPerformTransaction ? onClick : undefined}
       className={cx(buttonProps?.className, { [classes.button]: hasCost || loading })}
+      pr={hasCost ? 8 : undefined}
       styles={{
         label: {
           width: '100%',
         },
       }}
     >
-      <Group spacing="md" noWrap w="100%">
-        <Text size={size ?? 14} ta={!hasCost ? 'center' : undefined}>
+      <Group spacing="md" position="apart" noWrap w="100%">
+        <Text size={size ?? 14} ta={!hasCost ? 'center' : undefined} sx={{ flex: 1 }}>
           {label}
         </Text>
         {(hasCost || loading) && (
@@ -99,7 +99,6 @@ export function BuzzTransactionButton({
             py={10}
             pl={4}
             pr={8}
-            ml="auto"
             loading={loading}
             color="dark.8"
           >
