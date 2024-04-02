@@ -51,16 +51,23 @@ export function formatSeconds(seconds: number) {
   return output.trim();
 }
 
-export function abbreviateNumber(value: number, opts?: { decimals: number }): string {
+export function abbreviateNumber(
+  value: number,
+  opts?: { decimals?: number; floor?: boolean }
+): string {
   if (!value) return '0';
 
-  const { decimals } = opts ?? { decimals: 1 };
+  const { decimals, floor } = opts ?? { decimals: 1 };
   const suffixes = ['', 'k', 'm', 'b', 't'];
   let index = 0;
 
   while (value >= 1000 && index < suffixes.length - 1) {
     value /= 1000;
     index++;
+  }
+
+  if (floor) {
+    value = Math.floor(value);
   }
 
   const formattedValue = value.toFixed(value < 10 && index > 0 ? decimals : 0);
