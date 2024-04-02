@@ -38,3 +38,10 @@ export const useCanUpgrade = () => {
     constants.memberships.tierOrder.length
   );
 };
+
+export const appliesForFounderDiscount = (tier?: UserTier) => {
+  const appliesForDiscount =
+    !!tier && tier === 'silver' && new Date() < constants.memberships.maxDiscountDate;
+
+  return appliesForDiscount;
+};

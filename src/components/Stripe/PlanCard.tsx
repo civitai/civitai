@@ -11,6 +11,8 @@ import {
   ButtonProps,
   ThemeIconVariant,
   Tooltip,
+  Badge,
+  Alert,
 } from '@mantine/core';
 import {
   IconAdCircleOff,
@@ -45,6 +47,8 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { DowngradeFeedbackModal } from '~/components/Stripe/MembershipChangePrevention';
 import { IconX } from '@tabler/icons-react';
+import { formatDate } from '~/utils/date-helpers';
+import { appliesForFounderDiscount } from '~/components/Stripe/memberships.util';
 
 type PlanCardProps = {
   product: StripePlan;
@@ -99,6 +103,8 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
     ? subscribeBtnProps.downgrade
     : subscribeBtnProps.subscribe;
 
+  const appliesForDiscount = appliesForFounderDiscount(subscription?.product?.metadata?.tier);
+
   return (
     <Card className={classes.card}>
       <Stack justify="space-between" style={{ height: '100%' }}>
@@ -113,14 +119,33 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
               </Center>
             )}
             <Stack spacing={0} align="center">
-              <Group position="center" spacing={4} align="flex-end">
-                <Text className={classes.price} align="center" lh={1}>
-                  {getStripeCurrencyDisplay(price.unitAmount, price.currency)}
-                </Text>
-                <Text align="center" color="dimmed">
-                  / {shortenPlanInterval(price.interval)}
-                </Text>
-              </Group>
+              {appliesForDiscount ? (
+                <Stack spacing={0} align="center">
+                  <Text td="line-through" color="gray" component="span" align="center" lh={1}>
+                    {getStripeCurrencyDisplay(price.unitAmount, price.currency)}
+                  </Text>
+                  <Group position="center" spacing={4} align="flex-end">
+                    <Text className={classes.price} align="center" lh={1}>
+                      {getStripeCurrencyDisplay(
+                        price.unitAmount * (constants.memberships.discountPercent / 100),
+                        price.currency
+                      )}
+                    </Text>
+                    <Text align="center" color="dimmed">
+                      / {shortenPlanInterval(price.interval)}
+                    </Text>
+                  </Group>
+                </Stack>
+              ) : (
+                <Group position="center" spacing={4} align="flex-end">
+                  <Text className={classes.price} align="center" lh={1}>
+                    {getStripeCurrencyDisplay(price.unitAmount, price.currency)}
+                  </Text>
+                  <Text align="center" color="dimmed">
+                    / {shortenPlanInterval(price.interval)}
+                  </Text>
+                </Group>
+              )}
               <Select
                 data={product.prices.map((p) => ({ label: p.currency, value: p.id }))}
                 value={priceId}
@@ -218,7 +243,7 @@ export const getPlanDetails: (
         iconVariant: 'light' as ThemeIconVariant,
         content: (
           <Text>
-            <Text span color="yellow.7">
+            <Text span color={(metadata?.monthlyBuzz ?? 0) === 0 ? undefined : 'yellow.7'}>
               {numberWithCommas(metadata?.monthlyBuzz ?? 0)} Buzz per month
             </Text>
           </Text>
@@ -231,9 +256,7 @@ export const getPlanDetails: (
         content:
           (metadata?.purchasesMultiplier ?? 1) === 1 ? (
             <Text>
-              <Text span color="yellow.7">
-                No bonus Buzz on purchases
-              </Text>
+              <Text span>No bonus Buzz on purchases</Text>
             </Text>
           ) : (
             <Text>
@@ -251,9 +274,7 @@ export const getPlanDetails: (
         content:
           (metadata?.rewardsMultiplier ?? 1) === 1 ? (
             <Text>
-              <Text span color="yellow.7">
-                No extra Buzz on rewards
-              </Text>
+              <Text span>No extra Buzz on rewards</Text>
             </Text>
           ) : (
             <Text>

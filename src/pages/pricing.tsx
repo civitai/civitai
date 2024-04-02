@@ -21,6 +21,7 @@ import { PlanCard, getPlanDetails } from '~/components/Stripe/PlanCard';
 import {
   IconCalendarDue,
   IconExclamationMark,
+  IconHeart,
   IconHeartHandshake,
   IconInfoCircle,
   IconPhotoPlus,
@@ -36,7 +37,11 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NextLink } from '@mantine/next';
 import { constants } from '~/server/common/constants';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { useActiveSubscription } from '~/components/Stripe/memberships.util';
+import {
+  appliesForFounderDiscount,
+  useActiveSubscription,
+} from '~/components/Stripe/memberships.util';
+import { formatDate } from '~/utils/date-helpers';
 
 export default function Pricing() {
   const router = useRouter();
@@ -58,6 +63,7 @@ export default function Pricing() {
     !(products ?? []).find((p) => p.id === subscription.product.id);
 
   const freePlanDetails = getPlanDetails(constants.freeMembershipDetails, features);
+  const appliesForDiscount = appliesForFounderDiscount(subscription?.product?.metadata?.tier);
 
   return (
     <>
@@ -83,15 +89,45 @@ export default function Pricing() {
       </Container>
       <Container size="xl">
         <Stack>
-          {currentMembershipUnavailable && (
-            <AlertWithIcon color="yellow" iconColor="yellow" icon={<IconInfoCircle />}>
-              <Text>
-                We have stopped offering the membership plan you are in. You can view your current
-                benefits and manage your membership details by clicking{' '}
-                <Anchor href="/user/membership">here</Anchor>.
-              </Text>
-            </AlertWithIcon>
-          )}
+          <Group>
+            {currentMembershipUnavailable && (
+              <AlertWithIcon
+                color="yellow"
+                iconColor="yellow"
+                icon={<IconInfoCircle size={20} />}
+                iconSize={28}
+                py={6}
+                maw="calc(50% - 8px)"
+                mx="auto"
+              >
+                <Text lh={1.2}>
+                  We have stopped offering the membership plan you are in. You can view your current
+                  benefits and manage your membership details by clicking{' '}
+                  <Anchor href="/user/membership">here</Anchor>.
+                </Text>
+              </AlertWithIcon>
+            )}
+            {appliesForDiscount && (
+              <AlertWithIcon
+                maw={650}
+                mx="auto"
+                icon={<IconHeart size={20} />}
+                iconSize={28}
+                py={4}
+                miw="calc(50% - 8px)"
+              >
+                <Stack spacing={0}>
+                  <Text color="blue" weight="bold">
+                    Supporter Discount
+                  </Text>
+                  <Text>
+                    Get {constants.memberships.discountPercent}% off your first month! Offer ends{' '}
+                    {formatDate(constants.memberships.maxDiscountDate)}.
+                  </Text>
+                </Stack>
+              </AlertWithIcon>
+            )}
+          </Group>
 
           {isLoading ? (
             <Center p="xl">
@@ -112,7 +148,7 @@ export default function Pricing() {
                       <Title className={classes.cardTitle} order={2} align="center" mb="sm">
                         Free
                       </Title>
-                      <Center>
+                      <Center style={{ opacity: 0.3 }}>
                         <EdgeMedia
                           src={freePlanDetails.image}
                           width={128}
@@ -120,7 +156,12 @@ export default function Pricing() {
                         />
                       </Center>
                       <Group position="center" spacing={4} align="flex-end" mb={24}>
-                        <Text className={classes.price} align="center" lh={1}>
+                        <Text
+                          className={classes.price}
+                          align="center"
+                          lh={1}
+                          mt={appliesForDiscount ? 'md' : undefined}
+                        >
                           $0
                         </Text>
                       </Group>
@@ -168,7 +209,6 @@ const useStyles = createStyles((theme) => ({
     },
   },
   image: {
-    opacity: 0.3,
     [containerQuery.smallerThan('sm')]: {
       width: 96,
       marginBottom: theme.spacing.xs,

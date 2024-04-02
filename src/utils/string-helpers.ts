@@ -31,7 +31,13 @@ const stripeCurrencyMap: Record<string, [string, number]> = {
 
 export function getStripeCurrencyDisplay(unitAmount: number, currency: string) {
   const [symbol, divisor] = stripeCurrencyMap[currency.toLowerCase()] ?? ['$', 100];
-  return symbol + (unitAmount / divisor).toLocaleString();
+
+  const hasDecimals = (unitAmount / divisor).toFixed(2).split('.')[1] !== '00';
+
+  return (
+    symbol +
+    (unitAmount / divisor).toLocaleString(undefined, { minimumFractionDigits: hasDecimals ? 2 : 0 })
+  );
 }
 
 const nameOverrides: Record<string, string> = {
