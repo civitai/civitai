@@ -150,6 +150,7 @@ export const getServerSideProps = createServerSideProps({
           limit: CAROUSEL_LIMIT,
           pending: true,
         });
+      await ssg.hiddenPreferences.getHidden.prefetch();
 
       if (modelVersionIdParsed) {
         await ssg.common.getEntityAccess.prefetch({

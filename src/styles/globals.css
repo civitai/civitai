@@ -289,8 +289,22 @@ ol {
 @layer utilities {
   .card {
     @apply rounded-md overflow-hidden relative;
+    background-color: #dee2e6;
   }
   .theme-dark .card {
     background-color: #25262b;
+  }
+
+  .vertical-gradient-dark {
+    position: relative;
+  }
+  .vertical-gradient-dark:before {
+    content: '';
+    position: absolute;
+    background: linear-gradient(transparent, rgba(0, 0, 0, 0.6));
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
   }
 }

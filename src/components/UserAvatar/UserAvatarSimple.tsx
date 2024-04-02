@@ -1,6 +1,7 @@
-import { createStyles, Text, Tooltip } from '@mantine/core';
+import { createStyles, Text, Tooltip, UnstyledButton } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { IconUser } from '@tabler/icons-react';
+import { useRouter } from 'next/router';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { UserAvatarProfilePicture } from '~/components/UserAvatar/UserAvatarProfilePicture';
 import { BadgeCosmetic, NamePlateCosmetic } from '~/server/selectors/cosmetic.selector';
@@ -24,6 +25,7 @@ export function UserAvatarSimple({
   const { classes } = useStyles();
   const displayProfilePicture =
     !deletedAt && profilePicture && profilePicture.ingestion !== 'Blocked';
+  const router = useRouter();
 
   const nameplate = cosmetics?.find(({ cosmetic }) =>
     cosmetic ? cosmetic.type === 'NamePlate' : undefined
@@ -34,8 +36,8 @@ export function UserAvatarSimple({
   const additionalTextProps = nameplate?.data;
 
   return (
-    <NextLink
-      href={username ? `/user/${username}` : `/user?id=${id}`}
+    <UnstyledButton
+      onClick={() => router.push(username ? `/user/${username}` : `/user?id=${id}`)}
       className="flex gap-2 items-center"
     >
       {displayProfilePicture && (
@@ -69,7 +71,7 @@ export function UserAvatarSimple({
           )}
         </>
       )}
-    </NextLink>
+    </UnstyledButton>
   );
 }
 
