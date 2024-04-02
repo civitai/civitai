@@ -1,4 +1,4 @@
-import { ModelHashType, ModelModifier } from '@prisma/client';
+import { CollectionType, ModelHashType, ModelModifier } from '@prisma/client';
 import { NextApiRequest, NextApiResponse } from 'next';
 import { Session } from 'next-auth';
 import { z } from 'zod';
@@ -16,6 +16,7 @@ import {
   publicBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { booleanString } from '~/utils/zod-helpers';
+import { getUserBookmarkCollections } from '~/server/services/user.service';
 
 type Metadata = {
   currentPage?: number;
@@ -39,6 +40,8 @@ const modelsEndpointSchema = getAllModelsSchema.extend({
   limit: z.preprocess((val) => Number(val), z.number().min(0).max(100)).default(100),
   nsfw: booleanString().optional(),
   primaryFileOnly: booleanString().optional(),
+  favorites: booleanString().optional().default(false),
+  hidden: booleanString().optional().default(false),
 });
 
 export default MixedAuthEndpoint(async function handler(
@@ -71,9 +74,16 @@ export default MixedAuthEndpoint(async function handler(
         .json({ error: "You've requested too many pages, please use cursors instead" });
   }
 
+  let collectionId: number | undefined;
+  if (parsedParams.data.favorites && user) {
+    const collections = await getUserBookmarkCollections({ userId: user.id });
+    const favoriteModelsCollections = collections.find((c) => c.type === CollectionType.Model);
+    collectionId = favoriteModelsCollections?.id;
+  }
+
   try {
     const { items, nextCursor } = await getModelsWithVersions({
-      input: { browsingLevel, ...data, take: limit, skip, cursor },
+      input: { browsingLevel, ...data, take: limit, skip, cursor, collectionId },
       user,
     });
 

@@ -46,28 +46,30 @@ export function useApplyHiddenPreferences<
 
   const items = useMemo(
     () => {
+      const preferences = { ...hiddenPreferences };
       if (hiddenImages)
-        hiddenPreferences.hiddenImages = new Map([
-          ...hiddenPreferences.hiddenImages,
+        preferences.hiddenImages = new Map([
+          ...preferences.hiddenImages,
           ...hiddenImages.map((id): [number, boolean] => [id, true]),
         ]);
       if (hiddenUsers)
-        hiddenPreferences.hiddenUsers = new Map([
-          ...hiddenPreferences.hiddenUsers,
+        preferences.hiddenUsers = new Map([
+          ...preferences.hiddenUsers,
           ...hiddenUsers.map((id): [number, boolean] => [id, true]),
         ]);
-      if (hiddenTags)
-        hiddenPreferences.hiddenTags = new Map([
-          ...hiddenPreferences.hiddenTags,
+      if (hiddenTags) {
+        preferences.hiddenTags = new Map([
+          ...preferences.hiddenTags,
           ...hiddenTags.map((id): [number, boolean] => [id, true]),
         ]);
+      }
       return filterPreferences({
         type,
         data,
         showHidden,
         disabled,
         browsingLevel,
-        hiddenPreferences,
+        hiddenPreferences: preferences,
         currentUser,
         allowLowerLevels,
       });

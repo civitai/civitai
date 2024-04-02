@@ -46,6 +46,7 @@ function ResourceSelect({
       title: buttonLabel,
       onSelect: handleAdd,
       options,
+      isTraining,
     });
   };
 
