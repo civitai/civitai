@@ -120,7 +120,7 @@ export const useEstimateTextToImageJobCost = () => {
   const status = useGenerationStatus();
 
   const input = useMemo(() => {
-    if (!status.chargesEnabled) {
+    if (!status.charge) {
       return null;
     }
 
@@ -150,7 +150,7 @@ export const useEstimateTextToImageJobCost = () => {
     debouncedGenerationForm.resources,
     debouncedGenerationForm.sampler,
     debouncedGenerationForm.vae,
-    status.chargesEnabled,
+    status.charge,
     debouncedGenerationForm.draft,
     /* eslint-enable react-hooks/exhaustive-deps */
   ]);
@@ -158,11 +158,11 @@ export const useEstimateTextToImageJobCost = () => {
   const { data: result, isLoading } = trpc.generation.estimateTextToImage.useQuery(
     input as CreateGenerationRequestInput,
     {
-      enabled: !!input && status.chargesEnabled,
+      enabled: !!input && status.charge,
     }
   );
 
-  const totalCost = status.chargesEnabled
+  const totalCost = status.charge
     ? (result?.jobs ?? []).reduce((acc, job) => {
         acc += Math.ceil(job.cost);
         return acc;
@@ -171,7 +171,7 @@ export const useEstimateTextToImageJobCost = () => {
 
   return {
     totalCost,
-    isCalculatingCost: !status.chargesEnabled ? false : input ? isLoading : false,
+    isCalculatingCost: !status.charge ? false : input ? isLoading : false,
   };
 };
 
