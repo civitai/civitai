@@ -17,13 +17,18 @@ export const useActiveSubscription = () => {
 export const useCanUpgrade = () => {
   const currentUser = useCurrentUser();
   const { subscription, subscriptionLoading } = useActiveSubscription();
+  const { data: products = [], isLoading: productsLoading } = trpc.stripe.getPlans.useQuery();
 
-  if (!currentUser || subscriptionLoading) {
+  if (!currentUser || subscriptionLoading || productsLoading) {
     return false;
   }
 
   if (!subscription) {
     return true;
+  }
+
+  if (products.length <= 1) {
+    return false;
   }
 
   const metadata = subscription?.product?.metadata as ProductMetadata;
