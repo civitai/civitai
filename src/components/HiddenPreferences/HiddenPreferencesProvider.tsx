@@ -1,4 +1,4 @@
-import { useContext, createContext, ReactNode, useMemo, useDeferredValue, useEffect } from 'react';
+import { useContext, createContext, ReactNode, useMemo, useDeferredValue } from 'react';
 import { useQueryHiddenPreferences } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { HiddenTag } from '~/server/services/user-preferences.service';
@@ -28,9 +28,7 @@ export const HiddenPreferencesProvider = ({ children }: { children: ReactNode })
   const hidden = useMemo(() => {
     const moderatedTags = data.hiddenTags.filter((x) => !!x.nsfwLevel);
     const tags = new Map(
-      data.hiddenTags
-        .filter((x) => !disableHidden && x.hidden && !moderatedTags.some((m) => m.id === x.id))
-        .map((x) => [x.id, true])
+      data.hiddenTags.filter((x) => !disableHidden && x.hidden).map((x) => [x.id, true])
     );
 
     const images = new Map(

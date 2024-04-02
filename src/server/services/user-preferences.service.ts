@@ -75,7 +75,7 @@ const getHiddenTagsOfHiddenTags = async (tagIds: number[]) => {
 };
 
 const HiddenTags = createUserCache({
-  key: 'hidden-tags-3',
+  key: 'hidden-tags-4',
   callback: async ({ userId }) => {
     const tagEngagment = (
       await dbWrite.tagEngagement.findMany({
@@ -413,9 +413,12 @@ async function toggleHiddenTags({
 
   const hiddenChangedIds = [...addedTags, ...deletedTags];
 
-  const [votedHideImages, changedHiddenTagsOfHiddenTags] = await Promise.all([
+  const [
+    votedHideImages,
+    // changedHiddenTagsOfHiddenTags
+  ] = await Promise.all([
     getVotedHideImages({ hiddenTagIds: hiddenChangedIds, userId }),
-    getHiddenTagsOfHiddenTags(hiddenChangedIds),
+    // getHiddenTagsOfHiddenTags(hiddenChangedIds),
   ]);
 
   await Promise.all([
@@ -429,7 +432,7 @@ async function toggleHiddenTags({
     tagId && deletedTags.includes(tagId);
 
   const imageMap = (image: HiddenImage): HiddenPreferencesKind => ({ ...image, kind: 'image' });
-  const tagMap = (tag: HiddenTag): HiddenPreferencesKind => ({ ...tag, kind: 'tag' });
+  // const tagMap = (tag: HiddenTag): HiddenPreferencesKind => ({ ...tag, kind: 'tag' });
 
   return {
     added: [

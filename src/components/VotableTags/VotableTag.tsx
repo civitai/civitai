@@ -1,7 +1,17 @@
 import { VotableTagConnectorInput } from '~/server/schema/tag.schema';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
-import { ActionIcon, Badge, Group, HoverCard, useMantineTheme, Text, Divider } from '@mantine/core';
+import {
+  ActionIcon,
+  Badge,
+  Group,
+  HoverCard,
+  useMantineTheme,
+  Text,
+  Divider,
+  Menu,
+  UnstyledButton,
+} from '@mantine/core';
 import { useCallback, useRef } from 'react';
 import { TagType } from '@prisma/client';
 import {
@@ -22,6 +32,10 @@ import {
   votableTagColors,
   getIsSafeBrowsingLevel,
 } from '~/shared/constants/browsingLevel.constants';
+import { IconDotsVertical } from '@tabler/icons-react';
+import { useHiddenPreferencesContext } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
+import { useToggleHiddenPreferences } from '~/hooks/hidden-preferences';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 type VotableTagProps = VotableTagConnectorInput & {
   tagId: number;
@@ -78,6 +92,7 @@ export function VotableTag({
   lastUpvote,
   onChange,
 }: VotableTagProps) {
+  const currentUser = useCurrentUser();
   const clickedRef = useRef(false);
   const key = getKey({ entityType, entityId, name });
   const vote = useVotableTagStore(useCallback((state) => state.votes[key] ?? initialVote, [key])); //eslint-disable-line
@@ -151,17 +166,13 @@ export function VotableTag({
   const canVote = tagId;
   let badge = (
     <Badge
-      component={NextLink}
       radius="xs"
-      href={`/images?tags=${tagId}&view=feed`}
-      data-activity="tag-click:image"
       key={tagId}
       sx={{
         position: 'relative',
         background: badgeBg,
         borderColor: badgeBorder,
         color: badgeColor.color,
-        cursor: 'pointer',
         userSelect: 'none',
 
         [`&:before`]: {
@@ -174,25 +185,36 @@ export function VotableTag({
           width: `${opacity * 100}%`,
         },
       }}
-      pl={canVote ? 0 : 4}
-      pr={0}
+      pl={canVote ? 3 : 4}
+      pr={!!currentUser ? 0 : undefined}
     >
       <Group spacing={0}>
         {canVote && (
           <LoginPopover>
-            <ActionIcon
-              variant="transparent"
-              size="sm"
-              onClick={handleUpvote}
-              color={vote === 1 ? voteColor : undefined}
-            >
+            <UnstyledButton onClick={handleUpvote} className="z-10">
               <IconArrowBigUp
                 strokeWidth={0}
                 fill={vote === 1 ? voteColor : 'rgba(255, 255, 255, 0.3)'}
                 size="1rem"
               />
-            </ActionIcon>
+            </UnstyledButton>
           </LoginPopover>
+        )}
+        {canVote && (
+          <LoginPopover>
+            <UnstyledButton onClick={handleDownvote} className="z-10 mr-1">
+              <IconArrowBigDown
+                strokeWidth={0}
+                fill={vote === -1 ? voteColor : 'rgba(255, 255, 255, 0.3)'}
+                size="1rem"
+              />
+            </UnstyledButton>
+          </LoginPopover>
+        )}
+        {!canVote && (
+          <ActionIcon variant="transparent" size="sm" onClick={handleRemove}>
+            <IconX strokeWidth={2.5} size=".75rem" />
+          </ActionIcon>
         )}
         {needsReview && (
           <IconFlag
@@ -210,24 +232,26 @@ export function VotableTag({
             style={{ marginRight: 2 }}
           />
         )}
-        <span title={!isVoting ? `Score: ${score}` : undefined} style={{ zIndex: 10 }}>
+        <Text
+          component={NextLink}
+          href={`/images?tags=${tagId}&view=feed`}
+          data-activity="tag-click:image"
+          title={!isVoting ? `Score: ${score}` : undefined}
+          style={{ zIndex: 10 }}
+        >
           {getTagDisplayName(name)}
-        </span>
-        {canVote && (
-          <LoginPopover>
-            <ActionIcon variant="transparent" size="sm" onClick={handleDownvote}>
-              <IconArrowBigDown
-                strokeWidth={0}
-                fill={vote === -1 ? voteColor : 'rgba(255, 255, 255, 0.3)'}
-                size="1rem"
-              />
-            </ActionIcon>
-          </LoginPopover>
-        )}
-        {!canVote && (
-          <ActionIcon variant="transparent" size="sm" onClick={handleRemove}>
-            <IconX strokeWidth={2.5} size=".75rem" />
-          </ActionIcon>
+        </Text>
+        {!!currentUser && (
+          <Menu withinPortal withArrow>
+            <Menu.Target>
+              <ActionIcon size="sm">
+                <IconDotsVertical strokeWidth={2.5} size=".75rem" />
+              </ActionIcon>
+            </Menu.Target>
+            <Menu.Dropdown>
+              <TagContexDropdown tagId={tagId} name={name} />
+            </Menu.Dropdown>
+          </Menu>
         )}
       </Group>
     </Badge>
@@ -276,3 +300,17 @@ const debounce = (func: () => void, timeout = 1000) => {
     func();
   }, timeout);
 };
+
+function TagContexDropdown({ tagId, name }: { tagId: number; name: string }) {
+  const { hiddenTags } = useHiddenPreferencesContext();
+  const { mutate } = useToggleHiddenPreferences();
+  const isHidden = hiddenTags.get(tagId);
+
+  return (
+    <>
+      <Menu.Item onClick={() => mutate({ kind: 'tag', data: [{ id: tagId, name }] })}>
+        {isHidden ? 'Unhide' : 'Hide'} images with this tag
+      </Menu.Item>
+    </>
+  );
+}
