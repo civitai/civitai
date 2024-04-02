@@ -27,6 +27,7 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { BrowsingModeOverrideProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { isProd } from '~/env/other';
 
 export default function Home() {
   const { data: homeBlocks = [], isLoading } = trpc.homeBlock.getHomeBlocks.useQuery();
@@ -244,7 +245,7 @@ export default function Home() {
                           // excludedImageTagIds: homeExcludedTags.map((tag) => tag.id),
                           excludedTagIds: homeExcludedTags.map((tag) => tag.id),
                           // Required to override localStorage filters
-                          period: MetricTimeframe.Week,
+                          period: isProd ? MetricTimeframe.Week : MetricTimeframe.AllTime,
                           sort: ModelSort.HighestRated,
                           types: undefined,
                           collectionId: undefined,

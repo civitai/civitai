@@ -1,24 +1,33 @@
-import { ContextModalProps, openContextModal } from '@mantine/modals';
-import { Generation } from '~/server/services/generation/generation.types';
+import OneKeyMap from '@essentials/one-key-map';
 import {
+  ActionIcon,
+  Badge,
+  Box,
+  Button,
+  Card,
+  Center,
+  Divider,
+  Group,
+  Loader,
+  Menu,
+  Select,
   Stack,
   Text,
-  Group,
-  Badge,
-  Loader,
-  Divider,
-  Center,
-  Box,
-  Title,
   ThemeIcon,
-  Menu,
-  ActionIcon,
-  Card,
-  Select,
-  Button,
+  Title,
 } from '@mantine/core';
+import { ContextModalProps, openContextModal } from '@mantine/modals';
+import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
+import { ModelType } from '@prisma/client';
+import {
+  IconCloudOff,
+  IconDotsVertical,
+  IconHorse,
+  IconInfoCircle,
+  IconTagOff,
+} from '@tabler/icons-react';
+import { truncate } from 'lodash-es';
 import React, { useContext, useEffect, useRef, useState } from 'react';
-import { getDisplayName } from '~/utils/string-helpers';
 import {
   Configure,
   InstantSearch,
@@ -26,48 +35,44 @@ import {
   useInstantSearch,
   useRefinementList,
 } from 'react-instantsearch';
-import { BaseModel, baseModelSets, constants } from '~/server/common/constants';
-import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
-import { env } from '~/env/client.mjs';
-import { CustomSearchBox } from '~/components/Search/CustomSearchComponents';
-import { useIsMobile } from '~/hooks/useIsMobile';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useInView } from '~/hooks/useInView';
-import { IconCloudOff, IconDotsVertical, IconHorse } from '@tabler/icons-react';
-import { useSearchLayoutStyles } from '~/components/Search/SearchLayout';
 import trieMemoize from 'trie-memoize';
-import OneKeyMap from '@essentials/one-key-map';
-import { FeedCard } from '~/components/Cards/FeedCard';
-import { ResourceSelectOptions } from './resource-select.types';
-import { InViewLoader } from '~/components/InView/InViewLoader';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
-import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { CivitaiLinkManageButton } from '~/components/CivitaiLink/CivitaiLinkManageButton';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
-import { aDayAgo } from '~/utils/date-helpers';
+import { FeedCard } from '~/components/Cards/FeedCard';
+import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
+import { CivitaiLinkManageButton } from '~/components/CivitaiLink/CivitaiLinkManageButton';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
-import { ReportMenuItem } from '~/components/MenuItems/ReportMenuItem';
-import { openContext } from '~/providers/CustomModalsProvider';
-import { IconTagOff } from '@tabler/icons-react';
-import { IconInfoCircle } from '@tabler/icons-react';
-import { ReportEntity } from '~/server/schema/report.schema';
-import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { getBaseModelSet } from '~/components/ImageGeneration/GenerationForm/generation.utils';
-import { ModelType } from '@prisma/client';
-import { ImageMetaProps } from '~/server/schema/image.schema';
-import { truncate } from 'lodash-es';
+import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
+import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { InViewLoader } from '~/components/InView/InViewLoader';
+import { ReportMenuItem } from '~/components/MenuItems/ReportMenuItem';
+import { CustomSearchBox } from '~/components/Search/CustomSearchComponents';
 import { searchIndexMap } from '~/components/Search/search.types';
 import { SearchIndexDataMap, useInfiniteHitsTransformed } from '~/components/Search/search.utils2';
-import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
-import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
+import { useSearchLayoutStyles } from '~/components/Search/SearchLayout';
+import { env } from '~/env/client.mjs';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useInView } from '~/hooks/useInView';
+import { useIsMobile } from '~/hooks/useIsMobile';
+import { openContext } from '~/providers/CustomModalsProvider';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { BaseModel, baseModelSets, constants } from '~/server/common/constants';
+import { ImageMetaProps } from '~/server/schema/image.schema';
+import { ReportEntity } from '~/server/schema/report.schema';
+import { Generation } from '~/server/services/generation/generation.types';
+import { aDayAgo } from '~/utils/date-helpers';
+import { getDisplayName } from '~/utils/string-helpers';
+import { ResourceSelectOptions } from './resource-select.types';
 
 type ResourceSelectModalProps = {
   title?: React.ReactNode;
   onSelect: (value: Generation.Resource) => void;
   options?: ResourceSelectOptions;
+  isTraining?: boolean;
 };
 
 export const openResourceSelectModal = ({ title, ...innerProps }: ResourceSelectModalProps) =>
@@ -81,6 +86,7 @@ export const openResourceSelectModal = ({ title, ...innerProps }: ResourceSelect
 
 const ResourceSelectContext = React.createContext<{
   canGenerate?: boolean;
+  isTraining?: boolean;
   resources: { type: ModelType; baseModels: BaseModel[] }[];
   onSelect: (
     value: Generation.Resource & { image: SearchIndexDataMap['models'][number]['images'][number] }
@@ -96,7 +102,7 @@ const useResourceSelectContext = () => {
 export default function ResourceSelectModal({
   context,
   id,
-  innerProps: { onSelect, options = {} },
+  innerProps: { onSelect, options = {}, isTraining = false },
 }: ContextModalProps<ResourceSelectModalProps>) {
   const isMobile = useIsMobile();
   const features = useFeatureFlags();
@@ -141,7 +147,7 @@ export default function ResourceSelectModal({
 
   return (
     <ResourceSelectContext.Provider
-      value={{ onSelect: handleSelect, canGenerate, resources: _resources }}
+      value={{ onSelect: handleSelect, canGenerate, isTraining, resources: _resources }}
     >
       <InstantSearch searchClient={searchClient} indexName={searchIndexMap.models}>
         <Configure hitsPerPage={20} filters={[...filters, ...exclude].join(' AND ')} />
@@ -254,6 +260,7 @@ const createRenderElement = trieMemoize(
 );
 
 const IMAGE_CARD_WIDTH = 450;
+
 function ResourceSelectCard({
   data,
 }: {
@@ -262,7 +269,7 @@ function ResourceSelectCard({
 }) {
   const currentUser = useCurrentUser();
   const { ref, inView } = useInView({ rootMargin: '600px' });
-  const { onSelect, canGenerate, resources } = useResourceSelectContext();
+  const { onSelect, canGenerate, isTraining, resources } = useResourceSelectContext();
   const image = data.images[0];
   const { classes, cx } = useCardStyles({
     aspectRatio: image && image.width && image.height ? image.width / image.height : 1,
@@ -270,6 +277,7 @@ function ResourceSelectCard({
 
   const resourceFilter = resources.find((x) => x.type === data.type);
   const versions = data.versions.filter((version) => {
+    if (isTraining && version.baseModel === 'SDXL Lightning') return false;
     if (canGenerate === undefined) return true;
     return (
       version.canGenerate === canGenerate &&

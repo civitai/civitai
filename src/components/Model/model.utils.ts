@@ -124,6 +124,7 @@ export const useQueryModels = (
     data: flatData,
     showHidden: !!_filters.hidden,
     isRefetching: rest.isRefetching,
+    hiddenTags: _filters.excludedTagIds,
   });
 
   return { data, models: items, isLoading: isLoading || loadingPreferences, ...rest };
