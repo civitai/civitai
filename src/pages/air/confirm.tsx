@@ -16,6 +16,7 @@ import { useState } from 'react';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { PlanCard } from '~/components/Stripe/PlanCard';
+import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 import { getLoginLink } from '~/utils/login-helpers';
@@ -33,10 +34,8 @@ export default function Confirm() {
   const { data: products, isLoading: productsLoading } = trpc.stripe.getPlans.useQuery(undefined, {
     enabled: !isMember,
   });
-  const { data: subscription, isLoading: subscriptionLoading } =
-    trpc.stripe.getUserSubscription.useQuery(undefined, {
-      enabled: !isMember,
-    });
+  const { subscription, subscriptionLoading } = useActiveSubscription();
+
   const confirmMutation = trpc.integration.airConfirm.useMutation({
     async onSuccess(data) {
       queryUtils.integration.airStatus.setData(undefined, () => data);

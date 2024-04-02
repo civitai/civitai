@@ -86,6 +86,8 @@ import Router from 'next/router';
 import { NextLink } from '@mantine/next';
 import { IconLock } from '@tabler/icons-react';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
+import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
+import { DailyBoostRewardClaim } from '~/components/Buzz/Rewards/DailyBoostRewardClaim';
 
 const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
   const { classes, theme } = useStyles();
@@ -137,6 +139,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
     isSDXL,
     isLCM,
     unstableResources,
+    isCalculatingCost,
     draft,
   } = useDerivedGenerationState();
 
@@ -263,7 +266,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
   const { requests } = useGetGenerationRequests();
   const pendingProcessingCount = usePollGenerationRequests(requests);
   const reachedRequestLimit = pendingProcessingCount >= limits.queue;
-  const disableGenerateButton = reachedRequestLimit;
+  const disableGenerateButton = reachedRequestLimit || isCalculatingCost;
 
   const cfgDisabled = !!draft;
   const samplerDisabled = !!draft;
@@ -707,6 +710,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
           </Stack>
         </ScrollArea>
         <Stack spacing={4} px="md" pt="xs" pb={3} className={classes.generationArea}>
+          <DailyBoostRewardClaim />
           {promptWarning && (
             <div>
               <Alert color="red" title="Prohibited Prompt">
@@ -797,37 +801,15 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                   </Stack>
                 </Card>
                 <LoginRedirect reason="image-gen" returnUrl="/generate">
-                  {/* TODO.generation: Uncomment this out by next week */}
-                  {/* {isSDXL ? (
-                        <BuzzTransactionButton
-                          type="submit"
-                          size="lg"
-                          label="Generate"
-                          loading={isSubmitting || loading}
-                          className={classes.generateButtonButton}
-                          disabled={disableGenerateButton}
-                          buzzAmount={totalCost}
-                        />
-                      ) : (
-                        <Button
-                          type="submit"
-                          size="lg"
-                          loading={isSubmitting || loading}
-                          className={classes.generateButtonButton}
-                          disabled={disableGenerateButton}
-                        >
-                          Generate
-                        </Button>
-                      )} */}
-                  <Button
+                  <BuzzTransactionButton
                     type="submit"
                     size="lg"
-                    loading={isLoading}
+                    label="Generate"
+                    loading={isCalculatingCost || isLoading}
                     className={classes.generateButtonButton}
                     disabled={disableGenerateButton}
-                  >
-                    Generate
-                  </Button>
+                    buzzAmount={totalCost}
+                  />
                 </LoginRedirect>
                 {/* <Tooltip label="Reset" color="dark" withArrow> */}
                 <Button

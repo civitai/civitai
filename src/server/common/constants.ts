@@ -280,6 +280,27 @@ export const constants = {
     },
   },
   supporterBadge: '020f374d-f165-4f45-9082-371e696a44ff',
+  memberships: {
+    tierOrder: ['founder', 'bronze', 'silver', 'gold'],
+    badges: {
+      founder: '020f374d-f165-4f45-9082-371e696a44ff',
+      bronze: '020f374d-f165-4f45-9082-371e696a44ff',
+      silver: '5844e919-31e3-4dd7-a3c3-f5affdc7af7a',
+      gold: '5844e919-31e3-4dd7-a3c3-f5affdc7af7a',
+    },
+  },
+  freeMembershipDetails: {
+    name: 'Free',
+    price: 0,
+    badge: '020f374d-f165-4f45-9082-371e696a44ff',
+    metadata: {
+      monthlyBuzz: 0,
+      generationLimit: 1,
+      quantityLimit: 4,
+      queueLimit: 4,
+      badgeType: 'none',
+    },
+  },
 } as const;
 export const activeBaseModels = constants.baseModels.filter(
   (model) => !constants.hiddenBaseModels.includes(model)
@@ -479,9 +500,10 @@ export const generationConfig = {
       { label: 'Portrait', width: 512, height: 768 },
     ],
     costs: {
+      // TODO.imageGenerationBuzzCharge - Remove all cost calculation from the front-end. This is done by the orchestrator.
       base: 0,
       quantity: 1,
-      steps: 40,
+      steps: 30,
       width: 512,
       height: 512,
     },
@@ -509,11 +531,11 @@ export const generationConfig = {
       { label: 'Portrait', width: 832, height: 1216 },
     ],
     costs: {
-      // TODO.generation: Uncomment this out by next week once we start charging for SDXL generation
+      // TODO.imageGenerationBuzzCharge - Remove all cost calculation from the front-end. This is done by the orchestrator.
       // base: 4,
       base: 0,
       quantity: 1,
-      steps: 40,
+      steps: 30,
       width: 1024,
       height: 1024,
     },

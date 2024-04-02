@@ -1,8 +1,10 @@
 import {
+  Badge,
   Button,
   ButtonProps,
   createStyles,
   Group,
+  Loader,
   MantineSize,
   Text,
   Tooltip,
@@ -40,6 +42,7 @@ export function BuzzTransactionButton({
   performTransactionOnPurchase = true,
   label,
   size,
+  loading,
   ...buttonProps
 }: Props) {
   const features = useFeatureFlags();
@@ -68,18 +71,26 @@ export function BuzzTransactionButton({
 
     conditionalPerformTransaction(buzzAmount, onPerformTransaction);
   };
+
   const hasCost = buzzAmount > 0;
 
   return (
     <Button
-      color={hasCost ? 'yellow.7' : 'blue'}
+      color={hasCost || loading ? 'yellow.7' : 'blue'}
       {...buttonProps}
-      onClick={onPerformTransaction ? onClick : undefined}
-      className={cx(buttonProps?.className, { [classes.button]: hasCost })}
+      onClick={loading ? undefined : onPerformTransaction ? onClick : undefined}
+      className={cx(buttonProps?.className, { [classes.button]: hasCost || loading })}
+      styles={{
+        label: {
+          width: '100%',
+        },
+      }}
     >
-      <Group spacing="md" noWrap position="apart">
-        <Text size={size ?? 14}>{label}</Text>
-        {hasCost && (
+      <Group spacing="md" noWrap w="100%">
+        <Text size={size ?? 14} ta={!hasCost ? 'center' : undefined}>
+          {label}
+        </Text>
+        {(hasCost || loading) && (
           <CurrencyBadge
             currency={Currency.BUZZ}
             unitAmount={buzzAmount}
@@ -88,6 +99,8 @@ export function BuzzTransactionButton({
             py={10}
             pl={4}
             pr={8}
+            ml="auto"
+            loading={loading}
             color="dark.8"
           >
             {!hasRequiredAmount(buzzAmount) && (

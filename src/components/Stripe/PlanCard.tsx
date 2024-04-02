@@ -8,13 +8,22 @@ import {
   Group,
   Select,
   Button,
+  ButtonProps,
+  ThemeIconVariant,
+  Tooltip,
 } from '@mantine/core';
 import {
   IconAdCircleOff,
   IconBolt,
   IconChevronDown,
   IconCloud,
+  IconVideo,
   IconPhotoPlus,
+  IconHexagon,
+  IconHexagonPlus,
+  IconList,
+  IconPhotoAi,
+  IconInfoCircle,
 } from '@tabler/icons-react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { benefitIconSize, BenefitItem, PlanBenefitList } from '~/components/Stripe/PlanBenefitList';
@@ -27,44 +36,91 @@ import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
 import { getStripeCurrencyDisplay } from '~/utils/string-helpers';
 import { ProductMetadata } from '~/server/schema/stripe.schema';
 import { isDefined } from '~/utils/type-guards';
-import { formatKBytes } from '~/utils/number-helpers';
+import { abbreviateNumber, formatKBytes, numberWithCommas } from '~/utils/number-helpers';
 import { constants } from '~/server/common/constants';
+import { shortenPlanInterval } from '~/components/Stripe/stripe.utils';
+import { ManageSubscriptionButton } from '~/components/Stripe/ManageSubscriptionButton';
 import { FeatureAccess } from '~/server/services/feature-flags.service';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import { DowngradeFeedbackModal } from '~/components/Stripe/MembershipChangePrevention';
+import { IconX } from '@tabler/icons-react';
 
 type PlanCardProps = {
   product: StripePlan;
   subscription?: StripeSubscription | null;
 };
 
+const subscribeBtnProps: Record<string, Partial<ButtonProps>> = {
+  upgrade: {
+    color: 'blue',
+    variant: 'filled',
+  },
+  downgrade: {
+    color: 'gray',
+    variant: 'filled',
+  },
+  active: {
+    color: 'gray',
+    variant: 'outline',
+  },
+  subscribe: {
+    color: 'blue',
+    variant: 'filled',
+  },
+} as const;
+
 export function PlanCard({ product, subscription }: PlanCardProps) {
+  const features = useFeatureFlags();
+  const hasActiveSubscription = subscription?.status === 'active';
+  const isActivePlan = hasActiveSubscription && subscription?.product?.id === product.id;
   const { classes } = useStyles();
   const meta = (product.metadata ?? {}) as ProductMetadata;
-  const features = useFeatureFlags();
-  const { benefits, image } =
-    getPlanDetails(features, meta).find((x) => x.name === product.name) ?? {};
-  const defaultPriceId = subscription?.price.id ?? product.defaultPriceId;
+  const subscriptionMeta = (subscription?.product.metadata ?? {}) as ProductMetadata;
+  const isUpgrade =
+    hasActiveSubscription &&
+    constants.memberships.tierOrder.indexOf(meta.tier) >
+      constants.memberships.tierOrder.indexOf(subscriptionMeta.tier ?? '');
+  const isDowngrade =
+    hasActiveSubscription &&
+    constants.memberships.tierOrder.indexOf(meta.tier) <
+      constants.memberships.tierOrder.indexOf(subscriptionMeta.tier ?? '');
+  const { benefits, image } = getPlanDetails(product, features) ?? {};
+  const defaultPriceId = isActivePlan
+    ? subscription?.price.id ?? product.defaultPriceId
+    : product.defaultPriceId;
   const [priceId, setPriceId] = useState<string | null>(defaultPriceId);
   const price = product.prices.find((p) => p.id === priceId) ?? product.prices[0];
-  const canSubscribe = (!subscription || !!subscription.canceledAt) && priceId;
+  const btnProps = isActivePlan
+    ? subscribeBtnProps.active
+    : isUpgrade
+    ? subscribeBtnProps.upgrade
+    : isDowngrade
+    ? subscribeBtnProps.downgrade
+    : subscribeBtnProps.subscribe;
 
   return (
-    <Card withBorder style={{ height: '100%' }}>
+    <Card className={classes.card}>
       <Stack justify="space-between" style={{ height: '100%' }}>
         <Stack>
-          <Stack spacing={0} mb="md">
+          <Stack spacing="md" mb="md">
+            <Title className={classes.title} order={2} align="center" mb="sm">
+              {product.name}
+            </Title>
             {image && (
               <Center>
                 <EdgeMedia src={image} width={128} className={classes.image} />
               </Center>
             )}
-            <Title className={classes.title} order={2} align="center" mb="sm">
-              {product.name}
-            </Title>
-            <Group position="center" spacing={4}>
-              <Text className={classes.price} align="center" size={18} weight={500} lh={1}>
-                {getStripeCurrencyDisplay(price.unitAmount, price.currency)}
-              </Text>
+            <Stack spacing={0} align="center">
+              <Group position="center" spacing={4} align="flex-end">
+                <Text className={classes.price} align="center" lh={1}>
+                  {getStripeCurrencyDisplay(price.unitAmount, price.currency)}
+                </Text>
+                <Text align="center" color="dimmed">
+                  / {shortenPlanInterval(price.interval)}
+                </Text>
+              </Group>
               <Select
                 data={product.prices.map((p) => ({ label: p.currency, value: p.id }))}
                 value={priceId}
@@ -94,60 +150,139 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
                   },
                 })}
               />
-            </Group>
-            <Text className={classes.price} align="center" color="dimmed">
-              per {price.interval}
-            </Text>
+            </Stack>
+
+            {priceId && (
+              <>
+                {isActivePlan ? (
+                  <ManageSubscriptionButton>
+                    <Button radius="xl" {...btnProps}>
+                      Manage your Membership
+                    </Button>
+                  </ManageSubscriptionButton>
+                ) : isDowngrade ? (
+                  <Button
+                    radius="xl"
+                    {...btnProps}
+                    onClick={() => {
+                      dialogStore.trigger({
+                        component: DowngradeFeedbackModal,
+                        props: {
+                          priceId,
+                          upcomingVaultSizeKb: meta.vaultSizeKb,
+                          fromTier: subscriptionMeta.tier,
+                          toTier: meta.tier,
+                        },
+                      });
+                    }}
+                  >
+                    Downgrade to {meta?.tier}
+                  </Button>
+                ) : (
+                  <SubscribeButton priceId={priceId}>
+                    <Button radius="xl" {...btnProps}>
+                      {isActivePlan
+                        ? `You are ${meta?.tier}`
+                        : isUpgrade
+                        ? `Upgrade to ${meta?.tier}`
+                        : isDowngrade
+                        ? `Downgrade to ${meta?.tier}`
+                        : `Subscribe to ${meta?.tier}`}
+                    </Button>
+                  </SubscribeButton>
+                )}
+              </>
+            )}
           </Stack>
           {benefits && <PlanBenefitList benefits={benefits} />}
           {product.description && <Text>{product.description}</Text>}
         </Stack>
-        {canSubscribe && (
-          <SubscribeButton priceId={priceId}>
-            <Button>Subscribe</Button>
-          </SubscribeButton>
-        )}
       </Stack>
     </Card>
   );
 }
 
-export const getPlanDetails: (features: FeatureAccess, metadata: ProductMetadata) => PlanMeta[] = (
-  features,
-  metadata: ProductMetadata = {}
-) => [
-  {
-    name: 'Supporter Tier',
-    image: constants.supporterBadge,
+export const getPlanDetails: (
+  product: Pick<StripePlan, 'metadata' | 'name'>,
+  features: FeatureAccess
+) => PlanMeta = (product: Pick<StripePlan, 'metadata' | 'name'>, features: FeatureAccess) => {
+  const metadata = (product.metadata ?? {}) as ProductMetadata;
+  const planMeta = {
+    name: product?.name ?? 'Supporter Tier',
+    image:
+      metadata?.badge ?? constants.memberships.badges[metadata.tier] ?? constants.supporterBadge,
     benefits: [
-      { content: 'Ad-free Browsing', icon: <IconAdCircleOff size={benefitIconSize} /> },
-      { content: 'Early access to new features' },
       {
+        icon: <IconBolt size={benefitIconSize} />,
+        iconColor: (metadata?.monthlyBuzz ?? 0) === 0 ? 'gray' : 'yellow',
+        iconVariant: 'light' as ThemeIconVariant,
         content: (
-          <Text
-            variant="link"
-            td="underline"
-            component="a"
-            href="https://www.youtube.com/watch?v=MaSRXvM05x4"
-            target="_blank"
-          >
-            One-click model loading
+          <Text>
+            <Text span color="yellow.7">
+              {numberWithCommas(metadata?.monthlyBuzz ?? 0)} Buzz per month
+            </Text>
           </Text>
         ),
       },
-      { content: 'Monthly Supporter Badge' },
-      { content: 'Unique nameplate color' },
-      { content: 'Unique Discord role' },
       {
-        icon: <IconPhotoPlus size={benefitIconSize} />,
-        iconColor: 'blue',
-        content: <Text>{metadata.generationLimit ?? 3}x more generations per day</Text>,
+        icon: <IconBolt size={benefitIconSize} />,
+        iconColor: (metadata?.purchasesMultiplier ?? 1) === 1 ? 'gray' : 'yellow',
+        iconVariant: 'light' as ThemeIconVariant,
+        content:
+          (metadata?.purchasesMultiplier ?? 1) === 1 ? (
+            <Text>
+              <Text span color="yellow.7">
+                No bonus Buzz on purchases
+              </Text>
+            </Text>
+          ) : (
+            <Text>
+              <Text span color="yellow.7">
+                {(((metadata?.purchasesMultiplier ?? 1) - 1) * 100).toFixed(0)}% Bonus Buzz on
+                purchases
+              </Text>
+            </Text>
+          ),
       },
-      metadata.vaultSizeKb && features.vault
+      {
+        icon: <IconBolt size={benefitIconSize} />,
+        iconColor: (metadata?.rewardsMultiplier ?? 1) === 1 ? 'gray' : 'yellow',
+        iconVariant: 'light' as ThemeIconVariant,
+        content:
+          (metadata?.rewardsMultiplier ?? 1) === 1 ? (
+            <Text>
+              <Text span color="yellow.7">
+                No extra Buzz on rewards
+              </Text>
+            </Text>
+          ) : (
+            <Text>
+              <Text span color="yellow.7">
+                Rewards give you {(((metadata?.rewardsMultiplier ?? 1) - 1) * 100).toFixed(0)}% more
+                Buzz!
+              </Text>
+            </Text>
+          ),
+      },
+      {
+        icon: <IconPhotoAi size={benefitIconSize} />,
+        iconColor: 'blue',
+        iconVariant: 'light' as ThemeIconVariant,
+        content: <Text>{metadata.quantityLimit ?? 4} Images per job</Text>,
+      },
+      {
+        icon: <IconList size={benefitIconSize} />,
+        iconColor: 'blue',
+        iconVariant: 'light' as ThemeIconVariant,
+        content: <Text>{metadata.queueLimit ?? 4} Queued jobs</Text>,
+      },
+      features.vault
         ? {
             content: (
               <Text>
-                {formatKBytes(metadata.vaultSizeKb)}{' '}
+                {(metadata.vaultSizeKb ?? 0) === 0
+                  ? 'No '
+                  : formatKBytes(metadata.vaultSizeKb ?? 0)}{' '}
                 <Text
                   variant="link"
                   td="underline"
@@ -160,24 +295,39 @@ export const getPlanDetails: (features: FeatureAccess, metadata: ProductMetadata
               </Text>
             ),
             icon: <IconCloud size={benefitIconSize} />,
-            iconColor: 'blue',
+            iconColor: metadata.vaultSizeKb ? 'blue' : 'gray',
+            iconVariant: 'light' as ThemeIconVariant,
           }
         : undefined,
       {
-        icon: <IconBolt size={benefitIconSize} />,
-        iconColor: 'yellow',
-        content: (
-          <Text>
-            <Text span>
-              <CurrencyBadge currency={Currency.BUZZ} unitAmount={metadata.buzz ?? 5000} /> each
-              month
+        content:
+          metadata.badgeType === 'animated' ? (
+            <Text lh={1}>
+              Unique{' '}
+              <Text lh={1} weight={700} component="span">
+                Animated
+              </Text>{' '}
+              Supporter Badge each month
             </Text>
-          </Text>
-        ),
+          ) : metadata.badgeType === 'static' ? (
+            <Text lh={1}>Unique Supporter Badge each month</Text>
+          ) : (
+            <Text lh={1}>No Unique Supporter Badge each month</Text>
+          ),
+        icon:
+          metadata.badgeType === 'animated' ? (
+            <IconHexagonPlus size={benefitIconSize} />
+          ) : (
+            <IconHexagon size={benefitIconSize} />
+          ),
+        iconColor: !metadata.badgeType || metadata.badgeType === 'none' ? 'gray' : 'blue',
+        iconVariant: 'light' as ThemeIconVariant,
       },
     ].filter(isDefined),
-  },
-];
+  };
+
+  return planMeta;
+};
 
 type PlanMeta = {
   name: string;
@@ -186,6 +336,12 @@ type PlanMeta = {
 };
 
 const useStyles = createStyles((theme) => ({
+  card: {
+    height: '100%',
+    background: theme.colorScheme === 'dark' ? theme.colors.dark[8] : theme.colors.gray[0],
+    borderRadius: theme.radius.md,
+    padding: theme.spacing.lg,
+  },
   image: {
     [containerQuery.smallerThan('sm')]: {
       width: 96,
@@ -198,8 +354,7 @@ const useStyles = createStyles((theme) => ({
     },
   },
   price: {
-    [containerQuery.smallerThan('sm')]: {
-      fontSize: 16,
-    },
+    fontSize: 48,
+    fontWeight: 'bold',
   },
 }));

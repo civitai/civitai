@@ -17,6 +17,7 @@ import {
   handleLogError,
   throwAuthorizationError,
   throwBadRequestError,
+  throwInsufficientFundsError,
   throwNotFoundError,
   throwRateLimitError,
   withRetries,
@@ -61,6 +62,7 @@ import { clickhouse } from '~/server/clickhouse/client';
 import dayjs from 'dayjs';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { UserTier } from '~/server/schema/user.schema';
+import { Orchestrator } from '~/server/http/orchestrator/orchestrator.types';
 
 export function parseModelVersionId(assetId: string) {
   const pattern = /^@civitai\/(\d+)$/;
@@ -420,24 +422,130 @@ async function checkResourcesAccess(
   return true;
 }
 
+// TODO.imageGenerationBuzzCharge - Remove all limiters. Generation will not be limited as it's now using buzz.
 const generationLimiter = createLimiter({
   counterKey: REDIS_KEYS.GENERATION.COUNT,
   limitKey: REDIS_KEYS.GENERATION.LIMITS,
   fetchCount: async (userKey) => {
-    const res = await clickhouse?.query({
-      query: `
-        SELECT COUNT(*) as count
-        FROM orchestration.textToImageJobs
-        WHERE userId = ${userKey} AND createdAt > subtractHours(now(), 24);
-      `,
-      format: 'JSONEachRow',
-    });
+    if (!clickhouse) return 0;
 
-    const data = (await res?.json<{ count: number }[]>()) ?? [];
-    const count = data[0]?.count ?? 0;
-    return count;
+    const data = await clickhouse.$query<{ cost: number }>`
+      SELECT SUM(jobCost) as cost
+      FROM orchestration.textToImageJobs
+      WHERE userId = ${userKey} AND createdAt > subtractHours(now(), 24);
+    `;
+    const cost = data?.[0]?.cost ?? 0;
+    return cost;
   },
 });
+
+export const prepareGenerationInput = async ({
+  userId,
+  resources,
+  params: { nsfw, negativePrompt, draft, ...params },
+}: CreateGenerationRequestInput & {
+  userId: number;
+}) => {
+  const { additionalResourceTypes, aspectRatios } = getGenerationConfig(params.baseModel);
+  const status = await getGenerationStatus();
+  const isPromptNsfw = includesNsfw(params.prompt);
+  nsfw ??= isPromptNsfw !== false;
+
+  const additionalNetworks = resources
+    .filter((x) => additionalResourceTypes.map((x) => x.type).includes(x.modelType as any))
+    .reduce(
+      (acc, { id, modelType, ...rest }) => {
+        acc[`@civitai/${id}`] = { type: modelType, ...rest };
+        return acc;
+      },
+      {} as {
+        [key: string]: {
+          type: string;
+          strength?: number;
+          triggerWord?: string;
+        };
+      }
+    );
+
+  const negativePrompts = [negativePrompt ?? ''];
+  if (!nsfw && status.sfwEmbed) {
+    for (const { id, triggerWord } of safeNegatives) {
+      additionalNetworks[`@civitai/${id}`] = {
+        triggerWord,
+        type: ModelType.TextualInversion,
+      };
+      negativePrompts.unshift(triggerWord);
+    }
+  }
+
+  const positivePrompts = [params.prompt];
+  if (isPromptNsfw && status.minorFallback) {
+    for (const { id, triggerWord } of minorPositives) {
+      additionalNetworks[`@civitai/${id}`] = {
+        triggerWord,
+        type: ModelType.TextualInversion,
+      };
+      positivePrompts.unshift(triggerWord);
+    }
+    for (const { id, triggerWord } of minorNegatives) {
+      additionalNetworks[`@civitai/${id}`] = {
+        triggerWord,
+        type: ModelType.TextualInversion,
+      };
+      negativePrompts.unshift(triggerWord);
+    }
+  }
+
+  if (params.aspectRatio.includes('x'))
+    throw throwBadRequestError('Invalid size. Please select your size and try again');
+
+  const { height, width } = aspectRatios[Number(params.aspectRatio)];
+
+  const checkpoint = resources.find((x) => x.modelType === ModelType.Checkpoint);
+
+  if (!checkpoint)
+    throw throwBadRequestError('A checkpoint is required to make a generation request');
+
+  const isSDXL = params.baseModel === 'SDXL' || params.baseModel === 'Pony';
+  if (draft) {
+    // Fix quantity
+    if (params.quantity % 4 !== 0) params.quantity = Math.ceil(params.quantity / 4) * 4;
+    // Fix other params
+    params.steps = isSDXL ? 4 : 6;
+    params.cfgScale = 1;
+    params.sampler = isSDXL ? 'Euler' : 'LCM';
+    // Add speed up resources
+    resources.push({
+      modelType: ModelType.LORA,
+      strength: 1,
+      id: isSDXL ? 391971 : 424706,
+    });
+  }
+
+  const generationRequest = {
+    userId,
+    nsfw,
+    job: {
+      model: `@civitai/${checkpoint.id}`,
+      baseModel: baseModelToOrchestration[params.baseModel as BaseModelSetType],
+      quantity: params.quantity,
+      additionalNetworks,
+      params: {
+        prompt: positivePrompts.join(', '),
+        negativePrompt: negativePrompts.join(', '),
+        scheduler: samplersToSchedulers[params.sampler as Sampler],
+        steps: params.steps,
+        cfgScale: params.cfgScale,
+        height,
+        width,
+        seed: params.seed,
+        clipSkip: params.clipSkip,
+      },
+    },
+  };
+
+  return generationRequest;
+};
 
 export const createGenerationRequest = async ({
   userId,
@@ -622,33 +730,15 @@ export const createGenerationRequest = async ({
   // console.log(JSON.stringify(generationRequest));
   // console.log('________');
 
-  const totalCost = calculateGenerationBill({
-    baseModel: params.baseModel,
-    quantity: params.quantity,
-    steps: params.steps,
-    aspectRatio: params.aspectRatio,
-  });
-
-  const buzzTransaction =
-    totalCost > 0
-      ? await createBuzzTransaction({
-          fromAccountId: userId,
-          type: TransactionType.Generation,
-          amount: totalCost,
-          details: {
-            resources,
-            params,
-          },
-          toAccountId: 0,
-          description: 'Image generation',
-        })
-      : undefined;
-
-  const response = await fetch(`${env.SCHEDULER_ENDPOINT}/requests`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(generationRequest),
-  });
+  const chargesEnabled = status.chargesEnabled;
+  const response = await fetch(
+    `${env.SCHEDULER_ENDPOINT}/requests${chargesEnabled ? '?charge=true' : ''}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(generationRequest),
+    }
+  );
 
   // console.log('________');
   // console.log(response);
@@ -659,23 +749,20 @@ export const createGenerationRequest = async ({
     throw throwRateLimitError();
   }
 
-  if (!response.ok) {
-    if (buzzTransaction) {
-      await withRetries(async () =>
-        refundTransaction(
-          buzzTransaction.transactionId,
-          'Refund due to an error submitting the training job.'
-        )
-      );
-    }
+  if (response.status === 403) {
+    throw throwInsufficientFundsError();
+  }
 
+  if (!response.ok) {
     const message = await response.json();
     throw throwBadRequestError(message);
   }
 
+  // TODO.imageGenerationBuzzCharge - Remove all cost calculation / generation limit from the front-end. This is done by the orchestrator.
   generationLimiter.increment(userId.toString(), params.quantity);
 
   const data: Generation.Api.RequestProps = await response.json();
+  // TODO.imageGenerationBuzzCharge - Remove all cost calculation / generation limit from the front-end. This is done by the orchestrator.
   const [formatted] = await formatGenerationRequests([data]);
   return formatted;
 };
@@ -739,6 +826,8 @@ export async function getGenerationStatus() {
   const status = generationStatusSchema.parse(
     JSON.parse((await redis.hGet(REDIS_KEYS.SYSTEM.FEATURES, REDIS_KEYS.GENERATION.STATUS)) ?? '{}')
   );
+
+  status;
 
   return status as GenerationStatus;
 }
@@ -987,4 +1076,27 @@ export const sendGenerationFeedback = async ({ jobId, reason, message }: SendFee
   if (!response.ok) throw new Error('An unknown error occurred. Please try again later');
 
   return response;
+};
+
+export const textToImage = async ({
+  input,
+  isTestRun,
+}: {
+  input: CreateGenerationRequestInput & {
+    userId: number;
+  };
+  isTestRun?: boolean;
+}) => {
+  const data = await prepareGenerationInput(input);
+  const response = await orchestratorCaller.textToImage({
+    payload: {
+      properties: {},
+      ...data.job,
+    },
+    isTestRun,
+  });
+
+  if (!response.ok) throw new Error('An unknown error occurred. Please try again later');
+
+  return response.data;
 };
