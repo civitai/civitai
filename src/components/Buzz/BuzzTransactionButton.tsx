@@ -80,7 +80,6 @@ export function BuzzTransactionButton({
       {...buttonProps}
       onClick={loading ? undefined : onPerformTransaction ? onClick : undefined}
       className={cx(buttonProps?.className, { [classes.button]: hasCost || loading })}
-      px={8}
       styles={{
         label: {
           width: '100%',
