@@ -31,7 +31,7 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { CancelMembershipFeedbackModal } from '~/components/Stripe/MembershipChangePrevention';
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
 import { ManageSubscriptionButton } from '~/components/Stripe/ManageSubscriptionButton';
-import { useActiveSubscription } from '~/components/Stripe/memberships.util';
+import { useActiveSubscription, useCanUpgrade } from '~/components/Stripe/memberships.util';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -71,6 +71,7 @@ export default function UserMembership() {
   const { classes, theme } = useStyles();
   const { subscription, subscriptionLoading } = useActiveSubscription();
   const features = useFeatureFlags();
+  const canUpgrade = useCanUpgrade();
 
   if (subscriptionLoading || !subscription) {
     return (
@@ -86,9 +87,6 @@ export default function UserMembership() {
   const product = subscription.product;
   const { image, benefits } = getPlanDetails(subscription.product, features);
   const productMeta = (product.metadata ?? {}) as ProductMetadata;
-  const canUpgrade =
-    productMeta.tier !==
-    constants.memberships.tierOrder[constants.memberships.tierOrder.length - 1];
 
   return (
     <>
