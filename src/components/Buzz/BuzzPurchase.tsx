@@ -471,24 +471,6 @@ export const BuzzPurchase = ({
               Credit card, bank transfer, Google Pay, Apple Pay, and more.
             </Text>
           </Stack>
-          <DismissibleAlert
-            id="rewards-program-notice"
-            content={
-              <Text align="center">
-                Want free Buzz? Check out our{' '}
-                <Text
-                  component="a"
-                  href="/user/buzz-dashboard#rewards"
-                  target="_blank"
-                  variant="link"
-                  td="underline"
-                >
-                  rewards program
-                </Text>
-              </Text>
-            }
-            radius="md"
-          />
         </Stack>
       </Grid.Col>
       {canUpgradeMembership && (

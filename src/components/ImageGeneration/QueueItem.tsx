@@ -42,6 +42,8 @@ import {
   useUnstableResources,
 } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
+import { Currency } from '@prisma/client';
 
 const tooltipProps: Omit<TooltipProps, 'children' | 'label'> = {
   withinPortal: true,
@@ -118,6 +120,8 @@ export function QueueItem({ request }: Props) {
 
   const { prompt, ...details } = request.params;
   const removedForSafety = request.images?.some((x) => x.removedForSafety && x.available);
+
+  console.log(request);
 
   const hasUnstableResources = request.resources.some((x) => unstableResources.includes(x.id));
   const overwriteStatusLabel =
@@ -201,6 +205,9 @@ export function QueueItem({ request }: Props) {
             </Text>
           </Group>
           <Group spacing="xs">
+            {request.cost && (
+              <CurrencyBadge unitAmount={request.cost} currency={Currency.BUZZ} size="xs" />
+            )}
             <Tooltip {...tooltipProps} label="Copy Job IDs">
               <ActionIcon size="md" p={4} variant="light" radius={0} onClick={handleCopy}>
                 {copied ? <IconCheck /> : <IconInfoHexagon />}

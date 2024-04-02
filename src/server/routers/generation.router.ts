@@ -105,7 +105,9 @@ export const generationRouter = router({
     ),
   sendFeedback: protectedProcedure
     .input(sendFeedbackSchema)
-    .mutation(({ input }) => sendGenerationFeedback(input)),
+    .mutation(({ input, ctx }) =>
+      sendGenerationFeedback({ ...input, userId: ctx.user.id, ip: ctx.ip })
+    ),
   textToImage: protectedProcedure
     .input(createGenerationRequestSchema)
     .mutation(({ input, ctx }) => {

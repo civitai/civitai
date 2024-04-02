@@ -342,7 +342,7 @@ export type BuzzEvent = ReturnType<typeof createBuzzEvent>;
 type BuzzEventKey = {
   type: string;
   toUserId: number;
-  forId: number;
+  forId: number | string;
   byUserId: number;
 };
 
