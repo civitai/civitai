@@ -72,7 +72,6 @@ import {
 import { BrowsingModeIcon, BrowsingModeMenu } from '~/components/BrowsingMode/BrowsingMode';
 import { ChatButton } from '~/components/Chat/ChatButton';
 import { CivitaiLinkPopover } from '~/components/CivitaiLink/CivitaiLinkPopover';
-import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvider';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { ListSearch } from '~/components/ListSearch/ListSearch';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
@@ -100,10 +99,6 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 const HEADER_HEIGHT = 70;
 
 const useStyles = createStyles((theme) => ({
-  root: {
-    containerName: 'header',
-    containerType: 'inline-size',
-  },
   header: {
     display: 'flex',
     alignItems: 'center',
@@ -782,13 +777,7 @@ export function AppHeader({
   };
 
   return (
-    <ContainerProvider
-      component={Header}
-      height={HEADER_HEIGHT}
-      fixed={fixed}
-      zIndex={100}
-      containerName="header"
-    >
+    <Header height={HEADER_HEIGHT} fixed={fixed} zIndex={100}>
       <Box className={cx(classes.mobileSearchWrapper, { [classes.dNone]: !showSearch })}>
         {renderSearchComponent({ onSearchDone, isMobile: true, ref: searchRef })}
       </Box>
@@ -1015,7 +1004,7 @@ export function AppHeader({
           </Group>
         </Grid.Col>
       </Grid>
-    </ContainerProvider>
+    </Header>
   );
 }
 

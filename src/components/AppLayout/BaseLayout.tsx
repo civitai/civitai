@@ -1,27 +1,16 @@
-import { createStyles, useMantineTheme } from '@mantine/core';
+import { useMantineTheme } from '@mantine/core';
 import React from 'react';
 import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvider';
+import { GenerationSidebar } from '~/components/ImageGeneration/GenerationSidebar';
 
 export function BaseLayout({ children }: { children: React.ReactNode }) {
   const theme = useMantineTheme();
-  const { classes, cx } = useStyles();
   return (
-    <ContainerProvider
-      className={cx(`theme-${theme.colorScheme}`, classes.root)}
-      id="root"
-      containerName="root"
-      supportsContainerQuery={false}
-    >
-      {children}
-    </ContainerProvider>
+    <div className={`flex h-full w-full theme-${theme.colorScheme}`}>
+      <GenerationSidebar />
+      <ContainerProvider containerName="main" className="flex-1">
+        {children}
+      </ContainerProvider>
+    </div>
   );
 }
-
-const useStyles = createStyles(() => ({
-  root: {
-    display: 'flex',
-    flexDirection: 'column',
-    height: '100%',
-    width: '100%',
-  },
-}));
