@@ -23,13 +23,13 @@ import {
   useMantineColorScheme,
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
-import { CollectionType, Currency } from '@prisma/client';
+import { Currency } from '@prisma/client';
 import {
+  IconLink,
   IconBarbell,
   IconBookmark,
   IconBrush,
   IconChevronDown,
-  IconCircleDashed,
   IconCrown,
   IconHeart,
   IconHistory,
@@ -477,6 +477,15 @@ export function AppHeader({
           <Group align="center" spacing="xs">
             <IconCrown stroke={1.5} color={theme.colors.yellow[theme.fn.primaryShade()]} />
             Leaderboard
+          </Group>
+        ),
+      },
+      {
+        href: '/product/link',
+        label: (
+          <Group align="center" spacing="xs">
+            <IconLink stroke={1.5} />
+            Download Link App
           </Group>
         ),
       },
