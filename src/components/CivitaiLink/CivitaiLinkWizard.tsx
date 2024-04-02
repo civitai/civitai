@@ -17,6 +17,7 @@ import { openContextModal } from '@mantine/modals';
 import {
   IconCheck,
   IconChevronRight,
+  IconCircleCheck,
   IconCirclePlus,
   IconClock,
   IconCopy,
@@ -82,9 +83,18 @@ const { openModal, Modal } = createContextModal({
                 }
               />
               <PlanBenefitList
+                useDefaultBenefits={false}
                 benefits={[
-                  { content: 'Add & remove resources' },
-                  { content: 'Add & remove vault resources' },
+                  {
+                    content: 'Add & remove resources',
+                    icon: <IconCircleCheck size={18} />,
+                    iconColor: 'green',
+                  },
+                  {
+                    content: 'Add & remove vault resources',
+                    icon: <IconCircleCheck size={18} />,
+                    iconColor: 'green',
+                  },
                   {
                     content: 'Generate images (coming soon)',
                     icon: <IconClock size={18} />,
@@ -102,6 +112,7 @@ const { openModal, Modal } = createContextModal({
                 }
               />
               <PlanBenefitList
+                useDefaultBenefits={false}
                 benefits={[
                   {
                     content: (
@@ -115,6 +126,8 @@ const { openModal, Modal } = createContextModal({
                         Automatic 1111 SD Web UI
                       </Text>
                     ),
+                    icon: <IconCircleCheck size={18} />,
+                    iconColor: 'green',
                   },
                   {
                     content: (
@@ -128,6 +141,8 @@ const { openModal, Modal } = createContextModal({
                         ComfyUI
                       </Text>
                     ),
+                    icon: <IconCircleCheck size={18} />,
+                    iconColor: 'green',
                   },
                   {
                     content: <Text>Connect any models folder</Text>,
