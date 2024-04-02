@@ -155,11 +155,14 @@ const defaultsByTier: Record<string, GenerationLimits> = {
     resources: 9,
   },
   founder: {
-    quantity: 10,
-    queue: 10,
+    quantity: 8,
+    queue: 8,
     steps: 60,
-    resources: 12,
+    resources: 9,
   },
+  bronze: { quantity: 8, queue: 8, steps: 60, resources: 12 },
+  silver: { quantity: 10, queue: 10, steps: 60, resources: 12 },
+  gold: { quantity: 12, queue: 10, steps: 60, resources: 12 },
 };
 
 export const generationStatusSchema = z.object({
@@ -178,6 +181,7 @@ export const generationStatusSchema = z.object({
       }
       return mergedLimits;
     }),
+  chargesEnabled: z.boolean().default(true),
 });
 export type GenerationStatus = z.infer<typeof generationStatusSchema>;
 
@@ -211,6 +215,18 @@ export const createGenerationRequestSchema = z.object({
     .max(10),
   params: sharedGenerationParamsSchema,
 });
+
+export type GenerationRequestTestRunSchema = z.infer<typeof generationRequestTestRunSchema>;
+export const generationRequestTestRunSchema = createGenerationRequestSchema.merge(
+  z.object({
+    params: sharedGenerationParamsSchema.merge(
+      z.object({
+        prompt: z.string().default(''),
+        negativePrompt: z.string().default(''),
+      })
+    ),
+  })
+);
 
 export type CheckResourcesCoverageSchema = z.infer<typeof checkResourcesCoverageSchema>;
 export const checkResourcesCoverageSchema = z.object({

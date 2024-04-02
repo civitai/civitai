@@ -809,7 +809,7 @@ export function AppHeader({
             >
               <Logo />
             </Anchor>
-            {!isMember && <SupportButton />}
+            <SupportButton />
             {/* Disabled until next event */}
             {/* <EventButton /> */}
           </Group>

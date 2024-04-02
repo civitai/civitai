@@ -80,7 +80,11 @@ export function numberWithCommas(value: number | string | undefined) {
     : '';
 }
 
-export function formatPriceForDisplay(value: number | undefined, currency?: Currency) {
+export function formatPriceForDisplay(
+  value: number | undefined,
+  currency?: Currency,
+  opts?: { decimals: boolean }
+) {
   if (currency === Currency.BUZZ) {
     return numberWithCommas(value);
   }
@@ -90,6 +94,10 @@ export function formatPriceForDisplay(value: number | undefined, currency?: Curr
   }
 
   const [intPart, decimalPart] = (value / 100).toFixed(2).split('.');
+
+  if (opts && !opts?.decimals && decimalPart === '00') {
+    return `${numberWithCommas(intPart)}`;
+  }
 
   return `${numberWithCommas(intPart)}.${decimalPart}`;
 }
@@ -104,7 +112,11 @@ export const findClosest = (array: number[], target: number) => {
   });
 };
 
-export const formatCurrencyForDisplay = (value: number, currency?: Currency) => {
+export const formatCurrencyForDisplay = (
+  value: number,
+  currency?: Currency,
+  opts?: { decimals?: boolean }
+) => {
   if (!currency) {
     numberWithCommas(value);
   }
@@ -114,6 +126,11 @@ export const formatCurrencyForDisplay = (value: number, currency?: Currency) => 
   }
 
   const [intPart, decimalPart] = (value / 100).toFixed(2).split('.');
+
+  if (opts && !opts?.decimals && decimalPart === '00') {
+    return `${numberWithCommas(intPart)}`;
+  }
+
   return `${numberWithCommas(intPart)}.${decimalPart}`;
 };
 

@@ -3,6 +3,7 @@ import {
   bulkDeleteGeneratedImagesSchema,
   checkResourcesCoverageSchema,
   createGenerationRequestSchema,
+  generationRequestTestRunSchema,
   getGenerationRequestsSchema,
   getGenerationResourcesSchema,
   sendFeedbackSchema,
@@ -20,6 +21,7 @@ import {
   getUnavailableResources,
   getUnstableResources,
   sendGenerationFeedback,
+  textToImage,
   toggleUnavailableResource,
 } from '~/server/services/generation/generation.service';
 import {
@@ -104,4 +106,25 @@ export const generationRouter = router({
   sendFeedback: protectedProcedure
     .input(sendFeedbackSchema)
     .mutation(({ input }) => sendGenerationFeedback(input)),
+  textToImage: protectedProcedure
+    .input(createGenerationRequestSchema)
+    .mutation(({ input, ctx }) => {
+      return textToImage({
+        input: {
+          ...input,
+          userId: ctx.user.id,
+        },
+      });
+    }),
+  estimateTextToImage: protectedProcedure
+    .input(generationRequestTestRunSchema)
+    .query(({ input, ctx }) => {
+      return textToImage({
+        input: {
+          ...input,
+          userId: ctx.user.id,
+        },
+        isTestRun: true,
+      });
+    }),
 });

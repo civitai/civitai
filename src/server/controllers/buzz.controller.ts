@@ -13,14 +13,20 @@ import {
 import {
   completeStripeBuzzTransaction,
   createBuzzTransaction,
+  getMultipliersForUser,
   getUserBuzzAccount,
   getUserBuzzTransactions,
 } from '~/server/services/buzz.service';
-import { throwAuthorizationError, throwBadRequestError } from '../utils/errorHandling';
+import {
+  handleLogError,
+  throwAuthorizationError,
+  throwBadRequestError,
+} from '../utils/errorHandling';
 import { DEFAULT_PAGE_SIZE } from '../utils/pagination-helpers';
 import { dbRead } from '~/server/db/client';
 import { userContributingClubs } from '../services/club.service';
 import { ClubAdminPermission } from '@prisma/client';
+import { dailyBoostReward } from '~/server/rewards/active/dailyBoost.reward';
 
 export function getUserAccountHandler({ ctx }: { ctx: DeepNonNullable<Context> }) {
   try {
@@ -239,3 +245,21 @@ export async function depositClubFundsHandler({
     throw getTRPCErrorFromUnknown(error);
   }
 }
+
+export const getUserMultipliersHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
+  try {
+    return getMultipliersForUser(ctx.user.id);
+  } catch (error) {
+    throw getTRPCErrorFromUnknown(error);
+  }
+};
+
+export const claimDailyBoostRewardHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
+  try {
+    await dailyBoostReward.apply({ userId: ctx.user.id }, ctx.ip);
+  } catch (error) {
+    const parsedError = getTRPCErrorFromUnknown(error);
+    handleLogError(parsedError);
+    throw parsedError;
+  }
+};
