@@ -105,7 +105,8 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
     : subscribeBtnProps.subscribe;
 
   const metadata = (subscription?.product?.metadata ?? { tier: 'free' }) as ProductMetadata;
-  const appliesForDiscount = !isActivePlan && appliesForFounderDiscount(metadata?.tier);
+  const appliesForDiscount =
+    !isActivePlan && appliesForFounderDiscount(metadata?.tier) && features.membershipsV2;
 
   return (
     <Card className={classes.card}>
@@ -254,42 +255,46 @@ export const getPlanDetails: (
           </Text>
         ),
       },
-      {
-        icon: <IconBolt size={benefitIconSize} />,
-        iconColor: (metadata?.purchasesMultiplier ?? 1) === 1 ? 'gray' : 'yellow',
-        iconVariant: 'light' as ThemeIconVariant,
-        content:
-          (metadata?.purchasesMultiplier ?? 1) === 1 ? (
-            <Text>
-              <Text span>No bonus Buzz on purchases</Text>
-            </Text>
-          ) : (
-            <Text>
-              <Text span color="yellow.7">
-                {(((metadata?.purchasesMultiplier ?? 1) - 1) * 100).toFixed(0)}% Bonus Buzz on
-                purchases
-              </Text>
-            </Text>
-          ),
-      },
-      {
-        icon: <IconBolt size={benefitIconSize} />,
-        iconColor: (metadata?.rewardsMultiplier ?? 1) === 1 ? 'gray' : 'yellow',
-        iconVariant: 'light' as ThemeIconVariant,
-        content:
-          (metadata?.rewardsMultiplier ?? 1) === 1 ? (
-            <Text>
-              <Text span>No extra Buzz on rewards</Text>
-            </Text>
-          ) : (
-            <Text>
-              <Text span color="yellow.7">
-                Rewards give you {(((metadata?.rewardsMultiplier ?? 1) - 1) * 100).toFixed(0)}% more
-                Buzz!
-              </Text>
-            </Text>
-          ),
-      },
+      features.membershipsV2
+        ? {
+            icon: <IconBolt size={benefitIconSize} />,
+            iconColor: (metadata?.purchasesMultiplier ?? 1) === 1 ? 'gray' : 'yellow',
+            iconVariant: 'light' as ThemeIconVariant,
+            content:
+              (metadata?.purchasesMultiplier ?? 1) === 1 ? (
+                <Text>
+                  <Text span>No bonus Buzz on purchases</Text>
+                </Text>
+              ) : (
+                <Text>
+                  <Text span color="yellow.7">
+                    {(((metadata?.purchasesMultiplier ?? 1) - 1) * 100).toFixed(0)}% Bonus Buzz on
+                    purchases
+                  </Text>
+                </Text>
+              ),
+          }
+        : undefined,
+      features.membershipsV2
+        ? {
+            icon: <IconBolt size={benefitIconSize} />,
+            iconColor: (metadata?.rewardsMultiplier ?? 1) === 1 ? 'gray' : 'yellow',
+            iconVariant: 'light' as ThemeIconVariant,
+            content:
+              (metadata?.rewardsMultiplier ?? 1) === 1 ? (
+                <Text>
+                  <Text span>No extra Buzz on rewards</Text>
+                </Text>
+              ) : (
+                <Text>
+                  <Text span color="yellow.7">
+                    Rewards give you {(((metadata?.rewardsMultiplier ?? 1) - 1) * 100).toFixed(0)}%
+                    more Buzz!
+                  </Text>
+                </Text>
+              ),
+          }
+        : undefined,
       {
         icon: <IconPhotoAi size={benefitIconSize} />,
         iconColor: 'blue',

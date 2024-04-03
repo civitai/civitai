@@ -65,8 +65,7 @@ export default function Pricing() {
 
   const freePlanDetails = getPlanDetails(constants.freeMembershipDetails, features);
   const metadata = (subscription?.product?.metadata ?? { tier: 'free' }) as ProductMetadata;
-  const appliesForDiscount =
-    (products ?? []).length > 1 && appliesForFounderDiscount(metadata.tier);
+  const appliesForDiscount = features.membershipsV2 && appliesForFounderDiscount(metadata.tier);
 
   return (
     <>

@@ -58,23 +58,17 @@ export function SubscribeButton({
 
   return (
     <LoginPopover>
-      {typeof children === 'function' ? (
-        <>
-          {children({
+      {typeof children === 'function'
+        ? children({
+            onClick: handleClick,
+            loading: isLoading,
+            disabled: !isLoading && mutateCount > 0,
+          })
+        : cloneElement(children, {
             onClick: handleClick,
             loading: isLoading,
             disabled: !isLoading && mutateCount > 0,
           })}
-        </>
-      ) : (
-        <>
-          {cloneElement(children, {
-            onClick: handleClick,
-            loading: isLoading,
-            disabled: !isLoading && mutateCount > 0,
-          })}
-        </>
-      )}
     </LoginPopover>
   );
 }

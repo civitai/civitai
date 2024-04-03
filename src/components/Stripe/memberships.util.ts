@@ -1,4 +1,5 @@
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import { ProductMetadata } from '~/server/schema/stripe.schema';
 import { UserTier } from '~/server/schema/user.schema';
@@ -19,8 +20,9 @@ export const useCanUpgrade = () => {
   const currentUser = useCurrentUser();
   const { subscription, subscriptionLoading } = useActiveSubscription();
   const { data: products = [], isLoading: productsLoading } = trpc.stripe.getPlans.useQuery();
+  const features = useFeatureFlags();
 
-  if (!currentUser || subscriptionLoading || productsLoading) {
+  if (!currentUser || subscriptionLoading || productsLoading || !features.membershipsV2) {
     return false;
   }
 

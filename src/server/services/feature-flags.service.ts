@@ -81,6 +81,7 @@ const featureFlags = createFeatureFlags({
   creatorsProgram: ['mod', 'granted'],
   buzzWithdrawalTransfer: ['granted'],
   vault: ['public'],
+  membershipsV2: ['mod'],
 });
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
 
