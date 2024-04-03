@@ -818,7 +818,7 @@ export function AppHeader({
             >
               <Logo />
             </Anchor>
-            <SupportButton />
+            {!isMember && <SupportButton />}
             {/* Disabled until next event */}
             {/* <EventButton /> */}
           </Group>
