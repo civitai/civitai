@@ -22,6 +22,7 @@ import {
 } from '~/workers/civitai-link-worker-types';
 import { MantineColor } from '@mantine/styles';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { trpc } from '~/utils/trpc';
 
 type CivitaiLinkStatus = (typeof statuses)[number];
 const statuses = [
@@ -146,6 +147,13 @@ const Provider = ({ children }: { children: React.ReactNode }) => {
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string>();
   const setActivities = useCivitaiLinkStore((state) => state.setActivities);
+  const trpcContext = trpc.useContext();
+  const trpcUtils = trpc.useUtils();
+  const { mutateAsync } = trpc.apiKey.add.useMutation({
+    async onSuccess() {
+      await trpcContext.apiKey.getAllUserKeys.invalidate();
+    },
+  });
 
   //TODO.civitai-link - timeout when setting active instance
 
@@ -222,9 +230,20 @@ const Provider = ({ children }: { children: React.ReactNode }) => {
     worker.port.postMessage(req);
   };
 
-  const selectInstance = (id: number) => workerReq({ type: 'join', id });
+  const selectInstance = async (id: number) => {
+    // Look for existing API key when connecting to an instance
+    const apiKeys = await trpcUtils.apiKey.getAllUserKeys.fetch({});
+    const apiKey = apiKeys.find((x) => x.name === `link:${id}`);
+
+    return workerReq({ type: 'join', id });
+  };
   const deselectInstance = () => workerReq({ type: 'leave' });
-  const createInstance = (id?: number) => workerReq({ type: 'create', id });
+  const createInstance = async (id?: number) => {
+    // Create an API key when creating a new instance
+    const apiKey = await mutateAsync({ name: `link:${id}`, scope: ['Read', 'Write'] });
+
+    return workerReq({ type: 'create', id });
+  };
   const deleteInstance = (id: number) => workerReq({ type: 'delete', id });
   const renameInstance = (id: number, name: string) => workerReq({ type: 'rename', id, name });
 
