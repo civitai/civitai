@@ -281,9 +281,9 @@ const formatGenerationRequests = async (requests: Generation.Api.RequestProps[])
       )?.[0] as BaseModelSetType)
     : undefined;
 
-  const alternativesAvailable =
-    ((await redis.hGet(REDIS_KEYS.SYSTEM.FEATURES, 'generation:alternatives')) ?? 'false') ===
-    'true';
+  // const alternativesAvailable =
+  //   ((await redis.hGet(REDIS_KEYS.SYSTEM.FEATURES, 'generation:alternatives')) ?? 'false') ===
+  //   'true';
 
   return requests.map((x): Generation.Request => {
     const { additionalNetworks = {}, params, ...job } = x.job;
@@ -305,7 +305,7 @@ const formatGenerationRequests = async (requests: Generation.Api.RequestProps[])
 
     const request = {
       id: x.id,
-      alternativesAvailable,
+      // alternativesAvailable,
       createdAt: x.createdAt,
       // estimatedCompletionDate: x.estimatedCompletedAt,
       status: mapRequestStatus(x.status),
@@ -342,7 +342,7 @@ const formatGenerationRequests = async (requests: Generation.Api.RequestProps[])
         .sort((a, b) => (b.duration ?? 1) - (a.duration ?? 1)),
     };
 
-    if (alternativesAvailable) request.alternativesAvailable = true;
+    // if (alternativesAvailable) request.alternativesAvailable = true;
 
     return request;
   });

@@ -3,28 +3,24 @@ import {
   Badge,
   Button,
   Card,
-  Group,
-  HoverCard,
-  Stack,
   Text,
-  ThemeIcon,
   MantineColor,
   Tooltip,
   TooltipProps,
   createStyles,
-  Alert,
+  useMantineTheme,
 } from '@mantine/core';
 import { useClipboard, useLocalStorage } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
 import {
-  IconBolt,
   IconInfoHexagon,
   IconPhoto,
   IconPlayerPlayFilled,
   IconTrash,
   IconX,
   IconCheck,
+  IconLoader,
 } from '@tabler/icons-react';
 
 import { Collection } from '~/components/Collection/Collection';
@@ -43,25 +39,11 @@ import {
 } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 
-const tooltipProps: Omit<TooltipProps, 'children' | 'label'> = {
-  withinPortal: true,
-  withArrow: true,
-  color: 'dark',
-  zIndex: constants.imageGeneration.drawerZIndex + 1,
-};
-
-const statusColors: Record<GenerationRequestStatus, MantineColor> = {
-  [GenerationRequestStatus.Pending]: 'gray',
-  [GenerationRequestStatus.Cancelled]: 'gray',
-  [GenerationRequestStatus.Processing]: 'yellow',
-  [GenerationRequestStatus.Succeeded]: 'green',
-  [GenerationRequestStatus.Error]: 'red',
-};
-
 // export function QueueItem({ data: request, index }: { data: Generation.Request; index: number }) {
 export function QueueItem({ request }: Props) {
+  const theme = useMantineTheme();
   const [showBoost] = useLocalStorage({ key: 'show-boost-modal', defaultValue: false });
-  const { classes } = useStyle();
+  const { classes, cx } = useStyle();
 
   const generationStatus = useGenerationStatus();
   const { unstableResources } = useUnstableResources();
@@ -126,46 +108,43 @@ export function QueueItem({ request }: Props) {
       ? `${status} - Potentially caused by unstable resources`
       : `${status} - Generations can error for any number of reasons, try regenerating or swapping what models/additional resources you're using`;
 
+  const count = request.images?.filter((x) => x.duration).length ?? 0;
+  const quantity = request.quantity;
+
   return (
     <Card withBorder px="xs">
       <Card.Section py={4} inheritPadding withBorder>
-        <Group position="apart">
-          <Group spacing={8}>
-            {!!request.images?.length && (
-              <Tooltip label={overwriteStatusLabel} withArrow color="dark">
-                <ThemeIcon
-                  variant={pendingProcessing ? 'filled' : 'light'}
-                  w="auto"
-                  h="auto"
-                  size="sm"
-                  color={statusColors[status]}
-                  px={4}
-                  py={2}
-                  sx={{ cursor: 'default' }}
-                >
-                  <Group spacing={4}>
-                    <IconPhoto size={16} />
-                    <Text size="sm" inline weight={500}>
-                      {request.images.length}
-                    </Text>
-                  </Group>
-                </ThemeIcon>
-              </Tooltip>
-            )}
+        <div className="flex justify-between">
+          <div className="flex gap-1 items-center">
+            <Badge
+              variant={pendingProcessing ? 'filled' : 'light'}
+              size="sm"
+              color={statusColors[status]}
+              radius="lg"
+              h={22}
+            >
+              <div className="flex items-center gap-1">
+                <IconPhoto size={16} />
+                <Text size="sm" inline weight={500}>
+                  {status !== GenerationRequestStatus.Succeeded ? `${count}/${quantity}` : count}
+                </Text>
+                {status === GenerationRequestStatus.Processing && <IconLoader size={16} />}
+              </div>
+            </Badge>
 
             <Text size="xs" color="dimmed">
               {formatDateMin(request.createdAt)}
             </Text>
-          </Group>
-          <Group spacing="xs">
             <Tooltip {...tooltipProps} label="Copy Job IDs">
-              <ActionIcon size="md" p={4} variant="light" radius={0} onClick={handleCopy}>
+              <ActionIcon size="md" p={4} radius={0} onClick={handleCopy}>
                 {copied ? <IconCheck /> : <IconInfoHexagon />}
               </ActionIcon>
             </Tooltip>
+          </div>
+          <div className="flex gap-1">
             {generationStatus.available && (
               <Tooltip {...tooltipProps} label="Generate">
-                <ActionIcon size="md" p={4} variant="light" radius={0} onClick={handleGenerate}>
+                <ActionIcon size="md" p={4} radius={0} onClick={handleGenerate}>
                   <IconPlayerPlayFilled />
                 </ActionIcon>
               </Tooltip>
@@ -175,14 +154,38 @@ export function QueueItem({ request }: Props) {
                 size="md"
                 onClick={handleDeleteQueueItem}
                 disabled={deleteMutation.isLoading}
+                color="red"
               >
                 {pendingProcessing ? <IconX size={20} /> : <IconTrash size={20} />}
               </ActionIcon>
             </Tooltip>
-          </Group>
-        </Group>
+          </div>
+        </div>
       </Card.Section>
-      <Stack py="xs" spacing={8} className={classes.container}>
+      <div className="flex flex-col gap-3 py-3 @container">
+        {/* TODO - add restart functionality to the code commented out below */}
+        {/* {status === GenerationRequestStatus.Cancelled && (
+          <div
+            className={cx(
+              classes.stopped,
+              'flex justify-between items-center rounded-3xl p-1 pl-2'
+            )}
+          >
+            <Text
+              color={theme.colorScheme === 'dark' ? 'yellow' : 'orange'}
+              weight={500}
+              className="flex items-center gap-1 "
+            >
+              <IconHandStop size={16} /> Stopped
+            </Text>
+            <Button compact color="gray" radius="xl">
+              <span className="flex gap-1">
+                <IconRotateClockwise size={16} />
+                <span>Restart</span>
+              </span>
+            </Button>
+          </div>
+        )} */}
         <ContentClamp maxHeight={36} labelSize="xs">
           <Text lh={1.3} sx={{ wordBreak: 'break-all' }}>
             {prompt}
@@ -196,7 +199,7 @@ export function QueueItem({ request }: Props) {
             ))}
           </div>
         )}
-      </Stack>
+      </div>
       <Card.Section
         withBorder
         sx={(theme) => ({
@@ -211,16 +214,6 @@ export function QueueItem({ request }: Props) {
           paperProps={{ radius: 0, sx: { borderWidth: '1px 0 0 0' } }}
         />
       </Card.Section>
-      {/* <Card.Section py="xs" inheritPadding>
-        <Group position="apart" spacing={8}>
-          <Text color="dimmed" size="xs">
-            Fulfillment by {item.provider.name}
-          </Text>
-          <Text color="dimmed" size="xs">
-            Started <DaysFromNow date={item.createdAt} />
-          </Text>
-        </Group>
-      </Card.Section> */}
     </Card>
   );
 }
@@ -231,6 +224,9 @@ type Props = {
 };
 
 const useStyle = createStyles((theme) => ({
+  stopped: {
+    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[1],
+  },
   grid: {
     display: 'grid',
     gap: theme.spacing.xs,
@@ -251,9 +247,6 @@ const useStyle = createStyles((theme) => ({
   },
   asSidebar: {
     gridTemplateColumns: 'repeat(2, 1fr)',
-  },
-  container: {
-    containerType: 'inline-size',
   },
 }));
 
@@ -277,4 +270,19 @@ const ResourceBadge = (props: Generation.Resource) => {
   );
 
   return unstable ? <Tooltip label="Unstable resource">{badge}</Tooltip> : badge;
+};
+
+const tooltipProps: Omit<TooltipProps, 'children' | 'label'> = {
+  withinPortal: true,
+  withArrow: true,
+  color: 'dark',
+  zIndex: constants.imageGeneration.drawerZIndex + 1,
+};
+
+const statusColors: Record<GenerationRequestStatus, MantineColor> = {
+  [GenerationRequestStatus.Pending]: 'gray',
+  [GenerationRequestStatus.Cancelled]: 'gray',
+  [GenerationRequestStatus.Processing]: 'yellow',
+  [GenerationRequestStatus.Succeeded]: 'green',
+  [GenerationRequestStatus.Error]: 'red',
 };

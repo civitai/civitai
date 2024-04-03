@@ -258,386 +258,388 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
       form={form}
       onSubmit={handleSubmit}
       onError={handleError}
-      style={{ width: '100%', position: 'relative', height: '100%' }}
+      className="relative flex-1 overflow-hidden"
     >
       <Stack spacing={0} h="100%">
-        <ScrollArea scrollRestore={{ key: 'generation-form' }} py={0}>
-          <Stack p="md" pb={0}>
-            {/* {type === 'remix' && (
+        <ScrollArea
+          scrollRestore={{ key: 'generation-form' }}
+          pt={0}
+          className="flex flex-col gap-2 px-3"
+        >
+          {/* {type === 'remix' && (
               <DismissibleAlert
                 id="image-gen-params"
                 content="Not all of the resources used in this image are available at this time, we've populated as much of the generation parameters as possible"
               />
             )} */}
-            <InputResourceSelect
-              name="model"
+          <InputResourceSelect
+            name="model"
+            label={
+              <Group mb={5} spacing={4} noWrap>
+                <Input.Label style={{ fontWeight: 590 }} required>
+                  Model
+                </Input.Label>
+                <InfoPopover size="xs" iconProps={{ size: 14 }}>
+                  <Text weight={400}>
+                    Models are the resources you&apos;re generating with. Using a different base
+                    model can drastically alter the style and composition of images, while adding
+                    additional resource can change the characters, concepts and objects
+                  </Text>
+                </InfoPopover>
+              </Group>
+            }
+            buttonLabel="Add Model"
+            options={{
+              canGenerate: true,
+              resources: [
+                {
+                  type: ModelType.Checkpoint,
+                  baseModelSet: hasResources ? baseModel : undefined,
+                },
+              ],
+            }}
+            allowRemove={false}
+          />
+          <PersistentAccordion
+            storeKey="generation-form-resources"
+            classNames={{
+              item: classes.accordionItem,
+              control: classes.accordionControl,
+              content: classes.accordionContent,
+            }}
+            variant="contained"
+          >
+            <Accordion.Item value="resources">
+              <Accordion.Control>
+                <Group spacing={4}>
+                  <Text size="sm" weight={590}>
+                    Additional Resources
+                  </Text>
+                  {additionalResourcesCount > 0 && (
+                    <Badge style={{ fontWeight: 590 }}>{additionalResourcesCount}</Badge>
+                  )}
+                </Group>
+              </Accordion.Control>
+              <Accordion.Panel>
+                <InputResourceSelectMultiple
+                  name="resources"
+                  limit={limits.resources}
+                  buttonLabel="Add additional resource"
+                  options={{
+                    canGenerate: true,
+                    resources: getGenerationConfig(baseModel).additionalResourceTypes,
+                  }}
+                />
+              </Accordion.Panel>
+            </Accordion.Item>
+          </PersistentAccordion>
+          {unstableResources.length > 0 && (
+            <Alert color="yellow" title="Unstable Resources">
+              <Text size="xs">
+                The following resources are currently unstable and may not be available for
+                generation
+              </Text>
+              <List size="xs">
+                {unstableResources.map((resource) => (
+                  <List.Item key={resource.id}>
+                    {resource.modelName} - {resource.name}
+                  </List.Item>
+                ))}
+              </List>
+            </Alert>
+          )}
+          <Stack spacing={0}>
+            <Input.Wrapper
               label={
                 <Group mb={5} spacing={4} noWrap>
-                  <Input.Label style={{ fontWeight: 590 }} required>
-                    Model
-                  </Input.Label>
+                  <Input.Label required>Prompt</Input.Label>
                   <InfoPopover size="xs" iconProps={{ size: 14 }}>
-                    <Text weight={400}>
-                      Models are the resources you&apos;re generating with. Using a different base
-                      model can drastically alter the style and composition of images, while adding
-                      additional resource can change the characters, concepts and objects
-                    </Text>
+                    Type out what you&apos;d like to generate in the prompt, add aspects you&apos;d
+                    like to avoid in the negative prompt
                   </InfoPopover>
                 </Group>
               }
-              buttonLabel="Add Model"
-              options={{
-                canGenerate: true,
-                resources: [
-                  {
-                    type: ModelType.Checkpoint,
-                    baseModelSet: hasResources ? baseModel : undefined,
-                  },
-                ],
-              }}
-              allowRemove={false}
-            />
-            <PersistentAccordion
-              storeKey="generation-form-resources"
-              classNames={{
-                item: classes.accordionItem,
-                control: classes.accordionControl,
-                content: classes.accordionContent,
-              }}
-              variant="contained"
+              error={errors.prompt?.message}
             >
-              <Accordion.Item value="resources">
-                <Accordion.Control>
-                  <Group spacing={4}>
-                    <Text size="sm" weight={590}>
-                      Additional Resources
+              <Paper
+                px="sm"
+                sx={(theme) => ({
+                  borderBottomLeftRadius: showFillForm ? 0 : undefined,
+                  borderBottomRightRadius: showFillForm ? 0 : undefined,
+                  borderColor: errors.prompt
+                    ? theme.colors.red[theme.fn.primaryShade()]
+                    : undefined,
+                  marginBottom: errors.prompt ? 5 : undefined,
+                  background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : undefined,
+
+                  // Apply focus styles if textarea is focused
+                  '&:has(textarea:focus)': {
+                    ...theme.focusRingStyles.inputStyles(theme),
+                  },
+                })}
+                withBorder
+              >
+                <InputTextArea
+                  name="prompt"
+                  placeholder="Your prompt goes here..."
+                  autosize
+                  unstyled
+                  styles={(theme) => ({
+                    input: {
+                      background: 'transparent',
+                      width: '100%',
+                      resize: 'none',
+                      border: 'none',
+                      padding: '0',
+                      outline: 'none',
+                      fontFamily: theme.fontFamily,
+                      fontSize: theme.fontSizes.sm,
+                      lineHeight: theme.lineHeight,
+                      overflow: 'hidden',
+                      color: theme.colorScheme === 'dark' ? theme.colors.dark[0] : undefined,
+                    },
+                    // Prevents input from displaying form error
+                    error: { display: 'none' },
+                    wrapper: { margin: 0 },
+                  })}
+                  onPaste={(event) => {
+                    const text = event.clipboardData.getData('text/plain');
+                    if (text) setShowFillForm(text.includes('Steps:'));
+                  }}
+                  onKeyDown={promptKeyHandler}
+                />
+                {trainedWords.length > 0 ? (
+                  <Stack spacing={8} mb="xs">
+                    <Divider />
+                    <Text color="dimmed" size="xs" weight={590}>
+                      Trigger words
                     </Text>
-                    {additionalResourcesCount > 0 && (
-                      <Badge style={{ fontWeight: 590 }}>{additionalResourcesCount}</Badge>
-                    )}
-                  </Group>
-                </Accordion.Control>
-                <Accordion.Panel>
-                  <InputResourceSelectMultiple
-                    name="resources"
-                    limit={limits.resources}
-                    buttonLabel="Add additional resource"
+                    <Group spacing={4}>
+                      <TrainedWords
+                        type="LORA"
+                        trainedWords={trainedWords}
+                        badgeProps={{ style: { textTransform: 'none' } }}
+                      />
+                      <CopyButton value={trainedWords.join(', ')}>
+                        {({ copied, copy }) => (
+                          <Button
+                            variant="subtle"
+                            size="xs"
+                            color={copied ? 'green' : 'blue.5'}
+                            onClick={copy}
+                            compact
+                          >
+                            {copied ? (
+                              <Group spacing={4}>
+                                Copied <IconCheck size={14} />
+                              </Group>
+                            ) : (
+                              <Group spacing={4}>
+                                Copy all <IconCopy size={14} />
+                              </Group>
+                            )}
+                          </Button>
+                        )}
+                      </CopyButton>
+                    </Group>
+                  </Stack>
+                ) : null}
+              </Paper>
+            </Input.Wrapper>
+            {showFillForm && (
+              <Button
+                variant="light"
+                onClick={handleParsePrompt}
+                leftIcon={<IconArrowAutofitDown size={16} />}
+                sx={{ borderTopLeftRadius: 0, borderTopRightRadius: 0 }}
+                fullWidth
+              >
+                Apply Parameters
+              </Button>
+            )}
+          </Stack>
+
+          <InputTextArea
+            name="negativePrompt"
+            label="Negative Prompt"
+            onKeyDown={promptKeyHandler}
+            autosize
+          />
+          <Stack spacing={2}>
+            <Input.Label>Aspect Ratio</Input.Label>
+            <InputSegmentedControl name="aspectRatio" data={getAspectRatioControls(baseModel)} />
+          </Stack>
+          <InputSwitch name="nsfw" label="Mature content" labelPosition="left" />
+
+          <PersistentAccordion
+            storeKey="generation-form-advanced"
+            variant="contained"
+            classNames={{
+              item: classes.accordionItem,
+              control: classes.accordionControl,
+              content: classes.accordionContent,
+            }}
+          >
+            <Accordion.Item value="advanced">
+              <Accordion.Control>
+                <Text size="sm" weight={590}>
+                  Advanced
+                </Text>
+              </Accordion.Control>
+              <Accordion.Panel>
+                <Stack>
+                  <InputNumberSlider
+                    name="cfgScale"
+                    label={
+                      <Group spacing={4} noWrap>
+                        <Input.Label>CFG Scale</Input.Label>
+                        <InfoPopover size="xs" iconProps={{ size: 14 }}>
+                          Controls how closely the image generation follows the text prompt.{' '}
+                          <Anchor
+                            href="https://wiki.civitai.com/wiki/Classifier_Free_Guidance"
+                            target="_blank"
+                            rel="nofollow noreferrer"
+                            span
+                          >
+                            Learn more
+                          </Anchor>
+                          .
+                        </InfoPopover>
+                      </Group>
+                    }
+                    min={1}
+                    max={isSDXL ? 10 : 30}
+                    step={0.5}
+                    precision={1}
+                    sliderProps={sharedSliderProps}
+                    numberProps={sharedNumberProps}
+                    presets={[
+                      { label: 'Creative', value: '4' },
+                      { label: 'Balanced', value: '7' },
+                      { label: 'Precise', value: '10' },
+                    ]}
+                    reverse
+                  />
+                  <InputSelect
+                    name="sampler"
+                    label={
+                      <Group spacing={4} noWrap>
+                        <Input.Label>Sampler</Input.Label>
+                        <InfoPopover size="xs" iconProps={{ size: 14 }}>
+                          Each will produce a slightly (or significantly) different image result.{' '}
+                          <Anchor
+                            href="https://wiki.civitai.com/wiki/Sampler"
+                            target="_blank"
+                            rel="nofollow noreferrer"
+                            span
+                          >
+                            Learn more
+                          </Anchor>
+                          .
+                        </InfoPopover>
+                      </Group>
+                    }
+                    data={isLCM ? generation.lcmSamplers : generation.samplers}
+                    presets={
+                      isLCM
+                        ? []
+                        : [
+                            { label: 'Fast', value: 'Euler a' },
+                            { label: 'Popular', value: 'DPM++ 2M Karras' },
+                          ]
+                    }
+                  />
+                  <InputNumberSlider
+                    name="steps"
+                    label={
+                      <Group spacing={4} noWrap>
+                        <Input.Label>Steps</Input.Label>
+                        <InfoPopover size="xs" iconProps={{ size: 14 }}>
+                          The number of iterations spent generating an image.{' '}
+                          <Anchor
+                            href="https://wiki.civitai.com/wiki/Sampling_Steps"
+                            target="_blank"
+                            rel="nofollow noreferrer"
+                            span
+                          >
+                            Learn more
+                          </Anchor>
+                          .
+                        </InfoPopover>
+                      </Group>
+                    }
+                    min={isLCM ? 3 : 10}
+                    max={isLCM ? 12 : limits.steps}
+                    sliderProps={sharedSliderProps}
+                    numberProps={sharedNumberProps}
+                    presets={
+                      isLCM
+                        ? []
+                        : [
+                            {
+                              label: 'Fast',
+                              value: Number(10 + samplerCfgOffset).toString(),
+                            },
+                            {
+                              label: 'Balanced',
+                              value: Number(20 + samplerCfgOffset).toString(),
+                            },
+                            {
+                              label: 'High',
+                              value: Number(30 + samplerCfgOffset).toString(),
+                            },
+                          ]
+                    }
+                    reverse
+                  />
+                  <InputSeed name="seed" label="Seed" min={1} max={generation.maxValues.seed} />
+                  {!isSDXL && (
+                    <InputNumberSlider
+                      name="clipSkip"
+                      label="Clip Skip"
+                      min={1}
+                      max={generation.maxValues.clipSkip}
+                      sliderProps={{
+                        ...sharedSliderProps,
+                        marks: clipSkipMarks,
+                      }}
+                      numberProps={sharedNumberProps}
+                    />
+                  )}
+                  <InputResourceSelect
+                    name="vae"
+                    label={
+                      <Group spacing={4} noWrap>
+                        <Input.Label>{getDisplayName(ModelType.VAE)}</Input.Label>
+                        <InfoPopover size="xs" iconProps={{ size: 14 }}>
+                          These provide additional color and detail improvements.{' '}
+                          <Anchor
+                            href="https://wiki.civitai.com/wiki/Variational_Autoencoder"
+                            target="_blank"
+                            rel="nofollow noreferrer"
+                            span
+                          >
+                            Learn more
+                          </Anchor>
+                          .
+                        </InfoPopover>
+                      </Group>
+                    }
+                    buttonLabel="Add VAE"
                     options={{
                       canGenerate: true,
-                      resources: getGenerationConfig(baseModel).additionalResourceTypes,
+                      resources: [{ type: ModelType.VAE, baseModelSet: baseModel }],
                     }}
                   />
-                </Accordion.Panel>
-              </Accordion.Item>
-            </PersistentAccordion>
-            {unstableResources.length > 0 && (
-              <Alert color="yellow" title="Unstable Resources">
-                <Text size="xs">
-                  The following resources are currently unstable and may not be available for
-                  generation
-                </Text>
-                <List size="xs">
-                  {unstableResources.map((resource) => (
-                    <List.Item key={resource.id}>
-                      {resource.modelName} - {resource.name}
-                    </List.Item>
-                  ))}
-                </List>
-              </Alert>
-            )}
-            <Stack spacing={0}>
-              <Input.Wrapper
-                label={
-                  <Group mb={5} spacing={4} noWrap>
-                    <Input.Label required>Prompt</Input.Label>
-                    <InfoPopover size="xs" iconProps={{ size: 14 }}>
-                      Type out what you&apos;d like to generate in the prompt, add aspects
-                      you&apos;d like to avoid in the negative prompt
-                    </InfoPopover>
-                  </Group>
-                }
-                error={errors.prompt?.message}
-              >
-                <Paper
-                  px="sm"
-                  sx={(theme) => ({
-                    borderBottomLeftRadius: showFillForm ? 0 : undefined,
-                    borderBottomRightRadius: showFillForm ? 0 : undefined,
-                    borderColor: errors.prompt
-                      ? theme.colors.red[theme.fn.primaryShade()]
-                      : undefined,
-                    marginBottom: errors.prompt ? 5 : undefined,
-                    background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : undefined,
-
-                    // Apply focus styles if textarea is focused
-                    '&:has(textarea:focus)': {
-                      ...theme.focusRingStyles.inputStyles(theme),
-                    },
-                  })}
-                  withBorder
-                >
-                  <InputTextArea
-                    name="prompt"
-                    placeholder="Your prompt goes here..."
-                    autosize
-                    unstyled
-                    styles={(theme) => ({
-                      input: {
-                        background: 'transparent',
-                        width: '100%',
-                        resize: 'none',
-                        border: 'none',
-                        padding: '0',
-                        outline: 'none',
-                        fontFamily: theme.fontFamily,
-                        fontSize: theme.fontSizes.sm,
-                        lineHeight: theme.lineHeight,
-                        overflow: 'hidden',
-                        color: theme.colorScheme === 'dark' ? theme.colors.dark[0] : undefined,
-                      },
-                      // Prevents input from displaying form error
-                      error: { display: 'none' },
-                      wrapper: { margin: 0 },
-                    })}
-                    onPaste={(event) => {
-                      const text = event.clipboardData.getData('text/plain');
-                      if (text) setShowFillForm(text.includes('Steps:'));
-                    }}
-                    onKeyDown={promptKeyHandler}
-                  />
-                  {trainedWords.length > 0 ? (
-                    <Stack spacing={8} mb="xs">
-                      <Divider />
-                      <Text color="dimmed" size="xs" weight={590}>
-                        Trigger words
-                      </Text>
-                      <Group spacing={4}>
-                        <TrainedWords
-                          type="LORA"
-                          trainedWords={trainedWords}
-                          badgeProps={{ style: { textTransform: 'none' } }}
-                        />
-                        <CopyButton value={trainedWords.join(', ')}>
-                          {({ copied, copy }) => (
-                            <Button
-                              variant="subtle"
-                              size="xs"
-                              color={copied ? 'green' : 'blue.5'}
-                              onClick={copy}
-                              compact
-                            >
-                              {copied ? (
-                                <Group spacing={4}>
-                                  Copied <IconCheck size={14} />
-                                </Group>
-                              ) : (
-                                <Group spacing={4}>
-                                  Copy all <IconCopy size={14} />
-                                </Group>
-                              )}
-                            </Button>
-                          )}
-                        </CopyButton>
-                      </Group>
-                    </Stack>
-                  ) : null}
-                </Paper>
-              </Input.Wrapper>
-              {showFillForm && (
-                <Button
-                  variant="light"
-                  onClick={handleParsePrompt}
-                  leftIcon={<IconArrowAutofitDown size={16} />}
-                  sx={{ borderTopLeftRadius: 0, borderTopRightRadius: 0 }}
-                  fullWidth
-                >
-                  Apply Parameters
-                </Button>
-              )}
-            </Stack>
-
-            <InputTextArea
-              name="negativePrompt"
-              label="Negative Prompt"
-              onKeyDown={promptKeyHandler}
-              autosize
-            />
-            <Stack spacing={2}>
-              <Input.Label>Aspect Ratio</Input.Label>
-              <InputSegmentedControl name="aspectRatio" data={getAspectRatioControls(baseModel)} />
-            </Stack>
-            <InputSwitch name="nsfw" label="Mature content" labelPosition="left" />
-
-            <PersistentAccordion
-              storeKey="generation-form-advanced"
-              variant="contained"
-              classNames={{
-                item: classes.accordionItem,
-                control: classes.accordionControl,
-                content: classes.accordionContent,
-              }}
-            >
-              <Accordion.Item value="advanced">
-                <Accordion.Control>
-                  <Text size="sm" weight={590}>
-                    Advanced
-                  </Text>
-                </Accordion.Control>
-                <Accordion.Panel>
-                  <Stack>
-                    <InputNumberSlider
-                      name="cfgScale"
-                      label={
-                        <Group spacing={4} noWrap>
-                          <Input.Label>CFG Scale</Input.Label>
-                          <InfoPopover size="xs" iconProps={{ size: 14 }}>
-                            Controls how closely the image generation follows the text prompt.{' '}
-                            <Anchor
-                              href="https://wiki.civitai.com/wiki/Classifier_Free_Guidance"
-                              target="_blank"
-                              rel="nofollow noreferrer"
-                              span
-                            >
-                              Learn more
-                            </Anchor>
-                            .
-                          </InfoPopover>
-                        </Group>
-                      }
-                      min={1}
-                      max={isSDXL ? 10 : 30}
-                      step={0.5}
-                      precision={1}
-                      sliderProps={sharedSliderProps}
-                      numberProps={sharedNumberProps}
-                      presets={[
-                        { label: 'Creative', value: '4' },
-                        { label: 'Balanced', value: '7' },
-                        { label: 'Precise', value: '10' },
-                      ]}
-                      reverse
-                    />
-                    <InputSelect
-                      name="sampler"
-                      label={
-                        <Group spacing={4} noWrap>
-                          <Input.Label>Sampler</Input.Label>
-                          <InfoPopover size="xs" iconProps={{ size: 14 }}>
-                            Each will produce a slightly (or significantly) different image result.{' '}
-                            <Anchor
-                              href="https://wiki.civitai.com/wiki/Sampler"
-                              target="_blank"
-                              rel="nofollow noreferrer"
-                              span
-                            >
-                              Learn more
-                            </Anchor>
-                            .
-                          </InfoPopover>
-                        </Group>
-                      }
-                      data={isLCM ? generation.lcmSamplers : generation.samplers}
-                      presets={
-                        isLCM
-                          ? []
-                          : [
-                              { label: 'Fast', value: 'Euler a' },
-                              { label: 'Popular', value: 'DPM++ 2M Karras' },
-                            ]
-                      }
-                    />
-                    <InputNumberSlider
-                      name="steps"
-                      label={
-                        <Group spacing={4} noWrap>
-                          <Input.Label>Steps</Input.Label>
-                          <InfoPopover size="xs" iconProps={{ size: 14 }}>
-                            The number of iterations spent generating an image.{' '}
-                            <Anchor
-                              href="https://wiki.civitai.com/wiki/Sampling_Steps"
-                              target="_blank"
-                              rel="nofollow noreferrer"
-                              span
-                            >
-                              Learn more
-                            </Anchor>
-                            .
-                          </InfoPopover>
-                        </Group>
-                      }
-                      min={isLCM ? 3 : 10}
-                      max={isLCM ? 12 : limits.steps}
-                      sliderProps={sharedSliderProps}
-                      numberProps={sharedNumberProps}
-                      presets={
-                        isLCM
-                          ? []
-                          : [
-                              {
-                                label: 'Fast',
-                                value: Number(10 + samplerCfgOffset).toString(),
-                              },
-                              {
-                                label: 'Balanced',
-                                value: Number(20 + samplerCfgOffset).toString(),
-                              },
-                              {
-                                label: 'High',
-                                value: Number(30 + samplerCfgOffset).toString(),
-                              },
-                            ]
-                      }
-                      reverse
-                    />
-                    <InputSeed name="seed" label="Seed" min={1} max={generation.maxValues.seed} />
-                    {!isSDXL && (
-                      <InputNumberSlider
-                        name="clipSkip"
-                        label="Clip Skip"
-                        min={1}
-                        max={generation.maxValues.clipSkip}
-                        sliderProps={{
-                          ...sharedSliderProps,
-                          marks: clipSkipMarks,
-                        }}
-                        numberProps={sharedNumberProps}
-                      />
-                    )}
-                    <InputResourceSelect
-                      name="vae"
-                      label={
-                        <Group spacing={4} noWrap>
-                          <Input.Label>{getDisplayName(ModelType.VAE)}</Input.Label>
-                          <InfoPopover size="xs" iconProps={{ size: 14 }}>
-                            These provide additional color and detail improvements.{' '}
-                            <Anchor
-                              href="https://wiki.civitai.com/wiki/Variational_Autoencoder"
-                              target="_blank"
-                              rel="nofollow noreferrer"
-                              span
-                            >
-                              Learn more
-                            </Anchor>
-                            .
-                          </InfoPopover>
-                        </Group>
-                      }
-                      buttonLabel="Add VAE"
-                      options={{
-                        canGenerate: true,
-                        resources: [{ type: ModelType.VAE, baseModelSet: baseModel }],
-                      }}
-                    />
-                  </Stack>
-                </Accordion.Panel>
-              </Accordion.Item>
-            </PersistentAccordion>
-            {/* <Card {...sharedCardProps}>
+                </Stack>
+              </Accordion.Panel>
+            </Accordion.Item>
+          </PersistentAccordion>
+          {/* <Card {...sharedCardProps}>
           <Stack>
             <Text>TODO.hires</Text>
           </Stack>
           </Card> */}
-          </Stack>
         </ScrollArea>
         <Stack spacing={4} px="md" pt="xs" pb={3} className={classes.generationArea}>
           {promptWarning && (

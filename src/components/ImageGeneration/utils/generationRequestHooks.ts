@@ -73,11 +73,8 @@ export const usePollGenerationRequests = (requestsInput: Generation.Request[] = 
         for (const page of old.pages) {
           const index = page.items.findIndex((x) => x.id === request.id);
           if (index > -1) {
-            // page.items[index] = request;
             const item = page.items[index];
-            // item.estimatedCompletionDate = request.estimatedCompletionDate;
             item.status = request.status;
-            // item.queuePosition = request.queuePosition;
             item.images = item.images?.map((image) => {
               const match = request.images?.find((x) => x.hash === image.hash);
               if (!match) return image;

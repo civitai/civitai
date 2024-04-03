@@ -1,5 +1,6 @@
 import { Center, Group, Stack, Tabs, Text, ThemeIcon, createStyles } from '@mantine/core';
-import { IconLock } from '@tabler/icons-react';
+import { IconLayoutList } from '@tabler/icons-react';
+import { IconGridDots, IconLock } from '@tabler/icons-react';
 import React, { useState } from 'react';
 import { setPageOptions } from '~/components/AppLayout/AppLayout';
 import { Feed } from '~/components/ImageGeneration/Feed';
@@ -32,10 +33,8 @@ export const getServerSideProps = createServerSideProps({
 
 export default function GeneratePage() {
   const currentUser = useCurrentUser();
-  const { classes, cx } = useStyles();
+  const { classes } = useStyles();
   const [tab, setTab] = useState<string>('queue');
-
-  const result = useGetGenerationRequests();
 
   if (currentUser?.muted)
     return (
@@ -67,21 +66,23 @@ export default function GeneratePage() {
     >
       <Tabs.List px="md" py="xs">
         <Group position="apart" w="100%">
-          <Group align="flex-start">
-            <Tabs.Tab value="queue">Queue</Tabs.Tab>
-            <Tabs.Tab value="feed">Feed</Tabs.Tab>
+          <Group align="flex-start" spacing="xs">
+            <Tabs.Tab value="queue" icon={<IconLayoutList size={16} />}>
+              Queue
+            </Tabs.Tab>
+            <Tabs.Tab value="feed" icon={<IconGridDots size={16} />}>
+              Feed
+            </Tabs.Tab>
           </Group>
-          <Group spacing="xs">
-            <GeneratedImageActions />
-          </Group>
+          <GeneratedImageActions />
         </Group>
       </Tabs.List>
       <ScrollArea scrollRestore={{ key: tab }}>
         <Tabs.Panel value="queue">
-          <Queue {...result} />
+          <Queue />
         </Tabs.Panel>
         <Tabs.Panel value="feed" p="md">
-          <Feed {...result} />
+          <Feed />
         </Tabs.Panel>
       </ScrollArea>
     </Tabs>
@@ -100,6 +101,11 @@ const useStyles = createStyles((theme) => {
     //   left: 0,
     //   right: 0,
     //   bottom: 0,
+    // },
+    // tab: {
+    //   '&[data-active]': {
+    //     backgroundColor: theme.fn.rgba(theme.colors.blue[7], 0.7),
+    //   },
     // },
     root: {
       flex: 1,
