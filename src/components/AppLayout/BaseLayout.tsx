@@ -8,7 +8,7 @@ export function BaseLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className={`flex h-full w-full theme-${theme.colorScheme}`}>
       <GenerationSidebar />
-      <ContainerProvider containerName="main" className="flex-1">
+      <ContainerProvider id="main" containerName="main" className="flex-1">
         {children}
       </ContainerProvider>
     </div>

@@ -58,7 +58,7 @@ export function GenerationSidebar() {
       defaultWidth={400}
     >
       <ContainerProvider containerName="generation-sidebar">
-        <Group
+        {/* <Group
           position="right"
           p="xs"
           spacing="xs"
@@ -88,7 +88,7 @@ export function GenerationSidebar() {
             size="lg"
             variant="light"
           />
-        </Group>
+        </Group> */}
         <GenerationTabs tabs={isGeneratePage ? ['generate'] : undefined} />
       </ContainerProvider>
     </ResizableSidebar>

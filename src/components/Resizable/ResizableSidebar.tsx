@@ -14,7 +14,7 @@ export type ResizableSidebarProps = {
   name: string;
 };
 
-export function ResizableSidebarInner({
+export function ResizableSidebar({
   children,
   resizePosition,
   minWidth,
@@ -59,17 +59,18 @@ const useStyles = createStyles((theme, { resizeFrom }: { resizeFrom: 'left' | 'r
       alignItems: 'stretch',
     },
     resizer: {
-      cursor: 'col-resize',
+      cursor: 'ew-resize',
       position: 'absolute',
       top: 0,
       height: '100%',
-      [resizeFrom]: -5,
-      width: 7,
+      [resizeFrom]: -2,
+      width: 5,
       zIndex: 1002,
-      opacity: 0.2,
+      // opacity: 0.2,
 
-      '&:hover': {
-        background: theme.colors[theme.primaryColor][theme.colorScheme === 'dark' ? 4 : 8],
+      '&:hover, &:active': {
+        // background: '#007fd4',
+        background: theme.colors[theme.primaryColor][theme.colorScheme === 'dark' ? 8 : 8],
       },
     },
     content: {
@@ -84,10 +85,10 @@ const useStyles = createStyles((theme, { resizeFrom }: { resizeFrom: 'left' | 'r
   };
 });
 
-export const ResizableSidebar = (props: ResizableSidebarProps) => {
-  return (
-    <IsClient>
-      <ResizableSidebarInner {...props} />
-    </IsClient>
-  );
-};
+// export const ResizableSidebar = (props: ResizableSidebarProps) => {
+//   return (
+//     <IsClient>
+//       <ResizableSidebarInner {...props} />
+//     </IsClient>
+//   );
+// };
