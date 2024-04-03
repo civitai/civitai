@@ -748,12 +748,13 @@ export const createGenerationRequest = async ({
   const generationRequest = {
     userId,
     nsfw,
+    priority: draft ? env.DRAFT_MODE_PRIORITY : undefined,
     job: {
       model: `@civitai/${checkpoint.id}`,
       baseModel: baseModelToOrchestration[params.baseModel as BaseModelSetType],
       quantity: params.quantity,
       sequential: draft ? true : false,
-      providers: draft ? ['ValdiAI'] : undefined,
+      providers: draft ? env.DRAFT_MODE_PROVIDERS : undefined,
       additionalNetworks,
       params: {
         prompt: positivePrompts.join(', '),

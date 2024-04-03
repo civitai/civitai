@@ -781,15 +781,26 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                   </Stack>
                 </Card>
                 <LoginRedirect reason="image-gen" returnUrl="/generate">
-                  <BuzzTransactionButton
-                    type="submit"
-                    size="lg"
-                    label="Generate"
-                    loading={isCalculatingCost || isLoading}
-                    className={classes.generateButtonButton}
-                    disabled={disableGenerateButton}
-                    buzzAmount={totalCost}
-                  />
+                  {!status.charge ? (
+                    <Button
+                      type="submit"
+                      size="lg"
+                      className={classes.generateButtonButton}
+                      loading={isLoading}
+                    >
+                      <Text ta="center">Generate</Text>
+                    </Button>
+                  ) : (
+                    <BuzzTransactionButton
+                      type="submit"
+                      size="lg"
+                      label="Generate"
+                      loading={isCalculatingCost || isLoading}
+                      className={classes.generateButtonButton}
+                      disabled={disableGenerateButton}
+                      buzzAmount={totalCost}
+                    />
+                  )}
                 </LoginRedirect>
                 {/* <Tooltip label="Reset" color="dark" withArrow> */}
                 <Button
@@ -799,7 +810,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                   px="xs"
                 >
                   {/* <IconX size={20} strokeWidth={3} /> */}
-                  Clear All
+                  Clear All {status.charge ? 1 : 0}
                 </Button>
                 {/* </Tooltip> */}
               </Group>
