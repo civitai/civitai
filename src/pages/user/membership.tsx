@@ -12,6 +12,7 @@ import {
   Button,
   Menu,
   ActionIcon,
+  Box,
 } from '@mantine/core';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
@@ -102,7 +103,9 @@ export default function UserMembership() {
                     <Group noWrap>
                       {image && (
                         <Center>
-                          <EdgeMedia src={image} width={100} />
+                          <Box w={100}>
+                            <EdgeMedia src={image} width="original" />
+                          </Box>
                         </Center>
                       )}
                       <Stack spacing={0}>

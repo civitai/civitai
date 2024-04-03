@@ -1,4 +1,4 @@
-import { Button, Card, Stack, Center, Loader, Title, Text, Group } from '@mantine/core';
+import { Button, Card, Stack, Center, Loader, Title, Text, Group, Box } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { IconRotateClockwise, IconSettings } from '@tabler/icons-react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -56,7 +56,9 @@ export function SubscriptionCard() {
             <Group noWrap>
               {image && (
                 <Center>
-                  <EdgeMedia src={image} width={40} />
+                  <Box w={40}>
+                    <EdgeMedia src={image} width="original" />
+                  </Box>
                 </Center>
               )}
               {product && <Text>{product.name}</Text>}
