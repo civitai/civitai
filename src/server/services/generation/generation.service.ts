@@ -444,6 +444,31 @@ const generationLimiter = createLimiter({
   },
 });
 
+const getDraftStateFromInputForOrchestrator = ({
+  baseModel,
+  quantity,
+  steps,
+  cfgScale,
+  sampler,
+}: {
+  baseModel?: string;
+  quantity: number;
+  steps: number;
+  cfgScale: number;
+  sampler: string;
+}) => {
+  // Fix other params
+  const isSDXL = baseModel === 'SDXL' || baseModel === 'Pony';
+  const draftModeSettings = draftMode[isSDXL ? 'sdxl' : 'sd1'];
+
+  if (quantity % 4 !== 0) quantity = Math.ceil(quantity / 4) * 4;
+  steps = draftModeSettings.steps;
+  cfgScale = draftModeSettings.cfgScale;
+  sampler = draftModeSettings.sampler;
+
+  return { quantity, steps, cfgScale, sampler };
+};
+
 export const prepareGenerationInput = async ({
   userId,
   resources,
@@ -467,14 +492,23 @@ export const prepareGenerationInput = async ({
     throw throwBadRequestError('A checkpoint is required to make a generation request');
 
   const isSDXL = params.baseModel === 'SDXL' || params.baseModel === 'Pony';
+
   if (draft) {
+    const draftData = getDraftStateFromInputForOrchestrator({
+      baseModel: params.baseModel,
+      quantity: params.quantity,
+      steps: params.steps,
+      cfgScale: params.cfgScale,
+      sampler: params.sampler,
+    });
+
     const draftModeSettings = draftMode[isSDXL ? 'sdxl' : 'sd1'];
     // Fix quantity
-    if (params.quantity % 4 !== 0) params.quantity = Math.ceil(params.quantity / 4) * 4;
+    params.quantity = draftData.quantity;
     // Fix other params
-    params.steps = draftModeSettings.steps;
-    params.cfgScale = draftModeSettings.cfgScale;
-    params.sampler = draftModeSettings.sampler;
+    params.steps = draftData.steps;
+    params.cfgScale = draftData.cfgScale;
+    params.sampler = draftData.sampler;
     // Add speed up resources
     resources.push({
       modelType: ModelType.LORA,
@@ -1133,16 +1167,30 @@ export const textToImageTestRun = async ({
   sampler,
   steps,
   aspectRatio,
+  draft,
 }: GenerationRequestTestRunSchema & {
   userId: number;
 }) => {
-  const status = await getGenerationStatus();
-  const { additionalResourceTypes, aspectRatios } = getGenerationConfig(baseModel);
+  const { aspectRatios } = getGenerationConfig(baseModel);
 
   if (aspectRatio.includes('x'))
     throw throwBadRequestError('Invalid size. Please select your size and try again');
 
   const { height, width } = aspectRatios[Number(aspectRatio)];
+
+  if (draft) {
+    const draftData = getDraftStateFromInputForOrchestrator({
+      baseModel: baseModel,
+      quantity: quantity,
+      steps: steps,
+      cfgScale: 0,
+      sampler: sampler,
+    });
+
+    quantity = draftData.quantity;
+    steps = draftData.steps;
+    sampler = draftData.sampler;
+  }
 
   const response = await orchestratorCaller.textToImage({
     payload: {
@@ -1151,6 +1199,8 @@ export const textToImageTestRun = async ({
       baseModel: baseModelToOrchestration[baseModel as BaseModelSetType],
       properties: {},
       quantity: quantity,
+      // TODO: in the future we may wanna add additional networks as they might be used for cost calculation.
+      // Not the case as of now.
       additionalNetworks: {},
       params: {
         baseModel,
