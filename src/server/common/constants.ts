@@ -313,10 +313,10 @@ export const activeBaseModels = constants.baseModels.filter(
 
 export const draftMode = {
   sdxl: {
-    steps: 4,
+    steps: 8,
     cfgScale: 1,
     sampler: 'Euler',
-    resourceId: 391971,
+    resourceId: 391999,
   },
   sd1: {
     steps: 6,

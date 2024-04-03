@@ -266,7 +266,6 @@ export function GeneratedImage({
                   onDragStart={(e) => e.dataTransfer.setData('text/uri-list', image.url)}
                 />
               )}
-              s
             </Box>
             <label className={classes.checkboxLabel}>
               <Checkbox
