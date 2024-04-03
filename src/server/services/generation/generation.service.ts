@@ -307,9 +307,9 @@ const formatGenerationRequests = async (requests: Generation.Api.RequestProps[])
       id: x.id,
       alternativesAvailable,
       createdAt: x.createdAt,
-      estimatedCompletionDate: x.estimatedCompletedAt,
+      // estimatedCompletionDate: x.estimatedCompletedAt,
       status: mapRequestStatus(x.status),
-      queuePosition: x.queuePosition,
+      // queuePosition: x.queuePosition,
       params: {
         ...params,
         prompt,
@@ -337,7 +337,9 @@ const formatGenerationRequests = async (requests: Generation.Api.RequestProps[])
         })
         .filter(isDefined),
       ...job,
-      images: x.images,
+      images: x.images
+        ?.map(({ jobToken, ...image }) => image)
+        .sort((a, b) => (b.duration ?? 1) - (a.duration ?? 1)),
     };
 
     if (alternativesAvailable) request.alternativesAvailable = true;

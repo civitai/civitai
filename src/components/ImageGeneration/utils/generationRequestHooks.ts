@@ -75,9 +75,9 @@ export const usePollGenerationRequests = (requestsInput: Generation.Request[] = 
           if (index > -1) {
             // page.items[index] = request;
             const item = page.items[index];
-            item.estimatedCompletionDate = request.estimatedCompletionDate;
+            // item.estimatedCompletionDate = request.estimatedCompletionDate;
             item.status = request.status;
-            item.queuePosition = request.queuePosition;
+            // item.queuePosition = request.queuePosition;
             item.images = item.images?.map((image) => {
               const match = request.images?.find((x) => x.hash === image.hash);
               if (!match) return image;
@@ -189,7 +189,13 @@ export const useImageGenStatusUpdate = () => {
             if (image) {
               matched = true;
               image.status = status;
-              if (image.status === 'Success') image.available = true;
+              if (image.status === 'Success') {
+                const createdAtMilliseconds = new Date(item.createdAt).getTime();
+                const nowMilliseconds = new Date().getTime();
+                image.available = true;
+                image.duration = nowMilliseconds - createdAtMilliseconds;
+                item.images = item.images?.sort((a, b) => (b.duration ?? 1) - (a.duration ?? 1));
+              }
               if (image.status === 'RemovedForSafety') {
                 image.removedForSafety = true;
                 image.available = true;

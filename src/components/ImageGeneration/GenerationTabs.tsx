@@ -75,7 +75,7 @@ export default function GenerationTabs({
       Icon: IconClockHour9,
       label: 'Queue',
       render: () => (
-        <ScrollArea scrollRestore={{ key: 'queue' }} py={0}>
+        <ScrollArea scrollRestore={{ key: 'queue' }} p="md" py={0}>
           <Queue {...result} />
         </ScrollArea>
       ),
@@ -84,7 +84,7 @@ export default function GenerationTabs({
       Icon: IconGridDots,
       label: 'Feed',
       render: () => (
-        <ScrollArea scrollRestore={{ key: 'feed' }} p="md">
+        <ScrollArea scrollRestore={{ key: 'feed' }} p="md" py={0}>
           <Feed {...result} />
         </ScrollArea>
       ),
@@ -115,6 +115,7 @@ export default function GenerationTabs({
             className="flex-shrink-0"
             data={tabEntries.map(([key, { Icon }]) => ({ label: <Icon size={16} />, value: key }))}
             onChange={(key) => setView(key as any)}
+            value={view}
           />
         )}
         <div className="flex flex-1 justify-end">

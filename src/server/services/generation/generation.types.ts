@@ -18,6 +18,8 @@ export namespace Generation {
     seed?: number; // TODO.generation - check if this prop will be set
     status?: ImageStatus;
     removedForSafety: boolean;
+    jobToken?: string;
+    duration?: number | null;
   };
 
   export type Data = {
@@ -86,14 +88,14 @@ export namespace Generation {
     id: number;
     alternativesAvailable?: boolean;
     createdAt: Date;
-    estimatedCompletionDate: Date;
+    // estimatedCompletionDate: Date;
     status: GenerationRequestStatus;
     quantity: number;
     priority: number;
     params: Params;
     resources: Resource[];
     images?: Image[];
-    queuePosition?: QueuePosition;
+    // queuePosition?: QueuePosition;
   };
 
   export type Coverage = {

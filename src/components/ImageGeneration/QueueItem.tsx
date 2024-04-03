@@ -117,23 +117,14 @@ export function QueueItem({ request }: Props) {
   };
 
   const { prompt, ...details } = request.params;
-  const removedForSafety = request.images?.some((x) => x.removedForSafety && x.available);
+  const images = request.images?.filter((x) => x.duration);
+  // const removedForSafety = images?.some((x) => x.removedForSafety && x.available);
 
   const hasUnstableResources = request.resources.some((x) => unstableResources.includes(x.id));
   const overwriteStatusLabel =
     hasUnstableResources && status === GenerationRequestStatus.Error
       ? `${status} - Potentially caused by unstable resources`
       : `${status} - Generations can error for any number of reasons, try regenerating or swapping what models/additional resources you're using`;
-
-  // const boost = (request: Generation.Request) => {
-  //   console.log('boost it', request);
-  // };
-
-  // TODO - enable this after boosting is ready
-  // const handleBoostClick = () => {
-  //   if (showBoost) openBoostModal({ request, cb: boost });
-  //   else boost(request);
-  // };
 
   return (
     <Card withBorder px="xs">
@@ -161,41 +152,7 @@ export function QueueItem({ request }: Props) {
                 </ThemeIcon>
               </Tooltip>
             )}
-            {/* {pendingProcessing && request.queuePosition && (
-              <Button.Group>
-                {request.queuePosition && (
-                  <Button
-                    size="xs"
-                    variant="outline"
-                    color="gray"
-                    sx={{ pointerEvents: 'none' }}
-                    compact
-                  >
-                    {request.queuePosition.precedingJobs}/{request.queuePosition.jobs}
-                  </Button>
-                )}
-                <HoverCard withArrow position="top" withinPortal zIndex={400}>
-                  <HoverCard.Target>
-                    <Button
-                      size="xs"
-                      rightIcon={showBoost ? <IconBolt size={16} /> : undefined}
-                      compact
-                      // onClick={handleBoostClick}
-                    >
-                      Boost
-                    </Button>
-                  </HoverCard.Target>
-                  <HoverCard.Dropdown title="Coming soon" maw={300}>
-                    <Stack spacing={0}>
-                      <Text weight={500}>Coming soon!</Text>
-                      <Text size="xs">
-                        Want to run this request faster? Boost it to the front of the queue.
-                      </Text>
-                    </Stack>
-                  </HoverCard.Dropdown>
-                </HoverCard>
-              </Button.Group>
-            )} */}
+
             <Text size="xs" color="dimmed">
               {formatDateMin(request.createdAt)}
             </Text>
@@ -232,9 +189,9 @@ export function QueueItem({ request }: Props) {
           </Text>
         </ContentClamp>
         <Collection items={request.resources} limit={3} renderItem={ResourceBadge} grouped />
-        {!!request.images?.length && (
+        {!!images?.length && (
           <div className={classes.grid}>
-            {request.images.map((image) => (
+            {images.map((image) => (
               <GeneratedImage key={image.id} image={image} request={request} />
             ))}
           </div>

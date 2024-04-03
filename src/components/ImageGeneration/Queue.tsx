@@ -31,7 +31,7 @@ export function Queue({
     </Center>
   ) : !!requests?.length ? (
     <>
-      <Stack p="md">
+      <Stack>
         {requests.map((request) => (
           <div key={request.id} id={request.id.toString()}>
             {createRenderElement(QueueItem, request.id, request)}
