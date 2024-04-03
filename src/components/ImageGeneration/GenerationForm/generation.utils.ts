@@ -315,13 +315,14 @@ export const getFormData = (
 
   // Look through data for Draft resource.
   // If we find them, toggle draft and remove the resource.
-  const isSDXL = baseModel === 'SDXL' || baseModel === 'Pony';
+  const isSDXL = baseModel === 'SDXL' || baseModel === 'Pony' || baseModel === 'SDXLDistilled';
   const draftResourceId = draftMode[isSDXL ? 'sdxl' : 'sd1'].resourceId;
   const draftResourceIndex = formData.resources?.findIndex((x) => x.id === draftResourceId) ?? -1;
   if (draftResourceIndex !== -1) {
     formData.draft = true;
     formData.resources?.splice(draftResourceIndex, 1);
   }
+  if (isSDXL) formData.clipSkip = 2;
 
   return {
     ...formData,
