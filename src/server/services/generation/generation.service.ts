@@ -635,8 +635,8 @@ export const createGenerationRequest = async ({
 
   // Handle Draft Mode
   const isSDXL = params.baseModel === 'SDXL' || params.baseModel === 'Pony';
+  const draftModeSettings = draftMode[isSDXL ? 'sdxl' : 'sd1'];
   if (draft) {
-    const draftModeSettings = draftMode[isSDXL ? 'sdxl' : 'sd1'];
     // Fix quantity
     if (params.quantity % 4 !== 0) params.quantity = Math.ceil(params.quantity / 4) * 4;
     // Fix other params
@@ -652,7 +652,9 @@ export const createGenerationRequest = async ({
   }
 
   const resourceData = await getResourceData(resources.map((x) => x.id));
-  const allResourcesAvailable = resourceData.every((x) => !!x.generationCoverage?.covered);
+  const allResourcesAvailable = resourceData.every(
+    (x) => !!x.generationCoverage?.covered || x.id === draftModeSettings.resourceId
+  );
   if (!allResourcesAvailable)
     throw throwBadRequestError('Some of your resources are not available for generation');
 

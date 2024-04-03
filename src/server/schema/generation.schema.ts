@@ -132,7 +132,7 @@ const sharedGenerationParamsSchema = z.object({
     }),
   seed: z.coerce.number().min(-1).max(generation.maxValues.seed).default(-1),
   clipSkip: z.coerce.number().default(1),
-  steps: z.coerce.number().min(10).max(100),
+  steps: z.coerce.number().min(1).max(100),
   quantity: z.coerce.number().min(1).max(20),
   nsfw: z.boolean().optional(),
   draft: z.boolean().optional(),
@@ -220,7 +220,7 @@ export type GenerationRequestTestRunSchema = z.infer<typeof generationRequestTes
 export const generationRequestTestRunSchema = z.object({
   baseModel: z.string().optional(),
   aspectRatio: z.string(),
-  steps: z.coerce.number().min(10).max(100),
+  steps: z.coerce.number().min(1).max(100),
   quantity: z.coerce.number().min(1).max(20),
   sampler: z
     .string()

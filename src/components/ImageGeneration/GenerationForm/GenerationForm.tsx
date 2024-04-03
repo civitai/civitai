@@ -88,6 +88,7 @@ import { IconLock } from '@tabler/icons-react';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { DailyBoostRewardClaim } from '~/components/Buzz/Rewards/DailyBoostRewardClaim';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
   const { classes, theme } = useStyles();
@@ -104,6 +105,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
     nsfw: nsfw ?? false,
     quantity: quantity ?? generation.defaultValues.quantity,
   };
+  const features = useFeatureFlags();
 
   const form = useForm<GenerateFormModel>({
     resolver: zodResolver(generateFormSchema),
@@ -137,7 +139,6 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
     additionalResourcesCount,
     samplerCfgOffset,
     isSDXL,
-    isLCM,
     unstableResources,
     isCalculatingCost,
     draft,
@@ -479,29 +480,31 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
             </Stack>
             <Group position="apart">
               <InputSwitch name="nsfw" label="Mature content" labelPosition="left" />
-              <InputSwitch
-                name="draft"
-                labelPosition="left"
-                label={
-                  <Group spacing={4} noWrap pos="relative">
-                    <Input.Label>Draft Mode</Input.Label>
-                    <Badge
-                      color="yellow"
-                      size="xs"
-                      sx={{ position: 'absolute', right: 18, top: -8, padding: '0 4px' }}
-                    >
-                      New
-                    </Badge>
-                    <InfoPopover size="xs" iconProps={{ size: 14 }}>
-                      Draft Mode will generate images faster, cheaper, and with slightly less
-                      quality. Use this for exploring concepts quickly.
-                      <Text size="xs" color="dimmed" mt={4}>
-                        Requires generating in batches of 4
-                      </Text>
-                    </InfoPopover>
-                  </Group>
-                }
-              />
+              {features.draftMode && (
+                <InputSwitch
+                  name="draft"
+                  labelPosition="left"
+                  label={
+                    <Group spacing={4} noWrap pos="relative">
+                      <Input.Label>Draft Mode</Input.Label>
+                      <Badge
+                        color="yellow"
+                        size="xs"
+                        sx={{ position: 'absolute', right: 18, top: -8, padding: '0 4px' }}
+                      >
+                        New
+                      </Badge>
+                      <InfoPopover size="xs" iconProps={{ size: 14 }}>
+                        Draft Mode will generate images faster, cheaper, and with slightly less
+                        quality. Use this for exploring concepts quickly.
+                        <Text size="xs" color="dimmed" mt={4}>
+                          Requires generating in batches of 4
+                        </Text>
+                      </InfoPopover>
+                    </Group>
+                  }
+                />
+              )}
             </Group>
 
             <PersistentAccordion
@@ -589,15 +592,11 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                             </InfoPopover>
                           </Group>
                         }
-                        data={isLCM ? generation.lcmSamplers : generation.samplers}
-                        presets={
-                          isLCM
-                            ? []
-                            : [
-                                { label: 'Fast', value: 'Euler a' },
-                                { label: 'Popular', value: 'DPM++ 2M Karras' },
-                              ]
-                        }
+                        data={generation.samplers}
+                        presets={[
+                          { label: 'Fast', value: 'Euler a' },
+                          { label: 'Popular', value: 'DPM++ 2M Karras' },
+                        ]}
                       />
                       <InputNumberSlider
                         name="steps"
@@ -619,28 +618,24 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                             </InfoPopover>
                           </Group>
                         }
-                        min={isLCM ? 3 : 10}
-                        max={isLCM ? 12 : limits.steps}
+                        min={draft ? 3 : 10}
+                        max={draft ? 12 : limits.steps}
                         sliderProps={sharedSliderProps}
                         numberProps={sharedNumberProps}
-                        presets={
-                          isLCM
-                            ? []
-                            : [
-                                {
-                                  label: 'Fast',
-                                  value: Number(10 + samplerCfgOffset).toString(),
-                                },
-                                {
-                                  label: 'Balanced',
-                                  value: Number(20 + samplerCfgOffset).toString(),
-                                },
-                                {
-                                  label: 'High',
-                                  value: Number(30 + samplerCfgOffset).toString(),
-                                },
-                              ]
-                        }
+                        presets={[
+                          {
+                            label: 'Fast',
+                            value: Number(10 + samplerCfgOffset).toString(),
+                          },
+                          {
+                            label: 'Balanced',
+                            value: Number(20 + samplerCfgOffset).toString(),
+                          },
+                          {
+                            label: 'High',
+                            value: Number(30 + samplerCfgOffset).toString(),
+                          },
+                        ]}
                         reverse
                       />
                     </Stack>
@@ -873,17 +868,6 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
               }
             />
           )} */}
-          {isLCM && (
-            <DismissibleAlert
-              id="lcm-preview"
-              title="Initial LCM Support"
-              content={
-                <Text>
-                  {`We're still testing out LCM support, please let us know if you run into any issues.`}
-                </Text>
-              }
-            />
-          )}
         </Stack>
       </Stack>
     </Form>
