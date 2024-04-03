@@ -41,9 +41,7 @@ export function ModelsInfinite({
   const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
 
   const { models, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching } =
-    useQueryModels({
-      ...debouncedFilters,
-    });
+    useQueryModels(debouncedFilters);
 
   //#region [useEffect] cancel debounced filters
   useEffect(() => {

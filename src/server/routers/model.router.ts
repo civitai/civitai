@@ -132,9 +132,8 @@ export const modelRouter = router({
   getById: publicProcedure.input(getByIdSchema).query(getModelHandler),
   getAll: publicProcedure
     .input(getAllModelsSchema.extend({ page: z.never().optional() }))
-
-    // .use(skipEdgeCache)
-    // .use(edgeCacheIt({ ttl: 60, tags: () => ['models'] }))
+    .use(skipEdgeCache)
+    .use(edgeCacheIt({ ttl: 60, tags: () => ['models'] }))
     .query(getModelsInfiniteHandler),
   getAllPagedSimple: publicProcedure
     .input(getAllModelsSchema.extend({ cursor: z.never().optional() }))
