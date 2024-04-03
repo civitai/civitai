@@ -45,7 +45,7 @@ export const SubscriptionFeature = ({
   const featureFlags = useFeatureFlags();
   const { subscription } = useActiveSubscription();
 
-  if (!currentUser || !subscription) {
+  if (!currentUser || !subscription || !featureFlags.membershipsV2) {
     return null;
   }
 
@@ -72,7 +72,7 @@ export const BuzzPurchaseMultiplierFeature = ({ buzzAmount }: { buzzAmount: numb
   const { multipliers, multipliersLoading } = useUserMultipliers();
   const purchasesMultiplier = multipliers.purchasesMultiplier ?? 1;
 
-  if (multipliersLoading || !subscription) {
+  if (multipliersLoading || !subscription || purchasesMultiplier == 1) {
     return null;
   }
 

@@ -33,6 +33,7 @@ import { useUserMultipliers } from '~/components/Buzz/useBuzz';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { RedeemCodeModal } from '~/components/RedeemableCode/RedeemCodeModal';
 import { useRouter } from 'next/router';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -54,6 +55,7 @@ export default function UserBuzzDashboard() {
   const { classes } = useBuzzDashboardStyles();
   const isMember = currentUser?.isMember;
   const { query } = useRouter();
+  const features = useFeatureFlags();
 
   // Handle direct redemption
   useEffect(() => {
@@ -100,7 +102,7 @@ export default function UserBuzzDashboard() {
                   Other ways you can earn Buzz
                 </Title>
 
-                {isMember && rewardsMultiplier > 1 && (
+                {isMember && rewardsMultiplier > 1 && features.membershipsV2 && (
                   <Tooltip multiline label="Your membership makes rewards worth more!">
                     <Stack spacing={0}>
                       <Text size={20} className={classes.goldText}>
