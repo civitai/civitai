@@ -810,7 +810,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                   px="xs"
                 >
                   {/* <IconX size={20} strokeWidth={3} /> */}
-                  Clear All {status.charge ? 1 : 0}
+                  Clear All
                 </Button>
                 {/* </Tooltip> */}
               </Group>
