@@ -1935,6 +1935,7 @@ enum CosmeticType {
   Badge
   NamePlate
   ContentDecoration
+  ProfileDecoration
 }
 
 enum CosmeticSource {

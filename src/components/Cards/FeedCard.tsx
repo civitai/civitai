@@ -1,6 +1,8 @@
 import { AspectRatio, Card, CardProps, createStyles } from '@mantine/core';
 import Link from 'next/link';
 import React, { forwardRef } from 'react';
+import { BadgeCosmetic } from '~/server/selectors/cosmetic.selector';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 
 type AspectRatio = 'portrait' | 'landscape' | 'square' | 'flat';
 const aspectRatioValues: Record<
@@ -78,12 +80,33 @@ export const FeedCard = forwardRef<HTMLAnchorElement, Props>(
       </Card>
     );
 
-    return href ? (
-      <Link href={href} passHref>
-        {card}
-      </Link>
-    ) : (
-      card
+    return (
+      <div style={{ position: 'relative' }}>
+        {href ? (
+          <Link href={href} passHref>
+            {card}
+          </Link>
+        ) : (
+          card
+        )}
+        {cardDecoration && cardDecoration.data.url ? (
+          <EdgeMedia
+            src={cardDecoration.data.url}
+            type="image"
+            name="card decoration"
+            style={{
+              position: 'absolute',
+              top: '50%',
+              left: '50%',
+              transform: 'translate(-50%,-50%)',
+              width: '100%',
+              height: '100%',
+              zIndex: 1,
+            }}
+            width="original"
+          />
+        ) : null}
+      </div>
     );
   }
 );
@@ -96,6 +119,6 @@ type Props = CardProps & {
   aspectRatio?: AspectRatio;
   onClick?: React.MouseEventHandler<HTMLAnchorElement>;
   useCSSAspectRatio?: boolean;
-  cardDecoration?: any;
+  cardDecoration?: BadgeCosmetic;
   inViewOptions?: any;
 };

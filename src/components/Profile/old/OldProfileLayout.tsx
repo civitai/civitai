@@ -75,7 +75,9 @@ export const UserContextMenu = ({ username }: { username: string }) => {
   );
   const isMod = currentUser && currentUser.isModerator;
   const isSameUser =
-    !!currentUser && postgresSlugify(currentUser.username) === postgresSlugify(username);
+    !!currentUser &&
+    !!currentUser.username &&
+    postgresSlugify(currentUser.username) === postgresSlugify(username);
   const removeContentMutation = trpc.user.removeAllContent.useMutation();
   const deleteAccountMutation = trpc.user.delete.useMutation({
     onSuccess() {

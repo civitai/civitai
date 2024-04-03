@@ -37,7 +37,10 @@ export function UserAvatarSimple({
 
   return (
     <UnstyledButton
-      onClick={() => router.push(username ? `/user/${username}` : `/user?id=${id}`)}
+      onClick={(e) => {
+        e.stopPropagation();
+        router.push(username ? `/user/${username}` : `/user?id=${id}`);
+      }}
       className="flex gap-2 items-center"
     >
       {displayProfilePicture && (

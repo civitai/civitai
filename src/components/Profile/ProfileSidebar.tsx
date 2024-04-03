@@ -186,6 +186,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
             user={user}
             size={sizeOpts.username}
             radius="md"
+            withDecorations={false}
           />
 
           {!isMobile && (
