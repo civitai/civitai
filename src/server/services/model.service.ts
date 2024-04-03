@@ -1034,7 +1034,9 @@ export const getModelsWithImagesAndModelVersions = async ({
     items: items
       .map(({ hashes, modelVersions, rank, tagsOnModels, ...model }) => {
         const [version] = modelVersions;
-        if (!version) return null;
+        if (!version) {
+          return null;
+        }
         const versionImages = modelVersionImages[version.id]?.images ?? [];
         const filteredImages = excludedTagIds
           ? versionImages.filter((x) => !excludedTagIds?.includes(x.id))
