@@ -151,19 +151,7 @@ function AboutCivitaiLink() {
         <Center p="md" pb={0}>
           <CivitaiLinkSvg />
         </Center>
-        <Text my="xs">
-          Interact with your{' '}
-          <Text
-            component="a"
-            variant="link"
-            href="https://github.com/AUTOMATIC1111/stable-diffusion-webui"
-            target="_blank"
-            rel="nofollow noreferrer"
-          >
-            Automatic1111 Stable Diffusion
-          </Text>{' '}
-          instance in realtime from Civitai
-        </Text>
+        <Text my="xs">Interact with any Stable Diffusion instance in realtime from Civitai</Text>
       </Stack>
       <Divider />
       <Group spacing={0} grow>
@@ -369,19 +357,7 @@ function GetStarted() {
         <Center p="md" pb={0}>
           <CivitaiLinkSvg />
         </Center>
-        <Text my="xs">
-          Interact with your{' '}
-          <Text
-            component="a"
-            variant="link"
-            href="https://github.com/AUTOMATIC1111/stable-diffusion-webui"
-            target="_blank"
-            rel="nofollow noreferrer"
-          >
-            Automatic1111 Stable Diffusion
-          </Text>{' '}
-          instance in realtime from Civitai
-        </Text>
+        <Text my="xs">Interact with any Stable Diffusion instance in realtime from Civitai</Text>
       </Stack>
       <Divider />
       <Stack>
