@@ -9,6 +9,7 @@ import {
   Badge,
   Loader,
   Center,
+  Box,
 } from '@mantine/core';
 import { IconCheck, IconDiscountCheck } from '@tabler/icons-react';
 import { capitalize } from 'lodash';
@@ -112,7 +113,11 @@ export const MembershipUpsell = ({ buzzAmount }: { buzzAmount: number }) => {
             <Text tt="uppercase">Get More</Text>
           </Group>
         </Badge>
-        {image && <EdgeMedia src={image} width={80} />}
+        {image && (
+          <Box w={80}>
+            <EdgeMedia src={image} width="original" />
+          </Box>
+        )}
         <Stack spacing={0}>
           <Text className={classes.title}>{capitalize(targetTier)} membership</Text>
           <Text color="yellow.7" className={classes.subtitle}>
