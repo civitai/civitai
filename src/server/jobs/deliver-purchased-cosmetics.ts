@@ -23,7 +23,7 @@ export const deliverPurchasedCosmetics = createJob(
             AND jsonb_typeof(pdl.metadata->'level') != 'undefined'
             AND (pdl.metadata->>'level')::int <= (pd.metadata->>'level')::int
         JOIN "User" u ON u."customerId" = p."customerId"
-        WHERE p."createdAt" >= ${lastDelivered} AND u.id = 1
+        WHERE p."createdAt" >= ${lastDelivered}
       )
       INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "obtainedAt")
       SELECT DISTINCT
