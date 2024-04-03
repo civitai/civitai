@@ -201,8 +201,14 @@ export const getModelsRaw = async ({
     clubId,
     modelVersionIds,
     browsingLevel,
-    pending,
   } = input;
+
+  let pending = input.pending;
+  const hasDraftModels = status?.includes(ModelStatus.Draft);
+
+  if (hasDraftModels) {
+    pending = true;
+  }
 
   const includeDetails = !!include?.includes('details');
   function ifDetails(sql: TemplateStringsArray) {
@@ -346,7 +352,7 @@ export const getModelsRaw = async ({
 
   if (period && period !== MetricTimeframe.AllTime && periodMode !== 'stats') {
     AND.push(
-      Prisma.sql`(m."lastVersionAt" >= ${decreaseDate(
+      Prisma.sql`(COALESCE(m."lastVersionAt", lmv."createdAt") >= ${decreaseDate(
         new Date(),
         1,
         period.toLowerCase() as ManipulateType
@@ -1018,7 +1024,8 @@ export const getModelsWithImagesAndModelVersions = async ({
     ? await getImagesForModelVersionCache(modelVersionIds)
     : {};
 
-  const { excludedTagIds } = input;
+  const { excludedTagIds, status } = input;
+  const includeDrafts = status?.includes(ModelStatus.Draft);
 
   const unavailableGenResources = await getUnavailableResources();
   const result = {
@@ -1033,7 +1040,8 @@ export const getModelsWithImagesAndModelVersions = async ({
           ? versionImages.filter((x) => !excludedTagIds?.includes(x.id))
           : versionImages;
         const showImageless =
-          (user?.isModerator || model.user.id === user?.id) && (input.user || input.username);
+          (user?.isModerator || model.user.id === user?.id) &&
+          (input.user || input.username || includeDrafts);
         if (!filteredImages.length && !showImageless) return null;
 
         const canGenerate =
