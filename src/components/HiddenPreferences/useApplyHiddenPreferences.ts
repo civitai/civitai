@@ -1,4 +1,3 @@
-import { model } from '@tensorflow/tfjs';
 import { useEffect, useMemo, useState } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { CivitaiSessionUser } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
