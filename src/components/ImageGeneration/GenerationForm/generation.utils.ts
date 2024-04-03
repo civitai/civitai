@@ -17,6 +17,7 @@ import { uniqBy } from 'lodash';
 import {
   CreateGenerationRequestInput,
   GenerateFormModel,
+  GenerationRequestTestRunSchema,
   generationStatusSchema,
   SendFeedbackInput,
 } from '~/server/schema/generation.schema';
@@ -118,45 +119,26 @@ export const useEstimateTextToImageJobCost = () => {
   const generationForm = useGenerationFormStore.getState();
   const [debouncedGenerationForm] = useDebouncedValue(generationForm, 500);
   const status = useGenerationStatus();
+  const { model, aspectRatio, steps, quantity, sampler, draft } = debouncedGenerationForm;
+  const baseModel = model?.baseModel ? getBaseModelSetKey(model.baseModel) : undefined;
 
   const input = useMemo(() => {
-    if (!status.charge) {
+    if (!status.charge || !baseModel) {
       return null;
     }
 
-    const { model, resources = [], vae, ...params } = debouncedGenerationForm;
-
-    const _resources = [model, ...resources, vae].filter(isDefined).map((resource) => {
-      if (resource.modelType === 'TextualInversion')
-        return { ...resource, triggerWord: resource.trainedWords[0] };
-      return resource;
-    });
-
-    if (!_resources.length) return undefined;
-
     return {
-      resources: _resources.filter((x) => x.covered !== false),
-      params: {
-        ...params,
-        baseModel: model?.baseModel ? getBaseModelSetKey(model.baseModel) : undefined,
-      },
+      baseModel,
+      aspectRatio,
+      steps,
+      quantity,
+      sampler,
+      draft,
     };
-  }, [
-    /* eslint-disable react-hooks/exhaustive-deps */
-    debouncedGenerationForm.model,
-    debouncedGenerationForm.aspectRatio,
-    debouncedGenerationForm.steps,
-    debouncedGenerationForm.quantity,
-    debouncedGenerationForm.resources,
-    debouncedGenerationForm.sampler,
-    debouncedGenerationForm.vae,
-    status.charge,
-    debouncedGenerationForm.draft,
-    /* eslint-enable react-hooks/exhaustive-deps */
-  ]);
+  }, [aspectRatio, steps, quantity, sampler, status.charge, baseModel, draft]);
 
   const { data: result, isLoading } = trpc.generation.estimateTextToImage.useQuery(
-    input as CreateGenerationRequestInput,
+    input as GenerationRequestTestRunSchema,
     {
       enabled: !!input && status.charge,
     }

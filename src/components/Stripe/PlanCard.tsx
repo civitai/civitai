@@ -13,6 +13,7 @@ import {
   Tooltip,
   Badge,
   Alert,
+  Box,
 } from '@mantine/core';
 import {
   IconAdCircleOff,
@@ -116,7 +117,9 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
             </Title>
             {image && (
               <Center>
-                <EdgeMedia src={image} width={128} className={classes.image} />
+                <Box w={128}>
+                  <EdgeMedia src={image} width="original" className={classes.image} />
+                </Box>
               </Center>
             )}
             <Stack spacing={0} align="center">

@@ -121,8 +121,6 @@ export function QueueItem({ request }: Props) {
   const { prompt, ...details } = request.params;
   const removedForSafety = request.images?.some((x) => x.removedForSafety && x.available);
 
-  console.log(request);
-
   const hasUnstableResources = request.resources.some((x) => unstableResources.includes(x.id));
   const overwriteStatusLabel =
     hasUnstableResources && status === GenerationRequestStatus.Error

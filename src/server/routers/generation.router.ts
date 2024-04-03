@@ -22,6 +22,7 @@ import {
   getUnstableResources,
   sendGenerationFeedback,
   textToImage,
+  textToImageTestRun,
   toggleUnavailableResource,
 } from '~/server/services/generation/generation.service';
 import {
@@ -120,13 +121,11 @@ export const generationRouter = router({
     }),
   estimateTextToImage: protectedProcedure
     .input(generationRequestTestRunSchema)
+    .use(edgeCacheIt({ ttl: CacheTTL.hour }))
     .query(({ input, ctx }) => {
-      return textToImage({
-        input: {
-          ...input,
-          userId: ctx.user.id,
-        },
-        isTestRun: true,
+      return textToImageTestRun({
+        ...input,
+        userId: ctx.user.id,
       });
     }),
 });

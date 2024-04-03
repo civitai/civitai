@@ -131,8 +131,8 @@ const sharedGenerationParamsSchema = z.object({
       message: 'invalid sampler',
     }),
   seed: z.coerce.number().min(-1).max(generation.maxValues.seed).default(-1),
-  steps: z.coerce.number().min(10).max(100),
   clipSkip: z.coerce.number().default(1),
+  steps: z.coerce.number().min(10).max(100),
   quantity: z.coerce.number().min(1).max(20),
   nsfw: z.boolean().optional(),
   draft: z.boolean().optional(),
@@ -217,17 +217,18 @@ export const createGenerationRequestSchema = z.object({
 });
 
 export type GenerationRequestTestRunSchema = z.infer<typeof generationRequestTestRunSchema>;
-export const generationRequestTestRunSchema = createGenerationRequestSchema.merge(
-  z.object({
-    params: sharedGenerationParamsSchema.merge(
-      z.object({
-        prompt: z.string().default(''),
-        negativePrompt: z.string().default(''),
-      })
-    ),
-  })
-);
-
+export const generationRequestTestRunSchema = z.object({
+  baseModel: z.string().optional(),
+  aspectRatio: z.string(),
+  steps: z.coerce.number().min(10).max(100),
+  quantity: z.coerce.number().min(1).max(20),
+  sampler: z
+    .string()
+    .refine((val) => generation.samplers.includes(val as (typeof generation.samplers)[number]), {
+      message: 'invalid sampler',
+    }),
+  draft: z.boolean().optional(),
+});
 export type CheckResourcesCoverageSchema = z.infer<typeof checkResourcesCoverageSchema>;
 export const checkResourcesCoverageSchema = z.object({
   id: z.number(),

@@ -3,6 +3,7 @@ import {
   BulkDeleteGeneratedImagesInput,
   CheckResourcesCoverageSchema,
   CreateGenerationRequestInput,
+  GenerationRequestTestRunSchema,
   GenerationStatus,
   generationStatusSchema,
   GetGenerationDataInput,
@@ -1102,12 +1103,10 @@ export const sendGenerationFeedback = async ({
 
 export const textToImage = async ({
   input,
-  isTestRun,
 }: {
   input: CreateGenerationRequestInput & {
     userId: number;
   };
-  isTestRun?: boolean;
 }) => {
   const data = await prepareGenerationInput(input);
   const response = await orchestratorCaller.textToImage({
@@ -1115,7 +1114,58 @@ export const textToImage = async ({
       properties: {},
       ...data.job,
     },
-    isTestRun,
+  });
+
+  if (!response.ok) {
+    if (response.status === 403) {
+      throw throwInsufficientFundsError();
+    }
+
+    throw new Error('An unknown error occurred. Please try again later');
+  }
+
+  return response.data;
+};
+
+export const textToImageTestRun = async ({
+  baseModel,
+  quantity,
+  sampler,
+  steps,
+  aspectRatio,
+}: GenerationRequestTestRunSchema & {
+  userId: number;
+}) => {
+  const status = await getGenerationStatus();
+  const { additionalResourceTypes, aspectRatios } = getGenerationConfig(baseModel);
+
+  if (aspectRatio.includes('x'))
+    throw throwBadRequestError('Invalid size. Please select your size and try again');
+
+  const { height, width } = aspectRatios[Number(aspectRatio)];
+
+  const response = await orchestratorCaller.textToImage({
+    payload: {
+      // Civitai SDXL - Irrelevant, not used for cost calculation.
+      model: '@civitai/128078',
+      baseModel: baseModelToOrchestration[baseModel as BaseModelSetType],
+      properties: {},
+      quantity: quantity,
+      additionalNetworks: {},
+      params: {
+        baseModel,
+        scheduler: samplersToSchedulers[sampler as Sampler],
+        steps,
+        height,
+        width,
+        // Defaults - These are not used for calculating cost
+        prompt: '',
+        negativePrompt: '',
+        clipSkip: 7,
+        cfgScale: 7,
+      },
+    },
+    isTestRun: true,
   });
 
   if (!response.ok) {
