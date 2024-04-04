@@ -101,7 +101,8 @@ export function ProfileSidebar({ username, className }: { username: string; clas
         ? []
         : user.cosmetics
             .map((c) => c.cosmetic)
-            .filter((c) => c.type === CosmeticType.Badge && !!c.data),
+            .filter((c) => c.type === CosmeticType.Badge && !!c.data)
+            .reverse(),
     [user]
   );
 
@@ -270,10 +271,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
             Badges
           </Text>
           <Group spacing="xs">
-            {(showAllBadges
-              ? badges.reverse()
-              : badges.reverse().slice(0, sizeOpts.badgeCount)
-            ).map((award) => {
+            {(showAllBadges ? badges : badges.slice(0, sizeOpts.badgeCount)).map((award) => {
               const data = (award.data ?? {}) as { url?: string; animated?: boolean };
               const url = (data.url ?? '') as string;
 
