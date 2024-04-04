@@ -15,7 +15,7 @@ import { trpc } from '~/utils/trpc';
 const useStyles = createStyles((theme) => ({
   card: {
     backgroundColor: theme.fn.rgba(theme.colors.yellow[6], 0.2),
-    border: `1px solid ${theme.fn.rgba(theme.colors.yellow[6], 0.5)}`,
+    border: `1px solid ${theme.fn.rgba(theme.colors.yellow[6], 0.3)}`,
     width: '100%',
     maxHeight: '100%',
     margin: 0,
@@ -54,7 +54,7 @@ export const SubscriptionFeature = ({
   return (
     <Paper className={classes.card} py="xs">
       <Group noWrap>
-        {image && <EdgeMedia src={image} width={50} />}
+        {image && <EdgeMedia src={image} width="original" style={{ width: 50 }} />}
         <Stack spacing={2}>
           <Text className={classes.title}>{title}</Text>
           <Text className={classes.subtitle} lh={1.2}>

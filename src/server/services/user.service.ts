@@ -61,7 +61,7 @@ import { constants } from '~/server/common/constants';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { removeEmpty } from '~/utils/object-helpers';
 import { purchasableRewardDetails } from '~/server/selectors/purchasableReward.selector';
-import { getNsfwLeveLDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
+import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
 import { HiddenModels } from '~/server/services/user-preferences.service';
 import { deleteImageById } from '~/server/services/image.service';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
@@ -186,7 +186,7 @@ export const getUsers = async ({ limit, query, email, ids, include }: GetAllUser
   `;
   return result.map(({ avatarNsfwLevel, ...user }) => ({
     ...user,
-    avatarNsfw: getNsfwLeveLDeprecatedReverseMapping(avatarNsfwLevel),
+    avatarNsfw: getNsfwLevelDeprecatedReverseMapping(avatarNsfwLevel),
   }));
 };
 

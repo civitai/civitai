@@ -1,4 +1,3 @@
-import { useTheme } from '@emotion/react';
 import {
   Button,
   Center,
@@ -10,13 +9,19 @@ import {
   Stack,
   Image,
   Text,
+  createStyles,
+  Box,
+  Alert,
 } from '@mantine/core';
+import { IconAlertTriangle } from '@tabler/icons-react';
 import Router from 'next/router';
 import { useState } from 'react';
+import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { PlanBenefitList } from '~/components/Stripe/PlanBenefitList';
-import { getPlanDetails } from '~/components/Stripe/PlanCard';
+import { PlanMeta, getPlanDetails } from '~/components/Stripe/PlanCard';
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { useTrackEvent } from '~/components/TrackView/track.utils';
@@ -26,6 +31,15 @@ import { formatKBytes } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 
 const downgradeReasons = ['Too expensive', 'I don’t need all the benefits', 'Others'];
+
+const useStyles = createStyles((theme) => ({
+  card: {
+    height: '100%',
+    background: theme.colorScheme === 'dark' ? theme.colors.dark[8] : theme.colors.gray[0],
+    borderRadius: theme.radius.md,
+    padding: theme.spacing.lg,
+  },
+}));
 
 export const DowngradeFeedbackModal = ({
   priceId,
@@ -71,8 +85,11 @@ export const DowngradeFeedbackModal = ({
               </Paper>
             ))}
           </Radio.Group>
+          <AlertWithIcon color="red" icon={<IconAlertTriangle size={20} />} iconColor="red">
+            Downgrade is immediate. You will lose your tier benefits as soon as you downgrade.
+          </AlertWithIcon>
           <Group grow>
-            <SubscribeButton priceId={priceId}>
+            <SubscribeButton priceId={priceId} onSuccess={handleClose}>
               {({ onClick, ...props }) => (
                 <Button
                   color="gray"
@@ -308,6 +325,61 @@ export const VaultStorageDowngrade = ({
           </Group>
         </Stack>
       )}
+    </Modal>
+  );
+};
+
+export const MembershipUpgradeModal = ({ priceId, meta }: { priceId: string; meta: PlanMeta }) => {
+  const dialog = useDialogContext();
+  const handleClose = dialog.onClose;
+  const { name, image, benefits } = meta;
+  const { classes } = useStyles();
+
+  return (
+    <Modal
+      {...dialog}
+      size="md"
+      title={`You are about to upgrade to the ${name} plan!`}
+      radius="md"
+    >
+      <Stack>
+        {image && (
+          <Center>
+            <Box w={120}>
+              <EdgeMedia src={image} width="original" />
+            </Box>
+          </Center>
+        )}
+        {benefits && (
+          <Paper withBorder className={classes.card}>
+            <PlanBenefitList benefits={benefits} />
+          </Paper>
+        )}
+
+        <Alert>
+          Please note you will be charged immediately for your upgrade and will get access to all
+          benefits:.
+        </Alert>
+        <Group grow>
+          <SubscribeButton priceId={priceId} onSuccess={handleClose}>
+            {({ onClick, ...props }) => (
+              <Button
+                color="blue"
+                onClick={() => {
+                  onClick();
+                }}
+                radius="xl"
+                {...props}
+              >
+                Upgrade now
+              </Button>
+            )}
+          </SubscribeButton>
+          <Button color="gray" onClick={handleClose} radius="xl">
+            Don&rsquo;t change plan
+          </Button>
+        </Group>
+      </Stack>
     </Modal>
   );
 };

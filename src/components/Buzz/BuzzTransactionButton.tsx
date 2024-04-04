@@ -24,6 +24,7 @@ type Props = ButtonProps & {
   purchaseSuccessMessage?: (purchasedBalance: number) => React.ReactNode;
   size?: MantineSize;
   performTransactionOnPurchase?: boolean;
+  showPurchaseModal?: boolean;
 };
 
 const useButtonStyle = createStyles((theme) => ({
@@ -42,6 +43,7 @@ export function BuzzTransactionButton({
   label,
   size,
   loading,
+  showPurchaseModal = true,
   ...buttonProps
 }: Props) {
   const features = useFeatureFlags();
@@ -55,6 +57,8 @@ export function BuzzTransactionButton({
   if (!features.buzz) return null;
 
   const onClick = (e?: React.MouseEvent) => {
+    if (!showPurchaseModal) return;
+
     e?.preventDefault();
     e?.stopPropagation();
 

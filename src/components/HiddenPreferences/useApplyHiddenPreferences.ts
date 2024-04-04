@@ -18,6 +18,7 @@ export function useApplyHiddenPreferences<
   type,
   data,
   showHidden,
+  showImageless,
   disabled,
   isRefetching,
   hiddenImages,
@@ -29,6 +30,7 @@ export function useApplyHiddenPreferences<
   type: T;
   data?: TData;
   showHidden?: boolean;
+  showImageless?: boolean;
   disabled?: boolean;
   isRefetching?: boolean;
   hiddenImages?: number[];
@@ -67,6 +69,7 @@ export function useApplyHiddenPreferences<
         type,
         data,
         showHidden,
+        showImageless,
         disabled,
         browsingLevel,
         hiddenPreferences: preferences,
@@ -107,6 +110,7 @@ type FilterPreferencesProps<TKey, TData> = {
   hiddenPreferences: HiddenPreferencesState;
   browsingLevel: number;
   showHidden?: boolean;
+  showImageless?: boolean;
   disabled?: boolean;
   currentUser: CivitaiSessionUser | null;
   allowLowerLevels?: boolean;
@@ -121,6 +125,7 @@ function filterPreferences<
   hiddenPreferences,
   browsingLevel,
   showHidden,
+  showImageless,
   disabled,
   currentUser,
   allowLowerLevels,
@@ -194,11 +199,12 @@ function filterPreferences<
                 return aIntersects === bIntersects ? 0 : aIntersects ? -1 : 1;
               })
             : filteredImages;
+
           if (sortedImages.length === 0) {
             hidden.noImages++;
           }
 
-          return sortedImages.length
+          return sortedImages.length || showImageless
             ? {
                 ...x,
                 images: filteredImages,
@@ -326,8 +332,8 @@ function filterPreferences<
           if (filteredImages.length === 0) {
             hidden.noImages++;
           }
-
-          return filteredImages.length
+          
+          return filteredImages.length || showImageless
             ? {
                 ...x,
                 images: filteredImages,
@@ -415,13 +421,15 @@ function filterPreferences<
             if (hiddenImages.get(image.id)) return false;
             for (const tag of image.tagIds ?? []) if (hiddenTags.get(tag)) return false;
             return true;
-          });
+          }); 
 
           if (filteredImages.length === 0) {
             hidden.noImages++;
           }
 
-          return filteredImages.length ? { ...post, images: filteredImages } : null;
+          return filteredImages.length || showImageless
+            ? { ...post, images: filteredImages }
+            : null;
         })
         .filter(isDefined);
 

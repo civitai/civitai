@@ -63,7 +63,7 @@ export function JoinPopover({
                 message
               ) : (
                 <Text size="sm" weight={500} sx={{ flex: 1 }}>
-                  {message ?? 'You must be a Supporter Tier member to access this content.'}
+                  {message ?? 'You must be a Member to access this content.'}
                 </Text>
               )}
             </Group>

@@ -18,6 +18,7 @@ import { Currency, StripeConnectStatus } from '@prisma/client';
 import { Paper, Stack, Title, Text, Center, Loader } from '@mantine/core';
 import { constants } from '~/server/common/constants';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
+import { useUserStripeConnect } from '~/components/Stripe/stripe.utils';
 
 ChartJS.register(
   CategoryScale,
@@ -30,7 +31,7 @@ ChartJS.register(
 );
 
 export const EarlyAccessRewards = () => {
-  const { data: userStripeConnect } = trpc.userStripeConnect.get.useQuery();
+  const { userStripeConnect } = useUserStripeConnect();
   const { data: modelVersions = [], isLoading } =
     trpc.modelVersion.earlyAccessModelVersionsOnTimeframe.useQuery(
       { timeframe: 14 },

@@ -11,16 +11,22 @@ import { openContextModal } from '@mantine/modals';
 export function SubscribeButton({
   children,
   priceId,
+  onSuccess,
 }: {
   children:
     | React.ReactElement
     | ((props: { onClick: () => void; disabled: boolean; loading: boolean }) => React.ReactElement);
   priceId: string;
+  onSuccess?: () => void;
 }) {
+  const queryUtils = trpc.useUtils();
   const currentUser = useCurrentUser();
   const mutateCount = useIsMutating();
   const { mutate, isLoading } = trpc.stripe.createSubscriptionSession.useMutation({
     async onSuccess({ sessionId, url }) {
+      await currentUser?.refresh();
+      await queryUtils.stripe.getUserSubscription.reset();
+      onSuccess?.();
       if (url) Router.push(url);
       else if (sessionId) {
         const stripe = await getClientStripe();

@@ -13,6 +13,7 @@ import {
   Menu,
   ActionIcon,
   Box,
+  Alert,
 } from '@mantine/core';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
@@ -33,6 +34,11 @@ import { CancelMembershipFeedbackModal } from '~/components/Stripe/MembershipCha
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
 import { ManageSubscriptionButton } from '~/components/Stripe/ManageSubscriptionButton';
 import { useActiveSubscription, useCanUpgrade } from '~/components/Stripe/memberships.util';
+import { useRouter } from 'next/router';
+import { userTierSchema } from '~/server/schema/user.schema';
+import { z } from 'zod';
+import { capitalize } from 'lodash';
+import { booleanString } from '~/utils/zod-helpers';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -68,11 +74,20 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
+const querySchema = z.object({
+  downgraded: booleanString().optional(),
+  tier: userTierSchema.optional(),
+});
+
 export default function UserMembership() {
   const { classes, theme } = useStyles();
   const { subscription, subscriptionLoading } = useActiveSubscription();
   const features = useFeatureFlags();
   const canUpgrade = useCanUpgrade();
+  const router = useRouter();
+  const query = querySchema.safeParse(router.query);
+  const isDrowngrade = query.success ? query.data?.downgraded : false;
+  const downgradedTier = query.success ? isDrowngrade && query.data?.tier : null;
 
   if (subscriptionLoading || !subscription) {
     return (
@@ -87,7 +102,6 @@ export default function UserMembership() {
   const price = subscription.price;
   const product = subscription.product;
   const { image, benefits } = getPlanDetails(subscription.product, features);
-  const productMeta = (product.metadata ?? {}) as ProductMetadata;
 
   return (
     <>
@@ -97,6 +111,13 @@ export default function UserMembership() {
           <Grid.Col span={12}>
             <Stack>
               <Title>My Membership Plan</Title>
+              {isDrowngrade && downgradedTier && (
+                <Alert>
+                  You have successfully downgraded your membership to the{' '}
+                  {capitalize(downgradedTier)} tier. It may take a few seconds for your new plan to
+                  take effect. You may refresh the page to see the changes.
+                </Alert>
+              )}
               <Paper withBorder className={classes.card}>
                 <Stack>
                   <Group position="apart">

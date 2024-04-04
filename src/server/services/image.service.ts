@@ -536,6 +536,7 @@ export const getAllImages = async ({
   browsingLevel,
   user,
   pending,
+  notPublished,
 }: GetInfiniteImagesOutput & {
   userId?: number;
   user?: SessionUser;
@@ -592,6 +593,9 @@ export const getAllImages = async ({
 
   if (fromPlatform && types?.includes(MediaType.image)) {
     AND.push(Prisma.sql`(i.meta IS NOT NULL AND i.meta ? 'civitaiResources')`);
+  }
+  if (notPublished && isModerator && types?.includes(MediaType.image)) {
+    AND.push(Prisma.sql`(p."publishedAt" IS NULL)`);
   }
 
   let from = 'FROM "Image" i';

@@ -181,7 +181,7 @@ export const generationStatusSchema = z.object({
       }
       return mergedLimits;
     }),
-  charge: z.boolean().default(true),
+  charge: z.boolean().default(false),
 });
 export type GenerationStatus = z.infer<typeof generationStatusSchema>;
 

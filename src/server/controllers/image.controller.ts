@@ -36,7 +36,7 @@ import { trackModActivity } from '~/server/services/moderator.service';
 import { hasEntityAccess } from '../services/common.service';
 import { getGallerySettingsByModelId } from '~/server/services/model.service';
 import { Flags } from '~/shared/utils';
-import { getNsfwLeveLDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
+import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
 
 export const moderateImageHandler = async ({
   input,
@@ -82,7 +82,7 @@ export const deleteImageHandler = async ({
       await ctx.track.image({
         type: 'Delete',
         imageId: input.id,
-        nsfw: getNsfwLeveLDeprecatedReverseMapping(image.nsfwLevel),
+        nsfw: getNsfwLevelDeprecatedReverseMapping(image.nsfwLevel),
         tags: imageTags.map((x) => x.tagName),
         ownerId: image.userId,
       });
@@ -170,7 +170,7 @@ export const setTosViolationHandler = async ({
     await ctx.track.image({
       type: 'DeleteTOS',
       imageId: id,
-      nsfw: getNsfwLeveLDeprecatedReverseMapping(image.nsfwLevel),
+      nsfw: getNsfwLevelDeprecatedReverseMapping(image.nsfwLevel),
       tags: image.tags.map((x) => x.tag.name),
       ownerId: image.userId,
     });

@@ -1021,7 +1021,7 @@ export default function ModelDetailsV2({
                   ) : (
                     !isMuted &&
                     onlyEarlyAccess && (
-                      <JoinPopover message="You must be a Supporter Tier member to join this discussion">
+                      <JoinPopover message="You must be a Civitai Member to join this discussion">
                         <Button
                           leftIcon={<IconClock size={16} />}
                           variant="outline"

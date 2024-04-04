@@ -634,7 +634,10 @@ export const createGenerationRequest = async ({
   if (resources.length > 10) throw throwBadRequestError('Too many resources provided');
 
   // Handle Draft Mode
-  const isSDXL = params.baseModel === 'SDXL' || params.baseModel === 'Pony';
+  const isSDXL =
+    params.baseModel === 'SDXL' ||
+    params.baseModel === 'Pony' ||
+    params.baseModel === 'SDXLDistilled';
   const draftModeSettings = draftMode[isSDXL ? 'sdxl' : 'sd1'];
   if (draft) {
     // Fix quantity
@@ -741,19 +744,22 @@ export const createGenerationRequest = async ({
     };
   }
 
-  // handle Pony ClipSkip
-  const isPony = isSDXL && resourceData.some((x) => x.baseModel === 'Pony');
-  if (isPony) params.clipSkip = 2;
+  // handle SDXL ClipSkip
+  // I was made aware that SDXL only works with clipSkip 2
+  // if that's not the case anymore, we can rollback to just setting
+  // this for Pony resources -Manuel
+  if (isSDXL) params.clipSkip = 2;
 
   const generationRequest = {
     userId,
     nsfw,
+    priority: draft ? env.DRAFT_MODE_PRIORITY : undefined,
     job: {
       model: `@civitai/${checkpoint.id}`,
       baseModel: baseModelToOrchestration[params.baseModel as BaseModelSetType],
       quantity: params.quantity,
       sequential: draft ? true : false,
-      providers: draft ? ['ValdiAI'] : undefined,
+      providers: draft ? env.DRAFT_MODE_PROVIDERS : undefined,
       additionalNetworks,
       params: {
         prompt: positivePrompts.join(', '),
@@ -1170,9 +1176,7 @@ export const textToImageTestRun = async ({
   steps,
   aspectRatio,
   draft,
-}: GenerationRequestTestRunSchema & {
-  userId: number;
-}) => {
+}: GenerationRequestTestRunSchema) => {
   const { aspectRatios } = getGenerationConfig(baseModel);
 
   if (aspectRatio.includes('x'))

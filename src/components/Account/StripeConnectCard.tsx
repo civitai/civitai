@@ -27,6 +27,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { FeatureIntroductionModal } from '~/components/FeatureIntroduction/FeatureIntroduction';
+import { useUserStripeConnect } from '~/components/Stripe/stripe.utils';
 
 const stripeConnectLoginUrl = 'https://connect.stripe.com/express_login';
 
@@ -208,9 +209,7 @@ const StripeConnectStatusDisplay = ({ status }: { status: StripeConnectStatus })
 
 export function StripeConnectCard() {
   const features = useFeatureFlags();
-  const { data: userStripeConnect, isLoading } = trpc.userStripeConnect.get.useQuery(undefined, {
-    enabled: !!features.creatorsProgram,
-  });
+  const { userStripeConnect, isLoading } = useUserStripeConnect();
 
   if (!features.creatorsProgram || !userStripeConnect) return null;
 
