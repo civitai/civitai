@@ -8,18 +8,20 @@ import {
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';
 import { GetByIdStringInput } from '~/server/schema/base.schema';
+import { useUserStripeConnect } from '~/components/Stripe/stripe.utils';
 
 export const useQueryOwnedBuzzWithdrawalRequests = (
   filters?: Partial<GetPaginatedOwnedBuzzWithdrawalRequestSchema>,
   options?: { keepPreviousData?: boolean; enabled?: boolean }
 ) => {
   const currentUser = useCurrentUser();
+  const { userStripeConnect } = useUserStripeConnect();
   const { data, ...rest } = trpc.buzzWithdrawalRequest.getPaginatedOwned.useQuery(
     {
       ...filters,
     },
     {
-      enabled: !!currentUser,
+      enabled: !!currentUser && !!userStripeConnect,
       ...options,
     }
   );

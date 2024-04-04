@@ -34,13 +34,22 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { RedeemCodeModal } from '~/components/RedeemableCode/RedeemCodeModal';
 import { useRouter } from 'next/router';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { getLoginLink } from '~/utils/login-helpers';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
-  resolver: async ({ features }) => {
+  resolver: async ({ features, session, ctx }) => {
     if (!features?.buzz) {
       return { notFound: true };
     }
+
+    if (!session)
+      return {
+        redirect: {
+          destination: getLoginLink({ returnUrl: ctx.resolvedUrl }),
+          permanent: false,
+        },
+      };
   },
 });
 
