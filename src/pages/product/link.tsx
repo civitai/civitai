@@ -19,13 +19,7 @@ import Lottie from 'react-lottie';
 import * as linkAnimation from '~/utils/lotties/link-animation.json';
 import { Meta } from '~/components/Meta/Meta';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-
-type GithubReleases = {
-  tag_name: string;
-  assets: {
-    browser_download_url: string;
-  }[];
-};
+import { fetchLinkReleases } from '~/utils/fetch-link-releases';
 
 type ServerSideProps = {
   secondaryText: string;
@@ -35,41 +29,27 @@ type ServerSideProps = {
 export const getServerSideProps = createServerSideProps({
   resolver: async ({ ctx: req }) => {
     const userAgent = req.req.headers['user-agent'];
-    const res = await fetch(
-      'https://api.github.com/repos/civitai/civitai-link-desktop/releases/latest'
-    );
-    const data: GithubReleases = await res.json();
-
-    let downloadLink = {
-      name: 'Unknown',
-      extension: '',
-    };
-
-    if (userAgent?.includes('Win')) downloadLink = { name: 'Windows', extension: 'exe' };
-    if (userAgent?.includes('Mac')) downloadLink = { name: 'Mac', extension: 'dmg' };
-    if (userAgent?.includes('Linux')) downloadLink = { name: 'Linux', extension: 'deb' };
-
-    const downloadUrl = data.assets.find((asset) =>
-      asset.browser_download_url.includes(downloadLink.extension)
-    );
+    const data = await fetchLinkReleases(userAgent || '');
 
     return {
-      props: {
-        secondaryText: `${downloadLink.name} ${data.tag_name}`,
-        href: downloadUrl || 'https://github.com/civitai/civitai-link-desktop/releases/latest',
-      },
+      props: data,
     };
   },
 });
 
-type DownloadButtonProps = {
+type LinkDownloadButtonProps = {
   text: string;
   secondaryText: string;
   href: string;
   isMember?: boolean;
 };
 
-function DownloadButton({ text, secondaryText, href, isMember }: DownloadButtonProps) {
+export function LinkDownloadButton({
+  text,
+  secondaryText,
+  href,
+  isMember,
+}: LinkDownloadButtonProps) {
   const { classes } = useStyles();
 
   return (
@@ -135,7 +115,7 @@ export default function LinkApp(props: ServerSideProps) {
             ) : null}
           </Stack>
           <Flex align="center">
-            <DownloadButton {...buttonData} isMember={isMember} />
+            <LinkDownloadButton {...buttonData} isMember={isMember} />
           </Flex>
         </Flex>
 
@@ -245,7 +225,7 @@ export default function LinkApp(props: ServerSideProps) {
       </AspectRatio> */}
 
         <Flex justify="center" w="100%" my={40}>
-          <DownloadButton {...buttonData} isMember={isMember} />
+          <LinkDownloadButton {...buttonData} isMember={isMember} />
         </Flex>
       </Container>
     </>
