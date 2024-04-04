@@ -5,11 +5,7 @@ import { clickhouse } from '~/server/clickhouse/client';
 import { dbWrite } from '~/server/db/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { TransactionType } from '~/server/schema/buzz.schema';
-import {
-  createBuzzTransactionMany,
-  getMultipliersForUser,
-  getMultipliersForUserCache,
-} from '~/server/services/buzz.service';
+import { createBuzzTransactionMany, getMultipliersForUser } from '~/server/services/buzz.service';
 import { hashifyObject } from '~/utils/string-helpers';
 import { withRetries } from '../utils/errorHandling';
 
@@ -215,7 +211,7 @@ export function createBuzzEvent<T>({
         const idTuples = [...ids].map((id) => `(${id})`).join(', ');
         const res = await clickhouse?.query({
           query: `
-            SELECT ${keyParts.join(', ')}, SUM(awardAmount * multiplier) AS total
+            SELECT ${keyParts.join(', ')}, SUM(awardAmount) AS total
             FROM buzzEvents
             WHERE type IN (${types.map((x) => `'${x}'`).join(', ')})
               AND status = 'awarded'
@@ -239,13 +235,8 @@ export function createBuzzEvent<T>({
       }
     }
 
-    const userIds = [...new Set(targeted.map((x) => x.toUserId))];
-    const multipliers = await getMultipliersForUserCache(userIds);
-
     // prepare awards for allocation
     for (const event of targeted) {
-      const multiplier = multipliers[event.toUserId]?.rewardsMultiplier ?? 1;
-
       // check against caps
       const prevAwardKeys = new Set<string>();
       if (buzzEvent.caps) {
@@ -256,9 +247,8 @@ export function createBuzzEvent<T>({
           const prevAward = prevAwards[key] ?? 0;
 
           // Determine amount remaining against cap
-          const multipliedCap = amount * multiplier;
-          const remaining = Math.max(multipliedCap - prevAward, 0);
-          event.awardAmount = Math.min(event.awardAmount * multiplier, remaining);
+          const remaining = Math.max(amount - prevAward, 0);
+          event.awardAmount = Math.min(event.awardAmount, remaining);
         }
       }
 
