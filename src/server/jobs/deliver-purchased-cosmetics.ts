@@ -43,13 +43,20 @@ export const deliverPurchasedCosmetics = createJob(
         -- Deliver supporter upgrade cosmetic
         INSERT INTO "UserCosmetic"("userId", "cosmeticId")
         SELECT
-          cs."userId",
+          u.id "userId",
           c.id as "cosmeticId"
-        FROM "CustomerSubscription" cs
+        FROM "Purchase" p
+        JOIN "Product" pd ON pd.id = p."productId"
+        JOIN "User" u ON u."customerId" = p."customerId"
         JOIN "Cosmetic" c ON c.name = 'Grandfather Badge'
-        WHERE jsonb_typeof(metadata->'oldTier') != 'undefined'
-          AND (metadata->>'upgradeMonth')::int = date_part('month', now())
-          AND cs."updatedAt" > ${lastDelivered}
+        WHERE p."createdAt" >= ${lastDelivered}
+          AND jsonb_typeof(pd.metadata->'level') != 'undefined'
+          AND EXISTS (
+            SELECT 1
+            FROM "Purchase" op
+            JOIN "Product" opd ON opd.id = op."productId"
+            WHERE opd.metadata->>'tier' = 'founder'
+          )
         ON CONFLICT DO NOTHING;
       `;
 
