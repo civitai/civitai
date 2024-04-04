@@ -45,9 +45,9 @@ export const getServerSideProps = createServerSideProps({
       extension: '',
     };
 
-    if (userAgent?.indexOf('Win') != -1) downloadLink = { name: 'Windows', extension: 'exe' };
-    if (userAgent?.indexOf('Mac') != -1) downloadLink = { name: 'Mac', extension: 'dmg' };
-    if (userAgent?.indexOf('Linux') != -1) downloadLink = { name: 'Linux', extension: 'deb' };
+    if (userAgent?.includes('Win')) downloadLink = { name: 'Windows', extension: 'exe' };
+    if (userAgent?.includes('Mac')) downloadLink = { name: 'Mac', extension: 'dmg' };
+    if (userAgent?.includes('Linux')) downloadLink = { name: 'Linux', extension: 'deb' };
 
     const downloadUrl = data.assets.find((asset) =>
       asset.browser_download_url.includes(downloadLink.extension)
