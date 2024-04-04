@@ -1,19 +1,32 @@
+import { useEffect } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import { ProductMetadata } from '~/server/schema/stripe.schema';
-import { UserTier } from '~/server/schema/user.schema';
 import { trpc } from '~/utils/trpc';
 
 export const useActiveSubscription = () => {
   const currentUser = useCurrentUser();
+  const userTier = currentUser?.tier;
   const isMember = currentUser?.tier !== undefined;
+  const queryUtils = trpc.useUtils();
 
-  const { data: subscription, isLoading } = trpc.stripe.getUserSubscription.useQuery(undefined, {
+  const {
+    data: subscription,
+    isLoading,
+    isFetching,
+  } = trpc.stripe.getUserSubscription.useQuery(undefined, {
     enabled: !!currentUser && isMember,
   });
 
-  return { subscription, subscriptionLoading: !isMember ? false : isLoading };
+  useEffect(() => {
+    if (userTier) {
+      // Invalidate the query if the user's tier changes
+      queryUtils.stripe.getUserSubscription.invalidate();
+    }
+  }, [userTier]);
+
+  return { subscription, subscriptionLoading: !isMember ? false : isLoading || isFetching };
 };
 
 export const useCanUpgrade = () => {
