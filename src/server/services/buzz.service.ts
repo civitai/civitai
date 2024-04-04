@@ -329,7 +329,7 @@ export async function createBuzzTransactionMany(
   // Protect against transactions that are not valid. A transaction with from === to
   // breaks the entire request.
   const validTransactions = transactions.filter(
-    (t) => t.toAccountId !== undefined && t.fromAccountId !== t.toAccountId
+    (t) => t.toAccountId !== undefined && t.fromAccountId !== t.toAccountId && t.amount > 0
   );
   const body = JSON.stringify(validTransactions);
   const response = await fetch(`${env.BUZZ_ENDPOINT}/transactions`, {

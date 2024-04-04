@@ -237,6 +237,7 @@ export const getInfiniteImagesSchema = baseQuerySchema
     hidden: z.boolean().optional(),
     followed: z.boolean().optional(),
     fromPlatform: z.coerce.boolean().optional(),
+    notPublished: z.coerce.boolean().optional(),
     pending: z.boolean().optional(),
   })
   .transform((value) => {
