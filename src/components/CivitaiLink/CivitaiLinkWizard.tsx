@@ -69,10 +69,9 @@ const { openModal, Modal } = createContextModal({
               </Title>
               <Text>{`Civitai Link allows you to interact with your Stable Diffusion instance in realtime wherever it is from any device.`}</Text>
 
-              {/* Temporary remove until we update the video */}
-              {/* <AspectRatio ratio={16 / 9}>
-                <YoutubeEmbed videoId="MaSRXvM05x4" />
-              </AspectRatio> */}
+              <AspectRatio ratio={16 / 9}>
+                <YoutubeEmbed videoId="EHUjiDgh-MI" />
+              </AspectRatio>
 
               <Divider
                 mt="lg"

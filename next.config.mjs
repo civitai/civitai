@@ -129,7 +129,7 @@ export default defineNextConfig(withAxiom({
       },
       {
         source: '/v/civitai-link-intro',
-        destination: 'https://youtu.be/MaSRXvM05x4',
+        destination: 'https://youtu.be/EHUjiDgh-MI',
         permanent: false,
       },
       {
