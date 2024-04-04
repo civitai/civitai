@@ -2,10 +2,9 @@ import { ModelType } from '@prisma/client';
 import { z } from 'zod';
 import { BaseModel, constants, generation } from '~/server/common/constants';
 import { userTierSchema } from '~/server/schema/user.schema';
-import { GenerationRequestStatus } from '~/server/services/generation/generation.types';
 import { auditPrompt } from '~/utils/metadata/audit';
 import { imageSchema } from './image.schema';
-
+import { GenerationRequestStatus } from '~/server/common/enums';
 // export type GetGenerationResourceInput = z.infer<typeof getGenerationResourceSchema>;
 // export const getGenerationResourceSchema = z.object({
 //   type: z.nativeEnum(ModelType),

@@ -236,3 +236,11 @@ export enum VaultSort {
   ModelName = 'Model Name',
   ModelSize = 'Model Size',
 }
+
+export enum GenerationRequestStatus {
+  Pending = 'Pending',
+  Processing = 'Processing',
+  Cancelled = 'Cancelled',
+  Error = 'Error',
+  Succeeded = 'Succeeded',
+}

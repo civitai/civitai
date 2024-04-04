@@ -1,5 +1,5 @@
 import { ModelType } from '@prisma/client';
-import { BaseModelSetType } from '~/server/common/constants';
+import { GenerationRequestStatus } from '~/server/common/enums';
 
 export namespace Generation {
   export type AdditionalNetwork = Partial<{
@@ -133,12 +133,4 @@ export namespace Generation {
       requests: RequestProps[];
     };
   }
-}
-
-export enum GenerationRequestStatus {
-  Pending = 'Pending',
-  Processing = 'Processing',
-  Cancelled = 'Cancelled',
-  Error = 'Error',
-  Succeeded = 'Succeeded',
 }

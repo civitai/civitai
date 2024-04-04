@@ -26,7 +26,7 @@ import {
   GenerationResourceSelect,
   generationResourceSelect,
 } from '~/server/selectors/generation.selector';
-import { Generation, GenerationRequestStatus } from '~/server/services/generation/generation.types';
+import { Generation } from '~/server/services/generation/generation.types';
 import { isDefined } from '~/utils/type-guards';
 import { QS } from '~/utils/qs';
 import { env } from '~/env/server.mjs';
@@ -59,7 +59,7 @@ import { modelsSearchIndex } from '~/server/search-index';
 import { createLimiter } from '~/server/utils/rate-limiting';
 import { clickhouse } from '~/server/clickhouse/client';
 import dayjs from 'dayjs';
-import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { SearchIndexUpdateQueueAction, GenerationRequestStatus } from '~/server/common/enums';
 import { UserTier } from '~/server/schema/user.schema';
 
 export function parseModelVersionId(assetId: string) {

@@ -6,10 +6,10 @@ import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { useCallback, useEffect, useMemo } from 'react';
 import { GetGenerationRequestsInput } from '~/server/schema/generation.schema';
-import { GenerationRequestStatus, Generation } from '~/server/services/generation/generation.types';
+import { Generation } from '~/server/services/generation/generation.types';
 import { useDebouncer } from '~/utils/debouncer';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
-import { SignalMessages } from '~/server/common/enums';
+import { SignalMessages, GenerationRequestStatus } from '~/server/common/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export const useGetGenerationRequests = (

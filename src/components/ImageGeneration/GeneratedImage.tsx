@@ -37,7 +37,6 @@ import { GeneratedImageLightbox } from '~/components/ImageGeneration/GeneratedIm
 import { generationImageSelect } from '~/components/ImageGeneration/utils/generationImage.select';
 import { useDeleteGenerationRequestImages } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useInView } from '~/hooks/useInView';
 import { constants } from '~/server/common/constants';
 import { Generation } from '~/server/services/generation/generation.types';
@@ -55,7 +54,6 @@ export function GeneratedImage({
   request: Generation.Request;
 }) {
   const { classes } = useStyles();
-  const user = useCurrentUser();
   const { ref, inView } = useInView({ rootMargin: '600px' });
   const selected = generationImageSelect.useIsSelected(image.id);
   const toggleSelect = (checked?: boolean) => generationImageSelect.toggle(image.id, checked);

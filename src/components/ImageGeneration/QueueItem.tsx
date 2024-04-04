@@ -29,7 +29,7 @@ import { GeneratedImage } from '~/components/ImageGeneration/GeneratedImage';
 import { GenerationDetails } from '~/components/ImageGeneration/GenerationDetails';
 import { useDeleteGenerationRequest } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { constants } from '~/server/common/constants';
-import { Generation, GenerationRequestStatus } from '~/server/services/generation/generation.types';
+import { Generation } from '~/server/services/generation/generation.types';
 import { generationPanel, generationStore } from '~/store/generation.store';
 import { formatDateMin } from '~/utils/date-helpers';
 import {
@@ -38,6 +38,8 @@ import {
   useUnstableResources,
 } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { GenerationRequestStatus } from '~/server/common/enums';
+import { GenerationStatusBadge } from '~/components/ImageGeneration/GenerationStatusBadge';
 
 // export function QueueItem({ data: request, index }: { data: Generation.Request; index: number }) {
 export function QueueItem({ request }: Props) {
@@ -108,29 +110,16 @@ export function QueueItem({ request }: Props) {
       ? `${status} - Potentially caused by unstable resources`
       : `${status} - Generations can error for any number of reasons, try regenerating or swapping what models/additional resources you're using`;
 
-  const count = request.images?.filter((x) => x.duration).length ?? 0;
-  const quantity = request.quantity;
-
   return (
     <Card withBorder px="xs">
       <Card.Section py={4} inheritPadding withBorder>
         <div className="flex justify-between">
           <div className="flex gap-1 items-center">
-            <Badge
-              variant={pendingProcessing ? 'filled' : 'light'}
-              size="sm"
-              color={statusColors[status]}
-              radius="lg"
-              h={22}
-            >
-              <div className="flex items-center gap-1">
-                <IconPhoto size={16} />
-                <Text size="sm" inline weight={500}>
-                  {status !== GenerationRequestStatus.Succeeded ? `${count}/${quantity}` : count}
-                </Text>
-                {status === GenerationRequestStatus.Processing && <IconLoader size={16} />}
-              </div>
-            </Badge>
+            <GenerationStatusBadge
+              status={request.status}
+              count={request.images?.filter((x) => x.duration).length ?? 0}
+              quantity={request.quantity}
+            />
 
             <Text size="xs" color="dimmed">
               {formatDateMin(request.createdAt)}
