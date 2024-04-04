@@ -338,12 +338,12 @@ export const getPlanDetails: (
               <Text lh={1} weight={700} component="span">
                 Animated
               </Text>{' '}
-              Supporter Badge each month
+              Member Badge each month
             </Text>
           ) : metadata.badgeType === 'static' ? (
-            <Text lh={1}>Unique Supporter Badge each month</Text>
+            <Text lh={1}>Unique Member Badge each month</Text>
           ) : (
-            <Text lh={1}>No Unique Supporter Badge each month</Text>
+            <Text lh={1}>No Unique Member Badge each month</Text>
           ),
         icon:
           metadata.badgeType === 'animated' ? (

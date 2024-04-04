@@ -120,7 +120,7 @@ function SupporterHelp() {
 
   return (
     <Text size="xs" ta="center">
-      Are you a supporter and seeing this message?{' '}
+      Are you a member and seeing this message?{' '}
       <Text
         component="span"
         variant="link"
@@ -144,7 +144,7 @@ function AboutCivitaiLink() {
         size="md"
         color="yellow"
       >
-        This feature is currently in early access and only available to Supporters.
+        This feature is currently in early access and only available to Members.
       </AlertWithIcon>
       <SupporterHelp />
       <Stack py="sm" px="lg" spacing={4}>
@@ -165,7 +165,7 @@ function AboutCivitaiLink() {
           Video Demo
         </Button>
         <Button rightIcon={<IconHeart size={18} />} radius={0} component={NextLink} href="/pricing">
-          Become a Supporter
+          Become a Member
         </Button>
       </Group>
     </>

@@ -1,4 +1,4 @@
-import { Table, Group, Text, LoadingOverlay, Card, Title, Stack } from '@mantine/core';
+import { Table, Group, Text, LoadingOverlay, Card, Title, Stack, Button } from '@mantine/core';
 import { BuiltInProviderType } from 'next-auth/providers';
 import { getProviders, signIn } from 'next-auth/react';
 import { SocialLabel } from '~/components/Social/SocialLabel';
@@ -70,6 +70,9 @@ export function AccountsCard({ providers }: { providers: AsyncReturnType<typeof 
             </tbody>
           </Table>
         </div>
+        <Button variant="subtle" compact onClick={() => currentUser?.refresh()}>
+          Refresh my session
+        </Button>
       </Stack>
     </Card>
   );
