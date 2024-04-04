@@ -3,6 +3,7 @@ import { IconMessage2 } from '@tabler/icons-react';
 import { useChatContext } from '~/components/Chat/ChatProvider';
 import { ChatWindow } from '~/components/Chat/ChatWindow';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -26,6 +27,7 @@ export function ChatButton() {
   const { state, setState } = useChatContext();
   const { classes } = useStyles();
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
 
   const { data: unreadData, isLoading: unreadLoading } = trpc.chat.getUnreadCount.useQuery(
     undefined,
@@ -33,7 +35,7 @@ export function ChatButton() {
   );
   trpc.chat.getUserSettings.useQuery(undefined, { enabled: !!currentUser });
 
-  if (!currentUser) return <></>;
+  if (!currentUser || !features.chat) return <></>;
 
   const totalUnread = unreadData?.reduce((accum, { cnt }) => accum + cnt, 0);
 

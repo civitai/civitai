@@ -102,7 +102,7 @@ export function SettingsCard() {
         </Group>
         {toggles.available.length > 0 && (
           <>
-            <Divider label="Early Access Features" mb={-12} />
+            <Divider label="Early Access Features" />
             {toggles.available.map((feature) => (
               <Switch
                 name={feature.key}
@@ -111,6 +111,7 @@ export function SettingsCard() {
                 checked={toggles.values[feature.key]}
                 onChange={(e) => toggles.set(feature.key, e.target.checked)}
                 description={feature.description}
+                styles={{ track: { flex: '0 0 1em' } }}
               />
             ))}
           </>
