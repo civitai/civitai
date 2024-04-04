@@ -662,7 +662,9 @@ export const manageInvoicePaid = async (invoice: Stripe.Invoice) => {
     invoice.subscription &&
     user &&
     invoice.billing_reason &&
-    ['subscription_cycle', 'subscription_create'].includes(invoice.billing_reason)
+    ['subscription_cycle', 'subscription_create', 'subscription_update'].includes(
+      invoice.billing_reason
+    )
   ) {
     const products = (await dbRead.product.findMany()).filter(
       (p) => !!(p.metadata as any)?.[env.STRIPE_METADATA_KEY]
