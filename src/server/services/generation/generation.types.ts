@@ -96,6 +96,7 @@ export namespace Generation {
     resources: Resource[];
     images?: Image[];
     // queuePosition?: QueuePosition;
+    cost?: number;
   };
 
   export type Coverage = {
@@ -127,6 +128,7 @@ export namespace Generation {
       job: Job;
       images?: Image[];
       queuePosition?: QueuePosition;
+      cost: number;
     };
     export type Request = {
       cursor: number;

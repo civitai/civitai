@@ -10,6 +10,7 @@ import {
   createStyles,
   useMantineTheme,
 } from '@mantine/core';
+import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useClipboard, useLocalStorage } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
@@ -21,6 +22,7 @@ import {
   IconX,
   IconCheck,
   IconLoader,
+  IconAlertTriangleFilled,
 } from '@tabler/icons-react';
 
 import { Collection } from '~/components/Collection/Collection';
@@ -38,6 +40,10 @@ import {
   useUnstableResources,
 } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
+import { Currency } from '@prisma/client';
+import dayjs from 'dayjs';
+import { useMemo } from 'react';
 import { GenerationRequestStatus } from '~/server/common/enums';
 import { GenerationStatusBadge } from '~/components/ImageGeneration/GenerationStatusBadge';
 
@@ -108,22 +114,43 @@ export function QueueItem({ request }: Props) {
   const overwriteStatusLabel =
     hasUnstableResources && status === GenerationRequestStatus.Error
       ? `${status} - Potentially caused by unstable resources`
-      : `${status} - Generations can error for any number of reasons, try regenerating or swapping what models/additional resources you're using`;
+      : status === GenerationRequestStatus.Error
+      ? `${status} - Generations can error for any number of reasons, try regenerating or swapping what models/additional resources you're using.`
+      : status;
+
+  // const boost = (request: Generation.Request) => {
+  //   console.log('boost it', request);
+  // };
+
+  // TODO - enable this after boosting is ready
+  // const handleBoostClick = () => {
+  //   if (showBoost) openBoostModal({ request, cb: boost });
+  //   else boost(request);
+  // };
+
+  const refundTime = useMemo(() => {
+    return !failed ? undefined : dayjs(request.createdAt).add(35, 'minutes').toDate();
+  }, [failed, request.createdAt]);
 
   return (
     <Card withBorder px="xs">
       <Card.Section py={4} inheritPadding withBorder>
         <div className="flex justify-between">
           <div className="flex gap-1 items-center">
-            <GenerationStatusBadge
-              status={request.status}
-              count={request.images?.filter((x) => x.duration).length ?? 0}
-              quantity={request.quantity}
-            />
+            <Tooltip label={overwriteStatusLabel} withArrow color="dark" maw={300} multiline>
+              <GenerationStatusBadge
+                status={request.status}
+                count={request.images?.filter((x) => x.duration).length ?? 0}
+                quantity={request.quantity}
+              />
+            </Tooltip>
 
             <Text size="xs" color="dimmed">
               {formatDateMin(request.createdAt)}
             </Text>
+            {request.cost && (
+              <CurrencyBadge unitAmount={request.cost} currency={Currency.BUZZ} size="xs" />
+            )}
             <Tooltip {...tooltipProps} label="Copy Job IDs">
               <ActionIcon size="md" p={4} radius={0} onClick={handleCopy}>
                 {copied ? <IconCheck /> : <IconInfoHexagon />}
@@ -175,6 +202,20 @@ export function QueueItem({ request }: Props) {
             </Button>
           </div>
         )} */}
+        {refundTime && refundTime > new Date() && (
+          <Alert color="yellow" p={4} pl={8}>
+            <Group spacing="xs" noWrap mb={4} align="center">
+              <Text size="xs" color="yellow" lh={1}>
+                <IconAlertTriangleFilled size={20} />
+              </Text>
+              <Text size="xs" lh={1.2} color="yellow">
+                {`There was an error generating. You will be refunded for any undelivered images by ${formatDateMin(
+                  refundTime
+                )}.`}
+              </Text>
+            </Group>
+          </Alert>
+        )}
         <ContentClamp maxHeight={36} labelSize="xs">
           <Text lh={1.3} sx={{ wordBreak: 'break-all' }}>
             {prompt}

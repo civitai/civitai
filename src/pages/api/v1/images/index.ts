@@ -1,7 +1,7 @@
 import {
   nsfwLevelMapDeprecated,
   NsfwLevelDeprecated,
-  getNsfwLeveLDeprecatedReverseMapping,
+  getNsfwLevelDeprecatedReverseMapping,
   nsfwBrowsingLevelsFlag,
   publicBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
@@ -95,7 +95,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
 
     res.status(200).json({
       items: items.map((image) => {
-        const nsfw = getNsfwLeveLDeprecatedReverseMapping(image.nsfwLevel);
+        const nsfw = getNsfwLevelDeprecatedReverseMapping(image.nsfwLevel);
 
         return {
           id: image.id,

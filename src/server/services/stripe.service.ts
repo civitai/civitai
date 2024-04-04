@@ -21,8 +21,14 @@ import { formatPriceForDisplay } from '~/utils/number-helpers';
 import { TransactionType } from '../schema/buzz.schema';
 import * as Schema from '../schema/stripe.schema';
 import { PaymentMethodDeleteInput } from '../schema/stripe.schema';
-import { completeStripeBuzzTransaction, createBuzzTransaction } from './buzz.service';
+import {
+  completeStripeBuzzTransaction,
+  createBuzzTransaction,
+  getMultipliersForUser,
+} from './buzz.service';
 import { getOrCreateVault } from '~/server/services/vault.service';
+import { stripeRouter } from '~/server/routers/stripe.router';
+import { sleep } from '~/server/utils/concurrency-helpers';
 
 const baseUrl = getBaseUrl();
 const log = createLogger('stripe', 'blue');
@@ -46,6 +52,9 @@ export const getPlans = async () => {
           currency: true,
           metadata: true,
         },
+        where: {
+          active: true,
+        },
       },
     },
   });
@@ -57,7 +66,7 @@ export const getPlans = async () => {
     })
     .map((product) => {
       const prices = product.prices.map((x) => ({ ...x, unitAmount: x.unitAmount ?? 0 }));
-      const price = prices.filter((x) => x.id === product.defaultPriceId)[0];
+      const price = prices.filter((x) => x.id === product.defaultPriceId)[0] ?? prices[0];
 
       return {
         ...product,
@@ -142,15 +151,84 @@ export const createSubscribeSession = async ({
     customerId = await createCustomer(user);
   }
 
+  const products = await dbRead.product.findMany({});
+  const membershipProducts = products.filter(({ metadata }) => {
+    return !!(metadata as any)?.[env.STRIPE_METADATA_KEY];
+  });
+
   // Check to see if this user has a subscription with Stripe
   const { data: subscriptions } = await stripe.subscriptions.list({
     customer: customerId,
   });
+  const price = await stripe.prices.retrieve(priceId);
 
-  if (subscriptions.filter((x) => x.status !== 'canceled').length > 0) {
-    const { url } = await createManageSubscriptionSession({ customerId });
-    await invalidateSession(user.id);
-    return { sessionId: null, url };
+  if (!price || !membershipProducts.find((x) => x.id === (price.product as string))) {
+    throw throwNotFoundError(`The product you are trying to purchase does not exists`);
+  }
+
+  const activeSubscription = subscriptions.find((x) => x.status !== 'canceled');
+  const subscriptionItem = activeSubscription?.items.data.find((d) =>
+    membershipProducts.some((p) => p.id === (d.price.product as string))
+  );
+  const activeProduct = membershipProducts.find((p) => p.id === subscriptionItem?.price.product);
+  const priceProduct = products.find((p) => p.id === price.product);
+  const isUpgrade =
+    activeSubscription &&
+    constants.memberships.tierOrder.indexOf(
+      ((activeProduct?.metadata ?? {}) as Schema.ProductMetadata)?.tier
+    ) <
+      constants.memberships.tierOrder.indexOf(
+        ((priceProduct?.metadata ?? {}) as Schema.ProductMetadata).tier
+      );
+
+  if (activeSubscription && !isUpgrade) {
+    if (!subscriptionItem) {
+      throw throwBadRequestError(
+        `Your subscription does not have a main plan. Please contact administration`
+      );
+    }
+
+    const membershipProduct = membershipProducts.find(
+      (p) => p.id === subscriptionItem?.price.product
+    );
+
+    const isActivePrice = subscriptionItem.price.id === price.id;
+    if (!isActivePrice) {
+      const { url } = await createSubscriptionChangeSession({
+        customerId,
+        priceId,
+        subscriptionId: activeSubscription.id,
+        subscriptionItemId: subscriptionItem.id,
+      });
+      await invalidateSession(user.id);
+      return { sessionId: null, url };
+    } else {
+      const { url } = await createManageSubscriptionSession({ customerId });
+      await invalidateSession(user.id);
+      return { sessionId: null, url };
+    }
+  }
+
+  const isFounder =
+    (activeProduct?.metadata as Schema.ProductMetadata)?.tier ===
+    constants.memberships.founderDiscount.tier;
+
+  const discounts = [];
+
+  if (isFounder && new Date() < constants.memberships.founderDiscount.maxDiscountDate) {
+    // Create a custom discount for founders to get $5 off
+    const coupon = await stripe.coupons.create({
+      duration: 'once',
+      percent_off: constants.memberships.founderDiscount.discountPercent,
+      max_redemptions: 1,
+      metadata: {
+        customerId,
+      },
+    });
+
+    discounts.push({
+      coupon: coupon.id,
+    });
   }
 
   // array of items we are charging the customer
@@ -167,7 +245,8 @@ export const createSubscribeSession = async ({
     line_items: lineItems,
     success_url: `${baseUrl}/payment/success?cid=${customerId.slice(-8)}`,
     cancel_url: `${baseUrl}/pricing?canceled=true`,
-    allow_promotion_codes: true,
+    allow_promotion_codes: discounts.length ? undefined : true,
+    discounts: discounts.length ? discounts : undefined,
   });
 
   return { sessionId: session.id, url: session.url };
@@ -221,6 +300,75 @@ export const createManageSubscriptionSession = async ({ customerId }: { customer
   return { url: session.url };
 };
 
+export const createSubscriptionChangeSession = async ({
+  customerId,
+  subscriptionId,
+  priceId,
+  subscriptionItemId,
+}: {
+  customerId: string;
+  subscriptionId: string;
+  subscriptionItemId: string;
+  priceId: string;
+}) => {
+  const stripe = await getServerStripe();
+
+  const session = await stripe.billingPortal.sessions.create({
+    customer: customerId,
+    return_url: `${baseUrl}/user/account`,
+    flow_data: {
+      // @ts-ignore This is valid as per stripe's documentation
+      type: 'subscription_update_confirm',
+      subscription_update_confirm: {
+        subscription: subscriptionId,
+        items: [
+          {
+            id: subscriptionItemId,
+            quantity: 1,
+            price: priceId,
+          },
+        ],
+      },
+      after_completion: {
+        type: 'redirect',
+        redirect: {
+          return_url: `${baseUrl}/payment/success?cid=${customerId.slice(-8)}`,
+        },
+      },
+    },
+  });
+
+  return { url: session.url };
+};
+
+export const createCancelSubscriptionSession = async ({ customerId }: { customerId: string }) => {
+  const stripe = await getServerStripe();
+
+  // Check to see if this user has a subscription with Stripe
+  const { data: subscriptions } = await stripe.subscriptions.list({
+    customer: customerId,
+  });
+
+  const activeSubscription = subscriptions.find((x) => x.status !== 'canceled');
+  if (!activeSubscription) {
+    throw throwBadRequestError(`No active subscription found`);
+  }
+
+  const session = await stripe.billingPortal.sessions.create({
+    customer: customerId,
+    return_url: `${baseUrl}/user/account`,
+    flow_data: {
+      // @ts-ignore This is valid as per stripe's documentation
+      type: 'subscription_cancel',
+      subscription_cancel: {
+        subscription: activeSubscription.id,
+      },
+    },
+  });
+
+  return { url: session.url };
+};
+
 export const createBuzzSession = async ({
   customerId,
   user,
@@ -241,6 +389,7 @@ export const createBuzzSession = async ({
     where: { id: priceId },
     select: { productId: true, currency: true, type: true },
   });
+
   if (!price)
     throw throwNotFoundError(`The product you are trying to purchase does not exists: ${priceId}`);
 
@@ -272,26 +421,61 @@ export const upsertSubscription = async (
   eventDate: Date,
   eventType: string
 ) => {
+  const stripe = await getServerStripe();
+
+  const isUpdatingSubscription = eventType === 'customer.subscription.updated';
+  if (isUpdatingSubscription) {
+    // We need to wait a bit to avoid race conditions
+    await sleep(5000);
+  }
+
   const user = await dbWrite.user.findFirst({
     where: { customerId: customerId },
     select: {
       id: true,
       customerId: true,
       subscriptionId: true,
-      subscription: { select: { updatedAt: true, status: true } },
+      subscription: {
+        select: { updatedAt: true, status: true },
+      },
     },
   });
 
   if (!user) throw throwNotFoundError(`User with customerId: ${customerId} not found`);
 
   const userHasSubscription = !!user.subscriptionId;
-  const startingNewSubscription = userHasSubscription && user.subscriptionId !== subscription.id;
+  const isSameSubscriptionItem = user.subscriptionId === subscription.id;
   const isCreatingSubscription = eventType === 'customer.subscription.created';
+  const isCancelingSubscription = eventType === 'customer.subscription.deleted';
+
+  const startingNewSubscription =
+    isCreatingSubscription && userHasSubscription && !isSameSubscriptionItem;
+
+  log('Subscription event:', eventType);
+
+  if (isCancelingSubscription && isSameSubscriptionItem && subscription.cancel_at === null) {
+    // immediate cancel:
+    log('Subscription canceled immediately');
+    await dbWrite.customerSubscription.delete({ where: { id: user.subscriptionId as string } });
+    await getMultipliersForUser(user.id, true);
+    await invalidateSession(user.id);
+    return;
+  }
+
+  let subscriptionToCancelId: string | undefined;
   if (startingNewSubscription) {
     log('Subscription id changed, deleting old subscription');
-    await dbWrite.customerSubscription.delete({ where: { id: user.subscriptionId as string } });
+    if (user.subscriptionId) {
+      await dbWrite.customerSubscription.delete({ where: { userId: user.id } });
+    }
+    await dbWrite.user.update({ where: { id: user.id }, data: { subscriptionId: null } });
+    subscriptionToCancelId = user.subscriptionId as string;
   } else if (userHasSubscription && isCreatingSubscription) {
     log('Subscription already up to date');
+    return;
+  } else if ((isCancelingSubscription || isUpdatingSubscription) && !isSameSubscriptionItem) {
+    // We do not need to do anything, as the subscription has already been removed from the DB in all likelyhood
+    log('Subscription updated or cancelled, but not active on member. Nothing to do.');
     return;
   }
 
@@ -314,11 +498,13 @@ export const upsertSubscription = async (
   };
 
   await dbWrite.$transaction([
-    isCreatingSubscription
-      ? dbWrite.customerSubscription.create({ data })
-      : dbWrite.customerSubscription.upsert({ where: { id: data.id }, update: data, create: data }),
+    dbWrite.customerSubscription.upsert({ where: { id: data.id }, update: data, create: data }),
     dbWrite.user.update({ where: { id: user.id }, data: { subscriptionId: subscription.id } }),
   ]);
+
+  if (subscriptionToCancelId) {
+    await stripe.subscriptions.cancel(subscriptionToCancelId as string).catch((e) => log(e));
+  }
 
   if (user.subscription?.status !== data.status && ['active', 'canceled'].includes(data.status)) {
     await playfab.trackEvent(user.id, {
@@ -356,6 +542,7 @@ export const upsertSubscription = async (
     }
   }
 
+  await getMultipliersForUser(user.id, true);
   await invalidateSession(user.id);
 };
 
@@ -448,9 +635,10 @@ export const manageInvoicePaid = async (invoice: Stripe.Invoice) => {
   // Check if user exists and has a customerId
   // Use write db to avoid replication lag between webhook requests
   const user = await dbWrite.user.findUnique({
-    where: { email: invoice.customer_email as string },
+    where: { customerId: invoice.customer as string },
     select: { id: true, customerId: true },
   });
+
   if (user && !user.customerId) {
     // Since we're handling an invoice, we assume that the user
     // is already created in stripe. We just update in our records
@@ -470,15 +658,41 @@ export const manageInvoicePaid = async (invoice: Stripe.Invoice) => {
   await dbWrite.purchase.createMany({ data: purchases });
 
   // Don't check for subscription active because there is a chance it hasn't been updated yet
-  if (invoice.subscription && user) {
+  if (
+    invoice.subscription &&
+    user &&
+    invoice.billing_reason &&
+    ['subscription_cycle', 'subscription_create', 'subscription_update'].includes(
+      invoice.billing_reason
+    )
+  ) {
+    const products = (await dbRead.product.findMany()).filter(
+      (p) => !!(p.metadata as any)?.[env.STRIPE_METADATA_KEY]
+    );
+    const billedProduct = products.find((p) =>
+      invoice.lines.data.some((l) => l.price?.product === p.id)
+    );
+
+    if (!billedProduct) {
+      return;
+    }
+
+    const billedProductMeta = (billedProduct?.metadata ?? {}) as Schema.ProductMetadata;
+    const mainPurchase = purchases.find((p) => p.productId === billedProduct?.id);
+
+    if (!mainPurchase) {
+      // Give you no buzz. You no pay.
+      return;
+    }
+
     await withRetries(() =>
       createBuzzTransaction({
         fromAccountId: 0,
         toAccountId: user.id,
         type: TransactionType.Reward,
         externalTransactionId: invoice.id,
-        amount: 5000, // Hardcoded for now cause we only have one subscription option
-        description: 'Membership bonus',
+        amount: billedProductMeta.monthlyBuzz ?? 3000, // assume a min of 3000.
+        description: `Membership bonus.`,
         details: { invoiceId: invoice.id },
       })
     ).catch(handleLogError);

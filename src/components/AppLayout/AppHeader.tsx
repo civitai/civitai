@@ -23,13 +23,13 @@ import {
   useMantineColorScheme,
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
-import { CollectionType, Currency } from '@prisma/client';
+import { Currency } from '@prisma/client';
 import {
+  IconLink,
   IconBarbell,
   IconBookmark,
   IconBrush,
   IconChevronDown,
-  IconCircleDashed,
   IconCrown,
   IconHeart,
   IconHistory,
@@ -478,6 +478,15 @@ export function AppHeader({
         ),
       },
       {
+        href: '/product/link',
+        label: (
+          <Group align="center" spacing="xs">
+            <IconLink stroke={1.5} />
+            Download Link App
+          </Group>
+        ),
+      },
+      {
         href: `/user/${currentUser?.username}/following`,
         visible: !!currentUser,
         label: (
@@ -800,7 +809,7 @@ export function AppHeader({
             >
               <Logo />
             </Anchor>
-            {!isMember && <SupportButton />}
+            <SupportButton />
             {/* Disabled until next event */}
             {/* <EventButton /> */}
           </Group>
@@ -947,7 +956,7 @@ export function AppHeader({
                         <>
                           <Divider />
                           <Box px="md" pt="md">
-                            <BrowsingModeMenu />
+                            <BrowsingModeMenu closeMenu={() => setBurgerOpened(false)} />
                           </Box>
                         </>
                       )}

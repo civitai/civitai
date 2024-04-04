@@ -4,6 +4,7 @@ import {
   Button,
   ButtonProps,
   Group,
+  Loader,
   MantineTheme,
   useMantineTheme,
 } from '@mantine/core';
@@ -17,6 +18,7 @@ type Props = BadgeProps & {
   unitAmount: number;
   formatter?: (value: number) => string;
   displayCurrency?: boolean;
+  loading?: boolean;
 };
 
 export function CurrencyBadge({
@@ -26,12 +28,14 @@ export function CurrencyBadge({
   displayCurrency = true,
   sx,
   children,
+  loading,
   ...badgeProps
 }: Props) {
   const value = formatCurrencyForDisplay(unitAmount, currency);
   const theme = useMantineTheme();
   const Icon = CurrencyConfig[currency].icon;
   const config = CurrencyConfig[currency];
+  const colorString = config.color(theme);
 
   return (
     <Badge
@@ -51,14 +55,19 @@ export function CurrencyBadge({
     >
       <Group spacing={4} noWrap>
         <Icon size={14} fill="currentColor" />
-        {formatter ? (
-          formatter(unitAmount)
-        ) : (
+        {loading && <Loader size="xs" variant="dots" color={colorString} />}
+        {!loading && (
           <>
-            {value || 0} {displayCurrency ? currency : ''}
+            {formatter ? (
+              formatter(unitAmount)
+            ) : (
+              <>
+                {value || 0} {displayCurrency ? currency : ''}
+              </>
+            )}
+            {children}
           </>
         )}
-        {children}
       </Group>
     </Badge>
   );

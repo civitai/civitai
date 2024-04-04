@@ -6,6 +6,7 @@ import {
   generationConfig,
   getGenerationConfig,
   samplerOffsets,
+  draftMode,
 } from '~/server/common/constants';
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
@@ -14,7 +15,9 @@ import { calculateGenerationBill } from '~/server/common/generation';
 import { RunType } from '~/store/generation.store';
 import { uniqBy } from 'lodash';
 import {
+  CreateGenerationRequestInput,
   GenerateFormModel,
+  GenerationRequestTestRunSchema,
   generationStatusSchema,
   SendFeedbackInput,
 } from '~/server/schema/generation.schema';
@@ -24,6 +27,9 @@ import { Generation } from '~/server/services/generation/generation.types';
 import { findClosest } from '~/utils/number-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { showErrorNotification } from '~/utils/notifications';
+import { ModelType } from '@prisma/client';
+import { useDebouncedValue } from '@mantine/hooks';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export const useGenerationFormStore = create<Partial<GenerateFormModel>>()(
   persist(() => ({}), { name: 'generation-form-2', version: 0 })
@@ -31,9 +37,7 @@ export const useGenerationFormStore = create<Partial<GenerateFormModel>>()(
 
 export const useDerivedGenerationState = () => {
   const status = useGenerationStatus();
-  const totalCost = useGenerationFormStore(({ baseModel, aspectRatio, steps, quantity }) =>
-    calculateGenerationBill({ baseModel, aspectRatio, steps, quantity })
-  );
+  const { totalCost, isCalculatingCost } = useEstimateTextToImageJobCost();
 
   const selectedResources = useGenerationFormStore(({ resources = [], model }) => {
     return model ? resources.concat([model]).filter(isDefined) : resources.filter(isDefined);
@@ -77,10 +81,13 @@ export const useDerivedGenerationState = () => {
 
     return samplerOffset + cfgOffset;
   });
+
   const unstableResources = useMemo(
     () => selectedResources.filter((x) => allUnstableResources.includes(x.id)),
     [selectedResources, allUnstableResources]
   );
+
+  const draft = useGenerationFormStore((x) => x.draft);
 
   return {
     totalCost,
@@ -92,6 +99,8 @@ export const useDerivedGenerationState = () => {
     isSDXL: baseModel === 'SDXL',
     isLCM,
     unstableResources,
+    isCalculatingCost,
+    draft,
   };
 };
 
@@ -104,6 +113,50 @@ export const useGenerationStatus = () => {
 
   if (isLoading) return defaultServiceStatus;
   return status ?? defaultServiceStatus;
+};
+
+export const useEstimateTextToImageJobCost = () => {
+  const generationForm = useGenerationFormStore.getState();
+  const [debouncedGenerationForm] = useDebouncedValue(generationForm, 500);
+  const status = useGenerationStatus();
+  const { model, aspectRatio, steps, quantity, sampler, draft } = debouncedGenerationForm;
+  const baseModel = model?.baseModel ? getBaseModelSetKey(model.baseModel) : undefined;
+
+  const input = useMemo(() => {
+    if (!status.charge || !baseModel) {
+      return null;
+    }
+
+    return {
+      baseModel,
+      aspectRatio,
+      steps,
+      quantity,
+      sampler,
+      draft,
+    };
+  }, [aspectRatio, steps, quantity, sampler, status.charge, baseModel, draft]);
+
+  const { data: result, isLoading } = trpc.generation.estimateTextToImage.useQuery(
+    input as GenerationRequestTestRunSchema,
+    {
+      enabled: !!input && status.charge,
+    }
+  );
+
+  const totalCost = status.charge
+    ? Math.ceil(
+        (result?.jobs ?? []).reduce((acc, job) => {
+          acc += job.cost;
+          return acc;
+        }, 0)
+      )
+    : 0;
+
+  return {
+    totalCost,
+    isCalculatingCost: !status.charge ? false : input ? isLoading : false,
+  };
 };
 
 export const useUnstableResources = () => {
@@ -259,6 +312,17 @@ export const getFormData = (
   formData.resources = formData.resources?.length
     ? uniqBy(formData.resources, 'id').slice(0, 9)
     : undefined;
+
+  // Look through data for Draft resource.
+  // If we find them, toggle draft and remove the resource.
+  const isSDXL = baseModel === 'SDXL' || baseModel === 'Pony' || baseModel === 'SDXLDistilled';
+  const draftResourceId = draftMode[isSDXL ? 'sdxl' : 'sd1'].resourceId;
+  const draftResourceIndex = formData.resources?.findIndex((x) => x.id === draftResourceId) ?? -1;
+  if (draftResourceIndex !== -1) {
+    formData.draft = true;
+    formData.resources?.splice(draftResourceIndex, 1);
+  }
+  if (isSDXL) formData.clipSkip = 2;
 
   return {
     ...formData,

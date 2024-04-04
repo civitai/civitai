@@ -213,7 +213,7 @@ export function ModelCard({ data, forceInView }: Props) {
   };
 
   // Small hack to prevent blurry landscape images
-  const originalAspectRatio = image.width && image.height ? image.width / image.height : 1;
+  const originalAspectRatio = image && image.width && image.height ? image.width / image.height : 1;
 
   return (
     <HolidayFrame {...cardDecoration}>

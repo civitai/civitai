@@ -141,6 +141,8 @@ export const serverSchema = z.object({
   MEDIA_TAGGER_ENDPOINT: z.string().url().optional(),
   S3_VAULT_BUCKET: z.string().optional(),
   HEALTHCHECK_TIMEOUT: z.coerce.number().optional().default(1500),
+  DRAFT_MODE_PROVIDERS: commaDelimitedStringArray().optional(),
+  DRAFT_MODE_PRIORITY: z.coerce.number().optional(),
 });
 
 /**

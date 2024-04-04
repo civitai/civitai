@@ -1,4 +1,4 @@
-import { Container, Stack, Title, Text, Button } from '@mantine/core';
+import { Container, Stack, Title, Text, Button, Group, Divider } from '@mantine/core';
 import { getProviders } from 'next-auth/react';
 import React, { useMemo } from 'react';
 
@@ -50,6 +50,12 @@ export default function Account({ providers }: Props) {
           <AccountsCard providers={providers} />
           {apiKeys && <ApiKeysCard />}
           <DeleteCard />
+          <Divider label="Extras" />
+          <Group spacing="sm">
+            <Button variant="subtle" onClick={() => currentUser?.refresh()}>
+              Refresh my session
+            </Button>
+          </Group>
         </Stack>
       </Container>
     </>

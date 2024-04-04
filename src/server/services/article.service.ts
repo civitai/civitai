@@ -769,12 +769,12 @@ export const deleteArticleById = async ({ id }: GetByIdInput) => {
       if (!article) return null;
 
       await tx.file.deleteMany({ where: { entityId: id, entityType: 'Article' } });
-      if (article.coverId) await deleteImageById({ id: article.coverId });
 
       return article;
     });
     if (!deleted) throw throwNotFoundError(`No article with id ${id}`);
 
+    if (deleted.coverId) await deleteImageById({ id: deleted.coverId });
     await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
 
     return deleted;

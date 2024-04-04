@@ -1,68 +1,25 @@
-import { Button, Card, Stack, Center, Loader, Title, Text, Group, Code } from '@mantine/core';
+import { Button, Card, Stack, Center, Loader, Title, Text, Group, Box } from '@mantine/core';
+import { NextLink } from '@mantine/next';
 import { IconRotateClockwise, IconSettings } from '@tabler/icons-react';
-import { upperFirst } from 'lodash-es';
-import {
-  DescriptionTable,
-  Props as DescriptionTableProps,
-} from '~/components/DescriptionTable/DescriptionTable';
-import { ManageSubscriptionButton } from '~/components/Stripe/ManageSubscriptionButton';
-import { PlanBenefitList } from '~/components/Stripe/PlanBenefitList';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { CancelMembershipFeedbackModal } from '~/components/Stripe/MembershipChangePrevention';
 import { getPlanDetails } from '~/components/Stripe/PlanCard';
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
+import { useActiveSubscription } from '~/components/Stripe/memberships.util';
+import { shortenPlanInterval } from '~/components/Stripe/stripe.utils';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { ProductMetadata } from '~/server/schema/stripe.schema';
+import { formatDate } from '~/utils/date-helpers';
 import { getStripeCurrencyDisplay } from '~/utils/string-helpers';
-import { trpc } from '~/utils/trpc';
 
 export function SubscriptionCard() {
-  const { data, isLoading } = trpc.stripe.getUserSubscription.useQuery();
+  const { subscription, subscriptionLoading } = useActiveSubscription();
   const features = useFeatureFlags();
-
-  const details: DescriptionTableProps['items'] = [];
-  let displayStatus = '';
-  if (data) {
-    const { status, price, product } = data;
-    displayStatus = data.canceledAt ? 'canceled' : status;
-    details.push({
-      label: 'Plan',
-      value: product.name,
-    });
-    details.push({
-      label: 'Status',
-      value: (
-        <Group align="flex-end" position="apart">
-          <Text>{upperFirst(displayStatus)}</Text>
-          <Text size="xs" color="dimmed">
-            Since {(data.canceledAt ?? data.createdAt).toLocaleDateString()}
-          </Text>
-        </Group>
-      ),
-    });
-    if (displayStatus === 'active') {
-      details.push({
-        label: 'Price',
-        value: (
-          <Group align="flex-end" position="apart">
-            <Text>
-              {getStripeCurrencyDisplay(price.unitAmount, price.currency) +
-                ' ' +
-                price.currency.toUpperCase() +
-                ' per ' +
-                price.interval}
-            </Text>
-            <Text size="xs" color="dimmed">
-              Paid {data.currentPeriodStart.toLocaleDateString()}
-            </Text>
-          </Group>
-        ),
-      });
-    }
-
-    details.push({
-      label: data.cancelAtPeriodEnd ? 'Ends' : 'Renews',
-      value: new Date(data.currentPeriodEnd).toLocaleDateString(),
-    });
-  }
+  const price = subscription?.price;
+  const product = subscription?.product;
+  const { image } = subscription
+    ? getPlanDetails(subscription?.product, features)
+    : { image: null };
 
   return (
     <Card withBorder>
@@ -71,39 +28,58 @@ export function SubscriptionCard() {
           <Title id="manage-subscription" order={2}>
             Membership
           </Title>
-          {data?.canceledAt ? (
-            <SubscribeButton priceId={data?.price.id}>
-              <Button compact variant="outline" rightIcon={<IconRotateClockwise size={16} />}>
+          {subscription?.canceledAt ? (
+            <SubscribeButton priceId={subscription?.price.id}>
+              <Button compact radius="xl" rightIcon={<IconRotateClockwise size={16} />}>
                 Resume
               </Button>
             </SubscribeButton>
           ) : (
-            <ManageSubscriptionButton>
-              <Button compact variant="outline" rightIcon={<IconSettings size={16} />}>
-                Manage
-              </Button>
-            </ManageSubscriptionButton>
+            <Button
+              compact
+              radius="xl"
+              color="gray"
+              rightIcon={<IconSettings size={16} />}
+              component={NextLink}
+              href="/user/membership"
+            >
+              Manage
+            </Button>
           )}
         </Group>
-        {isLoading ? (
+        {subscriptionLoading ? (
           <Center p="xl">
             <Loader />
           </Center>
-        ) : data ? (
-          <DescriptionTable items={details} />
+        ) : subscription ? (
+          <Group position="apart">
+            <Group noWrap>
+              {image && (
+                <Center>
+                  <Box w={40}>
+                    <EdgeMedia src={image} width="original" />
+                  </Box>
+                </Center>
+              )}
+              {product && <Text>{product.name}</Text>}
+            </Group>
+            <Stack spacing={0}>
+              {price && (
+                <Text>
+                  {getStripeCurrencyDisplay(price.unitAmount, price.currency) +
+                    ' ' +
+                    price.currency.toUpperCase() +
+                    '/' +
+                    shortenPlanInterval(price.interval)}
+                </Text>
+              )}
+              <Text size="sm" color="dimmed">
+                {subscription.cancelAtPeriodEnd ? 'Ends' : 'Renews'}{' '}
+                {formatDate(subscription.currentPeriodEnd)}
+              </Text>
+            </Stack>
+          </Group>
         ) : null}
-        {displayStatus === 'active' && (
-          <Stack>
-            <Text size="md" weight={500}>
-              Your Membership Includes
-            </Text>
-            <PlanBenefitList
-              benefits={
-                getPlanDetails(features, data?.product?.metadata as ProductMetadata)[0].benefits
-              }
-            />
-          </Stack>
-        )}
       </Stack>
     </Card>
   );

@@ -9,28 +9,56 @@ export const deliverPurchasedCosmetics = createJob(
 
     const deliverPurchasedCosmetics = async () =>
       dbWrite.$executeRaw`
-      -- Deliver purchased cosmetics
-      with recent_purchases AS (
+        -- Deliver purchased cosmetics
+        with recent_purchases AS (
+          SELECT
+            u.id "userId",
+            COALESCE(pdl.id, pd.id) "productId",
+            p."createdAt"
+          FROM "Purchase" p
+          JOIN "Product" pd ON pd.id = p."productId"
+          LEFT JOIN "Product" pdl
+            ON pdl.active
+              AND jsonb_typeof(pd.metadata->'level') != 'undefined'
+              AND jsonb_typeof(pdl.metadata->'level') != 'undefined'
+              AND (pdl.metadata->>'level')::int <= (pd.metadata->>'level')::int
+          JOIN "User" u ON u."customerId" = p."customerId"
+          WHERE p."createdAt" >= ${lastDelivered}
+        )
+        INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "obtainedAt")
+        SELECT DISTINCT
+          p."userId",
+          c.id "cosmeticId",
+          now()
+        FROM recent_purchases p
+        JOIN "Cosmetic" c ON
+          c."productId" = p."productId"
+          AND (c."availableStart" IS NULL OR p."createdAt" >= c."availableStart")
+          AND (c."availableEnd" IS NULL OR p."createdAt" <= c."availableEnd")
+        ON CONFLICT ("userId", "cosmeticId") DO NOTHING;
+    `;
+
+    const deliverSupporterUpgradeCosmetic = async () =>
+      dbWrite.$executeRaw`
+        -- Deliver supporter upgrade cosmetic
+        INSERT INTO "UserCosmetic"("userId", "cosmeticId")
         SELECT
           u.id "userId",
-          p."productId",
-          p."createdAt"
+          c.id as "cosmeticId"
         FROM "Purchase" p
+        JOIN "Product" pd ON pd.id = p."productId"
         JOIN "User" u ON u."customerId" = p."customerId"
+        JOIN "Cosmetic" c ON c.name = 'Grandfather Badge'
         WHERE p."createdAt" >= ${lastDelivered}
-      )
-      INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "obtainedAt")
-      SELECT DISTINCT
-        p."userId",
-        c.id "cosmeticId",
-        now()
-      FROM recent_purchases p
-      JOIN "Cosmetic" c ON
-        c."productId" = p."productId"
-        AND (c."availableStart" IS NULL OR p."createdAt" >= c."availableStart")
-        AND (c."availableEnd" IS NULL OR p."createdAt" <= c."availableEnd")
-      WHERE NOT EXISTS (SELECT 1 FROM "UserCosmetic" uc WHERE uc."cosmeticId" = c.id AND uc."userId" = p."userId");
-    `;
+          AND jsonb_typeof(pd.metadata->'level') != 'undefined'
+          AND EXISTS (
+            SELECT 1
+            FROM "Purchase" op
+            JOIN "Product" opd ON opd.id = op."productId"
+            WHERE opd.metadata->>'tier' = 'founder'
+          )
+        ON CONFLICT DO NOTHING;
+      `;
 
     const revokeMembershipLimitedCosmetics = async () =>
       dbWrite.$executeRaw`
@@ -55,6 +83,7 @@ export const deliverPurchasedCosmetics = createJob(
     // Deliver cosmetics
     // --------------------------------------------
     await deliverPurchasedCosmetics();
+    await deliverSupporterUpgradeCosmetic();
     await revokeMembershipLimitedCosmetics();
 
     // Update the last time this ran in the KeyValue store

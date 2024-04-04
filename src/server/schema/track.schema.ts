@@ -113,6 +113,30 @@ const loginRedirectSchema = z.object({
   type: z.literal('LoginRedirect'),
   reason: z.enum(trackedReasons),
 });
+
+const membershipCancelSchema = z.object({
+  type: z.literal('Membership_Cancel'),
+  details: z
+    .object({
+      reason: z.string(),
+      from: z.string(),
+    })
+    .passthrough()
+    .optional(),
+});
+
+const membershipDowngradeSchema = z.object({
+  type: z.literal('Membership_Downgrade'),
+  details: z
+    .object({
+      reason: z.string(),
+      from: z.string().optional(),
+      to: z.string().optional(),
+    })
+    .passthrough()
+    .optional(),
+});
+
 export type TrackActionInput = z.infer<typeof trackActionSchema>;
 export const trackActionSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('AddToBounty_Click') }),
@@ -127,4 +151,6 @@ export const trackActionSchema = z.discriminatedUnion('type', [
   purchaseFundsCancelSchema,
   purchaseFundsConfirmSchema,
   loginRedirectSchema,
+  membershipCancelSchema,
+  membershipDowngradeSchema,
 ]);

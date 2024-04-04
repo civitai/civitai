@@ -120,7 +120,7 @@ function SupporterHelp() {
 
   return (
     <Text size="xs" ta="center">
-      Are you a supporter and seeing this message?{' '}
+      Are you a member and seeing this message?{' '}
       <Text
         component="span"
         variant="link"
@@ -144,26 +144,14 @@ function AboutCivitaiLink() {
         size="md"
         color="yellow"
       >
-        This feature is currently in early access and only available to Supporters.
+        This feature is currently in early access and only available to Members.
       </AlertWithIcon>
       <SupporterHelp />
       <Stack py="sm" px="lg" spacing={4}>
         <Center p="md" pb={0}>
           <CivitaiLinkSvg />
         </Center>
-        <Text my="xs">
-          Interact with your{' '}
-          <Text
-            component="a"
-            variant="link"
-            href="https://github.com/AUTOMATIC1111/stable-diffusion-webui"
-            target="_blank"
-            rel="nofollow noreferrer"
-          >
-            Automatic1111 Stable Diffusion
-          </Text>{' '}
-          instance in realtime from Civitai
-        </Text>
+        <Text my="xs">Interact with any Stable Diffusion instance in realtime from Civitai</Text>
       </Stack>
       <Divider />
       <Group spacing={0} grow>
@@ -177,7 +165,7 @@ function AboutCivitaiLink() {
           Video Demo
         </Button>
         <Button rightIcon={<IconHeart size={18} />} radius={0} component={NextLink} href="/pricing">
-          Become a Supporter
+          Become a Member
         </Button>
       </Group>
     </>
@@ -204,9 +192,6 @@ function LinkDropdown() {
             <Title order={4} size="sm">
               Civitai Link
             </Title>
-            <Badge size="xs" color="yellow">
-              alpha
-            </Badge>
           </Group>
           {canToggleManageInstances && (
             <Tooltip label="Manage instances">
@@ -369,19 +354,7 @@ function GetStarted() {
         <Center p="md" pb={0}>
           <CivitaiLinkSvg />
         </Center>
-        <Text my="xs">
-          Interact with your{' '}
-          <Text
-            component="a"
-            variant="link"
-            href="https://github.com/AUTOMATIC1111/stable-diffusion-webui"
-            target="_blank"
-            rel="nofollow noreferrer"
-          >
-            Automatic1111 Stable Diffusion
-          </Text>{' '}
-          instance in realtime from Civitai
-        </Text>
+        <Text my="xs">Interact with any Stable Diffusion instance in realtime from Civitai</Text>
       </Stack>
       <Divider />
       <Stack>

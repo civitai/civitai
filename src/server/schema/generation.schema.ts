@@ -65,6 +65,7 @@ const baseGenerationParamsSchema = z.object({
   quantity: z.coerce.number(),
   nsfw: z.boolean().optional(),
   aspectRatio: z.string(),
+  draft: z.boolean().optional(),
 });
 
 export const blockedRequest = (() => {
@@ -129,10 +130,11 @@ const sharedGenerationParamsSchema = z.object({
       message: 'invalid sampler',
     }),
   seed: z.coerce.number().min(-1).max(generation.maxValues.seed).default(-1),
-  steps: z.coerce.number().min(10).max(100),
   clipSkip: z.coerce.number().default(1),
+  steps: z.coerce.number().min(1).max(100),
   quantity: z.coerce.number().min(1).max(20),
   nsfw: z.boolean().optional(),
+  draft: z.boolean().optional(),
   baseModel: z.string().optional(),
   aspectRatio: z.string(),
 });
@@ -152,11 +154,14 @@ const defaultsByTier: Record<string, GenerationLimits> = {
     resources: 9,
   },
   founder: {
-    quantity: 10,
-    queue: 10,
+    quantity: 8,
+    queue: 8,
     steps: 60,
-    resources: 12,
+    resources: 9,
   },
+  bronze: { quantity: 8, queue: 8, steps: 60, resources: 12 },
+  silver: { quantity: 10, queue: 10, steps: 60, resources: 12 },
+  gold: { quantity: 12, queue: 10, steps: 60, resources: 12 },
 };
 
 export const generationStatusSchema = z.object({
@@ -175,6 +180,7 @@ export const generationStatusSchema = z.object({
       }
       return mergedLimits;
     }),
+  charge: z.boolean().default(false),
 });
 export type GenerationStatus = z.infer<typeof generationStatusSchema>;
 
@@ -209,6 +215,19 @@ export const createGenerationRequestSchema = z.object({
   params: sharedGenerationParamsSchema,
 });
 
+export type GenerationRequestTestRunSchema = z.infer<typeof generationRequestTestRunSchema>;
+export const generationRequestTestRunSchema = z.object({
+  baseModel: z.string().optional(),
+  aspectRatio: z.string(),
+  steps: z.coerce.number().min(1).max(100),
+  quantity: z.coerce.number().min(1).max(20),
+  sampler: z
+    .string()
+    .refine((val) => generation.samplers.includes(val as (typeof generation.samplers)[number]), {
+      message: 'invalid sampler',
+    }),
+  draft: z.boolean().optional(),
+});
 export type CheckResourcesCoverageSchema = z.infer<typeof checkResourcesCoverageSchema>;
 export const checkResourcesCoverageSchema = z.object({
   id: z.number(),

@@ -32,7 +32,7 @@ export function UserBuzz({
           {balance === null ? (
             <Loader size="sm" variant="dots" color="accent.5" />
           ) : withAbbreviation ? (
-            abbreviateNumber(balance)
+            abbreviateNumber(balance, { floor: true })
           ) : (
             balance.toLocaleString()
           )}

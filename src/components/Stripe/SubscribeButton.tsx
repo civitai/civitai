@@ -12,7 +12,9 @@ export function SubscribeButton({
   children,
   priceId,
 }: {
-  children: React.ReactElement;
+  children:
+    | React.ReactElement
+    | ((props: { onClick: () => void; disabled: boolean; loading: boolean }) => React.ReactElement);
   priceId: string;
 }) {
   const currentUser = useCurrentUser();
@@ -56,11 +58,17 @@ export function SubscribeButton({
 
   return (
     <LoginPopover>
-      {cloneElement(children, {
-        onClick: handleClick,
-        loading: isLoading,
-        disabled: !isLoading && mutateCount > 0,
-      })}
+      {typeof children === 'function'
+        ? children({
+            onClick: handleClick,
+            loading: isLoading,
+            disabled: !isLoading && mutateCount > 0,
+          })
+        : cloneElement(children, {
+            onClick: handleClick,
+            loading: isLoading,
+            disabled: !isLoading && mutateCount > 0,
+          })}
     </LoginPopover>
   );
 }

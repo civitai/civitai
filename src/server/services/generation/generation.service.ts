@@ -3,6 +3,7 @@ import {
   BulkDeleteGeneratedImagesInput,
   CheckResourcesCoverageSchema,
   CreateGenerationRequestInput,
+  GenerationRequestTestRunSchema,
   GenerationStatus,
   generationStatusSchema,
   GetGenerationDataInput,
@@ -17,6 +18,7 @@ import {
   handleLogError,
   throwAuthorizationError,
   throwBadRequestError,
+  throwInsufficientFundsError,
   throwNotFoundError,
   throwRateLimitError,
   withRetries,
@@ -37,6 +39,7 @@ import {
   BaseModelSetType,
   CacheTTL,
   constants,
+  draftMode,
   getGenerationConfig,
   Sampler,
 } from '~/server/common/constants';
@@ -61,6 +64,8 @@ import { clickhouse } from '~/server/clickhouse/client';
 import dayjs from 'dayjs';
 import { SearchIndexUpdateQueueAction, GenerationRequestStatus } from '~/server/common/enums';
 import { UserTier } from '~/server/schema/user.schema';
+import { Orchestrator } from '~/server/http/orchestrator/orchestrator.types';
+import { generatorFeedbackReward } from '~/server/rewards';
 
 export function parseModelVersionId(assetId: string) {
   const pattern = /^@civitai\/(\d+)$/;
@@ -264,6 +269,7 @@ export async function deleteResourceDataCache(modelVersionIds: number | number[]
 }
 
 const baseModelSetsEntries = Object.entries(baseModelSets);
+
 const formatGenerationRequests = async (requests: Generation.Api.RequestProps[]) => {
   const modelVersionIds = requests
     .map((x) => parseModelVersionId(x.job.model))
@@ -310,6 +316,7 @@ const formatGenerationRequests = async (requests: Generation.Api.RequestProps[])
       // estimatedCompletionDate: x.estimatedCompletedAt,
       status: mapRequestStatus(x.status),
       // queuePosition: x.queuePosition,
+      cost: x.cost,
       params: {
         ...params,
         prompt,
@@ -422,31 +429,172 @@ async function checkResourcesAccess(
   return true;
 }
 
+// TODO.imageGenerationBuzzCharge - Remove all limiters. Generation will not be limited as it's now using buzz.
 const generationLimiter = createLimiter({
   counterKey: REDIS_KEYS.GENERATION.COUNT,
   limitKey: REDIS_KEYS.GENERATION.LIMITS,
   fetchCount: async (userKey) => {
-    const res = await clickhouse?.query({
-      query: `
-        SELECT COUNT(*) as count
-        FROM orchestration.textToImageJobs
-        WHERE userId = ${userKey} AND createdAt > subtractHours(now(), 24);
-      `,
-      format: 'JSONEachRow',
-    });
+    if (!clickhouse) return 0;
 
-    const data = (await res?.json<{ count: number }[]>()) ?? [];
-    const count = data[0]?.count ?? 0;
-    return count;
+    const data = await clickhouse.$query<{ cost: number }>`
+      SELECT SUM(jobCost) as cost
+      FROM orchestration.textToImageJobs
+      WHERE userId = ${userKey} AND createdAt > subtractHours(now(), 24);
+    `;
+    const cost = data?.[0]?.cost ?? 0;
+    return cost;
   },
 });
+
+const getDraftStateFromInputForOrchestrator = ({
+  baseModel,
+  quantity,
+  steps,
+  cfgScale,
+  sampler,
+}: {
+  baseModel?: string;
+  quantity: number;
+  steps: number;
+  cfgScale: number;
+  sampler: string;
+}) => {
+  // Fix other params
+  const isSDXL = baseModel === 'SDXL' || baseModel === 'Pony';
+  const draftModeSettings = draftMode[isSDXL ? 'sdxl' : 'sd1'];
+
+  if (quantity % 4 !== 0) quantity = Math.ceil(quantity / 4) * 4;
+  steps = draftModeSettings.steps;
+  cfgScale = draftModeSettings.cfgScale;
+  sampler = draftModeSettings.sampler;
+
+  return { quantity, steps, cfgScale, sampler };
+};
+
+export const prepareGenerationInput = async ({
+  userId,
+  resources,
+  params: { nsfw, negativePrompt, draft, ...params },
+}: CreateGenerationRequestInput & {
+  userId: number;
+}) => {
+  const { additionalResourceTypes, aspectRatios } = getGenerationConfig(params.baseModel);
+  const status = await getGenerationStatus();
+  const isPromptNsfw = includesNsfw(params.prompt);
+  nsfw ??= isPromptNsfw !== false;
+
+  if (params.aspectRatio.includes('x'))
+    throw throwBadRequestError('Invalid size. Please select your size and try again');
+
+  const { height, width } = aspectRatios[Number(params.aspectRatio)];
+
+  const checkpoint = resources.find((x) => x.modelType === ModelType.Checkpoint);
+
+  if (!checkpoint)
+    throw throwBadRequestError('A checkpoint is required to make a generation request');
+
+  const isSDXL = params.baseModel === 'SDXL' || params.baseModel === 'Pony';
+
+  if (draft) {
+    const draftData = getDraftStateFromInputForOrchestrator({
+      baseModel: params.baseModel,
+      quantity: params.quantity,
+      steps: params.steps,
+      cfgScale: params.cfgScale,
+      sampler: params.sampler,
+    });
+
+    const draftModeSettings = draftMode[isSDXL ? 'sdxl' : 'sd1'];
+    // Fix quantity
+    params.quantity = draftData.quantity;
+    // Fix other params
+    params.steps = draftData.steps;
+    params.cfgScale = draftData.cfgScale;
+    params.sampler = draftData.sampler;
+    // Add speed up resources
+    resources.push({
+      modelType: ModelType.LORA,
+      strength: 1,
+      id: draftModeSettings.resourceId,
+    });
+  }
+
+  const additionalNetworks = resources
+    .filter((x) => additionalResourceTypes.map((x) => x.type).includes(x.modelType as any))
+    .reduce(
+      (acc, { id, modelType, ...rest }) => {
+        acc[`@civitai/${id}`] = { type: modelType, ...rest };
+        return acc;
+      },
+      {} as {
+        [key: string]: {
+          type: string;
+          strength?: number;
+          triggerWord?: string;
+        };
+      }
+    );
+
+  const negativePrompts = [negativePrompt ?? ''];
+  if (!nsfw && status.sfwEmbed) {
+    for (const { id, triggerWord } of safeNegatives) {
+      additionalNetworks[`@civitai/${id}`] = {
+        triggerWord,
+        type: ModelType.TextualInversion,
+      };
+      negativePrompts.unshift(triggerWord);
+    }
+  }
+
+  const positivePrompts = [params.prompt];
+  if (isPromptNsfw && status.minorFallback) {
+    for (const { id, triggerWord } of minorPositives) {
+      additionalNetworks[`@civitai/${id}`] = {
+        triggerWord,
+        type: ModelType.TextualInversion,
+      };
+      positivePrompts.unshift(triggerWord);
+    }
+    for (const { id, triggerWord } of minorNegatives) {
+      additionalNetworks[`@civitai/${id}`] = {
+        triggerWord,
+        type: ModelType.TextualInversion,
+      };
+      negativePrompts.unshift(triggerWord);
+    }
+  }
+
+  const generationRequest = {
+    userId,
+    nsfw,
+    job: {
+      model: `@civitai/${checkpoint.id}`,
+      baseModel: baseModelToOrchestration[params.baseModel as BaseModelSetType],
+      quantity: params.quantity,
+      additionalNetworks,
+      params: {
+        prompt: positivePrompts.join(', '),
+        negativePrompt: negativePrompts.join(', '),
+        scheduler: samplersToSchedulers[params.sampler as Sampler],
+        steps: params.steps,
+        cfgScale: params.cfgScale,
+        height,
+        width,
+        seed: params.seed,
+        clipSkip: params.clipSkip,
+      },
+    },
+  };
+
+  return generationRequest;
+};
 
 export const createGenerationRequest = async ({
   userId,
   userTier,
   isModerator,
   resources,
-  params: { nsfw, negativePrompt, ...params },
+  params: { nsfw, negativePrompt, draft, ...params },
 }: CreateGenerationRequestInput & {
   userId: number;
   userTier?: UserTier;
@@ -487,8 +635,31 @@ export const createGenerationRequest = async ({
   if (!resources || resources.length === 0) throw throwBadRequestError('No resources provided');
   if (resources.length > 10) throw throwBadRequestError('Too many resources provided');
 
+  // Handle Draft Mode
+  const isSDXL =
+    params.baseModel === 'SDXL' ||
+    params.baseModel === 'Pony' ||
+    params.baseModel === 'SDXLDistilled';
+  const draftModeSettings = draftMode[isSDXL ? 'sdxl' : 'sd1'];
+  if (draft) {
+    // Fix quantity
+    if (params.quantity % 4 !== 0) params.quantity = Math.ceil(params.quantity / 4) * 4;
+    // Fix other params
+    params.steps = draftModeSettings.steps;
+    params.cfgScale = draftModeSettings.cfgScale;
+    params.sampler = draftModeSettings.sampler;
+    // Add speed up resources
+    resources.push({
+      modelType: ModelType.LORA,
+      strength: 1,
+      id: draftModeSettings.resourceId,
+    });
+  }
+
   const resourceData = await getResourceData(resources.map((x) => x.id));
-  const allResourcesAvailable = resourceData.every((x) => !!x.generationCoverage?.covered);
+  const allResourcesAvailable = resourceData.every(
+    (x) => !!x.generationCoverage?.covered || x.id === draftModeSettings.resourceId
+  );
   if (!allResourcesAvailable)
     throw throwBadRequestError('Some of your resources are not available for generation');
 
@@ -496,7 +667,6 @@ export const createGenerationRequest = async ({
   if (!access)
     throw throwAuthorizationError('You do not have access to some of the selected resources');
 
-  const isSDXL = params.baseModel === 'SDXL' || params.baseModel === 'Pony';
   const checkpoint = resources.find((x) => x.modelType === ModelType.Checkpoint);
   if (!checkpoint)
     throw throwBadRequestError('A checkpoint is required to make a generation request');
@@ -576,17 +746,22 @@ export const createGenerationRequest = async ({
     };
   }
 
-  // handle Pony ClipSkip
-  const isPony = isSDXL && resourceData.some((x) => x.baseModel === 'Pony');
-  if (isPony) params.clipSkip = 2;
+  // handle SDXL ClipSkip
+  // I was made aware that SDXL only works with clipSkip 2
+  // if that's not the case anymore, we can rollback to just setting
+  // this for Pony resources -Manuel
+  if (isSDXL) params.clipSkip = 2;
 
   const generationRequest = {
     userId,
     nsfw,
+    priority: draft ? env.DRAFT_MODE_PRIORITY : undefined,
     job: {
       model: `@civitai/${checkpoint.id}`,
       baseModel: baseModelToOrchestration[params.baseModel as BaseModelSetType],
       quantity: params.quantity,
+      sequential: draft ? true : false,
+      providers: draft ? env.DRAFT_MODE_PROVIDERS : undefined,
       additionalNetworks,
       params: {
         prompt: positivePrompts.join(', '),
@@ -606,33 +781,15 @@ export const createGenerationRequest = async ({
   // console.log(JSON.stringify(generationRequest));
   // console.log('________');
 
-  const totalCost = calculateGenerationBill({
-    baseModel: params.baseModel,
-    quantity: params.quantity,
-    steps: params.steps,
-    aspectRatio: params.aspectRatio,
-  });
-
-  const buzzTransaction =
-    totalCost > 0
-      ? await createBuzzTransaction({
-          fromAccountId: userId,
-          type: TransactionType.Generation,
-          amount: totalCost,
-          details: {
-            resources,
-            params,
-          },
-          toAccountId: 0,
-          description: 'Image generation',
-        })
-      : undefined;
-
-  const response = await fetch(`${env.SCHEDULER_ENDPOINT}/requests`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(generationRequest),
-  });
+  const charge = status.charge;
+  const response = await fetch(
+    `${env.SCHEDULER_ENDPOINT}/requests${charge ? '?charge=true' : ''}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(generationRequest),
+    }
+  );
 
   // console.log('________');
   // console.log(response);
@@ -643,23 +800,20 @@ export const createGenerationRequest = async ({
     throw throwRateLimitError();
   }
 
-  if (!response.ok) {
-    if (buzzTransaction) {
-      await withRetries(async () =>
-        refundTransaction(
-          buzzTransaction.transactionId,
-          'Refund due to an error submitting the training job.'
-        )
-      );
-    }
+  if (response.status === 403) {
+    throw throwInsufficientFundsError();
+  }
 
+  if (!response.ok) {
     const message = await response.json();
     throw throwBadRequestError(message);
   }
 
+  // TODO.imageGenerationBuzzCharge - Remove all cost calculation / generation limit from the front-end. This is done by the orchestrator.
   generationLimiter.increment(userId.toString(), params.quantity);
 
   const data: Generation.Api.RequestProps = await response.json();
+  // TODO.imageGenerationBuzzCharge - Remove all cost calculation / generation limit from the front-end. This is done by the orchestrator.
   const [formatted] = await formatGenerationRequests([data]);
   return formatted;
 };
@@ -723,6 +877,8 @@ export async function getGenerationStatus() {
   const status = generationStatusSchema.parse(
     JSON.parse((await redis.hGet(REDIS_KEYS.SYSTEM.FEATURES, REDIS_KEYS.GENERATION.STATUS)) ?? '{}')
   );
+
+  status;
 
   return status as GenerationStatus;
 }
@@ -961,7 +1117,13 @@ export async function toggleUnavailableResource({
   return unavailableResources;
 }
 
-export const sendGenerationFeedback = async ({ jobId, reason, message }: SendFeedbackInput) => {
+export const sendGenerationFeedback = async ({
+  jobId,
+  reason,
+  message,
+  userId,
+  ip,
+}: SendFeedbackInput & { userId: number; ip: string }) => {
   const response = await orchestratorCaller.taintJobById({
     id: jobId,
     payload: { reason, context: { imageHash: jobId, message } },
@@ -970,5 +1132,107 @@ export const sendGenerationFeedback = async ({ jobId, reason, message }: SendFee
   if (response.status === 404) throw throwNotFoundError();
   if (!response.ok) throw new Error('An unknown error occurred. Please try again later');
 
+  await generatorFeedbackReward
+    .apply(
+      {
+        jobId,
+        userId,
+      },
+      ip
+    )
+    .catch(handleLogError);
+
   return response;
+};
+
+export const textToImage = async ({
+  input,
+}: {
+  input: CreateGenerationRequestInput & {
+    userId: number;
+  };
+}) => {
+  const data = await prepareGenerationInput(input);
+  const response = await orchestratorCaller.textToImage({
+    payload: {
+      properties: {},
+      ...data.job,
+    },
+  });
+
+  if (!response.ok) {
+    if (response.status === 403) {
+      throw throwInsufficientFundsError();
+    }
+
+    throw new Error('An unknown error occurred. Please try again later');
+  }
+
+  return response.data;
+};
+
+export const textToImageTestRun = async ({
+  baseModel,
+  quantity,
+  sampler,
+  steps,
+  aspectRatio,
+  draft,
+}: GenerationRequestTestRunSchema) => {
+  const { aspectRatios } = getGenerationConfig(baseModel);
+
+  if (aspectRatio.includes('x'))
+    throw throwBadRequestError('Invalid size. Please select your size and try again');
+
+  const { height, width } = aspectRatios[Number(aspectRatio)];
+
+  if (draft) {
+    const draftData = getDraftStateFromInputForOrchestrator({
+      baseModel: baseModel,
+      quantity: quantity,
+      steps: steps,
+      cfgScale: 0,
+      sampler: sampler,
+    });
+
+    quantity = draftData.quantity;
+    steps = draftData.steps;
+    sampler = draftData.sampler;
+  }
+
+  const response = await orchestratorCaller.textToImage({
+    payload: {
+      // Civitai SDXL - Irrelevant, not used for cost calculation.
+      model: '@civitai/128078',
+      baseModel: baseModelToOrchestration[baseModel as BaseModelSetType],
+      properties: {},
+      quantity: quantity,
+      // TODO: in the future we may wanna add additional networks as they might be used for cost calculation.
+      // Not the case as of now.
+      additionalNetworks: {},
+      params: {
+        baseModel,
+        scheduler: samplersToSchedulers[sampler as Sampler],
+        steps,
+        height,
+        width,
+        // Defaults - These are not used for calculating cost
+        prompt: '',
+        negativePrompt: '',
+        clipSkip: 7,
+        cfgScale: 7,
+      },
+    },
+    isTestRun: true,
+  });
+
+  if (!response.ok) {
+    if (response.status === 403) {
+      throw throwInsufficientFundsError();
+    }
+
+    throw new Error('An unknown error occurred. Please try again later');
+  }
+
+  return response.data;
 };
