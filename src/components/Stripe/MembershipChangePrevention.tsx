@@ -364,7 +364,7 @@ export const MembershipUpgradeModal = ({ priceId, meta }: { priceId: string; met
           <SubscribeButton priceId={priceId} onSuccess={handleClose}>
             {({ onClick, ...props }) => (
               <Button
-                color="blye"
+                color="blue"
                 onClick={() => {
                   onClick();
                 }}
