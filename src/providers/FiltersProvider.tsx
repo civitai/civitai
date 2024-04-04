@@ -65,6 +65,7 @@ const imageFilterSchema = z.object({
   types: z.array(z.nativeEnum(MediaType)).default([MediaType.image]),
   withMeta: z.boolean().optional(),
   fromPlatform: z.boolean().optional(),
+  notPublished: z.boolean().optional(),
   hidden: z.boolean().optional(),
   followed: z.boolean().optional(),
 });
