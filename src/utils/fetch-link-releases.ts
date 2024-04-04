@@ -26,7 +26,8 @@ export async function fetchLinkReleases(userAgent: string) {
   );
 
   return {
-    secondaryText: `${os} ${data.tag_name}`,
+    os,
+    tag_name: data.tag_name,
     href:
       downloadUrl?.browser_download_url ||
       'https://github.com/civitai/civitai-link-desktop/releases/latest',

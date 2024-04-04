@@ -1,6 +1,5 @@
 import {
   // AspectRatio,
-  Button,
   Container,
   createStyles,
   Flex,
@@ -9,17 +8,16 @@ import {
   Text,
   Title,
   Image,
-  Anchor,
 } from '@mantine/core';
 // import { YoutubeEmbed } from '~/components/YoutubeEmbed/YoutubeEmbed';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { NextLink } from '@mantine/next';
 import Lottie from 'react-lottie';
 import * as linkAnimation from '~/utils/lotties/link-animation.json';
 import { Meta } from '~/components/Meta/Meta';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { fetchLinkReleases } from '~/utils/fetch-link-releases';
+import { CivitaiLinkDownloadButton } from '~/components/CivitaiLink/CivitaiLinkDownloadButton';
 
 type ServerSideProps = {
   secondaryText: string;
@@ -32,57 +30,13 @@ export const getServerSideProps = createServerSideProps({
     const data = await fetchLinkReleases(userAgent || '');
 
     return {
-      props: data,
+      props: {
+        secondaryText: `${data.os} ${data.tag_name}`,
+        href: data.href,
+      },
     };
   },
 });
-
-type LinkDownloadButtonProps = {
-  text: string;
-  secondaryText: string;
-  href: string;
-  isMember?: boolean;
-};
-
-export function LinkDownloadButton({
-  text,
-  secondaryText,
-  href,
-  isMember,
-}: LinkDownloadButtonProps) {
-  const { classes } = useStyles();
-
-  return (
-    <Flex direction="column" justify="space-between" align="center">
-      <Button
-        variant="filled"
-        color="blue"
-        size="lg"
-        radius="xl"
-        component={NextLink}
-        href={href}
-        rel="nofollow noreferrer"
-      >
-        <Flex direction="column" justify="space-between" align="center">
-          {text}
-          {isMember ? <Text className={classes.buttonSecondary}>{secondaryText}</Text> : null}
-        </Flex>
-      </Button>
-      {isMember ? (
-        <Text className={classes.buttonSecondary} mt={10}>
-          Not your OS? Check out all{' '}
-          <Anchor
-            href="https://github.com/civitai/civitai-link-desktop/releases/latest"
-            target="_blank"
-          >
-            releases
-          </Anchor>
-          .
-        </Text>
-      ) : null}
-    </Flex>
-  );
-}
 
 export default function LinkApp(props: ServerSideProps) {
   const { classes } = useStyles();
@@ -115,7 +69,7 @@ export default function LinkApp(props: ServerSideProps) {
             ) : null}
           </Stack>
           <Flex align="center">
-            <LinkDownloadButton {...buttonData} isMember={isMember} />
+            <CivitaiLinkDownloadButton {...buttonData} isMember={isMember} />
           </Flex>
         </Flex>
 
@@ -225,7 +179,7 @@ export default function LinkApp(props: ServerSideProps) {
       </AspectRatio> */}
 
         <Flex justify="center" w="100%" my={40}>
-          <LinkDownloadButton {...buttonData} isMember={isMember} />
+          <CivitaiLinkDownloadButton {...buttonData} isMember={isMember} />
         </Flex>
       </Container>
     </>
@@ -276,8 +230,5 @@ const useStyles = createStyles((theme) => ({
     right: 0,
     bottom: 0,
     background: 'linear-gradient(180deg, rgba(26, 27, 30, 0.00) 50%, #1A1B1E 100%)',
-  },
-  buttonSecondary: {
-    fontSize: 10,
   },
 }));

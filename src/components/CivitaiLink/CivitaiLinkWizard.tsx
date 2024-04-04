@@ -4,7 +4,6 @@ import {
   Group,
   Button,
   Text,
-  List,
   CopyButton,
   Loader,
   Tooltip,
@@ -27,16 +26,20 @@ import { useCivitaiLink } from '~/components/CivitaiLink/CivitaiLinkProvider';
 import { createContextModal } from '~/components/Modals/utils/createContextModal';
 import { PlanBenefitList } from '~/components/Stripe/PlanBenefitList';
 import { YoutubeEmbed } from '~/components/YoutubeEmbed/YoutubeEmbed';
-import { NextLink } from '@mantine/next';
+import { CivitaiLinkDownloadButton } from './CivitaiLinkDownloadButton';
+import { fetchLinkReleases } from '~/utils/fetch-link-releases';
 
 const { openModal, Modal } = createContextModal({
   name: 'civitai-link-wizard',
   title: 'Civitai Link Setup',
   size: 800,
-  // withCloseButton: false,
-  // closeOnClickOutside: false,
   Element: ({ context }) => {
     const [active, setActive] = useState(0);
+    const [buttonData, setButtonData] = useState({
+      text: 'Download the Link App',
+      secondaryText: '',
+      href: 'https://github.com/civitai/civitai-link-desktop/releases/latest',
+    });
     const nextStep = () => setActive((current) => (current < 2 ? current + 1 : current));
     const prevStep = () => setActive((current) => (current > 0 ? current - 1 : current));
 
@@ -58,6 +61,21 @@ const { openModal, Modal } = createContextModal({
         });
       }
     }, [connected]);
+
+    useEffect(() => {
+      const fetchReleases = async () => {
+        const userAgent = navigator.userAgent;
+        const data = await fetchLinkReleases(userAgent);
+
+        setButtonData({
+          text: 'Download the Link App',
+          secondaryText: `${data.os} ${data.tag_name}`,
+          href: data.href,
+        });
+      };
+
+      fetchReleases();
+    }, []);
 
     return (
       <Stepper active={active} onStepClick={setActive} breakpoint="sm" allowNextStepsSelect={false}>
@@ -169,18 +187,7 @@ const { openModal, Modal } = createContextModal({
                 Run the installer and head to the next step to get a Link key.
               </Text>
               <Flex justify="center" w="100%">
-                <Button
-                  variant="filled"
-                  color="blue"
-                  size="lg"
-                  radius="xl"
-                  my={40}
-                  component={NextLink}
-                  href="https://github.com/civitai/civitai-link-desktop/releases/latest"
-                  rel="nofollow noreferrer"
-                >
-                  Download the Link App
-                </Button>
+                <CivitaiLinkDownloadButton {...buttonData} isMember />
               </Flex>
             </Stack>
             <Group position="apart" mt="xl">
