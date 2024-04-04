@@ -9,6 +9,7 @@ import {
   Text,
   Title,
   Image,
+  Anchor,
 } from '@mantine/core';
 // import { YoutubeEmbed } from '~/components/YoutubeEmbed/YoutubeEmbed';
 import { containerQuery } from '~/utils/mantine-css-helpers';
@@ -17,14 +18,100 @@ import { NextLink } from '@mantine/next';
 import Lottie from 'react-lottie';
 import * as linkAnimation from '~/utils/lotties/link-animation.json';
 import { Meta } from '~/components/Meta/Meta';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
-export default function LinkApp() {
+type GithubReleases = {
+  tag_name: string;
+  assets: {
+    browser_download_url: string;
+  }[];
+};
+
+type ServerSideProps = {
+  secondaryText: string;
+  href: string;
+};
+
+export const getServerSideProps = createServerSideProps({
+  resolver: async ({ ctx: req }) => {
+    const userAgent = req.req.headers['user-agent'];
+    const res = await fetch(
+      'https://api.github.com/repos/civitai/civitai-link-desktop/releases/latest'
+    );
+    const data: GithubReleases = await res.json();
+
+    let downloadLink = {
+      name: 'Unknown',
+      extension: '',
+    };
+
+    if (userAgent?.indexOf('Win') != -1) downloadLink = { name: 'Windows', extension: 'exe' };
+    if (userAgent?.indexOf('Mac') != -1) downloadLink = { name: 'Mac', extension: 'dmg' };
+    if (userAgent?.indexOf('Linux') != -1) downloadLink = { name: 'Linux', extension: 'deb' };
+
+    const downloadUrl = data.assets.find((asset) =>
+      asset.browser_download_url.includes(downloadLink.extension)
+    );
+
+    return {
+      props: {
+        secondaryText: `${downloadLink.name} ${data.tag_name}`,
+        href: downloadUrl || 'https://github.com/civitai/civitai-link-desktop/releases/latest',
+      },
+    };
+  },
+});
+
+type DownloadButtonProps = {
+  text: string;
+  secondaryText: string;
+  href: string;
+  isMember?: boolean;
+};
+
+function DownloadButton({ text, secondaryText, href, isMember }: DownloadButtonProps) {
+  const { classes } = useStyles();
+
+  return (
+    <Flex direction="column" justify="space-between" align="center">
+      <Button
+        variant="filled"
+        color="blue"
+        size="lg"
+        radius="xl"
+        component={NextLink}
+        href={href}
+        rel="nofollow noreferrer"
+      >
+        <Flex direction="column" justify="space-between" align="center">
+          {text}
+          {isMember ? <Text className={classes.buttonSecondary}>{secondaryText}</Text> : null}
+        </Flex>
+      </Button>
+      {isMember ? (
+        <Text className={classes.buttonSecondary} mt={10}>
+          Not your OS? Check out all{' '}
+          <Anchor
+            href="https://github.com/civitai/civitai-link-desktop/releases/latest"
+            target="_blank"
+          >
+            releases
+          </Anchor>
+          .
+        </Text>
+      ) : null}
+    </Flex>
+  );
+}
+
+export default function LinkApp(props: ServerSideProps) {
   const { classes } = useStyles();
   const currentUser = useCurrentUser();
   const isMember = currentUser?.isMember;
   const buttonData = {
     text: isMember ? 'Download the Link App' : 'Become a member',
-    href: isMember ? 'https://github.com/civitai/civitai-link-desktop/releases/latest' : '/pricing',
+    secondaryText: props.secondaryText,
+    href: isMember ? props.href : '/pricing',
   };
 
   return (
@@ -48,18 +135,7 @@ export default function LinkApp() {
             ) : null}
           </Stack>
           <Flex align="center">
-            <Button
-              variant="filled"
-              color="blue"
-              size="lg"
-              radius="xl"
-              fullWidth
-              component={NextLink}
-              href={buttonData.href}
-              rel="nofollow noreferrer"
-            >
-              {buttonData.text}
-            </Button>
+            <DownloadButton {...buttonData} isMember={isMember} />
           </Flex>
         </Flex>
 
@@ -168,19 +244,8 @@ export default function LinkApp() {
         <YoutubeEmbed videoId="MaSRXvM05x4" />
       </AspectRatio> */}
 
-        <Flex justify="center" w="100%">
-          <Button
-            variant="filled"
-            color="blue"
-            size="lg"
-            radius="xl"
-            my={40}
-            component={NextLink}
-            href={buttonData.href}
-            rel="nofollow noreferrer"
-          >
-            {buttonData.text}
-          </Button>
+        <Flex justify="center" w="100%" my={40}>
+          <DownloadButton {...buttonData} isMember={isMember} />
         </Flex>
       </Container>
     </>
@@ -231,5 +296,8 @@ const useStyles = createStyles((theme) => ({
     right: 0,
     bottom: 0,
     background: 'linear-gradient(180deg, rgba(26, 27, 30, 0.00) 50%, #1A1B1E 100%)',
+  },
+  buttonSecondary: {
+    fontSize: 10,
   },
 }));
