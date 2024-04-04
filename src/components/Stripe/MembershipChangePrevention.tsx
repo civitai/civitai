@@ -1,4 +1,3 @@
-import { useTheme } from '@emotion/react';
 import {
   Button,
   Center,
@@ -11,8 +10,10 @@ import {
   Image,
   Text,
 } from '@mantine/core';
+import { IconAlertTriangle } from '@tabler/icons-react';
 import Router from 'next/router';
 import { useState } from 'react';
+import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { PlanBenefitList } from '~/components/Stripe/PlanBenefitList';
@@ -71,6 +72,9 @@ export const DowngradeFeedbackModal = ({
               </Paper>
             ))}
           </Radio.Group>
+          <AlertWithIcon color="red" icon={<IconAlertTriangle size={20} />} iconColor="red">
+            Downgrade is immediate. You will lose your tier benefits as soon as you downgrade.
+          </AlertWithIcon>
           <Group grow>
             <SubscribeButton priceId={priceId}>
               {({ onClick, ...props }) => (
