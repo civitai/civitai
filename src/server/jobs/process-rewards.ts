@@ -29,6 +29,7 @@ export const processRewards = createJob('rewards-process', '*/1 * * * *', async 
       toUserId,
       byUserId,
       awardAmount,
+      multiplier,
       status,
       ip,
       version,
