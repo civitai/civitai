@@ -964,7 +964,7 @@ export function AppHeader({
                         <>
                           <Divider />
                           <Box px="md" pt="md">
-                            <BrowsingModeMenu />
+                            <BrowsingModeMenu closeMenu={() => setBurgerOpened(false)} />
                           </Box>
                         </>
                       )}

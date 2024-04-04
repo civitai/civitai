@@ -30,9 +30,10 @@ export function BrowsingModeIcon({ iconProps = {} }: BrowsingModeIconProps) {
 }
 type BrowsingModeIconProps = {
   iconProps?: TablerIconsProps;
+  closeMenu?: () => void;
 };
 
-export function BrowsingModeMenu() {
+export function BrowsingModeMenu({ closeMenu }: { closeMenu?: () => void }) {
   const { toggleBlurNsfw, toggleDisableHidden, useStore } = useBrowsingModeContext();
   const { blurNsfw } = useStore((state) => state);
   const currentUser = useCurrentUser();
@@ -52,6 +53,7 @@ export function BrowsingModeMenu() {
                   {showNsfw && (
                     <Tooltip label="Help us improve by playing!" withArrow color="dark">
                       <Button
+                        onClick={closeMenu}
                         component={NextLink}
                         href="/research/rater"
                         compact
