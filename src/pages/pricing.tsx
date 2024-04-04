@@ -96,16 +96,18 @@ export default function Pricing() {
               <AlertWithIcon
                 color="yellow"
                 iconColor="yellow"
-                icon={<IconInfoCircle size={20} />}
+                icon={<IconInfoCircle size={20} strokeWidth={2.5} />}
                 iconSize={28}
-                py={6}
+                py={11}
                 maw="calc(50% - 8px)"
                 mx="auto"
               >
                 <Text lh={1.2}>
-                  We have stopped offering the membership plan you are in. You can view your current
-                  benefits and manage your membership details by clicking{' '}
-                  <Anchor href="/user/membership">here</Anchor>.
+                  The Supporter plan can no longer be purchased. You can stay on your{' '}
+                  <Text component={NextLink} td="underline" href="/user/membership">
+                    current plan
+                  </Text>{' '}
+                  or level up your membership here.
                 </Text>
               </AlertWithIcon>
             )}

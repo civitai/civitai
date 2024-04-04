@@ -436,13 +436,7 @@ export const upsertSubscription = async (
       customerId: true,
       subscriptionId: true,
       subscription: {
-        select: {
-          updatedAt: true,
-          status: true,
-          productId: true,
-          metadata: true,
-          product: { select: { name: true, metadata: true } },
-        },
+        select: { updatedAt: true, status: true },
       },
     },
   });
@@ -450,7 +444,6 @@ export const upsertSubscription = async (
   if (!user) throw throwNotFoundError(`User with customerId: ${customerId} not found`);
 
   const userHasSubscription = !!user.subscriptionId;
-
   const isSameSubscriptionItem = user.subscriptionId === subscription.id;
   const isCreatingSubscription = eventType === 'customer.subscription.created';
   const isCancelingSubscription = eventType === 'customer.subscription.deleted';
@@ -490,8 +483,6 @@ export const upsertSubscription = async (
     id: subscription.id,
     userId: user.id,
     metadata: subscription.metadata,
-    // If the subscription is incomplete, we treat it as active so that we don't lock the user out
-    // This is possible in racing condition scenarios to be clear.
     status: subscription.status,
     // as far as I can tell, there are never multiple items in this array
     priceId: subscription.items.data[0].price.id,

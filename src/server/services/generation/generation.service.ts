@@ -1176,9 +1176,7 @@ export const textToImageTestRun = async ({
   steps,
   aspectRatio,
   draft,
-}: GenerationRequestTestRunSchema & {
-  userId: number;
-}) => {
+}: GenerationRequestTestRunSchema) => {
   const { aspectRatios } = getGenerationConfig(baseModel);
 
   if (aspectRatio.includes('x'))

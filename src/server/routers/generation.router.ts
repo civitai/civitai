@@ -119,13 +119,8 @@ export const generationRouter = router({
         },
       });
     }),
-  estimateTextToImage: protectedProcedure
+  estimateTextToImage: publicProcedure
     .input(generationRequestTestRunSchema)
     .use(edgeCacheIt({ ttl: CacheTTL.hour }))
-    .query(({ input, ctx }) => {
-      return textToImageTestRun({
-        ...input,
-        userId: ctx.user.id,
-      });
-    }),
+    .query(({ input }) => textToImageTestRun(input)),
 });
