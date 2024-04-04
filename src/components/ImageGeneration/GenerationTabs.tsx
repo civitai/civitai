@@ -74,9 +74,9 @@ export default function GenerationTabs({
       <div className="flex flex-col gap-2 p-3 w-full">
         <div className="flex justify-between items-center gap-2 w-full">
           <div className="flex-1">
-            <Text className="w-full" lineClamp={1}>
+            {/* <Text className="w-full" lineClamp={1}>
               Folder
-            </Text>
+            </Text> */}
           </div>
           {currentUser && tabEntries.length > 1 && (
             <SegmentedControl

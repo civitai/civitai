@@ -9,6 +9,8 @@ import {
   TooltipProps,
   createStyles,
   useMantineTheme,
+  Alert,
+  Group,
 } from '@mantine/core';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useClipboard, useLocalStorage } from '@mantine/hooks';
@@ -46,6 +48,7 @@ import dayjs from 'dayjs';
 import { useMemo } from 'react';
 import { GenerationRequestStatus } from '~/server/common/enums';
 import { GenerationStatusBadge } from '~/components/ImageGeneration/GenerationStatusBadge';
+import { isProd } from '~/env/other';
 
 // export function QueueItem({ data: request, index }: { data: Generation.Request; index: number }) {
 export function QueueItem({ request }: Props) {
@@ -129,7 +132,12 @@ export function QueueItem({ request }: Props) {
   // };
 
   const refundTime = useMemo(() => {
-    return !failed ? undefined : dayjs(request.createdAt).add(35, 'minutes').toDate();
+    // TODO.generation - remove `isProd` condition after finished testing
+    return isProd
+      ? !failed
+        ? undefined
+        : dayjs(request.createdAt).add(35, 'minutes').toDate()
+      : dayjs(request.createdAt).add(35, 'minutes').toDate();
   }, [failed, request.createdAt]);
 
   return (
@@ -203,8 +211,8 @@ export function QueueItem({ request }: Props) {
           </div>
         )} */}
         {refundTime && refundTime > new Date() && (
-          <Alert color="yellow" p={4} pl={8}>
-            <Group spacing="xs" noWrap mb={4} align="center">
+          <Alert color="yellow" p={0}>
+            <div className="flex items-center px-3 py-1 gap-1">
               <Text size="xs" color="yellow" lh={1}>
                 <IconAlertTriangleFilled size={20} />
               </Text>
@@ -213,7 +221,7 @@ export function QueueItem({ request }: Props) {
                   refundTime
                 )}.`}
               </Text>
-            </Group>
+            </div>
           </Alert>
         )}
         <ContentClamp maxHeight={36} labelSize="xs">

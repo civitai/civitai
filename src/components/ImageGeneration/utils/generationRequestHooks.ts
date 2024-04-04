@@ -11,6 +11,8 @@ import { useDebouncer } from '~/utils/debouncer';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { SignalMessages, GenerationRequestStatus } from '~/server/common/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { create } from 'zustand';
+import { immer } from 'zustand/middleware/immer';
 
 export const useGetGenerationRequests = (
   input?: GetGenerationRequestsInput,
@@ -209,3 +211,50 @@ export const useImageGenStatusUpdate = () => {
 
   useSignalConnection(SignalMessages.ImageGenStatusUpdate, onStatusUpdate);
 };
+
+type QueueStoreState = {
+  requests: Generation.Request[];
+  images: Generation.Image[];
+};
+type QueueStore = QueueStoreState & {
+  addImage: (image: Generation.Image) => void;
+  addRequest: (request: Generation.Request) => void;
+  updateRequest: (request: Generation.Request) => void;
+};
+const removableStatuses = [
+  GenerationRequestStatus.Succeeded,
+  GenerationRequestStatus.Cancelled,
+  GenerationRequestStatus.Error,
+];
+export const useGenerationQueueStore = create<QueueStore>()(
+  immer((set) => ({
+    requests: [],
+    images: [],
+    addImage: (image) =>
+      set(({ images }) => {
+        if (images.length <= 3) images.unshift(image);
+        if (images.length > 3) images.pop();
+      }),
+    addRequest: (request) =>
+      set(({ requests }) => {
+        requests.unshift(request);
+      }),
+    updateRequest: (request) => {
+      set(({ requests }) => {
+        const index = requests.findIndex((x) => x.id === request.id);
+        if (index > -1) requests[index] = request;
+      });
+      if (removableStatuses.includes(request.status)) {
+        setTimeout(() => {
+          set(({ requests }) => {
+            const index = requests.findIndex((x) => x.id === request.id);
+            if (index > -1) requests.splice(index, 1);
+          });
+        }, 3000);
+      }
+    },
+  }))
+);
+
+const { requests, images, ...generationQueueStore } = useGenerationQueueStore.getState();
+export { generationQueueStore };
