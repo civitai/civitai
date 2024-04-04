@@ -128,11 +128,11 @@ export const useEstimateTextToImageJobCost = () => {
     }
 
     return {
-      baseModel,
-      aspectRatio,
-      steps,
-      quantity,
-      sampler,
+      baseModel: baseModel ?? generation.defaultValues.model.baseModel,
+      aspectRatio: aspectRatio ?? generation.defaultValues.aspectRatio,
+      steps: steps ?? generation.defaultValues.steps,
+      quantity: quantity ?? generation.defaultValues.quantity,
+      sampler: sampler ?? generation.defaultValues.sampler,
       draft,
     };
   }, [aspectRatio, steps, quantity, sampler, status.charge, baseModel, draft]);
