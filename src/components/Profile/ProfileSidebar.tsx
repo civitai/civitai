@@ -78,7 +78,7 @@ const mapSize: Record<
     rankBadge: 'xl',
     badges: 56,
     bio: 48,
-    badgeCount: 4,
+    badgeCount: 4 * 4,
   },
 };
 
@@ -270,7 +270,10 @@ export function ProfileSidebar({ username, className }: { username: string; clas
             Badges
           </Text>
           <Group spacing="xs">
-            {(showAllBadges ? badges : badges.slice(0, sizeOpts.badgeCount)).map((award) => {
+            {(showAllBadges
+              ? badges.reverse()
+              : badges.reverse().slice(0, sizeOpts.badgeCount)
+            ).map((award) => {
               const data = (award.data ?? {}) as { url?: string; animated?: boolean };
               const url = (data.url ?? '') as string;
 

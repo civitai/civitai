@@ -64,7 +64,7 @@ import {
   LoadingOverlay,
 } from '@mantine/core';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
-import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
+import { LoginRedirect, useLoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import InputResourceSelect from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
 import { PersistentAccordion } from '~/components/PersistentAccordion/PersistantAccordion';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
@@ -90,9 +90,12 @@ import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { DailyBoostRewardClaim } from '~/components/Buzz/Rewards/DailyBoostRewardClaim';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
+const BUZZ_CHARGE_NOTICE_END = new Date('2024-04-14T00:00:00Z');
+
 const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
   const { classes, theme } = useStyles();
   const currentUser = useCurrentUser();
+  const { requireLogin } = useLoginRedirect({ reason: 'image-gen', returnUrl: '/generate' });
   const [promptWarning, setPromptWarning] = useState<string | null>(null);
   const [reviewed, setReviewed] = useLocalStorage({
     key: 'review-generation-terms',
@@ -176,6 +179,11 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
   // #region [mutations]
   const { mutateAsync, isLoading } = useCreateGenerationRequest();
   const handleSubmit = async (data: GenerateFormModel) => {
+    if (!currentUser) {
+      requireLogin();
+      generationPanel.close();
+      return;
+    }
     const { model, resources = [], vae, ...params } = data;
     const _resources = [model, ...resources, vae].filter(isDefined).map((resource) => {
       if (resource.modelType === 'TextualInversion')
@@ -746,15 +754,25 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
             </Alert>
           ) : status.available && !promptWarning ? (
             <>
+              {status.charge && new Date() < BUZZ_CHARGE_NOTICE_END && (
+                <DismissibleAlert id="generator-charge-buzz">
+                  <Text>
+                    Generating images now costs Buzz.{' '}
+                    <Text component={NextLink} href="/articles/4797" td="underline">
+                      Learn why
+                    </Text>
+                  </Text>
+                </DismissibleAlert>
+              )}
               {isFreeTier && limits.quantity < 8 && (
                 <Group spacing="xs" noWrap mb={4} align="center">
                   <Text size="xs" color="yellow" lh={1}>
                     <IconAlertTriangleFilled size={20} />
                   </Text>
                   <Text size="xs" lh={1.2} color="yellow">
-                    {`Generator under high load. Image limits have been temporarily reduced for free users. `}
+                    {`Want to generate more at once? `}
                     <Text lh={1.2} component={NextLink} href="/pricing" td="underline">
-                      Remove limits
+                      Become a member!
                     </Text>
                   </Text>
                 </Group>
@@ -780,28 +798,27 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                     />
                   </Stack>
                 </Card>
-                <LoginRedirect reason="image-gen" returnUrl="/generate">
-                  {!status.charge ? (
-                    <Button
-                      type="submit"
-                      size="lg"
-                      className={classes.generateButtonButton}
-                      loading={isLoading}
-                    >
-                      <Text ta="center">Generate</Text>
-                    </Button>
-                  ) : (
-                    <BuzzTransactionButton
-                      type="submit"
-                      size="lg"
-                      label="Generate"
-                      loading={isCalculatingCost || isLoading}
-                      className={classes.generateButtonButton}
-                      disabled={disableGenerateButton}
-                      buzzAmount={totalCost}
-                    />
-                  )}
-                </LoginRedirect>
+                {!status.charge ? (
+                  <Button
+                    type="submit"
+                    size="lg"
+                    className={classes.generateButtonButton}
+                    loading={isLoading}
+                  >
+                    <Text ta="center">Generate</Text>
+                  </Button>
+                ) : (
+                  <BuzzTransactionButton
+                    type="submit"
+                    size="lg"
+                    label="Generate"
+                    loading={isCalculatingCost || isLoading}
+                    className={classes.generateButtonButton}
+                    disabled={disableGenerateButton}
+                    buzzAmount={totalCost}
+                    showPurchaseModal={false}
+                  />
+                )}
                 {/* <Tooltip label="Reset" color="dark" withArrow> */}
                 <Button
                   onClick={handleClearAll}
@@ -840,45 +857,6 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
               {status.message}
             </AlertWithIcon>
           )}
-          {/* TODO.generation: Remove this by next week we start charging for sdxl generation */}
-          {/* {status.available && isSDXL && (
-            <DismissibleAlert
-              id="sdxl-free-preview"
-              title="Free SDXL Generations!"
-              content={
-                <Text>
-                  To celebrate{' '}
-                  <Anchor
-                    href="https://civitai.com/articles/2935/civitais-first-birthday-a-year-of-art-code-and-community"
-                    target="_blank"
-                    underline
-                  >
-                    Civitai&apos;s Birthday
-                  </Anchor>{' '}
-                  we&apos;re letting everyone use SDXL for free!{' '}
-                  <Anchor
-                    href="https://education.civitai.com/using-civitai-the-on-site-image-generator/"
-                    rel="noopener nofollow"
-                    underline
-                  >
-                    After that it will cost a minimum of⚡3 Buzz per image
-                  </Anchor>
-                  . Complete our{' '}
-                  <Anchor
-                    href={`https://forms.clickup.com/8459928/f/825mr-6111/V0OXEDK2MIO5YKFZV4?Username=${
-                      currentUser?.username ?? 'Unauthed'
-                    }`}
-                    rel="noopener nofollow"
-                    target="_blank"
-                    underline
-                  >
-                    SDXL generation survey
-                  </Anchor>{' '}
-                  to let us know how we did.
-                </Text>
-              }
-            />
-          )} */}
         </Stack>
       </Stack>
     </Form>

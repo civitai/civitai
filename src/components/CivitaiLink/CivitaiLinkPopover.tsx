@@ -192,9 +192,6 @@ function LinkDropdown() {
             <Title order={4} size="sm">
               Civitai Link
             </Title>
-            <Badge size="xs" color="yellow">
-              alpha
-            </Badge>
           </Group>
           {canToggleManageInstances && (
             <Tooltip label="Manage instances">
