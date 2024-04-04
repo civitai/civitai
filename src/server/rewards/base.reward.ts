@@ -105,7 +105,7 @@ export function createBuzzEvent<T>({
               type: TransactionType.Reward,
               toAccountId: event.toUserId,
               fromAccountId: 0, // central bank
-              amount: event.awardAmount * (event.multiplier ?? 1),
+              amount: Math.ceil(event.awardAmount * (event.multiplier ?? 1)),
               description: `Buzz Reward: ${description}`,
               details: {
                 type: event.type,
