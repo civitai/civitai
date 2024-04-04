@@ -419,35 +419,17 @@ export const upsertSubscription = async (
       customerId: true,
       subscriptionId: true,
       subscription: {
-        select: {
-          updatedAt: true,
-          status: true,
-          productId: true,
-          metadata: true,
-          product: { select: { name: true, metadata: true } },
-        },
+        select: { updatedAt: true, status: true },
       },
     },
   });
 
   if (!user) throw throwNotFoundError(`User with customerId: ${customerId} not found`);
 
-  const productId = subscription.items.data[0].price.product as string;
   const userHasSubscription = !!user.subscriptionId;
-  const currentMetadata = (user.subscription?.metadata ?? {}) as Record<string, string>;
-  const metadata = { ...subscription.metadata, ...currentMetadata };
   const startingNewSubscription = userHasSubscription && user.subscriptionId !== subscription.id;
   const isCreatingSubscription = eventType === 'customer.subscription.created';
   if (startingNewSubscription) {
-    if (user.subscription) {
-      const productMetadata = (user.subscription.product.metadata ?? {}) as Record<string, string>;
-      const wasSupporter = productMetadata[env.STRIPE_METADATA_KEY] === 'founder';
-      if (wasSupporter && user.subscription && productId !== user.subscription.productId) {
-        metadata.oldTier = 'founder';
-        metadata.upgradeMonth = (new Date().getMonth() + 1).toString();
-      }
-    }
-
     log('Subscription id changed, deleting old subscription');
     await dbWrite.customerSubscription.delete({ where: { id: user.subscriptionId as string } });
   } else if (userHasSubscription && isCreatingSubscription) {
@@ -458,11 +440,11 @@ export const upsertSubscription = async (
   const data = {
     id: subscription.id,
     userId: user.id,
-    metadata,
+    metadata: subscription.metadata,
     status: subscription.status,
     // as far as I can tell, there are never multiple items in this array
     priceId: subscription.items.data[0].price.id,
-    productId,
+    productId: subscription.items.data[0].price.product as string,
     cancelAtPeriodEnd: subscription.cancel_at_period_end,
     cancelAt: subscription.cancel_at ? toDateTime(subscription.cancel_at) : null,
     canceledAt: subscription.canceled_at ? toDateTime(subscription.canceled_at) : null,
