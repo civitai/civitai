@@ -79,7 +79,7 @@ export const getPlans = async () => {
 export type StripePlan = Awaited<ReturnType<typeof getPlans>>[number];
 
 export const getUserSubscription = async ({ userId }: Schema.GetUserSubscriptionInput) => {
-  const subscription = await dbRead.customerSubscription.findUnique({
+  const subscription = await dbWrite.customerSubscription.findUnique({
     where: { userId },
     select: {
       id: true,
@@ -172,63 +172,76 @@ export const createSubscribeSession = async ({
   );
   const activeProduct = membershipProducts.find((p) => p.id === subscriptionItem?.price.product);
   const priceProduct = products.find((p) => p.id === price.product);
+  const oldTier = ((activeProduct?.metadata ?? {}) as Schema.ProductMetadata)?.tier;
+  const newTier = ((priceProduct?.metadata ?? {}) as Schema.ProductMetadata).tier;
+
   const isUpgrade =
     activeSubscription &&
-    constants.memberships.tierOrder.indexOf(
-      ((activeProduct?.metadata ?? {}) as Schema.ProductMetadata)?.tier
-    ) <
-      constants.memberships.tierOrder.indexOf(
-        ((priceProduct?.metadata ?? {}) as Schema.ProductMetadata).tier
-      );
+    constants.memberships.tierOrder.indexOf(oldTier) <
+      constants.memberships.tierOrder.indexOf(newTier);
 
-  if (activeSubscription && !isUpgrade) {
+  if (activeSubscription) {
     if (!subscriptionItem) {
       throw throwBadRequestError(
         `Your subscription does not have a main plan. Please contact administration`
       );
     }
 
-    const membershipProduct = membershipProducts.find(
-      (p) => p.id === subscriptionItem?.price.product
-    );
-
     const isActivePrice = subscriptionItem.price.id === price.id;
     if (!isActivePrice) {
-      const { url } = await createSubscriptionChangeSession({
-        customerId,
-        priceId,
-        subscriptionId: activeSubscription.id,
-        subscriptionItemId: subscriptionItem.id,
+      const isFounder =
+        (activeProduct?.metadata as Schema.ProductMetadata)?.tier ===
+        constants.memberships.founderDiscount.tier;
+
+      const discounts = [];
+
+      if (
+        isUpgrade &&
+        isFounder &&
+        new Date() < constants.memberships.founderDiscount.maxDiscountDate
+      ) {
+        // Create a custom discount for founders to get $5 off
+        const coupon = await stripe.coupons.create({
+          duration: 'once',
+          percent_off: constants.memberships.founderDiscount.discountPercent,
+          max_redemptions: 1,
+          metadata: {
+            customerId,
+          },
+        });
+
+        discounts.push({
+          coupon: coupon.id,
+        });
+      }
+
+      const items = [
+        {
+          id: subscriptionItem.id,
+          price: price.id,
+        },
+      ];
+
+      await stripe.subscriptions.update(subscriptionItem.subscription as string, {
+        items,
+        billing_cycle_anchor: isUpgrade ? 'now' : 'unchanged',
+        proration_behavior: 'none',
+        // @ts-ignore This is valid as per stripe's documentation
+        discounts,
       });
+
       await invalidateSession(user.id);
-      return { sessionId: null, url };
+      return {
+        sessionId: null,
+        url: isUpgrade
+          ? `/payment/success?cid=${customerId.slice(-8)}`
+          : `/user/membership?downgraded=true&tier=${newTier}`,
+      };
     } else {
       const { url } = await createManageSubscriptionSession({ customerId });
       await invalidateSession(user.id);
       return { sessionId: null, url };
     }
-  }
-
-  const isFounder =
-    (activeProduct?.metadata as Schema.ProductMetadata)?.tier ===
-    constants.memberships.founderDiscount.tier;
-
-  const discounts = [];
-
-  if (isFounder && new Date() < constants.memberships.founderDiscount.maxDiscountDate) {
-    // Create a custom discount for founders to get $5 off
-    const coupon = await stripe.coupons.create({
-      duration: 'once',
-      percent_off: constants.memberships.founderDiscount.discountPercent,
-      max_redemptions: 1,
-      metadata: {
-        customerId,
-      },
-    });
-
-    discounts.push({
-      coupon: coupon.id,
-    });
   }
 
   // array of items we are charging the customer
@@ -245,8 +258,7 @@ export const createSubscribeSession = async ({
     line_items: lineItems,
     success_url: `${baseUrl}/payment/success?cid=${customerId.slice(-8)}`,
     cancel_url: `${baseUrl}/pricing?canceled=true`,
-    allow_promotion_codes: discounts.length ? undefined : true,
-    discounts: discounts.length ? discounts : undefined,
+    allow_promotion_codes: true,
   });
 
   return { sessionId: session.id, url: session.url };
@@ -453,7 +465,7 @@ export const upsertSubscription = async (
 
   log('Subscription event:', eventType);
 
-  if (isCancelingSubscription && isSameSubscriptionItem && subscription.cancel_at === null) {
+  if (isCancelingSubscription && subscription.cancel_at === null) {
     // immediate cancel:
     log('Subscription canceled immediately');
     await dbWrite.customerSubscription.delete({ where: { id: user.subscriptionId as string } });
@@ -462,20 +474,14 @@ export const upsertSubscription = async (
     return;
   }
 
-  let subscriptionToCancelId: string | undefined;
   if (startingNewSubscription) {
     log('Subscription id changed, deleting old subscription');
     if (user.subscriptionId) {
       await dbWrite.customerSubscription.delete({ where: { userId: user.id } });
     }
     await dbWrite.user.update({ where: { id: user.id }, data: { subscriptionId: null } });
-    subscriptionToCancelId = user.subscriptionId as string;
   } else if (userHasSubscription && isCreatingSubscription) {
     log('Subscription already up to date');
-    return;
-  } else if ((isCancelingSubscription || isUpdatingSubscription) && !isSameSubscriptionItem) {
-    // We do not need to do anything, as the subscription has already been removed from the DB in all likelyhood
-    log('Subscription updated or cancelled, but not active on member. Nothing to do.');
     return;
   }
 
@@ -501,10 +507,6 @@ export const upsertSubscription = async (
     dbWrite.customerSubscription.upsert({ where: { id: data.id }, update: data, create: data }),
     dbWrite.user.update({ where: { id: user.id }, data: { subscriptionId: subscription.id } }),
   ]);
-
-  if (subscriptionToCancelId) {
-    await stripe.subscriptions.cancel(subscriptionToCancelId as string).catch((e) => log(e));
-  }
 
   if (user.subscription?.status !== data.status && ['active', 'canceled'].includes(data.status)) {
     await playfab.trackEvent(user.id, {
@@ -542,8 +544,8 @@ export const upsertSubscription = async (
     }
   }
 
-  await getMultipliersForUser(user.id, true);
   await invalidateSession(user.id);
+  await getMultipliersForUser(user.id, true);
 };
 
 export const toDateTime = (secs: number) => {
