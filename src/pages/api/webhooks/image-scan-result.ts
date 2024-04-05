@@ -23,6 +23,7 @@ import { scanJobsSchema } from '~/server/schema/image.schema';
 import { getTagRules } from '~/server/services/system-cache';
 import { uniqBy } from 'lodash-es';
 import { NsfwLevel } from '~/server/common/enums';
+import { logToAxiom } from '~/server/logging/client';
 
 const REQUIRED_SCANS = [TagSource.WD14, TagSource.Rekognition];
 
@@ -139,21 +140,6 @@ async function handleSuccess({ id, tags: incomingTags = [], source, context }: B
     throw new Error('Image not found');
   }
 
-  // Add to scanJobs and update aiRating
-  let aiRating: NsfwLevel | undefined;
-  let aiModel: string | undefined;
-  console.log('context', context);
-  if (source === TagSource.WD14 && !!context?.movie_rating) {
-    aiRating = NsfwLevel[context.movie_rating as keyof typeof NsfwLevel];
-    aiModel = context.movie_rating_model_id;
-  }
-  await dbWrite.$executeRawUnsafe(`
-    UPDATE "Image" SET
-      "scanJobs" = jsonb_set(COALESCE("scanJobs", '{}'), '{scans}', COALESCE("scanJobs"->'scans', '{}') || '{"${source}": ${Date.now()}}'::jsonb)
-      ${aiRating ? `, "aiNsfwLevel" = ${aiRating}, "aiModel" = '${aiModel}'` : ''}
-    WHERE id = ${id};
-  `);
-
   // Handle underscores coming out of WD14
   if (source === TagSource.WD14) {
     for (const tag of incomingTags) tag.tag = tag.tag.replace(/_/g, ' ');
@@ -260,6 +246,8 @@ async function handleSuccess({ id, tags: incomingTags = [], source, context }: B
           .join(', ')}
         ON CONFLICT ("imageId", "tagId") DO UPDATE SET "confidence" = EXCLUDED."confidence";
       `);
+    } else {
+      logToAxiom({ type: 'image-scan-result', message: 'No tags found', imageId: id, source });
     }
 
     // Mark image as scanned and set the nsfw field based on the presence of automated tags with type 'Moderation'
@@ -340,6 +328,20 @@ async function handleSuccess({ id, tags: incomingTags = [], source, context }: B
         data,
       });
     }
+
+    // Add to scanJobs and update aiRating
+    let aiRating: NsfwLevel | undefined;
+    let aiModel: string | undefined;
+    if (source === TagSource.WD14 && !!context?.movie_rating) {
+      aiRating = NsfwLevel[context.movie_rating as keyof typeof NsfwLevel];
+      aiModel = context.movie_rating_model_id;
+    }
+    await dbWrite.$executeRawUnsafe(`
+      UPDATE "Image" SET
+        "scanJobs" = jsonb_set(COALESCE("scanJobs", '{}'), '{scans}', COALESCE("scanJobs"->'scans', '{}') || '{"${source}": ${Date.now()}}'::jsonb)
+        ${aiRating ? `, "aiNsfwLevel" = ${aiRating}, "aiModel" = '${aiModel}'` : ''}
+      WHERE id = ${id};
+    `);
 
     // Update scannedAt and ingestion if not blocked
     if (data.ingestion !== 'Blocked') {

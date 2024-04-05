@@ -124,6 +124,8 @@ const tagCombos: ComputedTagCombo[] = [
       'male mastuerbation',
       '(kiss|french kiss) + (nudity|partial nudity)',
       'breast grab',
+      'female ejaculation',
+      'pussy juice',
     ],
     sources: [TagSource.WD14],
   },
