@@ -22,7 +22,7 @@ export default function CivitaiVault() {
   const currentUser = useCurrentUser();
   const isMember = currentUser?.isMember;
   const buttonData = {
-    text: isMember ? 'Go to my Vault' : 'Become a member',
+    text: isMember ? 'Go to my Vault' : 'Become a Supporter',
     href: isMember ? '/user/vault' : '/pricing',
   };
   const isMobile = useIsMobile();
@@ -44,7 +44,7 @@ export default function CivitaiVault() {
                 </Text>
               ) : (
                 <Text className={classes.heroText} sx={{ lineHeight: 1.25 }}>
-                  ❤️ Civitai Vault is only available to members
+                  ❤️ Civitai Vault is only available to Supporters
                 </Text>
               )}
             </Stack>
@@ -90,7 +90,7 @@ export default function CivitaiVault() {
                 </Title>
                 <Text>
                   Seamlessly save any model to your vault. Your storage capacity is determined by
-                  your membership tier, ensuring you have ample space for your collection.
+                  your Supporter tier, ensuring you have ample space for your collection.
                 </Text>
               </Stack>
             </Group>
@@ -151,8 +151,8 @@ export default function CivitaiVault() {
               </Text>
             ) : (
               <Text ta="center" size="lg" fs="italic">
-                Civitai Vault is only available to members. Become a member to access Civitai Vault
-                and enjoy a host of other benefits.
+                Civitai Vault is only available to Supporters. Become a Supporter to access Civitai
+                Vault and enjoy a host of other benefits.
               </Text>
             )}
           </Stack>
