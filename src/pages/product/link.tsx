@@ -1,6 +1,5 @@
 import {
   // AspectRatio,
-  Button,
   Container,
   createStyles,
   Flex,
@@ -13,18 +12,40 @@ import {
 // import { YoutubeEmbed } from '~/components/YoutubeEmbed/YoutubeEmbed';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { NextLink } from '@mantine/next';
 import Lottie from 'react-lottie';
 import * as linkAnimation from '~/utils/lotties/link-animation.json';
 import { Meta } from '~/components/Meta/Meta';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { fetchLinkReleases } from '~/utils/fetch-link-releases';
+import { CivitaiLinkDownloadButton } from '~/components/CivitaiLink/CivitaiLinkDownloadButton';
 
-export default function LinkApp() {
+type ServerSideProps = {
+  secondaryText: string;
+  href: string;
+};
+
+export const getServerSideProps = createServerSideProps({
+  resolver: async ({ ctx: req }) => {
+    const userAgent = req.req.headers['user-agent'];
+    const data = await fetchLinkReleases(userAgent || '');
+
+    return {
+      props: {
+        secondaryText: `${data.os} ${data.tag_name}`,
+        href: data.href,
+      },
+    };
+  },
+});
+
+export default function LinkApp(props: ServerSideProps) {
   const { classes } = useStyles();
   const currentUser = useCurrentUser();
   const isMember = currentUser?.isMember;
   const buttonData = {
     text: isMember ? 'Download the Link App' : 'Become a member',
-    href: isMember ? 'https://github.com/civitai/civitai-link-desktop/releases/latest' : '/pricing',
+    secondaryText: props.secondaryText,
+    href: isMember ? props.href : '/pricing',
   };
 
   return (
@@ -48,18 +69,7 @@ export default function LinkApp() {
             ) : null}
           </Stack>
           <Flex align="center">
-            <Button
-              variant="filled"
-              color="blue"
-              size="lg"
-              radius="xl"
-              fullWidth
-              component={NextLink}
-              href={buttonData.href}
-              rel="nofollow noreferrer"
-            >
-              {buttonData.text}
-            </Button>
+            <CivitaiLinkDownloadButton {...buttonData} isMember={isMember} />
           </Flex>
         </Flex>
 
@@ -168,19 +178,8 @@ export default function LinkApp() {
         <YoutubeEmbed videoId="MaSRXvM05x4" />
       </AspectRatio> */}
 
-        <Flex justify="center" w="100%">
-          <Button
-            variant="filled"
-            color="blue"
-            size="lg"
-            radius="xl"
-            my={40}
-            component={NextLink}
-            href={buttonData.href}
-            rel="nofollow noreferrer"
-          >
-            {buttonData.text}
-          </Button>
+        <Flex justify="center" w="100%" my={40}>
+          <CivitaiLinkDownloadButton {...buttonData} isMember={isMember} />
         </Flex>
       </Container>
     </>

@@ -44,6 +44,7 @@ export const imagesQueryParamSchema = z
     hidden: booleanString(),
     followed: booleanString(),
     fromPlatform: booleanString(),
+    notPublished: booleanString(),
   })
   .partial();
 

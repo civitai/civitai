@@ -46,7 +46,10 @@ import { ManageSubscriptionButton } from '~/components/Stripe/ManageSubscription
 import { FeatureAccess } from '~/server/services/feature-flags.service';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import { DowngradeFeedbackModal } from '~/components/Stripe/MembershipChangePrevention';
+import {
+  DowngradeFeedbackModal,
+  MembershipUpgradeModal,
+} from '~/components/Stripe/MembershipChangePrevention';
 import { IconX } from '@tabler/icons-react';
 import { formatDate } from '~/utils/date-helpers';
 import { appliesForFounderDiscount } from '~/components/Stripe/memberships.util';
@@ -90,7 +93,8 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
     hasActiveSubscription &&
     constants.memberships.tierOrder.indexOf(meta.tier) <
       constants.memberships.tierOrder.indexOf(subscriptionMeta.tier ?? '');
-  const { benefits, image } = getPlanDetails(product, features) ?? {};
+  const planDetails = getPlanDetails(product, features) ?? {};
+  const { benefits, image } = planDetails;
   const defaultPriceId = isActivePlan
     ? subscription?.price.id ?? product.defaultPriceId
     : product.defaultPriceId;
@@ -209,16 +213,26 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
                   >
                     Downgrade to {meta?.tier}
                   </Button>
+                ) : isUpgrade ? (
+                  <Button
+                    radius="xl"
+                    {...btnProps}
+                    onClick={() => {
+                      dialogStore.trigger({
+                        component: MembershipUpgradeModal,
+                        props: {
+                          priceId,
+                          meta: planDetails,
+                        },
+                      });
+                    }}
+                  >
+                    Upgrade to {meta?.tier}
+                  </Button>
                 ) : (
                   <SubscribeButton priceId={priceId}>
                     <Button radius="xl" {...btnProps}>
-                      {isActivePlan
-                        ? `You are ${meta?.tier}`
-                        : isUpgrade
-                        ? `Upgrade to ${meta?.tier}`
-                        : isDowngrade
-                        ? `Downgrade to ${meta?.tier}`
-                        : `Subscribe to ${meta?.tier}`}
+                      {isActivePlan ? `You are ${meta?.tier}` : `Subscribe to ${meta?.tier}`}
                     </Button>
                   </SubscribeButton>
                 )}
@@ -360,7 +374,7 @@ export const getPlanDetails: (
   return planMeta;
 };
 
-type PlanMeta = {
+export type PlanMeta = {
   name: string;
   image: string;
   benefits: BenefitItem[];

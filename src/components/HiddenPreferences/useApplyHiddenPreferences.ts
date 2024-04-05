@@ -18,6 +18,7 @@ export function useApplyHiddenPreferences<
   type,
   data,
   showHidden,
+  showImageless,
   disabled,
   isRefetching,
   hiddenImages,
@@ -29,6 +30,7 @@ export function useApplyHiddenPreferences<
   type: T;
   data?: TData;
   showHidden?: boolean;
+  showImageless?: boolean;
   disabled?: boolean;
   isRefetching?: boolean;
   hiddenImages?: number[];
@@ -44,7 +46,7 @@ export function useApplyHiddenPreferences<
 
   const hiddenPreferences = useHiddenPreferencesContext();
 
-  const items = useMemo(
+  const { items, hidden } = useMemo(
     () => {
       const preferences = { ...hiddenPreferences };
       if (hiddenImages)
@@ -63,16 +65,22 @@ export function useApplyHiddenPreferences<
           ...hiddenTags.map((id): [number, boolean] => [id, true]),
         ]);
       }
-      return filterPreferences({
+      const { items, hidden } = filterPreferences({
         type,
         data,
         showHidden,
+        showImageless,
         disabled,
         browsingLevel,
         hiddenPreferences: preferences,
         currentUser,
         allowLowerLevels,
       });
+
+      return {
+        items,
+        hidden,
+      };
     },
     // eslint-disable-next-line
   [
@@ -85,7 +93,9 @@ export function useApplyHiddenPreferences<
 
   useEffect(() => setPrevious(items), [data]);
 
-  const hiddenCount = !!data?.length ? data.length - items.length : 0;
+  // We will not be counting `noImages` because the user can't do anything about these.
+  const hiddenCount =
+    hidden.browsingLevel + hidden.models + hidden.images + hidden.tags + hidden.users;
 
   return {
     loadingPreferences: hiddenPreferences.hiddenLoading,
@@ -100,6 +110,7 @@ type FilterPreferencesProps<TKey, TData> = {
   hiddenPreferences: HiddenPreferencesState;
   browsingLevel: number;
   showHidden?: boolean;
+  showImageless?: boolean;
   disabled?: boolean;
   currentUser: CivitaiSessionUser | null;
   allowLowerLevels?: boolean;
@@ -114,11 +125,26 @@ function filterPreferences<
   hiddenPreferences,
   browsingLevel,
   showHidden,
+  showImageless,
   disabled,
   currentUser,
   allowLowerLevels,
 }: FilterPreferencesProps<TKey, TData>) {
-  if (!data || disabled || hiddenPreferences.hiddenLoading) return [];
+  const hidden = {
+    unprocessed: 0,
+    browsingLevel: 0,
+    models: 0,
+    images: 0,
+    tags: 0,
+    users: 0,
+    noImages: 0,
+  };
+
+  if (!data || disabled || hiddenPreferences.hiddenLoading)
+    return {
+      items: [],
+      hidden,
+    };
 
   const isModerator = !!currentUser?.isModerator;
   const { key, value } = paired<BaseDataTypeMap>(type, data);
@@ -128,15 +154,28 @@ function filterPreferences<
 
   switch (key) {
     case 'models':
-      return value
+      const models = value
         .filter((model) => {
           const userId = model.user.id;
           const isOwner = userId === currentUser?.id;
           if ((isOwner || isModerator) && model.nsfwLevel === 0) return true;
-          if (!Flags.intersects(model.nsfwLevel, browsingLevel)) return false;
-          if (userId && hiddenUsers.get(userId)) return false;
-          if (hiddenModels.get(model.id) && !showHidden) return false;
-          for (const tag of model.tags ?? []) if (hiddenTags.get(tag)) return false;
+          if (!Flags.intersects(model.nsfwLevel, browsingLevel)) {
+            hidden.browsingLevel++;
+            return false;
+          }
+          if (userId && hiddenUsers.get(userId)) {
+            hidden.users++;
+            return false;
+          }
+          if (hiddenModels.get(model.id) && !showHidden) {
+            hidden.models++;
+            return false;
+          }
+          for (const tag of model.tags ?? [])
+            if (hiddenTags.get(tag)) {
+              hidden.tags++;
+              return false;
+            }
           return true;
         })
         .map(({ images, ...x }) => {
@@ -160,7 +199,12 @@ function filterPreferences<
                 return aIntersects === bIntersects ? 0 : aIntersects ? -1 : 1;
               })
             : filteredImages;
-          return sortedImages.length
+
+          if (sortedImages.length === 0) {
+            hidden.noImages++;
+          }
+
+          return sortedImages.length || showImageless
             ? {
                 ...x,
                 images: filteredImages,
@@ -168,8 +212,10 @@ function filterPreferences<
             : null;
         })
         .filter(isDefined);
+
+      return { items: models, hidden };
     case 'images':
-      return value.filter((image) => {
+      const images = value.filter((image) => {
         const userId = image.userId ?? image.user?.id;
         const isOwner = userId && userId === currentUser?.id;
         if ((isOwner || isModerator) && image.nsfwLevel === 0) return true;
@@ -177,44 +223,97 @@ function filterPreferences<
           allowLowerLevels
             ? image.nsfwLevel > maxBrowsingLevel
             : !Flags.intersects(image.nsfwLevel, browsingLevel)
-        )
+        ) {
+          hidden.browsingLevel++;
           return false;
-        if (userId && hiddenUsers.get(userId)) return false;
-        if (hiddenImages.get(image.id) && !showHidden) return false;
-        for (const tag of image.tagIds ?? []) if (hiddenTags.get(tag)) return false;
+        }
+        if (userId && hiddenUsers.get(userId)) {
+          hidden.users++;
+          return false;
+        }
+        if (hiddenImages.get(image.id) && !showHidden) {
+          hidden.images++;
+          return false;
+        }
+        for (const tag of image.tagIds ?? [])
+          if (hiddenTags.get(tag)) {
+            hidden.tags++;
+            return false;
+          }
         return true;
       });
+
+      return { hidden, items: images };
     case 'articles':
-      return value.filter((article) => {
+      const articles = value.filter((article) => {
         const userId = article.user.id;
         const isOwner = userId === currentUser?.id;
         if ((isOwner || isModerator) && article.nsfwLevel === 0) return true;
-        if (!Flags.intersects(article.nsfwLevel, browsingLevel)) return false;
-        if (article.user && hiddenUsers.get(article.user.id)) return false;
-        for (const tag of article.tags ?? []) if (hiddenTags.get(tag.id)) return false;
+        if (!Flags.intersects(article.nsfwLevel, browsingLevel)) {
+          hidden.browsingLevel++;
+          return false;
+        }
+        if (article.user && hiddenUsers.get(article.user.id)) {
+          hidden.users++;
+          return false;
+        }
+        for (const tag of article.tags ?? [])
+          if (hiddenTags.get(tag.id)) {
+            hidden.tags++;
+            return false;
+          }
         if (article.coverImage) {
-          if (hiddenImages.get(article.coverImage.id)) return false;
-          for (const tag of article.coverImage.tags) if (hiddenTags.get(tag)) return false;
+          if (hiddenImages.get(article.coverImage.id)) {
+            hidden.images++;
+            return false;
+          }
+          for (const tag of article.coverImage.tags)
+            if (hiddenTags.get(tag)) {
+              hidden.tags++;
+              return false;
+            }
         }
         return true;
       });
+
+      return { hidden, items: articles };
     case 'users':
-      return value.filter((user) => {
+      const users = value.filter((user) => {
         if (user.id === currentUser?.id) return true;
-        if (hiddenUsers.get(user.id)) return false;
+        if (hiddenUsers.get(user.id)) {
+          hidden.users++;
+          return false;
+        }
         return true;
       });
+
+      return {
+        hidden,
+        items: users,
+      };
     case 'collections':
-      return value
+      const collections = value
         .filter((collection) => {
           const userId = collection.userId ?? collection.user?.id;
           const isOwner = userId && userId === currentUser?.id;
           if ((isOwner || isModerator) && collection.nsfwLevel === 0) return true;
-          if (!Flags.intersects(collection.nsfwLevel, browsingLevel)) return false;
-          if (userId && hiddenUsers.get(userId)) return false;
+          if (!Flags.intersects(collection.nsfwLevel, browsingLevel)) {
+            hidden.browsingLevel++;
+            return false;
+          }
+          if (userId && hiddenUsers.get(userId)) {
+            hidden.users++;
+            return false;
+          }
           if (collection.image) {
-            if (hiddenImages.get(collection.image.id)) return false;
-            for (const tag of collection.image.tagIds ?? []) if (hiddenTags.get(tag)) return false;
+            if (hiddenImages.get(collection.image.id)) {
+              hidden.images++;
+              return false;
+            }
+            for (const tag of collection.image.tagIds ?? [])
+              if (hiddenTags.get(tag)) {
+                hidden.images++;
+              }
           }
           return true;
         })
@@ -229,7 +328,12 @@ function filterPreferences<
               for (const tag of i.tagIds ?? []) if (hiddenTags.get(tag)) return false;
               return true;
             }) ?? [];
-          return filteredImages.length
+
+          if (filteredImages.length === 0) {
+            hidden.noImages++;
+          }
+          
+          return filteredImages.length || showImageless
             ? {
                 ...x,
                 images: filteredImages,
@@ -237,16 +341,32 @@ function filterPreferences<
             : null;
         })
         .filter(isDefined);
+
+      return { items: collections, hidden };
     case 'bounties':
-      return value
+      const bounties = value
         .filter((bounty) => {
           const userId = bounty.user.id;
           const isOwner = userId === currentUser?.id;
           if ((isOwner || isModerator) && bounty.nsfwLevel === 0) return true;
-          if (!Flags.intersects(bounty.nsfwLevel, browsingLevel)) return false;
-          if (hiddenUsers.get(bounty.user.id)) return false;
-          for (const image of bounty.images ?? []) if (hiddenImages.get(image.id)) return false;
-          for (const tag of bounty.tags ?? []) if (hiddenTags.get(tag)) return false;
+          if (!Flags.intersects(bounty.nsfwLevel, browsingLevel)) {
+            hidden.browsingLevel++;
+            return false;
+          }
+          if (hiddenUsers.get(bounty.user.id)) {
+            hidden.users++;
+            return false;
+          }
+          for (const image of bounty.images ?? [])
+            if (hiddenImages.get(image.id)) {
+              hidden.images++;
+              return false;
+            }
+          for (const tag of bounty.tags ?? [])
+            if (hiddenTags.get(tag)) {
+              hidden.tags++;
+              return false;
+            }
           return true;
         })
         .map(({ images, ...x }) => {
@@ -259,6 +379,11 @@ function filterPreferences<
             for (const tag of i.tagIds ?? []) if (hiddenTags.get(tag)) return false;
             return true;
           });
+
+          if (filteredImages?.length === 0) {
+            hidden.noImages++;
+          }
+
           return filteredImages.length
             ? {
                 ...x,
@@ -267,14 +392,22 @@ function filterPreferences<
             : null;
         })
         .filter(isDefined);
+
+      return { items: bounties, hidden };
     case 'posts':
-      return value
+      const posts = value
         .filter((post) => {
           const userId = post.userId ?? post.user?.id;
           const isOwner = userId && userId === currentUser?.id;
           if ((isOwner || isModerator) && post.nsfwLevel === 0) return true;
-          if (!Flags.intersects(post.nsfwLevel, browsingLevel)) return false;
-          if (userId && hiddenUsers.get(userId)) return false;
+          if (!Flags.intersects(post.nsfwLevel, browsingLevel)) {
+            hidden.browsingLevel++;
+            return false;
+          }
+          if (userId && hiddenUsers.get(userId)) {
+            hidden.users++;
+            return false;
+          }
           return true;
         })
         .map((post) => {
@@ -288,20 +421,43 @@ function filterPreferences<
             if (hiddenImages.get(image.id)) return false;
             for (const tag of image.tagIds ?? []) if (hiddenTags.get(tag)) return false;
             return true;
-          });
-          return filteredImages.length ? { ...post, images: filteredImages } : null;
+          }); 
+
+          if (filteredImages.length === 0) {
+            hidden.noImages++;
+          }
+
+          return filteredImages.length || showImageless
+            ? { ...post, images: filteredImages }
+            : null;
         })
         .filter(isDefined);
+
+      return { items: posts, hidden };
     case 'tags': {
       const moderatedTagIds = moderatedTags
         .filter((x) => !!x.nsfwLevel && Flags.intersects(x.nsfwLevel, browsingLevel))
         .map((x) => x.id);
-      return value.filter((tag) => {
-        if (hiddenTags.get(tag.id)) return false;
-        if (!!tag.nsfwLevel && tag.nsfwLevel > NsfwLevel.PG13 && !moderatedTagIds.includes(tag.id))
+      const tags = value.filter((tag) => {
+        if (hiddenTags.get(tag.id)) {
+          hidden.tags++;
           return false;
+        }
+        if (
+          !!tag.nsfwLevel &&
+          tag.nsfwLevel > NsfwLevel.PG13 &&
+          !moderatedTagIds.includes(tag.id)
+        ) {
+          hidden.browsingLevel++;
+          return false;
+        }
         return true;
       });
+
+      return {
+        items: tags,
+        hidden,
+      };
     }
     default:
       throw new Error('unhandled hidden user preferences filter type');

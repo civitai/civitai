@@ -1,3 +1,4 @@
+import dayjs from 'dayjs';
 import { createBuzzEvent } from '../base.reward';
 
 export const dailyBoostReward = createBuzzEvent({
@@ -8,9 +9,10 @@ export const dailyBoostReward = createBuzzEvent({
   cap: 50,
   onDemand: true,
   getKey: async (input: DailyBoostInput) => {
+    const date = dayjs().startOf('day').format('YYYY-MM-DD');
     return {
       toUserId: input.userId,
-      forId: input.userId,
+      forId: date,
       byUserId: input.userId,
       type: `dailyBoost`,
     };

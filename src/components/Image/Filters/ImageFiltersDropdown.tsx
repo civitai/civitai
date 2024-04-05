@@ -71,6 +71,7 @@ export function ImageFiltersDropdown({
   const mobile = useIsMobile();
   const isClient = useIsClient();
   const currentUser = useCurrentUser();
+  const isModerator = currentUser?.isModerator;
 
   const [opened, setOpened] = useState(false);
 
@@ -87,6 +88,7 @@ export function ImageFiltersDropdown({
     (mergedFilters.hidden ? 1 : 0) +
     (mergedFilters.followed ? 1 : 0) +
     (mergedFilters.fromPlatform ? 1 : 0) +
+    (mergedFilters.notPublished ? 1 : 0) +
     (mergedFilters.period && mergedFilters.period !== MetricTimeframe.AllTime ? 1 : 0);
 
   const clearFilters = useCallback(() => {
@@ -96,6 +98,7 @@ export function ImageFiltersDropdown({
       hidden: false,
       followed: false,
       fromPlatform: false,
+      notPublished: false,
       period: MetricTimeframe.AllTime,
     };
 
@@ -213,6 +216,19 @@ export function ImageFiltersDropdown({
           >
             Made On-site
           </Chip>
+          {isModerator && (
+            <Chip
+              {...chipProps}
+              checked={mergedFilters.notPublished}
+              onChange={(checked) =>
+                onChange
+                  ? onChange({ notPublished: checked })
+                  : setFilters({ notPublished: checked })
+              }
+            >
+              Not Published
+            </Chip>
+          )}
         </Group>
       </Stack>
       {filterLength > 0 && (

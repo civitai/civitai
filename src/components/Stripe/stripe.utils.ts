@@ -2,6 +2,7 @@ import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';
 import { PaymentMethodDeleteInput } from '~/server/schema/stripe.schema';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export const useMutateStripe = () => {
   const queryUtils = trpc.useContext();
@@ -55,4 +56,17 @@ export const shortenPlanInterval = (interval?: string | null) => {
   if (interval === 'month') return 'mo';
 
   return interval ?? '';
+};
+
+export const useUserStripeConnect = () => {
+  const features = useFeatureFlags();
+  const currentUser = useCurrentUser();
+  const { data: userStripeConnect, isLoading } = trpc.userStripeConnect.get.useQuery(undefined, {
+    enabled: !!features.creatorsProgram && !!currentUser,
+  });
+
+  return {
+    userStripeConnect,
+    isLoading,
+  };
 };
