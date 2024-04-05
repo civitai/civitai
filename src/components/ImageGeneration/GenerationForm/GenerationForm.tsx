@@ -89,6 +89,7 @@ import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { DailyBoostRewardClaim } from '~/components/Buzz/Rewards/DailyBoostRewardClaim';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import InputQuantity from '~/components/ImageGeneration/GenerationForm/InputQuantity';
 
 const BUZZ_CHARGE_NOTICE_END = new Date('2024-04-14T00:00:00Z');
 
@@ -789,13 +790,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                     >
                       Quantity
                     </Text>
-                    <InputNumber
-                      name="quantity"
-                      min={!!draft ? 4 : 1}
-                      max={limits.quantity}
-                      step={!!draft ? 4 : 1}
-                      className={classes.generateButtonQuantityInput}
-                    />
+                    <InputQuantity name="quantity" />
                   </Stack>
                 </Card>
                 {!status.charge ? (
