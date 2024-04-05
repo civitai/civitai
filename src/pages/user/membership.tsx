@@ -14,6 +14,7 @@ import {
   ActionIcon,
   Box,
   Alert,
+  Anchor,
 } from '@mantine/core';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
@@ -26,7 +27,7 @@ import { trpc } from '~/utils/trpc';
 import { getPlanDetails } from '~/components/Stripe/PlanCard';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { PlanBenefitList } from '~/components/Stripe/PlanBenefitList';
-import { IconDotsVertical, IconRotateClockwise } from '@tabler/icons-react';
+import { IconDotsVertical, IconInfoTriangleFilled, IconRotateClockwise } from '@tabler/icons-react';
 import { ProductMetadata } from '~/server/schema/stripe.schema';
 import { constants } from '~/server/common/constants';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -39,6 +40,7 @@ import { userTierSchema } from '~/server/schema/user.schema';
 import { z } from 'zod';
 import { capitalize } from 'lodash';
 import { booleanString } from '~/utils/zod-helpers';
+import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -81,7 +83,9 @@ const querySchema = z.object({
 
 export default function UserMembership() {
   const { classes, theme } = useStyles();
-  const { subscription, subscriptionLoading } = useActiveSubscription();
+  const { subscription, subscriptionLoading } = useActiveSubscription({
+    checkWhenInBadState: true,
+  });
   const features = useFeatureFlags();
   const canUpgrade = useCanUpgrade();
   const router = useRouter();
@@ -117,6 +121,27 @@ export default function UserMembership() {
                   {capitalize(downgradedTier)} tier. It may take a few seconds for your new plan to
                   take effect. You may refresh the page to see the changes.
                 </Alert>
+              )}
+              {subscription?.isBadState && (
+                <AlertWithIcon
+                  color="red"
+                  iconColor="red"
+                  icon={<IconInfoTriangleFilled size={20} strokeWidth={2.5} />}
+                  iconSize={28}
+                  py={11}
+                >
+                  <Stack spacing={0}>
+                    <Text lh={1.2}>
+                      Uh oh! It looks like there was an issue with your membership. You can update
+                      your payment method or renew your membership now by clicking{' '}
+                      <SubscribeButton priceId={subscription.price.id}>
+                        <Anchor component="button" type="button">
+                          here
+                        </Anchor>
+                      </SubscribeButton>
+                    </Text>
+                  </Stack>
+                </AlertWithIcon>
               )}
               <Paper withBorder className={classes.card}>
                 <Stack>
