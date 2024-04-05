@@ -851,73 +851,75 @@ export function AppHeader({
                 Sign In
               </Button>
             ) : (
-              <Divider orientation="vertical" />
-            )}
-            <Menu
-              width={260}
-              opened={userMenuOpened}
-              position="bottom-end"
-              transition="pop-top-right"
-              zIndex={constants.imageGeneration.drawerZIndex + 1}
-              // radius="lg"
-              onClose={() => setUserMenuOpened(false)}
-              withinPortal
-            >
-              <Menu.Target>
-                <UnstyledButton
-                  className={cx(classes.user, { [classes.userActive]: userMenuOpened })}
-                  onClick={() => setUserMenuOpened(true)}
+              <>
+                <Divider orientation="vertical" />
+                <Menu
+                  width={260}
+                  opened={userMenuOpened}
+                  position="bottom-end"
+                  transition="pop-top-right"
+                  zIndex={constants.imageGeneration.drawerZIndex + 1}
+                  // radius="lg"
+                  onClose={() => setUserMenuOpened(false)}
+                  withinPortal
                 >
-                  <Group spacing={8} noWrap>
-                    <UserAvatar user={currentUser} size="md" />
-                    {features.buzz && currentUser && <UserBuzz pr="sm" />}
-                  </Group>
-                </UnstyledButton>
-              </Menu.Target>
-              <Menu.Dropdown>
-                <ScrollArea.Autosize
-                  maxHeight="calc(90vh - var(--mantine-header-height))"
-                  styles={{ root: { margin: -4 }, viewport: { padding: 4 } }}
-                  offsetScrollbars
-                >
-                  <BuzzMenuItem withAbbreviation={false} />
-                  {userMenuItems}
-                  <Divider my={4} />
-                  <Menu.Item
-                    closeMenuOnClick={false}
-                    icon={<IconPalette stroke={1.5} />}
-                    onClick={() => toggleColorScheme()}
-                  >
-                    <Group align="center" position="apart">
-                      Dark mode
-                      <Switch
-                        checked={colorScheme === 'dark'}
-                        sx={{ display: 'flex', alignItems: 'center' }}
-                        onClick={(e) => e.stopPropagation()}
-                      />
-                    </Group>
-                  </Menu.Item>
+                  <Menu.Target>
+                    <UnstyledButton
+                      className={cx(classes.user, { [classes.userActive]: userMenuOpened })}
+                      onClick={() => setUserMenuOpened(true)}
+                    >
+                      <Group spacing={8} noWrap>
+                        <UserAvatar user={currentUser} size="md" />
+                        {features.buzz && currentUser && <UserBuzz pr="sm" />}
+                      </Group>
+                    </UnstyledButton>
+                  </Menu.Target>
+                  <Menu.Dropdown>
+                    <ScrollArea.Autosize
+                      maxHeight="calc(90vh - var(--mantine-header-height))"
+                      styles={{ root: { margin: -4 }, viewport: { padding: 4 } }}
+                      offsetScrollbars
+                    >
+                      <BuzzMenuItem withAbbreviation={false} />
+                      {userMenuItems}
+                      <Divider my={4} />
+                      <Menu.Item
+                        closeMenuOnClick={false}
+                        icon={<IconPalette stroke={1.5} />}
+                        onClick={() => toggleColorScheme()}
+                      >
+                        <Group align="center" position="apart">
+                          Dark mode
+                          <Switch
+                            checked={colorScheme === 'dark'}
+                            sx={{ display: 'flex', alignItems: 'center' }}
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                        </Group>
+                      </Menu.Item>
 
-                  {currentUser ? (
-                    <>
-                      <Menu.Item
-                        icon={<IconSettings stroke={1.5} />}
-                        component={NextLink}
-                        href="/user/account"
-                      >
-                        Account settings
-                      </Menu.Item>
-                      <Menu.Item
-                        icon={<IconLogout color={theme.colors.red[9]} stroke={1.5} />}
-                        onClick={handleSignOut}
-                      >
-                        Logout
-                      </Menu.Item>
-                    </>
-                  ) : null}
-                </ScrollArea.Autosize>
-              </Menu.Dropdown>
-            </Menu>
+                      {currentUser ? (
+                        <>
+                          <Menu.Item
+                            icon={<IconSettings stroke={1.5} />}
+                            component={NextLink}
+                            href="/user/account"
+                          >
+                            Account settings
+                          </Menu.Item>
+                          <Menu.Item
+                            icon={<IconLogout color={theme.colors.red[9]} stroke={1.5} />}
+                            onClick={handleSignOut}
+                          >
+                            Logout
+                          </Menu.Item>
+                        </>
+                      ) : null}
+                    </ScrollArea.Autosize>
+                  </Menu.Dropdown>
+                </Menu>
+              </>
+            )}
           </Group>
         </Grid.Col>
         <Grid.Col span="auto" className={classes.burger}>

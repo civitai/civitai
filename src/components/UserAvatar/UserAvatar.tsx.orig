@@ -21,12 +21,17 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { getInitials } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+<<<<<<< Updated upstream
 import { EdgeMedia } from '../EdgeMedia/EdgeMedia';
 import { MediaHash } from '../ImageHash/ImageHash';
 import { IconEye, IconEyeOff, IconUser } from '@tabler/icons-react';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
+=======
+import { IconUser } from '@tabler/icons-react';
 import { UserAvatarProfilePicture } from '~/components/UserAvatar/UserAvatarProfilePicture';
 import { BadgeCosmetic } from '~/server/selectors/cosmetic.selector';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+>>>>>>> Stashed changes
 
 const mapAvatarTextSize: Record<MantineSize, { textSize: MantineSize; subTextSize: MantineSize }> =
   {

@@ -10,7 +10,7 @@ export const simpleCosmeticSelect = Prisma.validator<Prisma.CosmeticSelect>()({
   data: true,
 });
 
-const simpleUser = Prisma.validator<Prisma.CosmeticArgs>()({
+const simpleUser = Prisma.validator<Prisma.CosmeticDefaultArgs>()({
   select: simpleCosmeticSelect,
 });
 

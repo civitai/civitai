@@ -63,11 +63,14 @@ import { ImageMetaProps } from '~/server/schema/image.schema';
 import { ToggleSearchableMenuItem } from '../MenuItems/ToggleSearchableMenuItem';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
+<<<<<<< Updated upstream
 import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
+=======
 import { IconNose } from '~/components/SVG/IconNose';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import { NextLink } from '@mantine/next';
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
+>>>>>>> Stashed changes
 
 const IMAGE_CARD_WIDTH = 450;
 

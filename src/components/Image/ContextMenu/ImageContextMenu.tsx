@@ -45,6 +45,7 @@ import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import React, { createContext, useContext } from 'react';
 import { trpc } from '~/utils/trpc';
 import { imageStore, useImageStore } from '~/store/image.store';
+import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
 
 type ImageProps = {
   id: number;
@@ -168,7 +169,12 @@ function ImageMenuItems(
     <>
       {additionalMenuItemsBefore?.(image)}
       {/* GENERAL */}
-      {isOwner && <AddToShowcaseMenuItem entityType="Image" entityId={imageId} />}
+      {isOwner && (
+        <>
+          <AddToShowcaseMenuItem entityType="Image" entityId={imageId} />
+          <AddArtFrameMenuItem entity={image} entityType="media" />
+        </>
+      )}
       <LoginRedirect reason="add-to-collection">
         <Menu.Item icon={<IconBookmark size={14} stroke={1.5} />} onClick={handleSaveClick}>
           Save {context} to collection
