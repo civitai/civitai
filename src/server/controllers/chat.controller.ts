@@ -1,11 +1,15 @@
 import { ChatMemberStatus, ChatMessageType, Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import dayjs from 'dayjs';
+import { find as findLinks } from 'linkifyjs';
 import { uniq } from 'lodash-es';
+import { unfurl } from 'unfurl.js';
+import { airRegex, linkifyOptions } from '~/components/Chat/ExistingChat';
 import { env } from '~/env/server.mjs';
 import { SignalMessages } from '~/server/common/enums';
 import { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
 import {
   AddUsersInput,
   CreateChatInput,
@@ -74,7 +78,10 @@ const latestChat = {
     select: {
       createdAt: true,
       content: true,
-      // contentType: true,
+      contentType: true,
+    },
+    where: {
+      contentType: { not: ChatMessageType.Embed },
     },
   },
 };
@@ -677,6 +684,7 @@ export const getMessageByIdHandler = async ({
       where: { id: input.messageId },
       select: {
         content: true,
+        contentType: true,
         user: {
           select: {
             id: true,
@@ -711,6 +719,7 @@ export const getMessageByIdHandler = async ({
 
     return {
       content: msg.content,
+      contentType: msg.contentType,
       user: msg.user,
     };
   } catch (error) {
@@ -795,6 +804,84 @@ export const createMessageFn = async ({
       body: JSON.stringify(resp as ChatAllMessages[number]),
     }
   ).catch();
+
+  if (userId !== -1) {
+    const links = findLinks(input.content, linkifyOptions);
+    for (let { href } of links) {
+      if (!href) continue;
+      try {
+        const airMatch = href.match(airRegex);
+        if (airMatch && airMatch.groups) {
+          const { mId, mvId } = airMatch.groups;
+          href = `${env.NEXTAUTH_URL}/models/${mId}?modelVersionId=${mvId}`;
+        }
+
+        if (/^(?:https?:\/\/)?image./.test(href)) {
+          dbWrite.chatMessage
+            .create({
+              data: {
+                chatId: input.chatId,
+                content: JSON.stringify({ image: href }),
+                contentType: ChatMessageType.Embed,
+                userId: -1,
+                referenceMessageId: resp.id,
+              },
+            })
+            .then((embedResp) => {
+              fetch(
+                `${env.SIGNALS_ENDPOINT}/groups/chat:${input.chatId}/signals/${SignalMessages.ChatNewMessage}`,
+                {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(embedResp as ChatAllMessages[number]),
+                }
+              ).catch();
+            });
+        } else {
+          unfurl(href)
+            .then(async (hrefData) => {
+              const embedData = {
+                title: hrefData.title ?? null,
+                description: hrefData.description ?? null,
+                image: hrefData.open_graph?.images?.[0]?.url ?? null,
+              };
+              const embedMsg = JSON.stringify(embedData);
+
+              const embedResp = await dbWrite.chatMessage.create({
+                data: {
+                  chatId: input.chatId,
+                  content: embedMsg,
+                  contentType: ChatMessageType.Embed,
+                  userId: -1,
+                  referenceMessageId: resp.id,
+                },
+              });
+
+              fetch(
+                `${env.SIGNALS_ENDPOINT}/groups/chat:${input.chatId}/signals/${SignalMessages.ChatNewMessage}`,
+                {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(embedResp as ChatAllMessages[number]),
+                }
+              ).catch();
+            })
+            .catch();
+        }
+      } catch (e: unknown) {
+        logToAxiom(
+          {
+            name: (e as Error)?.name,
+            message: (e as Error)?.message,
+            stack: (e as Error)?.stack,
+            path: 'chat.createChat',
+            user: userId,
+          },
+          'civitai-prod'
+        ).catch();
+      }
+    }
+  }
 
   return resp;
 };

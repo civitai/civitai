@@ -48,7 +48,7 @@ import { trpc } from '~/utils/trpc';
 
 const PGroup = createPolymorphicComponent<'div', GroupProps>(Group);
 
-const useStyles = createStyles((theme) => ({
+export const chatListStyles = createStyles((theme) => ({
   selectChat: {
     cursor: 'pointer',
     borderRadius: theme.spacing.xs,
@@ -77,7 +77,7 @@ type StatusValues = (typeof statusMap)[StatusKeys];
 export function ChatList() {
   const { state, setState } = useChatContext();
   const currentUser = useCurrentUser();
-  const { classes, cx } = useStyles();
+  const { classes, cx } = chatListStyles();
   const queryUtils = trpc.useUtils();
   const [searchInput, setSearchInput] = useState<string>('');
   const [activeTab, setActiveTab] = useState<StatusValues>('Active');
