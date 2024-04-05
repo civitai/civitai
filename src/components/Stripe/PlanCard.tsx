@@ -302,8 +302,8 @@ export const getPlanDetails: (
               ) : (
                 <Text>
                   <Text span color="yellow.7">
-                    Rewards give you {(((metadata?.rewardsMultiplier ?? 1) - 1) * 100).toFixed(0)}%
-                    more Buzz!
+                    Rewards give {(((metadata?.rewardsMultiplier ?? 1) - 1) * 100).toFixed(0)}% more
+                    Buzz!
                   </Text>
                 </Text>
               ),
@@ -352,12 +352,12 @@ export const getPlanDetails: (
               <Text lh={1} weight={700} component="span">
                 Animated
               </Text>{' '}
-              Member Badge each month
+              Supporter Badge each month
             </Text>
           ) : metadata.badgeType === 'static' ? (
-            <Text lh={1}>Unique Member Badge each month</Text>
+            <Text lh={1}>Unique Supporter Badge each month</Text>
           ) : (
-            <Text lh={1}>No Unique Member Badge each month</Text>
+            <Text lh={1}>No Unique Supporter Badge each month</Text>
           ),
         icon:
           metadata.badgeType === 'animated' ? (

@@ -47,6 +47,7 @@ import { formatDate } from '~/utils/date-helpers';
 import { ProductMetadata } from '~/server/schema/stripe.schema';
 import Subscribe from '~/pages/subscribe/[plan]';
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
+import { Meta } from '~/components/Meta/Meta';
 
 export default function Pricing() {
   const router = useRouter();
@@ -77,6 +78,10 @@ export default function Pricing() {
 
   return (
     <>
+      <Meta
+        title="Memberships | Civitai"
+        description="As the leading generative AI community, we're adding new features every week. Help us keep the community thriving by becoming a Supporter and get exclusive perks."
+      />
       <Container size="sm" mb="lg">
         <Stack>
           {!!redirectReason && (
@@ -93,7 +98,7 @@ export default function Pricing() {
             Memberships
           </Title>
           <Text align="center" className={classes.introText} sx={{ lineHeight: 1.25 }}>
-            {`As the leading model sharing service, we're adding new features every week. Help us keep the community thriving by becoming a member and get exclusive perks.`}
+            {`As the leading generative AI community, we're adding new features every week. Help us keep the community thriving by becoming a Supporter and get exclusive perks.`}
           </Text>
         </Stack>
       </Container>

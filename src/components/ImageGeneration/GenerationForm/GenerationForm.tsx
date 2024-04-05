@@ -774,7 +774,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                   <Text size="xs" lh={1.2} color="yellow">
                     {`Want to generate more at once? `}
                     <Text lh={1.2} component={NextLink} href="/pricing" td="underline">
-                      Become a member!
+                      Become a Supporter!
                     </Text>
                   </Text>
                 </Group>
@@ -840,7 +840,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                   <Text component="span">
                     Want more?{' '}
                     <Text component={NextLink} href="/pricing" variant="link" td="underline">
-                      Become a Member
+                      Become a Supporter
                     </Text>
                     😍
                   </Text>

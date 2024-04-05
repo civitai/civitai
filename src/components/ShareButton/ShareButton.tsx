@@ -1,17 +1,18 @@
-import { Group, Popover, Stack, Text, Button, ThemeIcon } from '@mantine/core';
-import React from 'react';
-import { QS } from '~/utils/qs';
-import { SocialIconReddit } from '~/components/ShareButton/Icons/SocialIconReddit';
-import { SocialIconCopy } from '~/components/ShareButton/Icons/SocialIconCopy';
+import { Button, Popover, SimpleGrid, Stack, Text, ThemeIcon } from '@mantine/core';
 import { useClipboard } from '@mantine/hooks';
-import { SocialIconOther } from '~/components/ShareButton/Icons/SocialIconOther';
-import { SocialIconCollect } from '~/components/ShareButton/Icons/SocialIconCollect';
-import { CollectItemInput } from '~/server/schema/collection.schema';
-import { openContext } from '~/providers/CustomModalsProvider';
-import { useLoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { useTrackEvent } from '../TrackView/track.utils';
 import { IconBrandX } from '@tabler/icons-react';
+import React from 'react';
+import { useLoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
+import { SocialIconChat } from '~/components/ShareButton/Icons/SocialIconChat';
+import { SocialIconCollect } from '~/components/ShareButton/Icons/SocialIconCollect';
+import { SocialIconCopy } from '~/components/ShareButton/Icons/SocialIconCopy';
+import { SocialIconOther } from '~/components/ShareButton/Icons/SocialIconOther';
+import { SocialIconReddit } from '~/components/ShareButton/Icons/SocialIconReddit';
+import { openContext } from '~/providers/CustomModalsProvider';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { CollectItemInput } from '~/server/schema/collection.schema';
+import { QS } from '~/utils/qs';
+import { useTrackEvent } from '../TrackView/track.utils';
 
 export function ShareButton({
   children,
@@ -79,6 +80,17 @@ export function ShareButton({
     },
   ];
 
+  if (features.chat) {
+    shareLinks.unshift({
+      type: 'Send Chat',
+      onClick: () =>
+        requireLogin(() => {
+          openContext('chatShareModal', { message: url });
+        }),
+      render: <SocialIconChat />,
+    });
+  }
+
   if (collect && features.collections) {
     shareLinks.unshift({
       type: 'Save',
@@ -88,12 +100,12 @@ export function ShareButton({
   }
 
   return (
-    <Popover withArrow shadow="md" position="top-end" width={360}>
+    <Popover withArrow shadow="md" position="top-end" width={320}>
       <Popover.Target>{children}</Popover.Target>
       <Popover.Dropdown>
         <Stack>
           <Text weight={500}>Share</Text>
-          <Group spacing="xs">
+          <SimpleGrid cols={3}>
             {shareLinks.map(({ type, onClick, render }) => (
               <Button
                 key={type}
@@ -109,7 +121,7 @@ export function ShareButton({
                 </Stack>
               </Button>
             ))}
-          </Group>
+          </SimpleGrid>
         </Stack>
       </Popover.Dropdown>
     </Popover>

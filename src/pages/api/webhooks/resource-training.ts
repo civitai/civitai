@@ -44,7 +44,7 @@ const context = z.object({
 
 const schema = z.object({
   jobId: z.string(),
-  type: z.string(),
+  type: z.string(), // JobStatus
   dateTime: z.string(),
   // serviceProvider: z.string().nullish(),
   workerId: z.string().nullish(),
@@ -134,6 +134,7 @@ export default WebhookEndpoint(async (req, res) => {
         await updateRecords(
           { ...(data.context ?? {}), modelFileId: data.jobProperties.modelFileId },
           status,
+          data.type,
           data.jobId
         );
       } catch (e: unknown) {
@@ -163,6 +164,7 @@ export default WebhookEndpoint(async (req, res) => {
 async function updateRecords(
   { modelFileId, message, epochs, start_time, end_time }: ContextProps & { modelFileId: number },
   status: TrainingStatus,
+  orchStatus: string, // JobStatus
   jobId: string
 ) {
   const modelFile = await dbWrite.modelFile.findFirst({
@@ -188,7 +190,7 @@ async function updateRecords(
   }
 
   let attempts = trainingResults.attempts || 0;
-  if (status === TrainingStatus.Failed) {
+  if (['Rejected', 'Failed'].includes(orchStatus)) {
     attempts += 1;
   }
 

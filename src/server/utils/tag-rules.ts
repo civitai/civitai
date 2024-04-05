@@ -86,6 +86,8 @@ const tagCombos: ComputedTagCombo[] = [
       'no bra + (wet clothes|see-through) + female',
       'naked towel + wet',
       'see-through + no panties',
+      'pubic hair',
+      'exposed buttocks or anus + from behind',
       // 'bulge',
       // 'cameltoe',
     ],
@@ -236,6 +238,11 @@ const tagCombos: ComputedTagCombo[] = [
     tag: 'male swimwear or underwear',
     qualifiers: ['male + underwear'],
     sources: [TagSource.Rekognition],
+  },
+  {
+    tag: 'partial nudity',
+    qualifiers: ['!nudity', 'exposed buttocks or anus + from behind'],
+    sources: [TagSource.WD14, TagSource.Rekognition],
   },
 ];
 

@@ -43,7 +43,7 @@ export default function LinkApp(props: ServerSideProps) {
   const currentUser = useCurrentUser();
   const isMember = currentUser?.isMember;
   const buttonData = {
-    text: isMember ? 'Download the Link App' : 'Become a member',
+    text: isMember ? 'Download the Link App' : 'Become a Supporter',
     secondaryText: props.secondaryText,
     href: isMember ? props.href : '/pricing',
   };
@@ -65,7 +65,9 @@ export default function LinkApp(props: ServerSideProps) {
               Civitai Link App
             </Title>
             {!isMember ? (
-              <Text className={classes.heroText}>❤️ Civitai Link is only available to members</Text>
+              <Text className={classes.heroText}>
+                ❤️ Civitai Link is only available to Supporters
+              </Text>
             ) : null}
           </Stack>
           <Flex align="center">
