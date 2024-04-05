@@ -597,6 +597,9 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
     subscription && ['active', 'trialing'].includes(subscription.status)
       ? (subscription.product.metadata as any)[env.STRIPE_METADATA_KEY]
       : undefined;
+  const memberInBadState =
+    subscription &&
+    ['incomplete', 'incomplete_expired', 'past_due', 'unpaid'].includes(subscription.status);
 
   const permissions: string[] = [];
   const systemPermissions = await getSystemPermissions();
@@ -613,6 +616,7 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
     image: profilePicture?.url ?? rest.image,
     tier,
     permissions,
+    memberInBadState,
     // feedbackToken,
   };
 };

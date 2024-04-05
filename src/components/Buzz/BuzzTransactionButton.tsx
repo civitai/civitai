@@ -25,6 +25,7 @@ type Props = ButtonProps & {
   size?: MantineSize;
   performTransactionOnPurchase?: boolean;
   showPurchaseModal?: boolean;
+  error?: string;
 };
 
 const useButtonStyle = createStyles((theme) => ({
@@ -44,6 +45,7 @@ export function BuzzTransactionButton({
   size,
   loading,
   showPurchaseModal = true,
+  error,
   ...buttonProps
 }: Props) {
   const features = useFeatureFlags();
@@ -79,7 +81,7 @@ export function BuzzTransactionButton({
 
   return (
     <Button
-      color={hasCost || loading ? 'yellow.7' : 'blue'}
+      color={error ? 'red.9' : hasCost || loading ? 'yellow.7' : 'blue'}
       {...buttonProps}
       onClick={loading ? undefined : onPerformTransaction ? onClick : undefined}
       className={cx(buttonProps?.className, { [classes.button]: hasCost || loading })}
@@ -89,6 +91,7 @@ export function BuzzTransactionButton({
           width: '100%',
         },
       }}
+      disabled={buttonProps.disabled || !!error}
     >
       <Group spacing="md" position="apart" noWrap w="100%">
         <Text size={size ?? 14} ta={!hasCost ? 'center' : undefined} sx={{ flex: 1 }}>
@@ -123,6 +126,26 @@ export function BuzzTransactionButton({
               </Tooltip>
             )}
           </CurrencyBadge>
+        )}
+        {error && !hasCost && (
+          <Tooltip
+            label={error ?? 'There was an error'}
+            multiline={true}
+            withArrow
+            w={200}
+            opened={true} // Forcefully open becuse button is disabled
+            style={{ whiteSpace: 'normal' }}
+          >
+            <Badge
+              color="dark.8"
+              variant="filled"
+              radius={buttonProps?.radius ?? 'sm'}
+              py={10}
+              px={8}
+            >
+              <IconAlertTriangleFilled color="red" size={12} fill="currentColor" />
+            </Badge>
+          </Tooltip>
         )}
       </Group>
     </Button>

@@ -89,6 +89,7 @@ import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { DailyBoostRewardClaim } from '~/components/Buzz/Rewards/DailyBoostRewardClaim';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import InputQuantity from '~/components/ImageGeneration/GenerationForm/InputQuantity';
 
 const BUZZ_CHARGE_NOTICE_END = new Date('2024-04-14T00:00:00Z');
 
@@ -145,6 +146,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
     unstableResources,
     isCalculatingCost,
     draft,
+    costEstimateError,
   } = useDerivedGenerationState();
 
   const { conditionalPerformTransaction } = useBuzzTransaction({
@@ -264,7 +266,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
   const { requests } = useGetGenerationRequests();
   const pendingProcessingCount = usePollGenerationRequests(requests);
   const reachedRequestLimit = pendingProcessingCount >= limits.queue;
-  const disableGenerateButton = reachedRequestLimit || isCalculatingCost;
+  const disableGenerateButton = reachedRequestLimit || isCalculatingCost || isLoading;
 
   const cfgDisabled = !!draft;
   const samplerDisabled = !!draft;
@@ -789,13 +791,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                     >
                       Quantity
                     </Text>
-                    <InputNumber
-                      name="quantity"
-                      min={!!draft ? 4 : 1}
-                      max={limits.quantity}
-                      step={!!draft ? 4 : 1}
-                      className={classes.generateButtonQuantityInput}
-                    />
+                    <InputQuantity name="quantity" />
                   </Stack>
                 </Card>
                 {!status.charge ? (
@@ -817,6 +813,11 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                     disabled={disableGenerateButton}
                     buzzAmount={totalCost}
                     showPurchaseModal={false}
+                    error={
+                      costEstimateError
+                        ? 'Error calculating cost. Please try updating your values'
+                        : undefined
+                    }
                   />
                 )}
                 {/* <Tooltip label="Reset" color="dark" withArrow> */}

@@ -24,6 +24,8 @@ import {
   IconHeart,
   IconHeartHandshake,
   IconInfoCircle,
+  IconInfoTriangle,
+  IconInfoTriangleFilled,
   IconPhotoPlus,
 } from '@tabler/icons-react';
 import { DonateButton } from '~/components/Stripe/DonateButton';
@@ -43,6 +45,8 @@ import {
 } from '~/components/Stripe/memberships.util';
 import { formatDate } from '~/utils/date-helpers';
 import { ProductMetadata } from '~/server/schema/stripe.schema';
+import Subscribe from '~/pages/subscribe/[plan]';
+import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
 import { Meta } from '~/components/Meta/Meta';
 
 export default function Pricing() {
@@ -56,7 +60,9 @@ export default function Pricing() {
   const redirectReason = joinRedirectReasons[reason];
 
   const { data: products, isLoading: productsLoading } = trpc.stripe.getPlans.useQuery();
-  const { subscription, subscriptionLoading } = useActiveSubscription();
+  const { subscription, subscriptionLoading } = useActiveSubscription({
+    checkWhenInBadState: true,
+  });
 
   const isLoading = productsLoading || subscriptionLoading;
   const currentMembershipUnavailable =
@@ -67,6 +73,8 @@ export default function Pricing() {
   const freePlanDetails = getPlanDetails(constants.freeMembershipDetails, features);
   const metadata = (subscription?.product?.metadata ?? { tier: 'free' }) as ProductMetadata;
   const appliesForDiscount = features.membershipsV2 && appliesForFounderDiscount(metadata.tier);
+
+  console.log(subscription);
 
   return (
     <>
@@ -96,6 +104,31 @@ export default function Pricing() {
       </Container>
       <Container size="xl">
         <Stack>
+          {subscription?.isBadState && (
+            <AlertWithIcon
+              color="red"
+              iconColor="red"
+              icon={<IconInfoTriangleFilled size={20} strokeWidth={2.5} />}
+              iconSize={28}
+              py={11}
+            >
+              <Stack spacing={0}>
+                <Text lh={1.2}>
+                  Uh oh! It looks like there was an issue with your membership. You can update your
+                  payment method or renew your membership now by clicking{' '}
+                  <SubscribeButton priceId={subscription.price.id}>
+                    <Anchor component="button" type="button">
+                      here
+                    </Anchor>
+                  </SubscribeButton>
+                </Text>
+                <Text lh={1.2}>
+                  Alternatively, click <Anchor href="/user/membership">here</Anchor> to view all
+                  your benefits
+                </Text>
+              </Stack>
+            </AlertWithIcon>
+          )}
           <Group>
             {currentMembershipUnavailable && (
               <AlertWithIcon

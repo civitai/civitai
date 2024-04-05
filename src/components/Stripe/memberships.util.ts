@@ -4,7 +4,11 @@ import { constants } from '~/server/common/constants';
 import { ProductMetadata } from '~/server/schema/stripe.schema';
 import { trpc } from '~/utils/trpc';
 
-export const useActiveSubscription = () => {
+export const useActiveSubscription = ({
+  checkWhenInBadState,
+}: {
+  checkWhenInBadState?: boolean;
+} = {}) => {
   const currentUser = useCurrentUser();
   const isMember = currentUser?.tier !== undefined;
 
@@ -13,7 +17,7 @@ export const useActiveSubscription = () => {
     isLoading,
     isFetching,
   } = trpc.stripe.getUserSubscription.useQuery(undefined, {
-    enabled: !!currentUser && isMember,
+    enabled: !!currentUser && (isMember || (checkWhenInBadState && currentUser?.memberInBadState)),
   });
 
   return { subscription, subscriptionLoading: !isMember ? false : isLoading || isFetching };

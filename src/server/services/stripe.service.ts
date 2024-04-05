@@ -117,6 +117,9 @@ export const getUserSubscription = async ({ userId }: Schema.GetUserSubscription
   return {
     ...subscription,
     price: { ...subscription.price, unitAmount: subscription.price.unitAmount ?? 0 },
+    isBadState: ['incomplete', 'incomplete_expired', 'past_due', 'unpaid'].includes(
+      subscription.status
+    ),
   };
 };
 export type StripeSubscription = Awaited<ReturnType<typeof getUserSubscription>>;
