@@ -77,6 +77,12 @@ const { openModal, Modal } = createContextModal({
       fetchReleases();
     }, []);
 
+    const vaultLink = (
+      <Text component="a" variant="link" target="_blank" href="/user/vault" td="underline">
+        your Vault
+      </Text>
+    );
+
     return (
       <Stepper active={active} onStepClick={setActive} breakpoint="sm" allowNextStepsSelect={false}>
         <Stepper.Step label="About Civitai Link" description="Learn what it does">
@@ -109,7 +115,12 @@ const { openModal, Modal } = createContextModal({
                     iconColor: 'green',
                   },
                   {
-                    content: 'Add & remove vault resources',
+                    content: <>Offload resources to {vaultLink}</>,
+                    icon: <IconCircleCheck size={18} />,
+                    iconColor: 'green',
+                  },
+                  {
+                    content: <>Download resources from {vaultLink}</>,
                     icon: <IconCircleCheck size={18} />,
                     iconColor: 'green',
                   },
@@ -137,6 +148,7 @@ const { openModal, Modal } = createContextModal({
                       <Text
                         component="a"
                         variant="link"
+                        td="underline"
                         href="https://github.com/AUTOMATIC1111/stable-diffusion-webui"
                         target="_blank"
                         rel="nofollow noreferrer"
@@ -152,6 +164,7 @@ const { openModal, Modal } = createContextModal({
                       <Text
                         component="a"
                         variant="link"
+                        td="underline"
                         href="https://github.com/comfyanonymous/ComfyUI"
                         target="_blank"
                         rel="nofollow noreferrer"

@@ -37,6 +37,7 @@ import {
   IconDeviceDesktop,
   IconDownload,
   IconSearch,
+  IconHelpCircle,
 } from '@tabler/icons-react';
 import { useEffect, useMemo, useState } from 'react';
 import JSZip from 'jszip';
@@ -465,6 +466,16 @@ const VaultStateNotice = () => {
   );
 };
 
+const vaultHelp = (
+  <Tooltip label="What is Civitai Vault?">
+    <ActionIcon component="a" href="/product/vault" sx={{ alignSelf: 'center' }}>
+      <Text color="dimmed" inline>
+        <IconHelpCircle />
+      </Text>
+    </ActionIcon>
+  </Tooltip>
+);
+
 const MobileVault = () => {
   const { isLoading: isLoadingVault } = useQueryVault();
   const { items, isLoading: isLoadingVaultItems } = useQueryVaultItems(
@@ -476,8 +487,9 @@ const MobileVault = () => {
   return (
     <Container size="xl">
       <Stack mb="xl">
-        <Group position="apart" align="flex-end" grow>
+        <Group spacing="xs">
           <Title order={1}>Civitai Vault</Title>
+          {vaultHelp}
         </Group>
         <Alert color="yellow">
           <Group>
@@ -580,6 +592,7 @@ export default function CivitaiVault() {
         <Stack mb="xl">
           <Group position="apart" align="flex-end">
             <Title order={1}>Civitai Vault</Title>
+            {vaultHelp}
             <Group ml="auto" align="start">
               {vault && vault.storageKb > 0 && (
                 <Stack spacing={0}>
