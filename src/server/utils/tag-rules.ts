@@ -120,7 +120,7 @@ const tagCombos: ComputedTagCombo[] = [
       'masturbation',
       'fingering',
       'ejaculation',
-      'erection',
+      'erection + !(erection under clothes)',
       'male mastuerbation',
       '(kiss|french kiss) + (nudity|partial nudity)',
       'breast grab',
