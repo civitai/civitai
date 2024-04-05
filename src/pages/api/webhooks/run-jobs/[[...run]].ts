@@ -30,8 +30,6 @@ import { scanFilesJob } from '~/server/jobs/scan-files';
 import { searchIndexJobs } from '~/server/jobs/search-index-sync';
 import { sendNotificationsJob } from '~/server/jobs/send-notifications';
 import { sendWebhooksJob } from '~/server/jobs/send-webhooks';
-import { tempRecomputePostMetrics } from '~/server/jobs/temp-recompute-post-metrics';
-import { tempScanFilesMissingHashes } from '~/server/jobs/temp-scan-files-missing-hashes';
 import { processClubMembershipRecurringPayments } from '~/server/jobs/process-club-membership-recurring-payments';
 import { metricJobs } from '~/server/jobs/update-metrics';
 import { redis } from '~/server/redis/client';
@@ -66,8 +64,6 @@ export const jobs: Job[] = [
   ...leaderboardJobs,
   ingestImages,
   removeBlockedImages,
-  tempRecomputePostMetrics,
-  tempScanFilesMissingHashes,
   processScheduledPublishing,
   // refreshImageGenerationCoverage,
   cleanImageResources,
