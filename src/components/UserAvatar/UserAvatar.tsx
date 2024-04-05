@@ -1,7 +1,9 @@
 import {
+  ActionIcon,
   Avatar,
   AvatarProps,
   BadgeProps,
+  Center,
   Group,
   Indicator,
   IndicatorProps,
@@ -25,7 +27,6 @@ import { EdgeMedia } from '../EdgeMedia/EdgeMedia';
 import { MediaHash } from '../ImageHash/ImageHash';
 import { IconEye, IconEyeOff, IconUser } from '@tabler/icons-react';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
-import { UserAvatarProfilePicture } from '~/components/UserAvatar/UserAvatarProfilePicture';
 import { BadgeCosmetic } from '~/server/selectors/cosmetic.selector';
 
 const mapAvatarTextSize: Record<MantineSize, { textSize: MantineSize; subTextSize: MantineSize }> =
