@@ -146,6 +146,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
     unstableResources,
     isCalculatingCost,
     draft,
+    costEstimateError,
   } = useDerivedGenerationState();
 
   const { conditionalPerformTransaction } = useBuzzTransaction({
@@ -265,7 +266,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
   const { requests } = useGetGenerationRequests();
   const pendingProcessingCount = usePollGenerationRequests(requests);
   const reachedRequestLimit = pendingProcessingCount >= limits.queue;
-  const disableGenerateButton = reachedRequestLimit || isCalculatingCost;
+  const disableGenerateButton = reachedRequestLimit || isCalculatingCost || isLoading;
 
   const cfgDisabled = !!draft;
   const samplerDisabled = !!draft;
@@ -812,6 +813,11 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                     disabled={disableGenerateButton}
                     buzzAmount={totalCost}
                     showPurchaseModal={false}
+                    error={
+                      costEstimateError
+                        ? 'Error calculating cost. Please try updating your values'
+                        : undefined
+                    }
                   />
                 )}
                 {/* <Tooltip label="Reset" color="dark" withArrow> */}
