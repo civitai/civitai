@@ -335,6 +335,7 @@ export const ingestImage = async ({
       // wait: true,
       scans: [ImageScanType.Label, ImageScanType.Moderation, ImageScanType.WD14],
       callbackUrl,
+      movieRatingModel: env.IMAGE_SCANNING_MODEL,
     }),
   });
   if (response.status === 202) {
