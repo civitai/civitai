@@ -791,7 +791,10 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                     >
                       Quantity
                     </Text>
-                    <InputQuantity name="quantity" />
+                    <InputQuantity
+                      name="quantity"
+                      className={classes.generateButtonQuantityInput}
+                    />
                   </Stack>
                 </Card>
                 {!status.charge ? (
