@@ -45,7 +45,6 @@ import {
 } from '~/components/Stripe/memberships.util';
 import { formatDate } from '~/utils/date-helpers';
 import { ProductMetadata } from '~/server/schema/stripe.schema';
-import Subscribe from '~/pages/subscribe/[plan]';
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
 import { Meta } from '~/components/Meta/Meta';
 
@@ -73,8 +72,6 @@ export default function Pricing() {
   const freePlanDetails = getPlanDetails(constants.freeMembershipDetails, features);
   const metadata = (subscription?.product?.metadata ?? { tier: 'free' }) as ProductMetadata;
   const appliesForDiscount = features.membershipsV2 && appliesForFounderDiscount(metadata.tier);
-
-  console.log(subscription);
 
   return (
     <>

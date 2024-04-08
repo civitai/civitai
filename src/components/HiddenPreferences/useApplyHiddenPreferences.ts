@@ -317,9 +317,10 @@ function filterPreferences<
           }
           return true;
         })
-        .map(({ images, ...x }) => {
+        .map(({ images = [], image, ...x }) => {
+          const mergedImages = image ? [...images, image] : images;
           const filteredImages =
-            images?.filter((i) => {
+            mergedImages.filter((i) => {
               const userId = i.userId;
               const isOwner = userId === currentUser?.id;
               if ((isOwner || isModerator) && i.nsfwLevel === 0) return true;
@@ -332,7 +333,7 @@ function filterPreferences<
           if (filteredImages.length === 0) {
             hidden.noImages++;
           }
-          
+
           return filteredImages.length || showImageless
             ? {
                 ...x,
@@ -421,7 +422,7 @@ function filterPreferences<
             if (hiddenImages.get(image.id)) return false;
             for (const tag of image.tagIds ?? []) if (hiddenTags.get(tag)) return false;
             return true;
-          }); 
+          });
 
           if (filteredImages.length === 0) {
             hidden.noImages++;
