@@ -13,6 +13,7 @@ import { GenerationForm } from '~/components/ImageGeneration/GenerationForm/Gene
 import { useRouter } from 'next/router';
 import { IconClockHour9 } from '@tabler/icons-react';
 import { GeneratedImageActions } from '~/components/ImageGeneration/GeneratedImageActions';
+import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvider';
 
 export default function GenerationTabs({
   tabs: tabsToInclude,
@@ -70,7 +71,7 @@ export default function GenerationTabs({
   }, [tabsToInclude, view]); //eslint-disable-line
 
   return (
-    <>
+    <GenerationProvider>
       <div className="flex flex-col gap-2 p-3 w-full">
         <div className="flex justify-between items-center gap-2 w-full">
           <div className="flex-1">
@@ -111,6 +112,6 @@ export default function GenerationTabs({
         {view !== 'generate' && <GeneratedImageActions />}
       </div>
       <View />
-    </>
+    </GenerationProvider>
   );
 }

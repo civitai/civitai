@@ -5,6 +5,7 @@ import React, { useState } from 'react';
 import { setPageOptions } from '~/components/AppLayout/AppLayout';
 import { Feed } from '~/components/ImageGeneration/Feed';
 import { GeneratedImageActions } from '~/components/ImageGeneration/GeneratedImageActions';
+import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvider';
 import { Queue } from '~/components/ImageGeneration/Queue';
 import { useGetGenerationRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
@@ -53,39 +54,41 @@ export default function GeneratePage() {
 
   // desktop view
   return (
-    <Tabs
-      variant="pills"
-      value={tab}
-      onTabChange={(tab) => {
-        // tab can be null
-        if (tab) setTab(tab);
-      }}
-      radius="xl"
-      color="gray"
-      classNames={classes}
-    >
-      <Tabs.List px="md" py="xs">
-        <Group position="apart" w="100%">
-          <Group align="flex-start" spacing="xs">
-            <Tabs.Tab value="queue" icon={<IconLayoutList size={16} />}>
-              Queue
-            </Tabs.Tab>
-            <Tabs.Tab value="feed" icon={<IconGridDots size={16} />}>
-              Feed
-            </Tabs.Tab>
+    <GenerationProvider>
+      <Tabs
+        variant="pills"
+        value={tab}
+        onTabChange={(tab) => {
+          // tab can be null
+          if (tab) setTab(tab);
+        }}
+        radius="xl"
+        color="gray"
+        classNames={classes}
+      >
+        <Tabs.List px="md" py="xs">
+          <Group position="apart" w="100%">
+            <Group align="flex-start" spacing="xs">
+              <Tabs.Tab value="queue" icon={<IconLayoutList size={16} />}>
+                Queue
+              </Tabs.Tab>
+              <Tabs.Tab value="feed" icon={<IconGridDots size={16} />}>
+                Feed
+              </Tabs.Tab>
+            </Group>
+            <GeneratedImageActions />
           </Group>
-          <GeneratedImageActions />
-        </Group>
-      </Tabs.List>
-      <ScrollArea scrollRestore={{ key: tab }}>
-        <Tabs.Panel value="queue">
-          <Queue />
-        </Tabs.Panel>
-        <Tabs.Panel value="feed" p="md">
-          <Feed />
-        </Tabs.Panel>
-      </ScrollArea>
-    </Tabs>
+        </Tabs.List>
+        <ScrollArea scrollRestore={{ key: tab }}>
+          <Tabs.Panel value="queue">
+            <Queue />
+          </Tabs.Panel>
+          <Tabs.Panel value="feed" p="md">
+            <Feed />
+          </Tabs.Panel>
+        </ScrollArea>
+      </Tabs>
+    </GenerationProvider>
   );
 }
 

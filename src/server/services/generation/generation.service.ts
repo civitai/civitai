@@ -878,8 +878,6 @@ export async function getGenerationStatus() {
     JSON.parse((await redis.hGet(REDIS_KEYS.SYSTEM.FEATURES, REDIS_KEYS.GENERATION.STATUS)) ?? '{}')
   );
 
-  status;
-
   return status as GenerationStatus;
 }
 

@@ -30,6 +30,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { ModelType } from '@prisma/client';
 import { useDebouncedValue } from '@mantine/hooks';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export const useGenerationFormStore = create<Partial<GenerateFormModel>>()(
   persist(() => ({}), { name: 'generation-form-2', version: 0 })
@@ -106,13 +107,18 @@ export const useDerivedGenerationState = () => {
 
 const defaultServiceStatus = generationStatusSchema.parse({});
 export const useGenerationStatus = () => {
-  const { data: status, isLoading } = trpc.generation.getStatus.useQuery(undefined, {
+  const currentUser = useCurrentUser();
+  const { data } = trpc.generation.getStatus.useQuery(undefined, {
     cacheTime: 60,
     trpc: { context: { skipBatch: true } },
   });
 
-  if (isLoading) return defaultServiceStatus;
-  return status ?? defaultServiceStatus;
+  const status = data ?? defaultServiceStatus;
+  if (currentUser?.isModerator) status.available = true; // Always have generation available for mods
+  const isFreeTier = !currentUser?.tier || currentUser.tier === 'free';
+  const limits = status.limits[currentUser?.tier ?? 'free'];
+
+  return { ...status, isFreeTier, limits };
 };
 
 export const useEstimateTextToImageJobCost = () => {

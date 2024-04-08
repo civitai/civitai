@@ -289,15 +289,15 @@ export function GeneratedImage({
               <Menu.Dropdown>
                 <Menu.Item
                   onClick={handleGenerate}
-                  icon={<IconPlayerPlayFilled size={14} stroke={1.5} />}
+                  icon={<IconArrowsShuffle size={14} stroke={1.5} />}
                 >
-                  Generate
+                  Remix
                 </Menu.Item>
                 <Menu.Item
                   onClick={handleGenerateWithSeed}
                   icon={<IconPlayerTrackNextFilled size={14} stroke={1.5} />}
                 >
-                  Generate (with seed)
+                  Remix (with seed)
                 </Menu.Item>
                 <Menu.Item
                   color="red"

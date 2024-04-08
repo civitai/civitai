@@ -65,7 +65,7 @@ const useStyles = createStyles((theme, { resizeFrom }: { resizeFrom: 'left' | 'r
       height: '100%',
       [resizeFrom]: -2,
       width: 5,
-      zIndex: 1002,
+      zIndex: 100,
       // opacity: 0.2,
 
       '&:hover, &:active': {

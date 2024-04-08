@@ -89,6 +89,7 @@ import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { DailyBoostRewardClaim } from '~/components/Buzz/Rewards/DailyBoostRewardClaim';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
 
 const BUZZ_CHARGE_NOTICE_END = new Date('2024-04-14T00:00:00Z');
 
@@ -118,10 +119,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
     defaultValues,
   });
 
-  const status = useGenerationStatus();
-  if (currentUser?.isModerator) status.available = true; // Always have generation available for mods
-  const isFreeTier = !currentUser?.tier || currentUser.tier === 'free';
-  const limits = status.limits[currentUser?.tier ?? 'free'];
+  const { isFreeTier, limits, ...status } = useGenerationStatus();
 
   useEffect(() => {
     form.reset({
@@ -778,6 +776,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                   </Text>
                 </Group>
               )}
+              <QueueSnackbar />
               <Group spacing="xs" className={classes.generateButtonContainer} noWrap>
                 <Card withBorder className={classes.generateButtonQuantity} p={0}>
                   <Stack spacing={0}>

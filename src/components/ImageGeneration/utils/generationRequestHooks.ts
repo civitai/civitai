@@ -1,49 +1,66 @@
-import { InfiniteData, useQueryClient } from '@tanstack/react-query';
+import { InfiniteData } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';
 import { GetGenerationRequestsReturn } from '~/server/services/generation/generation.service';
 import { showErrorNotification } from '~/utils/notifications';
-import { trpc } from '~/utils/trpc';
-import { useCallback, useEffect, useMemo } from 'react';
+import { queryClient, trpc } from '~/utils/trpc';
+import { useEffect, useMemo } from 'react';
 import { GetGenerationRequestsInput } from '~/server/schema/generation.schema';
 import { Generation } from '~/server/services/generation/generation.types';
-import { useDebouncer } from '~/utils/debouncer';
+import { createDebouncer, useDebouncer } from '~/utils/debouncer';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { SignalMessages, GenerationRequestStatus } from '~/server/common/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { create } from 'zustand';
-import { immer } from 'zustand/middleware/immer';
+import { useSignalContext } from '~/components/Signals/SignalsProvider';
+import {
+  JobStatus,
+  JobType,
+  TextToImageEvent,
+  textToImageEventSchema,
+} from '~/libs/orchestrator/jobs';
+import { z } from 'zod';
 
 export const useGetGenerationRequests = (
   input?: GetGenerationRequestsInput,
   options?: { enabled?: boolean; onError?: (err: unknown) => void }
 ) => {
   const currentUser = useCurrentUser();
-  const { data, ...rest } = trpc.generation.getRequests.useInfiniteQuery(input ?? {}, {
+  const { data, isLoading, ...rest } = trpc.generation.getRequests.useInfiniteQuery(input ?? {}, {
     getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
     enabled: !!currentUser,
     ...options,
   });
-  const requests = useMemo(() => data?.pages.flatMap((x) => (!!x ? x.items : [])) ?? [], [data]);
+  const requests = useMemo(
+    () =>
+      data?.pages.flatMap((x) => {
+        const items = !!x ? x.items : [];
+        return items;
+      }) ?? [],
+    [data]
+  );
   const images = useMemo(() => requests.flatMap((x) => x.images ?? []), [requests]);
-  return { data, requests, images, ...rest };
+
+  useEffect(() => {
+    if (!isLoading) updateFromEvents();
+  }, [isLoading]);
+
+  return { data, requests, images, isLoading, ...rest };
 };
 
-export const useUpdateGenerationRequests = () => {
-  const queryClient = useQueryClient();
+const updateGenerationRequest = (cb: (data: InfiniteData<GetGenerationRequestsReturn>) => void) => {
   const queryKey = getQueryKey(trpc.generation.getRequests);
-
-  const setData = (cb: (data?: InfiniteData<GetGenerationRequestsReturn>) => void) => {
-    queryClient.setQueriesData({ queryKey, exact: false }, (state) => produce(state, cb));
-  };
-
-  return setData;
+  queryClient.setQueriesData({ queryKey, exact: false }, (state) =>
+    produce(state, (old?: InfiniteData<GetGenerationRequestsReturn>) => {
+      if (!old) return;
+      cb(old);
+    })
+  );
 };
 
 const POLLABLE_STATUSES = [GenerationRequestStatus.Pending, GenerationRequestStatus.Processing];
 export const usePollGenerationRequests = (requestsInput: Generation.Request[] = []) => {
+  const { connected } = useSignalContext();
   const currentUser = useCurrentUser();
-  const update = useUpdateGenerationRequests();
   const debouncer = useDebouncer(5000);
   const requestIds = requestsInput
     .filter((x) => POLLABLE_STATUSES.includes(x.status))
@@ -57,20 +74,19 @@ export const usePollGenerationRequests = (requestsInput: Generation.Request[] = 
     },
     {
       onError: () => debouncer(refetch),
-      enabled: !!requestIds.length && !!currentUser,
+      enabled: !!requestIds.length && !!currentUser && !connected,
     }
   );
 
   useEffect(() => {
-    if (!!requestIds?.length) {
+    if (!!requestIds?.length && !connected) {
       debouncer(refetch);
     }
-  }, [requestIds]); //eslint-disable-line
+  }, [requestIds, connected]); //eslint-disable-line
 
   // update requests with newly polled values
   useEffect(() => {
-    update((old) => {
-      if (!old) return;
+    updateGenerationRequest((old) => {
       for (const request of requests) {
         for (const page of old.pages) {
           const index = page.items.findIndex((x) => x.id === request.id);
@@ -93,20 +109,12 @@ export const usePollGenerationRequests = (requestsInput: Generation.Request[] = 
 };
 
 export const useCreateGenerationRequest = () => {
-  const update = useUpdateGenerationRequests();
   return trpc.generation.createRequest.useMutation({
     onSuccess: (data) => {
-      update((old) => {
-        if (!old) return;
-        for (const image of data.images ?? []) {
-          const status = unmatchedSignals[image.hash];
-          if (status) {
-            image.status = status;
-            delete unmatchedSignals[image.hash];
-          }
-        }
+      updateGenerationRequest((old) => {
         old.pages[0].items.unshift(data);
       });
+      updateFromEvents();
     },
     onError: (error) => {
       showErrorNotification({
@@ -119,11 +127,9 @@ export const useCreateGenerationRequest = () => {
 };
 
 export const useDeleteGenerationRequest = () => {
-  const update = useUpdateGenerationRequests();
   return trpc.generation.deleteRequest.useMutation({
     onSuccess: (_, { id }) => {
-      update((data) => {
-        if (!data) return;
+      updateGenerationRequest((data) => {
         for (const page of data.pages) {
           const index = page.items.findIndex((x) => x.id === id);
           if (index > -1) page.items.splice(index, 1);
@@ -144,12 +150,10 @@ export const useDeleteGenerationRequestImages = (
   ...args: Parameters<typeof bulkDeleteImagesMutation>
 ) => {
   const [options] = args;
-  const update = useUpdateGenerationRequests();
   return trpc.generation.bulkDeleteImages.useMutation({
     ...options,
     onSuccess: (response, request, context) => {
-      update((data) => {
-        if (!data) return;
+      updateGenerationRequest((data) => {
         for (const page of data.pages) {
           for (const item of page.items) {
             for (const id of request.ids) {
@@ -158,7 +162,10 @@ export const useDeleteGenerationRequestImages = (
             }
           }
           // if there are requests without images, remove the requests
-          page.items = page.items.filter((x) => !!x.images?.length);
+          page.items = page.items.filter((x) => {
+            const hasImages = !!x.images?.length;
+            return hasImages;
+          });
         }
       });
       options?.onSuccess?.(response, request, context);
@@ -173,88 +180,91 @@ export const useDeleteGenerationRequestImages = (
   });
 };
 
-const unmatchedSignals: Record<string, Generation.ImageStatus> = {};
+const debouncer = createDebouncer(100);
+export function useTextToImageSignalUpdate() {
+  return useSignalConnection(
+    SignalMessages.OrchestratorUpdate,
+    (data: z.infer<typeof textToImageEventSchema>) => {
+      if (data.jobType === JobType.TextToImage) {
+        if (data.type === JobStatus.Deleted) {
+          signalEvents = signalEvents.filter((x) => x.jobId !== data.jobId);
+        } else {
+          debouncer(() => updateFromEvents());
+          signalEvents.push(data);
+        }
+      }
+    }
+  );
+}
 
-export const useImageGenStatusUpdate = () => {
-  const update = useUpdateGenerationRequests();
-  const onStatusUpdate = useCallback(
-    ({ status, imageHash }: { status: Generation.ImageStatus; imageHash: string }) => {
-      let matched = false;
-      update((old) => {
-        if (!old) return;
-        pages: for (const page of old.pages) {
-          for (const item of page.items) {
-            const image = item.images?.find((x) => x.hash === imageHash);
-            if (image) {
-              matched = true;
-              image.status = status;
-              if (image.status === 'Success') {
-                const createdAtMilliseconds = new Date(item.createdAt).getTime();
-                const nowMilliseconds = new Date().getTime();
-                image.available = true;
-                image.duration = nowMilliseconds - createdAtMilliseconds;
-                item.images = item.images?.sort((a, b) => (b.duration ?? 1) - (a.duration ?? 1));
-              }
-              if (image.status === 'RemovedForSafety') {
-                image.removedForSafety = true;
-                image.available = true;
-              }
-              break pages;
+let signalEvents: TextToImageEvent[] = [];
+function updateFromEvents() {
+  let events = [...signalEvents];
+  if (!events.length) return;
+  // let toProcess = events.length;
+
+  updateGenerationRequest((old) => {
+    pages: for (const page of old.pages) {
+      for (const item of page.items) {
+        let hasEvents = false;
+
+        for (const image of item.images ?? []) {
+          const imageEvents = events.filter((x) => x.jobId === image.hash);
+          if (imageEvents.length) hasEvents = true;
+
+          for (const event of imageEvents) {
+            const { type, jobDuration } = event;
+            if (type === JobStatus.Claimed) image.status = 'Started';
+            else if (type === JobStatus.Failed || type === JobStatus.Rejected)
+              image.status = 'Error';
+            else if (type === JobStatus.Succeeded) image.status = 'Success';
+
+            image.type = type;
+            if (image.status === 'Success') {
+              image.duration = jobDuration
+                ? new TimeSpan(jobDuration).totalMilliseconds
+                : undefined;
+              image.available = true;
             }
+            events = events.filter((x) => x.jobId !== image.hash && x.type === type);
+            signalEvents = signalEvents.filter((x) => x.jobId !== image.hash && x.type === type);
           }
         }
-      });
-      if (!matched) unmatchedSignals[imageHash] = status;
-    },
-    [] //eslint-disable-line
-  );
 
-  useSignalConnection(SignalMessages.ImageGenStatusUpdate, onStatusUpdate);
-};
+        if (hasEvents) {
+          const types = item.images?.map((x) => x.type) ?? [];
+          if (types.some((status) => status === JobStatus.Claimed))
+            item.status = GenerationRequestStatus.Processing;
+          else if (types.some((status) => status === JobStatus.Failed))
+            item.status = GenerationRequestStatus.Error;
+          else if (types.every((status) => status === JobStatus.Succeeded))
+            item.status = GenerationRequestStatus.Succeeded;
 
-type QueueStoreState = {
-  requests: Generation.Request[];
-  images: Generation.Image[];
-};
-type QueueStore = QueueStoreState & {
-  addImage: (image: Generation.Image) => void;
-  addRequest: (request: Generation.Request) => void;
-  updateRequest: (request: Generation.Request) => void;
-};
-const removableStatuses = [
-  GenerationRequestStatus.Succeeded,
-  GenerationRequestStatus.Cancelled,
-  GenerationRequestStatus.Error,
-];
-export const useGenerationQueueStore = create<QueueStore>()(
-  immer((set) => ({
-    requests: [],
-    images: [],
-    addImage: (image) =>
-      set(({ images }) => {
-        if (images.length <= 3) images.unshift(image);
-        if (images.length > 3) images.pop();
-      }),
-    addRequest: (request) =>
-      set(({ requests }) => {
-        requests.unshift(request);
-      }),
-    updateRequest: (request) => {
-      set(({ requests }) => {
-        const index = requests.findIndex((x) => x.id === request.id);
-        if (index > -1) requests[index] = request;
-      });
-      if (removableStatuses.includes(request.status)) {
-        setTimeout(() => {
-          set(({ requests }) => {
-            const index = requests.findIndex((x) => x.id === request.id);
-            if (index > -1) requests.splice(index, 1);
-          });
-        }, 3000);
+          item.images = item.images?.sort((a, b) => (b.duration ?? 0) - (a.duration ?? 0));
+          if (!events.length) break pages;
+        }
       }
-    },
-  }))
-);
+    }
+  });
+}
 
-const { requests, images, ...generationQueueStore } = useGenerationQueueStore.getState();
-export { generationQueueStore };
+class TimeSpan {
+  ticks: number;
+
+  constructor(value: string) {
+    const [t = 0, s = 0, m = 0, h = 0, d = 0] = value
+      .split(/[.\:]/g)
+      .reverse()
+      .map((x) => {
+        const number = Number(x);
+        return !isNaN(number) ? number : 0;
+      });
+
+    this.ticks =
+      t + (s * 1000 + m * 1000 * 60 + h * 1000 * 60 * 60 + d * 1000 * 60 * 60 * 24) * 10000;
+  }
+
+  get totalMilliseconds() {
+    return Math.floor(this.ticks / 10000);
+  }
+}

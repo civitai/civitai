@@ -25,6 +25,9 @@ import {
   IconCheck,
   IconLoader,
   IconAlertTriangleFilled,
+  IconHandStop,
+  IconRotateClockwise,
+  IconArrowsShuffle,
 } from '@tabler/icons-react';
 
 import { Collection } from '~/components/Collection/Collection';
@@ -145,18 +148,17 @@ export function QueueItem({ request }: Props) {
       <Card.Section py={4} inheritPadding withBorder>
         <div className="flex justify-between">
           <div className="flex gap-1 items-center">
-            <Tooltip label={overwriteStatusLabel} withArrow color="dark" maw={300} multiline>
-              <GenerationStatusBadge
-                status={request.status}
-                count={request.images?.filter((x) => x.duration).length ?? 0}
-                quantity={request.quantity}
-              />
-            </Tooltip>
+            <GenerationStatusBadge
+              status={request.status}
+              count={request.images?.filter((x) => x.duration).length ?? 0}
+              quantity={request.quantity}
+              tooltipLabel={overwriteStatusLabel}
+            />
 
             <Text size="xs" color="dimmed">
               {formatDateMin(request.createdAt)}
             </Text>
-            {request.cost && (
+            {!!request.cost && (
               <CurrencyBadge unitAmount={request.cost} currency={Currency.BUZZ} size="xs" />
             )}
             <Tooltip {...tooltipProps} label="Copy Job IDs">
@@ -167,9 +169,9 @@ export function QueueItem({ request }: Props) {
           </div>
           <div className="flex gap-1">
             {generationStatus.available && (
-              <Tooltip {...tooltipProps} label="Generate">
+              <Tooltip {...tooltipProps} label="Remix">
                 <ActionIcon size="md" p={4} radius={0} onClick={handleGenerate}>
-                  <IconPlayerPlayFilled />
+                  <IconArrowsShuffle />
                 </ActionIcon>
               </Tooltip>
             )}
@@ -187,8 +189,8 @@ export function QueueItem({ request }: Props) {
         </div>
       </Card.Section>
       <div className="flex flex-col gap-3 py-3 @container">
-        {/* TODO - add restart functionality to the code commented out below */}
-        {/* {status === GenerationRequestStatus.Cancelled && (
+        {/* TODO.generation - add restart functionality to the code commented out below */}
+        {/* {status !== GenerationRequestStatus.Cancelled && (
           <div
             className={cx(
               classes.stopped,
