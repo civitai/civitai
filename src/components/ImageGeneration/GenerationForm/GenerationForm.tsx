@@ -195,7 +195,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
           params: { ...params, baseModel },
         });
         onSuccess?.();
-        if (!Router.pathname.includes('/generate')) generationPanel.setView('queue');
+        // if (!Router.pathname.includes('/generate')) generationPanel.setView('queue');
       } catch (e) {
         const error = e as Error;
         if (error.message.startsWith('Your prompt was flagged')) {

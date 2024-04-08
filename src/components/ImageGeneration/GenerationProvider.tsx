@@ -21,6 +21,7 @@ type GenerationState = {
   queueStatus?: GenerationRequestStatus;
   requestLimit: number;
   requestsRemaining: number;
+  requestsLoading: boolean;
   canGenerate: boolean;
   userLimits?: GenerationLimits;
   userTier: UserTier;
@@ -35,6 +36,7 @@ const createGenerationStore = () =>
     requestsRemaining: 0,
     canGenerate: false,
     userTier: 'free',
+    requestsLoading: true,
   }));
 
 const GenerationContext = createContext<GenerationStore | null>(null);
@@ -47,7 +49,7 @@ export function useGenerationContext<T>(selector: (state: GenerationState) => T)
 export function GenerationProvider({ children }: { children: React.ReactNode }) {
   const storeRef = useRef<GenerationStore>();
   const { connected } = useSignalContext();
-  const { requests } = useGetGenerationRequests();
+  const { requests, isLoading } = useGetGenerationRequests();
   const generationStatus = useGenerationStatus();
 
   // #region [queue state]
@@ -118,9 +120,9 @@ export function GenerationProvider({ children }: { children: React.ReactNode }) 
       queuedImages: images,
       queueStatus,
       requestsRemaining: requestsRemaining > 0 ? requestsRemaining : 0,
-      canGenerate: requestsRemaining > 0 && available,
+      canGenerate: requestsRemaining > 0 && available && !isLoading,
     });
-  }, [queued, generationStatus]);
+  }, [queued, generationStatus]); // eslint-disable-line
 
   useEffect(() => {
     const store = storeRef.current;
@@ -132,6 +134,12 @@ export function GenerationProvider({ children }: { children: React.ReactNode }) 
       userTier: tier,
     });
   }, [generationStatus]);
+
+  useEffect(() => {
+    const store = storeRef.current;
+    if (!store) return;
+    store.setState({ requestsLoading: isLoading });
+  }, [isLoading]);
   // #endregion
 
   // #region [polling]
@@ -158,12 +166,18 @@ export function GenerationProvider({ children }: { children: React.ReactNode }) 
 
   useEffect(() => {
     updateGenerationRequest((old) => {
-      for (const request of pollable.requests) {
-        pages: for (const page of old.pages) {
+      for (const request of requests) {
+        for (const page of old.pages) {
           const index = page.items.findIndex((x) => x.id === request.id);
           if (index > -1) {
-            page.items[index] = request;
-            break pages;
+            const item = page.items[index];
+            item.status = request.status;
+            item.images = item.images?.map((image) => {
+              const match = request.images?.find((x) => x.hash === image.hash);
+              if (!match) return image;
+              const available = image.available ? image.available : match.available;
+              return { ...image, ...match, available };
+            });
           }
         }
       }

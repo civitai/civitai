@@ -6,13 +6,24 @@ import { generationStatusColors } from '~/shared/constants/generation.constants'
 import { GenerationRequestStatus } from '~/server/common/enums';
 import { NextLink } from '@mantine/next';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { generationPanel, generationStore } from '~/store/generation.store';
+import { useRouter } from 'next/router';
 
 export function QueueSnackbar() {
+  const router = useRouter();
   const theme = useMantineTheme();
   const { classes, cx } = useStyles();
-  const { queued, queueStatus, requestLimit, requestsRemaining, userTier, queuedImages } =
-    useGenerationContext((state) => state);
+  const {
+    queued,
+    queueStatus,
+    requestLimit,
+    requestsRemaining,
+    userTier,
+    queuedImages,
+    requestsLoading,
+  } = useGenerationContext((state) => state);
   const slots = Array(requestLimit).fill(0);
+  const includeQueueLink = !router.pathname.includes('/generate');
 
   const { count, quantity } = queued.reduce(
     (acc, request) => {
@@ -28,13 +39,15 @@ export function QueueSnackbar() {
 
   const images = queuedImages.slice(0, 1).reverse();
 
+  if (requestsLoading) return null;
+
   return (
     <div className="w-full flex flex-col gap-2 ">
       <Card
         radius="md"
         withBorder
         p={0}
-        className={cx(classes.card, 'flex justify-center px-1 gap-3 items-stretch')}
+        className={cx(classes.card, 'flex justify-center px-1 gap-3 items-stretch ')}
       >
         <div className="flex items-center basis-20 py-2 pl-1">
           {queueStatus && (
@@ -42,12 +55,27 @@ export function QueueSnackbar() {
           )}
         </div>
         <div className="flex flex-col gap-1 items-center justify-center flex-1 py-2">
-          <Text weight={500}>
+          <Text weight={500} className="flex gap-1 items-center">
             {!!queued.length ? (
               <>
                 {(queueStatus === GenerationRequestStatus.Pending ||
-                  queueStatus === GenerationRequestStatus.Processing) &&
-                  `${queued.length} job${queued.length > 0 && 's'} in queue`}
+                  queueStatus === GenerationRequestStatus.Processing) && (
+                  <>
+                    <span>{`${queued.length} job${queued.length > 0 && 's'} in `}</span>
+                    {includeQueueLink ? (
+                      <Text
+                        inline
+                        variant="link"
+                        className="cursor-pointer"
+                        onClick={() => generationPanel.setView('queue')}
+                      >
+                        queue
+                      </Text>
+                    ) : (
+                      <span>queue</span>
+                    )}
+                  </>
+                )}
                 {queueStatus === GenerationRequestStatus.Succeeded && 'All jobs complete'}
                 {queueStatus === GenerationRequestStatus.Error && 'Error with job'}
               </>
@@ -123,6 +151,10 @@ const useStyles = createStyles((theme) => ({
     boxShadow: `inset 0 2px ${
       theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[2]
     }`,
+
+    // '&:hover': {
+    //   backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[0],
+    // },
   },
   inner: { width: '100%' },
 }));
