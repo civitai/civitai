@@ -135,12 +135,13 @@ export function GenerationProvider({ children }: { children: React.ReactNode }) 
   // #endregion
 
   // #region [polling]
-  const pollableIds = pendingProcessingQueued.map((x) => x.id);
-  const hasPollableIds = pollableIds.length > 0;
+  const pollableIdsRef = useRef<number[]>([]);
+  pollableIdsRef.current = pendingProcessingQueued.map((x) => x.id);
+  const hasPollableIds = pollableIdsRef.current.length > 0;
   const debouncer = useDebouncer(1000 * (!connected ? 5 : 60));
   const pollable = useGetGenerationRequests(
     {
-      requestId: pollableIds,
+      requestId: pollableIdsRef.current,
       take: 100,
       detailed: true,
     },
@@ -151,7 +152,7 @@ export function GenerationProvider({ children }: { children: React.ReactNode }) 
 
   useEffect(() => {
     debouncer(() => {
-      hasPollableIds ? pollable.refetch() : undefined;
+      pollableIdsRef.current.length ? pollable.refetch() : undefined;
     });
   }, [hasPollableIds]); // eslint-disable-line
 
