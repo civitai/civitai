@@ -3,7 +3,7 @@ import * as z from 'zod';
 import { env } from '~/env/server.mjs';
 import { SignalMessages } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
-import { trainingCompleteEmail } from '~/server/email/templates';
+import { trainingCompleteEmail, trainingFailEmail } from '~/server/email/templates';
 import { logToAxiom } from '~/server/logging/client';
 import { refundTransaction } from '~/server/services/buzz.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
@@ -190,7 +190,7 @@ async function updateRecords(
   }
 
   let attempts = trainingResults.attempts || 0;
-  if (['Rejected', 'Failed'].includes(orchStatus)) {
+  if (['Rejected', 'LateRejected'].includes(orchStatus)) {
     attempts += 1;
   }
 
@@ -238,13 +238,6 @@ async function updateRecords(
   });
   if (!model || !model.user) return;
 
-  if (status === 'InReview') {
-    await trainingCompleteEmail.send({
-      model,
-      user: model.user,
-    });
-  }
-
   try {
     await fetch(
       `${env.SIGNALS_ENDPOINT}/users/${model.user.id}/signals/${SignalMessages.TrainingUpdate}`,
@@ -258,6 +251,18 @@ async function updateRecords(
     logWebhook({
       message: 'Failed to send signal for update',
       data: { error: (e as Error)?.message, cause: (e as Error)?.cause, jobId },
+    });
+  }
+
+  if (status === 'InReview') {
+    await trainingCompleteEmail.send({
+      model,
+      user: model.user,
+    });
+  } else if (status === 'Failed') {
+    await trainingFailEmail.send({
+      model,
+      user: model.user,
     });
   }
 }
