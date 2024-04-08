@@ -108,7 +108,7 @@ export const imageRouter = router({
     .input(getByIdSchema)
     .use(
       edgeCacheIt({
-        ttl: CacheTTL.month, // Cache is purged on remove resource
+        ttl: CacheTTL.day, // Cache is purged on remove resource
         tags: (i) => ['image-resources', `image-resources-${i.id}`],
       })
     )

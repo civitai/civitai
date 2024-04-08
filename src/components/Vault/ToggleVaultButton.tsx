@@ -69,7 +69,7 @@ const MembershipUpsell = () => {
           Looks like you&rsquo;re running out of storage
         </Text>
         <Text align="center" size="sm">
-          You can get more storage by upgrading to a higher membership tier, along with other great
+          You can get more storage by upgrading to a higher Supporter tier, along with other great
           benefits!
         </Text>
 

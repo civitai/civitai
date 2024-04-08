@@ -87,6 +87,7 @@ import { DailyBoostRewardClaim } from '~/components/Buzz/Rewards/DailyBoostRewar
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
 import { useGenerationContext } from '~/components/ImageGeneration/GenerationProvider';
+import InputQuantity from '~/components/ImageGeneration/GenerationForm/InputQuantity';
 
 const BUZZ_CHARGE_NOTICE_END = new Date('2024-04-14T00:00:00Z');
 
@@ -140,6 +141,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
     unstableResources,
     isCalculatingCost,
     draft,
+    costEstimateError,
   } = useDerivedGenerationState();
 
   const { conditionalPerformTransaction } = useBuzzTransaction({
@@ -257,6 +259,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
   ]);
 
   const canGenerate = useGenerationContext((state) => state.canGenerate);
+  const disableGenerateButton = !canGenerate || isCalculatingCost || isLoading;
 
   const cfgDisabled = !!draft;
   const samplerDisabled = !!draft;
@@ -771,11 +774,8 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                     >
                       Quantity
                     </Text>
-                    <InputNumber
+                    <InputQuantity
                       name="quantity"
-                      min={!!draft ? 4 : 1}
-                      max={limits.quantity}
-                      step={!!draft ? 4 : 1}
                       className={classes.generateButtonQuantityInput}
                     />
                   </Stack>
@@ -797,9 +797,14 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                     label="Generate"
                     loading={isCalculatingCost || isLoading}
                     className={classes.generateButtonButton}
-                    disabled={!canGenerate}
+                    disabled={disableGenerateButton}
                     buzzAmount={totalCost}
                     showPurchaseModal={false}
+                    error={
+                      costEstimateError
+                        ? 'Error calculating cost. Please try updating your values'
+                        : undefined
+                    }
                   />
                 )}
 

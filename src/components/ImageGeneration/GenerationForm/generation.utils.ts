@@ -38,7 +38,7 @@ export const useGenerationFormStore = create<Partial<GenerateFormModel>>()(
 
 export const useDerivedGenerationState = () => {
   const status = useGenerationStatus();
-  const { totalCost, isCalculatingCost } = useEstimateTextToImageJobCost();
+  const { totalCost, isCalculatingCost, costEstimateError } = useEstimateTextToImageJobCost();
 
   const selectedResources = useGenerationFormStore(({ resources = [], model }) => {
     return model ? resources.concat([model]).filter(isDefined) : resources.filter(isDefined);
@@ -102,6 +102,7 @@ export const useDerivedGenerationState = () => {
     unstableResources,
     isCalculatingCost,
     draft,
+    costEstimateError,
   };
 };
 
@@ -136,21 +137,22 @@ export const useEstimateTextToImageJobCost = () => {
     }
 
     return {
-      baseModel,
-      aspectRatio,
-      steps,
-      quantity,
-      sampler,
+      baseModel: baseModel ?? generation.defaultValues.model.baseModel,
+      aspectRatio: aspectRatio ?? generation.defaultValues.aspectRatio,
+      steps: steps ?? generation.defaultValues.steps,
+      quantity: quantity ?? generation.defaultValues.quantity,
+      sampler: sampler ?? generation.defaultValues.sampler,
       draft,
     };
   }, [aspectRatio, steps, quantity, sampler, status.charge, baseModel, draft]);
 
-  const { data: result, isLoading } = trpc.generation.estimateTextToImage.useQuery(
-    input as GenerationRequestTestRunSchema,
-    {
-      enabled: !!input && status.charge,
-    }
-  );
+  const {
+    data: result,
+    isLoading,
+    isError,
+  } = trpc.generation.estimateTextToImage.useQuery(input as GenerationRequestTestRunSchema, {
+    enabled: !!input && status.charge,
+  });
 
   const totalCost = status.charge
     ? Math.ceil(
@@ -164,6 +166,7 @@ export const useEstimateTextToImageJobCost = () => {
   return {
     totalCost,
     isCalculatingCost: !status.charge ? false : input ? isLoading : false,
+    costEstimateError: !isLoading && isError,
   };
 };
 

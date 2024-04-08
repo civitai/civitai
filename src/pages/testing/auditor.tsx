@@ -17,6 +17,7 @@ import {
   highlightInappropriate,
   includesInappropriate,
 } from '~/utils/metadata/audit';
+import { normalizeText } from '~/utils/string-helpers';
 
 type AuditResult = {
   highlighted: string;
@@ -51,7 +52,8 @@ export default function MetadataTester() {
     const passed = new Set<AuditResult>();
     const failed = new Set<AuditResult>();
 
-    for (const prompt of input) {
+    for (let prompt of input) {
+      prompt = normalizeText(prompt);
       const isInappropriate = includesInappropriate(prompt) !== false;
       const tags = getTagsFromPrompt(prompt) || [];
       const highlighted = highlightInappropriate(prompt) ?? prompt;

@@ -2,6 +2,7 @@ import { ModalProps } from '@mantine/core';
 import { ContextModalProps, ModalsProvider } from '@mantine/modals';
 import dynamic from 'next/dynamic';
 import { openBountyEntryFilesModal } from '~/components/Bounty/BountyEntryFilesModal';
+import { openChatShareModal } from '~/components/Chat/ChatShareModal';
 import { openCivitaiLinkModal } from '~/components/CivitaiLink/CivitaiLinkWizard';
 import { openAddToCollectionModal } from '~/components/Collections/AddToCollectionModal';
 import { openManageHomeBlocksModal } from '~/components/HomeBlocks/ManageHomeBlocksModal';
@@ -48,6 +49,7 @@ const ManageClubPostModal = dynamic(() => import('~/components/Modals/ManageClub
 const GenQualityFeedbackModal = dynamic(
   () => import('~/components/Modals/GenerationQualityFeedbackModal')
 );
+const ChatShareModal = dynamic(() => import('~/components/Chat/ChatShareModal'));
 
 const registry = {
   blockModelTags: {
@@ -113,6 +115,10 @@ const registry = {
   imageGenQualityFeedbackModal: {
     Component: GenQualityFeedbackModal,
     fn: openGenQualityFeedbackModal,
+  },
+  chatShareModal: {
+    Component: ChatShareModal,
+    fn: openChatShareModal,
   },
 };
 

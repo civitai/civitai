@@ -84,7 +84,7 @@ export function CollectionCard({ data, sx }: Props) {
                   [classes.imageGroupContainer]: true,
                   [classes.imageGroupContainer4x4]: coverImagesCount > 2,
                 })
-              : undefined
+              : classes.imageGroupContainer
           }
         >
           {coverImages.length > 0 && (
@@ -159,7 +159,6 @@ function ImageCover({ data, coverImages }: Props & { coverImages: ImageProps[] }
   const { classes } = useCardStyles({ aspectRatio: 1 });
   const isMultiImage = coverImages.length > 1;
   const coverImagesCount = coverImages.length;
-  console.log({ coverImages });
 
   return (
     <>

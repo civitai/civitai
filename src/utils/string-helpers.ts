@@ -3,6 +3,7 @@ import slugify from 'slugify';
 
 import allowedUrls from '~/utils/allowed-third-party-urls.json';
 import { toJson } from '~/utils/json-helpers';
+import he from 'he';
 
 function getUrlDomain(url: string) {
   // convert url string into a URL object and extract just the domain, avoiding subdomains
@@ -168,6 +169,10 @@ export function trimNonAlphanumeric(str: string | null | undefined) {
   return str?.replace(/^[^\w]+|[^\w]+$/g, '');
 }
 
-export function removeAccents(input: string): string {
-  return input.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+export function normalizeText(input?: string): string {
+  if (!input) return '';
+  return he
+    .decode(input)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
 }

@@ -227,6 +227,7 @@ export const constants = {
     platformFeeRate: 3000, // 30.00%. Divide by 10000
     minBuzzWithdrawal: 100000,
     maxBuzzWithdrawal: 100000000,
+    generationBuzzChargingStartDate: new Date('2024-04-04T00:00:00.000Z'),
   },
   profile: {
     coverImageAspectRatio: 1 / 4,

@@ -101,7 +101,7 @@ export const SupportButton = ({ className, ...props }: Props) => {
   if (!button) return null;
 
   return (
-    <HoverCard withArrow>
+    <HoverCard withArrow openDelay={500}>
       <HoverCard.Target>{button}</HoverCard.Target>
       <HoverCard.Dropdown>
         <Text>You should really press this button.</Text>

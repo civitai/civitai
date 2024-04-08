@@ -159,9 +159,11 @@ export function QueueItem({ request }: Props) {
             <Text size="xs" color="dimmed">
               {formatDateMin(request.createdAt)}
             </Text>
-            {!!request.cost && (
-              <CurrencyBadge unitAmount={request.cost} currency={Currency.BUZZ} size="xs" />
-            )}
+            {!!request.cost &&
+              dayjs(request.createdAt).toDate() >=
+                constants.buzz.generationBuzzChargingStartDate && (
+                <CurrencyBadge unitAmount={request.cost} currency={Currency.BUZZ} size="xs" />
+              )}
             <Tooltip {...tooltipProps} label="Copy Job IDs">
               <ActionIcon size="md" p={4} radius={0} onClick={handleCopy}>
                 {copied ? <IconCheck /> : <IconInfoHexagon />}

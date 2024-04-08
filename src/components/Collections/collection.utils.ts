@@ -116,7 +116,7 @@ export const useQueryCollections = (
 ) => {
   filters ??= {};
 
-  const { data, ...rest } = trpc.collection.getInfinite.useInfiniteQuery(
+  const { data, isLoading, ...rest } = trpc.collection.getInfinite.useInfiniteQuery(
     { ...filters },
     {
       getNextPageParam: (lastPage) => lastPage.nextCursor,
@@ -126,12 +126,13 @@ export const useQueryCollections = (
   );
 
   const flatData = useMemo(() => data?.pages.flatMap((x) => (!!x ? x.items : [])), [data]);
-  const { items: collections } = useApplyHiddenPreferences({
+  const { items: collections, loadingPreferences } = useApplyHiddenPreferences({
     type: 'collections',
     data: flatData,
+    isRefetching: rest.isRefetching,
   });
 
-  return { data, collections, ...rest };
+  return { data, collections, isLoading: isLoading || loadingPreferences, ...rest };
 };
 
 export type PrivacyData = {

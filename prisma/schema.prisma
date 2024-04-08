@@ -2727,6 +2727,10 @@ model ChatMember {
 
 enum ChatMessageType {
   Markdown
+  Image
+  Video
+  Audio
+  Embed
 }
 
 model ChatMessage {

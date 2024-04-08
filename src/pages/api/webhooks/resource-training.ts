@@ -3,7 +3,7 @@ import * as z from 'zod';
 import { env } from '~/env/server.mjs';
 import { SignalMessages } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
-import { trainingCompleteEmail } from '~/server/email/templates';
+import { trainingCompleteEmail, trainingFailEmail } from '~/server/email/templates';
 import { logToAxiom } from '~/server/logging/client';
 import { refundTransaction } from '~/server/services/buzz.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
@@ -44,7 +44,7 @@ const context = z.object({
 
 const schema = z.object({
   jobId: z.string(),
-  type: z.string(),
+  type: z.string(), // JobStatus
   dateTime: z.string(),
   // serviceProvider: z.string().nullish(),
   workerId: z.string().nullish(),
@@ -134,6 +134,7 @@ export default WebhookEndpoint(async (req, res) => {
         await updateRecords(
           { ...(data.context ?? {}), modelFileId: data.jobProperties.modelFileId },
           status,
+          data.type,
           data.jobId
         );
       } catch (e: unknown) {
@@ -163,6 +164,7 @@ export default WebhookEndpoint(async (req, res) => {
 async function updateRecords(
   { modelFileId, message, epochs, start_time, end_time }: ContextProps & { modelFileId: number },
   status: TrainingStatus,
+  orchStatus: string, // JobStatus
   jobId: string
 ) {
   const modelFile = await dbWrite.modelFile.findFirst({
@@ -188,7 +190,7 @@ async function updateRecords(
   }
 
   let attempts = trainingResults.attempts || 0;
-  if (status === TrainingStatus.Failed) {
+  if (['Rejected', 'LateRejected'].includes(orchStatus)) {
     attempts += 1;
   }
 
@@ -236,13 +238,6 @@ async function updateRecords(
   });
   if (!model || !model.user) return;
 
-  if (status === 'InReview') {
-    await trainingCompleteEmail.send({
-      model,
-      user: model.user,
-    });
-  }
-
   try {
     await fetch(
       `${env.SIGNALS_ENDPOINT}/users/${model.user.id}/signals/${SignalMessages.TrainingUpdate}`,
@@ -256,6 +251,18 @@ async function updateRecords(
     logWebhook({
       message: 'Failed to send signal for update',
       data: { error: (e as Error)?.message, cause: (e as Error)?.cause, jobId },
+    });
+  }
+
+  if (status === 'InReview') {
+    await trainingCompleteEmail.send({
+      model,
+      user: model.user,
+    });
+  } else if (status === 'Failed') {
+    await trainingFailEmail.send({
+      model,
+      user: model.user,
     });
   }
 }

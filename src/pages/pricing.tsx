@@ -24,6 +24,8 @@ import {
   IconHeart,
   IconHeartHandshake,
   IconInfoCircle,
+  IconInfoTriangle,
+  IconInfoTriangleFilled,
   IconPhotoPlus,
 } from '@tabler/icons-react';
 import { DonateButton } from '~/components/Stripe/DonateButton';
@@ -43,6 +45,8 @@ import {
 } from '~/components/Stripe/memberships.util';
 import { formatDate } from '~/utils/date-helpers';
 import { ProductMetadata } from '~/server/schema/stripe.schema';
+import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
+import { Meta } from '~/components/Meta/Meta';
 
 export default function Pricing() {
   const router = useRouter();
@@ -55,7 +59,9 @@ export default function Pricing() {
   const redirectReason = joinRedirectReasons[reason];
 
   const { data: products, isLoading: productsLoading } = trpc.stripe.getPlans.useQuery();
-  const { subscription, subscriptionLoading } = useActiveSubscription();
+  const { subscription, subscriptionLoading } = useActiveSubscription({
+    checkWhenInBadState: true,
+  });
 
   const isLoading = productsLoading || subscriptionLoading;
   const currentMembershipUnavailable =
@@ -69,6 +75,10 @@ export default function Pricing() {
 
   return (
     <>
+      <Meta
+        title="Memberships | Civitai"
+        description="As the leading generative AI community, we're adding new features every week. Help us keep the community thriving by becoming a Supporter and get exclusive perks."
+      />
       <Container size="sm" mb="lg">
         <Stack>
           {!!redirectReason && (
@@ -85,12 +95,37 @@ export default function Pricing() {
             Memberships
           </Title>
           <Text align="center" className={classes.introText} sx={{ lineHeight: 1.25 }}>
-            {`As the leading model sharing service, we're adding new features every week. Help us keep the community thriving by becoming a member and get exclusive perks.`}
+            {`As the leading generative AI community, we're adding new features every week. Help us keep the community thriving by becoming a Supporter and get exclusive perks.`}
           </Text>
         </Stack>
       </Container>
       <Container size="xl">
         <Stack>
+          {subscription?.isBadState && (
+            <AlertWithIcon
+              color="red"
+              iconColor="red"
+              icon={<IconInfoTriangleFilled size={20} strokeWidth={2.5} />}
+              iconSize={28}
+              py={11}
+            >
+              <Stack spacing={0}>
+                <Text lh={1.2}>
+                  Uh oh! It looks like there was an issue with your membership. You can update your
+                  payment method or renew your membership now by clicking{' '}
+                  <SubscribeButton priceId={subscription.price.id}>
+                    <Anchor component="button" type="button">
+                      here
+                    </Anchor>
+                  </SubscribeButton>
+                </Text>
+                <Text lh={1.2}>
+                  Alternatively, click <Anchor href="/user/membership">here</Anchor> to view all
+                  your benefits
+                </Text>
+              </Stack>
+            </AlertWithIcon>
+          )}
           <Group>
             {currentMembershipUnavailable && (
               <AlertWithIcon
