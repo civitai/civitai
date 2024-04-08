@@ -153,6 +153,7 @@ export function QueueItem({ request }: Props) {
               count={request.images?.filter((x) => x.duration).length ?? 0}
               quantity={request.quantity}
               tooltipLabel={overwriteStatusLabel}
+              progress
             />
 
             <Text size="xs" color="dimmed">

@@ -113,12 +113,14 @@ export const useGenerationStatus = () => {
     trpc: { context: { skipBatch: true } },
   });
 
-  const status = data ?? defaultServiceStatus;
-  if (currentUser?.isModerator) status.available = true; // Always have generation available for mods
-  const isFreeTier = !currentUser?.tier || currentUser.tier === 'free';
-  const limits = status.limits[currentUser?.tier ?? 'free'];
+  return useMemo(() => {
+    const status = data ?? defaultServiceStatus;
+    if (currentUser?.isModerator) status.available = true; // Always have generation available for mods
+    const tier = currentUser?.tier ?? 'free';
+    const limits = status.limits[tier];
 
-  return { ...status, isFreeTier, limits };
+    return { ...status, tier, limits };
+  }, [data]);
 };
 
 export const useEstimateTextToImageJobCost = () => {

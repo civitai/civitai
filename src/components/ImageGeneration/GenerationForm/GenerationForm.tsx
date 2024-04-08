@@ -18,11 +18,7 @@ import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { constants, generation, getGenerationConfig } from '~/server/common/constants';
 import { generationPanel, generationStore, useGenerationStore } from '~/store/generation.store';
-import {
-  useCreateGenerationRequest,
-  useGetGenerationRequests,
-  usePollGenerationRequests,
-} from '~/components/ImageGeneration/utils/generationRequestHooks';
+import { useCreateGenerationRequest } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { isDefined } from '~/utils/type-guards';
 import {
   Form,
@@ -90,11 +86,12 @@ import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { DailyBoostRewardClaim } from '~/components/Buzz/Rewards/DailyBoostRewardClaim';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
+import { useGenerationContext } from '~/components/ImageGeneration/GenerationProvider';
 
 const BUZZ_CHARGE_NOTICE_END = new Date('2024-04-14T00:00:00Z');
 
 const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
-  const { classes, theme } = useStyles();
+  const { classes, cx, theme } = useStyles();
   const currentUser = useCurrentUser();
   const { requireLogin } = useLoginRedirect({ reason: 'image-gen', returnUrl: '/generate' });
   const [promptWarning, setPromptWarning] = useState<string | null>(null);
@@ -119,7 +116,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
     defaultValues,
   });
 
-  const { isFreeTier, limits, ...status } = useGenerationStatus();
+  const { limits, ...status } = useGenerationStatus();
 
   useEffect(() => {
     form.reset({
@@ -259,10 +256,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
     ],
   ]);
 
-  const { requests } = useGetGenerationRequests();
-  const pendingProcessingCount = usePollGenerationRequests(requests);
-  const reachedRequestLimit = pendingProcessingCount >= limits.queue;
-  const disableGenerateButton = reachedRequestLimit || isCalculatingCost;
+  const canGenerate = useGenerationContext((state) => state.canGenerate);
 
   const cfgDisabled = !!draft;
   const samplerDisabled = !!draft;
@@ -696,7 +690,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
           </Stack>
           </Card> */}
         </ScrollArea>
-        <Stack spacing={4} px="md" pt="xs" pb={3} className={classes.generationArea}>
+        <div className={cx(classes.generationArea, 'px-2 py-2 flex flex-col gap-2')}>
           <DailyBoostRewardClaim />
           {promptWarning && (
             <div>
@@ -763,19 +757,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                   </Text>
                 </DismissibleAlert>
               )}
-              {isFreeTier && limits.quantity < 8 && (
-                <Group spacing="xs" noWrap mb={4} align="center">
-                  <Text size="xs" color="yellow" lh={1}>
-                    <IconAlertTriangleFilled size={20} />
-                  </Text>
-                  <Text size="xs" lh={1.2} color="yellow">
-                    {`Want to generate more at once? `}
-                    <Text lh={1.2} component={NextLink} href="/pricing" td="underline">
-                      Become a member!
-                    </Text>
-                  </Text>
-                </Group>
-              )}
+
               <QueueSnackbar />
               <Group spacing="xs" className={classes.generateButtonContainer} noWrap>
                 <Card withBorder className={classes.generateButtonQuantity} p={0}>
@@ -804,6 +786,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                     size="lg"
                     className={classes.generateButtonButton}
                     loading={isLoading}
+                    disabled={!canGenerate}
                   >
                     <Text ta="center">Generate</Text>
                   </Button>
@@ -814,37 +797,21 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                     label="Generate"
                     loading={isCalculatingCost || isLoading}
                     className={classes.generateButtonButton}
-                    disabled={disableGenerateButton}
+                    disabled={!canGenerate}
                     buzzAmount={totalCost}
                     showPurchaseModal={false}
                   />
                 )}
-                {/* <Tooltip label="Reset" color="dark" withArrow> */}
+
                 <Button
                   onClick={handleClearAll}
-                  variant="outline"
+                  variant="default"
                   className={classes.generateButtonReset}
                   px="xs"
                 >
-                  {/* <IconX size={20} strokeWidth={3} /> */}
                   Clear All
                 </Button>
-                {/* </Tooltip> */}
               </Group>
-              <Text size="xs" color="dimmed">
-                {reachedRequestLimit
-                  ? 'You have reached the request limit. Please wait until your current requests are finished. '
-                  : `You can queue ${limits.queue - pendingProcessingCount} more jobs. `}
-                {isFreeTier && (
-                  <Text component="span">
-                    Want more?{' '}
-                    <Text component={NextLink} href="/pricing" variant="link" td="underline">
-                      Become a Member
-                    </Text>
-                    😍
-                  </Text>
-                )}
-              </Text>
             </>
           ) : null}
           {status.message && !promptWarning && (
@@ -857,7 +824,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
               {status.message}
             </AlertWithIcon>
           )}
-        </Stack>
+        </div>
       </Stack>
     </Form>
   );
@@ -892,6 +859,10 @@ const useStyles = createStyles((theme) => ({
   generationContainer: {},
   generationArea: {
     borderTop: `1px solid ${
+      theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[2]
+    }`,
+    borderRadius: theme.radius.md,
+    boxShadow: `inset 0 2px ${
       theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[2]
     }`,
   },

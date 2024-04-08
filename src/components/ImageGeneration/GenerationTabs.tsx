@@ -2,10 +2,6 @@ import { Tooltip, ActionIcon, CloseButton, SegmentedControl, Text } from '@manti
 import { IconArrowsDiagonal, IconBrush, IconGridDots, TablerIconsProps } from '@tabler/icons-react';
 import { Feed } from './Feed';
 import { Queue } from './Queue';
-import {
-  useGetGenerationRequests,
-  usePollGenerationRequests,
-} from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { generationPanel, useGenerationStore } from '~/store/generation.store';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import React, { useEffect } from 'react';
@@ -28,9 +24,6 @@ export default function GenerationTabs({
 
   const view = useGenerationStore((state) => state.view);
   const setView = useGenerationStore((state) => state.setView);
-
-  const result = useGetGenerationRequests();
-  const pendingProcessingCount = usePollGenerationRequests(result.requests);
 
   type Tabs = Record<
     typeof view,

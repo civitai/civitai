@@ -1,5 +1,6 @@
-import { Badge, BadgeProps, Text, Tooltip } from '@mantine/core';
-import { IconLoader, IconPhoto } from '@tabler/icons-react';
+import { Badge, BadgeProps, Progress, Text, Tooltip } from '@mantine/core';
+import { IconPhoto } from '@tabler/icons-react';
+import { useState } from 'react';
 import { GenerationRequestStatus } from '~/server/common/enums';
 import { generationStatusColors } from '~/shared/constants/generation.constants';
 
@@ -8,21 +9,38 @@ export function GenerationStatusBadge({
   count,
   quantity,
   tooltipLabel,
+  progress,
   ...badgeProps
 }: {
   status: GenerationRequestStatus;
   count: number;
   quantity: number;
   tooltipLabel?: string;
+  progress?: boolean;
 } & BadgeProps) {
+  const [opened, setOpened] = useState(false);
+  const toggleOpened = () => {
+    if (tooltipLabel) setOpened((o) => !o);
+  };
+
   return (
-    <Tooltip label={tooltipLabel} withArrow color="dark" maw={300} multiline>
+    <Tooltip
+      label={tooltipLabel}
+      withArrow
+      color="dark"
+      maw={300}
+      multiline
+      withinPortal
+      opened={opened}
+    >
       <Badge
         variant="light"
         size="sm"
         color={generationStatusColors[status]}
         radius="lg"
         h={22}
+        onMouseEnter={toggleOpened}
+        onMouseLeave={toggleOpened}
         {...badgeProps}
       >
         <div className="flex items-center gap-1">
@@ -30,7 +48,15 @@ export function GenerationStatusBadge({
           <Text size="sm" inline weight={500}>
             {status !== GenerationRequestStatus.Succeeded ? `${count}/${quantity}` : count}
           </Text>
-          {status === GenerationRequestStatus.Processing && <IconLoader size={16} />}
+          {progress && status === GenerationRequestStatus.Processing && (
+            <Progress
+              color="yellow"
+              value={(count / quantity) * 100}
+              w={40}
+              h={6}
+              className="ml-1"
+            />
+          )}
         </div>
       </Badge>
     </Tooltip>

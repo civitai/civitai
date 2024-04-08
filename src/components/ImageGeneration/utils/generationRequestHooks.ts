@@ -6,12 +6,10 @@ import { showErrorNotification } from '~/utils/notifications';
 import { queryClient, trpc } from '~/utils/trpc';
 import { useEffect, useMemo } from 'react';
 import { GetGenerationRequestsInput } from '~/server/schema/generation.schema';
-import { Generation } from '~/server/services/generation/generation.types';
 import { createDebouncer, useDebouncer } from '~/utils/debouncer';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { SignalMessages, GenerationRequestStatus } from '~/server/common/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import {
   JobStatus,
   JobType,
@@ -19,6 +17,7 @@ import {
   textToImageEventSchema,
 } from '~/libs/orchestrator/jobs';
 import { z } from 'zod';
+import { isDefined } from '~/utils/type-guards';
 
 export const useGetGenerationRequests = (
   input?: GetGenerationRequestsInput,
@@ -47,7 +46,9 @@ export const useGetGenerationRequests = (
   return { data, requests, images, isLoading, ...rest };
 };
 
-const updateGenerationRequest = (cb: (data: InfiniteData<GetGenerationRequestsReturn>) => void) => {
+export const updateGenerationRequest = (
+  cb: (data: InfiniteData<GetGenerationRequestsReturn>) => void
+) => {
   const queryKey = getQueryKey(trpc.generation.getRequests);
   queryClient.setQueriesData({ queryKey, exact: false }, (state) =>
     produce(state, (old?: InfiniteData<GetGenerationRequestsReturn>) => {
@@ -55,57 +56,6 @@ const updateGenerationRequest = (cb: (data: InfiniteData<GetGenerationRequestsRe
       cb(old);
     })
   );
-};
-
-const POLLABLE_STATUSES = [GenerationRequestStatus.Pending, GenerationRequestStatus.Processing];
-export const usePollGenerationRequests = (requestsInput: Generation.Request[] = []) => {
-  const { connected } = useSignalContext();
-  const currentUser = useCurrentUser();
-  const debouncer = useDebouncer(5000);
-  const requestIds = requestsInput
-    .filter((x) => POLLABLE_STATUSES.includes(x.status))
-    .map((x) => x.id);
-  const { requests, refetch } = useGetGenerationRequests(
-    {
-      requestId: requestIds,
-      take: 100,
-      status: !requestIds.length ? POLLABLE_STATUSES : undefined,
-      detailed: true,
-    },
-    {
-      onError: () => debouncer(refetch),
-      enabled: !!requestIds.length && !!currentUser && !connected,
-    }
-  );
-
-  useEffect(() => {
-    if (!!requestIds?.length && !connected) {
-      debouncer(refetch);
-    }
-  }, [requestIds, connected]); //eslint-disable-line
-
-  // update requests with newly polled values
-  useEffect(() => {
-    updateGenerationRequest((old) => {
-      for (const request of requests) {
-        for (const page of old.pages) {
-          const index = page.items.findIndex((x) => x.id === request.id);
-          if (index > -1) {
-            const item = page.items[index];
-            item.status = request.status;
-            item.images = item.images?.map((image) => {
-              const match = request.images?.find((x) => x.hash === image.hash);
-              if (!match) return image;
-              const available = image.available ? image.available : match.available;
-              return { ...image, ...match, available };
-            });
-          }
-        }
-      }
-    });
-  }, [requests]) //eslint-disable-line
-
-  return requests.filter((x) => POLLABLE_STATUSES.includes(x.status)).length;
 };
 
 export const useCreateGenerationRequest = () => {
@@ -232,13 +182,15 @@ function updateFromEvents() {
         }
 
         if (hasEvents) {
-          const types = item.images?.map((x) => x.type) ?? [];
-          if (types.some((status) => status === JobStatus.Claimed))
-            item.status = GenerationRequestStatus.Processing;
-          else if (types.some((status) => status === JobStatus.Failed))
-            item.status = GenerationRequestStatus.Error;
-          else if (types.every((status) => status === JobStatus.Succeeded))
-            item.status = GenerationRequestStatus.Succeeded;
+          const types = item.images?.map((x) => x.type).filter(isDefined) ?? [];
+          if (types.length) {
+            if (types.some((status) => status === JobStatus.Claimed))
+              item.status = GenerationRequestStatus.Processing;
+            else if (types.some((status) => status === JobStatus.Failed))
+              item.status = GenerationRequestStatus.Error;
+            else if (types.every((status) => status === JobStatus.Succeeded))
+              item.status = GenerationRequestStatus.Succeeded;
+          }
 
           item.images = item.images?.sort((a, b) => (b.duration ?? 0) - (a.duration ?? 0));
           if (!events.length) break pages;
