@@ -17,7 +17,8 @@ export const useActiveSubscription = ({
     isLoading,
     isFetching,
   } = trpc.stripe.getUserSubscription.useQuery(undefined, {
-    enabled: !!currentUser && (isMember || (checkWhenInBadState && currentUser?.memberInBadState)),
+    enabled:
+      !!currentUser && !!(isMember || (checkWhenInBadState && currentUser?.memberInBadState)),
   });
 
   return { subscription, subscriptionLoading: !isMember ? false : isLoading || isFetching };
