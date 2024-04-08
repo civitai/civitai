@@ -7,7 +7,6 @@ import { Feed } from '~/components/ImageGeneration/Feed';
 import { GeneratedImageActions } from '~/components/ImageGeneration/GeneratedImageActions';
 import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvider';
 import { Queue } from '~/components/ImageGeneration/Queue';
-import { useGetGenerationRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
