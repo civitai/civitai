@@ -125,47 +125,44 @@ export const useGenerationStatus = () => {
 };
 
 export const useEstimateTextToImageJobCost = () => {
-  const generationForm = useGenerationFormStore.getState();
-  const [debouncedGenerationForm] = useDebouncedValue(generationForm, 500);
   const status = useGenerationStatus();
-  const { model, aspectRatio, steps, quantity, sampler, draft } = debouncedGenerationForm;
+  const model = useGenerationFormStore((state) => state.model);
   const baseModel = model?.baseModel ? getBaseModelSetKey(model.baseModel) : undefined;
 
-  const input = useMemo(() => {
-    if (!status.charge || !baseModel) {
-      return null;
-    }
+  const input = useGenerationFormStore(
+    useCallback(
+      (state) => {
+        const { aspectRatio, steps, quantity, sampler, draft } = state;
+        if (!status.charge || !baseModel) return null;
 
-    return {
-      baseModel: baseModel ?? generation.defaultValues.model.baseModel,
-      aspectRatio: aspectRatio ?? generation.defaultValues.aspectRatio,
-      steps: steps ?? generation.defaultValues.steps,
-      quantity: quantity ?? generation.defaultValues.quantity,
-      sampler: sampler ?? generation.defaultValues.sampler,
-      draft,
-    };
-  }, [aspectRatio, steps, quantity, sampler, status.charge, baseModel, draft]);
+        return {
+          baseModel: baseModel ?? generation.defaultValues.model.baseModel,
+          aspectRatio: aspectRatio ?? generation.defaultValues.aspectRatio,
+          steps: steps ?? generation.defaultValues.steps,
+          quantity: quantity ?? generation.defaultValues.quantity,
+          sampler: sampler ?? generation.defaultValues.sampler,
+          draft,
+        };
+      },
+      [baseModel, status.charge]
+    )
+  );
 
   const {
     data: result,
     isLoading,
     isError,
   } = trpc.generation.estimateTextToImage.useQuery(input as GenerationRequestTestRunSchema, {
-    enabled: !!input && status.charge,
+    enabled: !!input,
   });
 
   const totalCost = status.charge
-    ? Math.ceil(
-        (result?.jobs ?? []).reduce((acc, job) => {
-          acc += job.cost;
-          return acc;
-        }, 0)
-      )
+    ? Math.ceil((result?.jobs ?? []).reduce((acc, job) => acc + job.cost, 0))
     : 0;
 
   return {
     totalCost,
-    isCalculatingCost: !status.charge ? false : input ? isLoading : false,
+    isCalculatingCost: input ? isLoading : false,
     costEstimateError: !isLoading && isError,
   };
 };
