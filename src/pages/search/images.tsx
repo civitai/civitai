@@ -64,7 +64,7 @@ function RenderFilters() {
       />
       <SearchableMultiSelectRefinementList
         title="Tags"
-        attribute="tags.name"
+        attribute="tagNames"
         operator="and"
         searchable={true}
       />
