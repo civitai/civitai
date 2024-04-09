@@ -1939,6 +1939,7 @@ enum CosmeticType {
   Badge
   NamePlate
   ContentDecoration
+  ProfileDecoration
 }
 
 enum CosmeticSource {
@@ -1967,6 +1968,7 @@ model Cosmetic {
   leaderboardPosition Int?
   UserCosmetic        UserCosmetic[]
   purchases           UserCosmeticShopPurchases[]
+  cosmeticShopItems   CosmeticShopItem[]
 }
 
 enum CosmeticEntity {
@@ -2007,6 +2009,7 @@ model CosmeticShopSection {
 model CosmeticShopItem {
   id                Int                         @id @default(autoincrement())
   cosmeticId        Int
+  cosmetic          Cosmetic                    @relation(fields: [cosmeticId], references: [id], onDelete: Cascade)
   unitValue         Int
   addedById         Int?
   addedBy           User?                       @relation(fields: [addedById], references: [id], onDelete: SetNull)

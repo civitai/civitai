@@ -6,12 +6,15 @@ export const useQueryCosmeticsPaged = (
   filters?: Partial<GetPaginatedCosmeticsInput>,
   options?: { keepPreviousData?: boolean; enabled?: boolean }
 ) => {
+  const currentUser = useCurrentUser();
+
   const { data, ...rest } = trpc.cosmetic.getPaged.useQuery(
     {
       ...filters,
     },
     {
       ...options,
+      enabled: (options?.enabled ?? true) && currentUser?.isModerator,
     }
   );
 
