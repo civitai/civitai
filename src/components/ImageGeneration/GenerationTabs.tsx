@@ -2,7 +2,7 @@ import { Tooltip, ActionIcon, CloseButton, SegmentedControl, Text } from '@manti
 import { IconArrowsDiagonal, IconBrush, IconGridDots, TablerIconsProps } from '@tabler/icons-react';
 import { Feed } from './Feed';
 import { Queue } from './Queue';
-import { generationPanel, useGenerationStore } from '~/store/generation.store';
+import { GenerationPanelView, generationPanel, useGenerationStore } from '~/store/generation.store';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import React, { useEffect } from 'react';
 import { GenerationForm } from '~/components/ImageGeneration/GenerationForm/GenerationForm';
@@ -24,33 +24,6 @@ export default function GenerationTabs({
 
   const view = useGenerationStore((state) => state.view);
   const setView = useGenerationStore((state) => state.setView);
-
-  type Tabs = Record<
-    typeof view,
-    {
-      Icon: (props: TablerIconsProps) => JSX.Element;
-      label: string;
-      Component: React.FC;
-    }
-  >;
-
-  const tabs: Tabs = {
-    generate: {
-      Icon: IconBrush,
-      label: 'Generate',
-      Component: GenerationForm,
-    },
-    queue: {
-      Icon: IconClockHour9,
-      label: 'Queue',
-      Component: Queue,
-    },
-    feed: {
-      Icon: IconGridDots,
-      label: 'Feed',
-      Component: Feed,
-    },
-  };
 
   const View = tabs[view].Component;
   const tabEntries = Object.entries(tabs).filter(([key]) =>
@@ -108,3 +81,30 @@ export default function GenerationTabs({
     </GenerationProvider>
   );
 }
+
+type Tabs = Record<
+  GenerationPanelView,
+  {
+    Icon: (props: TablerIconsProps) => JSX.Element;
+    label: string;
+    Component: React.FC;
+  }
+>;
+
+const tabs: Tabs = {
+  generate: {
+    Icon: IconBrush,
+    label: 'Generate',
+    Component: GenerationForm,
+  },
+  queue: {
+    Icon: IconClockHour9,
+    label: 'Queue',
+    Component: Queue,
+  },
+  feed: {
+    Icon: IconGridDots,
+    label: 'Feed',
+    Component: Feed,
+  },
+};

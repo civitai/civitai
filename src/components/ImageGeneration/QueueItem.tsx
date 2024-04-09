@@ -147,7 +147,6 @@ export function QueueItem({ request }: Props) {
   // };
 
   const refundTime = useMemo(() => {
-    // TODO.generation - remove `isProd` condition after finished testing
     return !failed ? undefined : dayjs(request.createdAt).add(35, 'minutes').toDate();
   }, [failed, request.createdAt]);
 

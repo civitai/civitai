@@ -7,15 +7,15 @@ import { showErrorNotification } from '~/utils/notifications';
 import { QS } from '~/utils/qs';
 
 export type RunType = 'run' | 'remix' | 'random' | 'params';
-type View = 'queue' | 'generate' | 'feed';
+export type GenerationPanelView = 'queue' | 'generate' | 'feed';
 type GenerationState = {
   opened: boolean;
-  view: View;
+  view: GenerationPanelView;
   data?: { type: RunType; data: Partial<Generation.Data> };
   // used to populate form with model/image generation data
   open: (input?: GetGenerationDataInput) => Promise<void>;
   close: () => void;
-  setView: (view: View) => void;
+  setView: (view: GenerationPanelView) => void;
   randomize: (includeResources?: boolean) => Promise<void>;
   setParams: (data: Generation.Data['params']) => void;
   setData: (args: { data: Partial<Generation.Data>; type: RunType }) => void;
