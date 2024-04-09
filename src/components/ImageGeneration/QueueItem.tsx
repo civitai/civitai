@@ -34,7 +34,10 @@ import { Collection } from '~/components/Collection/Collection';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { GeneratedImage } from '~/components/ImageGeneration/GeneratedImage';
 import { GenerationDetails } from '~/components/ImageGeneration/GenerationDetails';
-import { useDeleteGenerationRequest } from '~/components/ImageGeneration/utils/generationRequestHooks';
+import {
+  useDeleteGenerationRequest,
+  useDeleteGenerationRequestImages,
+} from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { constants } from '~/server/common/constants';
 import { Generation } from '~/server/services/generation/generation.types';
 import { generationPanel, generationStore } from '~/store/generation.store';
@@ -52,6 +55,7 @@ import { useMemo } from 'react';
 import { GenerationRequestStatus } from '~/server/common/enums';
 import { GenerationStatusBadge } from '~/components/ImageGeneration/GenerationStatusBadge';
 import { isProd } from '~/env/other';
+import { trpc } from '~/utils/trpc';
 
 // export function QueueItem({ data: request, index }: { data: Generation.Request; index: number }) {
 export function QueueItem({ request }: Props) {
@@ -70,14 +74,22 @@ export function QueueItem({ request }: Props) {
     status === GenerationRequestStatus.Pending || status === GenerationRequestStatus.Processing;
   const failed = status === GenerationRequestStatus.Error;
 
-  const verbage = pendingProcessing
+  const deleteImageMutation = useDeleteGenerationRequestImages();
+  const deleteMutation = useDeleteGenerationRequest();
+  const removeAction = pendingProcessing
     ? {
         modal: {
           title: 'Cancel Request',
           children: `Are you sure you want to cancel this request?`,
-          labels: { confirm: 'Delete', cancel: "No, don't cancel it" },
+          labels: { confirm: 'Cancel', cancel: "No, don't cancel it" },
         },
         tooltip: 'Cancel',
+        onConfirm: () => {
+          deleteImageMutation.mutate({
+            ids: request.images?.filter((x) => !x.available).map((x) => x.id) ?? [],
+            cancelled: true,
+          });
+        },
       }
     : {
         modal: {
@@ -86,17 +98,17 @@ export function QueueItem({ request }: Props) {
           labels: { confirm: 'Delete', cancel: "No, don't delete it" },
         },
         tooltip: 'Delete',
+        onConfirm: () => {
+          deleteMutation.mutate({ id: request.id });
+        },
       };
 
-  const deleteMutation = useDeleteGenerationRequest();
   const handleDeleteQueueItem = () => {
     openConfirmModal({
-      ...verbage.modal,
+      ...removeAction.modal,
       confirmProps: { color: 'red' },
       zIndex: constants.imageGeneration.drawerZIndex + 1,
-      onConfirm: () => {
-        deleteMutation.mutate({ id: request.id });
-      },
+      onConfirm: removeAction.onConfirm,
     });
   };
 
@@ -174,7 +186,7 @@ export function QueueItem({ request }: Props) {
                 </ActionIcon>
               </Tooltip>
             )}
-            <Tooltip {...tooltipProps} label={verbage.tooltip}>
+            <Tooltip {...tooltipProps} label={removeAction.tooltip}>
               <ActionIcon
                 size="md"
                 onClick={handleDeleteQueueItem}

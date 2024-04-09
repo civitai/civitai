@@ -853,8 +853,9 @@ export async function deleteGeneratedImage({ id, userId }: GetByIdInput & { user
 export async function bulkDeleteGeneratedImages({
   ids,
   userId,
+  cancelled,
 }: BulkDeleteGeneratedImagesInput & { userId: number }) {
-  const queryString = QS.stringify({ imageId: ids, userId });
+  const queryString = QS.stringify({ imageId: ids, userId, cancelled });
   const deleteResponse = await fetch(`${env.SCHEDULER_ENDPOINT}/images?${queryString}`, {
     method: 'DELETE',
   });

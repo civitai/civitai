@@ -121,8 +121,9 @@ export const useDeleteGenerationRequestImages = (
       options?.onSuccess?.(response, request, context);
     },
     onError: (error, ...args) => {
+      const [variables] = args;
       showErrorNotification({
-        title: 'Error deleting images',
+        title: variables.cancelled ? 'Error cancelling request' : 'Error deleting images',
         error: new Error(error.message),
       });
       options?.onError?.(error, ...args);
