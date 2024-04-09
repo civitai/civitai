@@ -2,7 +2,7 @@ import { NumberInput, NumberInputProps } from '@mantine/core';
 import { useDidUpdate } from '@mantine/hooks';
 import { useEffect, useState } from 'react';
 import {
-  useDerivedGenerationState,
+  useGenerationFormStore,
   useGenerationStatus,
 } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -17,7 +17,7 @@ type Props = Omit<NumberInputProps, 'limit' | 'min' | 'max'> & {
 };
 
 function QuantityInput({ value, onChange, ...inputWrapperProps }: Props) {
-  const { draft } = useDerivedGenerationState();
+  const draft = useGenerationFormStore((x) => x.draft);
   const { limits } = useGenerationStatus();
 
   useDidUpdate(() => {
