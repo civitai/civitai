@@ -18,112 +18,73 @@ import {
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
-import { BuzzWithdrawalRequestStatus, CosmeticType } from '@prisma/client';
+import { BuzzWithdrawalRequestStatus, CosmeticType, Currency } from '@prisma/client';
 import { IconCloudOff, IconEdit, IconPlus } from '@tabler/icons-react';
 import { useState } from 'react';
+import { useQueryCosmeticShopItemsPaged } from '~/components/CosmeticShop/cosmetic-shop.util';
 import { CosmeticsFiltersDropdown } from '~/components/Cosmetics/CosmeticsFiltersDropdown';
 import { useQueryCosmeticsPaged } from '~/components/Cosmetics/cosmetics.util';
+import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { Meta } from '~/components/Meta/Meta';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { CosmeticSample } from '~/pages/moderator/cosmetic-store/cosmetics';
 import { PurchasableRewardModeratorViewMode } from '~/server/common/enums';
+import { GetPaginatedCosmeticShopItemInput } from '~/server/schema/cosmetic-shop.schema';
 import { GetPaginatedCosmeticsInput } from '~/server/schema/cosmetic.schema';
 import { GetPaginatedPurchasableRewardsModeratorSchema } from '~/server/schema/purchasable-reward.schema';
 import { NamePlateCosmetic } from '~/server/selectors/cosmetic.selector';
 import { CosmeticGetById } from '~/types/router';
+import { formatDate } from '~/utils/date-helpers';
 
 import { trpc } from '~/utils/trpc';
 
-export const CosmeticSample = ({
-  cosmetic,
-}: {
-  cosmetic: Pick<CosmeticGetById, 'id' | 'data' | 'type' | 'name' | 'source'>;
-}) => {
-  const currentUser = useCurrentUser();
-  const { data: user } = trpc.user.getById.useQuery(
-    { id: currentUser?.id ?? 0 },
-    { enabled: !!currentUser }
-  );
-
-  if (!user) {
-    return <Loader />;
-  }
-
-  switch (cosmetic.type) {
-    case CosmeticType.Badge:
-      return (
-        <Box w={50}>
-          <EdgeMedia
-            src={(cosmetic.data as { url: string })?.url}
-            alt={cosmetic.name}
-            width="original"
-          />
-        </Box>
-      );
-    case CosmeticType.NamePlate:
-      const data = cosmetic.data as NamePlateCosmetic['data'];
-      return (
-        <Text weight="bold" {...data}>
-          {user.username ?? 'Username'}
-        </Text>
-      );
-    case CosmeticType.ProfileDecoration:
-      // TODO.cosmetic-shop: Confirm this is enough?
-      return (
-        <UserAvatar
-          user={{
-            ...user,
-            cosmetics: [{ data: {}, cosmetic }],
-          }}
-          size="md"
-        />
-      );
-    case CosmeticType.ContentDecoration:
-      // TODO.cosmetic-shop: Implement this
-      return null;
-    default:
-      return null;
-  }
-};
-
 export default function CosmeticStoreProducts() {
-  const [filters, setFilters] = useState<Omit<GetPaginatedCosmeticsInput, 'limit'>>({
+  const [filters, setFilters] = useState<Omit<GetPaginatedCosmeticShopItemInput, 'limit'>>({
     page: 1,
   });
   const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
   const {
-    cosmetics,
+    cosmeticShopItems,
     pagination,
     isLoading: isLoadingCosmetics,
     isRefetching,
-  } = useQueryCosmeticsPaged(debouncedFilters);
+  } = useQueryCosmeticShopItemsPaged(debouncedFilters);
 
   const isLoading = isLoadingCosmetics;
 
   return (
     <>
-      <Meta title="Cosmetics" deIndex />
+      <Meta title="Shop Products" deIndex />
       <Container size="lg">
         <Stack spacing={0} mb="xl">
-          <Title order={1}>Available Cosmetics</Title>
+          <Title order={1}>Shop Products</Title>
           <Text size="sm" color="dimmed">
-            You can view manage all available cosmetics here, and create new shop items from this
-            page.
-          </Text>
-          <Text size="sm" color="dimmed">
-            The ability to create cosmetics from this &amo; grant it to users will be coming soon
-            (TM).
+            You can add and manage shop products here. A cosmetic must be created before hand for it
+            to be created into a shop product.
           </Text>
         </Stack>
         <Group position="apart" mb="md">
-          <TextInput
-            label="Filter by name"
-            value={filters.name ?? ''}
-            onChange={(e) => setFilters({ ...filters, name: e.target.value || undefined })}
-            size="sm"
-            miw={300}
-          />
+          <Group align="flex-end">
+            <Button
+              component={NextLink}
+              href="/moderator/cosmetic-store/products/create"
+              radius="xl"
+            >
+              <IconPlus />
+              Add Product
+            </Button>
+            <TextInput
+              label="Filter by name"
+              value={filters.name ?? ''}
+              onChange={(e) => setFilters({ ...filters, name: e.target.value || undefined })}
+              size="sm"
+              miw={300}
+              radius="xl"
+              mb={0}
+            />
+          </Group>
           <Group>
             <CosmeticsFiltersDropdown
               setFilters={(f) => setFilters({ ...filters, ...f })}
@@ -135,43 +96,50 @@ export default function CosmeticStoreProducts() {
           <Center p="xl">
             <Loader />
           </Center>
-        ) : !!cosmetics.length ? (
+        ) : !!cosmeticShopItems.length ? (
           <div style={{ position: 'relative' }}>
             <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
 
             <Table>
               <thead>
                 <tr>
-                  <th>Name</th>
+                  <th>Title</th>
                   <th>Type</th>
                   <th>Sample</th>
-                  <th>Shop Items</th>
+                  <th>Price</th>
+                  <th>Available From</th>
+                  <th>Available To</th>
+                  <th>Total Quantity</th>
                   <th>&nbsp;</th>
                 </tr>
               </thead>
               <tbody>
-                {cosmetics.map((cosmetic) => {
+                {cosmeticShopItems.map((shopItem) => {
                   return (
-                    <tr key={cosmetic.id}>
+                    <tr key={shopItem.id}>
                       <td>
                         <Stack spacing={0} maw={350}>
-                          <Text>{cosmetic.name}</Text>
+                          <Text>{shopItem.title}</Text>
                           <Text color="dimmed" size="sm">
-                            {cosmetic.description}
+                            {shopItem.description}
                           </Text>
                         </Stack>
                       </td>
-                      <td>{cosmetic.type}</td>
+                      <td>{shopItem.cosmetic.type}</td>
                       <td>
-                        <CosmeticSample cosmetic={cosmetic} />
+                        <CosmeticSample cosmetic={shopItem.cosmetic} />
                       </td>
                       <td>
-                        <Badge color={cosmetic._count?.cosmeticShopItems > 0 ? 'blue' : 'gray'}>
-                          {cosmetic._count?.cosmeticShopItems} Shop items
-                        </Badge>
+                        <CurrencyBadge unitAmount={shopItem.unitAmount} currency={Currency.BUZZ} />
                       </td>
+                      <td>{shopItem.availableFrom ? formatDate(shopItem.availableFrom) : '-'}</td>
+                      <td>{shopItem.availableTo ? formatDate(shopItem.availableTo) : '-'}</td>
+                      <td>{!!shopItem.availableQuantity ? shopItem.availableQuantity : '-'}</td>
                       <td>
-                        <ActionIcon component={NextLink} href={`/moderator/rewards/update/test`}>
+                        <ActionIcon
+                          component={NextLink}
+                          href={`/moderator/cosmetic-shop/products/update/${shopItem.id}`}
+                        >
                           <IconEdit />
                         </ActionIcon>
                       </td>
@@ -196,7 +164,7 @@ export default function CosmeticStoreProducts() {
             <ThemeIcon size={62} radius={100}>
               <IconCloudOff />
             </ThemeIcon>
-            <Text align="center">Looks like no purchasable rewards have been created.</Text>
+            <Text align="center">Looks like no shop items have been created yet. Start now!.</Text>
           </Stack>
         )}
       </Container>

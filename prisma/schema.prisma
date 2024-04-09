@@ -2010,7 +2010,7 @@ model CosmeticShopItem {
   id                Int                         @id @default(autoincrement())
   cosmeticId        Int
   cosmetic          Cosmetic                    @relation(fields: [cosmeticId], references: [id], onDelete: Cascade)
-  unitValue         Int
+  unitAmount        Int
   addedById         Int?
   addedBy           User?                       @relation(fields: [addedById], references: [id], onDelete: SetNull)
   createdAt         DateTime                    @default(now())
@@ -2043,7 +2043,7 @@ model UserCosmeticShopPurchases {
   cosmetic          Cosmetic         @relation(fields: [cosmeticId], references: [id], onDelete: Cascade)
   shopItemId        Int
   shopItem          CosmeticShopItem @relation(fields: [shopItemId], references: [id], onDelete: Cascade)
-  unitValue         Int
+  unitAmount        Int
   purchasedAt       DateTime         @default(now())
   buzzTransactionId String           @id @default(cuid())
   refunded          Boolean
