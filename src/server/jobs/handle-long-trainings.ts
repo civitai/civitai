@@ -1,6 +1,8 @@
 import { TrainingStatus } from '@prisma/client';
 import { isEmpty } from 'lodash-es';
 import { dbWrite } from '~/server/db/client';
+import { trainingCompleteEmail } from '~/server/email/templates';
+import { trainingFailEmail } from '~/server/email/templates/trainingFail.email';
 import { logToAxiom } from '~/server/logging/client';
 import { refundTransaction } from '~/server/services/buzz.service';
 import { createTrainingRequest } from '~/server/services/training.service';
@@ -50,6 +52,10 @@ async function getJobStatus(jobId: string, submittedAt: Date, log: (message: str
 async function handleJob({
   modelFileId,
   modelVersionId,
+  modelId,
+  modelName,
+  userEmail,
+  userUsername,
   status,
   jobId,
   transactionId,
@@ -65,7 +71,12 @@ async function handleJob({
     // Ensure we have our epochs...
     const ready = await hasEpochs();
     if (ready) {
+      log(`Job status is ${job.status} - succeeding.`);
       await updateStatus('InReview');
+      await trainingCompleteEmail.send({
+        model: { id: modelId, name: modelName },
+        user: { email: userEmail, username: userUsername },
+      });
       return true;
     }
 
@@ -75,20 +86,19 @@ async function handleJob({
   }
 
   if (job.status === 'Failed' || job.status === 'Deleted' || job.status === 'Expired') {
-    log(`Job status is ${job.status}, failing.`);
+    log(`Job status is ${job.status} - failing.`);
     await updateStatus('Failed');
     return await refund();
   }
 
   const jobUpdated = job.date.getTime();
   const minsDiff = (new Date().getTime() - jobUpdated) / (1000 * 60);
-  // Treat rejected as processing
+
   if (job.status === 'Rejected') {
     if (minsDiff > REJECTED_CHECK_INTERVAL) {
-      log(`Job stuck in Rejected status - resubmitting`);
+      log(`Job stuck in Rejected status - failing`);
       await updateStatus('Failed');
       return await refund();
-      // Note: If for some reason we can't do the training run, this should be in the Failed status on the next pass.
     }
   }
 
@@ -106,17 +116,16 @@ async function handleJob({
         return true;
 
       // Otherwise, resubmit it
-      log(`Could not fetch position in queue.`);
+      log(`Could not fetch position in queue - resubmitting.`);
       getOrchestratorCaller(submittedAt).deleteJobById({ id: jobId }).catch();
       await requeueTraining();
-      // Note: If for some reason we can't do the training run, this should be in the Failed status on the next pass.
     }
   }
 
   if (status === 'Processing') {
     // - if it hasn't gotten an update in a while, mark failed
     if (minsDiff > PROCESSING_CHECK_INTERVAL) {
-      log(`Have not received an update in allotted time (${minsDiff} mins), failing.`);
+      log(`Have not received an update in allotted time (${minsDiff} mins) - failing.`);
       await updateStatus('Failed');
       return await refund();
     }
@@ -149,6 +158,15 @@ async function handleJob({
   }
 
   async function refund() {
+    try {
+      await trainingFailEmail.send({
+        model: { id: modelId, name: modelName },
+        user: { email: userEmail, username: userUsername },
+      });
+    } catch {
+      log('Could not send failure email.');
+    }
+
     if (!transactionId) {
       log(`No transaction ID - need to manually refund.`);
       return;
@@ -198,6 +216,10 @@ async function handleJob({
 type TrainingRunResult = {
   modelFileId: number;
   modelVersionId: number;
+  modelId: number;
+  modelName: string;
+  userEmail: string;
+  userUsername: string;
   updated: string;
   status: TrainingStatus;
   jobId: string | null;
@@ -210,6 +232,10 @@ export const handleLongTrainings = createJob('handle-long-trainings', `*/10 * * 
   const oldTraining = await dbWrite.$queryRaw<TrainingRunResult[]>`
     SELECT mf.id               as                                                      "modelFileId",
            mv.id               as                                                      "modelVersionId",
+           m.id                as                                                      "modelId",
+           m.name              as                                                      "modelName",
+           u.email             as                                                      "userEmail",
+           u.username          as                                                      "userUsername",
            mv."trainingStatus" as                                                      status,
            COALESCE(mf."metadata" -> 'trainingResults' ->> 'jobId',
                     mf."metadata" -> 'trainingResults' -> 'history' -> -1 ->> 'jobId') "jobId",
@@ -222,6 +248,7 @@ export const handleLongTrainings = createJob('handle-long-trainings', `*/10 * * 
     FROM "ModelVersion" mv
            JOIN "ModelFile" mf ON mv.id = mf."modelVersionId"
            JOIN "Model" m ON m.id = mv."modelId"
+           JOIN "User" u ON m."userId" = u.id
     WHERE mf.type = 'Training Data'
       AND m."uploadType" = 'Trained'
       AND mv."trainingStatus" in ('Processing', 'Submitted')

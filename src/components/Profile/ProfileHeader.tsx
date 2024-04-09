@@ -113,6 +113,7 @@ export function ProfileHeader({ username }: { username: string }) {
   const { items } = useApplyHiddenPreferences({
     type: 'images',
     data: images,
+    allowLowerLevels: true,
   });
   const image = items[0];
 

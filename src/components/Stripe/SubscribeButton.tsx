@@ -11,14 +11,22 @@ import { openContextModal } from '@mantine/modals';
 export function SubscribeButton({
   children,
   priceId,
+  onSuccess,
 }: {
-  children: React.ReactElement;
+  children:
+    | React.ReactElement
+    | ((props: { onClick: () => void; disabled: boolean; loading: boolean }) => React.ReactElement);
   priceId: string;
+  onSuccess?: () => void;
 }) {
+  const queryUtils = trpc.useUtils();
   const currentUser = useCurrentUser();
   const mutateCount = useIsMutating();
   const { mutate, isLoading } = trpc.stripe.createSubscriptionSession.useMutation({
     async onSuccess({ sessionId, url }) {
+      await currentUser?.refresh();
+      await queryUtils.stripe.getUserSubscription.reset();
+      onSuccess?.();
       if (url) Router.push(url);
       else if (sessionId) {
         const stripe = await getClientStripe();
@@ -56,11 +64,17 @@ export function SubscribeButton({
 
   return (
     <LoginPopover>
-      {cloneElement(children, {
-        onClick: handleClick,
-        loading: isLoading,
-        disabled: !isLoading && mutateCount > 0,
-      })}
+      {typeof children === 'function'
+        ? children({
+            onClick: handleClick,
+            loading: isLoading,
+            disabled: !isLoading && mutateCount > 0,
+          })
+        : cloneElement(children, {
+            onClick: handleClick,
+            loading: isLoading,
+            disabled: !isLoading && mutateCount > 0,
+          })}
     </LoginPopover>
   );
 }

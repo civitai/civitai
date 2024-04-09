@@ -69,7 +69,6 @@ import {
   cosmeticStatus,
   removeAllContent,
   getUserBookmarkedArticles,
-  toggleBookmarked,
   toggleBookmarkedArticle,
   updateUserById,
 } from '~/server/services/user.service';
@@ -81,6 +80,7 @@ import {
   router,
 } from '~/server/trpc';
 import { paymentMethodDeleteInput } from '~/server/schema/stripe.schema';
+import { invalidateSession } from '~/server/utils/session-helpers';
 
 export const userRouter = router({
   getCreator: publicProcedure.input(getUserByUsernameSchema).query(getUserCreatorHandler),
@@ -107,7 +107,10 @@ export const userRouter = router({
   update: guardedProcedure.input(userUpdateSchema).mutation(updateUserHandler),
   updateBrowsingMode: guardedProcedure
     .input(updateBrowsingModeSchema)
-    .mutation(({ input, ctx }) => updateUserById({ id: ctx.user.id, data: input })),
+    .mutation(async ({ input, ctx }) => {
+      await updateUserById({ id: ctx.user.id, data: input });
+      await invalidateSession(ctx.user.id);
+    }),
   delete: protectedProcedure.input(deleteUserSchema).mutation(deleteUserHandler),
   toggleFavorite: protectedProcedure.input(toggleFavoriteInput).mutation(toggleFavoriteHandler),
   toggleNotifyModel: protectedProcedure

@@ -238,11 +238,14 @@ function BrowsingLevelsStacked({
               p="md"
               onClick={() => toggleBrowsingLevel(level)}
               className={cx({ [classes.active]: isSelected })}
+              noWrap
             >
-              <div>
-                <Text weight={700}>{browsingLevelLabels[level]}</Text>
-                <Text>{browsingLevelDescriptions[level]}</Text>
-              </div>
+              <Text weight={700} w={50} ta="center">
+                {browsingLevelLabels[level]}
+              </Text>
+              <Text lh={1.2} size="sm" ta="left" sx={{ flex: 1 }}>
+                {browsingLevelDescriptions[level]}
+              </Text>
               <Text color="green" inline style={{ visibility: !isSelected ? 'hidden' : undefined }}>
                 <IconCheck />
               </Text>

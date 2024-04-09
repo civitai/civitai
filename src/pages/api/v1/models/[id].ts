@@ -10,6 +10,7 @@ import { getModelsWithVersions } from '~/server/services/model.service';
 import { PublicEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { getBaseUrl } from '~/server/utils/url-helpers';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { removeEmpty } from '~/utils/object-helpers';
 
 const hashesAsObject = (hashes: { type: ModelHashType; hash: string }[]) =>
@@ -35,6 +36,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
         hidden: false,
         period: 'AllTime',
         periodMode: 'published',
+        browsingLevel: allBrowsingLevelsFlag,
       },
     });
     if (items.length === 0)

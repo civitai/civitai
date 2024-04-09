@@ -40,7 +40,7 @@ const querySchema = z.object({
   modelId: z.coerce.number().optional(),
   modelVersionId: z.coerce.number().optional(),
   tag: z.coerce.number().optional(),
-  video: z.string().optional(),
+  video: z.preprocess((val) => val != null && val !== 'false', z.boolean()).optional(),
   returnUrl: z.string().optional(),
   clubId: z.coerce.number().optional(),
   reviewing: z.string().optional(),

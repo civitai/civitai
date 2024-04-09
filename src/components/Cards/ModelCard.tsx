@@ -63,7 +63,9 @@ import { ImageMetaProps } from '~/server/schema/image.schema';
 import { ToggleSearchableMenuItem } from '../MenuItems/ToggleSearchableMenuItem';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
-import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
+import { IconNose } from '~/components/SVG/IconNose';
+import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
+import { NextLink } from '@mantine/next';
 
 const IMAGE_CARD_WIDTH = 450;
 
@@ -74,8 +76,9 @@ export function ModelCard({ data, forceInView }: Props) {
     initialInView: forceInView,
   });
   const image = data.images[0];
+  const aspectRatio = image && image.width && image.height ? image.width / image.height : 1;
   const { classes, cx } = useCardStyles({
-    aspectRatio: image && image.width && image.height ? image.width / image.height : 1,
+    aspectRatio,
   });
 
   const router = useRouter();
@@ -190,6 +193,7 @@ export function ModelCard({ data, forceInView }: Props) {
     data.version?.baseModel as BaseModel
   );
   const isPony = data.version?.baseModel === 'Pony';
+  const isOdor = data.version?.baseModel === 'ODOR';
   const isArchived = data.mode === ModelModifier.Archived;
   const onSite = !!data.version.trainingStatus;
 
@@ -208,9 +212,240 @@ export function ModelCard({ data, forceInView }: Props) {
     data?: { lights?: number; upgradedLights?: number };
   };
 
+  // Small hack to prevent blurry landscape images
+  const originalAspectRatio = image && image.width && image.height ? image.width / image.height : 1;
+
   return (
     <HolidayFrame {...cardDecoration}>
-      <FeedCard className={!image ? classes.noImage : undefined} href={href}>
+      {/* <NextLink
+        href={href}
+        className={`card aspect-portrait ${!image ? 'vertical-gradient-dark' : ''}`}
+        ref={ref}
+      >
+        <MediaHash {...image} />
+        {inView && (
+          <>
+            {image && (
+              <ImageGuard2 image={image} connectType="model" connectId={data.id}>
+                {(safe) => (
+                  <>
+                    <div className="absolute top-0 z-10 w-full flex justify-between p-2">
+                      <div className="flex gap-1">
+                        <ImageGuard2.BlurToggle className="rounded-3xl h-6" />
+                        <Badge
+                          className={cx(classes.infoChip, classes.chip)}
+                          variant="light"
+                          radius="xl"
+                        >
+                          <Text color="white" size="xs" transform="capitalize">
+                            {getDisplayName(data.type)}
+                          </Text>
+                          {isSDXL && (
+                            <>
+                              <Divider orientation="vertical" />
+                              {isPony ? (
+                                <IconHorse size={16} strokeWidth={2.5} />
+                              ) : (
+                                <Text color="white" size="xs">
+                                  XL
+                                </Text>
+                              )}
+                            </>
+                          )}
+                          {isOdor && (
+                            <>
+                              <Divider orientation="vertical" />
+                              <IconNose size={16} strokeWidth={2} />
+                            </>
+                          )}
+                        </Badge>
+
+                        {(isNew || isUpdated) && (
+                          <Badge
+                            className={classes.chip}
+                            variant="filled"
+                            radius="xl"
+                            sx={(theme) => ({
+                              backgroundColor: isUpdated
+                                ? theme.colors.success[5]
+                                : theme.colors.blue[theme.fn.primaryShade()],
+                            })}
+                          >
+                            <Text color="white" size="xs" transform="capitalize">
+                              {isUpdated ? 'Updated' : 'New'}
+                            </Text>
+                          </Badge>
+                        )}
+                        {isArchived && (
+                          <Badge
+                            className={cx(classes.infoChip, classes.chip)}
+                            variant="light"
+                            radius="xl"
+                          >
+                            <IconArchiveFilled size={16} />
+                          </Badge>
+                        )}
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        {contextMenuItems.length > 0 && (
+                          <Menu position="left-start" withArrow offset={-5} withinPortal>
+                            <Menu.Target>
+                              <ActionIcon
+                                variant="transparent"
+                                p={0}
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                }}
+                              >
+                                <IconDotsVertical
+                                  size={24}
+                                  color="#fff"
+                                  style={{ filter: `drop-shadow(0 0 2px #000)` }}
+                                />
+                              </ActionIcon>
+                            </Menu.Target>
+                            <Menu.Dropdown>{contextMenuItems.map((el) => el)}</Menu.Dropdown>
+                          </Menu>
+                        )}
+
+                        {features.imageGeneration && data.canGenerate && (
+                          <HoverActionButton
+                            label="Create"
+                            size={30}
+                            color="white"
+                            variant="filled"
+                            data-activity="create:model-card"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              generationPanel.open({
+                                type: 'modelVersion',
+                                id: data.version.id,
+                              });
+                            }}
+                          >
+                            <IconBrush stroke={2.5} size={16} />
+                          </HoverActionButton>
+                        )}
+                        <CivitaiLinkManageButton
+                          modelId={data.id}
+                          modelName={data.name}
+                          modelType={data.type}
+                          hashes={data.hashes}
+                          noTooltip
+                          iconSize={16}
+                        >
+                          {({ color, onClick, icon, label }) => (
+                            <HoverActionButton
+                              onClick={onClick}
+                              label={label}
+                              size={30}
+                              color={color}
+                              variant="filled"
+                              keepIconOnHover
+                            >
+                              {icon}
+                            </HoverActionButton>
+                          )}
+                        </CivitaiLinkManageButton>
+                      </div>
+                    </div>
+                    {safe ? (
+                      <EdgeMedia
+                        src={image.url}
+                        name={image.name ?? image.id.toString()}
+                        alt={image.name}
+                        type={image.type}
+                        width={
+                          originalAspectRatio > 1
+                            ? IMAGE_CARD_WIDTH * originalAspectRatio
+                            : IMAGE_CARD_WIDTH
+                        }
+                        placeholder="empty"
+                        className={`h-full min-w-full relative transition duration-500 transform hover:scale-105 object-cover ${
+                          aspectRatio < 1 ? 'object-top' : 'object-center'
+                        }`}
+                        wrapperProps={{ className: 'h-full w-full' }}
+                        contain
+                      />
+                    ) : null}
+                    <div className="absolute bottom-0 w-full p-3">
+                      {data.user.id !== -1 && <UserAvatarSimple {...data.user} />}
+                      <Text size="xl" weight={700} lineClamp={3} lh={1.2}>
+                        {data.name}
+                      </Text>
+                      {data.rank && (
+                        <Group align="center" position="apart" spacing={4}>
+                          {(!!data.rank.downloadCount ||
+                            !!data.rank.collectedCount ||
+                            !!data.rank.tippedAmountCount) && (
+                            <Badge
+                              className={cx(classes.statChip, classes.chip)}
+                              variant="light"
+                              radius="xl"
+                            >
+                              <Group spacing={2}>
+                                <IconDownload size={14} strokeWidth={2.5} />
+                                <Text size="xs">{abbreviateNumber(data.rank.downloadCount)}</Text>
+                              </Group>
+                              <Group spacing={2}>
+                                <IconBookmark size={14} strokeWidth={2.5} />
+                                <Text size="xs">{abbreviateNumber(data.rank.collectedCount)}</Text>
+                              </Group>
+                              <Group spacing={2}>
+                                <IconMessageCircle2 size={14} strokeWidth={2.5} />
+                                <Text size="xs">{abbreviateNumber(data.rank.commentCount)}</Text>
+                              </Group>
+                              <InteractiveTipBuzzButton
+                                toUserId={data.user.id}
+                                entityType={'Model'}
+                                entityId={data.id}
+                              >
+                                <Group spacing={2}>
+                                  <IconBolt size={14} strokeWidth={2.5} />
+                                  <Text size="xs" tt="uppercase">
+                                    {abbreviateNumber(data.rank.tippedAmountCount + tippedAmount)}
+                                  </Text>
+                                </Group>
+                              </InteractiveTipBuzzButton>
+                            </Badge>
+                          )}
+                          {!data.locked && !!data.rank.thumbsUpCount && (
+                            <Badge
+                              className={cx(classes.statChip, classes.chip)}
+                              pl={6}
+                              pr={8}
+                              data-reviewed={hasReview}
+                              radius="xl"
+                              title={`${Math.round(positiveRating * 100)}% of reviews are positive`}
+                            >
+                              <Group spacing={4}>
+                                <Text
+                                  color={hasReview ? 'success.5' : 'yellow'}
+                                  component="span"
+                                  mt={2}
+                                >
+                                  <ThumbsUpIcon size={20} filled={hasReview} strokeWidth={2.5} />
+                                </Text>
+                                <Text size={16} weight={500}>
+                                  {abbreviateNumber(data.rank.thumbsUpCount)}
+                                </Text>
+                              </Group>
+                            </Badge>
+                          )}
+                        </Group>
+                      )}
+                    </div>
+                    {onSite && <OnsiteIndicator />}
+                  </>
+                )}
+              </ImageGuard2>
+            )}
+          </>
+        )}
+      </NextLink> */}
+      <FeedCard className={image ? classes.noImage : undefined} href={href}>
         <div className={classes.root} ref={ref}>
           {image && (
             <div className={classes.blurHash}>
@@ -255,6 +490,12 @@ export function ModelCard({ data, forceInView }: Props) {
                                         XL
                                       </Text>
                                     )}
+                                  </>
+                                )}
+                                {isOdor && (
+                                  <>
+                                    <Divider orientation="vertical" />
+                                    <IconNose size={16} strokeWidth={2} />
                                   </>
                                 )}
                               </Badge>
@@ -397,24 +638,7 @@ export function ModelCard({ data, forceInView }: Props) {
                   )}
                   spacing={5}
                 >
-                  {data.user.id !== -1 && (
-                    <UnstyledButton
-                      sx={{ color: 'white', alignSelf: 'flex-start' }}
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-
-                        router.push(`/user/${data.user.username}`);
-                      }}
-                    >
-                      <UserAvatar
-                        user={data.user}
-                        avatarProps={{ radius: 'md', size: 32 }}
-                        withUsername
-                        badgeSize={28}
-                      />
-                    </UnstyledButton>
-                  )}
+                  {data.user.id !== -1 && <UserAvatarSimple {...data.user} />}
                   <Text size="xl" weight={700} lineClamp={3} lh={1.2}>
                     {data.name}
                   </Text>

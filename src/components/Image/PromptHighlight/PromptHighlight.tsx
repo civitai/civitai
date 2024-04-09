@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { highlightInappropriate, includesInappropriate } from '~/utils/metadata/audit';
+import { normalizeText } from '~/utils/string-helpers';
 
 export default function PromptHighlight({
   prompt,
@@ -9,9 +10,10 @@ export default function PromptHighlight({
   children?: (ctx: { html: string; includesInappropriate: boolean }) => JSX.Element;
 }) {
   const ctx = useMemo(() => {
+    const cleaned = normalizeText(prompt);
     return {
-      includesInappropriate: includesInappropriate(prompt) !== false,
-      html: highlightInappropriate(prompt) ?? prompt ?? '',
+      includesInappropriate: includesInappropriate(cleaned) !== false,
+      html: highlightInappropriate(cleaned) ?? cleaned ?? '',
     };
   }, [prompt]);
 

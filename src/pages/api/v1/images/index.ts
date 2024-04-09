@@ -1,7 +1,7 @@
 import {
   nsfwLevelMapDeprecated,
   NsfwLevelDeprecated,
-  getNsfwLeveLDeprecatedReverseMapping,
+  getNsfwLevelDeprecatedReverseMapping,
   nsfwBrowsingLevelsFlag,
   publicBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
@@ -47,7 +47,7 @@ const imagesEndpointSchema = z.object({
         return value ? nsfwBrowsingLevelsFlag : publicBrowsingLevelsFlag;
       return nsfwLevelMapDeprecated[value] as number;
     }),
-  browsingLevel: z.number().optional(),
+  browsingLevel: z.coerce.number().optional(),
   tags: commaDelimitedNumberArray({ message: 'tags should be a number array' }).optional(),
   cursor: numericString().optional(),
 });
@@ -71,6 +71,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
     }
 
     const _browsingLevel = browsingLevel ?? nsfw ?? publicBrowsingLevelsFlag;
+    console.log({ _browsingLevel });
 
     const { items, nextCursor } = await getAllImages({
       ...data,
@@ -94,7 +95,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
 
     res.status(200).json({
       items: items.map((image) => {
-        const nsfw = getNsfwLeveLDeprecatedReverseMapping(image.nsfwLevel);
+        const nsfw = getNsfwLevelDeprecatedReverseMapping(image.nsfwLevel);
 
         return {
           id: image.id,
@@ -104,6 +105,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
           height: image.height,
           nsfwLevel: nsfw,
           nsfw: nsfw !== NsfwLevelDeprecated.None,
+          browsingLevel: image.nsfwLevel,
           createdAt: image.createdAt,
           postId: image.postId,
           stats: {

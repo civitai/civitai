@@ -22,6 +22,9 @@ import { SignalMessages, SearchIndexUpdateQueueAction } from '~/server/common/en
 import { scanJobsSchema } from '~/server/schema/image.schema';
 import { getTagRules } from '~/server/services/system-cache';
 import { uniqBy } from 'lodash-es';
+import { NsfwLevel } from '~/server/common/enums';
+import { logToAxiom } from '~/server/logging/client';
+import { normalizeText } from '~/utils/string-helpers';
 
 const REQUIRED_SCANS = [TagSource.WD14, TagSource.Rekognition];
 
@@ -51,10 +54,18 @@ const schema = z.object({
   vectors: z.array(z.number().array()).nullish(),
   status: z.nativeEnum(Status),
   source: z.nativeEnum(TagSource),
+  context: z
+    .object({
+      movie_rating: z.string().optional(),
+      movie_rating_model_id: z.string().optional(),
+    })
+    .nullish(),
 });
 
-function shouldIgnore(tag: string) {
-  return tagsToIgnore.includes(tag) || topLevelModerationCategories.includes(tag);
+function shouldIgnore(tag: string, source: TagSource) {
+  return (
+    (tagsToIgnore[source]?.includes(tag) ?? false) || topLevelModerationCategories.includes(tag)
+  );
 }
 
 export default WebhookEndpoint(async function imageTags(req, res) {
@@ -112,7 +123,7 @@ export default WebhookEndpoint(async function imageTags(req, res) {
 });
 
 type Tag = { tag: string; confidence: number; id?: number; source?: TagSource };
-async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps) {
+async function handleSuccess({ id, tags: incomingTags = [], source, context }: BodyProps) {
   if (!incomingTags) return;
 
   const image = await dbWrite.image.findUnique({
@@ -129,13 +140,6 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
     await logScanResultError({ id, message: 'Image not found' });
     throw new Error('Image not found');
   }
-
-  // Add to scanJobs
-  await dbWrite.$executeRawUnsafe(`
-    UPDATE "Image"
-      SET "scanJobs" = jsonb_set(COALESCE("scanJobs", '{}'), '{scans}', COALESCE("scanJobs"->'scans', '{}') || '{"${source}": ${Date.now()}}'::jsonb)
-    WHERE id = ${id};
-  `);
 
   // Handle underscores coming out of WD14
   if (source === TagSource.WD14) {
@@ -235,13 +239,16 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
           .filter((x) => x.id)
           .map(
             (x) =>
-              `(${id}, ${x.id}, ${x.confidence}, true, ${shouldIgnore(x.tag)}, '${
+              `(${id}, ${x.id}, ${x.confidence}, true, ${shouldIgnore(
+                x.tag,
                 x.source ?? source
-              }')`
+              )}, '${x.source ?? source}')`
           )
           .join(', ')}
         ON CONFLICT ("imageId", "tagId") DO UPDATE SET "confidence" = EXCLUDED."confidence";
       `);
+    } else {
+      logToAxiom({ type: 'image-scan-result', message: 'No tags found', imageId: id, source });
     }
 
     // Mark image as scanned and set the nsfw field based on the presence of automated tags with type 'Moderation'
@@ -264,7 +271,10 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
       else if (['adult'].includes(name)) hasAdultTag = true;
     }
 
-    const prompt = (image.meta as Prisma.JsonObject)?.['prompt'] as string | undefined;
+    const prompt = normalizeText(
+      (image.meta as Prisma.JsonObject)?.['prompt'] as string | undefined
+    );
+
     let reviewKey: string | null = null;
     const inappropriate = includesInappropriate(prompt, nsfw);
     if (inappropriate !== false) reviewKey = inappropriate;
@@ -322,6 +332,20 @@ async function handleSuccess({ id, tags: incomingTags = [], source }: BodyProps)
         data,
       });
     }
+
+    // Add to scanJobs and update aiRating
+    let aiRating: NsfwLevel | undefined;
+    let aiModel: string | undefined;
+    if (source === TagSource.WD14 && !!context?.movie_rating) {
+      aiRating = NsfwLevel[context.movie_rating as keyof typeof NsfwLevel];
+      aiModel = context.movie_rating_model_id;
+    }
+    await dbWrite.$executeRawUnsafe(`
+      UPDATE "Image" SET
+        "scanJobs" = jsonb_set(COALESCE("scanJobs", '{}'), '{scans}', COALESCE("scanJobs"->'scans', '{}') || '{"${source}": ${Date.now()}}'::jsonb)
+        ${aiRating ? `, "aiNsfwLevel" = ${aiRating}, "aiModel" = '${aiModel}'` : ''}
+      WHERE id = ${id};
+    `);
 
     // Update scannedAt and ingestion if not blocked
     if (data.ingestion !== 'Blocked') {

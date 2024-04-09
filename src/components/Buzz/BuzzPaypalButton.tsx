@@ -77,7 +77,7 @@ export const BuzzPaypalButton = ({
   }
 
   return (
-    <Box style={{ colorScheme: 'none' }}>
+    <Box style={{ colorScheme: 'none', marginBottom: '-8px' }}>
       <PayPalButtons
         createOrder={createOrder}
         onClick={onClick}
@@ -86,6 +86,7 @@ export const BuzzPaypalButton = ({
         forceReRender={[amount, onClick, onApprove, createOrder]}
         style={{
           height,
+          shape: 'pill',
         }}
         fundingSource={FUNDING.PAYPAL}
         {...props}

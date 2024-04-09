@@ -1,11 +1,12 @@
 import { ImageMetaProps } from '~/server/schema/image.schema';
-import { removeAccents, trimNonAlphanumeric } from '~/utils/string-helpers';
+import { normalizeText, trimNonAlphanumeric } from '~/utils/string-helpers';
 import blockedNSFW from './lists/blocklist-nsfw.json';
 import blocked from './lists/blocklist.json';
 import nsfwWords from './lists/words-nsfw.json';
 import youngWords from './lists/words-young.json';
 import poiWords from './lists/words-poi.json';
 import promptTags from './lists/prompt-tags.json';
+import he from 'he';
 
 // #region [audit]
 const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -22,21 +23,23 @@ const blockedNSFWRegex = blockedNSFW.map((word) => ({
 }));
 export const auditMetaData = (meta: ImageMetaProps | undefined, nsfw: boolean) => {
   if (!meta) return { blockedFor: [], success: true };
+  const prompt = normalizeText(meta.prompt);
 
   // Add minor check
   if (nsfw) {
-    const { found, age } = includesMinorAge(meta.prompt);
+    const { found, age } = includesMinorAge(prompt);
     if (found) return { blockedFor: [`${age} year old`], success: false };
   }
 
   const blockList = nsfw ? blockedNSFWRegex : blockedRegex;
   const blockedFor = blockList
-    .filter(({ regex }) => meta?.prompt && regex.test(meta.prompt))
+    .filter(({ regex }) => meta?.prompt && regex.test(prompt))
     .map((x) => x.word);
   return { blockedFor, success: !blockedFor.length };
 };
 
 export const auditPrompt = (prompt: string) => {
+  prompt = normalizeText(prompt); // Parse HTML Entities
   const { found, age } = includesMinorAge(prompt);
   if (found) return { blockedFor: [`${age} year old`], success: false };
 
@@ -309,7 +312,7 @@ export function includesMinor(prompt: string | undefined) {
 
 export function includesInappropriate(prompt: string | undefined, nsfw?: boolean) {
   if (!prompt) return false;
-  prompt = removeAccents(prompt).replace(/'|\.|\-/g, '');
+  prompt = prompt.replace(/'|\.|\-/g, '');
   if (!nsfw && !includesNsfw(prompt)) return false;
   if (includesPoi(prompt)) return 'poi';
   if (includesMinor(prompt)) return 'minor';
@@ -385,7 +388,6 @@ function highlightMinor(prompt: string, replaceFn: (word: string) => string) {
 
 export function highlightInappropriate(prompt: string | undefined) {
   if (!prompt) return prompt;
-  prompt = removeAccents(prompt);
   for (const { fn, color } of highlighters) {
     prompt = fn(prompt, (word) => `<span style="color: ${color}">${word}</span>`);
   }

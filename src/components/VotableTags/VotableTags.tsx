@@ -27,6 +27,7 @@ export function VotableTags({
   limit = 6,
   tags: initialTags,
   canAdd = false,
+  canAddModerated: _canAddModerated,
   collapsible = false,
   nsfwLevel,
   ...props
@@ -38,7 +39,7 @@ export function VotableTags({
     { enabled: !initialTags, initialData: initialTags }
   );
   canAdd = canAdd && !initialTags;
-  const canAddModerated = canAdd && !!currentUser?.isModerator;
+  const canAddModerated = (canAdd || _canAddModerated) && !!currentUser?.isModerator;
 
   const handleVote = useVoteForTags({ entityType: type, entityId: id });
 
@@ -138,6 +139,7 @@ type GalleryTagProps = {
   limit?: number;
   tags?: VotableTagModel[];
   canAdd?: boolean;
+  canAddModerated?: boolean;
   collapsible?: boolean;
   nsfwLevel?: number;
 } & Omit<GroupProps, 'id'>;

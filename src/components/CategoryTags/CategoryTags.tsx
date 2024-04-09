@@ -99,7 +99,7 @@ export function CategoryTags({
   const viewportRef = useRef<HTMLDivElement>(null);
   const [scrollPosition, setScrollPosition] = useState({ x: 0, y: 0 });
 
-  const { data: categories } = useCategoryTags({ entityType: TagTarget.Post });
+  const { data: categories } = useCategoryTags({ entityType: TagTarget.Model });
 
   if (!categories.length) return null;
 

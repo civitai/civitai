@@ -1,4 +1,4 @@
-import { Group, Paper, Switch, createStyles, Text } from '@mantine/core';
+import { Group, Paper, Switch, createStyles, Text, Stack, Checkbox } from '@mantine/core';
 import { useQueryHiddenPreferences, useToggleHiddenPreferences } from '~/hooks/hidden-preferences';
 import { toggleableBrowsingCategories } from '~/shared/constants/browsingLevel.constants';
 
@@ -22,7 +22,7 @@ const useStyles = createStyles((theme) => ({
 }));
 
 export function BrowsingCategories() {
-  const { classes, cx } = useStyles();
+  // const { classes, cx } = useStyles();
   const { data, isLoading } = useQueryHiddenPreferences();
 
   const toggleHiddenTagsMutation = useToggleHiddenPreferences();
@@ -33,30 +33,50 @@ export function BrowsingCategories() {
   };
 
   return (
-    <Paper p={0} className={classes.root} withBorder>
+    <Stack>
       {toggleableBrowsingCategories.map((category) => {
         const checked = category.relatedTags.every((tag) =>
           data.hiddenTags.find((hidden) => hidden.id === tag.id)
         );
 
         return (
-          <Group
-            position="apart"
+          <Checkbox
             key={category.title}
-            className={cx({ [classes.active]: checked })}
-            py="sm"
-            px="md"
-            onClick={() => toggle(!checked, category.relatedTags)}
-          >
-            <Text weight={500}>{category.title}</Text>
-            <Switch
-              checked={checked}
-              onChange={(e) => toggle(e.target.checked, category.relatedTags)}
-              disabled={isLoading}
-            />
-          </Group>
+            checked={checked}
+            onChange={(e) => toggle(e.target.checked, category.relatedTags)}
+            disabled={isLoading}
+            label={<Text weight={500}>{category.title}</Text>}
+          />
         );
       })}
-    </Paper>
+    </Stack>
   );
+
+  // return (
+  //   <Paper p={0} className={classes.root} withBorder>
+  //     {toggleableBrowsingCategories.map((category) => {
+  //       const checked = category.relatedTags.every((tag) =>
+  //         data.hiddenTags.find((hidden) => hidden.id === tag.id)
+  //       );
+
+  //       return (
+  //         <Group
+  //           position="apart"
+  //           key={category.title}
+  //           className={cx({ [classes.active]: checked })}
+  //           py="sm"
+  //           px="md"
+  //           onClick={() => toggle(!checked, category.relatedTags)}
+  //         >
+  //           <Text weight={500}>{category.title}</Text>
+  //           <Switch
+  //             checked={checked}
+  //             onChange={(e) => toggle(e.target.checked, category.relatedTags)}
+  //             disabled={isLoading}
+  //           />
+  //         </Group>
+  //       );
+  //     })}
+  //   </Paper>
+  // );
 }

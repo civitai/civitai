@@ -18,7 +18,9 @@ export function ModerationNav() {
         { label: 'Rewards', href: '/moderator/rewards' },
         { label: 'Auditor', href: '/testing/auditor' },
         { label: 'Rater', href: '/research/rater' },
+        { label: 'Sanity Images', href: '/moderator/research/rater-sanity' },
         { label: 'Metadata Tester', href: '/testing/metadata-test' },
+        { label: 'Ratings Review', href: '/moderator/image-rating-review' },
       ].map((link) => (
         <Menu.Item key={link.href} component={NextLink} href={link.href}>
           {link.label}

@@ -1,8 +1,10 @@
+import { ChatMessageType } from '@prisma/client';
 import produce from 'immer';
 import { useCallback } from 'react';
 import useSound from 'use-sound';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { SignalMessages } from '~/server/common/enums';
 import { ChatAllMessages, ChatCreateChat } from '~/types/router';
 import { trpc } from '~/utils/trpc';
@@ -12,14 +14,17 @@ const messageSound = '/sounds/message2.mp3'; // message
 export const useChatNewMessageSignal = () => {
   const queryUtils = trpc.useUtils();
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
   const [play] = useSound(messageSound, { volume: 0.5 });
 
   const onUpdate = useCallback(
     (updated: ChatAllMessages[number]) => {
       // queryUtils.chat.getInfiniteMessages.cancel();
 
-      if (!currentUser || updated.userId === currentUser.id) return;
+      // - if chat is off or it's your message, ignore
+      if (!currentUser || !features.chat || updated.userId === currentUser.id) return;
 
+      // - add the message to the chat list at the end
       queryUtils.chat.getInfiniteMessages.setInfiniteData(
         { chatId: updated.chatId },
         produce((old) => {
@@ -31,6 +36,10 @@ export const useChatNewMessageSignal = () => {
         })
       );
 
+      // - skip the rest for embeds
+      if (updated.contentType === ChatMessageType.Embed) return;
+
+      // - update the most recent message for preview (tk: skip image/video/audio when those are used)
       queryUtils.chat.getAllByUser.setData(
         undefined,
         produce((old) => {
@@ -42,12 +51,14 @@ export const useChatNewMessageSignal = () => {
           thisChat.messages = [
             {
               content: updated.content,
+              contentType: updated.contentType,
               createdAt: new Date(updated.createdAt),
             },
-          ]; //, contentType: updated.contentType
+          ];
         })
       );
 
+      // - increment the unread message count
       queryUtils.chat.getUnreadCount.setData(
         undefined,
         produce((old) => {
@@ -62,6 +73,7 @@ export const useChatNewMessageSignal = () => {
         })
       );
 
+      // - play a sound
       const userSettings = queryUtils.chat.getUserSettings.getData();
       // this will play if no key is present (default not muted)
       if (userSettings?.muteSounds !== true) {
@@ -69,7 +81,7 @@ export const useChatNewMessageSignal = () => {
         play();
       }
     },
-    [queryUtils, play, currentUser]
+    [queryUtils, play, currentUser, features.chat]
   );
 
   useSignalConnection(SignalMessages.ChatNewMessage, onUpdate);
@@ -78,11 +90,12 @@ export const useChatNewMessageSignal = () => {
 export const useChatNewRoomSignal = () => {
   const queryUtils = trpc.useUtils();
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
   const [play] = useSound(messageSound, { volume: 0.5 });
 
   const onUpdate = useCallback(
     (updated: ChatCreateChat) => {
-      if (!currentUser || updated.ownerId === currentUser.id) return;
+      if (!currentUser || !features.chat || updated.ownerId === currentUser.id) return;
 
       queryUtils.chat.getAllByUser.setData(undefined, (old) => {
         if (!old) return [updated];
@@ -102,7 +115,7 @@ export const useChatNewRoomSignal = () => {
         play();
       }
     },
-    [queryUtils, play, currentUser]
+    [queryUtils, play, currentUser, features.chat]
   );
 
   useSignalConnection(SignalMessages.ChatNewRoom, onUpdate);

@@ -36,7 +36,7 @@ export const researchWebhooks = createWebhookProcessor({
       for (const result of results) {
         result.count = await ratingsCounter.get(result.userId);
         const { level } = calculateLevelProgression(result.count);
-        result.level = level + 1;
+        result.level = level;
         if (result.image) result.image = getEdgeUrl(result.image, { width: 96 });
       }
       await queue.commit();

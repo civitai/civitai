@@ -4,7 +4,6 @@ import {
   createStyles,
   Divider,
   Group,
-  keyframes,
   Loader,
   Paper,
   RingProgress,
@@ -13,9 +12,9 @@ import {
   Title,
   Tooltip,
 } from '@mantine/core';
-import { Currency, StripeConnectStatus } from '@prisma/client';
+import { Currency } from '@prisma/client';
 import { IconInfoCircle } from '@tabler/icons-react';
-import React, { useMemo } from 'react';
+import React, { useEffect } from 'react';
 import { EarningBuzz, SpendingBuzz } from '~/components/Buzz/FeatureCards/FeatureCards';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Meta } from '~/components/Meta/Meta';
@@ -29,13 +28,28 @@ import { OwnedBuzzWithdrawalRequestsPaged } from '../../components/Buzz/Withdraw
 import { EarlyAccessRewards } from '~/components/Buzz/Rewards/EarlyAccessRewards';
 import { GeneratedImagesReward } from '~/components/Buzz/Rewards/GeneratedImagesRewards';
 import { PurchasableRewards } from '~/components/PurchasableRewards/PurchasableRewards';
+import { useBuzzDashboardStyles } from '~/components/Buzz/buzz.styles';
+import { useUserMultipliers } from '~/components/Buzz/useBuzz';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import { RedeemCodeModal } from '~/components/RedeemableCode/RedeemCodeModal';
+import { useRouter } from 'next/router';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { getLoginLink } from '~/utils/login-helpers';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
-  resolver: async ({ features }) => {
+  resolver: async ({ features, session, ctx }) => {
     if (!features?.buzz) {
       return { notFound: true };
     }
+
+    if (!session)
+      return {
+        redirect: {
+          destination: getLoginLink({ returnUrl: ctx.resolvedUrl }),
+          permanent: false,
+        },
+      };
   },
 });
 
@@ -47,7 +61,20 @@ const useStyles = createStyles((theme) => ({
 
 export default function UserBuzzDashboard() {
   const currentUser = useCurrentUser();
-  const { classes } = useStyles();
+  const { classes } = useBuzzDashboardStyles();
+  const isMember = currentUser?.isMember;
+  const { query } = useRouter();
+  const features = useFeatureFlags();
+
+  // Handle direct redemption
+  useEffect(() => {
+    if (!query?.redeem || typeof window === 'undefined') return;
+    dialogStore.trigger({
+      id: 'redeem-code',
+      component: RedeemCodeModal,
+      props: { code: query.redeem as string },
+    });
+  }, []);
 
   const { data: rewards = [], isLoading: loadingRewards } = trpc.user.userRewardDetails.useQuery(
     undefined,
@@ -55,6 +82,9 @@ export default function UserBuzzDashboard() {
       enabled: !!currentUser,
     }
   );
+
+  const { multipliers, multipliersLoading } = useUserMultipliers();
+  const rewardsMultiplier = multipliers.rewardsMultiplier ?? 1;
 
   return (
     <>
@@ -76,8 +106,22 @@ export default function UserBuzzDashboard() {
 
           <Paper withBorder className={classes.tileCard} h="100%">
             <Stack p="md">
-              <Title order={3}>Other ways you can earn Buzz</Title>
-              {loadingRewards ? (
+              <Group position="apart">
+                <Title order={3} id="rewards">
+                  Other ways you can earn Buzz
+                </Title>
+
+                {isMember && rewardsMultiplier > 1 && features.membershipsV2 && (
+                  <Tooltip multiline label="Your membership makes rewards worth more!">
+                    <Stack spacing={0}>
+                      <Text size={20} className={classes.goldText}>
+                        Rewards Multiplier: {rewardsMultiplier}x
+                      </Text>
+                    </Stack>
+                  </Tooltip>
+                )}
+              </Group>
+              {loadingRewards || multipliersLoading ? (
                 <Center py="xl">
                   <Loader />
                 </Center>
@@ -92,11 +136,18 @@ export default function UserBuzzDashboard() {
                     <Stack key={reward.type} spacing={4}>
                       <Group position="apart" mih={30}>
                         <Group noWrap spacing="xs">
-                          <CurrencyBadge
-                            w={100}
-                            currency={Currency.BUZZ}
-                            unitAmount={reward.awardAmount}
-                          />
+                          <Stack spacing={4} align="center">
+                            <CurrencyBadge
+                              w={100}
+                              currency={Currency.BUZZ}
+                              unitAmount={reward.awardAmount}
+                            />
+                            {rewardsMultiplier > 1 && (
+                              <Text size={10} color="yellow.7">
+                                Originally {Math.floor(reward.awardAmount / rewardsMultiplier)} Buzz
+                              </Text>
+                            )}
+                          </Stack>
                           <Text>{reward.triggerDescription ?? reward.description}</Text>
                           {reward.tooltip && (
                             <Tooltip label={reward.tooltip} maw={250} multiline withArrow>

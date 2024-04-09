@@ -1,4 +1,5 @@
 import { ImageEngagementType, Prisma, Report, ReportReason, ReportStatus } from '@prisma/client';
+import { NsfwLevel } from '~/server/common/enums';
 
 import { dbRead, dbWrite } from '~/server/db/client';
 import { reportAcceptedReward } from '~/server/rewards';
@@ -185,7 +186,7 @@ export const createReport = async ({
       });
       await dbWrite.image.update({
         where: { id },
-        data: { ingestion: 'Blocked', blockedFor: 'CSAM' },
+        data: { ingestion: 'Blocked', nsfwLevel: NsfwLevel.Blocked, blockedFor: 'CSAM' },
       });
     }
   });

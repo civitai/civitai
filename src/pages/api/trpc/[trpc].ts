@@ -5,7 +5,6 @@ import { isProd } from '~/env/other';
 import { createContext } from '~/server/createContext';
 import { logToAxiom } from '~/server/logging/client';
 import { appRouter } from '~/server/routers';
-import { handleTRPCError } from '~/server/utils/errorHandling';
 
 export const config = {
   api: {
@@ -38,13 +37,8 @@ export default withAxiom(
 
       return {};
     },
-    // onError: isDev
-    //   ? ({ path, error }) => {
-    //       console.error(`❌ tRPC failed on ${path}: ${error}`);
-    //     }
-    //   : undefined,
     onError: ({ error, type, path, input, ctx, req }) => {
-      handleTRPCError(error);
+      // handleTRPCError(error);
 
       if (isProd) {
         logToAxiom(
@@ -54,6 +48,7 @@ export default withAxiom(
             message: error.message,
             stack: error.stack,
             path,
+            type,
             user: ctx?.user?.id,
             browser: req.headers['user-agent'],
             input: req.method === 'GET' ? input : undefined,

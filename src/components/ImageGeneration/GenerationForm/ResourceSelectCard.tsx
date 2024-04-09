@@ -8,30 +8,47 @@ import {
   Stack,
   Text,
   ThemeIcon,
+  Overlay,
+  useMantineTheme,
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { ModelType } from '@prisma/client';
 import { IconAlertTriangle, IconReplace, IconX } from '@tabler/icons-react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { NumberSlider } from '~/libs/form/components/NumberSlider';
-import { generationPanel } from '~/store/generation.store';
 import { GenerationResourceSchema } from '~/server/schema/generation.schema';
+import { generationPanel } from '~/store/generation.store';
 
 type Props = {
   resource: GenerationResourceSchema;
+  isTraining?: boolean;
   onUpdate?: (value: GenerationResourceSchema) => void;
   onRemove?: (id: number) => void;
   onSwap?: VoidFunction;
+  disabled?: boolean;
 };
 
 export const ResourceSelectCard = (props: Props) => {
   const isCheckpoint = props.resource.modelType === ModelType.Checkpoint;
+  const theme = useMantineTheme();
 
-  return isCheckpoint ? <CheckpointInfo {...props} /> : <ResourceInfo {...props} />;
+  return (
+    <div className="relative">
+      {props.disabled && (
+        <Overlay
+          blur={3}
+          zIndex={10}
+          color={theme.colorScheme === 'dark' ? theme.colors.dark[7] : '#fff'}
+          opacity={0.8}
+        />
+      )}
+      {isCheckpoint ? <CheckpointInfo {...props} /> : <ResourceInfo {...props} />}
+    </div>
+  );
 };
 
-function CheckpointInfo({ resource, onRemove, onSwap }: Props) {
-  const unavailable = resource.covered === false;
+function CheckpointInfo({ resource, isTraining, onRemove, onSwap }: Props) {
+  const unavailable = isTraining ? false : resource.covered === false;
 
   return (
     <Card px="sm" py={8} radius="md" withBorder>

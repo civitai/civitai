@@ -59,7 +59,7 @@ import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import dayjs from 'dayjs';
 import { getDisplayName } from '~/utils/string-helpers';
-import { constants } from '~/server/common/constants';
+import { constants, activeBaseModels } from '~/server/common/constants';
 import { z } from 'zod';
 import { getMinMaxDates, useMutateBounty } from './bounty.utils';
 import { CurrencyIcon } from '../Currency/CurrencyIcon';
@@ -406,7 +406,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                           label="Base model"
                           placeholder="Please select a base model"
                           withAsterisk
-                          data={[...constants.baseModels]}
+                          data={[...activeBaseModels]}
                         />
                       )}
                     </Group>

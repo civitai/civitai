@@ -28,6 +28,7 @@ import { eventEngine } from '~/server/events';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { CacheTTL } from '~/server/common/constants';
 import { bustCachedArray, cachedObject } from '~/server/utils/cache-helpers';
+import { Prisma } from '@prisma/client';
 
 type AccountType = 'User';
 
@@ -71,14 +72,16 @@ export async function getMultipliersForUserCache(userIds: number[]) {
     ids: userIds,
     ttl: CacheTTL.day,
     lookupFn: async (ids) => {
+      if (ids.length === 0) return {};
+
       const multipliers = await dbRead.$queryRaw<CachedUserMultiplier[]>`
         SELECT
           cs."userId",
-          COALESCE((p.metadata->>'rewardsMultiplier')::int, 1) as "rewardsMultiplier",
-          COALESCE((p.metadata->>'purchasesMultiplier')::int, 1) as "purchasesMultiplier"
+          COALESCE((p.metadata->>'rewardsMultiplier')::float, 1) as "rewardsMultiplier",
+          COALESCE((p.metadata->>'purchasesMultiplier')::float, 1) as "purchasesMultiplier"
         FROM "CustomerSubscription" cs
         JOIN "Product" p ON p.id = cs."productId"
-        WHERE cs."userId" IN (1);
+        WHERE cs."userId" IN (${Prisma.join(ids)});
       `;
 
       const records: Record<number, CachedUserMultiplier> = Object.fromEntries(
@@ -326,7 +329,7 @@ export async function createBuzzTransactionMany(
   // Protect against transactions that are not valid. A transaction with from === to
   // breaks the entire request.
   const validTransactions = transactions.filter(
-    (t) => t.toAccountId !== undefined && t.fromAccountId !== t.toAccountId
+    (t) => t.toAccountId !== undefined && t.fromAccountId !== t.toAccountId && t.amount > 0
   );
   const body = JSON.stringify(validTransactions);
   const response = await fetch(`${env.BUZZ_ENDPOINT}/transactions`, {
@@ -383,12 +386,15 @@ export async function completeStripeBuzzTransaction({
       return { transactionId: metadata.transactionId };
     }
 
+    const { purchasesMultiplier } = await getMultipliersForUser(userId);
+    const buzzAmount = Math.ceil(amount * (purchasesMultiplier ?? 1));
+
     const body = JSON.stringify({
-      amount,
+      amount: buzzAmount,
       fromAccountId: 0,
       toAccountId: userId,
       type: TransactionType.Purchase,
-      description: `Purchase of ${amount} buzz`,
+      description: `Purchase of ${amount} buzz. Multiplier applied due to membership. A total of ${buzzAmount} buzz was added to your account.`,
       details: { ...(details ?? {}), stripePaymentIntentId },
       externalTransactionId: paymentIntent.id,
     });
@@ -418,7 +424,11 @@ export async function completeStripeBuzzTransaction({
     // Update the payment intent with the transaction id
     // A payment intent without a transaction ID can be tied to a DB failure delivering buzz.
     await stripe.paymentIntents.update(stripePaymentIntentId, {
-      metadata: { transactionId: data.transactionId },
+      metadata: {
+        transactionId: data.transactionId,
+        buzzAmountWithMultiplier: buzzAmount,
+        multiplier: purchasesMultiplier,
+      },
     });
 
     await eventEngine.processPurchase({

@@ -49,7 +49,6 @@ const useStyles = createStyles((theme) => ({
   },
 
   leftArrow: {
-    display: 'none',
     position: 'absolute',
     left: 0,
     top: '50%',
@@ -61,13 +60,9 @@ const useStyles = createStyles((theme) => ({
       to: 'transparent',
       deg: 90,
     }),
-
-    [containerQuery.largerThan('md')]: {
-      display: 'block',
-    },
+    display: 'block',
   },
   rightArrow: {
-    display: 'none',
     position: 'absolute',
     right: 0,
     top: '50%',
@@ -79,10 +74,7 @@ const useStyles = createStyles((theme) => ({
       to: 'transparent',
       deg: 270,
     }),
-
-    [containerQuery.largerThan('md')]: {
-      display: 'block',
-    },
+    display: 'block',
   },
   viewport: {
     overflowX: 'scroll',

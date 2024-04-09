@@ -16,5 +16,8 @@ export function calculateLevelProgression(totalRatings: number) {
   const ratingsInLevel = ratingsForNextLevel - ratingsRemaining;
   const progress = Math.round((ratingsInLevel / ratingsForNextLevel) * 100);
 
+  // For display purposes, start at level 1
+  level += 1;
+
   return { level, ratingsForNextLevel, ratingsInLevel, ratingsRemaining, progress };
 }

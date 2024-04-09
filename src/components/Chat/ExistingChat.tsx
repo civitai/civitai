@@ -15,11 +15,12 @@ import {
   StackProps,
   Text,
   Textarea,
+  Title,
   Tooltip,
   useMantineTheme,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
-import { ChatMemberStatus } from '@prisma/client';
+import { ChatMemberStatus, ChatMessageType } from '@prisma/client';
 import {
   IconArrowBack,
   IconChevronDown,
@@ -35,13 +36,18 @@ import {
 } from '@tabler/icons-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import produce from 'immer';
+import Linkify from 'linkify-react';
+import type { IntermediateRepresentation, OptFn, Opts } from 'linkifyjs';
 import { throttle } from 'lodash-es';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import Link from 'next/link';
+import React, { ReactElement, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChatActions } from '~/components/Chat/ChatActions';
 import { useChatContext } from '~/components/Chat/ChatProvider';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { env } from '~/env/client.mjs';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { SignalMessages } from '~/server/common/enums';
@@ -568,7 +574,10 @@ function ChatInputBox({
   replyId: number | undefined;
   setReplyId: React.Dispatch<React.SetStateAction<number | undefined>>;
   getTypingStatus: (newEntry: { [p: string]: boolean }) => {
-    newTotalStatus: { [p: string]: boolean };
+    newTotalStatus: {
+      // noinspection JSUnusedLocalSymbols
+      [p: string]: boolean;
+    };
     isTypingText: string | null;
   };
   setTypingStatus: React.Dispatch<React.SetStateAction<TypingStatus>>;
@@ -644,6 +653,7 @@ function ChatInputBox({
           thisChat.messages = [
             {
               content: data.content,
+              contentType: data.contentType,
               createdAt: new Date(data.createdAt),
             },
           ];
@@ -748,6 +758,87 @@ function ChatInputBox({
   );
 }
 
+const civRegex = new RegExp(
+  `^(?:https?:\/\/)?(?:image\.)?(?:${(env.NEXT_PUBLIC_BASE_URL ?? 'civitai.com').replace(
+    /^https?:\/\//,
+    ''
+  )}|civitai.com)`
+);
+// const airRegex = /^(?:urn:air:\w+:\w+:)?civitai:(?<mId>\d+)@(?<mvId>\d+)$/i;
+export const airRegex = /^civitai:(?<mId>\d+)@(?<mvId>\d+)$/i;
+
+const renderLink: OptFn<(ir: IntermediateRepresentation) => ReactElement | undefined> = ({
+  attributes,
+  content,
+}) => {
+  const { href, ...props }: { href?: string } = attributes;
+  if (!href) return;
+
+  let newHref: string;
+  const airMatch = href.match(airRegex);
+  if (airMatch && airMatch.groups) {
+    const { mId, mvId } = airMatch.groups;
+    newHref = `/models/${mId}?modelVersionId=${mvId}`;
+  } else {
+    newHref = href.replace(civRegex, '') || '/';
+  }
+
+  return (
+    <Link href={newHref} passHref {...props}>
+      <Text variant="link" component="a" style={{ color: 'revert', textDecoration: 'underline' }}>
+        {content}
+      </Text>
+    </Link>
+  );
+};
+const validateLink = {
+  url: (value: string) => civRegex.test(value) || airRegex.test(value),
+};
+export const linkifyOptions: Opts = {
+  render: renderLink,
+  validate: validateLink,
+};
+
+const EmbedMessage = ({ content }: { content: string }) => {
+  const { classes, cx } = useStyles();
+
+  let contentObj: { title: string | null; description: string | null; image: string | null };
+  try {
+    contentObj = JSON.parse(content);
+  } catch {
+    return <></>;
+  }
+
+  if (!contentObj.title && !contentObj.description && !contentObj.image) return <></>;
+
+  return (
+    <Group
+      sx={{
+        alignSelf: 'center',
+        border: '1px solid gray',
+      }}
+      className={cx(classes.chatMessage)}
+      noWrap
+    >
+      {(!!contentObj.title || !!contentObj.description) && (
+        <Stack>
+          {!!contentObj.title && <Title order={6}>{contentObj.title ?? 'Civitai'}</Title>}
+          {!!contentObj.description && <Text size="xs">{contentObj.description}</Text>}
+        </Stack>
+      )}
+      {!!contentObj.image && (
+        <EdgeMedia
+          src={contentObj.image}
+          width={75}
+          height={75}
+          alt="Link preview"
+          style={{ objectFit: 'cover' }}
+        />
+      )}
+    </Group>
+  );
+};
+
 function DisplayMessages({
   chats,
   setReplyId,
@@ -804,7 +895,9 @@ function DisplayMessages({
             animate={{ y: 0, opacity: 1 }}
             transition={{ type: 'spring', duration: 0.4 }}
           >
-            {c.userId === -1 ? (
+            {c.userId === -1 && c.contentType === ChatMessageType.Embed ? (
+              <EmbedMessage content={c.content} />
+            ) : c.userId === -1 ? (
               // <Group align="center" position="center">
               //   <Text size="xs">{formatDate(c.createdAt)}</Text>
               //   ...Text (below)
@@ -890,14 +983,14 @@ function DisplayMessages({
                     position={isMe ? 'top-end' : 'top-start'}
                     withArrow
                   >
-                    <Text
+                    <div
                       className={cx(classes.chatMessage, {
                         [classes.otherMessage]: !isMe,
                         [classes.myMessage]: isMe,
                       })}
                     >
-                      {c.content}
-                    </Text>
+                      <Linkify options={linkifyOptions}>{c.content}</Linkify>
+                    </div>
                   </Tooltip>
                 </Group>
               </>

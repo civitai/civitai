@@ -12,6 +12,7 @@ import {
   Text,
   Tooltip,
 } from '@mantine/core';
+import { useClickOutside } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
 import { NotificationCategory } from '@prisma/client';
 import { IconBell, IconListCheck, IconSettings } from '@tabler/icons-react';
@@ -19,15 +20,14 @@ import { useState } from 'react';
 
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { NotificationList } from '~/components/Notifications/NotificationList';
-import { NotificationTabs } from '~/components/Notifications/NotificationTabs';
 import {
   getCategoryDisplayName,
   useMarkReadNotification,
   useQueryNotifications,
   useQueryNotificationsCount,
 } from '~/components/Notifications/notifications.utils';
+import { NotificationTabs } from '~/components/Notifications/NotificationTabs';
 import { useIsMobile } from '~/hooks/useIsMobile';
-import { useClickOutside } from '@mantine/hooks';
 
 export function NotificationBell() {
   const mobile = useIsMobile();
@@ -52,7 +52,7 @@ export function NotificationBell() {
 
   return (
     <>
-      <div onClick={() => setOpened((val) => !val)} ref={setToggle}>
+      <div onClick={() => setOpened((val) => !val)} ref={setToggle} style={{ height: '28px' }}>
         <Indicator
           color="red"
           overflowCount={99}

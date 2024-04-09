@@ -7,7 +7,7 @@ import { ReactionType } from '../clickhouse/client';
 import { encouragementReward, goodContentReward } from '~/server/rewards';
 import {
   NsfwLevelDeprecated,
-  getNsfwLeveLDeprecatedReverseMapping,
+  getNsfwLevelDeprecatedReverseMapping,
 } from '~/shared/constants/browsingLevel.constants';
 
 async function getTrackerEvent(input: ToggleReactionInput, result: 'removed' | 'created') {
@@ -32,7 +32,7 @@ async function getTrackerEvent(input: ToggleReactionInput, result: 'removed' | '
       if (image) {
         return {
           type: `Image_${action}`,
-          nsfw: getNsfwLeveLDeprecatedReverseMapping(image.nsfwLevel),
+          nsfw: getNsfwLevelDeprecatedReverseMapping(image.nsfwLevel),
           userId: image.userId,
           ...shared,
         };
@@ -52,7 +52,7 @@ async function getTrackerEvent(input: ToggleReactionInput, result: 'removed' | '
       if (post) {
         return {
           type: `Post_${action}`,
-          nsfw: getNsfwLeveLDeprecatedReverseMapping(post.nsfwLevel),
+          nsfw: getNsfwLevelDeprecatedReverseMapping(post.nsfwLevel),
           userId: post.userId,
           ...shared,
         };
@@ -72,7 +72,7 @@ async function getTrackerEvent(input: ToggleReactionInput, result: 'removed' | '
       if (article) {
         return {
           type: `Article_${action}`,
-          nsfw: getNsfwLeveLDeprecatedReverseMapping(article.nsfwLevel),
+          nsfw: getNsfwLevelDeprecatedReverseMapping(article.nsfwLevel),
           userId: article.userId,
           ...shared,
         };
