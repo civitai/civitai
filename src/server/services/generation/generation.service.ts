@@ -841,15 +841,6 @@ export async function deleteGenerationRequest({ id, userId }: GetByIdInput & { u
   if (!deleteResponse.ok) throw throwNotFoundError();
 }
 
-export async function deleteGeneratedImage({ id, userId }: GetByIdInput & { userId: number }) {
-  const deleteResponse = await fetch(`${env.SCHEDULER_ENDPOINT}/images/${id}?userId=${userId}`, {
-    method: 'DELETE',
-  });
-  if (!deleteResponse.ok) throw throwNotFoundError();
-
-  return deleteResponse.ok;
-}
-
 export async function bulkDeleteGeneratedImages({
   ids,
   userId,
