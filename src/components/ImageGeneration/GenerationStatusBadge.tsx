@@ -53,8 +53,13 @@ export function GenerationStatusBadge({
               color="yellow"
               value={(count / quantity) * 100}
               w={40}
-              h={6}
+              h={10}
               className="ml-1"
+              styles={(theme) => ({
+                root: {
+                  backgroundColor: theme.fn.rgba(theme.black, 0.3),
+                },
+              })}
             />
           )}
         </div>

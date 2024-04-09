@@ -118,7 +118,7 @@ const useStyles = createStyles((theme) => ({
   burger: {
     display: 'flex',
     justifyContent: 'flex-end',
-    [containerQuery.largerThan('md')]: {
+    [containerQuery.largerThan('sm')]: {
       display: 'none',
     },
   },
@@ -154,7 +154,7 @@ const useStyles = createStyles((theme) => ({
 
   links: {
     display: 'flex',
-    [containerQuery.smallerThan('md')]: {
+    [containerQuery.smallerThan('sm')]: {
       display: 'none',
     },
   },
@@ -199,7 +199,7 @@ const useStyles = createStyles((theme) => ({
       backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[8] : theme.colors.gray[0],
     },
 
-    [containerQuery.smallerThan('md')]: {
+    [containerQuery.smallerThan('sm')]: {
       display: 'none',
     },
   },

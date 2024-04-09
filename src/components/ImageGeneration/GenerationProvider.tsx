@@ -18,7 +18,7 @@ const POLLABLE_STATUSES = [GenerationRequestStatus.Pending, GenerationRequestSta
 
 type GenerationState = {
   queued: { id: number; count: number; quantity: number; status: GenerationRequestStatus }[];
-  queuedImages: Generation.Image[];
+  latestImage?: Generation.Image & { createdAt: number };
   queueStatus?: GenerationRequestStatus;
   requestLimit: number;
   requestsRemaining: number;
@@ -34,7 +34,6 @@ const createGenerationStore = () =>
     devtools<GenerationState>(
       () => ({
         queued: [],
-        queuedImages: [],
         requestLimit: 0,
         requestsRemaining: 0,
         canGenerate: false,
@@ -119,14 +118,18 @@ export function GenerationProvider({ children }: { children: React.ReactNode }) 
           })) ?? []
       )
       .filter((x) => x.available)
-      .sort((a, b) => (b?.duration ?? 0) - (a?.duration ?? 0));
+      .sort((a, b) => (b?.createdAt ?? 0) - (a?.createdAt ?? 0));
 
-    store.setState({
-      queued: queuedRequests,
-      queuedImages: images,
-      queueStatus,
-      requestsRemaining: requestsRemaining > 0 ? requestsRemaining : 0,
-      canGenerate: requestsRemaining > 0 && available && !isLoading,
+    store.setState((state) => {
+      const latestImage = images.find((x) => x.createdAt > (state.latestImage?.createdAt ?? 0));
+
+      return {
+        queued: queuedRequests,
+        queueStatus,
+        latestImage: latestImage ?? state.latestImage,
+        requestsRemaining: requestsRemaining > 0 ? requestsRemaining : 0,
+        canGenerate: requestsRemaining > 0 && available && !isLoading,
+      };
     });
   }, [queued, generationStatus, isLoading]);
 
@@ -152,7 +155,7 @@ export function GenerationProvider({ children }: { children: React.ReactNode }) 
   const pollableIdsRef = useRef<number[]>([]);
   pollableIdsRef.current = pendingProcessingQueued.map((x) => x.id);
   const hasPollableIds = pollableIdsRef.current.length > 0;
-  const debouncer = useDebouncer(1000 * (!connected ? 5 : 60));
+  const debouncer = useDebouncer(1000 * 5);
   const pollable = useGetGenerationRequests(
     {
       requestId: pollableIdsRef.current,
@@ -165,10 +168,11 @@ export function GenerationProvider({ children }: { children: React.ReactNode }) 
   );
 
   useEffect(() => {
-    debouncer(() => {
-      pollableIdsRef.current.length ? pollable.refetch() : undefined;
-    });
-  }, [hasPollableIds]); // eslint-disable-line
+    if (!connected)
+      debouncer(() => {
+        pollableIdsRef.current.length ? pollable.refetch() : undefined;
+      });
+  }, [connected, hasPollableIds]); // eslint-disable-line
 
   useEffect(() => {
     updateGenerationRequest((old) => {

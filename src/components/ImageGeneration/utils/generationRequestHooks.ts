@@ -183,15 +183,14 @@ function updateFromEvents() {
         }
 
         if (hasEvents) {
-          const types = item.images?.map((x) => x.type).filter(isDefined) ?? [];
-          if (types.length) {
-            if (types.some((status) => status === JobStatus.Claimed))
-              item.status = GenerationRequestStatus.Processing;
-            else if (types.some((status) => status === JobStatus.Failed))
-              item.status = GenerationRequestStatus.Error;
-            else if (types.every((status) => status === JobStatus.Succeeded))
-              item.status = GenerationRequestStatus.Succeeded;
-          }
+          const types = item.images?.map((x) => x.type) ?? [];
+
+          if (types.some((status) => status === JobStatus.Claimed))
+            item.status = GenerationRequestStatus.Processing;
+          else if (types.some((status) => status === JobStatus.Failed))
+            item.status = GenerationRequestStatus.Error;
+          else if (types.every((status) => status === JobStatus.Succeeded))
+            item.status = GenerationRequestStatus.Succeeded;
 
           item.images = item.images?.sort((a, b) => (b.duration ?? 0) - (a.duration ?? 0));
           if (!events.length) break pages;

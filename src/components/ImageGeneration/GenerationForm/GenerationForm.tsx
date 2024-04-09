@@ -287,67 +287,69 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                 content="Not all of the resources used in this image are available at this time, we've populated as much of the generation parameters as possible"
               />
             )} */}
-          <InputResourceSelect
-            name="model"
-            label={
-              <Group mb={5} spacing={4} noWrap>
-                <Input.Label style={{ fontWeight: 590 }} required>
-                  Model
-                </Input.Label>
-                <InfoPopover size="xs" iconProps={{ size: 14 }}>
-                  <Text weight={400}>
-                    Models are the resources you&apos;re generating with. Using a different base
-                    model can drastically alter the style and composition of images, while adding
-                    additional resource can change the characters, concepts and objects
-                  </Text>
-                </InfoPopover>
-              </Group>
-            }
-            buttonLabel="Add Model"
-            options={{
-              canGenerate: true,
-              resources: [
-                {
-                  type: ModelType.Checkpoint,
-                  baseModelSet: hasResources ? baseModel : undefined,
-                },
-              ],
-            }}
-            allowRemove={false}
-          />
-          <PersistentAccordion
-            storeKey="generation-form-resources"
-            classNames={{
-              item: classes.accordionItem,
-              control: classes.accordionControl,
-              content: classes.accordionContent,
-            }}
-            variant="contained"
-          >
-            <Accordion.Item value="resources">
-              <Accordion.Control>
-                <Group spacing={4}>
-                  <Text size="sm" weight={590}>
-                    Additional Resources
-                  </Text>
-                  {additionalResourcesCount > 0 && (
-                    <Badge style={{ fontWeight: 590 }}>{additionalResourcesCount}</Badge>
-                  )}
-                </Group>
-              </Accordion.Control>
-              <Accordion.Panel>
-                <InputResourceSelectMultiple
-                  name="resources"
-                  limit={limits.resources}
-                  buttonLabel="Add additional resource"
-                  options={{
-                    canGenerate: true,
-                    resources: getGenerationConfig(baseModel).additionalResourceTypes,
-                  }}
-                />
-              </Accordion.Panel>
-            </Accordion.Item>
-          </PersistentAccordion>
+          <Group mb={5} spacing={4} noWrap>
+            <Input.Label style={{ fontWeight: 590 }} required>
+              Model
+            </Input.Label>
+            <InfoPopover size="xs" iconProps={{ size: 14 }}>
+              <Text weight={400}>
+                Models are the resources you&apos;re generating with. Using a different base model
+                can drastically alter the style and composition of images, while adding additional
+                resource can change the characters, concepts and objects
+              </Text>
+            </InfoPopover>
+          </Group>
+          <Card p="sm" radius="md" withBorder sx={{ overflow: 'visible' }}>
+            <InputResourceSelect
+              name="model"
+              buttonLabel="Add Model"
+              options={{
+                canGenerate: true,
+                resources: [
+                  {
+                    type: ModelType.Checkpoint,
+                    baseModelSet: hasResources ? baseModel : undefined,
+                  },
+                ],
+              }}
+              allowRemove={false}
+            />
+            <Card.Section withBorder mt="sm">
+              <PersistentAccordion
+                storeKey="generation-form-resources"
+                classNames={{
+                  item: classes.accordionItem,
+                  control: classes.accordionControl,
+                  content: classes.accordionContent,
+                }}
+              >
+                <Accordion.Item value="resources" sx={{ borderBottom: 0 }}>
+                  <Accordion.Control>
+                    <Group spacing={4}>
+                      <Text size="sm" weight={590}>
+                        Additional Resources
+                      </Text>
+                      {additionalResourcesCount > 0 && (
+                        <Badge style={{ fontWeight: 590 }}>{additionalResourcesCount}</Badge>
+                      )}
+                    </Group>
+                  </Accordion.Control>
+                  <Accordion.Panel>
+                    <InputResourceSelectMultiple
+                      name="resources"
+                      limit={limits.resources}
+                      buttonLabel="Add additional resource"
+                      options={{
+                        canGenerate: true,
+                        resources: getGenerationConfig(baseModel).additionalResourceTypes,
+                      }}
+                    />
+                  </Accordion.Panel>
+                </Accordion.Item>
+              </PersistentAccordion>
+            </Card.Section>
+          </Card>
+
           {unstableResources.length > 0 && (
             <Alert color="yellow" title="Unstable Resources">
               <Text size="xs">
@@ -484,7 +486,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
             <Input.Label>Aspect Ratio</Input.Label>
             <InputSegmentedControl name="aspectRatio" data={getAspectRatioControls(baseModel)} />
           </Stack>
-          <Group position="apart">
+          <Group position="apart" my="xs">
             <InputSwitch name="nsfw" label="Mature content" labelPosition="left" />
             {features.draftMode && (
               <InputSwitch
@@ -863,9 +865,6 @@ export const GenerationForm = (args: { onSuccess?: () => void }) => {
 const useStyles = createStyles((theme) => ({
   generationContainer: {},
   generationArea: {
-    borderTop: `1px solid ${
-      theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[2]
-    }`,
     borderRadius: theme.radius.md,
     boxShadow: `inset 0 2px ${
       theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[2]

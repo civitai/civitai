@@ -19,7 +19,7 @@ export function QueueSnackbar() {
     requestLimit,
     requestsRemaining,
     userTier,
-    queuedImages,
+    latestImage,
     requestsLoading,
   } = useGenerationContext((state) => state);
   const slots = Array(requestLimit).fill(0);
@@ -37,15 +37,12 @@ export function QueueSnackbar() {
     }
   );
 
-  const images = queuedImages.slice(0, 1).reverse();
-
   if (requestsLoading) return null;
 
   return (
     <div className="w-full flex flex-col gap-2 ">
       <Card
         radius="md"
-        withBorder
         p={0}
         className={cx(classes.card, 'flex justify-center px-1 gap-3 items-stretch ')}
       >
@@ -109,22 +106,19 @@ export function QueueSnackbar() {
           </div>
         </div>
         <div className="flex items-center justify-end basis-20 py-1">
-          {images.map((image, i) => (
+          {latestImage && (
             <Card
-              key={image.id}
               withBorder
               radius="md"
               p={0}
               style={{
-                zIndex: i,
-                marginRight: i < images.length - 1 ? `-33.33%` : undefined,
                 height: 42,
               }}
             >
               {/* eslint-disable-next-line jsx-a11y/alt-text, @next/next/no-img-element */}
-              <img alt="" src={image.url} className="max-h-full" />
+              <img alt="" src={latestImage.url} className="max-h-full" />
             </Card>
-          ))}
+          )}
         </div>
       </Card>
       {requestsRemaining <= 0 && userTier === 'free' && (
