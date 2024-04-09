@@ -8,6 +8,7 @@ import {
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { createStore, useStore } from 'zustand';
+import { devtools } from 'zustand/middleware';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import { useDebouncer } from '~/utils/debouncer';
 import { GenerationLimits } from '~/server/schema/generation.schema';
@@ -29,15 +30,20 @@ type GenerationState = {
 
 type GenerationStore = ReturnType<typeof createGenerationStore>;
 const createGenerationStore = () =>
-  createStore<GenerationState>(() => ({
-    queued: [],
-    queuedImages: [],
-    requestLimit: 0,
-    requestsRemaining: 0,
-    canGenerate: false,
-    userTier: 'free',
-    requestsLoading: true,
-  }));
+  createStore<GenerationState>()(
+    devtools<GenerationState>(
+      () => ({
+        queued: [],
+        queuedImages: [],
+        requestLimit: 0,
+        requestsRemaining: 0,
+        canGenerate: false,
+        userTier: 'free',
+        requestsLoading: true,
+      }),
+      { store: 'generation-context' }
+    )
+  );
 
 const GenerationContext = createContext<GenerationStore | null>(null);
 export function useGenerationContext<T>(selector: (state: GenerationState) => T) {
@@ -115,14 +121,6 @@ export function GenerationProvider({ children }: { children: React.ReactNode }) 
       .filter((x) => x.available)
       .sort((a, b) => (b?.duration ?? 0) - (a?.duration ?? 0));
 
-    console.log({
-      queued: queuedRequests,
-      queuedImages: images,
-      queueStatus,
-      requestsRemaining: requestsRemaining > 0 ? requestsRemaining : 0,
-      canGenerate: requestsRemaining > 0 && available && !isLoading,
-    });
-
     store.setState({
       queued: queuedRequests,
       queuedImages: images,
@@ -130,7 +128,7 @@ export function GenerationProvider({ children }: { children: React.ReactNode }) 
       requestsRemaining: requestsRemaining > 0 ? requestsRemaining : 0,
       canGenerate: requestsRemaining > 0 && available && !isLoading,
     });
-  }, [queued, generationStatus]); // eslint-disable-line
+  }, [queued, generationStatus, isLoading]);
 
   useEffect(() => {
     const store = storeRef.current;
