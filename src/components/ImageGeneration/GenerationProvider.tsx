@@ -115,6 +115,14 @@ export function GenerationProvider({ children }: { children: React.ReactNode }) 
       .filter((x) => x.available)
       .sort((a, b) => (b?.duration ?? 0) - (a?.duration ?? 0));
 
+    console.log({
+      queued: queuedRequests,
+      queuedImages: images,
+      queueStatus,
+      requestsRemaining: requestsRemaining > 0 ? requestsRemaining : 0,
+      canGenerate: requestsRemaining > 0 && available && !isLoading,
+    });
+
     store.setState({
       queued: queuedRequests,
       queuedImages: images,

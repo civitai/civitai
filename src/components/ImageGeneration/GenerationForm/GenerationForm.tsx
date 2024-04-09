@@ -260,7 +260,6 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
 
   const canGenerate = useGenerationContext((state) => state.canGenerate);
   const disableGenerateButton = !canGenerate || isCalculatingCost || isLoading;
-  console.log({ canGenerate, isCalculatingCost, isLoading });
 
   const cfgDisabled = !!draft;
   const samplerDisabled = !!draft;
