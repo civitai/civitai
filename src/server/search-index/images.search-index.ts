@@ -359,7 +359,10 @@ const onFetchItemsToIndex = async ({
       }
 
       const indexReadyRecords = images.map(({ user, cosmetics, meta, ...imageRecord }) => {
-        const parsed = imageGenerationSchema.omit({ comfy: true }).partial().safeParse(meta);
+        const parsed = imageGenerationSchema
+          .omit({ comfy: true, hashes: true })
+          .partial()
+          .safeParse(meta);
         const tags = rawTags
           .filter((rt) => rt.imageId === imageRecord.id)
           .map((rt) => ({ id: rt.tagId, name: rt.tagName }));
