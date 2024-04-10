@@ -130,6 +130,8 @@ export function GeneratedImage({
   const badFeedbackSelected = selectedFeedback === GENERATION_QUALITY.BAD;
   const goodFeedbackSelected = selectedFeedback === GENERATION_QUALITY.GOOD;
 
+  if (!image.available) return <></>;
+
   return (
     <AspectRatio ratio={request.params.width / request.params.height} ref={ref}>
       {inView && (

@@ -9,7 +9,7 @@ export namespace Generation {
     maxStrength: number;
   }>;
 
-  export type ImageStatus = 'Success' | 'Started' | 'Error' | 'RemovedForSafety';
+  export type ImageStatus = 'Success' | 'Started' | 'Error' | 'RemovedForSafety' | 'Cancelled';
   export type Image = {
     id: number;
     hash: string;
@@ -99,6 +99,7 @@ export namespace Generation {
     images?: Image[];
     // queuePosition?: QueuePosition;
     cost?: number;
+    sequential?: boolean;
   };
 
   export type Coverage = {
