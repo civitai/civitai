@@ -1,6 +1,4 @@
-import { Box, BoxProps, createPolymorphicComponent, createStyles } from '@mantine/core';
-import { useMergedRef } from '@mantine/hooks';
-import { RefObject, createContext, forwardRef, useCallback, useContext, useEffect } from 'react';
+import React, { RefObject, createContext, useCallback, useContext, useEffect } from 'react';
 import { create } from 'zustand';
 import { useResizeObserver } from '~/hooks/useResizeObserver';
 
@@ -16,65 +14,39 @@ export const useContainerContext = () => {
   return context;
 };
 
-type ContainerProviderProps = BoxProps & {
+type ContainerProviderProps = React.HTMLProps<HTMLDivElement> & {
   containerName: string;
-  supportsContainerQuery?: boolean;
 };
 
-const _ContainerProvider = forwardRef<HTMLDivElement, ContainerProviderProps>(
-  ({ children, containerName, supportsContainerQuery = true, ...props }, ref) => {
-    const { classes, cx } = useStyles({ supportsContainerQuery });
+export const ContainerProvider = ({
+  children,
+  containerName,
+  ...props
+}: ContainerProviderProps) => {
+  const innerRef = useResizeObserver<HTMLDivElement>((entry) => {
+    useContainerProviderStore.setState(() => ({ [containerName]: entry.borderBoxSize[0] }));
+  });
 
-    const innerRef = useResizeObserver<HTMLDivElement>((entry) => {
-      useContainerProviderStore.setState(() => ({ [containerName]: entry.borderBoxSize[0] }));
-    });
-    const mergedRef = useMergedRef(innerRef, ref);
+  useEffect(() => {
+    const container = innerRef.current;
+    if (container) {
+      useContainerProviderStore.setState(() => ({
+        [containerName]: { inlineSize: container.clientWidth, blockSize: container.clientHeight },
+      }));
+    }
+  }, []);
 
-    useEffect(() => {
-      const container = innerRef.current;
-      if (container) {
-        useContainerProviderStore.setState(() => ({
-          [containerName]: { inlineSize: container.clientWidth, blockSize: container.clientHeight },
-        }));
-      }
-    }, []);
+  let className = `@container flex flex-col h-full relative`;
+  if (props.className) className += ` ${props.className}`;
 
-    return (
-      <ContainerContext.Provider value={{ nodeRef: innerRef, containerName }}>
-        <Box
-          ref={mergedRef}
-          {...props}
-          className={cx(classes.root, props.className)}
-          style={{
-            containerName: supportsContainerQuery ? containerName : undefined,
-            ...props.style,
-          }}
-        >
-          {children}
-        </Box>
-      </ContainerContext.Provider>
-    );
-  }
-);
-
-_ContainerProvider.displayName = 'ContainerProvider';
-
-export const ContainerProvider = createPolymorphicComponent<'div', ContainerProviderProps>(
-  _ContainerProvider
-);
-
-const useStyles = createStyles<string, { supportsContainerQuery: boolean }>(
-  (theme, { supportsContainerQuery }) => ({
-    root: {
-      containerType: supportsContainerQuery ? 'inline-size' : undefined,
-      display: 'flex',
-      flexDirection: 'column',
-      height: '100%',
-      flex: 1,
-      position: 'relative',
-    },
-  })
-);
+  return (
+    <ContainerContext.Provider value={{ nodeRef: innerRef, containerName }}>
+      <div ref={innerRef} {...props} className={className}>
+        {children}
+      </div>
+    </ContainerContext.Provider>
+  );
+};
 
 export const useContainerProviderStore = create<Record<string, ResizeObserverSize>>(() => ({}));
 

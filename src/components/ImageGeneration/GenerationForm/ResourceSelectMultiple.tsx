@@ -1,6 +1,6 @@
 import { Button, Divider, Input, InputWrapperProps, Stack, Text } from '@mantine/core';
 import { IconPlus } from '@tabler/icons-react';
-import React, { forwardRef, useEffect } from 'react';
+import React, { forwardRef, useEffect, useState } from 'react';
 import { ResourceSelectCard } from '~/components/ImageGeneration/GenerationForm/ResourceSelectCard';
 import { openResourceSelectModal } from '~/components/ImageGeneration/GenerationForm/ResourceSelectModal';
 import { ResourceSelectOptions } from './resource-select.types';
@@ -14,10 +14,24 @@ type ResourceSelectMultipleProps = {
   onChange?: (value?: Generation.Resource[]) => void;
   buttonLabel: React.ReactNode;
   options?: ResourceSelectOptions;
+  modalOpened?: boolean;
+  onCloseModal?: () => void;
 } & Omit<InputWrapperProps, 'children'>;
 
 const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectMultipleProps>(
-  ({ limit, value = [], onChange, buttonLabel, options = {}, ...inputWrapperProps }, ref) => {
+  (
+    {
+      limit,
+      value = [],
+      onChange,
+      buttonLabel,
+      options = {},
+      modalOpened,
+      onCloseModal,
+      ...inputWrapperProps
+    },
+    ref
+  ) => {
     // const { types } = options;
     const types = options.resources?.map((x) => x.type);
 
@@ -36,6 +50,7 @@ const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectMultiple
     const handleAdd = (resource: Generation.Resource) => {
       if (!canAdd) return;
       onChange?.([..._values, resource]);
+      onCloseModal?.();
     };
 
     const handleRemove = (id: number) => {
@@ -57,6 +72,19 @@ const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectMultiple
     useEffect(() => {
       if (_values.length !== value.length) onChange?.(_values.length ? _values : undefined);
     }, [value]); //eslint-disable-line
+
+    const handleOpenModal = () => {
+      openResourceSelectModal({
+        title: buttonLabel,
+        onSelect: handleAdd,
+        options,
+        onClose: onCloseModal,
+      });
+    };
+
+    useEffect(() => {
+      if (modalOpened) handleOpenModal();
+    }, [modalOpened]);
 
     // Made with copilot :^) -Manuel
     const sortedGroups = [...groups].sort((a, b) => {
@@ -96,17 +124,7 @@ const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectMultiple
             );
           })}
           {canAdd && (
-            <Button
-              variant="light"
-              leftIcon={<IconPlus size={18} />}
-              onClick={() =>
-                openResourceSelectModal({
-                  title: buttonLabel,
-                  onSelect: handleAdd,
-                  options,
-                })
-              }
-            >
+            <Button variant="light" leftIcon={<IconPlus size={18} />} onClick={handleOpenModal}>
               {buttonLabel}
             </Button>
           )}

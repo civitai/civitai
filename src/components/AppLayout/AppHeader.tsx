@@ -72,7 +72,6 @@ import {
 import { BrowsingModeIcon, BrowsingModeMenu } from '~/components/BrowsingMode/BrowsingMode';
 import { ChatButton } from '~/components/Chat/ChatButton';
 import { CivitaiLinkPopover } from '~/components/CivitaiLink/CivitaiLinkPopover';
-import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvider';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { ListSearch } from '~/components/ListSearch/ListSearch';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
@@ -96,14 +95,11 @@ import { UserBuzz } from '../User/UserBuzz';
 import { FeatureIntroductionModal } from '~/components/FeatureIntroduction/FeatureIntroduction';
 import { useSystemCollections } from '~/components/Collections/collection.utils';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 const HEADER_HEIGHT = 70;
 
 const useStyles = createStyles((theme) => ({
-  root: {
-    containerName: 'header',
-    containerType: 'inline-size',
-  },
   header: {
     display: 'flex',
     alignItems: 'center',
@@ -113,7 +109,7 @@ const useStyles = createStyles((theme) => ({
     paddingLeft: theme.spacing.xs * 1.6, // 16px
     paddingRight: theme.spacing.xs * 1.6, // 16px
 
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       paddingLeft: theme.spacing.xs * 0.8, // 8px
       paddingRight: theme.spacing.xs * 0.8, // 8px
     },
@@ -122,7 +118,7 @@ const useStyles = createStyles((theme) => ({
   burger: {
     display: 'flex',
     justifyContent: 'flex-end',
-    [theme.fn.largerThan('md')]: {
+    [containerQuery.largerThan('sm')]: {
       display: 'none',
     },
   },
@@ -137,27 +133,28 @@ const useStyles = createStyles((theme) => ({
     borderTopLeftRadius: 0,
     borderTopWidth: 0,
     overflow: 'hidden',
+    height: `calc(100% - ${HEADER_HEIGHT}px)`,
 
-    [theme.fn.largerThan('md')]: {
+    [containerQuery.largerThan('md')]: {
       display: 'none',
     },
   },
 
   search: {
-    [theme.fn.smallerThan('md')]: {
+    [containerQuery.smallerThan('md')]: {
       display: 'none',
     },
   },
 
   searchArea: {
-    [theme.fn.smallerThan('md')]: {
+    [containerQuery.smallerThan('md')]: {
       display: 'none',
     },
   },
 
   links: {
     display: 'flex',
-    [theme.fn.smallerThan('md')]: {
+    [containerQuery.smallerThan('sm')]: {
       display: 'none',
     },
   },
@@ -176,7 +173,7 @@ const useStyles = createStyles((theme) => ({
       backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
     },
 
-    [theme.fn.smallerThan('md')]: {
+    [containerQuery.smallerThan('md')]: {
       borderRadius: 0,
       padding: theme.spacing.md,
       display: 'flex',
@@ -202,7 +199,7 @@ const useStyles = createStyles((theme) => ({
       backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[8] : theme.colors.gray[0],
     },
 
-    [theme.fn.smallerThan('md')]: {
+    [containerQuery.smallerThan('sm')]: {
       display: 'none',
     },
   },
@@ -791,13 +788,7 @@ export function AppHeader({
   };
 
   return (
-    <ContainerProvider
-      component={Header}
-      height={HEADER_HEIGHT}
-      fixed={fixed}
-      zIndex={100}
-      containerName="header"
-    >
+    <Header height={HEADER_HEIGHT} fixed={fixed} zIndex={100}>
       <Box className={cx(classes.mobileSearchWrapper, { [classes.dNone]: !showSearch })}>
         {renderSearchComponent({ onSearchDone, isMobile: true, ref: searchRef })}
       </Box>
@@ -947,13 +938,14 @@ export function AppHeader({
             />
             <Transition transition="scale-y" duration={200} mounted={burgerOpened}>
               {(styles) => (
-                <Portal>
+                <Portal target="#main">
                   <Paper
                     className={classes.dropdown}
                     withBorder
                     shadow="md"
                     style={{ ...styles, borderLeft: 0, borderRight: 0 }}
                     radius={0}
+                    sx={{ zIndex: 1002 }}
                     // ref={ref}
                   >
                     {/* Calculate maxHeight based off total viewport height minus header + footer + static menu options inside dropdown sizes */}
@@ -1024,7 +1016,7 @@ export function AppHeader({
           </Group>
         </Grid.Col>
       </Grid>
-    </ContainerProvider>
+    </Header>
   );
 }
 

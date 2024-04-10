@@ -16,9 +16,9 @@ body {
   overflow: hidden;
 }
 
-html {
+/* html {
   container: root layout / size;
-}
+} */
 
 #__next {
   height: 100%;

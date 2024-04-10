@@ -1019,45 +1019,47 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                   <Badge color="cyan" size="lg" radius="xs" w={85}>
                     Custom
                   </Badge>
-                  <InputResourceSelect
-                    name="customModelSelect"
-                    buttonLabel="Select custom model"
-                    buttonProps={{
-                      size: 'md',
-                      compact: true,
-                      styles: { label: { fontSize: 12 } },
-                    }}
-                    options={{
-                      resources: [
-                        {
-                          type: ModelType.Checkpoint,
-                        },
-                      ],
-                    }}
-                    allowRemove={true}
-                    isTraining={true}
-                    onChange={(val) => {
-                      const gVal = val as Generation.Resource;
-                      const mId = gVal?.modelId;
-                      const mvId = gVal?.id;
-                      const mBase = gVal?.baseModel as BaseModel | undefined;
-                      const castBase =
-                        !!mBase &&
-                        [
-                          ...baseModelSets.SDXL,
-                          ...baseModelSets.SDXLDistilled,
-                          ...baseModelSets.Pony,
-                        ].includes(mBase)
-                          ? 'sdxl'
-                          : 'sd15';
-                      const cLink =
-                        isDefined(mId) && isDefined(mvId) ? `civitai:${mId}@${mvId}` : null;
-                      setBaseModel15(null);
-                      setBaseModelXL(null);
-                      setFormBaseModelType(castBase);
-                      setFormBaseModel(cLink);
-                    }}
-                  />
+                  <Card px="sm" py={8} radius="md" withBorder>
+                    <InputResourceSelect
+                      name="customModelSelect"
+                      buttonLabel="Select custom model"
+                      buttonProps={{
+                        size: 'md',
+                        compact: true,
+                        styles: { label: { fontSize: 12 } },
+                      }}
+                      options={{
+                        resources: [
+                          {
+                            type: ModelType.Checkpoint,
+                          },
+                        ],
+                      }}
+                      allowRemove={true}
+                      isTraining={true}
+                      onChange={(val) => {
+                        const gVal = val as Generation.Resource;
+                        const mId = gVal?.modelId;
+                        const mvId = gVal?.id;
+                        const mBase = gVal?.baseModel as BaseModel | undefined;
+                        const castBase =
+                          !!mBase &&
+                          [
+                            ...baseModelSets.SDXL,
+                            ...baseModelSets.SDXLDistilled,
+                            ...baseModelSets.Pony,
+                          ].includes(mBase)
+                            ? 'sdxl'
+                            : 'sd15';
+                        const cLink =
+                          isDefined(mId) && isDefined(mvId) ? `civitai:${mId}@${mvId}` : null;
+                        setBaseModel15(null);
+                        setBaseModelXL(null);
+                        setFormBaseModelType(castBase);
+                        setFormBaseModel(cLink);
+                      }}
+                    />
+                  </Card>
                 </Group>
               </Stack>
             </Card.Section>

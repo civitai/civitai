@@ -3,39 +3,43 @@ import {
   Badge,
   Button,
   Card,
-  Group,
-  HoverCard,
-  Stack,
   Text,
-  ThemeIcon,
   MantineColor,
   Tooltip,
   TooltipProps,
   createStyles,
+  useMantineTheme,
   Alert,
+  Group,
 } from '@mantine/core';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useClipboard, useLocalStorage } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
 import {
-  IconBolt,
   IconInfoHexagon,
   IconPhoto,
   IconPlayerPlayFilled,
   IconTrash,
   IconX,
   IconCheck,
+  IconLoader,
   IconAlertTriangleFilled,
+  IconHandStop,
+  IconRotateClockwise,
+  IconArrowsShuffle,
 } from '@tabler/icons-react';
 
 import { Collection } from '~/components/Collection/Collection';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { GeneratedImage } from '~/components/ImageGeneration/GeneratedImage';
 import { GenerationDetails } from '~/components/ImageGeneration/GenerationDetails';
-import { useDeleteGenerationRequest } from '~/components/ImageGeneration/utils/generationRequestHooks';
+import {
+  useDeleteGenerationRequest,
+  useDeleteGenerationRequestImages,
+} from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { constants } from '~/server/common/constants';
-import { Generation, GenerationRequestStatus } from '~/server/services/generation/generation.types';
+import { Generation } from '~/server/services/generation/generation.types';
 import { generationPanel, generationStore } from '~/store/generation.store';
 import { formatDateMin } from '~/utils/date-helpers';
 import {
@@ -48,26 +52,16 @@ import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Currency } from '@prisma/client';
 import dayjs from 'dayjs';
 import { useMemo } from 'react';
-
-const tooltipProps: Omit<TooltipProps, 'children' | 'label'> = {
-  withinPortal: true,
-  withArrow: true,
-  color: 'dark',
-  zIndex: constants.imageGeneration.drawerZIndex + 1,
-};
-
-const statusColors: Record<GenerationRequestStatus, MantineColor> = {
-  [GenerationRequestStatus.Pending]: 'gray',
-  [GenerationRequestStatus.Cancelled]: 'gray',
-  [GenerationRequestStatus.Processing]: 'yellow',
-  [GenerationRequestStatus.Succeeded]: 'green',
-  [GenerationRequestStatus.Error]: 'red',
-};
+import { GenerationRequestStatus } from '~/server/common/enums';
+import { GenerationStatusBadge } from '~/components/ImageGeneration/GenerationStatusBadge';
+import { isProd } from '~/env/other';
+import { trpc } from '~/utils/trpc';
 
 // export function QueueItem({ data: request, index }: { data: Generation.Request; index: number }) {
 export function QueueItem({ request }: Props) {
+  const theme = useMantineTheme();
   const [showBoost] = useLocalStorage({ key: 'show-boost-modal', defaultValue: false });
-  const { classes } = useStyle();
+  const { classes, cx } = useStyle();
 
   const generationStatus = useGenerationStatus();
   const { unstableResources } = useUnstableResources();
@@ -80,14 +74,22 @@ export function QueueItem({ request }: Props) {
     status === GenerationRequestStatus.Pending || status === GenerationRequestStatus.Processing;
   const failed = status === GenerationRequestStatus.Error;
 
-  const verbage = pendingProcessing
+  const deleteImageMutation = useDeleteGenerationRequestImages();
+  const deleteMutation = useDeleteGenerationRequest();
+  const removeAction = pendingProcessing
     ? {
         modal: {
           title: 'Cancel Request',
           children: `Are you sure you want to cancel this request?`,
-          labels: { confirm: 'Delete', cancel: "No, don't cancel it" },
+          labels: { confirm: 'Cancel', cancel: "No, don't cancel it" },
         },
         tooltip: 'Cancel',
+        onConfirm: () => {
+          deleteImageMutation.mutate({
+            ids: request.images?.filter((x) => !x.available).map((x) => x.id) ?? [],
+            cancelled: true,
+          });
+        },
       }
     : {
         modal: {
@@ -96,17 +98,17 @@ export function QueueItem({ request }: Props) {
           labels: { confirm: 'Delete', cancel: "No, don't delete it" },
         },
         tooltip: 'Delete',
+        onConfirm: () => {
+          deleteMutation.mutate({ id: request.id });
+        },
       };
 
-  const deleteMutation = useDeleteGenerationRequest();
   const handleDeleteQueueItem = () => {
     openConfirmModal({
-      ...verbage.modal,
+      ...removeAction.modal,
       confirmProps: { color: 'red' },
       zIndex: constants.imageGeneration.drawerZIndex + 1,
-      onConfirm: () => {
-        deleteMutation.mutate({ id: request.id });
-      },
+      onConfirm: removeAction.onConfirm,
     });
   };
 
@@ -123,7 +125,8 @@ export function QueueItem({ request }: Props) {
   };
 
   const { prompt, ...details } = request.params;
-  const removedForSafety = request.images?.some((x) => x.removedForSafety && x.available);
+  const images = request.images?.filter((x) => x.duration);
+  // const removedForSafety = images?.some((x) => x.removedForSafety && x.available);
 
   const hasUnstableResources = request.resources.some((x) => unstableResources.includes(x.id));
   const overwriteStatusLabel =
@@ -150,102 +153,78 @@ export function QueueItem({ request }: Props) {
   return (
     <Card withBorder px="xs">
       <Card.Section py={4} inheritPadding withBorder>
-        <Group position="apart">
-          <Group spacing={8}>
-            {!!request.images?.length && (
-              <Tooltip label={overwriteStatusLabel} withArrow color="dark" maw={300} multiline>
-                <ThemeIcon
-                  variant={pendingProcessing ? 'filled' : 'light'}
-                  w="auto"
-                  h="auto"
-                  size="sm"
-                  color={statusColors[status]}
-                  px={4}
-                  py={2}
-                  sx={{ cursor: 'default' }}
-                >
-                  <Group spacing={4}>
-                    <IconPhoto size={16} />
-                    <Text size="sm" inline weight={500}>
-                      {request.images.length}
-                    </Text>
-                  </Group>
-                </ThemeIcon>
-              </Tooltip>
-            )}
-            {/* {pendingProcessing && request.queuePosition && (
-              <Button.Group>
-                {request.queuePosition && (
-                  <Button
-                    size="xs"
-                    variant="outline"
-                    color="gray"
-                    sx={{ pointerEvents: 'none' }}
-                    compact
-                  >
-                    {request.queuePosition.precedingJobs}/{request.queuePosition.jobs}
-                  </Button>
-                )}
-                <HoverCard withArrow position="top" withinPortal zIndex={400}>
-                  <HoverCard.Target>
-                    <Button
-                      size="xs"
-                      rightIcon={showBoost ? <IconBolt size={16} /> : undefined}
-                      compact
-                      // onClick={handleBoostClick}
-                    >
-                      Boost
-                    </Button>
-                  </HoverCard.Target>
-                  <HoverCard.Dropdown title="Coming soon" maw={300}>
-                    <Stack spacing={0}>
-                      <Text weight={500}>Coming soon!</Text>
-                      <Text size="xs">
-                        Want to run this request faster? Boost it to the front of the queue.
-                      </Text>
-                    </Stack>
-                  </HoverCard.Dropdown>
-                </HoverCard>
-              </Button.Group>
-            )} */}
+        <div className="flex justify-between">
+          <div className="flex gap-1 items-center">
+            <GenerationStatusBadge
+              status={request.status}
+              count={request.images?.filter((x) => x.duration).length ?? 0}
+              quantity={request.quantity}
+              tooltipLabel={overwriteStatusLabel}
+              progress
+            />
+
             <Text size="xs" color="dimmed">
               {formatDateMin(request.createdAt)}
             </Text>
-          </Group>
-          <Group spacing="xs">
-            {request.cost &&
+            {!!request.cost &&
               dayjs(request.createdAt).toDate() >=
                 constants.buzz.generationBuzzChargingStartDate && (
                 <CurrencyBadge unitAmount={request.cost} currency={Currency.BUZZ} size="xs" />
               )}
             <Tooltip {...tooltipProps} label="Copy Job IDs">
-              <ActionIcon size="md" p={4} variant="light" radius={0} onClick={handleCopy}>
+              <ActionIcon size="md" p={4} radius={0} onClick={handleCopy}>
                 {copied ? <IconCheck /> : <IconInfoHexagon />}
               </ActionIcon>
             </Tooltip>
+          </div>
+          <div className="flex gap-1">
             {generationStatus.available && (
-              <Tooltip {...tooltipProps} label="Generate">
-                <ActionIcon size="md" p={4} variant="light" radius={0} onClick={handleGenerate}>
-                  <IconPlayerPlayFilled />
+              <Tooltip {...tooltipProps} label="Remix">
+                <ActionIcon size="md" p={4} radius={0} onClick={handleGenerate}>
+                  <IconArrowsShuffle />
                 </ActionIcon>
               </Tooltip>
             )}
-            <Tooltip {...tooltipProps} label={verbage.tooltip}>
+            <Tooltip {...tooltipProps} label={removeAction.tooltip}>
               <ActionIcon
                 size="md"
                 onClick={handleDeleteQueueItem}
                 disabled={deleteMutation.isLoading}
+                color="red"
               >
                 {pendingProcessing ? <IconX size={20} /> : <IconTrash size={20} />}
               </ActionIcon>
             </Tooltip>
-          </Group>
-        </Group>
+          </div>
+        </div>
       </Card.Section>
-      <Stack py="xs" spacing={8} className={classes.container}>
+      <div className="flex flex-col gap-3 py-3 @container">
+        {/* TODO.generation - add restart functionality to the code commented out below */}
+        {/* {status !== GenerationRequestStatus.Cancelled && (
+          <div
+            className={cx(
+              classes.stopped,
+              'flex justify-between items-center rounded-3xl p-1 pl-2'
+            )}
+          >
+            <Text
+              color={theme.colorScheme === 'dark' ? 'yellow' : 'orange'}
+              weight={500}
+              className="flex items-center gap-1 "
+            >
+              <IconHandStop size={16} /> Stopped
+            </Text>
+            <Button compact color="gray" radius="xl">
+              <span className="flex gap-1">
+                <IconRotateClockwise size={16} />
+                <span>Restart</span>
+              </span>
+            </Button>
+          </div>
+        )} */}
         {refundTime && refundTime > new Date() && (
-          <Alert color="yellow" p={4} pl={8}>
-            <Group spacing="xs" noWrap mb={4} align="center">
+          <Alert color="yellow" p={0}>
+            <div className="flex items-center px-3 py-1 gap-1">
               <Text size="xs" color="yellow" lh={1}>
                 <IconAlertTriangleFilled size={20} />
               </Text>
@@ -254,7 +233,7 @@ export function QueueItem({ request }: Props) {
                   refundTime
                 )}.`}
               </Text>
-            </Group>
+            </div>
           </Alert>
         )}
         <ContentClamp maxHeight={36} labelSize="xs">
@@ -263,14 +242,14 @@ export function QueueItem({ request }: Props) {
           </Text>
         </ContentClamp>
         <Collection items={request.resources} limit={3} renderItem={ResourceBadge} grouped />
-        {!!request.images?.length && (
+        {!!images?.length && (
           <div className={classes.grid}>
-            {request.images.map((image) => (
+            {images.map((image) => (
               <GeneratedImage key={image.id} image={image} request={request} />
             ))}
           </div>
         )}
-      </Stack>
+      </div>
       <Card.Section
         withBorder
         sx={(theme) => ({
@@ -285,16 +264,6 @@ export function QueueItem({ request }: Props) {
           paperProps={{ radius: 0, sx: { borderWidth: '1px 0 0 0' } }}
         />
       </Card.Section>
-      {/* <Card.Section py="xs" inheritPadding>
-        <Group position="apart" spacing={8}>
-          <Text color="dimmed" size="xs">
-            Fulfillment by {item.provider.name}
-          </Text>
-          <Text color="dimmed" size="xs">
-            Started <DaysFromNow date={item.createdAt} />
-          </Text>
-        </Group>
-      </Card.Section> */}
     </Card>
   );
 }
@@ -305,6 +274,9 @@ type Props = {
 };
 
 const useStyle = createStyles((theme) => ({
+  stopped: {
+    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[1],
+  },
   grid: {
     display: 'grid',
     gap: theme.spacing.xs,
@@ -325,9 +297,6 @@ const useStyle = createStyles((theme) => ({
   },
   asSidebar: {
     gridTemplateColumns: 'repeat(2, 1fr)',
-  },
-  container: {
-    containerType: 'inline-size',
   },
 }));
 
@@ -351,4 +320,19 @@ const ResourceBadge = (props: Generation.Resource) => {
   );
 
   return unstable ? <Tooltip label="Unstable resource">{badge}</Tooltip> : badge;
+};
+
+const tooltipProps: Omit<TooltipProps, 'children' | 'label'> = {
+  withinPortal: true,
+  withArrow: true,
+  color: 'dark',
+  zIndex: constants.imageGeneration.drawerZIndex + 1,
+};
+
+const statusColors: Record<GenerationRequestStatus, MantineColor> = {
+  [GenerationRequestStatus.Pending]: 'gray',
+  [GenerationRequestStatus.Cancelled]: 'gray',
+  [GenerationRequestStatus.Processing]: 'yellow',
+  [GenerationRequestStatus.Succeeded]: 'green',
+  [GenerationRequestStatus.Error]: 'red',
 };
