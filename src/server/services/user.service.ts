@@ -701,6 +701,7 @@ export const getUserCosmetics = ({
         where: equipped ? { equippedAt: { not: null } } : undefined,
         select: {
           obtainedAt: true,
+          equippedToId: true,
           cosmetic: {
             select: {
               id: true,

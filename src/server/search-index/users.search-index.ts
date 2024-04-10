@@ -191,7 +191,7 @@ const onFetchItemsToIndex = async ({
     FROM "UserCosmetic" uc
     JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
     AND "equippedAt" IS NOT NULL
-    WHERE uc."userId" IN (SELECT id FROM target)
+    WHERE uc."userId" IN (SELECT id FROM target) AND uc."equippedToId" IS NULL
     GROUP BY uc."userId"
   ), ranks AS MATERIALIZED (
     SELECT

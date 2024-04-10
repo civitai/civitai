@@ -156,7 +156,7 @@ type ModelRaw = {
     deletedAt: Date | null;
     image: string;
   };
-  cosmetic: BadgeCosmetic | null;
+  cosmetic?: BadgeCosmetic | null;
 };
 
 export const getModelsRaw = async ({
@@ -590,7 +590,7 @@ export const getModelsRaw = async ({
           uc."equippedToId"
         FROM "UserCosmetic" uc
         JOIN "Cosmetic" c ON uc."cosmeticId" = c.id
-        WHERE uc."equippedToType" = 'Model'
+        WHERE uc."equippedToType" = 'Model' AND c.type = 'ContentDecoration'
       )
     `);
   }

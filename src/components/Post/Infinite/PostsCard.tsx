@@ -14,19 +14,19 @@ import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 
 export function PostsCard({
-  data: { images, id, stats, imageCount, user, modelVersionId },
+  data: { images, id, stats, imageCount, cosmetic },
   height,
 }: {
   data: PostsInfiniteModel;
   height?: number;
 }) {
   const { ref, inView } = useInView({ rootMargin: '600px' });
-  const { classes, theme } = useStyles();
+  const { classes } = useStyles();
 
   const image = images[0];
 
   return (
-    <MasonryCard withBorder shadow="sm" p={0} height={height} ref={ref}>
+    <MasonryCard withBorder shadow="sm" p={0} height={height} ref={ref} frameDecoration={cosmetic}>
       {inView && (
         <>
           <ImageGuard2 image={image} connectType="post" connectId={id}>

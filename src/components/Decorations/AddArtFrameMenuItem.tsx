@@ -10,9 +10,12 @@ export function AddArtFrameMenuItem({ data, entityType }: CardDecorationModalPro
   return (
     <Menu.Item
       icon={<IconDeviceTabletStar size={16} stroke={1.5} />}
-      onClick={() =>
-        dialogStore.trigger({ component: CardDecorationModal, props: { data, entityType } })
-      }
+      onClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+
+        dialogStore.trigger({ component: CardDecorationModal, props: { data, entityType } });
+      }}
     >
       Add Art Frame
     </Menu.Item>

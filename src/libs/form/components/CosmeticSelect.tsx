@@ -1,5 +1,6 @@
 import {
   Center,
+  Indicator,
   Input,
   InputWrapperProps,
   Paper,
@@ -82,14 +83,25 @@ export function CosmeticSelect({
             const isSelected = value === item.id;
 
             return (
-              <UnstyledButton
+              <Indicator
                 key={item.id}
-                className={cx(classes.decoration, isSelected && classes.selected)}
-                p="sm"
-                onClick={() => handleClick(!isSelected ? item.id : null)}
+                label="In use"
+                position="top-center"
+                disabled={!item.inUse}
+                color="gray.1"
+                styles={{
+                  indicator: { color: '#222', height: 'auto !important', fontWeight: 500 },
+                }}
+                inline
               >
-                <EdgeMedia src={url} width={data.animated ? 'original' : 64} />
-              </UnstyledButton>
+                <UnstyledButton
+                  className={cx(classes.decoration, isSelected && classes.selected)}
+                  p="sm"
+                  onClick={() => handleClick(!isSelected ? item.id : null)}
+                >
+                  <EdgeMedia src={url} width={data.animated ? 'original' : 64} />
+                </UnstyledButton>
+              </Indicator>
             );
           })
         ) : (
@@ -111,7 +123,7 @@ export function CosmeticSelect({
 }
 
 type Props = Omit<InputWrapperProps, 'onChange' | 'children'> & {
-  data: Pick<BadgeCosmetic, 'id' | 'data' | 'name'>[];
+  data: Pick<BadgeCosmetic, 'id' | 'data' | 'name' | 'inUse'>[];
   shopUrl?: string;
   onChange?: (id: number | null) => void;
   value?: number | null;

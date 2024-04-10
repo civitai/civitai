@@ -46,7 +46,6 @@ import React, { createContext, useContext } from 'react';
 import { trpc } from '~/utils/trpc';
 import { imageStore, useImageStore } from '~/store/image.store';
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
-import { ImagesInfiniteModel } from '~/server/services/image.service';
 import { ImageProps } from '~/components/ImageViewer/ImageViewer';
 
 // type ImageProps = Pick<ImagesInfiniteModel, 'id' | 'url' | 'width' | 'height' | 'nsfwLevel'> & {
@@ -59,7 +58,7 @@ import { ImageProps } from '~/components/ImageViewer/ImageViewer';
 // };
 
 type ImageContextMenuProps = {
-  image: ImageProps & { ingestion?: ImageIngestionStatus };
+  image: Omit<ImageProps, 'tags'> & { ingestion?: ImageIngestionStatus };
   context?: 'image' | 'post';
   additionalMenuItems?: React.ReactNode;
 };

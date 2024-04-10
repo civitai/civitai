@@ -42,6 +42,7 @@ import { postgresSlugify } from '~/utils/string-helpers';
 import { bustCacheTag, queryCache } from '~/server/utils/cache-helpers';
 import { env } from 'process';
 import { CacheTTL } from '../common/constants';
+import { BadgeCosmetic } from '~/server/selectors/cosmetic.selector';
 
 type GetAllPostsRaw = {
   id: number;
@@ -66,6 +67,7 @@ type GetAllPostsRaw = {
     laughCount: number;
     cryCount: number;
   } | null;
+  cosmetic?: BadgeCosmetic | null;
 };
 export type PostsInfiniteModel = AsyncReturnType<typeof getPostsInfinite>['items'][0];
 export const getPostsInfinite = async ({
@@ -98,6 +100,7 @@ export const getPostsInfinite = async ({
   let cacheTime = CacheTTL.xs;
   const userId = user?.id;
   const isModerator = user?.isModerator ?? false;
+  const includeCosmetics = !!include?.includes('cosmetics');
 
   const isOwnerRequest =
     !!user?.username && !!username && postgresSlugify(user.username) === postgresSlugify(username);
@@ -253,6 +256,20 @@ export const getPostsInfinite = async ({
     joins.push(`JOIN "clubPosts" cp ON cp."postId" = p."id"`);
   }
 
+  if (includeCosmetics) {
+    WITH.push(Prisma.sql`
+      "postCosmetic" AS (
+        SELECT
+          c.id,
+          c.data,
+          uc."equippedToId"
+        FROM "UserCosmetic" uc
+        JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
+        WHERE uc."equippedToType" = 'Post' AND c.type = 'ContentDecoration'
+      )
+    `);
+  }
+
   const queryWith = WITH.length > 0 ? Prisma.sql`WITH ${Prisma.join(WITH, ', ')}` : Prisma.sql``;
 
   const postsRawQuery = Prisma.sql`
@@ -284,6 +301,12 @@ export const getPostsInfinite = async ({
         FROM "PostMetric" pm
         WHERE pm."postId" = p.id AND pm."timeframe" = ${period}::"MetricTimeframe"
       ) "stats",
+      (
+        SELECT jsonb_build_object(
+          'id', pc.id,
+          'data', pc.data
+        ) FROM "postCosmetic" pc WHERE pc."equippedToId" = a.id
+      ) as "cosmetic",
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} "cursorId"
     FROM "Post" p
     JOIN "User" u ON u.id = p."userId"

@@ -991,16 +991,18 @@ export const getUserCosmeticsHandler = async ({
     if (!user) throw throwNotFoundError(`No user with id ${userId}`);
 
     const cosmetics = user.cosmetics.reduce(
-      (acc, { obtainedAt, cosmetic }) => {
+      (acc, { obtainedAt, equippedToId, cosmetic }) => {
         const { type, data, ...rest } = cosmetic;
+        const sharedData = { ...rest, obtainedAt, inUse: !!equippedToId };
+
         if (type === CosmeticType.Badge)
-          acc.badges.push({ ...rest, data: data as BadgeCosmetic['data'], obtainedAt });
+          acc.badges.push({ ...sharedData, data: data as BadgeCosmetic['data'] });
         else if (type === CosmeticType.NamePlate)
-          acc.nameplates.push({ ...rest, data: data as NamePlateCosmetic['data'], obtainedAt });
+          acc.nameplates.push({ ...sharedData, data: data as NamePlateCosmetic['data'] });
         else if (type === CosmeticType.ProfileDecoration)
-          acc.profileDecorations.push({ ...rest, data: data as BadgeCosmetic['data'], obtainedAt });
+          acc.profileDecorations.push({ ...sharedData, data: data as BadgeCosmetic['data'] });
         else if (type === CosmeticType.ContentDecoration)
-          acc.contentDecorations.push({ ...rest, data: data as BadgeCosmetic['data'], obtainedAt });
+          acc.contentDecorations.push({ ...sharedData, data: data as BadgeCosmetic['data'] });
 
         return acc;
       },

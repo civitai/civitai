@@ -506,7 +506,7 @@ type GetAllImagesRaw = {
   metadata: Prisma.JsonValue;
   baseModel?: string;
   availability: Availability;
-  cosmetic: BadgeCosmetic | null;
+  cosmetic?: BadgeCosmetic | null;
 };
 export type ImagesInfiniteModel = AsyncReturnType<typeof getAllImages>['items'][0];
 export const getAllImages = async ({
@@ -834,7 +834,7 @@ export const getAllImages = async ({
           uc."equippedToId"
         FROM "UserCosmetic" uc
         JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
-        WHERE uc."equippedToType" = 'Image'
+        WHERE uc."equippedToType" = 'Image' AND c.type = 'ContentDecoration'
       )
     `);
   }
@@ -1020,7 +1020,7 @@ export const getAllImages = async ({
       baseModel?: string | null;
       availability?: Availability;
       nsfwLevel: NsfwLevel;
-      cosmetic: BadgeCosmetic | null;
+      cosmetic?: BadgeCosmetic | null;
     }
   > = rawImages
     .filter((x) => {

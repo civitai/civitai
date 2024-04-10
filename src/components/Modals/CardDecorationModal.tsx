@@ -1,46 +1,76 @@
 import { Button, Center, Grid, Loader, Modal, Stack } from '@mantine/core';
-import { z } from 'zod';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { Form, InputCosmeticSelect, useForm } from '~/libs/form';
-import { trpc } from '~/utils/trpc';
-import { UseQueryModelReturn } from '~/components/Model/model.utils';
-import { ImagesInfiniteModel } from '~/server/services/image.service';
-import { FeedCard } from '~/components/Cards/FeedCard';
-import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { hideMobile, showMobile } from '~/libs/sx-helpers';
-import { BadgeCosmetic } from '~/server/selectors/cosmetic.selector';
-import { useCardStyles } from '~/components/Cards/Cards.styles';
-import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
+import { openConfirmModal } from '@mantine/modals';
 import { CosmeticEntity } from '@prisma/client';
+import { z } from 'zod';
+
+import { useCardStyles } from '~/components/Cards/Cards.styles';
+import { FeedCard } from '~/components/Cards/FeedCard';
+import {
+  useEquipContentDecoration,
+  useQueryUserCosmetics,
+} from '~/components/Cosmetics/cosmetics.util';
+import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
+import { ImageProps } from '~/components/ImageViewer/ImageViewer';
+import { UseQueryModelReturn } from '~/components/Model/model.utils';
+import { Form, InputCosmeticSelect, useForm } from '~/libs/form';
+import { hideMobile, showMobile } from '~/libs/sx-helpers';
+import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
+import { BadgeCosmetic } from '~/server/selectors/cosmetic.selector';
 import { ArticleGetAll } from '~/server/services/article.service';
 import { PostsInfiniteModel } from '~/server/services/post.service';
-import { ImageProps } from '~/components/ImageViewer/ImageViewer';
 
 const schema = z.object({
-  contentDecorationId: z.number().nullish(),
-  entityId: z.number(),
-  entityType: z.nativeEnum(CosmeticEntity),
+  cosmeticId: z.number().nullish(),
 });
 
 export function CardDecorationModal({ data, entityType }: Props) {
-  const currentUser = useCurrentUser();
   const dialog = useDialogContext();
-  const form = useForm({ schema });
+  const form = useForm({ schema, defaultValues: { cosmeticId: data.cosmetic?.id ?? null } });
 
-  const { data: userCosmetics, isInitialLoading } = trpc.user.getCosmetics.useQuery(undefined, {
-    enabled: !!currentUser,
-  });
+  const { data: userCosmetics, isInitialLoading } = useQueryUserCosmetics();
 
-  const handleSubmit = (data: z.infer<typeof schema>) => {
-    console.log(data);
+  const { equip, unequip, isLoading } = useEquipContentDecoration();
+  const handleSubmit = async ({ cosmeticId }: z.infer<typeof schema>) => {
+    const unequipping = data.cosmetic && !cosmeticId;
+
+    if (unequipping && data.cosmetic) {
+      await unequip({
+        equippedToId: data.id,
+        equippedToType: entityType,
+        cosmeticId: data.cosmetic.id,
+      }).catch(() => null); // error is handled in the custom hook
+      dialog.onClose();
+      return;
+    }
+
+    async function completeSubmission() {
+      if (cosmeticId)
+        await equip({ equippedToId: data.id, equippedToType: entityType, cosmeticId }).catch(
+          () => null
+        ); // error is handled in the custom hook
+
+      dialog.onClose();
+    }
+
+    if (selectedItem && selectedItem.inUse) {
+      return openConfirmModal({
+        title: 'Reassign Art Frame',
+        children:
+          'This art frame is being used on another post. Are you sure you want to reassign it?',
+        labels: { confirm: 'Continue', cancel: 'No, go back' },
+        onConfirm: completeSubmission,
+      });
+    }
+
+    await completeSubmission();
   };
 
   const { isDirty } = form.formState;
-  const contentDecorationId = form.watch('contentDecorationId');
+  const cosmeticId = form.watch('cosmeticId');
   const items = userCosmetics?.contentDecorations.filter(({ data }) => data.url) ?? [];
-  const selectedItem = items.find((item) => item.id === contentDecorationId);
+  const selectedItem = items.find((item) => item.id === cosmeticId);
 
   return (
     <Modal
@@ -59,7 +89,7 @@ export function CardDecorationModal({ data, entityType }: Props) {
             ) : (
               <Stack>
                 <InputCosmeticSelect
-                  name="contentDecorationId"
+                  name="cosmeticId"
                   data={items}
                   shopUrl="/shop/content-decorations"
                   gridProps={{
@@ -93,6 +123,7 @@ export function CardDecorationModal({ data, entityType }: Props) {
                 mx="auto"
                 sx={hideMobile}
                 disabled={isInitialLoading || !isDirty}
+                loading={isLoading}
               >
                 Apply
               </Button>

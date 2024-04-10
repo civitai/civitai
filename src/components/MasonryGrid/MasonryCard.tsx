@@ -44,6 +44,7 @@ const _MasonryCard = forwardRef<HTMLDivElement, MasonryCardProps>(
               width: '100%',
               height: '100%',
               zIndex: 2,
+              pointerEvents: 'none',
             }}
             width="original"
           />
