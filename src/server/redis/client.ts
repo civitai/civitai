@@ -92,6 +92,10 @@ export const REDIS_KEYS = {
   },
   COUNTERS: {
     REDEMPTION_ATTEMPTS: 'counters:redemption-attempts',
+    EMAIL_VERIFICATIONS: 'counters:email-verifications',
+  },
+  LIMITS: {
+    EMAIL_VERIFICATIONS: 'limits:email-verifications',
   },
   LIVE_NOW: 'live-now',
 } as const;
