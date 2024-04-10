@@ -138,22 +138,18 @@ export function useTextToImageSignalUpdate() {
     SignalMessages.OrchestratorUpdate,
     (data: z.infer<typeof textToImageEventSchema>) => {
       if (data.jobType === JobType.TextToImage) {
-        if (data.type === JobStatus.Deleted) {
-          signalEvents = signalEvents.filter((x) => x.jobId !== data.jobId);
-        } else {
-          if (JobStatus) signalEventsDictionary[data.jobId] = data;
-          debouncer(() => updateFromEvents());
-        }
+        if (JobStatus) signalEventsDictionary[data.jobId] = data;
+        debouncer(() => updateFromEvents());
       }
     }
   );
 }
 
-let signalEvents: TextToImageEvent[] = [];
 const signalEventsDictionary: Record<string, TextToImageEvent> = {};
 
 const jobStatusMap: Partial<Record<JobStatus, Generation.ImageStatus>> = {
   [JobStatus.Claimed]: 'Started',
+  [JobStatus.Deleted]: 'Cancelled',
   [JobStatus.Failed]: 'Error',
   [JobStatus.Rejected]: 'Error',
   [JobStatus.Succeeded]: 'Success',
@@ -202,6 +198,8 @@ function updateFromEvents() {
             item.status = GenerationRequestStatus.Error;
           else if (statuses.every((status) => status === 'Success'))
             item.status = GenerationRequestStatus.Succeeded;
+          else if (statuses.every((status) => status === 'Cancelled'))
+            item.status = GenerationRequestStatus.Cancelled;
 
           item.images = item.images?.sort((a, b) => (b.duration ?? 0) - (a.duration ?? 0));
         }

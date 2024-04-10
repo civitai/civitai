@@ -70,46 +70,36 @@ export function QueueItem({ request }: Props) {
   const currentUser = useCurrentUser();
 
   const status = request.status ?? GenerationRequestStatus.Pending;
-  const pendingProcessing =
-    status === GenerationRequestStatus.Pending || status === GenerationRequestStatus.Processing;
+  const isDraft = request.sequential ?? false;
+  const pendingProcessing = isDraft
+    ? status === GenerationRequestStatus.Pending
+    : status === GenerationRequestStatus.Pending || status === GenerationRequestStatus.Processing;
   const failed = status === GenerationRequestStatus.Error;
 
   const deleteImageMutation = useDeleteGenerationRequestImages();
   const deleteMutation = useDeleteGenerationRequest();
-  const removeAction = pendingProcessing
-    ? {
-        modal: {
-          title: 'Cancel Request',
-          children: `Are you sure you want to cancel this request?`,
-          labels: { confirm: 'Cancel', cancel: "No, don't cancel it" },
-        },
-        tooltip: 'Cancel',
-        onConfirm: () => {
-          deleteImageMutation.mutate({
-            ids: request.images?.filter((x) => !x.available).map((x) => x.id) ?? [],
-            cancelled: true,
-          });
-        },
-      }
-    : {
-        modal: {
-          title: 'Delete Creation',
-          children: `Are you sure you want to delete this creation?`,
-          labels: { confirm: 'Delete', cancel: "No, don't delete it" },
-        },
-        tooltip: 'Delete',
-        onConfirm: () => {
-          deleteMutation.mutate({ id: request.id });
-        },
-      };
 
   const handleDeleteQueueItem = () => {
     openConfirmModal({
-      ...removeAction.modal,
+      title: 'Delete Creation',
+      children: `Are you sure you want to delete this creation?`,
+      labels: { confirm: 'Delete', cancel: "No, don't delete it" },
       confirmProps: { color: 'red' },
       zIndex: constants.imageGeneration.drawerZIndex + 1,
-      onConfirm: removeAction.onConfirm,
+      onConfirm: () => {
+        deleteMutation.mutate({ id: request.id });
+      },
     });
+  };
+
+  const handleCancel = () => {
+    const ids = request.images?.filter((x) => !x.status).map((x) => x.id) ?? [];
+    if (ids.length) {
+      deleteImageMutation.mutate({
+        ids,
+        cancelled: true,
+      });
+    }
   };
 
   const handleCopy = () => {
@@ -126,7 +116,6 @@ export function QueueItem({ request }: Props) {
 
   const { prompt, ...details } = request.params;
   const images = request.images?.filter((x) => x.duration);
-  // const removedForSafety = images?.some((x) => x.removedForSafety && x.available);
 
   const hasUnstableResources = request.resources.some((x) => unstableResources.includes(x.id));
   const overwriteStatusLabel =
@@ -147,8 +136,15 @@ export function QueueItem({ request }: Props) {
   // };
 
   const refundTime = useMemo(() => {
-    return !failed ? undefined : dayjs(request.createdAt).add(35, 'minutes').toDate();
+    return !failed ? undefined : dayjs(request.createdAt).add(1, 'minutes').toDate();
   }, [failed, request.createdAt]);
+
+  const refunded = Math.ceil(
+    !!request.cost
+      ? (request.cost / request.quantity) * (request.quantity - (request.images?.length ?? 0))
+      : 0
+  );
+  const cost = !!request.cost ? request.cost - refunded : 0;
 
   return (
     <Card withBorder px="xs">
@@ -166,10 +162,10 @@ export function QueueItem({ request }: Props) {
             <Text size="xs" color="dimmed">
               {formatDateMin(request.createdAt)}
             </Text>
-            {!!request.cost &&
+            {!!cost &&
               dayjs(request.createdAt).toDate() >=
                 constants.buzz.generationBuzzChargingStartDate && (
-                <CurrencyBadge unitAmount={request.cost} currency={Currency.BUZZ} size="xs" />
+                <CurrencyBadge unitAmount={cost} currency={Currency.BUZZ} size="xs" />
               )}
             <Tooltip {...tooltipProps} label="Copy Job IDs">
               <ActionIcon size="md" p={4} radius={0} onClick={handleCopy}>
@@ -185,10 +181,13 @@ export function QueueItem({ request }: Props) {
                 </ActionIcon>
               </Tooltip>
             )}
-            <Tooltip {...tooltipProps} label={removeAction.tooltip}>
+            <Tooltip
+              {...tooltipProps}
+              label={pendingProcessing ? 'Cancel request' : 'Delete creation'}
+            >
               <ActionIcon
                 size="md"
-                onClick={handleDeleteQueueItem}
+                onClick={pendingProcessing ? handleCancel : handleDeleteQueueItem}
                 disabled={deleteMutation.isLoading}
                 color="red"
               >

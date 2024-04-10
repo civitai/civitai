@@ -334,6 +334,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                         <Badge style={{ fontWeight: 590 }}>{additionalResourcesCount}</Badge>
                       )}
                       <Button
+                        component="span"
                         compact
                         variant="light"
                         onClick={(e) => {
