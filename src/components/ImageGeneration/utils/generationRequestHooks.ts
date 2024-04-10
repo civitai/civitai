@@ -18,6 +18,7 @@ import {
 } from '~/libs/orchestrator/jobs';
 import { z } from 'zod';
 import { isDefined } from '~/utils/type-guards';
+import { Generation } from '~/server/services/generation/generation.types';
 
 export const useGetGenerationRequests = (
   input?: GetGenerationRequestsInput,

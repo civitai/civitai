@@ -100,6 +100,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
     key: 'review-generation-terms',
     defaultValue: window?.localStorage?.getItem('review-generation-terms') === 'true',
   });
+  const [opened, setOpened] = useState(false);
   const { nsfw, quantity, prompt } = useGenerationFormStore.getState();
   const defaultValues = {
     ...generation.defaultValues,
@@ -332,6 +333,18 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                       {additionalResourcesCount > 0 && (
                         <Badge style={{ fontWeight: 590 }}>{additionalResourcesCount}</Badge>
                       )}
+                      <Button
+                        compact
+                        variant="light"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setOpened(true);
+                        }}
+                        ml="auto"
+                      >
+                        Add resource
+                      </Button>
                     </Group>
                   </Accordion.Control>
                   <Accordion.Panel>
@@ -339,6 +352,8 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                       name="resources"
                       limit={limits.resources}
                       buttonLabel="Add additional resource"
+                      modalOpened={opened}
+                      onCloseModal={() => setOpened(false)}
                       options={{
                         canGenerate: true,
                         resources: getGenerationConfig(baseModel).additionalResourceTypes,
