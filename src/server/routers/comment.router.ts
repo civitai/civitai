@@ -32,6 +32,8 @@ import {
   router,
 } from '~/server/trpc';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
+import { CacheTTL } from '~/server/common/constants';
+import { rateLimit } from '~/server/middleware.trpc';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input }) => {
   if (!ctx?.user) throw new TRPCError({ code: 'UNAUTHORIZED' });
@@ -97,6 +99,7 @@ export const commentRouter = router({
     .input(commentUpsertInput)
     .use(isOwnerOrModerator)
     .use(isLocked)
+    .use(rateLimit({ limit: 60, period: CacheTTL.hour }))
     .mutation(upsertCommentHandler),
   delete: protectedProcedure
     .input(getByIdSchema)
