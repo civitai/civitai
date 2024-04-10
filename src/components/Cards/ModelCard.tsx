@@ -41,7 +41,7 @@ import { aDayAgo } from '~/utils/date-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { getDisplayName, slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import { CollectionType, CosmeticType, ModelModifier } from '@prisma/client';
+import { CollectionType, CosmeticEntity, CosmeticType, ModelModifier } from '@prisma/client';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { CivitaiLinkManageButton } from '~/components/CivitaiLink/CivitaiLinkManageButton';
 import { generationPanel } from '~/store/generation.store';
@@ -62,6 +62,9 @@ import { ToggleSearchableMenuItem } from '../MenuItems/ToggleSearchableMenuItem'
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
+import { IconNose } from '~/components/SVG/IconNose';
+import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
+import { NextLink } from '@mantine/next';
 
 const IMAGE_CARD_WIDTH = 450;
 
@@ -72,8 +75,9 @@ export function ModelCard({ data, forceInView }: Props) {
     initialInView: forceInView,
   });
   const image = data.images[0];
+  const aspectRatio = image && image.width && image.height ? image.width / image.height : 1;
   const { classes, cx } = useCardStyles({
-    aspectRatio: image && image.width && image.height ? image.width / image.height : 1,
+    aspectRatio,
   });
 
   const router = useRouter();
@@ -139,7 +143,7 @@ export function ModelCard({ data, forceInView }: Props) {
   if (features.profileOverhaul && currentUser?.id === data.user.id) {
     contextMenuItems = contextMenuItems.concat([
       <AddToShowcaseMenuItem key="add-to-showcase" entityType="Model" entityId={data.id} />,
-      <AddArtFrameMenuItem key="add-art-frame" entity={data} entityType="model" />,
+      <AddArtFrameMenuItem key="add-art-frame" data={data} entityType={CosmeticEntity.Model} />,
     ]);
   }
 
@@ -189,6 +193,7 @@ export function ModelCard({ data, forceInView }: Props) {
     data.version?.baseModel as BaseModel
   );
   const isPony = data.version?.baseModel === 'Pony';
+  const isOdor = data.version?.baseModel === 'ODOR';
   const isArchived = data.mode === ModelModifier.Archived;
   const onSite = !!data.version.trainingStatus;
 
@@ -207,9 +212,16 @@ export function ModelCard({ data, forceInView }: Props) {
     data?: { lights?: number; upgradedLights?: number };
   };
 
+  // Small hack to prevent blurry landscape images
+  const originalAspectRatio = image && image.width && image.height ? image.width / image.height : 1;
+
   return (
     <HolidayFrame {...cardDecoration}>
-      <FeedCard className={!image ? classes.noImage : undefined} href={href}>
+      <FeedCard
+        className={!image ? classes.noImage : undefined}
+        href={href}
+        frameDecoration={data.cosmetic}
+      >
         <div className={classes.root} ref={ref}>
           {image && (
             <div className={classes.blurHash}>
@@ -254,6 +266,12 @@ export function ModelCard({ data, forceInView }: Props) {
                                         XL
                                       </Text>
                                     )}
+                                  </>
+                                )}
+                                {isOdor && (
+                                  <>
+                                    <Divider orientation="vertical" />
+                                    <IconNose size={16} strokeWidth={2} />
                                   </>
                                 )}
                               </Badge>
@@ -396,24 +414,7 @@ export function ModelCard({ data, forceInView }: Props) {
                   )}
                   spacing={5}
                 >
-                  {data.user.id !== -1 && (
-                    <UnstyledButton
-                      sx={{ color: 'white', alignSelf: 'flex-start' }}
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-
-                        router.push(`/user/${data.user.username}`);
-                      }}
-                    >
-                      <UserAvatar
-                        user={data.user}
-                        avatarProps={{ radius: 'md', size: 32 }}
-                        withUsername
-                        badgeSize={28}
-                      />
-                    </UnstyledButton>
-                  )}
+                  {data.user.id !== -1 && <UserAvatarSimple {...data.user} />}
                   <Text size="xl" weight={700} lineClamp={3} lh={1.2}>
                     {data.name}
                   </Text>

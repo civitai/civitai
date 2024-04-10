@@ -39,10 +39,10 @@ export function DeleteCard() {
           confirmProps: { color: 'red', loading: deleteAccountMutation.isLoading },
           cancelProps: { loading: deleteAccountMutation.isLoading },
           onConfirm: () =>
-            currentUser ? deleteAccountMutation.mutateAsync({ ...currentUser }) : undefined,
+            currentUser ? deleteAccountMutation.mutateAsync({ id: currentUser.id }) : undefined,
           onCancel: () =>
             currentUser
-              ? deleteAccountMutation.mutateAsync({ ...currentUser, removeModels: true })
+              ? deleteAccountMutation.mutateAsync({ id: currentUser.id, removeModels: true })
               : undefined,
           onClose: () => closeModal('delete-confirm'),
         }),

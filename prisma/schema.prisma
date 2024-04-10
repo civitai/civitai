@@ -251,6 +251,7 @@ model User {
   purchasedRewards           UserPurchasedRewards[]
   VaultItem                  VaultItem[]
   Vault                      Vault[]
+  redeemedCodes              RedeemableCode[]
   addedCosmeticShopSections  CosmeticShopSection[]
   addedCosmeticShopItems     CosmeticShopItem[]
   purchasedCosmetics         UserCosmeticShopPurchases[]
@@ -378,6 +379,7 @@ enum ModelType {
   AestheticGradient
   LORA
   LoCon
+  DoRA
   Controlnet
   Upscaler
   MotionModule
@@ -1938,6 +1940,7 @@ enum CosmeticType {
   NamePlate
   ContentDecoration
   ProfileDecoration
+  ProfileBackground
 }
 
 enum CosmeticSource {
@@ -1976,16 +1979,16 @@ enum CosmeticEntity {
 }
 
 model UserCosmetic {
-  userId        Int
-  user          User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  cosmeticId    Int
-  cosmetic      Cosmetic        @relation(fields: [cosmeticId], references: [id], onDelete: Cascade)
-  obtainedAt    DateTime        @default(now()) // createdAt
-  equippedAt    DateTime?
-  data          Json?
-  claimKey      String          @default("claimed")
-  equippedToId  Int?
-  equppedToType CosmeticEntity?
+  userId         Int
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  cosmeticId     Int
+  cosmetic       Cosmetic        @relation(fields: [cosmeticId], references: [id], onDelete: Cascade)
+  obtainedAt     DateTime        @default(now()) // createdAt
+  equippedAt     DateTime?
+  data           Json?
+  claimKey       String          @default("claimed")
+  equippedToId   Int?
+  equippedToType CosmeticEntity?
 
   @@id([userId, cosmeticId, claimKey])
 }
@@ -2796,6 +2799,10 @@ model ChatMember {
 
 enum ChatMessageType {
   Markdown
+  Image
+  Video
+  Audio
+  Embed
 }
 
 model ChatMessage {
@@ -2944,6 +2951,23 @@ model Vault {
   items VaultItem[]
 
   @@id([userId])
+}
+
+enum RedeemableCodeType {
+  Buzz
+  Membership
+}
+
+model RedeemableCode {
+  code          String             @id @default(cuid())
+  unitValue     Int
+  userId        Int?
+  user          User?              @relation(fields: [userId], references: [id], onDelete: SetNull)
+  createdAt     DateTime           @default(now())
+  type          RedeemableCodeType
+  expiresAt     DateTime?
+  redeemedAt    DateTime?
+  transactionId String?
 }
 
 /// @view

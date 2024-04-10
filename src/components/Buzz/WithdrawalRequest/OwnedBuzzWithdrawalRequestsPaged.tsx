@@ -36,9 +36,10 @@ import { BuzzWithdrawalRequestStatus, Currency, StripeConnectStatus } from '@pri
 import { openConfirmModal } from '@mantine/modals';
 import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { useUserStripeConnect } from '~/components/Stripe/stripe.utils';
 
 export function OwnedBuzzWithdrawalRequestsPaged() {
-  const { data: userStripeConnect } = trpc.userStripeConnect.get.useQuery();
+  const { userStripeConnect } = useUserStripeConnect();
   const { classes } = useBuzzDashboardStyles();
   const [filters, setFilters] = useState<
     Omit<GetPaginatedOwnedBuzzWithdrawalRequestSchema, 'limit'>

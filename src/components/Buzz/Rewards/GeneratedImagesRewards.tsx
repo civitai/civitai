@@ -19,6 +19,7 @@ import { Paper, Stack, Title, Text, MultiSelect, Loader, Center } from '@mantine
 import { constants } from '~/server/common/constants';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { maxDate } from '~/utils/date-helpers';
+import { useUserStripeConnect } from '~/components/Stripe/stripe.utils';
 
 ChartJS.register(
   CategoryScale,
@@ -32,7 +33,7 @@ ChartJS.register(
 export const GeneratedImagesReward = () => {
   const [timeframe, setTimeframe] = useState(30);
   const [filteredVersionIds, setFilteredVersionIds] = useState<number[]>([]);
-  const { data: userStripeConnect } = trpc.userStripeConnect.get.useQuery();
+  const { userStripeConnect } = useUserStripeConnect();
   const { data: modelVersions = [], isLoading } =
     trpc.modelVersion.modelVersionsGeneratedImagesOnTimeframe.useQuery(
       { timeframe },

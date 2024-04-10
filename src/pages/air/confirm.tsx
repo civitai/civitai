@@ -16,6 +16,7 @@ import { useState } from 'react';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { PlanCard } from '~/components/Stripe/PlanCard';
+import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 import { getLoginLink } from '~/utils/login-helpers';
@@ -33,10 +34,8 @@ export default function Confirm() {
   const { data: products, isLoading: productsLoading } = trpc.stripe.getPlans.useQuery(undefined, {
     enabled: !isMember,
   });
-  const { data: subscription, isLoading: subscriptionLoading } =
-    trpc.stripe.getUserSubscription.useQuery(undefined, {
-      enabled: !isMember,
-    });
+  const { subscription, subscriptionLoading } = useActiveSubscription();
+
   const confirmMutation = trpc.integration.airConfirm.useMutation({
     async onSuccess(data) {
       queryUtils.integration.airStatus.setData(undefined, () => data);
@@ -52,7 +51,7 @@ export default function Confirm() {
   const confirmEmail = (
     <Container size="xs">
       <Stack>
-        <Text size="xl" weight={500} ta="center">{`Thanks for being a Civitai Member ❤️`}</Text>
+        <Text size="xl" weight={500} ta="center">{`Thanks for being a Civitai Supporter ❤️`}</Text>
         <Text>{`To complete your application, please enter the email that you used when you applied for the Artist in Residence program`}</Text>
         <Stack spacing={5}>
           <TextInput
@@ -104,7 +103,7 @@ export default function Confirm() {
   const subscriptionsLoading = subscriptionLoading || productsLoading;
   const notMember = (
     <Stack>
-      <Text size="xl" weight={500} ta="center">{`Become a member today!`}</Text>
+      <Text size="xl" weight={500} ta="center">{`Become a Supporter today!`}</Text>
       {subscriptionsLoading ? (
         <Loader />
       ) : (
@@ -125,7 +124,7 @@ export default function Confirm() {
   return (
     <Container>
       <Title order={1} align="center" mb="lg">
-        AiR Membership Confirmation
+        AiR Supporter Confirmation
       </Title>
       {!isMember ? notMember : isConfirmed ? confirmed : confirmEmail}
     </Container>

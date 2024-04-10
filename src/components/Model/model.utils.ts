@@ -1,4 +1,4 @@
-import { MetricTimeframe } from '@prisma/client';
+import { MetricTimeframe, ModelStatus } from '@prisma/client';
 import { useRouter } from 'next/router';
 import { useMemo, useState } from 'react';
 import { z } from 'zod';
@@ -123,7 +123,9 @@ export const useQueryModels = (
     type: 'models',
     data: flatData,
     showHidden: !!_filters.hidden,
+    showImageless: (_filters.status ?? []).includes(ModelStatus.Draft),
     isRefetching: rest.isRefetching,
+    hiddenTags: _filters.excludedTagIds,
   });
 
   return { data, models: items, isLoading: isLoading || loadingPreferences, ...rest };

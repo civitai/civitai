@@ -13,26 +13,40 @@ import {
   ThemeIcon,
   Group,
   createStyles,
+  Anchor,
 } from '@mantine/core';
 import { trpc } from '~/utils/trpc';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
-import { PlanCard } from '~/components/Stripe/PlanCard';
-import { ManageSubscriptionButton } from '~/components/Stripe/ManageSubscriptionButton';
+import { PlanCard, getPlanDetails } from '~/components/Stripe/PlanCard';
 import {
   IconCalendarDue,
-  IconCircleCheck,
   IconExclamationMark,
+  IconHeart,
   IconHeartHandshake,
+  IconInfoCircle,
+  IconInfoTriangle,
+  IconInfoTriangleFilled,
+  IconPhotoPlus,
 } from '@tabler/icons-react';
 import { DonateButton } from '~/components/Stripe/DonateButton';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { PlanBenefitList } from '~/components/Stripe/PlanBenefitList';
+import { PlanBenefitList, benefitIconSize } from '~/components/Stripe/PlanBenefitList';
 import { joinRedirectReasons, JoinRedirectReason } from '~/utils/join-helpers';
 import { useRouter } from 'next/router';
-import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { NextLink } from '@mantine/next';
+import { constants } from '~/server/common/constants';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import {
+  appliesForFounderDiscount,
+  useActiveSubscription,
+} from '~/components/Stripe/memberships.util';
+import { formatDate } from '~/utils/date-helpers';
+import { ProductMetadata } from '~/server/schema/stripe.schema';
+import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
+import { Meta } from '~/components/Meta/Meta';
 
 export default function Pricing() {
   const router = useRouter();
@@ -41,17 +55,30 @@ export default function Pricing() {
     returnUrl: string;
     reason: JoinRedirectReason;
   };
+  const features = useFeatureFlags();
   const redirectReason = joinRedirectReasons[reason];
 
   const { data: products, isLoading: productsLoading } = trpc.stripe.getPlans.useQuery();
-  const { data: subscription, isLoading: subscriptionLoading } =
-    trpc.stripe.getUserSubscription.useQuery();
+  const { subscription, subscriptionLoading } = useActiveSubscription({
+    checkWhenInBadState: true,
+  });
 
   const isLoading = productsLoading || subscriptionLoading;
-  const showSubscribeButton = !subscription || !!subscription.canceledAt;
+  const currentMembershipUnavailable =
+    !!subscription &&
+    !productsLoading &&
+    !(products ?? []).find((p) => p.id === subscription.product.id);
+
+  const freePlanDetails = getPlanDetails(constants.freeMembershipDetails, features);
+  const metadata = (subscription?.product?.metadata ?? { tier: 'free' }) as ProductMetadata;
+  const appliesForDiscount = features.membershipsV2 && appliesForFounderDiscount(metadata.tier);
 
   return (
     <>
+      <Meta
+        title="Memberships | Civitai"
+        description="As the leading generative AI community, we're adding new features every week. Help us keep the community thriving by becoming a Supporter and get exclusive perks."
+      />
       <Container size="sm" mb="lg">
         <Stack>
           {!!redirectReason && (
@@ -65,88 +92,142 @@ export default function Pricing() {
             </Alert>
           )}
           <Title align="center" className={classes.title}>
-            Support Us ❤️
+            Memberships
           </Title>
           <Text align="center" className={classes.introText} sx={{ lineHeight: 1.25 }}>
-            {`As the leading model sharing service, we're adding new features every week. Help us keep the community thriving by becoming a member or making a donation. Support Civitai and get exclusive perks.`}
+            {`As the leading generative AI community, we're adding new features every week. Help us keep the community thriving by becoming a Supporter and get exclusive perks.`}
           </Text>
         </Stack>
       </Container>
-      <Container>
-        <Tabs variant="outline" defaultValue="subscribe">
-          <Tabs.List position="center">
-            <Tabs.Tab value="subscribe" icon={<IconCalendarDue size={20} />}>
-              Membership
-            </Tabs.Tab>
-            <Tabs.Tab value="donate" icon={<IconHeartHandshake size={20} />}>
-              Donate
-            </Tabs.Tab>
-          </Tabs.List>
+      <Container size="xl">
+        <Stack>
+          {subscription?.isBadState && (
+            <AlertWithIcon
+              color="red"
+              iconColor="red"
+              icon={<IconInfoTriangleFilled size={20} strokeWidth={2.5} />}
+              iconSize={28}
+              py={11}
+            >
+              <Stack spacing={0}>
+                <Text lh={1.2}>
+                  Uh oh! It looks like there was an issue with your membership. You can update your
+                  payment method or renew your membership now by clicking{' '}
+                  <SubscribeButton priceId={subscription.price.id}>
+                    <Anchor component="button" type="button">
+                      here
+                    </Anchor>
+                  </SubscribeButton>
+                </Text>
+                <Text lh={1.2}>
+                  Alternatively, click <Anchor href="/user/membership">here</Anchor> to view all
+                  your benefits
+                </Text>
+              </Stack>
+            </AlertWithIcon>
+          )}
+          <Group>
+            {currentMembershipUnavailable && (
+              <AlertWithIcon
+                color="yellow"
+                iconColor="yellow"
+                icon={<IconInfoCircle size={20} strokeWidth={2.5} />}
+                iconSize={28}
+                py={11}
+                maw="calc(50% - 8px)"
+                mx="auto"
+              >
+                <Text lh={1.2}>
+                  The Supporter plan can no longer be purchased. You can stay on your{' '}
+                  <Text component={NextLink} td="underline" href="/user/membership">
+                    current plan
+                  </Text>{' '}
+                  or level up your membership here.
+                </Text>
+              </AlertWithIcon>
+            )}
+            {appliesForDiscount && (
+              <Alert maw={650} mx="auto" py={4} miw="calc(50% - 8px)" pl="sm">
+                <Group spacing="xs">
+                  <EdgeMedia src="df2b3298-7352-40d6-9fbc-17a08e2a43c5" width={48} />
+                  <Stack spacing={0}>
+                    <Text color="blue" weight="bold">
+                      Supporter Offer!
+                    </Text>
+                    <Text>
+                      Get {constants.memberships.founderDiscount.discountPercent}% off your first
+                      month and get a special badge! Offer ends{' '}
+                      {formatDate(constants.memberships.founderDiscount.maxDiscountDate)}.
+                    </Text>
+                  </Stack>
+                </Group>
+              </Alert>
+            )}
+          </Group>
 
-          <Tabs.Panel value="subscribe" pt="md">
-            <Stack>
-              {isLoading ? (
-                <Center p="xl">
-                  <Loader />
-                </Center>
-              ) : !products ? (
-                <Center>
-                  <Alert p="xl" title="There are no products to display">
-                    Check back in a little while to see what we have to offer
-                  </Alert>
-                </Center>
-              ) : (
-                <ContainerGrid justify="center">
-                  {products.map((product) => (
-                    <ContainerGrid.Col key={product.id} md={4} sm={6} xs={12}>
-                      <PlanCard product={product} subscription={subscription} />
-                    </ContainerGrid.Col>
-                  ))}
-                </ContainerGrid>
-              )}
-              {!showSubscribeButton && (
-                <Center>
-                  <ManageSubscriptionButton>
-                    <Button>Manage your Membership</Button>
-                  </ManageSubscriptionButton>
-                </Center>
-              )}
-            </Stack>
-          </Tabs.Panel>
-
-          <Tabs.Panel value="donate" pt="md">
+          {isLoading ? (
+            <Center p="xl">
+              <Loader />
+            </Center>
+          ) : !products ? (
+            <Center>
+              <Alert p="xl" title="There are no products to display">
+                Check back in a little while to see what we have to offer
+              </Alert>
+            </Center>
+          ) : (
             <ContainerGrid justify="center">
-              <ContainerGrid.Col md={4} sm={6} xs={12}>
-                <Card withBorder style={{ height: '100%' }}>
-                  <Stack justify="space-between" style={{ height: '100%' }}>
-                    <Stack spacing={0} mb="md">
-                      <Center>
+              <ContainerGrid.Col md={3} sm={6} xs={12}>
+                <Card className={classes.card}>
+                  <Stack style={{ height: '100%' }}>
+                    <Stack spacing="md" mb="md">
+                      <Title className={classes.cardTitle} order={2} align="center" mb="sm">
+                        Free
+                      </Title>
+                      <Center style={{ opacity: 0.3 }}>
                         <EdgeMedia
-                          src="ab3e161b-7c66-4412-9573-ca16dde9f900"
-                          className={classes.image}
+                          src={freePlanDetails.image}
                           width={128}
+                          className={classes.image}
                         />
                       </Center>
-                      <Title className={classes.cardTitle} order={2} align="center">
-                        One-time Donation
-                      </Title>
+                      <Group position="center" spacing={4} align="flex-end" mb={24}>
+                        <Text
+                          className={classes.price}
+                          align="center"
+                          lh={1}
+                          mt={appliesForDiscount ? 'md' : undefined}
+                        >
+                          $0
+                        </Text>
+                      </Group>
+                      {subscription ? (
+                        <Button
+                          radius="xl"
+                          color="gray"
+                          component={NextLink}
+                          href="/user/membership"
+                        >
+                          Downgrade to free
+                        </Button>
+                      ) : (
+                        <Button radius="xl" disabled color="gray">
+                          Current
+                        </Button>
+                      )}
                     </Stack>
-                    <PlanBenefitList
-                      benefits={[
-                        { content: 'Unique Donator badge' },
-                        { content: 'Unique nameplate color' },
-                        { content: 'Unique Discord role for 30 days' },
-                      ]}
-                    />
-                    <DonateButton>
-                      <Button>Donate</Button>
-                    </DonateButton>
+                    <PlanBenefitList benefits={freePlanDetails.benefits} defaultBenefitsDisabled />
                   </Stack>
                 </Card>
               </ContainerGrid.Col>
+              {products.map((product) => (
+                <ContainerGrid.Col key={product.id} md={3} sm={6} xs={12}>
+                  <PlanCard product={product} subscription={subscription} />
+                </ContainerGrid.Col>
+              ))}
             </ContainerGrid>
-          </Tabs.Panel>
-        </Tabs>
+          )}
+        </Stack>
       </Container>
     </>
   );
@@ -173,6 +254,16 @@ const useStyles = createStyles((theme) => ({
     [containerQuery.smallerThan('sm')]: {
       fontSize: 20,
     },
+  },
+  card: {
+    height: '100%',
+    background: theme.colorScheme === 'dark' ? theme.colors.dark[8] : theme.colors.gray[0],
+    borderRadius: theme.radius.md,
+    padding: theme.spacing.lg,
+  },
+  price: {
+    fontSize: 48,
+    fontWeight: 'bold',
   },
 }));
 

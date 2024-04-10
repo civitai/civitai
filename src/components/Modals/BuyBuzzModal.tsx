@@ -6,6 +6,7 @@ import { UserBuzz } from '../User/UserBuzz';
 import { BuzzPurchase } from '~/components/Buzz/BuzzPurchase';
 import { useTrackEvent } from '../TrackView/track.utils';
 import { AvailableBuzzBadge } from '~/components/Buzz/AvailableBuzzBadge';
+import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 
 const { openModal, Modal } = createContextModal<{
   message?: string;
@@ -16,7 +17,7 @@ const { openModal, Modal } = createContextModal<{
   name: 'buyBuzz',
   withCloseButton: false,
   centered: true,
-  size: 'lg',
+  size: 'xl',
   radius: 'lg',
   zIndex: 400,
   Element: ({
@@ -30,7 +31,7 @@ const { openModal, Modal } = createContextModal<{
     };
 
     return (
-      <Stack spacing="md">
+      <Stack spacing="lg">
         <Group position="apart" noWrap>
           <Text size="lg" weight={700}>
             Buy Buzz
@@ -40,17 +41,36 @@ const { openModal, Modal } = createContextModal<{
             <CloseButton radius="xl" iconSize={22} onClick={handleClose} />
           </Group>
         </Group>
-        <Divider mx="-lg" />
-        <BuzzPurchase
-          message={message}
-          onPurchaseSuccess={() => {
-            context.close();
-            onPurchaseSuccess?.();
-          }}
-          minBuzzAmount={minBuzzAmount}
-          purchaseSuccessMessage={purchaseSuccessMessage}
-          onCancel={handleClose}
+        <DismissibleAlert
+          id="rewards-program-notice"
+          content={
+            <Text align="center">
+              <Text
+                component="a"
+                href="/user/buzz-dashboard#rewards"
+                target="_blank"
+                variant="link"
+                td="underline"
+              >
+                Learn how to earn free Buzz daily
+              </Text>
+            </Text>
+          }
+          radius="md"
         />
+        <Divider mx="-lg" />
+        <Group>
+          <BuzzPurchase
+            message={message}
+            onPurchaseSuccess={() => {
+              context.close();
+              onPurchaseSuccess?.();
+            }}
+            minBuzzAmount={minBuzzAmount}
+            purchaseSuccessMessage={purchaseSuccessMessage}
+            onCancel={handleClose}
+          />
+        </Group>
       </Stack>
     );
   },

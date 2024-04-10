@@ -3,6 +3,7 @@ import slugify from 'slugify';
 
 import allowedUrls from '~/utils/allowed-third-party-urls.json';
 import { toJson } from '~/utils/json-helpers';
+import he from 'he';
 
 function getUrlDomain(url: string) {
   // convert url string into a URL object and extract just the domain, avoiding subdomains
@@ -31,22 +32,32 @@ const stripeCurrencyMap: Record<string, [string, number]> = {
 
 export function getStripeCurrencyDisplay(unitAmount: number, currency: string) {
   const [symbol, divisor] = stripeCurrencyMap[currency.toLowerCase()] ?? ['$', 100];
-  return symbol + (unitAmount / divisor).toLocaleString();
+
+  const hasDecimals = (unitAmount / divisor).toFixed(2).split('.')[1] !== '00';
+
+  return (
+    symbol +
+    (unitAmount / divisor).toLocaleString(undefined, { minimumFractionDigits: hasDecimals ? 2 : 0 })
+  );
 }
 
 const nameOverrides: Record<string, string> = {
   LoCon: 'LyCORIS',
   LORA: 'LoRA',
+  DoRA: 'DoRA',
   scheduler: 'Sampler',
   TextualInversion: 'Embedding',
   MotionModule: 'Motion',
   BenefactorsOnly: 'Supporters Only',
   ModelVersion: 'Model Version',
   ClubMembership: 'Club Memebership',
+  Redeemable: 'Redeemed Code',
 };
 
 export function getDisplayName(value: string, options?: { splitNumbers?: boolean }) {
   const { splitNumbers = true } = options ?? {};
+  if (!value) return '';
+
   return nameOverrides[value] ?? splitUppercase(value, { splitNumbers });
 }
 
@@ -160,6 +171,10 @@ export function trimNonAlphanumeric(str: string | null | undefined) {
   return str?.replace(/^[^\w]+|[^\w]+$/g, '');
 }
 
-export function removeAccents(input: string): string {
-  return input.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+export function normalizeText(input?: string): string {
+  if (!input) return '';
+  return he
+    .decode(input)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
 }

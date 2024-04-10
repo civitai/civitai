@@ -13,11 +13,15 @@ import { hideMobile, showMobile } from '~/libs/sx-helpers';
 import { BadgeCosmetic } from '~/server/selectors/cosmetic.selector';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
 import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
+import { CosmeticEntity } from '@prisma/client';
+import { ArticleGetAll } from '~/server/services/article.service';
+import { PostsInfiniteModel } from '~/server/services/post.service';
+import { ImageProps } from '~/components/ImageViewer/ImageViewer';
 
 const schema = z.object({
   contentDecorationId: z.number().nullish(),
   entityId: z.number(),
-  entityType: z.enum(['model', 'media', 'article']),
+  entityType: z.nativeEnum(CosmeticEntity),
 });
 
 export function CardDecorationModal({ data, entityType }: Props) {
@@ -100,16 +104,21 @@ export function CardDecorationModal({ data, entityType }: Props) {
   );
 }
 
-type Props =
-  | { entityType: 'model'; data: UseQueryModelReturn[number] }
-  | { entityType: 'media'; data: ImagesInfiniteModel };
+export type Props = {
+  entityType: CosmeticEntity;
+  data:
+    | PostsInfiniteModel
+    | Omit<ArticleGetAll[number], 'stats'>
+    | ImageProps
+    | UseQueryModelReturn[number];
+};
 
 const PreviewCard = ({
   data,
   decoration,
 }: Pick<Props, 'data'> & { decoration?: BadgeCosmetic }) => {
-  const image = 'images' in data ? data.images[0] : data;
-  const originalAspectRatio = image.width && image.height ? image.width / image.height : 1;
+  const image = 'images' in data ? data.images[0] : 'coverImage' in data ? data.coverImage : data;
+  const originalAspectRatio = image && image.width && image.height ? image.width / image.height : 1;
   const imageWidth =
     originalAspectRatio > 1
       ? DEFAULT_EDGE_IMAGE_WIDTH * originalAspectRatio
@@ -117,8 +126,10 @@ const PreviewCard = ({
 
   const { classes } = useCardStyles({ aspectRatio: originalAspectRatio });
 
+  if (!image) return null;
+
   return (
-    <FeedCard cardDecoration={decoration}>
+    <FeedCard frameDecoration={decoration}>
       <ImageGuard2 image={image}>
         {() => <EdgeMedia src={image.url} className={classes.image} width={imageWidth} />}
       </ImageGuard2>

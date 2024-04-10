@@ -73,10 +73,8 @@ export function ImagesInfiniteContent({
   const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
 
   const browsingLevel = useBrowsingLevelDebounced();
-  const { images, isLoading, fetchNextPage, hasNextPage, isRefetching } = useQueryImages(
-    { ...debouncedFilters, browsingLevel },
-    { keepPreviousData: true }
-  );
+  const { images, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching } =
+    useQueryImages({ ...debouncedFilters, browsingLevel }, { keepPreviousData: true });
 
   //#region [useEffect] cancel debounced filters
   useEffect(() => {
@@ -111,7 +109,7 @@ export function ImagesInfiniteContent({
           {hasNextPage && (
             <InViewLoader
               loadFn={fetchNextPage}
-              loadCondition={!isRefetching && hasNextPage}
+              loadCondition={!isFetching && hasNextPage}
               // Forces a re-render whenever the amount of images fetched changes. Forces load-more if available.
               style={{ gridColumn: '1/-1' }}
             >

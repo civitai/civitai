@@ -22,6 +22,7 @@ export type NumberSliderProps = Omit<InputWrapperProps, 'children' | 'onChange'>
   numberProps?: Omit<NumberInputProps, 'value' | 'onChange' | 'min' | 'max' | 'step' | 'precision'>;
   reverse?: boolean;
   presets?: PresetOptionsProps['options'];
+  disabled?: boolean;
 };
 
 type State = {
@@ -44,6 +45,7 @@ export function NumberSlider({
   reverse,
   presets,
   label,
+  disabled,
   ...inputWrapperProps
 }: NumberSliderProps) {
   const { classes, cx } = useStyles();
@@ -126,6 +128,7 @@ export function NumberSlider({
           <Group spacing={8} position="apart" noWrap>
             {label}
             <PresetOptions
+              disabled={disabled}
               color="blue"
               options={presets}
               value={state.selectedPreset}
@@ -156,6 +159,7 @@ export function NumberSlider({
           onFocus={handleSliderFocus}
           label={(value) => (value && precision ? value.toFixed(precision) : value)}
           onChangeEnd={(value) => setState((current) => ({ ...current, changeEndValue: value }))}
+          disabled={disabled}
         />
         <NumberInput
           ref={numberRef}
@@ -173,6 +177,7 @@ export function NumberSlider({
           onChange={handleInputChange}
           onBlur={handleInputBlur}
           onFocus={handleInputFocus}
+          disabled={disabled}
         />
       </Group>
     </Input.Wrapper>

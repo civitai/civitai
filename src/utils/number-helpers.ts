@@ -51,16 +51,23 @@ export function formatSeconds(seconds: number) {
   return output.trim();
 }
 
-export function abbreviateNumber(value: number, opts?: { decimals: number }): string {
+export function abbreviateNumber(
+  value: number,
+  opts?: { decimals?: number; floor?: boolean }
+): string {
   if (!value) return '0';
 
-  const { decimals } = opts ?? { decimals: 1 };
+  const { decimals, floor } = opts ?? { decimals: 1 };
   const suffixes = ['', 'k', 'm', 'b', 't'];
   let index = 0;
 
   while (value >= 1000 && index < suffixes.length - 1) {
     value /= 1000;
     index++;
+  }
+
+  if (floor) {
+    value = Math.floor(value);
   }
 
   const formattedValue = value.toFixed(value < 10 && index > 0 ? decimals : 0);
@@ -80,7 +87,11 @@ export function numberWithCommas(value: number | string | undefined) {
     : '';
 }
 
-export function formatPriceForDisplay(value: number | undefined, currency?: Currency) {
+export function formatPriceForDisplay(
+  value: number | undefined,
+  currency?: Currency,
+  opts?: { decimals: boolean }
+) {
   if (currency === Currency.BUZZ) {
     return numberWithCommas(value);
   }
@@ -90,6 +101,10 @@ export function formatPriceForDisplay(value: number | undefined, currency?: Curr
   }
 
   const [intPart, decimalPart] = (value / 100).toFixed(2).split('.');
+
+  if (opts && !opts?.decimals && decimalPart === '00') {
+    return `${numberWithCommas(intPart)}`;
+  }
 
   return `${numberWithCommas(intPart)}.${decimalPart}`;
 }
@@ -104,7 +119,11 @@ export const findClosest = (array: number[], target: number) => {
   });
 };
 
-export const formatCurrencyForDisplay = (value: number, currency?: Currency) => {
+export const formatCurrencyForDisplay = (
+  value: number,
+  currency?: Currency,
+  opts?: { decimals?: boolean }
+) => {
   if (!currency) {
     numberWithCommas(value);
   }
@@ -114,6 +133,11 @@ export const formatCurrencyForDisplay = (value: number, currency?: Currency) => 
   }
 
   const [intPart, decimalPart] = (value / 100).toFixed(2).split('.');
+
+  if (opts && !opts?.decimals && decimalPart === '00') {
+    return `${numberWithCommas(intPart)}`;
+  }
+
   return `${numberWithCommas(intPart)}.${decimalPart}`;
 };
 

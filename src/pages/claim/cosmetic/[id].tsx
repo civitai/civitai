@@ -19,6 +19,7 @@ import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { Meta } from '~/components/Meta/Meta';
+import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { enterFall, jelloVertical } from '~/libs/animations';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
@@ -99,7 +100,7 @@ export default function ClaimCosmeticPage({ id }: { id: number }) {
     setStatus('equipped');
   };
 
-  if (cosmeticLoading || !cosmetic) return <Loader />;
+  if (cosmeticLoading || !cosmetic) return <PageLoader />;
   const canClaim =
     availableCosmeticTypes.includes(cosmetic.type) && cosmetic.source === CosmeticSource.Claim;
   if (!canClaim) {

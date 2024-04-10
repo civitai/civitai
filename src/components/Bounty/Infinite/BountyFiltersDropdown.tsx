@@ -17,7 +17,7 @@ import { getDisplayName } from '~/utils/string-helpers';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { useCallback, useState } from 'react';
 import { BountyStatus } from '~/server/common/enums';
-import { constants, BaseModel } from '~/server/common/constants';
+import { activeBaseModels, BaseModel } from '~/server/common/constants';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { PeriodFilter } from '~/components/Filters';
 import { containerQuery } from '~/utils/mantine-css-helpers';
@@ -138,7 +138,7 @@ export function BountyFiltersDropdown({ ...buttonProps }: Props) {
             onChange={(baseModels: BaseModel[]) => setFilters({ baseModels })}
             multiple
           >
-            {constants.baseModels.map((baseModel, index) => (
+            {activeBaseModels.map((baseModel, index) => (
               <Chip key={index} value={baseModel} {...chipProps}>
                 {baseModel}
               </Chip>

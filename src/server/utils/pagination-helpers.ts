@@ -122,7 +122,7 @@ export function getCursor(sortString: string, cursor: string | number | bigint |
       const conditionParts: Prisma.Sql[] = [];
       for (let j = 0; j <= i; j++) {
         const { field, order } = sortFields[j];
-        let operator = j < i ? '=' : order === 'DESC' ? '<' : '>';
+        let operator = j < i ? '=' : order === 'DESC' ? '<' : '>=';
         if (j < i) operator = '=';
 
         conditionParts.push(

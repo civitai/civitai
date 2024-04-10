@@ -334,10 +334,12 @@ export const updateUserHandler = async ({
 
     const payloadCosmeticIds: number[] = [];
     if (badgeId) payloadCosmeticIds.push(badgeId);
-    else await unequipCosmeticByType({ userId: id, type: CosmeticType.Badge });
+    else if (badgeId === null)
+      await unequipCosmeticByType({ userId: id, type: CosmeticType.Badge });
 
     if (nameplateId) payloadCosmeticIds.push(nameplateId);
-    else await unequipCosmeticByType({ userId: id, type: CosmeticType.NamePlate });
+    else if (nameplateId === null)
+      await unequipCosmeticByType({ userId: id, type: CosmeticType.NamePlate });
 
     if (profileDecorationId) payloadCosmeticIds.push(profileDecorationId);
     else if (profileDecorationId === null)

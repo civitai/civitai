@@ -1,12 +1,13 @@
 import { Menu, useMantineTheme } from '@mantine/core';
 import { CollectionType } from '@prisma/client';
-import { IconEdit, IconFlag, IconTrash } from '@tabler/icons-react';
+import { IconEdit, IconFlag, IconTrash, IconInfoCircle } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React from 'react';
 
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionMenuItem';
 import { DeletePostButton } from '~/components/Post/DeletePostButton';
+import { env } from '~/env/client.mjs';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -73,6 +74,21 @@ export function PostControls({
               Report
             </Menu.Item>
           </LoginRedirect>
+        )}
+        {isModerator && (
+          <>
+            <Menu.Label>Moderator</Menu.Label>
+            {env.NEXT_PUBLIC_POST_LOOKUP_URL && (
+              <Menu.Item
+                component="a"
+                target="_blank"
+                icon={<IconInfoCircle size={14} stroke={1.5} />}
+                href={`${env.NEXT_PUBLIC_POST_LOOKUP_URL}${postId}`}
+              >
+                Lookup Post
+              </Menu.Item>
+            )}
+          </>
         )}
       </Menu.Dropdown>
     </Menu>

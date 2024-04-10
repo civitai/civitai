@@ -57,16 +57,13 @@ export const FeedCard = forwardRef<HTMLAnchorElement, Props>(
       aspectRatio = 'portrait',
       className,
       useCSSAspectRatio,
-      cardDecoration,
-      inViewOptions,
+      frameDecoration,
       ...props
     },
     ref
   ) => {
     const { stringRatio } = aspectRatioValues[aspectRatio];
     const { classes, cx } = useStyles();
-
-    // const {ref, inView} = useInView(inViewOptions)
 
     const card = (
       <Card<'a'>
@@ -89,9 +86,9 @@ export const FeedCard = forwardRef<HTMLAnchorElement, Props>(
         ) : (
           card
         )}
-        {cardDecoration && cardDecoration.data.url ? (
+        {frameDecoration && frameDecoration.data.url ? (
           <EdgeMedia
-            src={cardDecoration.data.url}
+            src={frameDecoration.data.url}
             type="image"
             name="card decoration"
             style={{
@@ -119,6 +116,5 @@ type Props = CardProps & {
   aspectRatio?: AspectRatio;
   onClick?: React.MouseEventHandler<HTMLAnchorElement>;
   useCSSAspectRatio?: boolean;
-  cardDecoration?: BadgeCosmetic;
-  inViewOptions?: any;
+  frameDecoration?: BadgeCosmetic | null;
 };

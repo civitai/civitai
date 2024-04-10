@@ -23,13 +23,14 @@ export function CivitaiSessionProvider({ children }: { children: React.ReactNode
     return {
       ...data.user,
       isMember: data.user.tier != null,
+      memberInBadState: data.user.memberInBadState,
       refresh: update,
       ...browsingModeState,
       blurNsfw: !Flags.intersection(browsingModeState.browsingLevel, nsfwBrowsingLevelsFlag)
         ? true
         : browsingModeState.blurNsfw,
     };
-  }, [data?.user, update, browsingModeState]);
+  }, [data?.expires, update, browsingModeState]); // eslint-disable-line
 
   useEffect(() => {
     if (data?.error === 'RefreshAccessTokenError') signIn();

@@ -37,8 +37,8 @@ export const deleteOldTrainingData = createJob(
              mf.visibility,
              mf.url
       FROM "ModelVersion" mv
-      JOIN "Model" m ON m.id = mv."modelId"
-      JOIN "ModelFile" mf ON mf."modelVersionId" = mv.id AND mf.type = 'Training Data'
+             JOIN "Model" m ON m.id = mv."modelId"
+             JOIN "ModelFile" mf ON mf."modelVersionId" = mv.id AND mf.type = 'Training Data'
       WHERE m."uploadType" = 'Trained'
         AND mv."trainingStatus" in ('InReview', 'Approved')
         AND (timezone('utc', current_timestamp) -

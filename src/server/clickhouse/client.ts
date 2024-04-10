@@ -180,6 +180,8 @@ export const ActionType = [
   'PurchaseFunds_Cancel',
   'PurchaseFunds_Confirm',
   'LoginRedirect',
+  'Membership_Cancel',
+  'Membership_Downgrade',
 ] as const;
 export type ActionType = (typeof ActionType)[number];
 
@@ -249,6 +251,10 @@ export class Tracker {
 
   public modelEvent(values: { type: ModelActivty; modelId: number; nsfw: boolean }) {
     return this.track('modelEvents', values);
+  }
+
+  public redeemableCode(activity: string, details: { quantity?: number; code?: string }) {
+    return this.track('redeemableCodes', { activity, ...details });
   }
 
   public modelVersionEvent(values: {

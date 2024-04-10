@@ -87,7 +87,7 @@ export function MasonryGrid<TData>({
                       width={142}
                     />
                   </div>
-                  <Text>Become a supporter to turn off ads today.</Text>
+                  <Text>Become a Member to turn off ads today.</Text>
                   <Button
                     component={NextLink}
                     href="/pricing"

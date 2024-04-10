@@ -24,6 +24,7 @@ import {
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
   constants,
+  activeBaseModels,
   modelVersionMonetizationTypeOptions,
   modelVersionSponsorshipSettingsTypeOptions,
 } from '~/server/common/constants';
@@ -259,7 +260,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                       {`This puts your model in the "Early Access" list of models
                   available to `}
                       <Text component={NextLink} href="/pricing" variant="link" target="_blank">
-                        Supporter Tier members
+                        Civitai members
                       </Text>
                       {
                         ' of the community. This can be a great way to get feedback from an engaged community before your model is available to the general public. If you choose to enable Early Access, your model will be released to the public after the selected time frame.'
@@ -307,7 +308,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
               placeholder="Base Model"
               withAsterisk
               style={{ flex: 1 }}
-              data={constants.baseModels.map((x) => ({ value: x, label: x }))}
+              data={activeBaseModels.map((x) => ({ value: x, label: x }))}
             />
             {hasBaseModelType && (
               <InputSelect

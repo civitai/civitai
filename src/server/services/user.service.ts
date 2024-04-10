@@ -19,7 +19,7 @@ import {
   Prisma,
   TagEngagementType,
 } from '@prisma/client';
-import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { SearchIndexUpdateQueueAction, NsfwLevel } from '~/server/common/enums';
 import { dbWrite, dbRead } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
@@ -61,7 +61,7 @@ import { constants } from '~/server/common/constants';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { removeEmpty } from '~/utils/object-helpers';
 import { purchasableRewardDetails } from '~/server/selectors/purchasableReward.selector';
-import { getNsfwLeveLDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
+import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
 import { HiddenModels } from '~/server/services/user-preferences.service';
 import { deleteImageById } from '~/server/services/image.service';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
@@ -186,7 +186,7 @@ export const getUsers = async ({ limit, query, email, ids, include }: GetAllUser
   `;
   return result.map(({ avatarNsfwLevel, ...user }) => ({
     ...user,
-    avatarNsfw: getNsfwLeveLDeprecatedReverseMapping(avatarNsfwLevel),
+    avatarNsfw: getNsfwLevelDeprecatedReverseMapping(avatarNsfwLevel),
   }));
 };
 
@@ -507,7 +507,12 @@ export async function softDeleteUser({ id }: { id: number }) {
   });
   await dbWrite.image.updateMany({
     where: { userId: id },
-    data: { ingestion: 'Blocked', blockedFor: 'CSAM', needsReview: 'blocked' },
+    data: {
+      ingestion: 'Blocked',
+      nsfwLevel: NsfwLevel.Blocked,
+      blockedFor: 'CSAM',
+      needsReview: 'blocked',
+    },
   });
   await cancelSubscription({ userId: id });
   await dbWrite.user.update({ where: { id }, data: { bannedAt: new Date() } });
@@ -592,6 +597,9 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
     subscription && ['active', 'trialing'].includes(subscription.status)
       ? (subscription.product.metadata as any)[env.STRIPE_METADATA_KEY]
       : undefined;
+  const memberInBadState =
+    subscription &&
+    ['incomplete', 'incomplete_expired', 'past_due', 'unpaid'].includes(subscription.status);
 
   const permissions: string[] = [];
   const systemPermissions = await getSystemPermissions();
@@ -608,6 +616,7 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
     image: profilePicture?.url ?? rest.image,
     tier,
     permissions,
+    memberInBadState,
     // feedbackToken,
   };
 };

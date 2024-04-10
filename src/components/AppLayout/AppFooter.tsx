@@ -12,6 +12,7 @@ import {
 import { NextLink } from '@mantine/next';
 import { useState } from 'react';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
+import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { SocialLinks } from '~/components/SocialLinks/SocialLinks';
 import { env } from '~/env/client.mjs';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -172,30 +173,18 @@ export function AppFooter({ fixed = true }: { fixed?: boolean }) {
           <SocialLinks />
         </Group>
         <Group ml="auto" spacing={4} sx={{ flexWrap: 'nowrap' }}>
-          <Button
-            component="a"
-            href="/bugs"
-            {...buttonProps}
-            target="_blank"
-            pl={4}
-            pr="xs"
-            rel="nofollow noreferrer"
-          >
-            🪲 Bugs
-          </Button>
-          <Button
-            component="a"
-            href="/feedback"
-            variant="light"
-            color="yellow"
-            target="_blank"
-            size={!fixed ? 'xs' : undefined}
-            pl={4}
-            pr="xs"
-            rel="nofollow noreferrer"
-          >
-            💡 Feature Requests
-          </Button>
+          <RoutedDialogLink name="support" state={{}} passHref>
+            <Button
+              component="a"
+              pl={4}
+              pr="xs"
+              color="yellow"
+              variant="light"
+              size={!fixed ? 'xs' : undefined}
+            >
+              🛟 Support
+            </Button>
+          </RoutedDialogLink>
         </Group>
       </Group>
     </Footer>

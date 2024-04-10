@@ -11,6 +11,7 @@ export const DismissibleAlert = ({
   icon,
   className,
   getInitialValueInEffect = true,
+  children,
   ...props
 }: DismissibleAlertProps) => {
   const { classes, cx } = useStyles({ color });
@@ -50,7 +51,7 @@ export const DismissibleAlert = ({
             </Text>
           )}
           <Text size={contentSize} className={classes.text}>
-            {content}
+            {children ?? content}
           </Text>
         </Stack>
       </Group>
@@ -60,7 +61,8 @@ export const DismissibleAlert = ({
 
 type DismissibleAlertProps = {
   id: string;
-  content: React.ReactNode;
+  content?: React.ReactNode;
+  children?: React.ReactNode;
   title?: React.ReactNode;
   color?: MantineColor;
   emoji?: string | null;

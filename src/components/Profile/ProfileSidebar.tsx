@@ -78,7 +78,7 @@ const mapSize: Record<
     rankBadge: 'xl',
     badges: 56,
     bio: 48,
-    badgeCount: 4,
+    badgeCount: 4 * 4,
   },
 };
 
@@ -101,7 +101,8 @@ export function ProfileSidebar({ username, className }: { username: string; clas
         ? []
         : user.cosmetics
             .map((c) => c.cosmetic)
-            .filter((c) => c.type === CosmeticType.Badge && !!c.data),
+            .filter((c) => c.type === CosmeticType.Badge && !!c.data)
+            .reverse(),
     [user]
   );
 

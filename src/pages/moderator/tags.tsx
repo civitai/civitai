@@ -139,7 +139,7 @@ export default function Tags() {
         header: 'Name',
         size: 150,
         enableColumnActions: false,
-        filterFn: 'startsWith',
+        filterFn: 'contains',
       },
       {
         id: 'type',

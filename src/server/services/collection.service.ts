@@ -1557,7 +1557,7 @@ export const getCollectionCoverImages = async ({
         'mimeType', i."mimeType",
         'scannedAt', i."scannedAt",
         'type', i."type",
-        'meta', i."meta"
+        'meta', i."meta",
         'userId', i."userId"
       ) image
   `;

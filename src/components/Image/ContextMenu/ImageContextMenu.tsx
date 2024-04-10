@@ -30,7 +30,7 @@ import { openContext } from '~/providers/CustomModalsProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { IconBookmark } from '@tabler/icons-react';
-import { CollectionType, ImageIngestionStatus } from '@prisma/client';
+import { CollectionType, CosmeticEntity, ImageIngestionStatus } from '@prisma/client';
 import { IconBan } from '@tabler/icons-react';
 import { useRescanImage } from '~/components/Image/hooks/useRescanImage';
 import { useReportTosViolation } from '~/components/Image/hooks/useReportTosViolation';
@@ -46,18 +46,20 @@ import React, { createContext, useContext } from 'react';
 import { trpc } from '~/utils/trpc';
 import { imageStore, useImageStore } from '~/store/image.store';
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
+import { ImagesInfiniteModel } from '~/server/services/image.service';
+import { ImageProps } from '~/components/ImageViewer/ImageViewer';
 
-type ImageProps = {
-  id: number;
-  postId?: number | null;
-  userId?: number;
-  user?: { id: number };
-  needsReview?: string | null;
-  ingestion?: ImageIngestionStatus;
-};
+// type ImageProps = Pick<ImagesInfiniteModel, 'id' | 'url' | 'width' | 'height' | 'nsfwLevel'> & {
+//   id: number;
+//   postId?: number | null;
+//   userId?: number;
+//   user?: { id: number };
+//   needsReview?: string | null;
+//   ingestion?: ImageIngestionStatus;
+// };
 
 type ImageContextMenuProps = {
-  image: ImageProps;
+  image: ImageProps & { ingestion?: ImageIngestionStatus };
   context?: 'image' | 'post';
   additionalMenuItems?: React.ReactNode;
 };
@@ -116,7 +118,7 @@ export function ImageContextMenu({
     </Menu>
   );
 
-  if (image.needsReview)
+  if (image.needsReview || image.ingestion === 'Blocked')
     return (
       <Group spacing={4} className={className}>
         <NeedsReviewBadge {...props} isModerator={isModerator} isOwner={isOwner} />
@@ -172,7 +174,7 @@ function ImageMenuItems(
       {isOwner && (
         <>
           <AddToShowcaseMenuItem entityType="Image" entityId={imageId} />
-          <AddArtFrameMenuItem entity={image} entityType="media" />
+          <AddArtFrameMenuItem data={image} entityType={CosmeticEntity.Image} />
         </>
       )}
       <LoginRedirect reason="add-to-collection">
@@ -273,6 +275,7 @@ function NeedsReviewBadge({
     ingestion: initialIngestion,
   });
   const moderateImagesMutation = trpc.image.moderate.useMutation();
+  if (!needsReview && ingestion !== 'Blocked') return null;
 
   const handleModerate = (action: 'accept' | 'delete' | 'removeName' | 'mistake') => {
     if (!isModerator) return;
@@ -282,7 +285,7 @@ function NeedsReviewBadge({
       reviewAction: action !== 'accept' ? action : undefined,
       reviewType: 'minor',
     });
-    imageStore.setImage(imageId, { needsReview: null });
+    imageStore.setImage(imageId, { needsReview: null, ingestion: 'Scanned' });
   };
 
   const Badge = (

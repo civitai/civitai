@@ -45,6 +45,7 @@ export const constants = {
     limit: 50,
   },
   baseModels: [
+    'ODOR',
     'SD 1.4',
     'SD 1.5',
     'SD 1.5 LCM',
@@ -67,6 +68,7 @@ export const constants = {
     'PixArt a',
     'Other',
   ],
+  hiddenBaseModels: [] as string[],
   modelFileTypes: [
     'Model',
     'Text Encoder',
@@ -225,6 +227,7 @@ export const constants = {
     platformFeeRate: 3000, // 30.00%. Divide by 10000
     minBuzzWithdrawal: 100000,
     maxBuzzWithdrawal: 100000000,
+    generationBuzzChargingStartDate: new Date('2024-04-04T00:00:00.000Z'),
   },
   profile: {
     coverImageAspectRatio: 1 / 4,
@@ -277,7 +280,51 @@ export const constants = {
       cover: ':modelVersionId/:userId/cover.jpg',
     },
   },
-  supporterBadge: '020f374d-f165-4f45-9082-371e696a44ff',
+  supporterBadge: 'a288c8c0-8b79-4e13-abd1-348989d7bac8',
+  memberships: {
+    tierOrder: ['founder', 'bronze', 'silver', 'gold'],
+    badges: {
+      founder: 'a288c8c0-8b79-4e13-abd1-348989d7bac8',
+      bronze: 'a288c8c0-8b79-4e13-abd1-348989d7bac8',
+      silver: '26f5e4c8-0905-4f08-97d5-ad80e9fc292a',
+      gold: 'c1086607-bfb5-4f9f-b3fa-b8bd286cf9d1',
+    },
+    founderDiscount: {
+      maxDiscountDate: new Date('2024-05-01T00:00:00Z'),
+      discountPercent: 50,
+      tier: 'founder',
+    },
+  },
+  freeMembershipDetails: {
+    name: 'Free',
+    price: 0,
+    badge: '020f374d-f165-4f45-9082-371e696a44ff',
+    metadata: {
+      monthlyBuzz: 0,
+      generationLimit: 1,
+      quantityLimit: 4,
+      queueLimit: 4,
+      badgeType: 'none',
+    },
+  },
+} as const;
+export const activeBaseModels = constants.baseModels.filter(
+  (model) => !constants.hiddenBaseModels.includes(model)
+);
+
+export const draftMode = {
+  sdxl: {
+    steps: 8,
+    cfgScale: 1,
+    sampler: 'Euler',
+    resourceId: 391999,
+  },
+  sd1: {
+    steps: 6,
+    cfgScale: 1,
+    sampler: 'LCM',
+    resourceId: 424706,
+  },
 } as const;
 
 export const zipModelFileTypes: ModelFileFormat[] = ['Core ML', 'Diffusers', 'ONNX'];
@@ -298,6 +345,7 @@ export const baseModelSetTypes = [
   'SDXLDistilled',
   'SCascade',
   'Pony',
+  'ODOR',
 ] as const;
 export type BaseModelSetType = (typeof baseModelSetTypes)[number];
 export const baseModelSets: Record<BaseModelSetType, BaseModel[]> = {
@@ -307,6 +355,7 @@ export const baseModelSets: Record<BaseModelSetType, BaseModel[]> = {
   SDXLDistilled: ['SDXL Distilled'],
   SCascade: ['Stable Cascade'],
   Pony: ['Pony'],
+  ODOR: ['ODOR'],
 };
 
 type LicenseDetails = {
@@ -376,6 +425,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'PixArt a': baseLicenses['agpl'],
   'Stable Cascade': baseLicenses['SAI NCRC'],
   Pony: baseLicenses['openrail++'],
+  ODOR: undefined,
   Other: undefined,
 };
 
@@ -471,9 +521,10 @@ export const generationConfig = {
       { label: 'Portrait', width: 512, height: 768 },
     ],
     costs: {
+      // TODO.imageGenerationBuzzCharge - Remove all cost calculation from the front-end. This is done by the orchestrator.
       base: 0,
       quantity: 1,
-      steps: 40,
+      steps: 30,
       width: 512,
       height: 512,
     },
@@ -501,11 +552,11 @@ export const generationConfig = {
       { label: 'Portrait', width: 832, height: 1216 },
     ],
     costs: {
-      // TODO.generation: Uncomment this out by next week once we start charging for SDXL generation
+      // TODO.imageGenerationBuzzCharge - Remove all cost calculation from the front-end. This is done by the orchestrator.
       // base: 4,
       base: 0,
       quantity: 1,
-      steps: 40,
+      steps: 30,
       width: 1024,
       height: 1024,
     },
@@ -567,7 +618,6 @@ export const getGenerationConfig = (baseModel?: string) => {
   const key = baseModel as keyof typeof generationConfig | undefined;
   return key && generationConfig[key] ? generationConfig[key] : generationConfig['SD1'];
 };
-
 
 export const MODELS_SEARCH_INDEX = 'models_v8';
 export const IMAGES_SEARCH_INDEX = 'images_v4';

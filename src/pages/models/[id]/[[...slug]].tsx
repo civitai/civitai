@@ -111,7 +111,10 @@ import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { HowToButton } from '~/components/Model/HowToUseModel/HowToUseModel';
 import { Adunit } from '~/components/Ads/AdUnit';
 import { adsRegistry } from '~/components/Ads/adsRegistry';
-import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import {
+  getIsSafeBrowsingLevel,
+  hasPublicBrowsingLevel,
+} from '~/shared/constants/browsingLevel.constants';
 import { ToggleModelNotification } from '~/components/Model/Actions/ToggleModelNotification';
 import { useToggleFavoriteMutation } from '~/components/ResourceReview/resourceReview.utils';
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
@@ -119,7 +122,7 @@ import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
   useSession: true,
-  resolver: async ({ ssg, ctx }) => {
+  resolver: async ({ ssg, ctx, session }) => {
     const params = (ctx.params ?? {}) as {
       id: string;
       slug: string[];
@@ -147,6 +150,7 @@ export const getServerSideProps = createServerSideProps({
           limit: CAROUSEL_LIMIT,
           pending: true,
         });
+      await ssg.hiddenPreferences.getHidden.prefetch();
 
       if (modelVersionIdParsed) {
         await ssg.common.getEntityAccess.prefetch({
@@ -160,8 +164,10 @@ export const getServerSideProps = createServerSideProps({
         await ssg.generation.checkResourcesCoverage.prefetch({ id: modelVersionIdParsed });
       }
       await ssg.model.getById.prefetch({ id });
-      await ssg.user.getEngagedModelVersions.prefetch({ id });
-      await ssg.resourceReview.getUserResourceReview.prefetch({ modelId: id });
+      if (session) {
+        await ssg.user.getEngagedModelVersions.prefetch({ id });
+        await ssg.resourceReview.getUserResourceReview.prefetch({ modelId: id });
+      }
     }
 
     return {
@@ -492,7 +498,7 @@ export default function ModelDetailsV2({
     />
   );
 
-  if (!getIsSafeBrowsingLevel(model.nsfwLevel) && !currentUser)
+  if (!currentUser && !hasPublicBrowsingLevel(selectedVersion?.nsfwLevel ?? model.nsfwLevel))
     return (
       <>
         {meta}
@@ -1015,7 +1021,7 @@ export default function ModelDetailsV2({
                   ) : (
                     !isMuted &&
                     onlyEarlyAccess && (
-                      <JoinPopover message="You must be a Supporter Tier member to join this discussion">
+                      <JoinPopover message="You must be a Civitai Member to join this discussion">
                         <Button
                           leftIcon={<IconClock size={16} />}
                           variant="outline"

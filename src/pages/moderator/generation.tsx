@@ -8,6 +8,7 @@ import { Meta } from '~/components/Meta/Meta';
 import { Generation } from '~/server/services/generation/generation.types';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { GenerationGetResources } from '~/types/router';
+import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 export const getServerSideProps = createServerSideProps({
@@ -47,12 +48,18 @@ export default function GenerationPage() {
 
   const columns = useMemo<MRT_ColumnDef<GenerationGetResources[number]>[]>(
     () => [
-      { id: 'modelId', header: 'Model', accessorKey: 'modelName' },
+      { id: 'modelId', header: 'Model', accessorKey: 'modelName', size: 300 },
       { id: 'id', header: 'Version', accessorKey: 'name' },
+      {
+        header: 'Type',
+        accessorKey: 'modelType',
+        Cell: ({ cell }) => getDisplayName(cell.getValue<string>()),
+      },
       {
         header: 'Action',
         mantineTableHeadCellProps: { align: 'right' },
         mantineTableBodyCellProps: { align: 'right' },
+        size: 80,
         Cell: ({ row: { original } }) => (
           <ActionIcon color="red" onClick={() => handleRemoveResource(original)}>
             <IconTrash />
@@ -92,6 +99,9 @@ export default function GenerationPage() {
             onPaginationChange={setPagination}
             enableStickyHeader
             manualPagination
+            mantineTableProps={{
+              sx: { tableLayout: 'fixed' },
+            }}
             initialState={{ density: 'xs' }}
             state={{
               isLoading: isInitialLoading,

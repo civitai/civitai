@@ -40,13 +40,7 @@ export const isTrainingCustomModel = (m: string | null) => {
   return m.startsWith('civitai:');
 };
 
-export const blockedCustomModels = [
-  'civitai:133005@348913',
-  'civitai:260267@403131',
-  'civitai:167764@253250',
-  'civitai:269232@303526',
-  'civitai:53761@285757',
-];
+export const blockedCustomModels = ['civitai:53761@285757'];
 
 export const useTrainingSignals = () => {
   const queryClient = useQueryClient();

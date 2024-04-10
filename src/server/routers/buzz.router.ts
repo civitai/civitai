@@ -1,10 +1,12 @@
 import {
+  claimDailyBoostRewardHandler,
   completeStripeBuzzPurchaseHandler,
   createBuzzTipTransactionHandler,
   depositClubFundsHandler,
   getBuzzAccountHandler,
   getBuzzAccountTransactionsHandler,
   getUserAccountHandler,
+  getUserMultipliersHandler,
   getUserTransactionsHandler,
   withdrawClubFundsHandler,
 } from '~/server/controllers/buzz.controller';
@@ -59,4 +61,6 @@ export const buzzRouter = router({
   claim: protectedProcedure
     .input(getByIdStringSchema)
     .mutation(({ input, ctx }) => claimBuzz({ ...input, userId: ctx.user.id })),
+  getUserMultipliers: protectedProcedure.query(getUserMultipliersHandler),
+  claimDailyBoostReward: protectedProcedure.mutation(claimDailyBoostRewardHandler),
 });

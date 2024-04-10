@@ -73,7 +73,7 @@ export function EarlyAccessAlert({ modelId, versionId, modelType, deadline }: Pr
         modelType
       ).toLowerCase()} is in "Early Access" to collect feedback from `}{' '}
       <Text variant="link" component={NextLink} href="/pricing">
-        Supporter Tier members
+        Civitai Members
       </Text>
       {`. It will be publicly available in `}
       <Countdown endTime={deadline} />

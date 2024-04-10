@@ -51,8 +51,8 @@ export function createBuzzEvent<T>({
     // Apply multipliers
     const { rewardsMultiplier } = await getMultipliersForUser(userId);
     if (rewardsMultiplier !== 1) {
-      data.awardAmount *= rewardsMultiplier;
-      if (data.cap) data.cap *= rewardsMultiplier;
+      data.awardAmount = Math.ceil(rewardsMultiplier * data.awardAmount);
+      if (data.cap) data.cap = Math.ceil(rewardsMultiplier * data.cap);
     }
 
     if (!isOnDemand) {
@@ -100,11 +100,12 @@ export function createBuzzEvent<T>({
         events
           .filter((x) => x.awardAmount > 0)
           .map((event) => {
+            if (event.multiplier === 0) event.multiplier = 1;
             return {
               type: TransactionType.Reward,
               toAccountId: event.toUserId,
               fromAccountId: 0, // central bank
-              amount: event.awardAmount * (event.multiplier ?? 1),
+              amount: Math.ceil(event.awardAmount * (event.multiplier ?? 1)),
               description: `Buzz Reward: ${description}`,
               details: {
                 type: event.type,
@@ -187,7 +188,9 @@ export function createBuzzEvent<T>({
       try {
         await sendAward([event]);
       } catch (error) {
-        throw new Error(`Failed to send award for buzz event: ${error}`);
+        throw new Error(
+          `Failed to send award for buzz event: ${error}.\n\nTransaction: ${JSON.stringify(event)}`
+        );
       }
     }
   };
@@ -342,7 +345,7 @@ export type BuzzEvent = ReturnType<typeof createBuzzEvent>;
 type BuzzEventKey = {
   type: string;
   toUserId: number;
-  forId: number;
+  forId: number | string;
   byUserId: number;
 };
 

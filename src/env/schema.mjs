@@ -25,7 +25,7 @@ export const serverSchema = z.object({
     // Since NextAuth automatically uses the VERCEL_URL if present.
     (str) => process.env.VERCEL_URL ?? str,
     // VERCEL_URL doesnt include `https` so it cant be validated as a URL
-    process.env.VERCEL ? z.string() : z.string().url()
+    process.env.VERCEL ? z.string() : z.string().url(),
   ),
   CLICKHOUSE_HOST: z.string().optional(),
   CLICKHOUSE_USERNAME: z.string().optional(),
@@ -65,6 +65,7 @@ export const serverSchema = z.object({
   CF_API_TOKEN: z.string().optional(),
   CF_ZONE_ID: z.string().optional(),
   JOB_TOKEN: z.string(),
+  WEBHOOK_URL: z.string().url().optional(),
   WEBHOOK_TOKEN: z.string(),
   SCANNING_ENDPOINT: z.string(),
   SCANNING_TOKEN: z.string(),
@@ -79,6 +80,7 @@ export const serverSchema = z.object({
   LOGGING: commaDelimitedStringArray(),
   IMAGE_SCANNING_ENDPOINT: z.string().optional(),
   IMAGE_SCANNING_CALLBACK: z.string().optional(),
+  IMAGE_SCANNING_MODEL: z.string().optional(),
   IMAGE_SCANNING_RETRY_DELAY: z.coerce.number().default(5),
   DELIVERY_WORKER_ENDPOINT: z.string().optional(),
   DELIVERY_WORKER_TOKEN: z.string().optional(),
@@ -128,7 +130,7 @@ export const serverSchema = z.object({
     return { start, end };
   }, z.object({
     start: z.date().optional(),
-    end: z.date().optional()
+    end: z.date().optional(),
   })).optional(),
   REPLICATION_LAG_DELAY: z.coerce.number().default(0),
   RECAPTCHA_PROJECT_ID: z.string(),
@@ -140,6 +142,8 @@ export const serverSchema = z.object({
   MEDIA_TAGGER_ENDPOINT: z.string().url().optional(),
   S3_VAULT_BUCKET: z.string().optional(),
   HEALTHCHECK_TIMEOUT: z.coerce.number().optional().default(1500),
+  DRAFT_MODE_PROVIDERS: commaDelimitedStringArray().optional(),
+  DRAFT_MODE_PRIORITY: z.coerce.number().optional(),
 });
 
 /**
@@ -167,6 +171,7 @@ export const clientSchema = z.object({
   NEXT_PUBLIC_USER_LOOKUP_URL: z.string().optional(),
   NEXT_PUBLIC_MODEL_LOOKUP_URL: z.string().optional(),
   NEXT_PUBLIC_CHAT_LOOKUP_URL: z.string().optional(),
+  NEXT_PUBLIC_POST_LOOKUP_URL: z.string().optional(),
   NEXT_PUBLIC_GPTT_UUID: z.string().optional(),
   NEXT_PUBLIC_BASE_URL: z.string().optional(),
   NEXT_PUBLIC_UI_CATEGORY_VIEWS: zc.booleanString.default(true),
@@ -174,7 +179,7 @@ export const clientSchema = z.object({
   NEXT_PUBLIC_LOG_TRPC: zc.booleanString.default(false),
   NEXT_PUBLIC_RECAPTCHA_KEY: z.string(),
   NEXT_PUBLIC_ADS: zc.booleanString.default(false),
-  NEXT_PUBLIC_PAYPAL_CLIENT_ID: z.string().optional()
+  NEXT_PUBLIC_PAYPAL_CLIENT_ID: z.string().optional(),
 });
 
 /**
@@ -203,6 +208,7 @@ export const clientEnv = {
   NEXT_PUBLIC_USER_LOOKUP_URL: process.env.NEXT_PUBLIC_USER_LOOKUP_URL,
   NEXT_PUBLIC_MODEL_LOOKUP_URL: process.env.NEXT_PUBLIC_MODEL_LOOKUP_URL,
   NEXT_PUBLIC_CHAT_LOOKUP_URL: process.env.NEXT_PUBLIC_CHAT_LOOKUP_URL,
+  NEXT_PUBLIC_POST_LOOKUP_URL: process.env.NEXT_PUBLIC_POST_LOOKUP_URL,
   NEXT_PUBLIC_GPTT_UUID: process.env.NEXT_PUBLIC_GPTT_UUID,
   NEXT_PUBLIC_BASE_URL: process.env.NEXT_PUBLIC_BASE_URL ?? process.env.NEXTAUTH_URL,
   NEXT_PUBLIC_UI_CATEGORY_VIEWS: process.env.NEXT_PUBLIC_UI_CATEGORY_VIEWS !== 'false',
@@ -210,5 +216,5 @@ export const clientEnv = {
   NEXT_PUBLIC_LOG_TRPC: process.env.NEXT_PUBLIC_LOG_TRPC !== 'false',
   NEXT_PUBLIC_RECAPTCHA_KEY: process.env.NEXT_PUBLIC_RECAPTCHA_KEY,
   NEXT_PUBLIC_ADS: process.env.NEXT_PUBLIC_ADS === 'true',
-  NEXT_PUBLIC_PAYPAL_CLIENT_ID: process.env.NEXT_PUBLIC_PAYPAL_CLIENT_ID
+  NEXT_PUBLIC_PAYPAL_CLIENT_ID: process.env.NEXT_PUBLIC_PAYPAL_CLIENT_ID,
 };

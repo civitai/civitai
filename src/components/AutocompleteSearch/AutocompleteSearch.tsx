@@ -386,6 +386,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
           rightSection={<IconChevronDown size={16} color="currentColor" />}
           sx={{ flexShrink: 1 }}
           onChange={onTargetChange}
+          autoComplete="off"
         />
         <ClearableAutoComplete
           ref={inputRef}
@@ -396,12 +397,14 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
           type="search"
           nothingFound={
             searchErrorState ? (
-              <Stack spacing={0}>
+              <Stack spacing={0} align="center">
                 <Text>There was an error while performing your request&hellip;</Text>
                 <Text size="xs">Please try again later</Text>
               </Stack>
             ) : query && !hits.length ? (
-              <TimeoutLoader delay={1500} renderTimeout={() => <Text>No results found</Text>} />
+              <Stack spacing={0} align="center">
+                <TimeoutLoader delay={1500} renderTimeout={() => <Text>No results found</Text>} />
+              </Stack>
             ) : undefined
           }
           limit={

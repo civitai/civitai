@@ -31,6 +31,7 @@ import {
   InputSegmentedControl,
   InputSelect,
   InputSwitch,
+  InputCheckbox,
   InputTextArea,
 } from '~/libs/form';
 import { trpc } from '~/utils/trpc';
@@ -59,9 +60,11 @@ import {
   Alert,
   ThemeIcon,
   List,
+  Overlay,
+  LoadingOverlay,
 } from '@mantine/core';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
-import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
+import { LoginRedirect, useLoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import InputResourceSelect from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
 import { PersistentAccordion } from '~/components/PersistentAccordion/PersistantAccordion';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
@@ -83,10 +86,17 @@ import Router from 'next/router';
 import { NextLink } from '@mantine/next';
 import { IconLock } from '@tabler/icons-react';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
+import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
+import { DailyBoostRewardClaim } from '~/components/Buzz/Rewards/DailyBoostRewardClaim';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import InputQuantity from '~/components/ImageGeneration/GenerationForm/InputQuantity';
+
+const BUZZ_CHARGE_NOTICE_END = new Date('2024-04-14T00:00:00Z');
 
 const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
-  const { classes } = useStyles();
+  const { classes, theme } = useStyles();
   const currentUser = useCurrentUser();
+  const { requireLogin } = useLoginRedirect({ reason: 'image-gen', returnUrl: '/generate' });
   const [promptWarning, setPromptWarning] = useState<string | null>(null);
   const [reviewed, setReviewed] = useLocalStorage({
     key: 'review-generation-terms',
@@ -99,6 +109,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
     nsfw: nsfw ?? false,
     quantity: quantity ?? generation.defaultValues.quantity,
   };
+  const features = useFeatureFlags();
 
   const form = useForm<GenerateFormModel>({
     resolver: zodResolver(generateFormSchema),
@@ -132,8 +143,10 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
     additionalResourcesCount,
     samplerCfgOffset,
     isSDXL,
-    isLCM,
     unstableResources,
+    isCalculatingCost,
+    draft,
+    costEstimateError,
   } = useDerivedGenerationState();
 
   const { conditionalPerformTransaction } = useBuzzTransaction({
@@ -168,6 +181,11 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
   // #region [mutations]
   const { mutateAsync, isLoading } = useCreateGenerationRequest();
   const handleSubmit = async (data: GenerateFormModel) => {
+    if (!currentUser) {
+      requireLogin();
+      generationPanel.close();
+      return;
+    }
     const { model, resources = [], vae, ...params } = data;
     const _resources = [model, ...resources, vae].filter(isDefined).map((resource) => {
       if (resource.modelType === 'TextualInversion')
@@ -248,7 +266,11 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
   const { requests } = useGetGenerationRequests();
   const pendingProcessingCount = usePollGenerationRequests(requests);
   const reachedRequestLimit = pendingProcessingCount >= limits.queue;
-  const disableGenerateButton = reachedRequestLimit;
+  const disableGenerateButton = reachedRequestLimit || isCalculatingCost || isLoading;
+
+  const cfgDisabled = !!draft;
+  const samplerDisabled = !!draft;
+  const stepsDisabled = !!draft;
 
   // Manually handle error display for prompt box
   const { errors } = form.formState;
@@ -262,7 +284,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
     >
       <Stack spacing={0} h="100%">
         <ScrollArea scrollRestore={{ key: 'generation-form' }} py={0}>
-          <Stack p="md" pb={0}>
+          <Stack p="md">
             {/* {type === 'remix' && (
               <DismissibleAlert
                 id="image-gen-params"
@@ -466,7 +488,34 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
               <Input.Label>Aspect Ratio</Input.Label>
               <InputSegmentedControl name="aspectRatio" data={getAspectRatioControls(baseModel)} />
             </Stack>
-            <InputSwitch name="nsfw" label="Mature content" labelPosition="left" />
+            <Group position="apart">
+              <InputSwitch name="nsfw" label="Mature content" labelPosition="left" />
+              {features.draftMode && (
+                <InputSwitch
+                  name="draft"
+                  labelPosition="left"
+                  label={
+                    <Group spacing={4} noWrap pos="relative">
+                      <Input.Label>Draft Mode</Input.Label>
+                      <Badge
+                        color="yellow"
+                        size="xs"
+                        sx={{ position: 'absolute', right: 18, top: -8, padding: '0 4px' }}
+                      >
+                        New
+                      </Badge>
+                      <InfoPopover size="xs" iconProps={{ size: 14 }}>
+                        Draft Mode will generate images faster, cheaper, and with slightly less
+                        quality. Use this for exploring concepts quickly.
+                        <Text size="xs" color="dimmed" mt={4}>
+                          Requires generating in batches of 4
+                        </Text>
+                      </InfoPopover>
+                    </Group>
+                  }
+                />
+              )}
+            </Group>
 
             <PersistentAccordion
               storeKey="generation-form-advanced"
@@ -485,110 +534,121 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                 </Accordion.Control>
                 <Accordion.Panel>
                   <Stack>
-                    <InputNumberSlider
-                      name="cfgScale"
-                      label={
-                        <Group spacing={4} noWrap>
-                          <Input.Label>CFG Scale</Input.Label>
-                          <InfoPopover size="xs" iconProps={{ size: 14 }}>
-                            Controls how closely the image generation follows the text prompt.{' '}
-                            <Anchor
-                              href="https://wiki.civitai.com/wiki/Classifier_Free_Guidance"
-                              target="_blank"
-                              rel="nofollow noreferrer"
-                              span
-                            >
-                              Learn more
-                            </Anchor>
-                            .
-                          </InfoPopover>
-                        </Group>
-                      }
-                      min={1}
-                      max={isSDXL ? 10 : 30}
-                      step={0.5}
-                      precision={1}
-                      sliderProps={sharedSliderProps}
-                      numberProps={sharedNumberProps}
-                      presets={[
-                        { label: 'Creative', value: '4' },
-                        { label: 'Balanced', value: '7' },
-                        { label: 'Precise', value: '10' },
-                      ]}
-                      reverse
-                    />
-                    <InputSelect
-                      name="sampler"
-                      label={
-                        <Group spacing={4} noWrap>
-                          <Input.Label>Sampler</Input.Label>
-                          <InfoPopover size="xs" iconProps={{ size: 14 }}>
-                            Each will produce a slightly (or significantly) different image result.{' '}
-                            <Anchor
-                              href="https://wiki.civitai.com/wiki/Sampler"
-                              target="_blank"
-                              rel="nofollow noreferrer"
-                              span
-                            >
-                              Learn more
-                            </Anchor>
-                            .
-                          </InfoPopover>
-                        </Group>
-                      }
-                      data={isLCM ? generation.lcmSamplers : generation.samplers}
-                      presets={
-                        isLCM
-                          ? []
-                          : [
-                              { label: 'Fast', value: 'Euler a' },
-                              { label: 'Popular', value: 'DPM++ 2M Karras' },
-                            ]
-                      }
-                    />
-                    <InputNumberSlider
-                      name="steps"
-                      label={
-                        <Group spacing={4} noWrap>
-                          <Input.Label>Steps</Input.Label>
-                          <InfoPopover size="xs" iconProps={{ size: 14 }}>
-                            The number of iterations spent generating an image.{' '}
-                            <Anchor
-                              href="https://wiki.civitai.com/wiki/Sampling_Steps"
-                              target="_blank"
-                              rel="nofollow noreferrer"
-                              span
-                            >
-                              Learn more
-                            </Anchor>
-                            .
-                          </InfoPopover>
-                        </Group>
-                      }
-                      min={isLCM ? 3 : 10}
-                      max={isLCM ? 12 : limits.steps}
-                      sliderProps={sharedSliderProps}
-                      numberProps={sharedNumberProps}
-                      presets={
-                        isLCM
-                          ? []
-                          : [
-                              {
-                                label: 'Fast',
-                                value: Number(10 + samplerCfgOffset).toString(),
-                              },
-                              {
-                                label: 'Balanced',
-                                value: Number(20 + samplerCfgOffset).toString(),
-                              },
-                              {
-                                label: 'High',
-                                value: Number(30 + samplerCfgOffset).toString(),
-                              },
-                            ]
-                      }
-                      reverse
-                    />
+                    <Stack pos="relative">
+                      <LoadingOverlay
+                        color={theme.colorScheme === 'dark' ? theme.colors.dark[7] : '#fff'}
+                        opacity={0.8}
+                        m={-8}
+                        radius="md"
+                        loader={
+                          <Text color="yellow" weight={500}>
+                            Not available in Draft Mode
+                          </Text>
+                        }
+                        zIndex={2}
+                        visible={!!draft}
+                      />
+                      <InputNumberSlider
+                        name="cfgScale"
+                        label={
+                          <Group spacing={4} noWrap>
+                            <Input.Label>CFG Scale</Input.Label>
+                            <InfoPopover size="xs" iconProps={{ size: 14 }}>
+                              Controls how closely the image generation follows the text prompt.{' '}
+                              <Anchor
+                                href="https://wiki.civitai.com/wiki/Classifier_Free_Guidance"
+                                target="_blank"
+                                rel="nofollow noreferrer"
+                                span
+                              >
+                                Learn more
+                              </Anchor>
+                              .
+                            </InfoPopover>
+                          </Group>
+                        }
+                        min={1}
+                        max={isSDXL ? 10 : 30}
+                        step={0.5}
+                        precision={1}
+                        sliderProps={sharedSliderProps}
+                        numberProps={sharedNumberProps}
+                        presets={[
+                          { label: 'Creative', value: '4' },
+                          { label: 'Balanced', value: '7' },
+                          { label: 'Precise', value: '10' },
+                        ]}
+                        reverse
+                        disabled={cfgDisabled}
+                      />
+                      <InputSelect
+                        name="sampler"
+                        disabled={samplerDisabled}
+                        label={
+                          <Group spacing={4} noWrap>
+                            <Input.Label>Sampler</Input.Label>
+                            <InfoPopover size="xs" iconProps={{ size: 14 }}>
+                              Each will produce a slightly (or significantly) different image
+                              result.{' '}
+                              <Anchor
+                                href="https://wiki.civitai.com/wiki/Sampler"
+                                target="_blank"
+                                rel="nofollow noreferrer"
+                                span
+                              >
+                                Learn more
+                              </Anchor>
+                              .
+                            </InfoPopover>
+                          </Group>
+                        }
+                        data={generation.samplers}
+                        presets={[
+                          { label: 'Fast', value: 'Euler a' },
+                          { label: 'Popular', value: 'DPM++ 2M Karras' },
+                        ]}
+                      />
+                      <InputNumberSlider
+                        name="steps"
+                        disabled={stepsDisabled}
+                        label={
+                          <Group spacing={4} noWrap>
+                            <Input.Label>Steps</Input.Label>
+                            <InfoPopover size="xs" iconProps={{ size: 14 }}>
+                              The number of iterations spent generating an image.{' '}
+                              <Anchor
+                                href="https://wiki.civitai.com/wiki/Sampling_Steps"
+                                target="_blank"
+                                rel="nofollow noreferrer"
+                                span
+                              >
+                                Learn more
+                              </Anchor>
+                              .
+                            </InfoPopover>
+                          </Group>
+                        }
+                        min={draft ? 3 : 10}
+                        max={draft ? 12 : limits.steps}
+                        sliderProps={sharedSliderProps}
+                        numberProps={sharedNumberProps}
+                        presets={[
+                          {
+                            label: 'Fast',
+                            value: Number(10 + samplerCfgOffset).toString(),
+                          },
+                          {
+                            label: 'Balanced',
+                            value: Number(20 + samplerCfgOffset).toString(),
+                          },
+                          {
+                            label: 'High',
+                            value: Number(30 + samplerCfgOffset).toString(),
+                          },
+                        ]}
+                        reverse
+                      />
+                    </Stack>
                     <InputSeed name="seed" label="Seed" min={1} max={generation.maxValues.seed} />
                     {!isSDXL && (
                       <InputNumberSlider
@@ -640,6 +700,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
           </Stack>
         </ScrollArea>
         <Stack spacing={4} px="md" pt="xs" pb={3} className={classes.generationArea}>
+          <DailyBoostRewardClaim />
           {promptWarning && (
             <div>
               <Alert color="red" title="Prohibited Prompt">
@@ -695,15 +756,25 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
             </Alert>
           ) : status.available && !promptWarning ? (
             <>
+              {status.charge && new Date() < BUZZ_CHARGE_NOTICE_END && (
+                <DismissibleAlert id="generator-charge-buzz">
+                  <Text>
+                    Generating images now costs Buzz.{' '}
+                    <Text component={NextLink} href="/articles/4797" td="underline">
+                      Learn why
+                    </Text>
+                  </Text>
+                </DismissibleAlert>
+              )}
               {isFreeTier && limits.quantity < 8 && (
                 <Group spacing="xs" noWrap mb={4} align="center">
                   <Text size="xs" color="yellow" lh={1}>
                     <IconAlertTriangleFilled size={20} />
                   </Text>
                   <Text size="xs" lh={1.2} color="yellow">
-                    {`Generator under high load. Image limits have been temporarily reduced for free users. `}
+                    {`Want to generate more at once? `}
                     <Text lh={1.2} component={NextLink} href="/pricing" td="underline">
-                      Remove limits
+                      Become a Supporter!
                     </Text>
                   </Text>
                 </Group>
@@ -720,47 +791,38 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                     >
                       Quantity
                     </Text>
-                    <InputNumber
+                    <InputQuantity
                       name="quantity"
-                      min={1}
-                      max={limits.quantity}
                       className={classes.generateButtonQuantityInput}
                     />
                   </Stack>
                 </Card>
-                <LoginRedirect reason="image-gen" returnUrl="/generate">
-                  {/* TODO.generation: Uncomment this out by next week */}
-                  {/* {isSDXL ? (
-                        <BuzzTransactionButton
-                          type="submit"
-                          size="lg"
-                          label="Generate"
-                          loading={isSubmitting || loading}
-                          className={classes.generateButtonButton}
-                          disabled={disableGenerateButton}
-                          buzzAmount={totalCost}
-                        />
-                      ) : (
-                        <Button
-                          type="submit"
-                          size="lg"
-                          loading={isSubmitting || loading}
-                          className={classes.generateButtonButton}
-                          disabled={disableGenerateButton}
-                        >
-                          Generate
-                        </Button>
-                      )} */}
+                {!status.charge ? (
                   <Button
                     type="submit"
                     size="lg"
+                    className={classes.generateButtonButton}
                     loading={isLoading}
+                  >
+                    <Text ta="center">Generate</Text>
+                  </Button>
+                ) : (
+                  <BuzzTransactionButton
+                    type="submit"
+                    size="lg"
+                    label="Generate"
+                    loading={isCalculatingCost || isLoading}
                     className={classes.generateButtonButton}
                     disabled={disableGenerateButton}
-                  >
-                    Generate
-                  </Button>
-                </LoginRedirect>
+                    buzzAmount={totalCost}
+                    showPurchaseModal={false}
+                    error={
+                      costEstimateError
+                        ? 'Error calculating cost. Please try updating your values'
+                        : undefined
+                    }
+                  />
+                )}
                 {/* <Tooltip label="Reset" color="dark" withArrow> */}
                 <Button
                   onClick={handleClearAll}
@@ -781,7 +843,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                   <Text component="span">
                     Want more?{' '}
                     <Text component={NextLink} href="/pricing" variant="link" td="underline">
-                      Become a Member
+                      Become a Supporter
                     </Text>
                     😍
                   </Text>
@@ -798,56 +860,6 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
             >
               {status.message}
             </AlertWithIcon>
-          )}
-          {/* TODO.generation: Remove this by next week we start charging for sdxl generation */}
-          {/* {status.available && isSDXL && (
-            <DismissibleAlert
-              id="sdxl-free-preview"
-              title="Free SDXL Generations!"
-              content={
-                <Text>
-                  To celebrate{' '}
-                  <Anchor
-                    href="https://civitai.com/articles/2935/civitais-first-birthday-a-year-of-art-code-and-community"
-                    target="_blank"
-                    underline
-                  >
-                    Civitai&apos;s Birthday
-                  </Anchor>{' '}
-                  we&apos;re letting everyone use SDXL for free!{' '}
-                  <Anchor
-                    href="https://education.civitai.com/using-civitai-the-on-site-image-generator/"
-                    rel="noopener nofollow"
-                    underline
-                  >
-                    After that it will cost a minimum of⚡3 Buzz per image
-                  </Anchor>
-                  . Complete our{' '}
-                  <Anchor
-                    href={`https://forms.clickup.com/8459928/f/825mr-6111/V0OXEDK2MIO5YKFZV4?Username=${
-                      currentUser?.username ?? 'Unauthed'
-                    }`}
-                    rel="noopener nofollow"
-                    target="_blank"
-                    underline
-                  >
-                    SDXL generation survey
-                  </Anchor>{' '}
-                  to let us know how we did.
-                </Text>
-              }
-            />
-          )} */}
-          {isLCM && (
-            <DismissibleAlert
-              id="lcm-preview"
-              title="Initial LCM Support"
-              content={
-                <Text>
-                  {`We're still testing out LCM support, please let us know if you run into any issues.`}
-                </Text>
-              }
-            />
           )}
         </Stack>
       </Stack>

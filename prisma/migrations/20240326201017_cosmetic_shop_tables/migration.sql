@@ -5,7 +5,7 @@ CREATE TYPE "CosmeticEntity" AS ENUM ('Model', 'Image', 'Article', 'Post');
 ALTER TABLE "UserCosmetic" DROP CONSTRAINT "UserCosmetic_pkey",
 ADD COLUMN     "claimKey" TEXT NOT NULL DEFAULT 'claimed',
 ADD COLUMN     "equippedToId" INTEGER,
-ADD COLUMN     "equppedToType" "CosmeticEntity",
+ADD COLUMN     "equippedToType" "CosmeticEntity",
 ADD CONSTRAINT "UserCosmetic_pkey" PRIMARY KEY ("userId", "cosmeticId", "claimKey");
 
 -- CreateTable

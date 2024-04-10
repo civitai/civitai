@@ -7,6 +7,8 @@ import {
   ReportReason,
   ReportStatus,
   ReviewReactions,
+  TagSource,
+  TagType,
 } from '@prisma/client';
 
 import { TRPCError } from '@trpc/server';
@@ -18,7 +20,12 @@ import { VotableTagModel } from '~/libs/tags';
 import { BlockedReason, ImageScanType, ImageSort, NsfwLevel } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
-import { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
+import {
+  GetByIdInput,
+  InfiniteQueryInput,
+  PaginationInput,
+  UserPreferencesInput,
+} from '~/server/schema/base.schema';
 import {
   CreateImageSchema,
   GetEntitiesCoverImage,
@@ -28,6 +35,7 @@ import {
   ImageUploadProps,
   UpdateImageNsfwLevelOutput,
   UpdateImageInput,
+  ImageRatingReviewOutput,
 } from '~/server/schema/image.schema';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { articlesSearchIndex, imagesSearchIndex } from '~/server/search-index';
@@ -56,7 +64,7 @@ import { ImageResourceHelperModel } from '~/server/selectors/image.selector';
 import { purgeCache } from '~/server/cloudflare/client';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { promptWordReplace } from '~/utils/metadata/audit';
-import { getCursor } from '~/server/utils/pagination-helpers';
+import { getCursor, getPagination } from '~/server/utils/pagination-helpers';
 import { bustCachedArray, cachedObject, queryCache } from '~/server/utils/cache-helpers';
 import { CacheTTL, constants } from '~/server/common/constants';
 import { getPeriods } from '~/server/utils/enum-helpers';
@@ -65,6 +73,9 @@ import { baseS3Client } from '~/utils/s3-client';
 import { pgDbRead, pgDbWrite } from '~/server/db/pgDb';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { trackModActivity } from '~/server/services/moderator.service';
+import { nsfwBrowsingLevelsArray } from '~/shared/constants/browsingLevel.constants';
+import { getVotableTags2 } from '~/server/services/tag.service';
+import { BadgeCosmetic } from '~/server/selectors/cosmetic.selector';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -150,6 +161,7 @@ export const moderateImages = async ({
       data: {
         needsReview: null,
         ingestion: 'Blocked',
+        nsfwLevel: NsfwLevel.Blocked,
         blockedFor: BlockedReason.Moderated,
       },
     });
@@ -167,16 +179,24 @@ export const moderateImages = async ({
     });
   } else {
     // Approve
-    await dbWrite.image.updateMany({
-      where: { id: { in: ids } },
-      data: { needsReview, ingestion: 'Scanned' },
-    });
+    const results = await dbWrite.$queryRaw<{ id: number; nsfwLevel: number }[]>`
+      UPDATE "Image" SET
+        "needsReview" = ${needsReview},
+        "ingestion" = 'Scanned',
+        "nsfwLevel" = CASE
+          WHEN "nsfwLevel" = ${NsfwLevel.Blocked}::int THEN 0
+          ELSE "nsfwLevel"
+        END
+      WHERE id IN (${Prisma.join(ids)})
+      RETURNING id, "nsfwLevel";
+    `;
 
     // Remove tags that triggered review
     const tagIds = (await getTagsNeedingReview()).map((x) => x.id);
 
     // And moderated tags for POI review (since no NSFW allowed)
-    if (reviewType === 'poi') {
+    const changeTags = reviewType === 'poi';
+    if (changeTags) {
       const moderatedTags = await getModeratedTags();
       tagIds.push(...moderatedTags.map((x) => x.id));
     }
@@ -187,10 +207,18 @@ export const moderateImages = async ({
     });
 
     // Update nsfw level of image
-    if (reviewType === 'poi')
-      await dbWrite.$executeRawUnsafe(`SELECT update_nsfw_levels('{${ids.join(',')}}'::int[]);`);
+    const resetLevels = results.filter((x) => x.nsfwLevel === 0).map((x) => x.id);
+    if (resetLevels.length) await updateNsfwLevel(resetLevels);
+    else if (changeTags) await updateNsfwLevel(ids);
   }
 };
+
+export async function updateNsfwLevel(ids: number | number[]) {
+  if (!Array.isArray(ids)) ids = [ids];
+  ids = [...new Set(ids)]; // dedupe
+  if (!ids.length) return;
+  await dbWrite.$executeRawUnsafe(`SELECT update_nsfw_levels(ARRAY[${ids.join(',')}]::integer[])`);
+}
 
 export const updateImageReportStatusByReason = ({
   id,
@@ -308,6 +336,7 @@ export const ingestImage = async ({
       // wait: true,
       scans: [ImageScanType.Label, ImageScanType.Moderation, ImageScanType.WD14],
       callbackUrl,
+      movieRatingModel: env.IMAGE_SCANNING_MODEL,
     }),
   });
   if (response.status === 202) {
@@ -459,6 +488,7 @@ type GetAllImagesRaw = {
   modelVersionId: number | null;
   imageId: number | null;
   publishedAt: Date | null;
+  unpublishedAt?: Date | null;
   username: string | null;
   userImage: string | null;
   deletedAt: Date | null;
@@ -476,6 +506,7 @@ type GetAllImagesRaw = {
   metadata: Prisma.JsonValue;
   baseModel?: string;
   availability: Availability;
+  cosmetic: BadgeCosmetic | null;
 };
 export type ImagesInfiniteModel = AsyncReturnType<typeof getAllImages>['items'][0];
 export const getAllImages = async ({
@@ -508,6 +539,7 @@ export const getAllImages = async ({
   browsingLevel,
   user,
   pending,
+  notPublished,
 }: GetInfiniteImagesOutput & {
   userId?: number;
   user?: SessionUser;
@@ -520,6 +552,7 @@ export const getAllImages = async ({
   let cacheTime = CacheTTL.xs;
   const userId = user?.id;
   const isModerator = user?.isModerator ?? false;
+  const includeCosmetics = include.includes('cosmetics');
 
   // Filter to specific user content
   let targetUserId: number | undefined;
@@ -564,6 +597,9 @@ export const getAllImages = async ({
 
   if (fromPlatform && types?.includes(MediaType.image)) {
     AND.push(Prisma.sql`(i.meta IS NOT NULL AND i.meta ? 'civitaiResources')`);
+  }
+  if (notPublished && isModerator && types?.includes(MediaType.image)) {
+    AND.push(Prisma.sql`(p."publishedAt" IS NULL)`);
   }
 
   let from = 'FROM "Image" i';
@@ -789,6 +825,20 @@ export const getAllImages = async ({
     );
   }
 
+  if (includeCosmetics) {
+    WITH.push(Prisma.sql`
+      "imageCosmetic" AS (
+        SELECT
+          c.id,
+          c.data,
+          uc."equippedToId"
+        FROM "UserCosmetic" uc
+        JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
+        WHERE uc."equippedToType" = 'Image'
+      )
+    `);
+  }
+
   // TODO: Adjust ImageMetric
   const queryFrom = Prisma.sql`
     ${Prisma.raw(from)}
@@ -840,6 +890,7 @@ export const getAllImages = async ({
       p."title" "postTitle",
       i."index",
       p."publishedAt",
+      p.metadata->>'unpublishedAt' "unpublishedAt",
       p."modelVersionId",
       u.username,
       u.image "userImage",
@@ -856,6 +907,12 @@ export const getAllImages = async ({
       ) "baseModel",`
           : ''
       )}
+      (
+        SELECT jsonb_build_object(
+          'id', ic.id,
+          'data', ic.data
+        ) FROM "imageCosmetic" ic WHERE ic."equippedToId" = i.id
+      ) as "cosmetic",
       im."cryCount",
       im."laughCount",
       im."likeCount",
@@ -963,13 +1020,14 @@ export const getAllImages = async ({
       baseModel?: string | null;
       availability?: Availability;
       nsfwLevel: NsfwLevel;
+      cosmetic: BadgeCosmetic | null;
     }
   > = rawImages
     .filter((x) => {
-      // Filter out images that shouldn't be seen by user
       if (isModerator) return true;
       // if (x.needsReview && x.userId !== userId) return false;
-      if ((!x.publishedAt || x.publishedAt > now) && x.userId !== userId) return false;
+      if ((!x.publishedAt || x.publishedAt > now || !!x.unpublishedAt) && x.userId !== userId)
+        return false;
       // if (x.ingestion !== 'Scanned' && x.userId !== userId) return false;
       return true;
     })
@@ -989,6 +1047,7 @@ export const getAllImages = async ({
         tippedAmountCount,
         viewCount,
         cursorId,
+        unpublishedAt,
         ...i
       }) => ({
         ...i,
@@ -1129,7 +1188,10 @@ export const getImage = async ({
       u."profilePictureId",
       ${
         !withoutPost
-          ? Prisma.sql`p."availability" "availability",`
+          ? Prisma.sql`
+            p."availability" "availability",
+            p."publishedAt" "publishedAt",
+          `
           : Prisma.sql`'Public' "availability",`
       }
       (
@@ -2613,9 +2675,17 @@ export async function updateImageNsfwLevel({
   id,
   nsfwLevel,
   user,
+  status,
 }: UpdateImageNsfwLevelOutput & { user: SessionUser }) {
+  if (!nsfwLevel) throw throwBadRequestError();
   if (user.isModerator) {
     await dbWrite.image.update({ where: { id }, data: { nsfwLevel, nsfwLevelLocked: true } });
+    if (status) {
+      await dbWrite.imageRatingRequest.updateMany({
+        where: { imageId: id, status: 'Pending' },
+        data: { status },
+      });
+    }
     await trackModActivity(user.id, {
       entityType: 'image',
       entityId: id,
@@ -2631,7 +2701,7 @@ export async function updateImageNsfwLevel({
 }
 
 type ImageRatingRequestResponse = {
-  imageId: number;
+  id: number;
   votes: {
     [NsfwLevel.PG]: NsfwLevel.PG;
     [NsfwLevel.PG13]: NsfwLevel.PG13;
@@ -2639,20 +2709,72 @@ type ImageRatingRequestResponse = {
     [NsfwLevel.X]: NsfwLevel.X;
     [NsfwLevel.XXX]: NsfwLevel.XXX;
   };
+  url: string;
+  nsfwLevel: number;
+  nsfwLevelLocked: boolean;
+  width: number | null;
+  height: number | null;
+  type: MediaType;
+  total: number;
+  ownerVote: number;
+  createdAt: Date;
 };
 
-export async function getImageRatingRequests() {
-  const results = await dbRead.$queryRaw<ImageRatingRequestResponse>`
+export async function getImageRatingRequests({
+  cursor,
+  limit,
+  user,
+}: ImageRatingReviewOutput & { user: SessionUser }) {
+  const results = await dbRead.$queryRaw<ImageRatingRequestResponse[]>`
+    WITH CTE_Requests AS (
+      SELECT
+        DISTINCT ON (irr."imageId") irr."imageId" as id,
+        MIN(irr."createdAt") "createdAt",
+        COUNT(CASE WHEN i."nsfwLevel" != irr."nsfwLevel" THEN i.id END)::INT "total",
+        COALESCE(SUM(CASE WHEN irr."userId" = i."userId" THEN irr."nsfwLevel" ELSE 0 END))::INT "ownerVote",
+        i.url,
+        i."nsfwLevel",
+        i."nsfwLevelLocked",
+        i.type,
+        i.height,
+        i.width,
+        jsonb_build_object(
+          ${NsfwLevel.PG}, count(irr."nsfwLevel")
+            FILTER (where irr."nsfwLevel" = ${NsfwLevel.PG}),
+          ${NsfwLevel.PG13}, count(irr."nsfwLevel")
+            FILTER (where irr."nsfwLevel" = ${NsfwLevel.PG13}),
+          ${NsfwLevel.R}, count(irr."nsfwLevel")
+            FILTER (where irr."nsfwLevel" = ${NsfwLevel.R}),
+          ${NsfwLevel.X}, count(irr."nsfwLevel")
+            FILTER (where irr."nsfwLevel" = ${NsfwLevel.X}),
+          ${NsfwLevel.XXX}, count(irr."nsfwLevel")
+            FILTER (where irr."nsfwLevel" = ${NsfwLevel.XXX})
+        ) "votes"
+        FROM "ImageRatingRequest" irr
+        JOIN "Image" i on i.id = irr."imageId"
+        WHERE irr.status = ${ReportStatus.Pending}::"ReportStatus"
+        GROUP BY irr."imageId", i.id
+    )
     SELECT
-      DISTINCT ON ("imageId") "imageId",
-      jsonb_build_object(
-        ${NsfwLevel.PG}, count("nsfwLevel" = ${NsfwLevel.PG}),
-        ${NsfwLevel.PG13}, count("nsfwLevel" = ${NsfwLevel.PG13}),
-        ${NsfwLevel.R}, count("nsfwLevel" = ${NsfwLevel.R}),
-        ${NsfwLevel.X}, count("nsfwLevel" = ${NsfwLevel.X}),
-        ${NsfwLevel.XXX}, count("nsfwLevel" = ${NsfwLevel.XXX}6)
-      ) "votes"
-    FROM "ImageRatingRequest"
-    GROUP BY "imageId"
+      r.*
+    FROM CTE_Requests r
+    WHERE (r.total >= 3 OR (r."ownerVote" != 0 AND r."ownerVote" != r."nsfwLevel"))
+    ${!!cursor ? Prisma.sql` AND r."createdAt" >= ${new Date(cursor)}` : Prisma.sql``}
+    ORDER BY r."createdAt"
+    LIMIT ${limit + 1}
   `;
+
+  let nextCursor: string | undefined;
+  if (limit && results.length > limit) {
+    const nextItem = results.pop();
+    nextCursor = nextItem?.createdAt.toISOString() || undefined;
+  }
+
+  const imageIds = results.map((x) => x.id);
+  const tags = await getVotableTags2({ ids: imageIds, user, type: 'image' });
+
+  return {
+    nextCursor,
+    items: results.map((item) => ({ ...item, tags: tags.filter((x) => x.imageId === item.id) })),
+  };
 }

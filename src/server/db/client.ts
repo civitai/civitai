@@ -1,7 +1,7 @@
 // src/server/db/client.ts
-import { PrismaClient, Prisma } from '@prisma/client';
-import { env } from '~/env/server.mjs';
+import { Prisma, PrismaClient } from '@prisma/client';
 import { isProd } from '~/env/other';
+import { env } from '~/env/server.mjs';
 import { logToAxiom } from '~/server/logging/client';
 
 declare global {
@@ -13,7 +13,7 @@ declare global {
 
 const logFor = (target: 'write' | 'read') =>
   async function logQuery(e: { query: string; params: string; duration: number }) {
-    if (e.duration < 2000) return;
+    // if (e.duration < 2000) return;
     let query = e.query;
     const params = JSON.parse(e.params);
     // Replace $X variables with params in query so it's possible to copy/paste and optimize
@@ -27,7 +27,7 @@ const logFor = (target: 'write' | 'read') =>
     }
 
     if (!isProd) console.log(query);
-    else logToAxiom({ query, duration: e.duration, pod: env.PODNAME, target }, 'db-logs');
+    else logToAxiom({ query, duration: e.duration, target }, 'db-logs');
   };
 
 const singleClient = env.DATABASE_REPLICA_URL === env.DATABASE_URL;
