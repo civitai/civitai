@@ -166,6 +166,7 @@ export function GeneratedImage({
                   height: '100%',
                   boxShadow: 'inset 0px 0px 2px 1px rgba(255,255,255,0.2)',
                   borderRadius: theme.radius.sm,
+                  pointerEvents: 'none',
                 })}
               />
               {!image.available ? (
