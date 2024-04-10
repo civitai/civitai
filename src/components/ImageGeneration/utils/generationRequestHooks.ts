@@ -140,8 +140,8 @@ export function useTextToImageSignalUpdate() {
         if (data.type === JobStatus.Deleted) {
           signalEvents = signalEvents.filter((x) => x.jobId !== data.jobId);
         } else {
+          if (JobStatus) signalEventsDictionary[data.jobId] = data;
           debouncer(() => updateFromEvents());
-          signalEvents.push(data);
         }
       }
     }
@@ -149,51 +149,60 @@ export function useTextToImageSignalUpdate() {
 }
 
 let signalEvents: TextToImageEvent[] = [];
+const signalEventsDictionary: Record<string, TextToImageEvent> = {};
+
+const jobStatusMap: Partial<Record<JobStatus, Generation.ImageStatus>> = {
+  [JobStatus.Claimed]: 'Started',
+  [JobStatus.Failed]: 'Error',
+  [JobStatus.Rejected]: 'Error',
+  [JobStatus.Succeeded]: 'Success',
+};
+
 function updateFromEvents() {
-  let events = [...signalEvents];
-  if (!events.length) return;
-  // let toProcess = events.length;
+  if (!Object.keys(signalEventsDictionary).length) return;
 
   updateGenerationRequest((old) => {
-    pages: for (const page of old.pages) {
+    for (const page of old.pages) {
       for (const item of page.items) {
+        if (!Object.keys(signalEventsDictionary).length) return;
         let hasEvents = false;
 
         for (const image of item.images ?? []) {
-          const imageEvents = events.filter((x) => x.jobId === image.hash);
-          if (imageEvents.length) hasEvents = true;
+          // Get the event
+          const event = signalEventsDictionary[image.hash];
+          if (!event) continue;
+          hasEvents = true;
 
-          for (const event of imageEvents) {
-            const { type, jobDuration } = event;
-            if (type === JobStatus.Claimed) image.status = 'Started';
-            else if (type === JobStatus.Failed || type === JobStatus.Rejected)
-              image.status = 'Error';
-            else if (type === JobStatus.Succeeded) image.status = 'Success';
+          // Update status
+          const { type, jobDuration } = event;
+          const imageStatus = jobStatusMap[type];
+          if (imageStatus) image.status = imageStatus;
 
-            image.type = type;
-            if (image.status === 'Success') {
-              image.duration = jobDuration
-                ? new TimeSpan(jobDuration).totalMilliseconds
-                : undefined;
-              image.available = true;
-            }
-            events = events.filter((x) => x.jobId !== image.hash && x.type === type);
-            signalEvents = signalEvents.filter((x) => x.jobId !== image.hash && x.type === type);
+          // If we finished, track the time it took and mark it ready
+          if (image.status === 'Success') {
+            image.duration = jobDuration ? new TimeSpan(jobDuration).totalMilliseconds : undefined;
+            image.available = true;
+          }
+
+          // If the event status is still the same, let's delete it
+          if (type === signalEventsDictionary[image.hash]?.type) {
+            delete signalEventsDictionary[image.hash];
+            if (!Object.keys(signalEventsDictionary).length) break;
           }
         }
 
+        // Update item status
         if (hasEvents) {
-          const types = item.images?.map((x) => x.type) ?? [];
+          const statuses = item.images?.map((x) => x.status) ?? [];
 
-          if (types.some((status) => status === JobStatus.Claimed))
+          if (statuses.some((status) => status === 'Started'))
             item.status = GenerationRequestStatus.Processing;
-          else if (types.some((status) => status === JobStatus.Failed))
+          else if (statuses.some((status) => status === 'Error'))
             item.status = GenerationRequestStatus.Error;
-          else if (types.every((status) => status === JobStatus.Succeeded))
+          else if (statuses.every((status) => status === 'Success'))
             item.status = GenerationRequestStatus.Succeeded;
 
           item.images = item.images?.sort((a, b) => (b.duration ?? 0) - (a.duration ?? 0));
-          if (!events.length) break pages;
         }
       }
     }
