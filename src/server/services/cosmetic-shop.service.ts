@@ -1,9 +1,21 @@
 import { Prisma } from '@prisma/client';
-import { dbRead } from '~/server/db/client';
-import { GetPaginatedCosmeticShopItemInput } from '~/server/schema/cosmetic-shop.schema';
-import { simpleCosmeticSelect } from '~/server/selectors/cosmetic.selector';
-import { simpleUserSelect } from '~/server/selectors/user.selector';
+import { dbRead, dbWrite } from '~/server/db/client';
+import { GetByIdInput } from '~/server/schema/base.schema';
+import {
+  GetPaginatedCosmeticShopItemInput,
+  UpsertCosmeticShopItemInput,
+} from '~/server/schema/cosmetic-shop.schema';
+import { cosmeticShopItemSelect } from '~/server/selectors/cosmetic-shop.selector';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
+
+export const getShopItemById = async ({ id }: GetByIdInput) => {
+  return dbRead.cosmeticShopItem.findUniqueOrThrow({
+    where: {
+      id,
+    },
+    select: cosmeticShopItemSelect,
+  });
+};
 
 export const getPaginatedCosmeticShopItems = async (input: GetPaginatedCosmeticShopItemInput) => {
   const { limit = DEFAULT_PAGE_SIZE, page } = input || {};
@@ -21,27 +33,65 @@ export const getPaginatedCosmeticShopItems = async (input: GetPaginatedCosmeticS
     where,
     take,
     skip,
-    select: {
-      id: true,
-      unitAmount: true,
-      addedBy: {
-        select: simpleUserSelect,
-      },
-      availableFrom: true,
-      availableTo: true,
-      availableQuantity: true,
-      title: true,
-      description: true,
-      archivedAt: true,
-      createdAt: true,
-      cosmetic: {
-        select: simpleCosmeticSelect,
-      },
-    },
+    select: cosmeticShopItemSelect,
     orderBy: { createdAt: 'desc' },
   });
 
   const count = await dbRead.cosmeticShopItem.count({ where });
 
   return getPagingData({ items, count: (count as number) ?? 0 }, limit, page);
+};
+
+export const upsertCosmeticShopItem = async ({
+  userId,
+  availableQuantity,
+  availableTo,
+  availableFrom,
+  id,
+  ...cosmeticShopItem
+}: UpsertCosmeticShopItemInput & { userId: number }) => {
+  const existingItem = id
+    ? await dbRead.cosmeticShopItem.findUnique({
+        where: { id },
+        select: {
+          id: true,
+          _count: {
+            select: {
+              purchases: true,
+            },
+          },
+        },
+      })
+    : undefined;
+
+  if (existingItem?.id && availableQuantity && existingItem._count.purchases > availableQuantity) {
+    throw new Error('Cannot reduce available quantity below the number of purchases');
+  }
+
+  if (availableTo && availableFrom && availableTo < availableFrom) {
+    throw new Error('Available to date cannot be before available from date');
+  }
+
+  if (id) {
+    return dbWrite.cosmeticShopItem.upsert({
+      where: { id },
+      create: {
+        ...cosmeticShopItem,
+        availableQuantity,
+        addedById: userId,
+      },
+      update: cosmeticShopItem,
+      select: cosmeticShopItemSelect,
+    });
+  } else {
+    return dbWrite.cosmeticShopItem.create({
+      data: {
+        ...cosmeticShopItem,
+        availableQuantity,
+        addedById: userId,
+        availableTo,
+        availableFrom,
+      },
+    });
+  }
 };

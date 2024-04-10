@@ -12,3 +12,15 @@ export const getPaginatedCosmeticShopItemInput = paginationSchema.merge(
     maxPrice: z.number().optional(),
   })
 );
+
+export type UpsertCosmeticShopItemInput = z.infer<typeof upsertCosmeticShopItemInput>;
+export const upsertCosmeticShopItemInput = z.object({
+  id: z.number().optional(),
+  title: z.string().max(255),
+  description: z.string().nullish(),
+  cosmeticId: z.number(),
+  unitAmount: z.number(),
+  availableFrom: z.date().nullish(),
+  availableTo: z.date().nullish(),
+  availableQuantity: z.number().nullish(),
+});

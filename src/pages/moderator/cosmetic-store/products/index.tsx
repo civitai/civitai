@@ -21,12 +21,14 @@ import { NextLink } from '@mantine/next';
 import { BuzzWithdrawalRequestStatus, CosmeticType, Currency } from '@prisma/client';
 import { IconCloudOff, IconEdit, IconPlus } from '@tabler/icons-react';
 import { useState } from 'react';
+import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { useQueryCosmeticShopItemsPaged } from '~/components/CosmeticShop/cosmetic-shop.util';
 import { CosmeticsFiltersDropdown } from '~/components/Cosmetics/CosmeticsFiltersDropdown';
 import { useQueryCosmeticsPaged } from '~/components/Cosmetics/cosmetics.util';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { Meta } from '~/components/Meta/Meta';
+import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { CosmeticSample } from '~/pages/moderator/cosmetic-store/cosmetics';
@@ -76,7 +78,7 @@ export default function CosmeticStoreProducts() {
               Add Product
             </Button>
             <TextInput
-              label="Filter by name"
+              label="Filter by cosmetic name"
               value={filters.name ?? ''}
               onChange={(e) => setFilters({ ...filters, name: e.target.value || undefined })}
               size="sm"
@@ -104,6 +106,7 @@ export default function CosmeticStoreProducts() {
               <thead>
                 <tr>
                   <th>Title</th>
+                  <th>Cosmetic Name</th>
                   <th>Type</th>
                   <th>Sample</th>
                   <th>Price</th>
@@ -119,10 +122,17 @@ export default function CosmeticStoreProducts() {
                     <tr key={shopItem.id}>
                       <td>
                         <Stack spacing={0} maw={350}>
-                          <Text>{shopItem.title}</Text>
-                          <Text color="dimmed" size="sm">
-                            {shopItem.description}
-                          </Text>
+                          <Text weight="bold">{shopItem.title}</Text>
+                          {shopItem.description && (
+                            <ContentClamp maxHeight={200}>
+                              <RenderHtml html={shopItem.description} />
+                            </ContentClamp>
+                          )}
+                        </Stack>
+                      </td>
+                      <td>
+                        <Stack spacing={0} maw={350} align="flex-start">
+                          <Text>{shopItem.cosmetic.name}</Text>
                         </Stack>
                       </td>
                       <td>{shopItem.cosmetic.type}</td>
@@ -138,7 +148,7 @@ export default function CosmeticStoreProducts() {
                       <td>
                         <ActionIcon
                           component={NextLink}
-                          href={`/moderator/cosmetic-shop/products/update/${shopItem.id}`}
+                          href={`/moderator/cosmetic-store/products/${shopItem.id}/edit`}
                         >
                           <IconEdit />
                         </ActionIcon>
