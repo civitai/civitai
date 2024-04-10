@@ -56,6 +56,7 @@ export const deliverPurchasedCosmetics = createJob(
             FROM "Purchase" op
             JOIN "Product" opd ON opd.id = op."productId"
             WHERE opd.metadata->>'tier' = 'founder'
+              AND op."customerId" = p."customerId"
           )
         ON CONFLICT DO NOTHING;
       `;
