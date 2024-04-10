@@ -414,7 +414,6 @@ export function ModelVersionDetails({
           type: file.type,
           meta: file.metadata,
         })}
-        download
       >
         {getFileDisplayName({ file, modelType: model.type })} ({formatKBytes(file.sizeKB)}){' '}
         {file.visibility !== 'Public' && (
@@ -607,16 +606,29 @@ export function ModelVersionDetails({
                   />
                 )}
                 {displayCivitaiLink || canGenerate ? (
-                  <Menu position="bottom-end">
-                    <Menu.Target>
-                      <DownloadButton
-                        canDownload={version.canDownload}
-                        disabled={!primaryFile || archived}
-                        iconOnly
-                      />
-                    </Menu.Target>
-                    <Menu.Dropdown>{downloadMenuItems}</Menu.Dropdown>
-                  </Menu>
+                  filesCount === 1 ? (
+                    <DownloadButton
+                      canDownload={version.canDownload}
+                      component="a"
+                      href={createModelFileDownloadUrl({
+                        versionId: version.id,
+                        primary: true,
+                      })}
+                      disabled={!primaryFile || archived}
+                      iconOnly
+                    />
+                  ) : (
+                    <Menu position="bottom-end">
+                      <Menu.Target>
+                        <DownloadButton
+                          canDownload={version.canDownload}
+                          disabled={!primaryFile || archived}
+                          iconOnly
+                        />
+                      </Menu.Target>
+                      <Menu.Dropdown>{downloadMenuItems}</Menu.Dropdown>
+                    </Menu>
+                  )
                 ) : (
                   <DownloadButton
                     component="a"
