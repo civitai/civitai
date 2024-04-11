@@ -25,16 +25,16 @@ export default function GenerationTabs({
   const view = useGenerationStore((state) => state.view);
   const setView = useGenerationStore((state) => state.setView);
 
-  const View = tabs[view].Component;
+  const View = isGeneratePage ? tabs.generate.Component : tabs[view].Component;
   const tabEntries = Object.entries(tabs).filter(([key]) =>
-    tabsToInclude ? tabsToInclude.includes(key as any) : true
+    isGeneratePage ? key !== 'generate' : true
   );
 
   useEffect(() => {
-    if (tabsToInclude) {
-      if (!tabsToInclude.includes(view)) setView(tabsToInclude[0]);
+    if (isGeneratePage && view === 'generate') {
+      setView('queue');
     }
-  }, [tabsToInclude, view]); //eslint-disable-line
+  }, [isGeneratePage, view]);
 
   return (
     <GenerationProvider>

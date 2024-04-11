@@ -1,5 +1,5 @@
 import { Center, Group, Stack, Tabs, Text, ThemeIcon, createStyles } from '@mantine/core';
-import { IconLayoutList } from '@tabler/icons-react';
+import { IconClock, IconClockHour9, IconLayoutList } from '@tabler/icons-react';
 import { IconGridDots, IconLock } from '@tabler/icons-react';
 import React, { useState } from 'react';
 import { setPageOptions } from '~/components/AppLayout/AppLayout';
@@ -10,6 +10,7 @@ import { Queue } from '~/components/ImageGeneration/Queue';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { GenerationPanelView, useGenerationStore } from '~/store/generation.store';
 import { getLoginLink } from '~/utils/login-helpers';
 
 /**
@@ -34,7 +35,8 @@ export const getServerSideProps = createServerSideProps({
 export default function GeneratePage() {
   const currentUser = useCurrentUser();
   const { classes } = useStyles();
-  const [tab, setTab] = useState<string>('queue');
+  const view = useGenerationStore((state) => state.view);
+  const setView = useGenerationStore((state) => state.setView);
 
   if (currentUser?.muted)
     return (
@@ -56,10 +58,10 @@ export default function GeneratePage() {
     <GenerationProvider>
       <Tabs
         variant="pills"
-        value={tab}
-        onTabChange={(tab) => {
+        value={view}
+        onTabChange={(view) => {
           // tab can be null
-          if (tab) setTab(tab);
+          if (view) setView(view as GenerationPanelView);
         }}
         radius="xl"
         color="gray"
@@ -68,7 +70,7 @@ export default function GeneratePage() {
         <Tabs.List px="md" py="xs">
           <Group position="apart" w="100%">
             <Group align="flex-start" spacing="xs">
-              <Tabs.Tab value="queue" icon={<IconLayoutList size={16} />}>
+              <Tabs.Tab value="queue" icon={<IconClockHour9 size={16} />}>
                 Queue
               </Tabs.Tab>
               <Tabs.Tab value="feed" icon={<IconGridDots size={16} />}>
@@ -78,11 +80,11 @@ export default function GeneratePage() {
             <GeneratedImageActions />
           </Group>
         </Tabs.List>
-        <ScrollArea scrollRestore={{ key: tab }}>
+        <ScrollArea scrollRestore={{ key: view }} py={0}>
           <Tabs.Panel value="queue">
             <Queue />
           </Tabs.Panel>
-          <Tabs.Panel value="feed" p="md">
+          <Tabs.Panel value="feed">
             <Feed />
           </Tabs.Panel>
         </ScrollArea>

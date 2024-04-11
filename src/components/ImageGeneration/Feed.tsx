@@ -53,30 +53,28 @@ export function Feed() {
     );
 
   return (
-    <>
-      <ScrollArea scrollRestore={{ key: 'feed' }} py={0} className="flex flex-col gap-2 px-3">
-        {/* <GeneratedImagesBuzzPrompt /> */}
-        <div className={classes.grid}>
-          {images
-            .map((image) => {
-              const request = requests.find((request) =>
-                request.images?.some((x) => x.id === image.id)
-              );
-              if (!request) return null;
+    <ScrollArea scrollRestore={{ key: 'feed' }} className="flex flex-col gap-2 px-3">
+      {/* <GeneratedImagesBuzzPrompt /> */}
+      <div className={classes.grid}>
+        {images
+          .map((image) => {
+            const request = requests.find((request) =>
+              request.images?.some((x) => x.id === image.id)
+            );
+            if (!request) return null;
 
-              return <GeneratedImage key={image.id} request={request} image={image} />;
-            })
-            .filter(isDefined)}
-        </div>
-        {hasNextPage && (
-          <InViewLoader loadFn={fetchNextPage} loadCondition={!isRefetching}>
-            <Center sx={{ height: 60 }}>
-              <Loader />
-            </Center>
-          </InViewLoader>
-        )}
-      </ScrollArea>
-    </>
+            return <GeneratedImage key={image.id} request={request} image={image} />;
+          })
+          .filter(isDefined)}
+      </div>
+      {hasNextPage && (
+        <InViewLoader loadFn={fetchNextPage} loadCondition={!isRefetching}>
+          <Center sx={{ height: 60 }}>
+            <Loader />
+          </Center>
+        </InViewLoader>
+      )}
+    </ScrollArea>
   );
 }
 

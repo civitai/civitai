@@ -188,6 +188,7 @@ export function createBuzzEvent<T>({
       try {
         await sendAward([event]);
       } catch (error) {
+        // TODO - if this fails, update the event log...
         throw new Error(
           `Failed to send award for buzz event: ${error}.\n\nTransaction: ${JSON.stringify(event)}`
         );
