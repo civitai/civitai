@@ -15,10 +15,10 @@ import { NextLink } from '@mantine/next';
 import {
   IconAlertTriangleFilled,
   IconArrowsShuffle,
+  IconBan,
   IconCheck,
   IconInfoHexagon,
   IconTrash,
-  IconX,
 } from '@tabler/icons-react';
 
 import { Currency } from '@prisma/client';
@@ -43,6 +43,10 @@ import { GenerationRequestStatus } from '~/server/common/enums';
 import { Generation } from '~/server/services/generation/generation.types';
 import { generationPanel, generationStore } from '~/store/generation.store';
 import { formatDateMin } from '~/utils/date-helpers';
+import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
+import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
+
+const PENDING_STATUSES = [GenerationRequestStatus.Pending, GenerationRequestStatus.Processing];
 
 // export function QueueItem({ data: request, index }: { data: Generation.Request; index: number }) {
 export function QueueItem({ request }: Props) {
@@ -55,9 +59,11 @@ export function QueueItem({ request }: Props) {
 
   const status = request.status ?? GenerationRequestStatus.Pending;
   const isDraft = request.sequential ?? false;
-  const pendingProcessing = isDraft
-    ? request.images?.every((x) => !x.status)
-    : request.images?.some((x) => !x.status || x.status === 'Started');
+  const pendingProcessing =
+    PENDING_STATUSES.includes(status) &&
+    (isDraft
+      ? request.images?.every((x) => !x.status)
+      : request.images?.some((x) => !x.status || x.status === 'Started'));
   const failed = status === GenerationRequestStatus.Error;
 
   const deleteImageMutation = useDeleteGenerationRequestImages();
@@ -65,16 +71,7 @@ export function QueueItem({ request }: Props) {
   const cancellingDeleting = deleteImageMutation.isLoading || deleteMutation.isLoading;
 
   const handleDeleteQueueItem = () => {
-    openConfirmModal({
-      title: 'Delete Creation',
-      children: `Are you sure you want to delete this creation?`,
-      labels: { confirm: 'Delete', cancel: "No, don't delete it" },
-      confirmProps: { color: 'red' },
-      zIndex: constants.imageGeneration.drawerZIndex + 1,
-      onConfirm: () => {
-        deleteMutation.mutate({ id: request.id });
-      },
-    });
+    deleteMutation.mutate({ id: request.id });
   };
 
   const handleCancel = () => {
@@ -158,33 +155,36 @@ export function QueueItem({ request }: Props) {
                 constants.buzz.generationBuzzChargingStartDate && (
                 <CurrencyBadge unitAmount={cost} currency={Currency.BUZZ} size="xs" />
               )}
-            <Tooltip {...tooltipProps} label="Copy Job IDs">
+            <ButtonTooltip {...tooltipProps} label="Copy Job IDs">
               <ActionIcon size="md" p={4} radius={0} onClick={handleCopy}>
                 {copied ? <IconCheck /> : <IconInfoHexagon />}
               </ActionIcon>
-            </Tooltip>
+            </ButtonTooltip>
           </div>
           <div className="flex gap-1">
             {generationStatus.available && (
-              <Tooltip {...tooltipProps} label="Remix">
+              <ButtonTooltip {...tooltipProps} label="Remix">
                 <ActionIcon size="md" p={4} radius={0} onClick={handleGenerate}>
                   <IconArrowsShuffle />
                 </ActionIcon>
-              </Tooltip>
+              </ButtonTooltip>
             )}
-            <Tooltip
-              {...tooltipProps}
-              label={pendingProcessing ? 'Cancel request' : 'Delete creation'}
+            <PopConfirm
+              message={`Are you sure you want to ${
+                pendingProcessing ? 'cancel' : 'delete'
+              } this job?`}
+              position="bottom-end"
+              onConfirm={pendingProcessing ? handleCancel : handleDeleteQueueItem}
             >
-              <ActionIcon
-                size="md"
-                onClick={pendingProcessing ? handleCancel : handleDeleteQueueItem}
-                disabled={cancellingDeleting}
-                color="red"
+              <ButtonTooltip
+                {...tooltipProps}
+                label={pendingProcessing ? 'Cancel job' : 'Delete job'}
               >
-                {pendingProcessing ? <IconX size={20} /> : <IconTrash size={20} />}
-              </ActionIcon>
-            </Tooltip>
+                <ActionIcon size="md" disabled={cancellingDeleting} color="red">
+                  {pendingProcessing ? <IconBan size={20} /> : <IconTrash size={20} />}
+                </ActionIcon>
+              </ButtonTooltip>
+            </PopConfirm>
           </div>
         </div>
       </Card.Section>
