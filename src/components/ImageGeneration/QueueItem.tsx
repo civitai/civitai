@@ -1,73 +1,57 @@
 import {
   ActionIcon,
+  Alert,
   Badge,
-  Button,
   Card,
-  Text,
+  createStyles,
   MantineColor,
+  Text,
   Tooltip,
   TooltipProps,
-  createStyles,
-  useMantineTheme,
-  Alert,
-  Group,
 } from '@mantine/core';
-import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { useClipboard, useLocalStorage } from '@mantine/hooks';
+import { useClipboard } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
 import {
+  IconAlertTriangleFilled,
+  IconArrowsShuffle,
+  IconCheck,
   IconInfoHexagon,
-  IconPhoto,
-  IconPlayerPlayFilled,
   IconTrash,
   IconX,
-  IconCheck,
-  IconLoader,
-  IconAlertTriangleFilled,
-  IconHandStop,
-  IconRotateClockwise,
-  IconArrowsShuffle,
 } from '@tabler/icons-react';
 
+import { Currency } from '@prisma/client';
+import dayjs from 'dayjs';
+import { useMemo } from 'react';
 import { Collection } from '~/components/Collection/Collection';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
-import { GeneratedImage } from '~/components/ImageGeneration/GeneratedImage';
+import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
+import { GeneratedImage, GenerationPlaceholder } from '~/components/ImageGeneration/GeneratedImage';
 import { GenerationDetails } from '~/components/ImageGeneration/GenerationDetails';
+import {
+  useGenerationStatus,
+  useUnstableResources,
+} from '~/components/ImageGeneration/GenerationForm/generation.utils';
+import { GenerationStatusBadge } from '~/components/ImageGeneration/GenerationStatusBadge';
 import {
   useDeleteGenerationRequest,
   useDeleteGenerationRequestImages,
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { constants } from '~/server/common/constants';
+import { GenerationRequestStatus } from '~/server/common/enums';
 import { Generation } from '~/server/services/generation/generation.types';
 import { generationPanel, generationStore } from '~/store/generation.store';
 import { formatDateMin } from '~/utils/date-helpers';
-import {
-  getBaseModelSetKey,
-  useGenerationStatus,
-  useUnstableResources,
-} from '~/components/ImageGeneration/GenerationForm/generation.utils';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { Currency } from '@prisma/client';
-import dayjs from 'dayjs';
-import { useMemo } from 'react';
-import { GenerationRequestStatus } from '~/server/common/enums';
-import { GenerationStatusBadge } from '~/components/ImageGeneration/GenerationStatusBadge';
-import { isProd } from '~/env/other';
-import { trpc } from '~/utils/trpc';
 
 // export function QueueItem({ data: request, index }: { data: Generation.Request; index: number }) {
 export function QueueItem({ request }: Props) {
-  const theme = useMantineTheme();
-  const [showBoost] = useLocalStorage({ key: 'show-boost-modal', defaultValue: false });
   const { classes, cx } = useStyle();
 
   const generationStatus = useGenerationStatus();
   const { unstableResources } = useUnstableResources();
 
   const { copied, copy } = useClipboard();
-  const currentUser = useCurrentUser();
 
   const status = request.status ?? GenerationRequestStatus.Pending;
   const isDraft = request.sequential ?? false;
@@ -119,7 +103,9 @@ export function QueueItem({ request }: Props) {
   };
 
   const { prompt, ...details } = request.params;
-  const images = request.images?.filter((x) => x.duration);
+  const images = request.images
+    ?.filter((x) => x.duration)
+    .sort((a, b) => b.duration! - a.duration!);
 
   const hasUnstableResources = request.resources.some((x) => unstableResources.includes(x.id));
   const overwriteStatusLabel =
@@ -157,7 +143,8 @@ export function QueueItem({ request }: Props) {
           <div className="flex gap-1 items-center">
             <GenerationStatusBadge
               status={request.status}
-              count={request.images?.filter((x) => x.duration).length ?? 0}
+              complete={request.images?.filter((x) => x.duration).length ?? 0}
+              processing={request.images?.filter((x) => x.status === 'Started').length ?? 0}
               quantity={request.quantity}
               tooltipLabel={overwriteStatusLabel}
               progress
@@ -245,9 +232,10 @@ export function QueueItem({ request }: Props) {
           </Text>
         </ContentClamp>
         <Collection items={request.resources} limit={3} renderItem={ResourceBadge} grouped />
-        {!!images?.length && (
+        {(!!images?.length || pendingProcessing) && (
           <div className={classes.grid}>
-            {images.map((image) => (
+            {pendingProcessing && <GenerationPlaceholder request={request} />}
+            {images?.map((image) => (
               <GeneratedImage key={image.id} image={image} request={request} />
             ))}
           </div>
