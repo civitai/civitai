@@ -40,7 +40,7 @@ export default function Account({ providers }: Props) {
           <ProfileCard />
           <StripeConnectCard />
           <PaymentMethodsCard />
-          {buzz && <UserReferralCodesCard />}
+          {/* {buzz && <UserReferralCodesCard />} */}
           <SocialProfileCard />
           <SettingsCard />
           <ContentControlsCard />

@@ -13,6 +13,7 @@ import {
 import {
   IconArrowRight,
   IconBarbell,
+  IconBarcode,
   IconCoin,
   IconCoins,
   IconHighlight,
@@ -37,16 +38,16 @@ const useStyles = createStyles((theme) => ({
 }));
 
 const getEarnings = (): (FeatureCardProps & { key: string })[] => [
-  {
-    key: 'referrals',
-    icon: <IconUsers size={32} />,
-    title: 'Referrals',
-    description: 'You & your friends can earn more Buzz!',
-    btnProps: {
-      href: '/user/account#referrals',
-      children: 'Invite a friend',
-    },
-  },
+  // {
+  //   key: 'referrals',
+  //   icon: <IconUsers size={32} />,
+  //   title: 'Referrals',
+  //   description: 'You & your friends can earn more Buzz!',
+  //   btnProps: {
+  //     href: '/user/account#referrals',
+  //     children: 'Invite a friend',
+  //   },
+  // },
   {
     key: 'bounties',
     icon: <IconMoneybag size={32} />,
@@ -75,6 +76,18 @@ const getEarnings = (): (FeatureCardProps & { key: string })[] => [
     btnProps: {
       href: '/posts/create',
       children: 'Create post',
+    },
+  },
+  {
+    key: 'redeem',
+    icon: <IconBarcode size={32} />,
+    title: 'Reedem a code',
+    description: 'Purchased a Buzz card? Redeem to get your Buzz!',
+    btnProps: {
+      onClick: () => {
+        dialogStore.trigger({ component: RedeemCodeModal });
+      },
+      children: 'Redeem code',
     },
   },
 ];
