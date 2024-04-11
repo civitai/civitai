@@ -122,7 +122,7 @@ export function ArticleContextMenu({ article, ...props }: Props) {
         />
         {currentUser && (isOwner || isModerator) && (
           <>
-            <AddArtFrameMenuItem data={article} entityType={CosmeticEntity.Article} />
+            {isOwner && <AddArtFrameMenuItem data={article} entityType={CosmeticEntity.Article} />}
             <Menu.Item
               color="red"
               icon={<IconTrash size={14} stroke={1.5} />}

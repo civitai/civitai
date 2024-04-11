@@ -1,4 +1,4 @@
-import { Button, Center, Grid, Loader, Modal, Stack } from '@mantine/core';
+import { Button, Center, Grid, Loader, Modal, Stack, createStyles } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { CosmeticEntity } from '@prisma/client';
 import { z } from 'zod';
@@ -15,11 +15,41 @@ import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageProps } from '~/components/ImageViewer/ImageViewer';
 import { UseQueryModelReturn } from '~/components/Model/model.utils';
 import { Form, InputCosmeticSelect, useForm } from '~/libs/form';
-import { hideMobile, showMobile } from '~/libs/sx-helpers';
 import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 import { BadgeCosmetic } from '~/server/selectors/cosmetic.selector';
 import { ArticleGetAll } from '~/server/services/article.service';
 import { PostsInfiniteModel } from '~/server/services/post.service';
+import { containerQuery } from '~/utils/mantine-css-helpers';
+
+const useStyles = createStyles((theme) => ({
+  preview: {
+    order: 1,
+
+    [containerQuery.largerThan('xs')]: {
+      order: 2,
+    },
+  },
+
+  decorations: {
+    order: 2,
+
+    [theme.fn.largerThan('xs')]: {
+      order: 1,
+    },
+  },
+
+  hideMobile: {
+    [theme.fn.smallerThan('xs')]: {
+      display: 'none',
+    },
+  },
+
+  showMobile: {
+    [theme.fn.largerThan('xs')]: {
+      display: 'none',
+    },
+  },
+}));
 
 const schema = z.object({
   cosmeticId: z.number().nullish(),
@@ -28,6 +58,7 @@ const schema = z.object({
 export function CardDecorationModal({ data, entityType }: Props) {
   const dialog = useDialogContext();
   const form = useForm({ schema, defaultValues: { cosmeticId: data.cosmetic?.id ?? null } });
+  const { classes } = useStyles();
 
   const { data: userCosmetics, isInitialLoading } = useQueryUserCosmetics();
 
@@ -81,7 +112,7 @@ export function CardDecorationModal({ data, entityType }: Props) {
     >
       <Form form={form} onSubmit={handleSubmit}>
         <Grid gutter="xl">
-          <Grid.Col xs={12} md={6} orderMd={1} orderSm={2}>
+          <Grid.Col xs={12} sm={6} className={classes.decorations}>
             {isInitialLoading ? (
               <Center>
                 <Loader />
@@ -92,20 +123,13 @@ export function CardDecorationModal({ data, entityType }: Props) {
                   name="cosmeticId"
                   data={items}
                   shopUrl="/shop/content-decorations"
-                  gridProps={{
-                    breakpoints: [
-                      { cols: 1, maxWidth: 'xs' },
-                      { cols: 2, minWidth: 'sm' },
-                      { cols: 3, minWidth: 'md' },
-                    ],
-                  }}
                 />
                 <Button
                   radius="xl"
                   type="submit"
                   w="80%"
                   mx="auto"
-                  sx={showMobile}
+                  className={classes.showMobile}
                   disabled={isInitialLoading || !isDirty}
                 >
                   Apply
@@ -113,7 +137,7 @@ export function CardDecorationModal({ data, entityType }: Props) {
               </Stack>
             )}
           </Grid.Col>
-          <Grid.Col xs={12} md={6} orderMd={2} orderSm={1}>
+          <Grid.Col xs={12} sm={6} className={classes.preview}>
             <Stack>
               <PreviewCard data={data} decoration={selectedItem} />
               <Button
@@ -121,7 +145,7 @@ export function CardDecorationModal({ data, entityType }: Props) {
                 type="submit"
                 w="80%"
                 mx="auto"
-                sx={hideMobile}
+                className={classes.hideMobile}
                 disabled={isInitialLoading || !isDirty}
                 loading={isLoading}
               >
