@@ -48,8 +48,13 @@ export default function GenerationTabs({
           {currentUser && tabEntries.length > 1 && (
             <SegmentedControl
               className="flex-shrink-0"
-              data={tabEntries.map(([key, { Icon }]) => ({
-                label: <Icon size={16} />,
+              sx={{ overflow: 'visible' }}
+              data={tabEntries.map(([key, { Icon, label }]) => ({
+                label: (
+                  <Tooltip label={label} position="bottom" color="dark" openDelay={200} offset={10}>
+                    <Icon size={16} />
+                  </Tooltip>
+                ),
                 value: key,
               }))}
               onChange={(key) => setView(key as any)}
