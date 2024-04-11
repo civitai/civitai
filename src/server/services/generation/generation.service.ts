@@ -367,7 +367,7 @@ export const getGenerationRequests = async (
   const items = await formatGenerationRequests(requests);
 
   return {
-    items: items.filter((x) => x.images?.length > 0),
+    items: items.filter((x) => !!x.images?.length),
     nextCursor: cursor === 0 ? undefined : cursor ?? undefined,
   };
 };
