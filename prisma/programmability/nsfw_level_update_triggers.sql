@@ -138,7 +138,7 @@ BEGIN
     -- When a collection item is deleted, schedule update of collection nsfw level
     PERFORM create_job_queue_record(OLD."collectionId", 'Collection', 'UpdateNsfwLevel');
   -- On collection item publish, schedule update of collection nsfw level
-  ELSIF (TG_OP = 'UPDATE' AND OLD.status != 'ACCEPTED' AND NEW.status = 'ACCEPTED') THEN
+  ELSIF ((TG_OP = 'UPDATE' AND OLD.status != 'ACCEPTED' AND NEW.status = 'ACCEPTED') OR (NEW."nsfw" != OLD."nsfw" AND NEW.status = 'ACCEPTED')) THEN
     PERFORM create_job_queue_record(OLD."collectionId", 'Collection', 'UpdateNsfwLevel');
   -- When a collection item is added, schedule update of collection nsfw level
   ELSIF (TG_OP = 'INSERT' AND NEW.status = 'ACCEPTED') THEN
