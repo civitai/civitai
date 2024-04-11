@@ -4,7 +4,11 @@ import { useRouter } from 'next/router';
 import { z } from 'zod';
 import { BackButton } from '~/components/BackButton/BackButton';
 import { CosmeticShopItemUpsertForm } from '~/components/CosmeticShop/CosmeticShopItemUpsertForm';
-import { useQueryCosmeticShopItem } from '~/components/CosmeticShop/cosmetic-shop.util';
+import { CosmeticShopSectionUpsertForm } from '~/components/CosmeticShop/CosmeticShopSectionUpsertForm';
+import {
+  useQueryCosmeticShopItem,
+  useQueryCosmeticShopSection,
+} from '~/components/CosmeticShop/cosmetic-shop.util';
 import { dbRead } from '~/server/db/client';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { showSuccessNotification } from '~/utils/notifications';
@@ -27,14 +31,14 @@ export const getServerSideProps = createServerSideProps({
     if (!result.success) return { notFound: true };
 
     const { id } = result.data;
-    const shopItem = await dbRead.cosmeticShopItem.findUnique({
+    const shopSection = await dbRead.cosmeticShopSection.findUnique({
       where: { id },
       select: { id: true },
     });
 
-    if (!shopItem) return { notFound: true };
+    if (!shopSection) return { notFound: true };
 
-    if (ssg) await ssg.cosmeticShop.getShopItemById.prefetch({ id });
+    if (ssg) await ssg.cosmeticShop.getSectionById.prefetch({ id });
 
     return {
       props: {
@@ -44,14 +48,14 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
-export default function ProductEdit({
+export default function SectionEdit({
   id,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const router = useRouter();
-  const { cosmeticShopItem, isLoading } = useQueryCosmeticShopItem({ id });
+  const { cosmeticShopSection, isLoading } = useQueryCosmeticShopSection({ id });
 
   const handleCancel = () => {
-    router.push('/moderator/cosmetic-store/products');
+    router.push('/moderator/cosmetic-store/sections');
   };
 
   const handleSuccess = () => {
@@ -60,10 +64,10 @@ export default function ProductEdit({
       message: 'Product has been updated successfully.',
     });
 
-    router.push('/moderator/cosmetic-store/products');
+    router.push('/moderator/cosmetic-store/sections');
   };
 
-  if (isLoading || !cosmeticShopItem)
+  if (isLoading || !cosmeticShopSection)
     return (
       <Container size="sm">
         <Center>
@@ -76,22 +80,18 @@ export default function ProductEdit({
     <Container size="md">
       <Stack>
         <Group spacing="md" noWrap>
-          <BackButton url="/moderator/cosmetic-store/products" />
-          <Title>Update shop product {cosmeticShopItem.title}</Title>
+          <BackButton url="/moderator/cosmetic-store/sections" />
+          <Title>Update shop section: {cosmeticShopSection.title}</Title>
         </Group>
-        <Text>
-          Note products will only be displayed in a store after you&rsquo;ve added them to at least
-          1 section
-        </Text>
         {isLoading ? (
           <Center>
             <Loader size="xl" />
           </Center>
         ) : (
-          <CosmeticShopItemUpsertForm
+          <CosmeticShopSectionUpsertForm
             onSuccess={handleSuccess}
             onCancel={handleCancel}
-            shopItem={cosmeticShopItem}
+            section={cosmeticShopSection}
           />
         )}
       </Stack>

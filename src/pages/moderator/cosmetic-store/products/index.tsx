@@ -58,10 +58,10 @@ export default function CosmeticStoreProducts() {
 
   return (
     <>
-      <Meta title="Shop Products" deIndex />
+      <Meta title="Cosmetic Shop Products" deIndex />
       <Container size="lg">
         <Stack spacing={0} mb="xl">
-          <Title order={1}>Shop Products</Title>
+          <Title order={1}>Cosmetic Shop Products</Title>
           <Text size="sm" color="dimmed">
             You can add and manage shop products here. A cosmetic must be created before hand for it
             to be created into a shop product.

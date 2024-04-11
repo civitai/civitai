@@ -307,6 +307,11 @@ export const constants = {
       badgeType: 'none',
     },
   },
+  cosmeticShop: {
+    sectionImageAspectRatio: 1 / 4,
+    sectionImageHeight: 400,
+    sectionImageWidth: 1600,
+  },
 } as const;
 export const activeBaseModels = constants.baseModels.filter(
   (model) => !constants.hiddenBaseModels.includes(model)

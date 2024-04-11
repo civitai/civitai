@@ -112,7 +112,6 @@ export type PurchasableRewardGetPaged =
   RouterOutput['purchasableReward']['getPaged']['items'][number];
 
 export type VaultItemGetPaged = RouterOutput['vault']['getItemsPaged']['items'][number];
-
 export type CosmeticGetById = Exclude<RouterOutput['cosmetic']['getById'], null>;
-
 export type CosmeticShopItemGetById = RouterOutput['cosmeticShop']['getShopItemById'];
+export type CosmeticShopSectionGetById = RouterOutput['cosmeticShop']['getSectionById'];

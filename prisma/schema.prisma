@@ -1999,10 +1999,10 @@ model CosmeticShopSection {
   addedBy     User?                     @relation(fields: [addedById], references: [id], onDelete: SetNull)
   title       String
   description String?
-  placement   Int
+  placement   Int                       @default(0)
   meta        Json                      @default("{}")
-  imageId     Int
-  image       Image                     @relation(fields: [imageId], references: [id], onDelete: SetNull)
+  imageId     Int?
+  image       Image?                    @relation(fields: [imageId], references: [id], onDelete: SetNull)
   items       CosmeticShopSectionItem[]
 }
 

@@ -25,3 +25,20 @@ export const useQueryCosmeticsPaged = (
 
   return { cosmetics: [], pagination: null, ...rest };
 };
+
+export const useQueryCosmetic = ({ id }: { id: number }) => {
+  const { data: cosmetic, ...rest } = trpc.cosmetic.getById.useQuery(
+    {
+      id,
+    },
+    {
+      enabled: !!id,
+    }
+  );
+
+  if (cosmetic) {
+    return { cosmetic, ...rest };
+  }
+
+  return { cosmetic: null, ...rest };
+};

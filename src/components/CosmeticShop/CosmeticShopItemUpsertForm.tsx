@@ -34,7 +34,7 @@ import { CosmeticGetById, CosmeticShopItemGetById } from '~/types/router';
 import { showSuccessNotification } from '~/utils/notifications';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { useMutateCosmeticShop } from '~/components/CosmeticShop/cosmetic-shop.util';
-import { useQueryCosmeticsPaged } from '~/components/Cosmetics/cosmetics.util';
+import { useQueryCosmetic, useQueryCosmeticsPaged } from '~/components/Cosmetics/cosmetics.util';
 import { GetPaginatedCosmeticsInput } from '~/server/schema/cosmetic.schema';
 import { useDebouncedValue } from '@mantine/hooks';
 import { upsertCosmeticShopItemInput } from '~/server/schema/cosmetic-shop.schema';
@@ -97,7 +97,7 @@ const CosmeticSearch = ({
   return (
     <Select
       label="Cosmetic"
-      description="Select a cosmetic to make it available in the shop"
+      description="Select a cosmetic to make into a product. Search by name"
       onChange={(cosmeticId: string) => onCosmeticSelected(Number(cosmeticId))}
       onSearchChange={(query) => setFilters({ ...filters, name: query })}
       searchValue={filters.name}
@@ -122,16 +122,9 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
   });
 
   const [title, description, cosmeticId] = form.watch(['title', 'description', 'cosmeticId']);
-  const { data: cosmetic, isLoading: isLoadingCosmetic } = trpc.cosmetic.getById.useQuery(
-    {
-      id: cosmeticId,
-    },
-    {
-      enabled: !!cosmeticId,
-    }
-  );
+  const { cosmetic, isLoading: isLoadingCosmetic } = useQueryCosmetic({ id: cosmeticId });
 
-  const { updateUpsertShopItem, upsertingShopItem } = useMutateCosmeticShop();
+  const { upsertShopItem, upsertingShopItem } = useMutateCosmeticShop();
 
   const handleSubmit = async (data: z.infer<typeof formSchema>) => {
     try {
