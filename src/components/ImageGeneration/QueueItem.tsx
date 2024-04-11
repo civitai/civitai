@@ -78,6 +78,7 @@ export function QueueItem({ request }: Props) {
 
   const deleteImageMutation = useDeleteGenerationRequestImages();
   const deleteMutation = useDeleteGenerationRequest();
+  const cancellingDeleting = deleteImageMutation.isLoading || deleteMutation.isLoading;
 
   const handleDeleteQueueItem = () => {
     openConfirmModal({
@@ -93,7 +94,10 @@ export function QueueItem({ request }: Props) {
   };
 
   const handleCancel = () => {
-    const ids = request.images?.filter((x) => !x.status).map((x) => x.id) ?? [];
+    const ids =
+      request.images
+        ?.filter((x) => (isDraft ? !x.status : !x.status || x.status === 'Started'))
+        .map((x) => x.id) ?? [];
     if (ids.length) {
       deleteImageMutation.mutate({
         ids,
@@ -188,7 +192,7 @@ export function QueueItem({ request }: Props) {
               <ActionIcon
                 size="md"
                 onClick={pendingProcessing ? handleCancel : handleDeleteQueueItem}
-                disabled={deleteMutation.isLoading}
+                disabled={cancellingDeleting}
                 color="red"
               >
                 {pendingProcessing ? <IconX size={20} /> : <IconTrash size={20} />}
