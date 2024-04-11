@@ -39,42 +39,42 @@ export default WebhookEndpoint(async (req, res) => {
     type: MigrationType;
     fn: (req: NextApiRequest, res: NextApiResponse) => Promise<void>;
   }> = [
-    {
-      type: 'users',
-      fn: migrateUsers,
-    },
     // {
-    //   type: 'images',
-    //   fn: migrateImages,
+    //   type: 'users',
+    //   fn: migrateUsers,
     // },
     {
-      type: 'posts',
-      fn: migratePosts,
+      type: 'images',
+      fn: migrateImages,
     },
-    {
-      type: 'articles',
-      fn: migrateArticles,
-    },
-    {
-      type: 'bounties',
-      fn: migrateBounties,
-    },
-    {
-      type: 'bountyEntries',
-      fn: migrateBountyEntries,
-    },
-    {
-      type: 'modelVersions',
-      fn: migrateModelVersions,
-    },
-    {
-      type: 'models',
-      fn: migrateModels,
-    },
-    {
-      type: 'collections',
-      fn: migrateCollections,
-    },
+    // {
+    //   type: 'posts',
+    //   fn: migratePosts,
+    // },
+    // {
+    //   type: 'articles',
+    //   fn: migrateArticles,
+    // },
+    // {
+    //   type: 'bounties',
+    //   fn: migrateBounties,
+    // },
+    // {
+    //   type: 'bountyEntries',
+    //   fn: migrateBountyEntries,
+    // },
+    // {
+    //   type: 'modelVersions',
+    //   fn: migrateModelVersions,
+    // },
+    // {
+    //   type: 'models',
+    //   fn: migrateModels,
+    // },
+    // {
+    //   type: 'collections',
+    //   fn: migrateCollections,
+    // },
   ];
 
   const migrations = params.type
@@ -125,7 +125,7 @@ async function migrateImages(req: NextApiRequest, res: NextApiResponse) {
           WHERE toi."imageId" = i.id
             AND NOT toi.disabled
         )
-        WHERE i.id BETWEEN ${start} AND ${end} AND i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus";
+        WHERE i.id BETWEEN ${start} AND ${end} AND i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus" AND NOT i."nsfwLevelLocked";
       `);
       cancelFns.push(cancel);
       await result();

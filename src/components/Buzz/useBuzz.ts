@@ -36,7 +36,7 @@ export const useBuzzSignalUpdate = () => {
     (updated: BuzzUpdateSignalSchema) => {
       if (!session?.user) return;
 
-      return queryUtils.buzz.getBuzzAccount.setData(
+      queryUtils.buzz.getBuzzAccount.setData(
         {
           accountId: session.user.id as number,
           accountType: 'User',

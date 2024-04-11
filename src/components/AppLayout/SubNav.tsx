@@ -41,7 +41,7 @@ export function SubNav() {
   const { classes } = useStyles();
   const router = useRouter();
 
-  const currentScroll = useRef(0);
+  const currentScrollRef = useRef(0);
   const subNavRef = useRef<HTMLDivElement>(null);
 
   const currentPath = router.pathname.replace('/', '') || 'home';
@@ -52,11 +52,11 @@ export function SubNav() {
       if (!node?.current) return;
 
       const scroll = node.current.scrollTop;
-      if (currentScroll.current > 0 && scroll > currentScroll.current)
+      if (currentScrollRef.current > 0 && scroll > currentScrollRef.current)
         subNavRef?.current?.style?.setProperty('transform', 'translateY(-200%)');
       else subNavRef?.current?.style?.setProperty('transform', 'translateY(0)');
 
-      currentScroll.current = scroll;
+      currentScrollRef.current = scroll;
     },
   });
 

@@ -1,4 +1,4 @@
-import { CloseButton, Drawer, Group, Box } from '@mantine/core';
+import { Drawer } from '@mantine/core';
 import { useDidUpdate } from '@mantine/hooks';
 import { useRouter } from 'next/router';
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
@@ -24,25 +24,9 @@ export function GenerationDrawer() {
       position="left"
       withOverlay={false}
       withCloseButton={false}
-      styles={isGeneratePage ? { drawer: { top: `var(--mantine-header-height)` } } : undefined}
       transitionDuration={isGeneratePage ? 0 : 300}
     >
-      <Box
-        sx={(theme) => ({
-          borderBottom: `1px solid ${
-            theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
-          }`,
-        })}
-      >
-        <Group position="right" p="xs" spacing="xs">
-          <GeneratedImageActions />
-          <CloseButton
-            size="lg"
-            onClick={!isGeneratePage ? dialog.onClose : () => history.go(-1)}
-          />
-        </Group>
-      </Box>
-      <GenerationTabs />
+      <GenerationTabs alwaysShowMaximize={false} />
     </Drawer>
   );
 }

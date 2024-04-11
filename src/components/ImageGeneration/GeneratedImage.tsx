@@ -37,7 +37,6 @@ import { GeneratedImageLightbox } from '~/components/ImageGeneration/GeneratedIm
 import { generationImageSelect } from '~/components/ImageGeneration/utils/generationImage.select';
 import { useDeleteGenerationRequestImages } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useInView } from '~/hooks/useInView';
 import { constants } from '~/server/common/constants';
 import { Generation } from '~/server/services/generation/generation.types';
@@ -55,7 +54,6 @@ export function GeneratedImage({
   request: Generation.Request;
 }) {
   const { classes } = useStyles();
-  const user = useCurrentUser();
   const { ref, inView } = useInView({ rootMargin: '600px' });
   const selected = generationImageSelect.useIsSelected(image.id);
   const toggleSelect = (checked?: boolean) => generationImageSelect.toggle(image.id, checked);
@@ -132,6 +130,8 @@ export function GeneratedImage({
   const badFeedbackSelected = selectedFeedback === GENERATION_QUALITY.BAD;
   const goodFeedbackSelected = selectedFeedback === GENERATION_QUALITY.GOOD;
 
+  if (!image.available) return <></>;
+
   return (
     <AspectRatio ratio={request.params.width / request.params.height} ref={ref}>
       {inView && (
@@ -168,6 +168,7 @@ export function GeneratedImage({
                   height: '100%',
                   boxShadow: 'inset 0px 0px 2px 1px rgba(255,255,255,0.2)',
                   borderRadius: theme.radius.sm,
+                  pointerEvents: 'none',
                 })}
               />
               {!image.available ? (
@@ -291,15 +292,15 @@ export function GeneratedImage({
               <Menu.Dropdown>
                 <Menu.Item
                   onClick={handleGenerate}
-                  icon={<IconPlayerPlayFilled size={14} stroke={1.5} />}
+                  icon={<IconArrowsShuffle size={14} stroke={1.5} />}
                 >
-                  Generate
+                  Remix
                 </Menu.Item>
                 <Menu.Item
                   onClick={handleGenerateWithSeed}
                   icon={<IconPlayerTrackNextFilled size={14} stroke={1.5} />}
                 >
-                  Generate (with seed)
+                  Remix (with seed)
                 </Menu.Item>
                 <Menu.Item
                   color="red"
