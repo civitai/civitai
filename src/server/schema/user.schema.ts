@@ -83,6 +83,7 @@ export const userUpdateSchema = z.object({
   profilePicture: profilePictureSchema.nullish(),
   badgeId: z.number().nullish(),
   nameplateId: z.number().nullish(),
+  profileDecorationId: z.number().nullish(),
   autoplayGifs: z.boolean().optional(),
   filePreferences: z
     .object({

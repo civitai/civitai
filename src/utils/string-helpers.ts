@@ -56,6 +56,8 @@ const nameOverrides: Record<string, string> = {
 
 export function getDisplayName(value: string, options?: { splitNumbers?: boolean }) {
   const { splitNumbers = true } = options ?? {};
+  if (!value) return '';
+
   return nameOverrides[value] ?? splitUppercase(value, { splitNumbers });
 }
 

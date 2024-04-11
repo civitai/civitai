@@ -54,7 +54,7 @@ async function deliverSeasonCosmetics() {
       LEFT JOIN "LeaderboardResult" lr ON lr."userId" = uc."userId"
         AND lr."leaderboardId" = c."leaderboardId"
         AND lr.date = current_date
-      WHERE uc."equippedAt" IS NOT NULL
+      WHERE uc."equippedAt" IS NOT NULL AND uc."equippedToId" IS NULL
         AND lr.position > c."leaderboardPosition"
     ), next_best AS (
       SELECT

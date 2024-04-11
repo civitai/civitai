@@ -310,6 +310,7 @@ export const updateUserHandler = async ({
     id,
     badgeId,
     nameplateId,
+    profileDecorationId,
     showNsfw,
     username,
     source,
@@ -327,8 +328,6 @@ export const updateUserHandler = async ({
     if (!valid) throw throwBadRequestError('Invalid avatar URL');
   }
 
-  const isSettingCosmetics = badgeId !== undefined && nameplateId !== undefined;
-
   try {
     const user = await getUserById({ id, select: { profilePictureId: true } });
     if (!user) throw throwNotFoundError(`No user with id ${id}`);
@@ -341,6 +340,12 @@ export const updateUserHandler = async ({
     if (nameplateId) payloadCosmeticIds.push(nameplateId);
     else if (nameplateId === null)
       await unequipCosmeticByType({ userId: id, type: CosmeticType.NamePlate });
+
+    if (profileDecorationId) payloadCosmeticIds.push(profileDecorationId);
+    else if (profileDecorationId === null)
+      await unequipCosmeticByType({ userId: id, type: CosmeticType.ProfileDecoration });
+
+    const isSettingCosmetics = payloadCosmeticIds.length > 0;
 
     const updatedUser = await updateUserById({
       id,
@@ -367,8 +372,6 @@ export const updateUserHandler = async ({
           : undefined,
       },
     });
-
-    await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
 
     // Delete old profilePic and ingest new one
     if (user.profilePictureId && profilePicture && user.profilePictureId !== profilePicture.id) {
@@ -404,6 +407,8 @@ export const updateUserHandler = async ({
         ip: ctx.ip,
       });
     }
+
+    await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
 
     return updatedUser;
   } catch (error) {
@@ -986,16 +991,27 @@ export const getUserCosmeticsHandler = async ({
     if (!user) throw throwNotFoundError(`No user with id ${userId}`);
 
     const cosmetics = user.cosmetics.reduce(
-      (acc, { obtainedAt, cosmetic }) => {
+      (acc, { obtainedAt, equippedToId, cosmetic }) => {
         const { type, data, ...rest } = cosmetic;
+        const sharedData = { ...rest, obtainedAt, inUse: !!equippedToId };
+
         if (type === CosmeticType.Badge)
-          acc.badges.push({ ...rest, data: data as BadgeCosmetic['data'], obtainedAt });
+          acc.badges.push({ ...sharedData, data: data as BadgeCosmetic['data'] });
         else if (type === CosmeticType.NamePlate)
-          acc.nameplates.push({ ...rest, data: data as NamePlateCosmetic['data'], obtainedAt });
+          acc.nameplates.push({ ...sharedData, data: data as NamePlateCosmetic['data'] });
+        else if (type === CosmeticType.ProfileDecoration)
+          acc.profileDecorations.push({ ...sharedData, data: data as BadgeCosmetic['data'] });
+        else if (type === CosmeticType.ContentDecoration)
+          acc.contentDecorations.push({ ...sharedData, data: data as BadgeCosmetic['data'] });
 
         return acc;
       },
-      { badges: [] as BadgeCosmetic[], nameplates: [] as NamePlateCosmetic[] }
+      {
+        badges: [] as BadgeCosmetic[],
+        nameplates: [] as NamePlateCosmetic[],
+        profileDecorations: [] as BadgeCosmetic[],
+        contentDecorations: [] as BadgeCosmetic[],
+      }
     );
 
     return cosmetics;

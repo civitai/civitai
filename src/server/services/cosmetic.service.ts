@@ -1,8 +1,8 @@
 import { Prisma } from '@prisma/client';
 import dayjs from 'dayjs';
-import { dbRead } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
-import { GetPaginatedCosmeticsInput } from '~/server/schema/cosmetic.schema';
+import { EquipCosmeticInput, GetPaginatedCosmeticsInput } from '~/server/schema/cosmetic.schema';
 import { simpleCosmeticSelect } from '~/server/selectors/cosmetic.selector';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 
@@ -52,3 +52,34 @@ export const getPaginatedCosmetics = async (input: GetPaginatedCosmeticsInput) =
 
   return getPagingData({ items, count: (count as number) ?? 0 }, limit, page);
 };
+
+export async function equipCosmeticToEntity({
+  cosmeticId,
+  equippedToType,
+  equippedToId,
+  userId,
+}: EquipCosmeticInput & { userId: number }) {
+  const userCosmetics = await dbWrite.userCosmetic.findMany({
+    where: { userId, cosmeticId },
+    select: { obtainedAt: true, equippedToId: true, cosmetic: { select: { type: true } } },
+  });
+  if (!userCosmetics.length) throw new Error("You don't have that cosmetic");
+
+  const updated = await dbWrite.userCosmetic.updateMany({
+    where: { userId, cosmeticId },
+    data: { equippedToId, equippedToType, equippedAt: new Date() },
+  });
+
+  return updated;
+}
+
+export async function unequipCosmetic({
+  cosmeticId,
+  equippedToId,
+  userId,
+}: EquipCosmeticInput & { userId: number }) {
+  return dbWrite.userCosmetic.updateMany({
+    where: { cosmeticId, equippedToId, userId },
+    data: { equippedToId: null, equippedToType: null, equippedAt: null },
+  });
+}
