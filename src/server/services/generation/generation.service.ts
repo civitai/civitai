@@ -366,7 +366,10 @@ export const getGenerationRequests = async (
 
   const items = await formatGenerationRequests(requests);
 
-  return { items, nextCursor: cursor === 0 ? undefined : cursor ?? undefined };
+  return {
+    items: items.filter((x) => x.images?.length > 0),
+    nextCursor: cursor === 0 ? undefined : cursor ?? undefined,
+  };
 };
 
 const samplersToSchedulers: Record<Sampler, string> = {

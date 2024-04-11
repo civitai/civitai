@@ -72,8 +72,8 @@ export function QueueItem({ request }: Props) {
   const status = request.status ?? GenerationRequestStatus.Pending;
   const isDraft = request.sequential ?? false;
   const pendingProcessing = isDraft
-    ? status === GenerationRequestStatus.Pending
-    : status === GenerationRequestStatus.Pending || status === GenerationRequestStatus.Processing;
+    ? request.images?.every((x) => !x.status)
+    : request.images?.every((x) => !x.status || x.status === 'Started');
   const failed = status === GenerationRequestStatus.Error;
 
   const deleteImageMutation = useDeleteGenerationRequestImages();

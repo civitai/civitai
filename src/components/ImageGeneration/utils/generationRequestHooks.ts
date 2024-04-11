@@ -111,6 +111,8 @@ export const useDeleteGenerationRequestImages = (
               const index = item.images?.findIndex((x) => x.id === id) ?? -1;
               if (index > -1) item.images?.splice(index, 1);
             }
+            if (item.images?.every((x) => x.available))
+              item.status = GenerationRequestStatus.Succeeded;
           }
           // if there are requests without images, remove the requests
           page.items = page.items.filter((x) => {
