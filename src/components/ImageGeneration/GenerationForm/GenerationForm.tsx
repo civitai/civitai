@@ -172,7 +172,11 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
     const { data, type } = createData;
     const formData = getFormData(type, data);
     useGenerationStore.setState({ data: undefined });
-    form.reset(formData);
+    // form.reset(formData);
+    for (const key in formData) {
+      const _key = key as keyof typeof formData;
+      form.setValue(_key as any, formData[_key]);
+    }
   }, [createData]); // eslint-disable-line
 
   // #region [mutations]

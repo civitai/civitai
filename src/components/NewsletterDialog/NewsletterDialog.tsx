@@ -1,4 +1,5 @@
 import { Button, Dialog, Group, Image, Stack, Text, createStyles } from '@mantine/core';
+import { useLocalStorage } from '@mantine/hooks';
 import { useEffect, useState } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Form, InputText, useForm } from '~/libs/form';
@@ -8,6 +9,7 @@ import {
 } from '~/server/schema/newsletter.schema';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { increaseDate } from '~//utils/date-helpers';
 
 const REFETCH_TIMEOUT = 30000; // 30 seconds
 
@@ -43,6 +45,10 @@ export function NewsletterDialog() {
   const { classes } = useStyles();
 
   const [opened, setOpened] = useState(true);
+  const [postponedUntil, setPostponedUntil] = useLocalStorage<string | null>({
+    key: 'newsletterDialogPostponedUntil',
+    defaultValue: null,
+  });
 
   const form = useForm({
     schema: updateSubscriptionSchema,
@@ -75,7 +81,9 @@ export function NewsletterDialog() {
   const postponeNewsletterDialogMutation = trpc.newsletter.postpone.useMutation();
   const handleClose = () => {
     if (currentUser) postponeNewsletterDialogMutation.mutate();
-    return setOpened(false);
+    setPostponedUntil(increaseDate(new Date(), 7, 'days').toISOString());
+    setOpened(false);
+    return;
   };
 
   useEffect(() => {
@@ -83,6 +91,8 @@ export function NewsletterDialog() {
     // We just want to run this once
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const postponedExpired = !postponedUntil || new Date(postponedUntil) <= new Date();
 
   return (
     <Dialog
@@ -92,9 +102,7 @@ export function NewsletterDialog() {
       p={0}
       classNames={{ root: classes.dialogRoot }}
       position={{ bottom: 10, right: 10 }}
-      opened={
-        opened && !(isLoading || subscription?.subscribed) && !!subscription?.showNewsletterDialog
-      }
+      opened={opened && !isLoading && !!subscription?.showNewsletterDialog && postponedExpired}
       onClose={handleClose}
       withCloseButton
     >
