@@ -1,4 +1,4 @@
-import { ActionIcon, Card, Group, Stack } from '@mantine/core';
+import { ActionIcon, BackgroundImage, Card, Group, Stack } from '@mantine/core';
 import { ChatUserButton } from '~/components/Chat/ChatUserButton';
 
 import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
@@ -12,6 +12,8 @@ import { sortDomainLinks } from '~/utils/domain-link';
 import { trpc } from '~/utils/trpc';
 import { TipBuzzButton } from '../Buzz/TipBuzzButton';
 import { UserStatBadges } from '../UserStatBadges/UserStatBadges';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { ProfileBackgroundCosmetic } from '~/server/selectors/cosmetic.selector';
 
 export function CreatorCard({
   user,
@@ -42,45 +44,102 @@ export function CreatorCard({
 
   if (!creator || user.id === -1) return null;
 
+  const backgroundImage = creator.cosmetics.find(({ cosmetic }) =>
+    cosmetic ? cosmetic.type === 'ProfileBackground' : undefined
+  )?.cosmetic as Omit<ProfileBackgroundCosmetic, 'description' | 'obtainedAt'>;
+
+  const hasBackgroundImage = backgroundImage && backgroundImage.data.url;
+
   return (
     <Card p="xs" withBorder>
-      <Card.Section py="xs" inheritPadding>
-        <Stack spacing="xs">
-          <Group align="center" position="apart" noWrap>
-            <UserAvatar
-              size="sm"
-              avatarProps={{ size: 32 }}
-              user={creator}
-              subText={creator.createdAt ? `Joined ${formatDate(creator.createdAt)}` : undefined}
-              withUsername
-              linkToProfile
-            />
-            {withActions && (
-              <Group spacing={8} noWrap>
-                <TipBuzzButton
-                  toUserId={creator.id}
-                  size="xs"
-                  compact
-                  entityId={tipBuzzEntityId}
-                  entityType={tipBuzzEntityType}
-                />
-                <ChatUserButton user={creator} size="xs" compact />
-                <FollowUserButton userId={creator.id} size="xs" compact />
-              </Group>
-            )}
-          </Group>
-          <Group spacing={8}>
-            <RankBadge size="md" rank={creator.rank} />
-            {stats && (
-              <UserStatBadges
-                uploads={uploads}
-                followers={stats.followerCountAllTime}
-                favorites={stats.thumbsUpCountAllTime}
-                downloads={stats.downloadCountAllTime}
+      <Card.Section>
+        <BackgroundImage
+          sx={{
+            backgroundRepeat: 'no-repeat',
+            backgroundPosition: 'right',
+            backgroundSize: 'cover',
+          }}
+          src={
+            backgroundImage && backgroundImage.data.url
+              ? getEdgeUrl(backgroundImage.data.url, {
+                  width: 'original',
+                  transcode: false,
+                })
+              : ''
+          }
+        >
+          <Stack spacing="xs" p="xs">
+            <Group align="center" position="apart">
+              <UserAvatar
+                size="sm"
+                avatarProps={{ size: 32 }}
+                user={creator}
+                subText={creator.createdAt ? `Joined ${formatDate(creator.createdAt)}` : undefined}
+                withUsername
+                linkToProfile
               />
-            )}
-          </Group>
-        </Stack>
+              {withActions && (
+                <Group spacing={8} noWrap>
+                  <TipBuzzButton
+                    toUserId={creator.id}
+                    size="xs"
+                    entityId={tipBuzzEntityId}
+                    entityType={tipBuzzEntityType}
+                    styles={
+                      hasBackgroundImage
+                        ? (theme) => ({
+                            root: {
+                              backgroundColor: theme.fn.rgba('#000', 0.31),
+                            },
+                          })
+                        : undefined
+                    }
+                    compact
+                  />
+                  <ChatUserButton
+                    user={creator}
+                    size="xs"
+                    styles={
+                      hasBackgroundImage
+                        ? (theme) => ({
+                            root: {
+                              backgroundColor: theme.fn.rgba('#000', 0.31),
+                            },
+                          })
+                        : undefined
+                    }
+                    compact
+                  />
+                  <FollowUserButton
+                    userId={creator.id}
+                    size="xs"
+                    styles={
+                      hasBackgroundImage
+                        ? (theme) => ({
+                            root: {
+                              backgroundColor: theme.fn.rgba('#000', 0.31),
+                            },
+                          })
+                        : undefined
+                    }
+                    compact
+                  />
+                </Group>
+              )}
+            </Group>
+            <Group spacing={8}>
+              <RankBadge size="md" rank={creator.rank} />
+              {stats && (
+                <UserStatBadges
+                  uploads={uploads}
+                  followers={stats.followerCountAllTime}
+                  favorites={stats.thumbsUpCountAllTime}
+                  downloads={stats.downloadCountAllTime}
+                />
+              )}
+            </Group>
+          </Stack>
+        </BackgroundImage>
       </Card.Section>
       {creator.links && creator.links.length > 0 ? (
         <Card.Section

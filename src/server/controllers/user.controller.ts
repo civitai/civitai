@@ -311,6 +311,7 @@ export const updateUserHandler = async ({
     badgeId,
     nameplateId,
     profileDecorationId,
+    profileBackgroundId,
     showNsfw,
     username,
     source,
@@ -344,6 +345,10 @@ export const updateUserHandler = async ({
     if (profileDecorationId) payloadCosmeticIds.push(profileDecorationId);
     else if (profileDecorationId === null)
       await unequipCosmeticByType({ userId: id, type: CosmeticType.ProfileDecoration });
+
+    if (profileBackgroundId) payloadCosmeticIds.push(profileBackgroundId);
+    else if (profileBackgroundId === null)
+      await unequipCosmeticByType({ userId: id, type: CosmeticType.ProfileBackground });
 
     const isSettingCosmetics = payloadCosmeticIds.length > 0;
 
@@ -1003,6 +1008,8 @@ export const getUserCosmeticsHandler = async ({
           acc.profileDecorations.push({ ...sharedData, data: data as BadgeCosmetic['data'] });
         else if (type === CosmeticType.ContentDecoration)
           acc.contentDecorations.push({ ...sharedData, data: data as BadgeCosmetic['data'] });
+        else if (type === CosmeticType.ProfileBackground)
+          acc.profileBackground.push({ ...sharedData, data: data as BadgeCosmetic['data'] });
 
         return acc;
       },
@@ -1010,6 +1017,7 @@ export const getUserCosmeticsHandler = async ({
         badges: [] as BadgeCosmetic[],
         nameplates: [] as NamePlateCosmetic[],
         profileDecorations: [] as BadgeCosmetic[],
+        profileBackground: [] as BadgeCosmetic[],
         contentDecorations: [] as BadgeCosmetic[],
       }
     );

@@ -20,10 +20,10 @@ export function UserStatBadges({
     <Group spacing={8} position="apart">
       <Badge
         size="lg"
-        color="gray"
         radius="xl"
         px={8}
-        variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+        sx={{ backgroundColor: theme.fn.rgba('#000', 0.31) }}
+        variant={theme.colorScheme === 'dark' ? 'light' : 'light'}
       >
         <Group spacing="xs" noWrap>
           {uploads != null ? (

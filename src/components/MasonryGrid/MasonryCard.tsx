@@ -2,6 +2,7 @@ import { Card, CardProps, createPolymorphicComponent, useMantineTheme } from '@m
 import { forwardRef } from 'react';
 import { BadgeCosmetic } from '~/server/selectors/cosmetic.selector';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 
 type MasonryCardProps = CardProps & {
   height?: number;
@@ -46,7 +47,7 @@ const _MasonryCard = forwardRef<HTMLDivElement, MasonryCardProps>(
               zIndex: 20,
               pointerEvents: 'none',
             }}
-            width="original"
+            width={frameDecoration.data.animated ? 'original' : DEFAULT_EDGE_IMAGE_WIDTH}
           />
         )}
       </div>

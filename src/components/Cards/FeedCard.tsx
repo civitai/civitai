@@ -3,6 +3,7 @@ import Link from 'next/link';
 import React, { forwardRef } from 'react';
 import { BadgeCosmetic } from '~/server/selectors/cosmetic.selector';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 
 type AspectRatio = 'portrait' | 'landscape' | 'square' | 'flat';
 const aspectRatioValues: Record<
@@ -101,7 +102,7 @@ export const FeedCard = forwardRef<HTMLAnchorElement, Props>(
               zIndex: 20,
               pointerEvents: 'none',
             }}
-            width="original"
+            width={frameDecoration.data.animated ? 'original' : DEFAULT_EDGE_IMAGE_WIDTH}
           />
         ) : null}
       </div>
