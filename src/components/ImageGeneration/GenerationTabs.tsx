@@ -38,7 +38,7 @@ export default function GenerationTabs({
 
   const View = isGeneratePage ? tabs.generate.Component : tabs[view].Component;
   const tabEntries = Object.entries(tabs).filter(([key]) =>
-    tabsToInclude ? tabsToInclude.includes(key as any) : true
+    isGeneratePage ? key !== 'generate' : true
   );
 
   useEffect(() => {
