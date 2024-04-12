@@ -10,6 +10,7 @@ import { useRouter } from 'next/router';
 import { IconClockHour9 } from '@tabler/icons-react';
 import { GeneratedImageActions } from '~/components/ImageGeneration/GeneratedImageActions';
 import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvider';
+import { useIsMobile } from '~/hooks/useIsMobile';
 
 export default function GenerationTabs({
   tabs: tabsToInclude,
@@ -20,7 +21,8 @@ export default function GenerationTabs({
 }) {
   const router = useRouter();
   const currentUser = useCurrentUser();
-  const isGeneratePage = router.pathname.startsWith('/generate');
+  const isMobile = useIsMobile();
+  const isGeneratePage = !isMobile && router.pathname.startsWith('/generate');
 
   const view = useGenerationStore((state) => state.view);
   const setView = useGenerationStore((state) => state.setView);
