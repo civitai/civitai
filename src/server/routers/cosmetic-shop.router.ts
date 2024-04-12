@@ -13,11 +13,12 @@ import {
   getSectionById,
   getShopItemById,
   getShopSections,
+  getShopSectionsWithItems,
   reorderCosmeticShopSections,
   upsertCosmeticShopItem,
   upsertCosmeticShopSection,
 } from '~/server/services/cosmetic-shop.service';
-import { moderatorProcedure, protectedProcedure, router } from '~/server/trpc';
+import { moderatorProcedure, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 
 export const cosmeticShopRouter = router({
   // #region [Shop Items]
@@ -64,5 +65,10 @@ export const cosmeticShopRouter = router({
     .mutation(({ input }) => {
       return reorderCosmeticShopSections(input);
     }),
+  // #endregion
+  // #region [Public facing routes]
+  getShop: publicProcedure.query(() => {
+    return getShopSectionsWithItems();
+  }),
   // #endregion
 });

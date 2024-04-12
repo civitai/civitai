@@ -35,16 +35,28 @@ import { CosmeticGetById } from '~/types/router';
 
 import { trpc } from '~/utils/trpc';
 
+const cosmeticSampleSizeMap: Record<
+  'sm' | 'md' | 'lg',
+  { badgeSize: number; textSize: string; avatarSize: string }
+> = {
+  sm: { badgeSize: 50, textSize: 'sm', avatarSize: 'md' },
+  md: { badgeSize: 100, textSize: 'md', avatarSize: 'lg' },
+  lg: { badgeSize: 150, textSize: 'lg', avatarSize: 'lg' },
+};
+
 export const CosmeticSample = ({
   cosmetic,
+  size = 'sm',
 }: {
   cosmetic: Pick<CosmeticGetById, 'id' | 'data' | 'type' | 'name' | 'source'>;
+  size?: 'sm' | 'md' | 'lg';
 }) => {
   const currentUser = useCurrentUser();
   const { data: user } = trpc.user.getById.useQuery(
     { id: currentUser?.id ?? 0 },
     { enabled: !!currentUser }
   );
+  const values = cosmeticSampleSizeMap[size];
 
   if (!user) {
     return <Loader />;
@@ -53,7 +65,7 @@ export const CosmeticSample = ({
   switch (cosmetic.type) {
     case CosmeticType.Badge:
       return (
-        <Box w={50}>
+        <Box w={values.badgeSize}>
           <EdgeMedia
             src={(cosmetic.data as { url: string })?.url}
             alt={cosmetic.name}
@@ -64,7 +76,7 @@ export const CosmeticSample = ({
     case CosmeticType.NamePlate:
       const data = cosmetic.data as NamePlateCosmetic['data'];
       return (
-        <Text weight="bold" {...data}>
+        <Text weight="bold" {...data} size={values.textSize}>
           {user.username ?? 'Username'}
         </Text>
       );
@@ -76,7 +88,7 @@ export const CosmeticSample = ({
             ...user,
             cosmetics: [{ data: {}, cosmetic }],
           }}
-          size="md"
+          size={values.avatarSize}
         />
       );
     case CosmeticType.ContentDecoration:

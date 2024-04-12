@@ -192,3 +192,13 @@ export const useMutateCosmeticShop = () => {
     deletingShopItem: deleteShopItemMutation.isLoading,
   };
 };
+
+export const useQueryShop = () => {
+  const { data = [], ...rest } = trpc.cosmeticShop.getShop.useQuery();
+
+  if (data) {
+    return { cosmeticShopSections: data, ...rest };
+  }
+
+  return { cosmeticShopSections: [], ...rest };
+};

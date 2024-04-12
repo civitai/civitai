@@ -290,3 +290,54 @@ export const reorderCosmeticShopSections = async ({
 
   return true;
 };
+
+export const getShopSectionsWithItems = async () => {
+  const sections = await dbRead.cosmeticShopSection.findMany({
+    select: {
+      id: true,
+      title: true,
+      description: true,
+      placement: true,
+      image: {
+        select: imageSelect,
+      },
+      _count: {
+        select: {
+          items: true,
+        },
+      },
+      items: {
+        select: {
+          shopItem: {
+            select: cosmeticShopItemSelect,
+          },
+        },
+        where: {
+          shopItem: {
+            archivedAt: null,
+          },
+        },
+        take: 8,
+      },
+    },
+    where: {
+      items: {
+        some: {},
+      },
+    },
+    orderBy: {
+      placement: 'asc',
+    },
+  });
+
+  return sections.map((section) => ({
+    ...section,
+    image: !!section.image
+      ? {
+          ...section.image,
+          meta: section.image.meta as ImageMetaProps,
+          metadata: section.image.metadata as MixedObject,
+        }
+      : section.image,
+  }));
+};
