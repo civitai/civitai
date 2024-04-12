@@ -211,7 +211,7 @@ export function createBuzzEvent<T>({
   };
 
   const process = async (ctx: ProcessingContext) => {
-    if (!isProcessable) return;
+    if (!isProcessable || !clickhouse) return;
     await buzzEvent.preprocess?.(ctx);
     const targeted = ctx.toProcess.filter((event) => event.status !== 'unqualified');
 
@@ -227,25 +227,21 @@ export function createBuzzEvent<T>({
         }
 
         const idTuples = [...ids].map((id) => `(${id})`).join(', ');
-        const res = await clickhouse?.query({
-          query: `
-            SELECT ${keyParts.join(', ')}, SUM(awardAmount) AS total
-            FROM buzzEvents
-            WHERE type IN (${types.map((x) => `'${x}'`).join(', ')})
-              AND status = 'awarded'
-              ${
-                !interval
-                  ? ''
-                  : interval === 'day'
-                  ? 'AND time > today()'
-                  : `AND time > now() - INTERVAL '1 ${interval}'`
-              }
-              AND (${keyParts.join(', ')}) IN (${idTuples})
-            GROUP BY ${keyParts.join(', ')}
-          `,
-          format: 'JSONEachRow',
-        });
-        const data = (await res?.json<CapResult[]>()) ?? [];
+        const data = await clickhouse.$query<CapResult>`
+          SELECT ${keyParts.join(', ')}, SUM(awardAmount) AS total
+          FROM buzzEvents
+          WHERE type IN (${types.map((x) => `'${x}'`).join(', ')})
+            AND status = 'awarded'
+            ${
+              !interval
+                ? ''
+                : interval === 'day'
+                ? 'AND time > today()'
+                : `AND time > now() - INTERVAL '1 ${interval}'`
+            }
+            AND (${keyParts.join(', ')}) IN (${idTuples})
+          GROUP BY ${keyParts.join(', ')}
+        `;
         for (const row of data) {
           const key = computeCapKey({ keyParts, interval, data: row });
           prevAwards[key] = row.total;
@@ -328,20 +324,30 @@ export function createBuzzEvent<T>({
 //  hypothesis is that this occurs due to a combination of
 //  async inserts + ch's merge strategy
 async function addBuzzEvent(event: BuzzEventLog) {
-  return await clickhouse?.insert({
-    table: 'buzzEvents',
-    values: [event],
-    format: 'JSONEachRow',
-  });
+  withRetries(
+    async () =>
+      await clickhouse?.insert({
+        table: 'buzzEvents',
+        values: [event],
+        format: 'JSONEachRow',
+      }),
+    5,
+    500
+  );
 }
 
 async function updateBuzzEvents(events: BuzzEventLog[]) {
   for (const event of events) event.version = (event.version ?? 0) + 1;
-  return await clickhouse?.insert({
-    table: 'buzzEvents',
-    values: events,
-    format: 'JSONEachRow',
-  });
+  withRetries(
+    async () =>
+      await clickhouse?.insert({
+        table: 'buzzEvents',
+        values: events,
+        format: 'JSONEachRow',
+      }),
+    5,
+    500
+  );
 }
 
 type CapResult = { [k: string]: number; total: number };
