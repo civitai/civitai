@@ -31,21 +31,22 @@ export default function GenerationTabs({
   const router = useRouter();
   const currentUser = useCurrentUser();
 
-  const isGeneratePage = !isDrawer && router.pathname.startsWith('/generate');
+  const isGeneratePage = router.pathname.startsWith('/generate');
+  const isImageFeedSeparate = isGeneratePage && !isDrawer;
 
   const view = useGenerationStore((state) => state.view);
   const setView = useGenerationStore((state) => state.setView);
 
-  const View = isGeneratePage ? tabs.generate.Component : tabs[view].Component;
+  const View = isImageFeedSeparate ? tabs.generate.Component : tabs[view].Component;
   const tabEntries = Object.entries(tabs).filter(([key]) =>
-    isGeneratePage ? key !== 'generate' : true
+    isImageFeedSeparate ? key !== 'generate' : true
   );
 
   useEffect(() => {
-    if (isGeneratePage && view === 'generate') {
+    if (isImageFeedSeparate && view === 'generate') {
       setView('queue');
     }
-  }, [isGeneratePage, view]);
+  }, [isImageFeedSeparate, view]);
 
   return (
     <GenerationProvider>
@@ -87,7 +88,7 @@ export default function GenerationTabs({
               </Tooltip>
             )}
             <CloseButton
-              onClick={!isGeneratePage ? generationPanel.close : () => history.go(-1)}
+              onClick={isGeneratePage ? () => history.go(-1) : generationPanel.close}
               size="lg"
               variant="transparent"
             />
