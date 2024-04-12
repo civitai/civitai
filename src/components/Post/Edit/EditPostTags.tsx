@@ -14,9 +14,12 @@ import {
   useMantineTheme,
 } from '@mantine/core';
 import { useDebouncedValue, getHotkeyHandler, useClickOutside } from '@mantine/hooks';
+import { TagTarget } from '@prisma/client';
 import { IconPlus, IconStar, IconX } from '@tabler/icons-react';
 import { useEffect, useState, useMemo } from 'react';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useEditPostContext } from '~/components/Post/Edit/EditPostProvider';
+import { TagSort } from '~/server/common/enums';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -107,10 +110,22 @@ function TagPicker() {
     [control, dropdown]
   );
 
+  const browsingLevel = useBrowsingLevelDebounced();
   const { data, isFetching } = trpc.post.getTags.useQuery(
-    { query: debounced },
+    { query: debounced, nsfwLevel: browsingLevel },
     { keepPreviousData: true }
   );
+
+  // const test = trpc.tag.getAll.useQuery(
+  //   {
+  //     query: debounced,
+  //     entityType: [TagTarget.Post],
+  //     nsfwLevel: browsingLevel,
+  //     sort: TagSort.MostPosts,
+  //     include: ['nsfwLevel'],
+  //   },
+  //   { keepPreviousData: true }
+  // );
   const { mutate } = trpc.post.addTag.useMutation({
     onSuccess: async (response) => {
       setTags((tags) => {

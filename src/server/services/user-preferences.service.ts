@@ -59,20 +59,20 @@ function createUserCache<T, TArgs extends { userId?: number }>({
   };
 }
 
-const getHiddenTagsOfHiddenTags = async (tagIds: number[]) => {
-  const tagsOnTags = await dbWrite.tagsOnTags.findMany({
-    where: { fromTagId: { in: [...tagIds] }, type: 'Parent' },
-    select: { fromTagId: true, toTag: { select: { id: true, name: true } } },
-  });
+// const getHiddenTagsOfHiddenTags = async (tagIds: number[]) => {
+//   const tagsOnTags = await dbWrite.tagsOnTags.findMany({
+//     where: { fromTagId: { in: [...tagIds] }, type: 'Parent' },
+//     select: { fromTagId: true, toTag: { select: { id: true, name: true } } },
+//   });
 
-  return tagsOnTags
-    .map(({ fromTagId, toTag }) => {
-      const parentTag = tagIds.find((id) => id === fromTagId);
-      if (!parentTag) return null;
-      return { ...toTag, parentId: fromTagId };
-    })
-    .filter(isDefined);
-};
+//   return tagsOnTags
+//     .map(({ fromTagId, toTag }) => {
+//       const parentTag = tagIds.find((id) => id === fromTagId);
+//       if (!parentTag) return null;
+//       return { ...toTag, parentId: fromTagId };
+//     })
+//     .filter(isDefined);
+// };
 
 const HiddenTags = createUserCache({
   key: 'hidden-tags-4',

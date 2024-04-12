@@ -545,6 +545,7 @@ export const getPostTags = async ({
   query,
   limit,
   excludedTagIds,
+  nsfwLevel,
 }: GetPostTagsInput & { excludedTagIds?: number[] }) => {
   const showTrending = query === undefined || query.length < 2;
   const tags = await dbRead.$queryRaw<PostQueryResult>`
@@ -569,6 +570,7 @@ export const getPostTags = async ({
     LEFT JOIN "TagRank" r ON r."tagId" = t.id
     WHERE
       ${showTrending ? Prisma.sql`t."isCategory" = true` : Prisma.sql`t.name ILIKE ${query + '%'}`}
+      ${nsfwLevel ? Prisma.sql`AND (t."nsfwLevel" & ${nsfwLevel}) != 0` : ``}
     ORDER BY ${Prisma.raw(
       showTrending ? `r."postCountWeekRank" ASC` : `r."postCountAllTimeRank" ASC`
     )}

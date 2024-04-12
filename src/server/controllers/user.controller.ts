@@ -51,7 +51,6 @@ import {
   getUsers,
   isUsernamePermitted,
   toggleBan,
-  toggleBlockedTag,
   toggleFollowUser,
   toggleHideUser,
   toggleModelNotify,
@@ -872,25 +871,6 @@ export const getUserTagsHandler = async ({
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
-  }
-};
-
-export const toggleBlockedTagHandler = async ({
-  input,
-  ctx,
-}: {
-  input: ToggleBlockedTagSchema;
-  ctx: DeepNonNullable<Context>;
-}) => {
-  try {
-    const { id: userId } = ctx.user;
-    const isHidden = await toggleBlockedTag({ ...input, userId });
-    ctx.track.tagEngagement({
-      type: isHidden ? 'Hide' : 'Allow',
-      tagId: input.tagId,
-    });
-  } catch (error) {
-    throw throwDbError(error);
   }
 };
 

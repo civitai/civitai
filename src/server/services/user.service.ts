@@ -27,7 +27,6 @@ import {
   GetAllUsersInput,
   GetByUsernameSchema,
   GetUserCosmeticsSchema,
-  ToggleBlockedTagSchema,
   ToggleUserBountyEngagementsInput,
 } from '~/server/schema/user.schema';
 import { invalidateSession } from '~/server/utils/session-helpers';
@@ -518,33 +517,6 @@ export async function softDeleteUser({ id }: { id: number }) {
   await dbWrite.user.update({ where: { id }, data: { bannedAt: new Date() } });
   await invalidateSession(id);
 }
-
-export const toggleBlockedTag = async ({
-  tagId,
-  userId,
-}: ToggleBlockedTagSchema & { userId: number }) => {
-  const matchedTag = await dbWrite.tagEngagement.findUnique({
-    where: { userId_tagId: { userId, tagId } },
-    select: { type: true },
-  });
-
-  let isHidden = false;
-  if (matchedTag) {
-    if (matchedTag.type === 'Hide')
-      await dbWrite.tagEngagement.delete({
-        where: { userId_tagId: { userId, tagId } },
-      });
-    else if (matchedTag.type === 'Follow')
-      await dbWrite.tagEngagement.update({
-        where: { userId_tagId: { userId, tagId } },
-        data: { type: 'Hide' },
-      });
-  } else {
-    await dbWrite.tagEngagement.create({ data: { userId, tagId, type: 'Hide' } });
-    isHidden = true;
-  }
-  return isHidden;
-};
 
 export const updateAccountScope = async ({
   providerAccountId,

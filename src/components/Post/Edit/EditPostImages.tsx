@@ -36,7 +36,8 @@ import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { POST_IMAGE_LIMIT } from '~/server/common/constants';
 import { ImageIngestionStatus } from '@prisma/client';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
-import { useEditPostContext, ImageUpload, ImageBlocked } from './EditPostProvider';
+import { useEditPostContext } from './EditPostProvider';
+import type { ImageUpload, ImageBlocked } from './EditPostProvider';
 import { orchestratorMediaTransmitter } from '~/store/post-image-transmitter.store';
 import { IMAGE_MIME_TYPE, MEDIA_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -47,6 +48,10 @@ import { useRouter } from 'next/router';
 import { getIsPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { BrowsingLevelBadge } from '~/components/ImageGuard/ImageGuard2';
 import { openSetBrowsingLevelModal } from '~/components/Dialog/dialog-registry';
+import {
+  MediaDropzone,
+  MediaDropzoneCallbackProps,
+} from '~/components/Image/ImageDropzone/MediaDropzone';
 
 export function EditPostImages({ max = POST_IMAGE_LIMIT }: { max?: number }) {
   const currentUser = useCurrentUser();
@@ -70,13 +75,21 @@ export function EditPostImages({ max = POST_IMAGE_LIMIT }: { max?: number }) {
     handleSrc();
   }, []);
 
+  const handleUploaded = (data: MediaDropzoneCallbackProps) => {
+    console.log(data);
+  };
+  const handleBlocked = (data: MediaDropzoneCallbackProps) => {
+    console.log(data);
+  };
+
   return (
     <Stack>
-      <ImageDropzone
-        onDrop={handleDrop}
+      <MediaDropzone
         count={images.length}
         max={max}
         accept={[...IMAGE_MIME_TYPE, ...VIDEO_MIME_TYPE]}
+        onUploaded={handleUploaded}
+        onBlocked={handleBlocked}
       />
       <DismissibleAlert
         id="image-tagging"

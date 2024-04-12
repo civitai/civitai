@@ -37,7 +37,7 @@ export const DismissibleAlert = ({
       closeButtonLabel="Close alert"
       withCloseButton
     >
-      <Group spacing="xs" noWrap>
+      <Group spacing="xs" noWrap pr="xs">
         {emoji && (
           <Text size={36} p={0} sx={{ lineHeight: 1.2 }}>
             {emoji}
