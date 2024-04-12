@@ -1,4 +1,11 @@
-import { Tooltip, ActionIcon, CloseButton, SegmentedControl, Text } from '@mantine/core';
+import {
+  Tooltip,
+  ActionIcon,
+  CloseButton,
+  SegmentedControl,
+  Text,
+  useMantineTheme,
+} from '@mantine/core';
 import { IconArrowsDiagonal, IconBrush, IconGridDots, TablerIconsProps } from '@tabler/icons-react';
 import { Feed } from './Feed';
 import { Queue } from './Queue';
@@ -10,26 +17,28 @@ import { useRouter } from 'next/router';
 import { IconClockHour9 } from '@tabler/icons-react';
 import { GeneratedImageActions } from '~/components/ImageGeneration/GeneratedImageActions';
 import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvider';
-import { useIsMobile } from '~/hooks/useIsMobile';
+import { useMediaQuery } from '@mantine/hooks';
 
 export default function GenerationTabs({
   tabs: tabsToInclude,
   alwaysShowMaximize = true,
+  isDrawer,
 }: {
   tabs?: ('generate' | 'queue' | 'feed')[];
   alwaysShowMaximize?: boolean;
+  isDrawer?: boolean;
 }) {
   const router = useRouter();
   const currentUser = useCurrentUser();
-  const isMobile = useIsMobile();
-  const isGeneratePage = !isMobile && router.pathname.startsWith('/generate');
+
+  const isGeneratePage = !isDrawer && router.pathname.startsWith('/generate');
 
   const view = useGenerationStore((state) => state.view);
   const setView = useGenerationStore((state) => state.setView);
 
   const View = isGeneratePage ? tabs.generate.Component : tabs[view].Component;
   const tabEntries = Object.entries(tabs).filter(([key]) =>
-    isGeneratePage ? key !== 'generate' : true
+    tabsToInclude ? tabsToInclude.includes(key as any) : true
   );
 
   useEffect(() => {
