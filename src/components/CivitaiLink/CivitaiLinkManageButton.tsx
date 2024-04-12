@@ -1,6 +1,6 @@
 import { Box, DefaultMantineColor, Loader, RingProgress } from '@mantine/core';
 import { useHover } from '@mantine/hooks';
-import { IconCheck, IconPlus, IconTrash, IconX } from '@tabler/icons-react';
+import { IconCheck, IconPlus, IconScreenShare, IconTrash, IconX } from '@tabler/icons-react';
 import {
   CivitaiLinkResourceManager,
   CivitaiLinkResourceManagerProps,
@@ -29,12 +29,12 @@ const buttonStates: Record<string, ButtonStateFn> = {
   installed: ({ hovered, iconSize }) => ({
     icon: hovered ? <IconTrash size={iconSize} /> : <IconCheck size={iconSize} strokeWidth={2.5} />,
     color: hovered ? 'red' : 'green',
-    label: hovered ? 'Remove from SD' : 'Installed',
+    label: hovered ? 'Remove from Machine' : 'Installed',
   }),
   notInstalled: ({ iconSize }) => ({
-    icon: <IconPlus strokeWidth={2.5} size={iconSize} />,
+    icon: <IconScreenShare strokeWidth={2.5} size={iconSize} />,
     color: 'blue',
-    label: 'Add to SD',
+    label: 'Send to Machine',
   }),
 };
 

@@ -3,11 +3,21 @@ import { PrismaClient } from '@prisma/client';
 import { chunk } from 'lodash-es';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { createBuzzTransactionMany, getMultipliersForUser } from '~/server/services/buzz.service';
 import { hashifyObject } from '~/utils/string-helpers';
 import { withRetries } from '../utils/errorHandling';
+
+const log = (event: BuzzEventLog, data: MixedObject) => {
+  logToAxiom({
+    name: 'buzz-rewards',
+    type: 'error',
+    event: JSON.stringify(event),
+    ...data,
+  }).catch();
+};
 
 export function createBuzzEvent<T>({
   type,
@@ -181,6 +191,7 @@ export function createBuzzEvent<T>({
     try {
       await addBuzzEvent(event);
     } catch (error) {
+      log(event, { message: 'Failed to record buzz event', error });
       throw new Error(`Failed to record buzz event: ${error}`);
     }
 
@@ -188,7 +199,10 @@ export function createBuzzEvent<T>({
       try {
         await sendAward([event]);
       } catch (error) {
-        // TODO - if this fails, update the event log...
+        log(event, {
+          message: 'Failed to send award for buzz event',
+          error,
+        });
         throw new Error(
           `Failed to send award for buzz event: ${error}.\n\nTransaction: ${JSON.stringify(event)}`
         );
