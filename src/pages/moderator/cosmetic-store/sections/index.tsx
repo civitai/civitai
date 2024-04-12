@@ -25,12 +25,16 @@ import {
   createStyles,
   Badge,
 } from '@mantine/core';
+import { openConfirmModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
 import { IconCloudOff, IconEdit, IconPlus, IconTrash } from '@tabler/icons-react';
-import { isEqual } from 'lodash';
+import { indexOf, isEqual } from 'lodash';
 import { useEffect, useState } from 'react';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
-import { useQueryCosmeticShopSections } from '~/components/CosmeticShop/cosmetic-shop.util';
+import {
+  useMutateCosmeticShop,
+  useQueryCosmeticShopSections,
+} from '~/components/CosmeticShop/cosmetic-shop.util';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
@@ -39,6 +43,7 @@ import { Meta } from '~/components/Meta/Meta';
 import { ImageCSSAspectRatioWrap } from '~/components/Profile/ImageCSSAspectRatioWrap';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { constants } from '~/server/common/constants';
+import { showSuccessNotification } from '~/utils/notifications';
 
 const useStyles = createStyles((theme) => ({
   container: {
@@ -65,14 +70,19 @@ export default function CosmeticStoreSections() {
   const [sections, setSections] = useState(cosmeticShopSections ?? []);
   const isLoading = isLoadingSections;
   const { classes } = useStyles();
+  const {
+    updateShopSectionsOrder,
+    updatingShopSectionsOrder,
+    deleteShopSection,
+    deletingShopSection,
+  } = useMutateCosmeticShop();
 
   useEffect(() => {
     if (cosmeticShopSections) {
+      const ids = cosmeticShopSections.map((section) => section.id);
       const sorted = [...(cosmeticShopSections ?? [])].sort((a, b) => {
-        const aUpdatedPlacement =
-          sections.find((section) => section.id === a.id)?.placement ?? a.placement;
-        const bUpdatedPlacement =
-          sections.find((section) => section.id === b.id)?.placement ?? b.placement;
+        const aUpdatedPlacement = indexOf(ids, a.id);
+        const bUpdatedPlacement = indexOf(ids, b.id);
 
         return aUpdatedPlacement - bUpdatedPlacement;
       });
@@ -88,8 +98,8 @@ export default function CosmeticStoreSections() {
     if (over && active.id !== over.id) {
       setSections((items) => {
         const ids = items.map((item) => item.id);
-        const oldIndex = ids.indexOf(active.id);
-        const newIndex = ids.indexOf(over.id);
+        const oldIndex = ids.indexOf(active.id as number);
+        const newIndex = ids.indexOf(over.id as number);
         const sorted = arrayMove(items, oldIndex, newIndex);
         return sorted;
       });
@@ -100,11 +110,43 @@ export default function CosmeticStoreSections() {
     sections.map((section) => section.id),
     cosmeticShopSections?.map((section) => section.id) ?? []
   );
+  const handleReorder = async () => {
+    await updateShopSectionsOrder({
+      sortedSectionIds: sections.map((section) => section.id),
+    });
+
+    showSuccessNotification({ message: 'Your changes have been saved successfuly' });
+  };
+
+  const handleDeleteSection = (id: number) => {
+    const onDelete = async () => {
+      await deleteShopSection({ id });
+      showSuccessNotification({ message: 'Your ' });
+    };
+
+    openConfirmModal({
+      title: 'Delete Shop Section',
+      children: (
+        <Stack spacing={0}>
+          <Text size="sm">Are you sure you want to delete this Shop Section?</Text>
+          <Text size="xs" color="dimmed">
+            Shop items will not be deleted by performing this action.
+          </Text>
+        </Stack>
+      ),
+      groupProps: {
+        position: 'center',
+      },
+      labels: { confirm: 'Delete Shop Section', cancel: "No, don't delete it" },
+      confirmProps: { color: 'red' },
+      onConfirm: () => onDelete(),
+    });
+  };
 
   return (
     <>
       <Meta title="Cosmetic Shop Sections" deIndex />
-      <Container size="lg">
+      <Container size="md">
         <Stack spacing={0} mb="xl">
           <Title order={1}>Cosmetic Shop Sections</Title>
           <Text size="sm" color="dimmed">
@@ -204,10 +246,7 @@ export default function CosmeticStoreSections() {
                             >
                               <IconEdit />
                             </ActionIcon>
-                            <ActionIcon
-                              component={NextLink}
-                              href={`/moderator/cosmetic-store/sections/${section.id}/edit`}
-                            >
+                            <ActionIcon onClick={() => handleDeleteSection(section.id)}>
                               <IconTrash />
                             </ActionIcon>
                           </Group>
@@ -219,12 +258,7 @@ export default function CosmeticStoreSections() {
               </SortableContext>
             </DndContext>
 
-            <Button
-              disabled={!isDirty}
-              onClick={() => {
-                // Save changes
-              }}
-            >
+            <Button disabled={!isDirty} onClick={handleReorder} loading={updatingShopSectionsOrder}>
               Save Changes
             </Button>
           </Stack>

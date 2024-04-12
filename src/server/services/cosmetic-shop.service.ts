@@ -4,9 +4,11 @@ import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   GetAllCosmeticShopSections,
   GetPaginatedCosmeticShopItemInput,
+  UpdateCosmeticShopSectionsOrderInput,
   UpsertCosmeticShopItemInput,
   UpsertCosmeticShopSectionInput,
 } from '~/server/schema/cosmetic-shop.schema';
+import { ImageMetaProps } from '~/server/schema/image.schema';
 import { cosmeticShopItemSelect } from '~/server/selectors/cosmetic-shop.selector';
 import { imageSelect } from '~/server/selectors/image.selector';
 import { createEntityImages } from '~/server/services/image.service';
@@ -52,6 +54,7 @@ export const upsertCosmeticShopItem = async ({
   availableTo,
   availableFrom,
   id,
+  archived,
   ...cosmeticShopItem
 }: UpsertCosmeticShopItemInput & { userId: number }) => {
   const existingItem = id
@@ -76,15 +79,18 @@ export const upsertCosmeticShopItem = async ({
     throw new Error('Available to date cannot be before available from date');
   }
 
+  console.log(archived);
+
   if (id) {
-    return dbWrite.cosmeticShopItem.upsert({
+    return dbWrite.cosmeticShopItem.update({
       where: { id },
-      create: {
+      data: {
         ...cosmeticShopItem,
         availableQuantity,
-        addedById: userId,
+        availableTo,
+        availableFrom,
+        archivedAt: archived ? new Date() : null,
       },
-      update: cosmeticShopItem,
       select: cosmeticShopItemSelect,
     });
   } else {
@@ -114,7 +120,7 @@ export const getShopSections = async (input: GetAllCosmeticShopSections) => {
     };
   }
 
-  return dbRead.cosmeticShopSection.findMany({
+  const sections = await dbRead.cosmeticShopSection.findMany({
     select: {
       id: true,
       title: true,
@@ -129,11 +135,25 @@ export const getShopSections = async (input: GetAllCosmeticShopSections) => {
         },
       },
     },
+    orderBy: {
+      placement: 'asc',
+    },
   });
+
+  return sections.map((section) => ({
+    ...section,
+    image: !!section.image
+      ? {
+          ...section.image,
+          meta: section.image.meta as ImageMetaProps,
+          metadata: section.image.metadata as MixedObject,
+        }
+      : section.image,
+  }));
 };
 
 export const getSectionById = async ({ id }: GetByIdInput) => {
-  const section = dbRead.cosmeticShopSection.findUnique({
+  const section = await dbRead.cosmeticShopSection.findUniqueOrThrow({
     where: { id },
     select: {
       id: true,
@@ -155,7 +175,7 @@ export const getSectionById = async ({ id }: GetByIdInput) => {
 
   return {
     ...section,
-    image: section.image
+    image: !!section.image
       ? {
           ...section.image,
           meta: section.image.meta as ImageMetaProps,
@@ -214,7 +234,7 @@ export const upsertCosmeticShopSection = async ({
     });
 
     // Recreate them:
-    if (items.length > 0 && id) {
+    if (items.length > 0 && !!id) {
       await dbWrite.cosmeticShopSectionItem.createMany({
         data: items.map((itemId, index) => ({
           shopSectionId: id,
@@ -226,4 +246,47 @@ export const upsertCosmeticShopSection = async ({
   }
 
   return getSectionById({ id });
+};
+
+export const deleteCosmeticShopItem = async ({ id }: GetByIdInput) => {
+  const item = await dbRead.cosmeticShopItem.findUniqueOrThrow({
+    where: { id },
+    select: {
+      id: true,
+      _count: {
+        select: {
+          purchases: true,
+        },
+      },
+    },
+  });
+
+  if (item._count.purchases > 0) {
+    throw new Error('Cannot delete item with purchases. Please mark it as archived instead.');
+  }
+
+  return dbWrite.cosmeticShopItem.delete({
+    where: { id },
+  });
+};
+
+export const deleteCosmeticShopSection = async ({ id }: GetByIdInput) => {
+  return dbWrite.cosmeticShopSection.delete({
+    where: { id },
+  });
+};
+
+export const reorderCosmeticShopSections = async ({
+  sortedSectionIds,
+}: UpdateCosmeticShopSectionsOrderInput) => {
+  console.log(sortedSectionIds);
+
+  await dbWrite.$queryRaw`
+    UPDATE "CosmeticShopSection" AS "css" 
+    SET "placement" = "idx"
+    FROM (SELECT "id", "idx" FROM UNNEST(${sortedSectionIds}) WITH ORDINALITY AS t("id", "idx")) AS "t"
+    WHERE "css"."id" = "t"."id"
+  `;
+
+  return true;
 };

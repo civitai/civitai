@@ -42,7 +42,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 import { CosmeticSample } from '~/pages/moderator/cosmetic-store/cosmetics';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
-import { IconCalendar } from '@tabler/icons-react';
+import { IconCalendar, IconQuestionMark } from '@tabler/icons-react';
 import { IconCalendarDue } from '@tabler/icons-react';
 import { isDefined } from '~/utils/type-guards';
 
@@ -117,6 +117,7 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
     schema: formSchema,
     defaultValues: {
       ...shopItem,
+      archived: shopItem?.archivedAt !== null,
     },
     shouldUnregister: false,
   });
@@ -128,7 +129,7 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
 
   const handleSubmit = async (data: z.infer<typeof formSchema>) => {
     try {
-      await updateUpsertShopItem({
+      await upsertShopItem({
         ...data,
       });
 
@@ -158,6 +159,22 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
             <CosmeticSearch
               cosmetic={cosmetic ?? undefined}
               onCosmeticSelected={(newCosmeticId) => form.setValue('cosmeticId', newCosmeticId)}
+            />
+          )}
+          {shopItem && (
+            <InputSwitch
+              name="archived"
+              label={
+                <Stack spacing={4}>
+                  <Group spacing={4}>
+                    <Text inline>Archived</Text>
+                  </Group>
+                  <Text size="xs" color="dimmed">
+                    Archive this item. Archived items are not shown in the shop even if they belong
+                    in a section.
+                  </Text>
+                </Stack>
+              }
             />
           )}
           {cosmetic && (
@@ -229,24 +246,26 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
             />
           </Group>
         </Stack>
-        <Group position="right">
-          {onCancel && (
-            <Button
-              loading={upsertingShopItem}
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                onCancel?.();
-              }}
-              color="gray"
-            >
-              Cancel
+        <Stack>
+          <Group position="right">
+            {onCancel && (
+              <Button
+                loading={upsertingShopItem}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onCancel?.();
+                }}
+                color="gray"
+              >
+                Cancel
+              </Button>
+            )}
+            <Button loading={upsertingShopItem} type="submit">
+              Save
             </Button>
-          )}
-          <Button loading={upsertingShopItem} type="submit">
-            Save
-          </Button>
-        </Group>
+          </Group>
+        </Stack>
       </Stack>
     </Form>
   );

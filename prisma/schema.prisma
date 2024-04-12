@@ -1940,6 +1940,7 @@ enum CosmeticType {
   NamePlate
   ContentDecoration
   ProfileDecoration
+  ProfileBackground
 }
 
 enum CosmeticSource {

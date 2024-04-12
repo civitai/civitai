@@ -25,6 +25,7 @@ export const upsertCosmeticShopItemInput = z.object({
   availableFrom: z.date().nullish(),
   availableTo: z.date().nullish(),
   availableQuantity: z.number().nullish(),
+  archived: z.boolean().optional(),
 });
 
 export type GetAllCosmeticShopSections = z.infer<typeof getAllCosmeticShopSections>;
@@ -42,4 +43,11 @@ export const upsertCosmeticShopSectionInput = z.object({
   placement: z.number().optional(),
   items: z.array(z.number()).optional(),
   image: comfylessImageSchema.nullish(),
+});
+
+export type UpdateCosmeticShopSectionsOrderInput = z.infer<
+  typeof updateCosmeticShopSectionsOrderInput
+>;
+export const updateCosmeticShopSectionsOrderInput = z.object({
+  sortedSectionIds: z.array(z.number()),
 });

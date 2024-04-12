@@ -1,7 +1,9 @@
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   GetAllCosmeticShopSections,
   GetPaginatedCosmeticShopItemInput,
+  UpdateCosmeticShopSectionsOrderInput,
   UpsertCosmeticShopItemInput,
   UpsertCosmeticShopSectionInput,
 } from '~/server/schema/cosmetic-shop.schema';
@@ -115,10 +117,49 @@ export const useMutateCosmeticShop = () => {
 
   const upsertShopSectionMutation = trpc.cosmeticShop.upsertShopSection.useMutation({
     async onSuccess() {
-      await queryUtils.cosmeticShop.getShopSectionsPaged.invalidate();
+      await queryUtils.cosmeticShop.getAllSections.invalidate();
     },
     onError(error) {
       onError(error, 'Failed to update or create the cosmetic shop section');
+    },
+  });
+
+  const deleteShopItemMutation = trpc.cosmeticShop.deleteShopItem.useMutation({
+    async onSuccess(input) {
+      await queryUtils.cosmeticShop.getShopItemsPaged.invalidate();
+    },
+    onError(error) {
+      onError(error, 'Failed to delete the cosmetic shop item');
+    },
+  });
+
+  const deleteShopSectionMutation = trpc.cosmeticShop.deleteShopSection.useMutation({
+    async onSuccess(input) {
+      await queryUtils.cosmeticShop.getAllSections.invalidate();
+    },
+    onError(error) {
+      onError(error, 'Failed to delete the cosmetic shop section');
+    },
+  });
+
+  const updateShopSectionsOrderMutation = trpc.cosmeticShop.updateSectionsOrder.useMutation({
+    async onSuccess(_, { sortedSectionIds }) {
+      await queryUtils.cosmeticShop.getAllSections.setData({}, (data) => {
+        if (!data) return [];
+
+        const updated = [...data].sort((a, b) => {
+          const aPlacement = sortedSectionIds.indexOf(a.id);
+          const bPlacement = sortedSectionIds.indexOf(b.id);
+
+          return aPlacement - bPlacement;
+        });
+        console.log(data, updated, sortedSectionIds);
+
+        return updated;
+      });
+    },
+    onError(error) {
+      onError(error, 'Failed to delete the cosmetic shop section');
     },
   });
 
@@ -128,11 +169,26 @@ export const useMutateCosmeticShop = () => {
   const handleUpsertShopSection = (data: UpsertCosmeticShopSectionInput) => {
     return upsertShopSectionMutation.mutateAsync(data);
   };
+  const handleDeleteShopSection = (data: GetByIdInput) => {
+    return deleteShopSectionMutation.mutateAsync(data);
+  };
+  const handleUpdateShopSectionsOrderMutation = (data: UpdateCosmeticShopSectionsOrderInput) => {
+    return updateShopSectionsOrderMutation.mutateAsync(data);
+  };
+  const handleDeleteShopItemMutation = (data: GetByIdInput) => {
+    return deleteShopItemMutation.mutateAsync(data);
+  };
 
   return {
     upsertShopItem: handleUpsertShopItem,
     upsertingShopItem: upsertShopItemMutation.isLoading,
     upsertShopSection: handleUpsertShopSection,
     upsertingShopSection: upsertShopSectionMutation.isLoading,
+    deleteShopSection: handleDeleteShopSection,
+    deletingShopSection: deleteShopSectionMutation.isLoading,
+    updateShopSectionsOrder: handleUpdateShopSectionsOrderMutation,
+    updatingShopSectionsOrder: updateShopSectionsOrderMutation.isLoading,
+    deleteShopItem: handleDeleteShopItemMutation,
+    deletingShopItem: deleteShopItemMutation.isLoading,
   };
 };

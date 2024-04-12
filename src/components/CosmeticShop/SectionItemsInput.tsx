@@ -150,13 +150,11 @@ export const SectionItemsInput = ({ value, onChange, ...props }: SectionItemsInp
 
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
-    console.log(active, over);
     if (over && active.id !== over.id) {
       setSelectedShopItems((items) => {
         const ids = items.map((item) => item.id);
-        const oldIndex = ids.indexOf(active.id);
-        const newIndex = ids.indexOf(over.id);
-        console.log(oldIndex, newIndex);
+        const oldIndex = ids.indexOf(active.id as number);
+        const newIndex = ids.indexOf(over.id as number);
         const sorted = arrayMove(items, oldIndex, newIndex);
         return sorted;
       });

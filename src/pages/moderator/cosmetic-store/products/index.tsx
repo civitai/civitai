@@ -17,12 +17,16 @@ import {
   Badge,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
+import { openConfirmModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
 import { BuzzWithdrawalRequestStatus, CosmeticType, Currency } from '@prisma/client';
-import { IconCloudOff, IconEdit, IconPlus } from '@tabler/icons-react';
+import { IconCloudOff, IconEdit, IconPlus, IconTrash } from '@tabler/icons-react';
 import { useState } from 'react';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
-import { useQueryCosmeticShopItemsPaged } from '~/components/CosmeticShop/cosmetic-shop.util';
+import {
+  useMutateCosmeticShop,
+  useQueryCosmeticShopItemsPaged,
+} from '~/components/CosmeticShop/cosmetic-shop.util';
 import { CosmeticsFiltersDropdown } from '~/components/Cosmetics/CosmeticsFiltersDropdown';
 import { useQueryCosmeticsPaged } from '~/components/Cosmetics/cosmetics.util';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
@@ -39,6 +43,7 @@ import { GetPaginatedPurchasableRewardsModeratorSchema } from '~/server/schema/p
 import { NamePlateCosmetic } from '~/server/selectors/cosmetic.selector';
 import { CosmeticGetById } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
+import { showSuccessNotification } from '~/utils/notifications';
 
 import { trpc } from '~/utils/trpc';
 
@@ -55,6 +60,33 @@ export default function CosmeticStoreProducts() {
   } = useQueryCosmeticShopItemsPaged(debouncedFilters);
 
   const isLoading = isLoadingCosmetics;
+
+  const { deleteShopItem, deletingShopItem } = useMutateCosmeticShop();
+
+  const handleDeleteItem = (id: number) => {
+    const onDelete = async () => {
+      await deleteShopItem({ id });
+      showSuccessNotification({ message: 'Shop item has been deleted.' });
+    };
+
+    openConfirmModal({
+      title: 'Delete Item',
+      children: (
+        <Stack spacing={0}>
+          <Text size="sm">Are you sure you want to delete this Shop item?</Text>
+          <Text size="xs" color="dimmed">
+            Items with purchases cannot be deleted. Instead, please mark them as archived.
+          </Text>
+        </Stack>
+      ),
+      groupProps: {
+        position: 'center',
+      },
+      labels: { confirm: 'Delete Shop Item', cancel: "No, don't delete it" },
+      confirmProps: { color: 'red' },
+      onConfirm: () => onDelete(),
+    });
+  };
 
   return (
     <>
@@ -113,6 +145,7 @@ export default function CosmeticStoreProducts() {
                   <th>Available From</th>
                   <th>Available To</th>
                   <th>Total Quantity</th>
+                  <th>Archived At</th>
                   <th>&nbsp;</th>
                 </tr>
               </thead>
@@ -144,14 +177,22 @@ export default function CosmeticStoreProducts() {
                       </td>
                       <td>{shopItem.availableFrom ? formatDate(shopItem.availableFrom) : '-'}</td>
                       <td>{shopItem.availableTo ? formatDate(shopItem.availableTo) : '-'}</td>
-                      <td>{!!shopItem.availableQuantity ? shopItem.availableQuantity : '-'}</td>
                       <td>
-                        <ActionIcon
-                          component={NextLink}
-                          href={`/moderator/cosmetic-store/products/${shopItem.id}/edit`}
-                        >
-                          <IconEdit />
-                        </ActionIcon>
+                        {!!shopItem.availableQuantity ? shopItem.availableQuantity : '-'}
+                      </td>{' '}
+                      <td>{shopItem.archivedAt ? formatDate(shopItem.archivedAt) : '-'}</td>
+                      <td>
+                        <Group>
+                          <ActionIcon
+                            component={NextLink}
+                            href={`/moderator/cosmetic-store/products/${shopItem.id}/edit`}
+                          >
+                            <IconEdit />
+                          </ActionIcon>
+                          <ActionIcon onClick={() => handleDeleteItem(shopItem.id)}>
+                            <IconTrash />
+                          </ActionIcon>
+                        </Group>
                       </td>
                     </tr>
                   );

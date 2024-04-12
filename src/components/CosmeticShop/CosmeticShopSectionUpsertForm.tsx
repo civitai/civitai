@@ -10,7 +10,7 @@ import {
   useForm,
 } from '~/libs/form';
 import { z } from 'zod';
-import { CosmeticShopSectionGetById, d } from '~/types/router';
+import { CosmeticShopSectionGetById } from '~/types/router';
 import { useMutateCosmeticShop } from '~/components/CosmeticShop/cosmetic-shop.util';
 import { upsertCosmeticShopSectionInput } from '~/server/schema/cosmetic-shop.schema';
 import { constants } from '~/server/common/constants';
@@ -36,7 +36,7 @@ export const CosmeticShopSectionUpsertForm = ({ section, onSuccess, onCancel }: 
         (section?.items ?? []).map((item) => ({
           id: item.shopItem.id,
           title: item.shopItem.title,
-          description: item.shopItem.description,
+          description: item.shopItem.description ?? undefined,
         })) ?? [],
     },
     shouldUnregister: false,
