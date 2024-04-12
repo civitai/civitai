@@ -47,6 +47,8 @@ export default function GenerationTabs({
           </div>
           {currentUser && tabEntries.length > 1 && (
             <SegmentedControl
+              // TODO.briant: this fixes the issue with rendering the SegmentedControl
+              key={tabEntries.map(([, item]) => item.label).join('-')}
               className="flex-shrink-0"
               sx={{ overflow: 'visible' }}
               data={tabEntries.map(([key, { Icon, label }]) => ({
