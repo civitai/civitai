@@ -13,6 +13,7 @@ export function UserStatBadges({
   downloads,
   answers,
   username,
+  colorOverrides,
 }: Props) {
   const theme = useMantineTheme();
 
@@ -22,8 +23,13 @@ export function UserStatBadges({
         size="lg"
         radius="xl"
         px={8}
-        sx={{ backgroundColor: theme.fn.rgba('#000', 0.31) }}
-        variant={theme.colorScheme === 'dark' ? 'light' : 'light'}
+        color="dark"
+        sx={
+          colorOverrides
+            ? { backgroundColor: colorOverrides.backgroundColor ?? undefined }
+            : undefined
+        }
+        variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
       >
         <Group spacing="xs" noWrap>
           {uploads != null ? (
@@ -31,7 +37,11 @@ export function UserStatBadges({
               p={0}
               tooltip={<StatTooltip label="Uploads" value={uploads} />}
               icon={<IconUpload size={14} />}
-              color="gray"
+              sx={
+                colorOverrides
+                  ? { color: colorOverrides.textColor ?? theme.colors.gray[0] }
+                  : undefined
+              }
               size="lg"
               // @ts-ignore: transparent variant does work
               variant="transparent"
@@ -47,7 +57,11 @@ export function UserStatBadges({
               tooltip={<StatTooltip label="Followers" value={followers} />}
               href={username ? `/user/${username}/followers` : undefined}
               icon={<IconUsers size={14} />}
-              color="gray"
+              sx={
+                colorOverrides
+                  ? { color: colorOverrides.textColor ?? theme.colors.gray[0] }
+                  : undefined
+              }
               size="lg"
               // @ts-ignore: transparent variant does work
               variant="transparent"
@@ -62,7 +76,11 @@ export function UserStatBadges({
               p={0}
               tooltip={<StatTooltip label="Likes" value={favorites} />}
               icon={<ThumbsUpIcon size={14} />}
-              color="gray"
+              sx={
+                colorOverrides
+                  ? { color: colorOverrides.textColor ?? theme.colors.gray[0] }
+                  : undefined
+              }
               // @ts-ignore: transparent variant does work
               variant="transparent"
               size="lg"
@@ -77,6 +95,11 @@ export function UserStatBadges({
               p={0}
               tooltip={<StatTooltip label="Downloads" value={downloads} />}
               icon={<IconDownload size={14} />}
+              sx={
+                colorOverrides
+                  ? { color: colorOverrides.textColor ?? theme.colors.gray[0] }
+                  : undefined
+              }
               // @ts-ignore: transparent variant does work
               variant="transparent"
               size="lg"
@@ -91,6 +114,11 @@ export function UserStatBadges({
               p={0}
               tooltip={<StatTooltip label="Answers" value={answers} />}
               icon={<IconChecks size={14} />}
+              sx={
+                colorOverrides
+                  ? { color: colorOverrides.textColor ?? theme.colors.gray[0] }
+                  : undefined
+              }
               // @ts-ignore: transparent variant does work
               variant="transparent"
               size="lg"
@@ -115,4 +143,5 @@ type Props = {
   answers?: number;
   username?: string | null;
   size?: MantineSize;
+  colorOverrides?: { textColor?: string; backgroundColor?: string };
 };

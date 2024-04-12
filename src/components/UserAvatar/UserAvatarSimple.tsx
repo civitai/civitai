@@ -33,6 +33,9 @@ export function UserAvatarSimple({
   const badge = cosmetics?.find(({ cosmetic }) =>
     cosmetic ? cosmetic.type === 'Badge' : undefined
   )?.cosmetic as Omit<BadgeCosmetic, 'description' | 'obtainedAt'>;
+  const profileDecoration = cosmetics?.find(({ cosmetic }) =>
+    cosmetic ? cosmetic.type === 'ProfileDecoration' : undefined
+  )?.cosmetic as Omit<BadgeCosmetic, 'description' | 'obtainedAt'>;
   const additionalTextProps = nameplate?.data;
 
   return (
@@ -46,6 +49,24 @@ export function UserAvatarSimple({
             <Text size="sm">{username ? getInitials(username) : <IconUser size={32} />}</Text>
           ) : (
             <UserAvatarProfilePicture id={id} username={username} image={profilePicture} />
+          )}
+          {profileDecoration && profileDecoration.data.url && (
+            <EdgeMedia
+              src={profileDecoration.data.url}
+              type="image"
+              name="user avatar decoration"
+              style={{
+                position: 'absolute',
+                top: '50%',
+                left: '50%',
+                maxWidth: 'fit-content',
+                transform: 'translate(-50%,-50%)',
+                width: '100%',
+                height: '100%',
+                zIndex: 2,
+              }}
+              width="original"
+            />
           )}
         </div>
       )}
@@ -79,8 +100,9 @@ const useStyles = createStyles((theme) => ({
   profilePictureWrapper: {
     overflow: 'hidden',
     backgroundColor: theme.colorScheme === 'dark' ? 'rgba(255,255,255,0.31)' : 'rgba(0,0,0,0.31)',
-    borderRadius: theme.radius.md,
+    borderRadius: theme.radius.xl,
     height: 32,
     width: 32,
+    position: 'relative',
   },
 }));

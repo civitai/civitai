@@ -738,7 +738,7 @@ export async function getCosmeticsForUsers(userIds: number[]) {
     ids: userIds,
     lookupFn: async (ids) => {
       const userCosmeticsRaw = await dbRead.userCosmetic.findMany({
-        where: { userId: { in: ids }, equippedAt: { not: null } },
+        where: { userId: { in: ids }, equippedAt: { not: null }, equippedToId: null },
         select: {
           userId: true,
           data: true,

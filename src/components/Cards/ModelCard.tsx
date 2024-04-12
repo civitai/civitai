@@ -1,13 +1,4 @@
-import {
-  ActionIcon,
-  Badge,
-  Divider,
-  Group,
-  Menu,
-  Stack,
-  Text,
-  UnstyledButton,
-} from '@mantine/core';
+import { ActionIcon, Badge, Divider, Group, Menu, Stack, Text } from '@mantine/core';
 import {
   IconDownload,
   IconMessageCircle2,
@@ -20,7 +11,6 @@ import {
   IconArchiveFilled,
   IconHorse,
 } from '@tabler/icons-react';
-import { useRouter } from 'next/router';
 import React from 'react';
 // import { z } from 'zod';
 import { FeedCard } from '~/components/Cards/FeedCard';
@@ -31,7 +21,6 @@ import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionMenuItem';
 import { ReportMenuItem } from '~/components/MenuItems/ReportMenuItem';
-import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -64,7 +53,6 @@ import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
 import { IconNose } from '~/components/SVG/IconNose';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
-import { NextLink } from '@mantine/next';
 
 const IMAGE_CARD_WIDTH = 450;
 
@@ -80,7 +68,6 @@ export function ModelCard({ data, forceInView }: Props) {
     aspectRatio,
   });
 
-  const router = useRouter();
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
   const tippedAmount = useBuzzTippingStore({ entityType: 'Model', entityId: data.id });
@@ -211,9 +198,6 @@ export function ModelCard({ data, forceInView }: Props) {
   ) as (typeof data.user.cosmetics)[number] & {
     data?: { lights?: number; upgradedLights?: number };
   };
-
-  // Small hack to prevent blurry landscape images
-  const originalAspectRatio = image && image.width && image.height ? image.width / image.height : 1;
 
   return (
     <HolidayFrame {...cardDecoration}>

@@ -124,7 +124,16 @@ export function UserAvatar({
     : undefined;
 
   return (
-    <Group align="center" spacing={spacing} noWrap>
+    <Group
+      align="center"
+      sx={{
+        padding: '0 10px 0 0',
+        backgroundColor: 'rgba(0, 0, 0, 0.31)',
+        borderRadius: '1000px',
+      }}
+      spacing={spacing}
+      noWrap
+    >
       {includeAvatar && (
         <UserProfileLink user={avatarUser} linkToProfile={linkToProfile}>
           <Indicator
@@ -146,8 +155,8 @@ export function UserAvatar({
                   left: '50%',
                   maxWidth: 'fit-content',
                   transform: 'translate(-50%,-50%)',
-                  width: '115%',
-                  height: '115%',
+                  width: '100%',
+                  height: '100%',
                   zIndex: 1,
                 }}
                 width="original"

@@ -101,7 +101,7 @@ export function ArticleCard({ data, aspectRatio }: Props) {
                   router.push(`/user/${user.username}`);
                 }}
               >
-                <UserAvatar user={user} avatarProps={{ radius: 'md', size: 32 }} withUsername />
+                <UserAvatar user={user} avatarProps={{ radius: 'xl', size: 32 }} withUsername />
               </UnstyledButton>
             )}
             <Stack spacing={0}>

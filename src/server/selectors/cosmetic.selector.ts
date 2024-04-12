@@ -33,5 +33,5 @@ export type NamePlateCosmetic = Omit<SimpleCosmetic, 'data' | 'type'> & {
   };
 };
 export type ProfileBackgroundCosmetic = BadgeCosmetic & {
-  data: { props?: { textColor?: string; backgroundColor?: string } };
+  data: { textColor?: string; backgroundColor?: string };
 };

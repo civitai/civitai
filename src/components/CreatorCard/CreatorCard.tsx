@@ -14,6 +14,7 @@ import { TipBuzzButton } from '../Buzz/TipBuzzButton';
 import { UserStatBadges } from '../UserStatBadges/UserStatBadges';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { ProfileBackgroundCosmetic } from '~/server/selectors/cosmetic.selector';
+import { applyCosmeticThemeColors } from '~/libs/sx-helpers';
 
 export function CreatorCard({
   user,
@@ -47,8 +48,6 @@ export function CreatorCard({
   const backgroundImage = creator.cosmetics.find(({ cosmetic }) =>
     cosmetic ? cosmetic.type === 'ProfileBackground' : undefined
   )?.cosmetic as Omit<ProfileBackgroundCosmetic, 'description' | 'obtainedAt'>;
-
-  const hasBackgroundImage = backgroundImage && backgroundImage.data.url;
 
   return (
     <Card p="xs" withBorder>
@@ -84,29 +83,19 @@ export function CreatorCard({
                     toUserId={creator.id}
                     size="xs"
                     entityId={tipBuzzEntityId}
+                    label=""
                     entityType={tipBuzzEntityType}
                     styles={
-                      hasBackgroundImage
-                        ? (theme) => ({
-                            root: {
-                              backgroundColor: theme.fn.rgba('#000', 0.31),
-                            },
-                          })
-                        : undefined
+                      backgroundImage ? applyCosmeticThemeColors(backgroundImage.data) : undefined
                     }
                     compact
                   />
                   <ChatUserButton
                     user={creator}
                     size="xs"
+                    label=""
                     styles={
-                      hasBackgroundImage
-                        ? (theme) => ({
-                            root: {
-                              backgroundColor: theme.fn.rgba('#000', 0.31),
-                            },
-                          })
-                        : undefined
+                      backgroundImage ? applyCosmeticThemeColors(backgroundImage.data) : undefined
                     }
                     compact
                   />
@@ -114,13 +103,7 @@ export function CreatorCard({
                     userId={creator.id}
                     size="xs"
                     styles={
-                      hasBackgroundImage
-                        ? (theme) => ({
-                            root: {
-                              backgroundColor: theme.fn.rgba('#000', 0.31),
-                            },
-                          })
-                        : undefined
+                      backgroundImage ? applyCosmeticThemeColors(backgroundImage.data) : undefined
                     }
                     compact
                   />
@@ -135,6 +118,7 @@ export function CreatorCard({
                   followers={stats.followerCountAllTime}
                   favorites={stats.thumbsUpCountAllTime}
                   downloads={stats.downloadCountAllTime}
+                  colorOverrides={backgroundImage?.data}
                 />
               )}
             </Group>
