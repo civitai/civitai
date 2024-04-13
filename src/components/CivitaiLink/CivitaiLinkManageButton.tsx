@@ -29,12 +29,12 @@ const buttonStates: Record<string, ButtonStateFn> = {
   installed: ({ hovered, iconSize }) => ({
     icon: hovered ? <IconTrash size={iconSize} /> : <IconCheck size={iconSize} strokeWidth={2.5} />,
     color: hovered ? 'red' : 'green',
-    label: hovered ? 'Remove from Machine' : 'Installed',
+    label: hovered ? 'Remove from Link' : 'Installed',
   }),
   notInstalled: ({ iconSize }) => ({
     icon: <IconScreenShare strokeWidth={2.5} size={iconSize} />,
     color: 'blue',
-    label: 'Send to Machine',
+    label: 'Send via Link',
   }),
 };
 
