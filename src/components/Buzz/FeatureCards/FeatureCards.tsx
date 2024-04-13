@@ -81,8 +81,8 @@ const getEarnings = (): (FeatureCardProps & { key: string })[] => [
   {
     key: 'redeem',
     icon: <IconBarcode size={32} />,
-    title: 'Reedem a code',
-    description: 'Purchased a Buzz card? Redeem to get your Buzz!',
+    title: 'Redeem a code',
+    description: 'Purchased a Buzz card? Redeem it to get your Buzz!',
     btnProps: {
       onClick: () => {
         dialogStore.trigger({ component: RedeemCodeModal });
