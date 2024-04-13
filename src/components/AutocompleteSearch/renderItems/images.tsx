@@ -24,7 +24,7 @@ export const ImagesSearchItem = forwardRef<
 
   if (!hit) return <ViewMoreItem ref={ref} value={value} {...props} />;
 
-  const { user, tags, stats } = hit;
+  const { user, tagNames, stats } = hit;
   const alt = truncate((hit.meta as ImageMetaProps)?.prompt, {
     length: constants.altTruncateLength,
   });
@@ -32,8 +32,8 @@ export const ImagesSearchItem = forwardRef<
     commentCountAllTime: 0,
     reactionCountAllTime: 0,
   };
-  const tagsMax = tags?.slice(0, 3);
-  const remainingTagsCount = tags?.slice(3).length;
+  const tagsMax = tagNames?.slice(0, 3);
+  const remainingTagsCount = tagNames?.slice(3).length;
 
   const tagBadgeProps: BadgeProps = {
     radius: 'xl',
@@ -88,9 +88,9 @@ export const ImagesSearchItem = forwardRef<
         )}
         <UserAvatar size="xs" user={user} withUsername />
         <Group spacing={8}>
-          {tagsMax?.map((tag) => (
-            <Badge key={tag.id} {...tagBadgeProps}>
-              {tag.name}
+          {tagsMax?.map((tag, index) => (
+            <Badge key={index} {...tagBadgeProps}>
+              {tag}
             </Badge>
           ))}
           {remainingTagsCount > 0 && <Badge {...tagBadgeProps}>+{remainingTagsCount}</Badge>}
