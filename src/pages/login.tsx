@@ -1,33 +1,32 @@
 import {
+  Alert,
+  Code,
   Container,
+  Divider,
+  Group,
   Paper,
   Stack,
   Text,
-  Alert,
-  Group,
   ThemeIcon,
-  Divider,
-  Code,
 } from '@mantine/core';
+import { Currency } from '@prisma/client';
 import { IconExclamationMark } from '@tabler/icons-react';
 import { BuiltInProviderType } from 'next-auth/providers';
 import { getCsrfToken, getProviders, signIn } from 'next-auth/react';
 import { useRouter } from 'next/router';
+import { useEffect, useRef } from 'react';
+import { CreatorCard } from '~/components/CreatorCard/CreatorCard';
+import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { EmailLogin } from '~/components/EmailLogin/EmailLogin';
+import { Meta } from '~/components/Meta/Meta';
+import { useReferralsContext } from '~/components/Referrals/ReferralsProvider';
 import { SignInError } from '~/components/SignInError/SignInError';
 import { SocialButton } from '~/components/Social/SocialButton';
-
-import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { loginRedirectReasons, LoginRedirectReason, trackedReasons } from '~/utils/login-helpers';
-import { useReferralsContext } from '~/components/Referrals/ReferralsProvider';
-import { trpc } from '~/utils/trpc';
-import { CreatorCard } from '~/components/CreatorCard/CreatorCard';
-import { Meta } from '~/components/Meta/Meta';
-import { env } from '~/env/client.mjs';
-import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { Currency } from '@prisma/client';
 import { useTrackEvent } from '~/components/TrackView/track.utils';
-import { useEffect, useRef } from 'react';
+import { env } from '~/env/client.mjs';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { LoginRedirectReason, loginRedirectReasons, trackedReasons } from '~/utils/login-helpers';
+import { trpc } from '~/utils/trpc';
 
 export default function Login({ providers }: Props) {
   const router = useRouter();
@@ -156,8 +155,10 @@ type Props = {
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
-  resolver: async ({ session }) => {
-    if (session) {
+  resolver: async ({ session, ctx }) => {
+    const { reason } = ctx.query as { reason: string };
+
+    if (session && reason !== 'switch-accounts') {
       return {
         redirect: {
           destination: '/',

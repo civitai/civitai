@@ -1,10 +1,10 @@
 import { User } from '@prisma/client';
-import { JWT } from 'next-auth/jwt';
-import { getSessionUser } from '~/server/services/user.service';
-import { createLogger } from '~/utils/logging';
-import { redis } from '~/server/redis/client';
-import { generateSecretHash } from '~/server/utils/key-generator';
 import { Session } from 'next-auth';
+import { JWT } from 'next-auth/jwt';
+import { redis } from '~/server/redis/client';
+import { getSessionUser } from '~/server/services/user.service';
+import { generateSecretHash } from '~/server/utils/key-generator';
+import { createLogger } from '~/utils/logging';
 
 const DEFAULT_EXPIRATION = 60 * 60 * 24 * 30; // 30 days
 const log = createLogger('session-helpers', 'green');

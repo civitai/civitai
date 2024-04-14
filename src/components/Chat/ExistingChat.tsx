@@ -758,6 +758,7 @@ function ChatInputBox({
   );
 }
 
+// TODO add github but make sure the domain is not replaced
 const civRegex = new RegExp(
   `^(?:https?:\/\/)?(?:image\.)?(?:${(env.NEXT_PUBLIC_BASE_URL ?? 'civitai.com').replace(
     /^https?:\/\//,

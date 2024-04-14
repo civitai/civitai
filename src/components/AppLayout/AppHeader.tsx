@@ -16,31 +16,37 @@ import {
   Paper,
   Portal,
   ScrollArea,
+  Stack,
   Switch,
   Text,
   Transition,
   UnstyledButton,
   useMantineColorScheme,
 } from '@mantine/core';
+import { useLocalStorage } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
 import { Currency } from '@prisma/client';
 import {
-  IconLink,
   IconBarbell,
   IconBookmark,
+  IconBookmarkEdit,
   IconBrush,
   IconChevronDown,
+  IconChevronLeft,
+  IconChevronRight,
+  IconCloudLock,
+  IconClubs,
   IconCrown,
   IconHeart,
   IconHistory,
   IconInfoSquareRounded,
+  IconLink,
   IconLogout,
   IconMoneybag,
   IconMoonStars,
   IconPalette,
   IconPhotoUp,
   IconPlayerPlayFilled,
-  IconBookmarkEdit,
   IconPlus,
   IconProgressBolt,
   IconSearch,
@@ -52,17 +58,17 @@ import {
   IconUsers,
   IconVideoPlus,
   IconWriting,
-  IconClubs,
-  IconCloudLock,
 } from '@tabler/icons-react';
 import { signOut } from 'next-auth/react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import {
+  type Dispatch,
   Fragment,
   ReactElement,
   ReactNode,
   RefObject,
+  type SetStateAction,
   useCallback,
   useEffect,
   useMemo,
@@ -72,14 +78,17 @@ import {
 import { BrowsingModeIcon, BrowsingModeMenu } from '~/components/BrowsingMode/BrowsingMode';
 import { ChatButton } from '~/components/Chat/ChatButton';
 import { CivitaiLinkPopover } from '~/components/CivitaiLink/CivitaiLinkPopover';
+import { CivitaiAccounts } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
+import { useSystemCollections } from '~/components/Collections/collection.utils';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import { FeatureIntroductionModal } from '~/components/FeatureIntroduction/FeatureIntroduction';
 import { ListSearch } from '~/components/ListSearch/ListSearch';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Logo } from '~/components/Logo/Logo';
 import { ModerationNav } from '~/components/Moderation/ModerationNav';
 import { NotificationBell } from '~/components/Notifications/NotificationBell';
 import { UploadTracker } from '~/components/Resource/UploadTracker';
-import { BlurToggle } from '~/components/Settings/BlurToggle';
 import { SupportButton } from '~/components/SupportButton/SupportButton';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -87,15 +96,12 @@ import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import { deleteCookies } from '~/utils/cookies-helpers';
-import { LoginRedirectReason } from '~/utils/login-helpers';
+import { getLoginLink, LoginRedirectReason } from '~/utils/login-helpers';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 import { AutocompleteSearch } from '../AutocompleteSearch/AutocompleteSearch';
 import { openBuyBuzzModal } from '../Modals/BuyBuzzModal';
 import { GenerateButton } from '../RunStrategy/GenerateButton';
 import { UserBuzz } from '../User/UserBuzz';
-import { FeatureIntroductionModal } from '~/components/FeatureIntroduction/FeatureIntroduction';
-import { useSystemCollections } from '~/components/Collections/collection.utils';
-import { dialogStore } from '~/components/Dialog/dialogStore';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 
 const HEADER_HEIGHT = 70;
 
@@ -242,6 +248,102 @@ function defaultRenderSearchComponent({ onSearchDone, isMobile, ref }: RenderSea
   return <AutocompleteSearch />;
 }
 
+const AccountSwitcher = ({
+  inMenu = true,
+  setUserSwitching,
+  accounts,
+  logout,
+  close,
+}: {
+  inMenu?: boolean;
+  setUserSwitching: Dispatch<SetStateAction<boolean>>;
+  accounts: CivitaiAccounts;
+  logout: ({ removeLS, redirect }?: { removeLS?: boolean; redirect?: boolean }) => Promise<void>;
+  close: () => void;
+}) => {
+  const { classes } = useStyles();
+  // const { data: userData } = useSession();
+  const router = useRouter();
+
+  console.log(accounts);
+
+  const swapAccount = async (jwt: string) => {
+    console.log(jwt);
+    const resp = await fetch(`/api/auth/switchaccounts?token=${jwt}`);
+
+    if (resp.ok) {
+      router.reload();
+    } else {
+      const respJson: { error: string } = await resp.json();
+      console.log(respJson.error);
+    }
+  };
+
+  if (inMenu) {
+    return (
+      <>
+        <Menu.Item onClick={() => setUserSwitching(false)} closeMenuOnClick={false}>
+          <Group>
+            <IconChevronLeft />
+            <Text>Back</Text>
+          </Group>
+        </Menu.Item>
+        <Divider />
+        {Object.entries(accounts).map(([k, v]) => (
+          <Menu.Item
+            key={k}
+            onClick={v.active ? undefined : () => swapAccount(v.jwt)}
+            sx={v.active ? { cursor: 'initial' } : {}}
+          >
+            <Group>
+              <UserAvatar userId={Number(k)} withUsername />
+              {v.active && <Text color="dimmed">Active</Text>}
+            </Group>
+          </Menu.Item>
+        ))}
+        <Divider mb={8} />
+        <Stack spacing="xs">
+          <Button
+            // component={NextLink}
+            // href={getLoginLink({ returnUrl: router.asPath, reason: 'switch-accounts' })}
+            variant="light"
+            onClick={async () => {
+              close();
+              await logout({ removeLS: false, redirect: false });
+              console.log('awaited logout, pushing');
+              router.push(
+                getLoginLink({
+                  returnUrl: router.asPath,
+                  reason: 'switch-accounts',
+                })
+              );
+            }}
+          >
+            Add Account
+          </Button>
+          <Button variant="light" color="grape" onClick={() => logout()}>
+            Logout
+          </Button>
+        </Stack>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <Group
+        onClick={() => setUserSwitching(false)}
+        className={classes.link}
+        sx={{ cursor: 'pointer', justifyContent: 'flex-start !important' }}
+      >
+        <IconChevronLeft />
+        <Text>Back</Text>
+      </Group>
+      <Text>sup</Text>
+    </>
+  );
+};
+
 export function AppHeader({
   renderSearchComponent = defaultRenderSearchComponent,
   fixed = true,
@@ -252,8 +354,13 @@ export function AppHeader({
   const router = useRouter();
   const features = useFeatureFlags();
   const isMobile = useIsMobile();
+  const [accounts, setAccounts] = useLocalStorage({
+    key: `civitai-accounts`,
+    defaultValue: {} as CivitaiAccounts,
+  });
   const [burgerOpened, setBurgerOpened] = useState(false);
   const [userMenuOpened, setUserMenuOpened] = useState(false);
+  const [userSwitching, setUserSwitching] = useState(false);
   // const ref = useClickOutside(() => setBurgerOpened(false));
   const searchRef = useRef<HTMLInputElement>(null);
 
@@ -466,6 +573,7 @@ export function AppHeader({
       },
       {
         href: '',
+        visible: !!currentUser,
         label: <Divider my={4} />,
       },
       {
@@ -622,6 +730,7 @@ export function AppHeader({
   const onSearchDone = () => setShowSearch(false);
 
   const handleCloseMenu = useCallback(() => {
+    setUserSwitching(false);
     setBurgerOpened(false);
     setUserMenuOpened(false);
   }, [setBurgerOpened]);
@@ -650,7 +759,6 @@ export function AppHeader({
             p="sm"
             position="apart"
             mx={-4}
-            mt={-4}
             mb={4}
             sx={(theme) => ({
               backgroundColor:
@@ -781,10 +889,33 @@ export function AppHeader({
     </Menu>
   );
 
-  const handleSignOut = async () => {
+  const handleSignOut = async (
+    {
+      removeLS,
+      redirect,
+    }: {
+      removeLS?: boolean;
+      redirect?: boolean;
+    } = { removeLS: true, redirect: true }
+  ) => {
     // Removes referral cookies on sign out
     deleteCookies(['ref_code', 'ref_source']);
-    await signOut();
+
+    // When logging out, remove from localStorage
+    if (removeLS) {
+      const userId = currentUser?.id;
+      const userIdStr = !!userId ? userId.toString() : undefined;
+      if (!!userIdStr && userIdStr in accounts) {
+        delete accounts[userIdStr];
+        setAccounts(accounts);
+      }
+    }
+
+    if (!redirect) {
+      await signOut({ redirect: false });
+    } else {
+      await signOut();
+    }
   };
 
   return (
@@ -860,7 +991,10 @@ export function AppHeader({
               transition="pop-top-right"
               zIndex={constants.imageGeneration.drawerZIndex + 1}
               // radius="lg"
-              onClose={() => setUserMenuOpened(false)}
+              onClose={() => {
+                setUserSwitching(false);
+                setUserMenuOpened(false);
+              }}
               withinPortal
             >
               <Menu.Target>
@@ -868,53 +1002,81 @@ export function AppHeader({
                   className={cx(classes.user, { [classes.userActive]: userMenuOpened })}
                   onClick={() => setUserMenuOpened(true)}
                 >
-                  <Group spacing={8} noWrap>
-                    <UserAvatar user={currentUser} size="md" />
-                    {features.buzz && currentUser && <UserBuzz pr="sm" />}
-                  </Group>
+                  {!!currentUser ? (
+                    <Group spacing={8} noWrap>
+                      <UserAvatar user={currentUser} size="md" />
+                      {features.buzz && currentUser && <UserBuzz pr="sm" />}
+                    </Group>
+                  ) : (
+                    <Burger opened={userMenuOpened} size="sm" />
+                  )}
                 </UnstyledButton>
               </Menu.Target>
+
               <Menu.Dropdown>
                 <ScrollArea.Autosize
                   maxHeight="calc(90vh - var(--mantine-header-height))"
                   styles={{ root: { margin: -4 }, viewport: { padding: 4 } }}
                   offsetScrollbars
                 >
-                  <BuzzMenuItem withAbbreviation={false} />
-                  {userMenuItems}
-                  <Divider my={4} />
-                  <Menu.Item
-                    closeMenuOnClick={false}
-                    icon={<IconPalette stroke={1.5} />}
-                    onClick={() => toggleColorScheme()}
-                  >
-                    <Group align="center" position="apart">
-                      Dark mode
-                      <Switch
-                        checked={colorScheme === 'dark'}
-                        sx={{ display: 'flex', alignItems: 'center' }}
-                        onClick={(e) => e.stopPropagation()}
-                      />
-                    </Group>
-                  </Menu.Item>
-
-                  {currentUser ? (
+                  {userSwitching ? (
+                    <AccountSwitcher
+                      setUserSwitching={setUserSwitching}
+                      accounts={accounts}
+                      logout={handleSignOut}
+                      close={handleCloseMenu}
+                    />
+                  ) : (
                     <>
+                      {!!currentUser && (
+                        <Menu.Item
+                          onClick={() => setUserSwitching(true)}
+                          closeMenuOnClick={false}
+                          mb={4}
+                        >
+                          <Group w="100%" position="apart">
+                            <UserAvatar user={currentUser} withUsername />
+                            <IconChevronRight />
+                          </Group>
+                        </Menu.Item>
+                      )}
+                      <BuzzMenuItem withAbbreviation={false} />
+                      {userMenuItems}
+                      <Divider my={4} />
                       <Menu.Item
-                        icon={<IconSettings stroke={1.5} />}
-                        component={NextLink}
-                        href="/user/account"
+                        closeMenuOnClick={false}
+                        icon={<IconPalette stroke={1.5} />}
+                        onClick={() => toggleColorScheme()}
                       >
-                        Account settings
+                        <Group align="center" position="apart">
+                          Dark mode
+                          <Switch
+                            checked={colorScheme === 'dark'}
+                            sx={{ display: 'flex', alignItems: 'center' }}
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                        </Group>
                       </Menu.Item>
-                      <Menu.Item
-                        icon={<IconLogout color={theme.colors.red[9]} stroke={1.5} />}
-                        onClick={handleSignOut}
-                      >
-                        Logout
-                      </Menu.Item>
+
+                      {currentUser ? (
+                        <>
+                          <Menu.Item
+                            icon={<IconSettings stroke={1.5} />}
+                            component={NextLink}
+                            href="/user/account"
+                          >
+                            Account settings
+                          </Menu.Item>
+                          <Menu.Item
+                            icon={<IconLogout color={theme.colors.red[9]} stroke={1.5} />}
+                            onClick={() => handleSignOut()}
+                          >
+                            Logout
+                          </Menu.Item>
+                        </>
+                      ) : null}
                     </>
-                  ) : null}
+                  )}
                 </ScrollArea.Autosize>
               </Menu.Dropdown>
             </Menu>
@@ -948,41 +1110,63 @@ export function AppHeader({
                     sx={{ zIndex: 1002 }}
                     // ref={ref}
                   >
-                    {/* Calculate maxHeight based off total viewport height minus header + footer + static menu options inside dropdown sizes */}
-                    <ScrollArea.Autosize maxHeight={'calc(100dvh - 135px)'}>
-                      <BuzzMenuItem mx={0} mt={0} textSize="sm" withAbbreviation={false} />
-                      {burgerMenuItems}
-                      {currentUser && (
-                        <>
-                          <Divider />
-                          <Box px="md" pt="md">
-                            <BrowsingModeMenu closeMenu={() => setBurgerOpened(false)} />
-                          </Box>
-                        </>
-                      )}
-                    </ScrollArea.Autosize>
+                    {userSwitching ? (
+                      <AccountSwitcher
+                        inMenu={false}
+                        setUserSwitching={setUserSwitching}
+                        accounts={accounts}
+                        logout={handleSignOut}
+                        close={handleCloseMenu}
+                      />
+                    ) : (
+                      <>
+                        {/* Calculate maxHeight based off total viewport height minus header + footer + static menu options inside dropdown sizes */}
+                        <ScrollArea.Autosize maxHeight={'calc(100dvh - 135px)'}>
+                          {!!currentUser && (
+                            <Group
+                              className={classes.link}
+                              w="100%"
+                              position="apart"
+                              sx={{ cursor: 'pointer' }}
+                              onClick={() => setUserSwitching(true)}
+                            >
+                              <UserAvatar user={currentUser} withUsername />
+                              <IconChevronRight />
+                            </Group>
+                          )}
+                          <BuzzMenuItem mx={0} mt={0} textSize="sm" withAbbreviation={false} />
+                          {burgerMenuItems}
+                          {currentUser && (
+                            <>
+                              <Divider />
+                              <Box px="md" pt="md">
+                                <BrowsingModeMenu closeMenu={() => setBurgerOpened(false)} />
+                              </Box>
+                            </>
+                          )}
+                        </ScrollArea.Autosize>
 
-                    <Group p="md" position="apart" grow>
-                      <ActionIcon
-                        variant="default"
-                        onClick={() => toggleColorScheme()}
-                        size="lg"
-                        sx={(theme) => ({
-                          color:
-                            theme.colorScheme === 'dark'
-                              ? theme.colors.yellow[theme.fn.primaryShade()]
-                              : theme.colors.blue[theme.fn.primaryShade()],
-                        })}
-                      >
-                        {colorScheme === 'dark' ? (
-                          <IconSun size={18} />
-                        ) : (
-                          <IconMoonStars size={18} />
-                        )}
-                      </ActionIcon>
-                      {currentUser && (
-                        <>
-                          {/* {currentUser?.showNsfw && (
+                        <Group p="md" position="apart" grow>
+                          <ActionIcon
+                            variant="default"
+                            onClick={() => toggleColorScheme()}
+                            size="lg"
+                            sx={(theme) => ({
+                              color:
+                                theme.colorScheme === 'dark'
+                                  ? theme.colors.yellow[theme.fn.primaryShade()]
+                                  : theme.colors.blue[theme.fn.primaryShade()],
+                            })}
+                          >
+                            {colorScheme === 'dark' ? (
+                              <IconSun size={18} />
+                            ) : (
+                              <IconMoonStars size={18} />
+                            )}
+                          </ActionIcon>
+                          {currentUser && (
+                            <>
+                              {/* {currentUser?.showNsfw && (
                             <BlurToggle iconProps={{ stroke: 1.5 }}>
                               {({ icon, toggle }) => (
                                 <ActionIcon variant="default" size="lg" onClick={() => toggle()}>
@@ -991,24 +1175,26 @@ export function AppHeader({
                               )}
                             </BlurToggle>
                           )} */}
-                          <Link href="/user/account">
-                            <ActionIcon
-                              variant="default"
-                              size="lg"
-                              onClick={() => setBurgerOpened(false)}
-                            >
-                              <IconSettings stroke={1.5} />
-                            </ActionIcon>
-                          </Link>
-                          <ActionIcon variant="default" onClick={() => signOut()} size="lg">
-                            <IconLogout
-                              stroke={1.5}
-                              color={theme.colors.red[theme.fn.primaryShade()]}
-                            />
-                          </ActionIcon>
-                        </>
-                      )}
-                    </Group>
+                              <Link href="/user/account">
+                                <ActionIcon
+                                  variant="default"
+                                  size="lg"
+                                  onClick={() => setBurgerOpened(false)}
+                                >
+                                  <IconSettings stroke={1.5} />
+                                </ActionIcon>
+                              </Link>
+                              <ActionIcon variant="default" onClick={() => signOut()} size="lg">
+                                <IconLogout
+                                  stroke={1.5}
+                                  color={theme.colors.red[theme.fn.primaryShade()]}
+                                />
+                              </ActionIcon>
+                            </>
+                          )}
+                        </Group>
+                      </>
+                    )}
                   </Paper>
                 </Portal>
               )}

@@ -1,17 +1,35 @@
-import { Session } from 'next-auth';
-import { SessionUser } from 'next-auth';
+import { useLocalStorage } from '@mantine/hooks';
+import dayjs from 'dayjs';
+import { Session, SessionUser } from 'next-auth';
 import { signIn, useSession } from 'next-auth/react';
-import { createContext, useContext, useMemo, useEffect, useRef, useState } from 'react';
-import { onboardingSteps } from '~/components/Onboarding/onboarding.utils';
-import { Flags } from '~/shared/utils';
-import { dialogStore } from '~/components/Dialog/dialogStore';
 import dynamic from 'next/dynamic';
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useBrowsingModeContext } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import { onboardingSteps } from '~/components/Onboarding/onboarding.utils';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { Flags } from '~/shared/utils';
+
 const OnboardingModal = dynamic(() => import('~/components/Onboarding/OnboardingWizard'));
+
+export type CivitaiAccounts = {
+  [k in string]: {
+    jwt: string;
+    // avatarUrl: string;
+    expireAt: string;
+    active: boolean;
+  };
+};
 
 export function CivitaiSessionProvider({ children }: { children: React.ReactNode }) {
   const { data, update } = useSession();
+
+  const [accounts, setAccounts] = useLocalStorage({
+    key: `civitai-accounts`,
+    defaultValue: {} as CivitaiAccounts,
+  });
+
+  console.log(accounts);
 
   const { useStore } = useBrowsingModeContext();
   const browsingModeState = useStore((state) => state);
@@ -32,9 +50,51 @@ export function CivitaiSessionProvider({ children }: { children: React.ReactNode
     };
   }, [data?.expires, update, browsingModeState]); // eslint-disable-line
 
+  console.log(data?.user);
+
   useEffect(() => {
     if (data?.error === 'RefreshAccessTokenError') signIn();
   }, [data?.error]);
+
+  useEffect(() => {
+    const userId = data?.user?.id;
+    if (!userId) return;
+    const userIdStr = userId.toString();
+    // console.log(data?.user);
+    // console.log({ expires: data?.expires });
+    const getAndSetData = async () => {
+      if (!(userIdStr in accounts)) {
+        const resp = await fetch('/api/auth/gettoken');
+        const respJson: { token: string | null } = await resp.json();
+        console.log('about to set accounts');
+        const { token } = respJson;
+        if (!!token) {
+          setAccounts((current) => {
+            const old = { ...current };
+            Object.keys(old).forEach((k) => {
+              old[k]['active'] = false;
+            });
+            console.log(old);
+
+            return {
+              ...old,
+              [userIdStr]: {
+                jwt: token,
+                // avatarUrl: data?.user?.image ?? '',
+                expireAt: data?.expires ?? dayjs().add(30, 'day').toISOString(),
+                active: true,
+              },
+            };
+          });
+        } else {
+          console.log('no token');
+        }
+      }
+    };
+    getAndSetData().catch((e) => console.log(e));
+  }, [data?.user]);
+
+  // TODO add listener to find out if current session is active one, if not - refresh
 
   useEffect(() => {
     const onboarding = value?.onboarding;

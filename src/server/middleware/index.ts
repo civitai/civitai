@@ -11,6 +11,7 @@ import { routeGuardsMiddleware } from '~/server/middleware/route-guards.middlewa
 const middlewares: Middleware[] = [routeGuardsMiddleware, apiCacheMiddleware, redirectsMiddleware];
 
 export const middlewareMatcher = middlewares.flatMap((middleware) => middleware.matcher);
+
 export async function runMiddlewares(request: NextRequest) {
   let user: SessionUser | null = null;
   let hasToken = true;
