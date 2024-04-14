@@ -473,7 +473,7 @@ export const commentNotifications = createNotificationProcessor({
         LEFT JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
         LEFT JOIN "Model" m ON m.id = mv."modelId"
         JOIN "User" u ON c."userId" = u.id
-        WHERE m."userId" > 0
+        WHERE i."userId" > 0
           AND c."createdAt" > '${lastSent}'
           AND c."userId" != i."userId"
       )

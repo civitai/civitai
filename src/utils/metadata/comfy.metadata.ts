@@ -77,13 +77,14 @@ export const comfyMetadataProcessor = createMetadataProcessor({
         }
       }
     }
+    console.log('positive', initialSamplerNode.positive);
 
     const metadata: ImageMetaProps = {
-      prompt: getPromptText(initialSamplerNode.positive),
-      negativePrompt: getPromptText(initialSamplerNode.negative),
+      prompt: getPromptText(initialSamplerNode.positive, 'positive'),
+      negativePrompt: getPromptText(initialSamplerNode.negative, 'negative'),
       cfgScale: initialSamplerNode.cfg,
       steps: initialSamplerNode.steps,
-      seed: initialSamplerNode.seed,
+      seed: getNumberValue(initialSamplerNode.seed, ['Value', 'seed']),
       sampler: initialSamplerNode.sampler_name,
       scheduler: initialSamplerNode.scheduler,
       denoise: initialSamplerNode.denoise,
@@ -97,7 +98,7 @@ export const comfyMetadataProcessor = createMetadataProcessor({
       versionIds,
       modelIds,
       // Converting to string to reduce bytes size
-      comfy: workflow ? JSON.stringify({ prompt, workflow }) : undefined,
+      comfy: `{"prompt": ${exif.prompt}, "workflow": ${exif.workflow}}`,
     };
 
     // Handle control net apply
@@ -136,24 +137,28 @@ function a1111Compatability(metadata: ImageMetaProps) {
   }
 }
 
-function getPromptText(node: ComfyNode): string {
+function getPromptText(node: ComfyNode, target: 'positive' | 'negative' = 'positive'): string {
   if (node.inputs?.text) {
     if (typeof node.inputs.text === 'string') return node.inputs.text;
     if (typeof (node.inputs.text as ComfyNode).class_type !== 'undefined')
-      return getPromptText(node.inputs.text as ComfyNode);
+      return getPromptText(node.inputs.text as ComfyNode, target);
   }
   if (node.inputs?.text_g) {
     if (!node.inputs?.text_l || node.inputs?.text_l === node.inputs?.text_g)
       return node.inputs.text_g as string;
     return `${node.inputs.text_g}, ${node.inputs.text_l}`;
   }
+  if (node.inputs?.[`text_${target}`]) return node.inputs[`text_${target}`] as string;
   return '';
 }
 
 type ComfyNumber = ComfyNode | number;
-function getNumberValue(input: ComfyNumber) {
+function getNumberValue(input: ComfyNumber, valueNames = ['Value']) {
   if (typeof input === 'number') return input;
-  return input.inputs.Value as number;
+  for (const name of valueNames) {
+    if (typeof input.inputs[name] !== 'undefined') return input.inputs[name] as number;
+  }
+  return 0;
 }
 
 // #region [types]

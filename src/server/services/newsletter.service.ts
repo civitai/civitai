@@ -28,8 +28,9 @@ export async function getSubscription(email?: string) {
   return {
     subscribed,
     showNewsletterDialog:
-      !settings?.newsletterDialogLastSeenAt ||
-      new Date(settings.newsletterDialogLastSeenAt) <= new Date(),
+      !subscribed &&
+      (!settings?.newsletterDialogLastSeenAt ||
+        new Date(settings.newsletterDialogLastSeenAt) <= new Date()),
   };
 }
 

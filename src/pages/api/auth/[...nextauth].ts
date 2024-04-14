@@ -13,6 +13,8 @@ import { civitaiTokenCookieName, useSecureCookies } from '~/libs/auth';
 import { Tracker } from '~/server/clickhouse/client';
 import { dbWrite } from '~/server/db/client';
 import { verificationEmail } from '~/server/email/templates';
+import { getRandomInt } from '~/utils/number-helpers';
+import { refreshToken, invalidateSession, invalidateToken } from '~/server/utils/session-helpers';
 import {
   createUserReferral,
   getSessionUser,
@@ -21,6 +23,10 @@ import {
 import blockedDomains from '~/server/utils/email-domain-blocklist.json';
 import { invalidateSession, refreshToken } from '~/server/utils/session-helpers';
 import { getRandomInt } from '~/utils/number-helpers';
+import { createLimiter } from '~/server/utils/rate-limiting';
+import { REDIS_KEYS } from '~/server/redis/client';
+import { CacheTTL } from '~/server/common/constants';
+import dayjs from 'dayjs';
 
 const setUserName = async (id: number, setTo: string) => {
   try {
@@ -59,6 +65,9 @@ export function createAuthOptions(): NextAuthOptions {
           while (!username) username = await setUserName(Number(user.id), startingUsername);
         }
       },
+      signOut: async ({ token }) => {
+        await invalidateToken(token);
+      },
     },
     callbacks: {
       async signIn({ account }) {
@@ -81,8 +90,9 @@ export function createAuthOptions(): NextAuthOptions {
         return token;
       },
       async session({ session, token }) {
-        token = await refreshToken(token);
-        session.user = (token.user ? token.user : session.user) as Session['user'];
+        const newToken = await refreshToken(token);
+        if (!newToken?.user) return {} as Session;
+        session.user = (newToken.user ? newToken.user : session.user) as Session['user'];
         return session;
       },
       async redirect({ url, baseUrl }) {
@@ -187,6 +197,12 @@ export default async function auth(req: NextApiRequest, res: NextApiResponse) {
   return await NextAuth(req, res, customAuthOptions);
 }
 
+const emailLimiter = createLimiter({
+  counterKey: REDIS_KEYS.COUNTERS.EMAIL_VERIFICATIONS,
+  limitKey: REDIS_KEYS.LIMITS.EMAIL_VERIFICATIONS,
+  fetchCount: async () => 0,
+  refetchInterval: CacheTTL.day,
+});
 async function sendVerificationRequest({
   identifier: to,
   url,
@@ -197,5 +213,14 @@ async function sendVerificationRequest({
     throw new Error(`Email domain ${emailDomain} is not allowed`);
   }
 
+  if (await emailLimiter.hasExceededLimit(to)) {
+    const limitHitTime = await emailLimiter.getLimitHitTime(to);
+    let message = 'Too many verification emails sent to this address';
+    if (limitHitTime)
+      message += ` - Please try again ${dayjs(limitHitTime).add(1, 'day').fromNow()}.`;
+    throw new Error(message);
+  }
+
   await verificationEmail.send({ to, url, theme });
+  await emailLimiter.increment(to);
 }

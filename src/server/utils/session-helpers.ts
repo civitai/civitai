@@ -5,6 +5,8 @@ import { redis } from '~/server/redis/client';
 import { getSessionUser } from '~/server/services/user.service';
 import { generateSecretHash } from '~/server/utils/key-generator';
 import { createLogger } from '~/utils/logging';
+import { Session } from 'next-auth';
+import { v4 as uuid } from 'uuid';
 
 const DEFAULT_EXPIRATION = 60 * 60 * 24 * 30; // 30 days
 const log = createLogger('session-helpers', 'green');
@@ -15,25 +17,46 @@ declare global {
   var sessionsFetch: Promise<Record<number, Date>> | null;
 }
 
+const TOKEN_ID_ENFORCEMENT = 1713139200000;
+export async function invalidateToken(token: JWT) {
+  if (!token?.id || typeof token.id !== 'string') return;
+
+  await redis.hSet('session:invalid-tokens', token.id as string, Date.now());
+  log(`Invalidated token ${token.id}`);
+}
+
 export async function refreshToken(token: JWT) {
   if (!token.user) return token;
   const user = token.user as User;
   if (!user.id) return token;
 
-  const userDateStr = await redis.get(`session:${user.id}`);
-  const userDate = userDateStr ? new Date(userDateStr) : undefined;
-  const allInvalidationDateStr = await redis.get('session:all');
-  const allInvalidationDate = allInvalidationDateStr ? new Date(allInvalidationDateStr) : undefined;
-  const invalidationDate =
-    userDate && allInvalidationDate
-      ? new Date(Math.max(userDate.getTime(), allInvalidationDate.getTime()))
-      : userDate ?? allInvalidationDate;
+  let shouldRefresh = false;
 
-  if (
-    !invalidationDate ||
-    (token.signedAt && new Date(token.signedAt as string) > invalidationDate)
-  )
-    return token;
+  // Enforce Token Validity
+  if (!token.id) {
+    if (Date.now() > TOKEN_ID_ENFORCEMENT) return null;
+    shouldRefresh = true;
+  } else {
+    const tokenInvalid = await redis.hExists('session:invalid-tokens', token.id as string);
+    if (tokenInvalid) return null;
+  }
+
+  // Enforce Token Refresh
+  if (!shouldRefresh) {
+    const userDateStr = await redis.get(`session:${user.id}`);
+    const userDate = userDateStr ? new Date(userDateStr) : undefined;
+    const allInvalidationDateStr = await redis.get('session:all');
+    const allInvalidationDate = allInvalidationDateStr
+      ? new Date(allInvalidationDateStr)
+      : undefined;
+    const invalidationDate =
+      userDate && allInvalidationDate
+        ? new Date(Math.max(userDate.getTime(), allInvalidationDate.getTime()))
+        : userDate ?? allInvalidationDate;
+    shouldRefresh = !invalidationDate || new Date(token.signedAt as string) < invalidationDate;
+  }
+
+  if (!shouldRefresh) return token;
 
   const refreshedUser = await getSessionUser({ userId: user.id });
   setToken(token, refreshedUser);
@@ -56,6 +79,7 @@ function setToken(token: JWT, session: AsyncReturnType<typeof getSessionUser>) {
     else if (typeof _user[key] === 'undefined') delete _user[key];
   }
 
+  token.id = token.id ?? uuid();
   token.signedAt = new Date();
 }
 

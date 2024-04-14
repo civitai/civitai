@@ -1,6 +1,8 @@
+import { TRPCError } from '@trpc/server';
 import superjson from 'superjson';
 import { isProd } from '~/env/other';
 import { purgeCache } from '~/server/cloudflare/client';
+import { CacheTTL } from '~/server/common/constants';
 import { logToAxiom } from '~/server/logging/client';
 import { redis } from '~/server/redis/client';
 import { UserPreferencesInput } from '~/server/schema/base.schema';
@@ -75,6 +77,36 @@ export function cacheIt<TInput extends object>({
     }
 
     return result;
+  });
+}
+
+export type RateLimit = {
+  limit?: number;
+  period?: number; // seconds
+};
+export function rateLimit({ limit, period }: RateLimit) {
+  limit ??= 10;
+  period ??= CacheTTL.md;
+
+  return middleware(async ({ ctx, next, path }) => {
+    const cacheKey = `trpc:limit:${path.replace('.', ':')}`;
+    const hashKey = ctx.user?.id?.toString() ?? ctx.ip;
+    const attempts = JSON.parse((await redis.hGet(cacheKey, hashKey)) ?? '[]').map(
+      Number
+    ) as number[];
+    const cutoff = Date.now() - period! * 1000;
+    const relevantAttempts = attempts.filter((x) => x > cutoff);
+    if (relevantAttempts.length >= limit!) {
+      throw new TRPCError({
+        code: 'TOO_MANY_REQUESTS',
+        message: 'Rate limit exceeded',
+      });
+    }
+
+    relevantAttempts.push(Date.now());
+    await redis.hSet(cacheKey, hashKey, JSON.stringify(relevantAttempts));
+    await redis.sAdd('trpc:limit:keys', cacheKey);
+    return await next();
   });
 }
 

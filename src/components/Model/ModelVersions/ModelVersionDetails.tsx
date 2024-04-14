@@ -572,8 +572,12 @@ export function ModelVersionDetails({
           ) : (
             <Stack spacing={4}>
               <Group spacing="xs" style={{ alignItems: 'flex-start', flexWrap: 'nowrap' }}>
+                {canGenerate && (
+                  <GenerateButton modelVersionId={version.id} data-activity="create:model" />
+                )}
+
                 {displayCivitaiLink && (
-                  <Stack sx={{ flex: 1 }} spacing={4}>
+                  <Stack sx={canGenerate ? undefined : { flex: 1 }} spacing={4}>
                     <CivitaiLinkManageButton
                       modelId={model.id}
                       modelVersionId={version.id}
@@ -582,29 +586,41 @@ export function ModelVersionDetails({
                       hashes={version.hashes}
                       noTooltip
                     >
-                      {({ color, onClick, ref, icon, label }) => (
-                        <Button
-                          ref={ref}
-                          color={color}
-                          onClick={onClick}
-                          leftIcon={icon}
-                          disabled={!primaryFile}
-                        >
-                          {label}
-                        </Button>
-                      )}
+                      {({ color, onClick, ref, icon, label }) =>
+                        !canGenerate ? (
+                          <Button
+                            ref={ref}
+                            color={color}
+                            onClick={onClick}
+                            leftIcon={icon}
+                            disabled={!primaryFile}
+                          >
+                            {label}
+                          </Button>
+                        ) : (
+                          <Tooltip label={label}>
+                            <Button
+                              ref={ref}
+                              color={color}
+                              onClick={onClick}
+                              disabled={!primaryFile}
+                              variant="light"
+                              sx={{
+                                cursor: 'pointer',
+                                paddingLeft: 0,
+                                paddingRight: 0,
+                                width: '36px',
+                              }}
+                            >
+                              {icon}
+                            </Button>
+                          </Tooltip>
+                        )
+                      }
                     </CivitaiLinkManageButton>
-                    {/* {primaryFileDetails} */}
                   </Stack>
                 )}
 
-                {canGenerate && (
-                  <GenerateButton
-                    iconOnly={displayCivitaiLink}
-                    modelVersionId={version.id}
-                    data-activity="create:model"
-                  />
-                )}
                 {displayCivitaiLink || canGenerate ? (
                   filesCount === 1 ? (
                     <DownloadButton
@@ -614,6 +630,7 @@ export function ModelVersionDetails({
                         versionId: version.id,
                         primary: true,
                       })}
+                      tooltip="Download"
                       disabled={!primaryFile || archived}
                       iconOnly
                     />

@@ -1,115 +1,90 @@
 import {
   ActionIcon,
+  Alert,
   Badge,
-  Button,
   Card,
-  Text,
+  createStyles,
   MantineColor,
+  Text,
   Tooltip,
   TooltipProps,
-  createStyles,
-  useMantineTheme,
-  Alert,
-  Group,
 } from '@mantine/core';
-import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { useClipboard, useLocalStorage } from '@mantine/hooks';
+import { useClipboard } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
 import {
-  IconInfoHexagon,
-  IconPhoto,
-  IconPlayerPlayFilled,
-  IconTrash,
-  IconX,
-  IconCheck,
-  IconLoader,
   IconAlertTriangleFilled,
-  IconHandStop,
-  IconRotateClockwise,
   IconArrowsShuffle,
+  IconBan,
+  IconCheck,
+  IconInfoHexagon,
+  IconTrash,
 } from '@tabler/icons-react';
 
+import { Currency } from '@prisma/client';
+import dayjs from 'dayjs';
+import { useMemo } from 'react';
 import { Collection } from '~/components/Collection/Collection';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
-import { GeneratedImage } from '~/components/ImageGeneration/GeneratedImage';
+import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
+import { GeneratedImage, GenerationPlaceholder } from '~/components/ImageGeneration/GeneratedImage';
 import { GenerationDetails } from '~/components/ImageGeneration/GenerationDetails';
+import {
+  useGenerationStatus,
+  useUnstableResources,
+} from '~/components/ImageGeneration/GenerationForm/generation.utils';
+import { GenerationStatusBadge } from '~/components/ImageGeneration/GenerationStatusBadge';
 import {
   useDeleteGenerationRequest,
   useDeleteGenerationRequestImages,
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { constants } from '~/server/common/constants';
+import { GenerationRequestStatus } from '~/server/common/enums';
 import { Generation } from '~/server/services/generation/generation.types';
 import { generationPanel, generationStore } from '~/store/generation.store';
 import { formatDateMin } from '~/utils/date-helpers';
-import {
-  getBaseModelSetKey,
-  useGenerationStatus,
-  useUnstableResources,
-} from '~/components/ImageGeneration/GenerationForm/generation.utils';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { Currency } from '@prisma/client';
-import dayjs from 'dayjs';
-import { useMemo } from 'react';
-import { GenerationRequestStatus } from '~/server/common/enums';
-import { GenerationStatusBadge } from '~/components/ImageGeneration/GenerationStatusBadge';
-import { isProd } from '~/env/other';
-import { trpc } from '~/utils/trpc';
+import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
+import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
+
+const PENDING_STATUSES = [GenerationRequestStatus.Pending, GenerationRequestStatus.Processing];
 
 // export function QueueItem({ data: request, index }: { data: Generation.Request; index: number }) {
 export function QueueItem({ request }: Props) {
-  const theme = useMantineTheme();
-  const [showBoost] = useLocalStorage({ key: 'show-boost-modal', defaultValue: false });
   const { classes, cx } = useStyle();
 
   const generationStatus = useGenerationStatus();
   const { unstableResources } = useUnstableResources();
 
   const { copied, copy } = useClipboard();
-  const currentUser = useCurrentUser();
 
   const status = request.status ?? GenerationRequestStatus.Pending;
+  const isDraft = request.sequential ?? false;
   const pendingProcessing =
-    status === GenerationRequestStatus.Pending || status === GenerationRequestStatus.Processing;
+    PENDING_STATUSES.includes(status) &&
+    (isDraft
+      ? request.images?.every((x) => !x.status)
+      : request.images?.some((x) => !x.status || x.status === 'Started'));
   const failed = status === GenerationRequestStatus.Error;
 
   const deleteImageMutation = useDeleteGenerationRequestImages();
   const deleteMutation = useDeleteGenerationRequest();
-  const removeAction = pendingProcessing
-    ? {
-        modal: {
-          title: 'Cancel Request',
-          children: `Are you sure you want to cancel this request?`,
-          labels: { confirm: 'Cancel', cancel: "No, don't cancel it" },
-        },
-        tooltip: 'Cancel',
-        onConfirm: () => {
-          deleteImageMutation.mutate({
-            ids: request.images?.filter((x) => !x.available).map((x) => x.id) ?? [],
-            cancelled: true,
-          });
-        },
-      }
-    : {
-        modal: {
-          title: 'Delete Creation',
-          children: `Are you sure you want to delete this creation?`,
-          labels: { confirm: 'Delete', cancel: "No, don't delete it" },
-        },
-        tooltip: 'Delete',
-        onConfirm: () => {
-          deleteMutation.mutate({ id: request.id });
-        },
-      };
+  const cancellingDeleting = deleteImageMutation.isLoading || deleteMutation.isLoading;
 
   const handleDeleteQueueItem = () => {
-    openConfirmModal({
-      ...removeAction.modal,
-      confirmProps: { color: 'red' },
-      zIndex: constants.imageGeneration.drawerZIndex + 1,
-      onConfirm: removeAction.onConfirm,
-    });
+    deleteMutation.mutate({ id: request.id });
+  };
+
+  const handleCancel = () => {
+    const ids =
+      request.images
+        ?.filter((x) => (isDraft ? !x.status : !x.status || x.status === 'Started'))
+        .map((x) => x.id) ?? [];
+    if (ids.length) {
+      deleteImageMutation.mutate({
+        ids,
+        cancelled: true,
+      });
+    }
   };
 
   const handleCopy = () => {
@@ -125,8 +100,9 @@ export function QueueItem({ request }: Props) {
   };
 
   const { prompt, ...details } = request.params;
-  const images = request.images?.filter((x) => x.duration);
-  // const removedForSafety = images?.some((x) => x.removedForSafety && x.available);
+  const images = request.images
+    ?.filter((x) => x.duration)
+    .sort((a, b) => b.duration! - a.duration!);
 
   const hasUnstableResources = request.resources.some((x) => unstableResources.includes(x.id));
   const overwriteStatusLabel =
@@ -147,8 +123,15 @@ export function QueueItem({ request }: Props) {
   // };
 
   const refundTime = useMemo(() => {
-    return !failed ? undefined : dayjs(request.createdAt).add(35, 'minutes').toDate();
+    return !failed ? undefined : dayjs(request.createdAt).add(1, 'minutes').toDate();
   }, [failed, request.createdAt]);
+
+  const refunded = Math.ceil(
+    !!request.cost
+      ? (request.cost / request.quantity) * (request.quantity - (request.images?.length ?? 0))
+      : 0
+  );
+  const cost = !!request.cost ? request.cost - refunded : 0;
 
   return (
     <Card withBorder px="xs">
@@ -157,7 +140,8 @@ export function QueueItem({ request }: Props) {
           <div className="flex gap-1 items-center">
             <GenerationStatusBadge
               status={request.status}
-              count={request.images?.filter((x) => x.duration).length ?? 0}
+              complete={request.images?.filter((x) => x.duration).length ?? 0}
+              processing={request.images?.filter((x) => x.status === 'Started').length ?? 0}
               quantity={request.quantity}
               tooltipLabel={overwriteStatusLabel}
               progress
@@ -166,35 +150,41 @@ export function QueueItem({ request }: Props) {
             <Text size="xs" color="dimmed">
               {formatDateMin(request.createdAt)}
             </Text>
-            {!!request.cost &&
+            {!!cost &&
               dayjs(request.createdAt).toDate() >=
                 constants.buzz.generationBuzzChargingStartDate && (
-                <CurrencyBadge unitAmount={request.cost} currency={Currency.BUZZ} size="xs" />
+                <CurrencyBadge unitAmount={cost} currency={Currency.BUZZ} size="xs" />
               )}
-            <Tooltip {...tooltipProps} label="Copy Job IDs">
+            <ButtonTooltip {...tooltipProps} label="Copy Job IDs">
               <ActionIcon size="md" p={4} radius={0} onClick={handleCopy}>
                 {copied ? <IconCheck /> : <IconInfoHexagon />}
               </ActionIcon>
-            </Tooltip>
+            </ButtonTooltip>
           </div>
           <div className="flex gap-1">
             {generationStatus.available && (
-              <Tooltip {...tooltipProps} label="Remix">
+              <ButtonTooltip {...tooltipProps} label="Remix">
                 <ActionIcon size="md" p={4} radius={0} onClick={handleGenerate}>
                   <IconArrowsShuffle />
                 </ActionIcon>
-              </Tooltip>
+              </ButtonTooltip>
             )}
-            <Tooltip {...tooltipProps} label={removeAction.tooltip}>
-              <ActionIcon
-                size="md"
-                onClick={handleDeleteQueueItem}
-                disabled={deleteMutation.isLoading}
-                color="red"
+            <PopConfirm
+              message={`Are you sure you want to ${
+                pendingProcessing ? 'cancel' : 'delete'
+              } this job?`}
+              position="bottom-end"
+              onConfirm={pendingProcessing ? handleCancel : handleDeleteQueueItem}
+            >
+              <ButtonTooltip
+                {...tooltipProps}
+                label={pendingProcessing ? 'Cancel job' : 'Delete job'}
               >
-                {pendingProcessing ? <IconX size={20} /> : <IconTrash size={20} />}
-              </ActionIcon>
-            </Tooltip>
+                <ActionIcon size="md" disabled={cancellingDeleting} color="red">
+                  {pendingProcessing ? <IconBan size={20} /> : <IconTrash size={20} />}
+                </ActionIcon>
+              </ButtonTooltip>
+            </PopConfirm>
           </div>
         </div>
       </Card.Section>
@@ -242,9 +232,10 @@ export function QueueItem({ request }: Props) {
           </Text>
         </ContentClamp>
         <Collection items={request.resources} limit={3} renderItem={ResourceBadge} grouped />
-        {!!images?.length && (
+        {(!!images?.length || pendingProcessing) && (
           <div className={classes.grid}>
-            {images.map((image) => (
+            {pendingProcessing && <GenerationPlaceholder request={request} />}
+            {images?.map((image) => (
               <GeneratedImage key={image.id} image={image} request={request} />
             ))}
           </div>

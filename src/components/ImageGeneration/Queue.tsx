@@ -54,7 +54,7 @@ export function Queue() {
     );
 
   return (
-    <ScrollArea scrollRestore={{ key: 'queue' }} py={0} className="flex flex-col gap-2 px-3">
+    <ScrollArea scrollRestore={{ key: 'queue' }} className="flex flex-col gap-2 px-3">
       <Stack>
         {requests.map((request) => (
           <div key={request.id} id={request.id.toString()}>

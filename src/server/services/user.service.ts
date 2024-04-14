@@ -1172,8 +1172,8 @@ export const createUserReferral = async ({
     refereeId: number;
     referrerId: number;
   }) => {
-    await refereeCreatedReward.apply({ refereeId, referrerId }, ip);
-    await userReferredReward.apply({ refereeId, referrerId }, ip);
+    // await refereeCreatedReward.apply({ refereeId, referrerId }, ip);
+    // await userReferredReward.apply({ refereeId, referrerId }, ip);
   };
 
   if (userReferralCode || source || landingPage || loginRedirectReason) {

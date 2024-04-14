@@ -1,4 +1,11 @@
-import { Tooltip, ActionIcon, CloseButton, SegmentedControl, Text } from '@mantine/core';
+import {
+  Tooltip,
+  ActionIcon,
+  CloseButton,
+  SegmentedControl,
+  Text,
+  useMantineTheme,
+} from '@mantine/core';
 import { IconArrowsDiagonal, IconBrush, IconGridDots, TablerIconsProps } from '@tabler/icons-react';
 import { Feed } from './Feed';
 import { Queue } from './Queue';
@@ -10,31 +17,36 @@ import { useRouter } from 'next/router';
 import { IconClockHour9 } from '@tabler/icons-react';
 import { GeneratedImageActions } from '~/components/ImageGeneration/GeneratedImageActions';
 import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvider';
+import { useMediaQuery } from '@mantine/hooks';
 
 export default function GenerationTabs({
   tabs: tabsToInclude,
   alwaysShowMaximize = true,
+  isDrawer,
 }: {
   tabs?: ('generate' | 'queue' | 'feed')[];
   alwaysShowMaximize?: boolean;
+  isDrawer?: boolean;
 }) {
   const router = useRouter();
   const currentUser = useCurrentUser();
+
   const isGeneratePage = router.pathname.startsWith('/generate');
+  const isImageFeedSeparate = isGeneratePage && !isDrawer;
 
   const view = useGenerationStore((state) => state.view);
   const setView = useGenerationStore((state) => state.setView);
 
-  const View = tabs[view].Component;
+  const View = isImageFeedSeparate ? tabs.generate.Component : tabs[view].Component;
   const tabEntries = Object.entries(tabs).filter(([key]) =>
-    tabsToInclude ? tabsToInclude.includes(key as any) : true
+    isImageFeedSeparate ? key !== 'generate' : true
   );
 
   useEffect(() => {
-    if (tabsToInclude) {
-      if (!tabsToInclude.includes(view)) setView(tabsToInclude[0]);
+    if (isImageFeedSeparate && view === 'generate') {
+      setView('queue');
     }
-  }, [tabsToInclude, view]); //eslint-disable-line
+  }, [isImageFeedSeparate, view]);
 
   return (
     <GenerationProvider>
@@ -47,9 +59,16 @@ export default function GenerationTabs({
           </div>
           {currentUser && tabEntries.length > 1 && (
             <SegmentedControl
+              // TODO.briant: this fixes the issue with rendering the SegmentedControl
+              key={tabEntries.map(([, item]) => item.label).join('-')}
               className="flex-shrink-0"
-              data={tabEntries.map(([key, { Icon }]) => ({
-                label: <Icon size={16} />,
+              sx={{ overflow: 'visible' }}
+              data={tabEntries.map(([key, { Icon, label }]) => ({
+                label: (
+                  <Tooltip label={label} position="bottom" color="dark" openDelay={200} offset={10}>
+                    <Icon size={16} />
+                  </Tooltip>
+                ),
                 value: key,
               }))}
               onChange={(key) => setView(key as any)}
@@ -69,7 +88,7 @@ export default function GenerationTabs({
               </Tooltip>
             )}
             <CloseButton
-              onClick={!isGeneratePage ? generationPanel.close : () => history.go(-1)}
+              onClick={isGeneratePage ? () => history.go(-1) : generationPanel.close}
               size="lg"
               variant="transparent"
             />
