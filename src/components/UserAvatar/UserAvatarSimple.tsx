@@ -1,10 +1,13 @@
 import { createStyles, Text, Tooltip, UnstyledButton } from '@mantine/core';
-import { NextLink } from '@mantine/next';
 import { IconUser } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { UserAvatarProfilePicture } from '~/components/UserAvatar/UserAvatarProfilePicture';
-import { BadgeCosmetic, NamePlateCosmetic } from '~/server/selectors/cosmetic.selector';
+import {
+  BadgeCosmetic,
+  ContentDecorationCosmetic,
+  NamePlateCosmetic,
+} from '~/server/selectors/cosmetic.selector';
 import { ProfileImage } from '~/server/selectors/image.selector';
 import { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { getInitials } from '~/utils/string-helpers';
@@ -33,9 +36,9 @@ export function UserAvatarSimple({
   const badge = cosmetics?.find(({ cosmetic }) =>
     cosmetic ? cosmetic.type === 'Badge' : undefined
   )?.cosmetic as Omit<BadgeCosmetic, 'description' | 'obtainedAt'>;
-  const profileDecoration = cosmetics?.find(({ cosmetic }) =>
+  const decoration = cosmetics?.find(({ cosmetic }) =>
     cosmetic ? cosmetic.type === 'ProfileDecoration' : undefined
-  )?.cosmetic as Omit<BadgeCosmetic, 'description' | 'obtainedAt'>;
+  )?.cosmetic as Omit<ContentDecorationCosmetic, 'description' | 'obtainedAt'>;
   const additionalTextProps = nameplate?.data;
 
   return (
@@ -50,9 +53,9 @@ export function UserAvatarSimple({
           ) : (
             <UserAvatarProfilePicture id={id} username={username} image={profilePicture} />
           )}
-          {profileDecoration && profileDecoration.data.url && (
+          {decoration && decoration.data.url && (
             <EdgeMedia
-              src={profileDecoration.data.url}
+              src={decoration.data.url}
               type="image"
               name="user avatar decoration"
               style={{
@@ -61,11 +64,12 @@ export function UserAvatarSimple({
                 left: '50%',
                 maxWidth: 'fit-content',
                 transform: 'translate(-50%,-50%)',
-                width: '100%',
-                height: '100%',
+                width: decoration.data.offset ? `calc(100% + ${decoration.data.offset})` : '100%',
+                height: decoration.data.offset ? `calc(100% + ${decoration.data.offset})` : '100%',
                 zIndex: 2,
               }}
               width="original"
+              anim={decoration.data.animated}
             />
           )}
         </div>

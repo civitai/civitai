@@ -75,7 +75,7 @@ import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { nsfwBrowsingLevelsArray } from '~/shared/constants/browsingLevel.constants';
 import { getVotableTags2 } from '~/server/services/tag.service';
-import { BadgeCosmetic } from '~/server/selectors/cosmetic.selector';
+import { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -506,7 +506,7 @@ type GetAllImagesRaw = {
   metadata: Prisma.JsonValue;
   baseModel?: string;
   availability: Availability;
-  cosmetic?: BadgeCosmetic | null;
+  cosmetic?: ContentDecorationCosmetic | null;
 };
 export type ImagesInfiniteModel = AsyncReturnType<typeof getAllImages>['items'][0];
 export const getAllImages = async ({
@@ -1026,7 +1026,7 @@ export const getAllImages = async ({
       baseModel?: string | null;
       availability?: Availability;
       nsfwLevel: NsfwLevel;
-      cosmetic?: BadgeCosmetic | null;
+      cosmetic?: ContentDecorationCosmetic | null;
     }
   > = rawImages
     .filter((x) => {

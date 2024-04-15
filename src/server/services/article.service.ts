@@ -40,7 +40,7 @@ import { getFilesByEntity } from './file.service';
 import { imageSelect, profileImageSelect } from '~/server/selectors/image.selector';
 import { createImage, deleteImageById } from '~/server/services/image.service';
 import { ImageMetaProps } from '~/server/schema/image.schema';
-import { BadgeCosmetic } from '~/server/selectors/cosmetic.selector';
+import { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 
 type ArticleRaw = {
   id: number;
@@ -89,7 +89,7 @@ type ArticleRaw = {
       source: CosmeticSource;
     };
   }[];
-  cosmetic?: BadgeCosmetic | null;
+  cosmetic?: ContentDecorationCosmetic | null;
 };
 
 export type ArticleGetAllRecord = Awaited<ReturnType<typeof getArticles>>['items'][number];

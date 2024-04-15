@@ -42,7 +42,7 @@ import { postgresSlugify } from '~/utils/string-helpers';
 import { bustCacheTag, queryCache } from '~/server/utils/cache-helpers';
 import { env } from 'process';
 import { CacheTTL } from '../common/constants';
-import { BadgeCosmetic } from '~/server/selectors/cosmetic.selector';
+import { BadgeCosmetic, ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 
 type GetAllPostsRaw = {
   id: number;
@@ -67,7 +67,7 @@ type GetAllPostsRaw = {
     laughCount: number;
     cryCount: number;
   } | null;
-  cosmetic?: BadgeCosmetic | null;
+  cosmetic?: ContentDecorationCosmetic | null;
 };
 export type PostsInfiniteModel = AsyncReturnType<typeof getPostsInfinite>['items'][0];
 export const getPostsInfinite = async ({

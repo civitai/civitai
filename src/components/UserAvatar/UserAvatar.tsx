@@ -1,9 +1,7 @@
 import {
-  ActionIcon,
   Avatar,
   AvatarProps,
   BadgeProps,
-  Center,
   Group,
   Indicator,
   IndicatorProps,
@@ -24,10 +22,8 @@ import { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { getInitials } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { EdgeMedia } from '../EdgeMedia/EdgeMedia';
-import { MediaHash } from '../ImageHash/ImageHash';
-import { IconEye, IconEyeOff, IconUser } from '@tabler/icons-react';
-import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
-import { BadgeCosmetic } from '~/server/selectors/cosmetic.selector';
+import { IconUser } from '@tabler/icons-react';
+import { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 import { UserAvatarProfilePicture } from '~/components/UserAvatar/UserAvatarProfilePicture';
 
 const mapAvatarTextSize: Record<MantineSize, { textSize: MantineSize; subTextSize: MantineSize }> =
@@ -118,7 +114,7 @@ export function UserAvatar({
   const image = avatarUser.profilePicture;
   const decoration = withDecorations
     ? (avatarUser.cosmetics?.find((c) => c.cosmetic.type === 'ProfileDecoration')?.cosmetic as Omit<
-        BadgeCosmetic,
+        ContentDecorationCosmetic,
         'description' | 'obtainedAt' | 'name'
       >)
     : undefined;
@@ -155,11 +151,14 @@ export function UserAvatar({
                   left: '50%',
                   maxWidth: 'fit-content',
                   transform: 'translate(-50%,-50%)',
-                  width: '100%',
-                  height: '100%',
+                  width: decoration.data.offset ? `calc(100% + ${decoration.data.offset})` : '100%',
+                  height: decoration.data.offset
+                    ? `calc(100% + ${decoration.data.offset})`
+                    : '100%',
                   zIndex: 1,
                 }}
                 width="original"
+                anim={decoration.data.animated}
               />
             )}
             {avatarUser.profilePicture &&

@@ -44,7 +44,12 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { formatDate } from '~/utils/date-helpers';
-import { BadgeCosmetic, NamePlateCosmetic } from '~/server/selectors/cosmetic.selector';
+import {
+  BadgeCosmetic,
+  ContentDecorationCosmetic,
+  NamePlateCosmetic,
+  ProfileBackgroundCosmetic,
+} from '~/server/selectors/cosmetic.selector';
 import { titleCase } from '~/utils/string-helpers';
 import { UserWithProfile } from '~/types/router';
 import { userUpdateSchema } from '~/server/schema/user.schema';
@@ -157,7 +162,7 @@ const { openModal, Modal } = createContextModal({
               .map(({ cosmetic, cosmeticId, ...c }) => ({
                 ...c,
                 ...cosmetic,
-                data: cosmetic.data as BadgeCosmetic['data'],
+                data: cosmetic.data as ContentDecorationCosmetic['data'],
               }))
           : [],
       [user]
@@ -171,7 +176,7 @@ const { openModal, Modal } = createContextModal({
               .map(({ cosmetic, cosmeticId, ...c }) => ({
                 ...c,
                 ...cosmetic,
-                data: cosmetic.data as BadgeCosmetic['data'],
+                data: cosmetic.data as ProfileBackgroundCosmetic['data'],
               }))
           : [],
       [user]
@@ -631,8 +636,8 @@ type ProfilePreviewProps = {
   badge?: BadgeCosmetic;
   nameplate?: NamePlateCosmetic;
   profileImage?: string | null;
-  profileDecoration?: BadgeCosmetic;
-  profileBackground?: BadgeCosmetic;
+  profileDecoration?: ContentDecorationCosmetic;
+  profileBackground?: ProfileBackgroundCosmetic;
 };
 function ProfilePreview({
   user,

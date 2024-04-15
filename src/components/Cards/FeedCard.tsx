@@ -1,7 +1,7 @@
 import { AspectRatio, Card, CardProps, createStyles } from '@mantine/core';
 import Link from 'next/link';
 import React, { forwardRef } from 'react';
-import { BadgeCosmetic } from '~/server/selectors/cosmetic.selector';
+import { BadgeCosmetic, ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 
@@ -97,12 +97,17 @@ export const FeedCard = forwardRef<HTMLAnchorElement, Props>(
               top: '50%',
               left: '50%',
               transform: 'translate(-50%,-50%)',
-              width: '100%',
-              height: '100%',
+              width: frameDecoration.data.offset
+                ? `calc(100% + ${frameDecoration.data.offset})`
+                : '100%',
+              height: frameDecoration.data.offset
+                ? `calc(100% + ${frameDecoration.data.offset})`
+                : '100%',
               zIndex: 20,
               pointerEvents: 'none',
             }}
             width={frameDecoration.data.animated ? 'original' : DEFAULT_EDGE_IMAGE_WIDTH}
+            anim={frameDecoration.data.animated}
           />
         ) : null}
       </div>
@@ -118,5 +123,5 @@ type Props = CardProps & {
   aspectRatio?: AspectRatio;
   onClick?: React.MouseEventHandler<HTMLAnchorElement>;
   useCSSAspectRatio?: boolean;
-  frameDecoration?: BadgeCosmetic | null;
+  frameDecoration?: ContentDecorationCosmetic | null;
 };

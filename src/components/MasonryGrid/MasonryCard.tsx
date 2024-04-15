@@ -1,13 +1,13 @@
 import { Card, CardProps, createPolymorphicComponent, useMantineTheme } from '@mantine/core';
 import { forwardRef } from 'react';
-import { BadgeCosmetic } from '~/server/selectors/cosmetic.selector';
+import { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 
 type MasonryCardProps = CardProps & {
   height?: number;
   uniform?: boolean;
-  frameDecoration?: BadgeCosmetic | null;
+  frameDecoration?: ContentDecorationCosmetic | null;
 };
 // TODO - when children not in view, replace child react nodes with static html
 const _MasonryCard = forwardRef<HTMLDivElement, MasonryCardProps>(
@@ -42,12 +42,17 @@ const _MasonryCard = forwardRef<HTMLDivElement, MasonryCardProps>(
               top: '50%',
               left: '50%',
               transform: 'translate(-50%,-50%)',
-              width: '100%',
-              height: '100%',
+              width: frameDecoration.data.offset
+                ? `calc(100% + ${frameDecoration.data.offset})`
+                : '100%',
+              height: frameDecoration.data.offset
+                ? `calc(100% + ${frameDecoration.data.offset})`
+                : '100%',
               zIndex: 20,
               pointerEvents: 'none',
             }}
             width={frameDecoration.data.animated ? 'original' : DEFAULT_EDGE_IMAGE_WIDTH}
+            anim={frameDecoration.data.animated}
           />
         )}
       </div>

@@ -27,7 +27,7 @@ import { ImageProps } from '~/components/ImageViewer/ImageViewer';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
 import { Form, InputCosmeticSelect, useForm } from '~/libs/form';
 import { DEFAULT_EDGE_IMAGE_WIDTH, constants } from '~/server/common/constants';
-import { BadgeCosmetic } from '~/server/selectors/cosmetic.selector';
+import { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 
 const useStyles = createStyles((theme) => ({
@@ -214,13 +214,13 @@ export type Props = {
   entityType: CosmeticEntity;
   entityId: number;
   image: Pick<ImageProps, 'id' | 'url' | 'width' | 'height' | 'meta'>;
-  currentCosmetic?: BadgeCosmetic | null;
+  currentCosmetic?: ContentDecorationCosmetic | null;
 };
 
 const PreviewCard = ({
   image,
   decoration,
-}: Pick<Props, 'image'> & { decoration?: BadgeCosmetic }) => {
+}: Pick<Props, 'image'> & { decoration?: ContentDecorationCosmetic }) => {
   const originalAspectRatio = image && image.width && image.height ? image.width / image.height : 1;
   const imageWidth =
     originalAspectRatio > 1

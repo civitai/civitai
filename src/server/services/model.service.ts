@@ -79,7 +79,7 @@ import {
 } from './../schema/model.schema';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
-import { BadgeCosmetic } from '~/server/selectors/cosmetic.selector';
+import { BadgeCosmetic, ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
@@ -156,7 +156,7 @@ type ModelRaw = {
     deletedAt: Date | null;
     image: string;
   };
-  cosmetic?: BadgeCosmetic | null;
+  cosmetic?: ContentDecorationCosmetic | null;
 };
 
 export const getModelsRaw = async ({
