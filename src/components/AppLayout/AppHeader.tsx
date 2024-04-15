@@ -255,9 +255,9 @@ export function AppHeader({
   const router = useRouter();
   const features = useFeatureFlags();
   const isMobile = useIsMobile();
-  const [accounts, setAccounts] = useLocalStorage({
+  const [accounts, setAccounts] = useLocalStorage<CivitaiAccounts>({
     key: `civitai-accounts`,
-    defaultValue: {} as CivitaiAccounts,
+    defaultValue: {},
   });
   const [burgerOpened, setBurgerOpened] = useState(false);
   const [userMenuOpened, setUserMenuOpened] = useState(false);
@@ -802,8 +802,6 @@ export function AppHeader({
     // Removes referral cookies on sign out
     deleteCookies(['ref_code', 'ref_source']);
 
-    console.log({ removeLS, redirect });
-
     // When logging out, remove from localStorage
     if (removeLS) {
       const userId = currentUser?.id;
@@ -815,10 +813,8 @@ export function AppHeader({
     }
 
     if (!redirect) {
-      console.log('sign out without redirect');
       await signOut({ redirect: false });
     } else {
-      console.log('regular signout');
       await signOut();
     }
   };

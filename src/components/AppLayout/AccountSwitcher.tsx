@@ -1,37 +1,26 @@
 import { Box, Button, createStyles, Divider, Group, Menu, Stack, Text } from '@mantine/core';
-import { IconChevronLeft } from '@tabler/icons-react';
+import { IconChevronLeft, IconExclamationCircle } from '@tabler/icons-react';
 import { signIn } from 'next-auth/react';
 import { useRouter } from 'next/router';
 import { Dispatch, SetStateAction, useState } from 'react';
-import { CivitaiAccounts } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
+import {
+  CivitaiAccount,
+  CivitaiAccounts,
+} from '~/components/CivitaiWrapped/CivitaiSessionProvider';
+import { socialItems } from '~/components/Social/Social';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { getLoginLink } from '~/utils/login-helpers';
 
 const useStyles = createStyles((theme) => ({
   link: {
-    // display: 'block',
-    // lineHeight: 1,
-    // padding: `${theme.spacing.xs}px ${theme.spacing.sm}px`,
-    // borderRadius: theme.radius.sm,
-    // textDecoration: 'none',
     color: theme.colorScheme === 'dark' ? theme.colors.dark[0] : theme.colors.gray[7],
     fontSize: theme.fontSizes.sm,
-    // fontWeight: 500,
+    padding: theme.spacing.md,
     cursor: 'pointer',
-    // justifyContent: 'flex-start !important',
 
     '&:hover': {
       backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
     },
-
-    // [containerQuery.smallerThan('md')]: {
-    // borderRadius: 0,
-    padding: theme.spacing.md,
-    // display: 'flex',
-    // alignItems: 'center',
-    // justifyContent: 'space-between',
-    // width: '100%',
-    // },
   },
 }));
 
@@ -96,28 +85,14 @@ export const AccountSwitcher = ({
 }) => {
   const { classes } = useStyles();
   const router = useRouter();
-  // const { data: userData } = useSession();
-  console.log(accounts);
 
-  const swapAccount = async (jwt: string, email: string) => {
-    // console.log(jwt);
-    // console.log('temp logging out');
-    // await logout({ removeLS: false, redirect: false });
-    // const resp = await fetch(`/api/auth/switchaccounts?token=${jwt}`);
-    //
-    // if (resp.ok) {
-    //   // router.reload();
-    //   console.log('dispatching event');
-    //   dispatchEvent(new CustomEvent('account-swap'));
-    // } else {
-    //   const respJson: { error: string } = await resp.json();
-    //   console.log(respJson.error);
-    // }
-
-    console.log(email);
-
+  const swapAccount = async (accountData: CivitaiAccount) => {
     await logout({ removeLS: false, redirect: false });
-    await signIn('google', { callbackUrl: router.asPath }, { login_hint: email });
+    await signIn(
+      accountData.provider,
+      { callbackUrl: router.asPath },
+      { login_hint: accountData.email }
+    );
   };
 
   if (inMenu) {
@@ -130,18 +105,22 @@ export const AccountSwitcher = ({
           </Group>
         </Menu.Item>
         <Divider />
-        {Object.entries(accounts).map(([k, v]) => (
-          <Menu.Item
-            key={k}
-            onClick={v.active ? undefined : () => swapAccount(v.jwt, v.email)}
-            sx={v.active ? { cursor: 'initial' } : {}}
-          >
-            <Group>
-              <UserAvatar userId={Number(k)} withUsername />
-              {v.active && <Text color="dimmed">Active</Text>}
-            </Group>
-          </Menu.Item>
-        ))}
+        {Object.entries(accounts).map(([k, v]) => {
+          const { Icon } = socialItems[v.provider] ?? {};
+          return (
+            <Menu.Item
+              key={k}
+              onClick={v.active ? undefined : () => swapAccount(v)}
+              sx={v.active ? { cursor: 'initial' } : {}}
+            >
+              <Group>
+                {Icon ? <Icon size={16} /> : <IconExclamationCircle size={26} />}
+                <UserAvatar userId={Number(k)} withUsername />
+                {v.active && <Text color="dimmed">Active</Text>}
+              </Group>
+            </Menu.Item>
+          );
+        })}
         <Divider mb={8} />
         <ActionButtons logout={logout} close={close} />
       </>
@@ -155,17 +134,21 @@ export const AccountSwitcher = ({
         <Text>Back</Text>
       </Group>
       <Divider />
-      {Object.entries(accounts).map(([k, v]) => (
-        <Group
-          key={k}
-          onClick={v.active ? undefined : () => swapAccount(v.jwt)}
-          className={classes.link}
-          sx={v.active ? { cursor: 'initial' } : {}}
-        >
-          <UserAvatar userId={Number(k)} withUsername />
-          {v.active && <Text color="dimmed">Active</Text>}
-        </Group>
-      ))}
+      {Object.entries(accounts).map(([k, v]) => {
+        const { Icon } = socialItems[v.provider] ?? {};
+        return (
+          <Group
+            key={k}
+            onClick={v.active ? undefined : () => swapAccount(v)}
+            className={classes.link}
+            sx={v.active ? { cursor: 'initial' } : {}}
+          >
+            {Icon ? <Icon size={16} /> : <IconExclamationCircle size={26} />}
+            <UserAvatar userId={Number(k)} withUsername />
+            {v.active && <Text color="dimmed">Active</Text>}
+          </Group>
+        );
+      })}
       <Divider />
       <Box p="md">
         <ActionButtons logout={logout} close={close} />

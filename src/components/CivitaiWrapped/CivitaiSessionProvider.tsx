@@ -1,6 +1,6 @@
 import { useLocalStorage } from '@mantine/hooks';
-import dayjs from 'dayjs';
 import { Session, SessionUser } from 'next-auth';
+import { BuiltInProviderType } from 'next-auth/providers';
 import { signIn, useSession } from 'next-auth/react';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
@@ -10,29 +10,26 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { onboardingSteps } from '~/components/Onboarding/onboarding.utils';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils';
+import { trpc } from '~/utils/trpc';
 
 const OnboardingModal = dynamic(() => import('~/components/Onboarding/OnboardingWizard'));
 
-export type CivitaiAccounts = {
-  [k in string]: {
-    jwt: string;
-    // avatarUrl: string;
-    email: string;
-    expireAt: string;
-    active: boolean;
-  };
+export type CivitaiAccount = {
+  email: string;
+  provider: BuiltInProviderType;
+  active: boolean;
+  // avatarUrl: string;
 };
+export type CivitaiAccounts = Record<string, CivitaiAccount>;
 
 export function CivitaiSessionProvider({ children }: { children: React.ReactNode }) {
   const { data, update } = useSession();
   const router = useRouter();
-  const [accounts, setAccounts] = useLocalStorage({
+  const [, setAccounts] = useLocalStorage<CivitaiAccounts>({
     key: `civitai-accounts`,
-    defaultValue: {} as CivitaiAccounts,
+    defaultValue: {},
   });
-
-  console.log(accounts);
-  console.log(data?.user);
+  const { data: userAccounts = [] } = trpc.account.getAll.useQuery();
 
   const { useStore } = useBrowsingModeContext();
   const browsingModeState = useStore((state) => state);
@@ -58,54 +55,38 @@ export function CivitaiSessionProvider({ children }: { children: React.ReactNode
   }, [data?.error]);
 
   useEffect(() => {
+    console.log(data);
     const userId = data?.user?.id;
-    if (!userId) return;
+    const email = data?.user?.email;
+    if (!userId || !email) return;
+
     const userIdStr = userId.toString();
-    // console.log(data?.user);
-    // console.log({ expires: data?.expires });
-    const getAndSetData = async () => {
-      console.log({ userIdStr });
-      console.log({ stored: accounts[userIdStr]?.expireAt, data: data?.expires });
-      console.log('expire match', accounts[userIdStr]?.expireAt === data?.expires);
-      console.log(accounts);
 
-      let token: string | null = null;
-      if (!(userIdStr in accounts) || accounts[userIdStr]?.expireAt !== data?.expires) {
-        const resp = await fetch('/api/auth/gettoken');
-        if (resp.ok) {
-          const respJson: { token: string | null } = await resp.json();
-          token = respJson.token;
-        } else {
-          console.log('bad token', resp);
-        }
-      } else {
-        token = accounts[userIdStr].jwt;
-      }
+    // console.log({ userIdStr });
+    // console.log(accounts);
+    // console.log(userAccounts);
 
-      if (token !== null) {
-        setAccounts((current) => {
-          const old = { ...current };
-          Object.keys(old).forEach((k) => {
-            old[k]['active'] = false;
-          });
+    if (!userAccounts.length) {
+      return;
+    }
 
-          return {
-            ...old,
-            [userIdStr]: {
-              jwt: token as string, // wtf typescript?
-              // avatarUrl: data?.user?.image ?? '',
-              email: data?.user?.email ?? 'unk',
-              expireAt: data?.expires ?? dayjs().add(30, 'day').toISOString(),
-              active: true,
-            },
-          };
-        });
-      } else {
-        console.log('no token');
-      }
-    };
-    getAndSetData().catch((e) => console.log(e));
-  }, [data]);
+    setAccounts((current) => {
+      const old = { ...current };
+      Object.keys(old).forEach((k) => {
+        old[k]['active'] = false;
+      });
+
+      return {
+        ...old,
+        [userIdStr]: {
+          email,
+          provider: userAccounts[0].provider as BuiltInProviderType,
+          active: true,
+          // avatarUrl: data?.user?.image ?? '',
+        },
+      };
+    });
+  }, [data, userAccounts]);
 
   useEffect(() => {
     const reloadFn = () => {
