@@ -22,6 +22,7 @@ import {
   IconLayoutList,
   IconMoneybag,
   IconPhoto,
+  IconShoppingBag,
   IconVideo,
   TablerIconsProps,
 } from '@tabler/icons-react';
@@ -76,6 +77,10 @@ const homeOptions: Record<string, HomeOption> = {
   builds: {
     url: '/builds',
     icon: (props: TablerIconsProps) => <IconCpu {...props} />,
+  },
+  shop: {
+    url: '/cosmetic-shop',
+    icon: (props: TablerIconsProps) => <IconShoppingBag {...props} />,
   },
 };
 type HomeOptions = keyof typeof homeOptions;

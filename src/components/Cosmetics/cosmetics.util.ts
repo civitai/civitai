@@ -9,7 +9,17 @@ export const useQueryCosmeticsPaged = (
   filters?: Partial<GetPaginatedCosmeticsInput>,
   options?: { keepPreviousData?: boolean; enabled?: boolean }
 ) => {
-  const { data, ...rest } = trpc.cosmetic.getPaged.useQuery({ ...filters }, { ...options });
+  const currentUser = useCurrentUser();
+
+  const { data, ...rest } = trpc.cosmetic.getPaged.useQuery(
+    {
+      ...filters,
+    },
+    {
+      ...options,
+      enabled: (options?.enabled ?? true) && currentUser?.isModerator,
+    }
+  );
 
   if (data) {
     const { items: cosmetics = [], ...pagination } = data;
@@ -17,6 +27,23 @@ export const useQueryCosmeticsPaged = (
   }
 
   return { cosmetics: [], pagination: null, ...rest };
+};
+
+export const useQueryCosmetic = ({ id }: { id: number }) => {
+  const { data: cosmetic, ...rest } = trpc.cosmetic.getById.useQuery(
+    {
+      id,
+    },
+    {
+      enabled: !!id,
+    }
+  );
+
+  if (cosmetic) {
+    return { cosmetic, ...rest };
+  }
+
+  return { cosmetic: null, ...rest };
 };
 
 export const useQueryUserCosmetics = () => {

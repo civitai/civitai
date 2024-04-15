@@ -1969,6 +1969,7 @@ model Cosmetic {
   leaderboardPosition Int?
   UserCosmetic        UserCosmetic[]
   purchases           UserCosmeticShopPurchases[]
+  cosmeticShopItems   CosmeticShopItem[]
 }
 
 enum CosmeticEntity {
@@ -1999,17 +2000,18 @@ model CosmeticShopSection {
   addedBy     User?                     @relation(fields: [addedById], references: [id], onDelete: SetNull)
   title       String
   description String?
-  placement   Int
+  placement   Int                       @default(0)
   meta        Json                      @default("{}")
-  imageId     Int
-  image       Image                     @relation(fields: [imageId], references: [id], onDelete: SetNull)
+  imageId     Int?
+  image       Image?                    @relation(fields: [imageId], references: [id], onDelete: SetNull)
   items       CosmeticShopSectionItem[]
 }
 
 model CosmeticShopItem {
   id                Int                         @id @default(autoincrement())
   cosmeticId        Int
-  unitValue         Int
+  cosmetic          Cosmetic                    @relation(fields: [cosmeticId], references: [id], onDelete: Cascade)
+  unitAmount        Int
   addedById         Int?
   addedBy           User?                       @relation(fields: [addedById], references: [id], onDelete: SetNull)
   createdAt         DateTime                    @default(now())
@@ -2042,7 +2044,7 @@ model UserCosmeticShopPurchases {
   cosmetic          Cosmetic         @relation(fields: [cosmeticId], references: [id], onDelete: Cascade)
   shopItemId        Int
   shopItem          CosmeticShopItem @relation(fields: [shopItemId], references: [id], onDelete: Cascade)
-  unitValue         Int
+  unitAmount        Int
   purchasedAt       DateTime         @default(now())
   buzzTransactionId String           @id @default(cuid())
   refunded          Boolean

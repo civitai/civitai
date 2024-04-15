@@ -60,7 +60,7 @@ export const imagesInstantSearchRoutingParser: InstantSearchRoutingParser = {
       generationTool: images.generationTool as string[],
       aspectRatio: images.aspectRatio as string[],
       baseModel: images.baseModel as string[],
-      'tags.name': images.tags as string[],
+      tagNames: images.tags as string[],
       'user.username': images.users as string[],
     });
     const range = removeEmpty({
@@ -90,7 +90,7 @@ export const imagesInstantSearchRoutingParser: InstantSearchRoutingParser = {
     const generationTool = uiState[IMAGES_SEARCH_INDEX].refinementList?.['generationTool'];
     const aspectRatio = uiState[IMAGES_SEARCH_INDEX].refinementList?.['aspectRatio'];
     const baseModel = uiState[IMAGES_SEARCH_INDEX].refinementList?.['baseModel'];
-    const tags = uiState[IMAGES_SEARCH_INDEX].refinementList?.['tags.name'];
+    const tags = uiState[IMAGES_SEARCH_INDEX].refinementList?.['tagNames'];
     const users = uiState[IMAGES_SEARCH_INDEX].refinementList?.['user.username'];
     const sortBy =
       (uiState[IMAGES_SEARCH_INDEX].sortBy as ImageSearchParams['sortBy']) || defaultSortBy;

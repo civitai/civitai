@@ -34,10 +34,11 @@ import Link from 'next/link';
 const transactionTypes = [
   TransactionType[TransactionType.Tip],
   TransactionType[TransactionType.Reward],
-  TransactionType[TransactionType.Purchase],
+  TransactionType[TransactionType.Generation],
   TransactionType[TransactionType.Refund],
-  TransactionType[TransactionType.Bounty],
   TransactionType[TransactionType.Training],
+  TransactionType[TransactionType.Purchase],
+  TransactionType[TransactionType.Bounty],
 ];
 
 const defaultFilters = {

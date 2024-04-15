@@ -146,42 +146,12 @@ export function GeneratedImage({
           <Card
             p={0}
             className={classes.imageWrapper}
-            sx={(theme) => ({
-              position: 'relative',
-              boxShadow:
-                '0 1px 3px rgba(0, 0, 0, .5), 0px 20px 25px -5px rgba(0, 0, 0, 0.2), 0px 10px 10px -5px rgba(0, 0, 0, 0.04)',
-              cursor: image.available ? 'pointer' : undefined,
-              width: '100%',
-              height: '100%',
-              background:
-                theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2],
-            })}
+            style={image.available ? { cursor: 'pointer' } : undefined}
           >
             <Box onClick={handleImageClick}>
-              <Box
-                sx={(theme) => ({
-                  display: 'block',
-                  position: 'absolute',
-                  top: 0,
-                  left: 0,
-                  width: '100%',
-                  height: '100%',
-                  boxShadow: 'inset 0px 0px 2px 1px rgba(255,255,255,0.2)',
-                  borderRadius: theme.radius.sm,
-                  pointerEvents: 'none',
-                })}
-              />
+              <Box className={classes.innerGlow} />
               {!image.available ? (
-                <Center
-                  sx={{
-                    position: 'absolute',
-                    top: 0,
-                    left: 0,
-                    right: 0,
-                    bottom: 0,
-                  }}
-                  p="xs"
-                >
+                <Center className={classes.centeredAbsolute} p="xs">
                   {image.status === 'Started' ? (
                     <Stack align="center">
                       <Loader size={24} />
@@ -203,16 +173,7 @@ export function GeneratedImage({
                   )}
                 </Center>
               ) : removedForSafety ? (
-                <Center
-                  sx={{
-                    position: 'absolute',
-                    top: 0,
-                    left: 0,
-                    right: 0,
-                    bottom: 0,
-                  }}
-                  p="xs"
-                >
+                <Center className={classes.centeredAbsolute} p="xs">
                   <Stack align="center" spacing={0}>
                     <Box
                       className={classes.blockedMessage}
@@ -386,6 +347,26 @@ export function GeneratedImage({
   );
 }
 
+export function GenerationPlaceholder({ request }: { request: Generation.Request }) {
+  const { classes } = useStyles();
+
+  return (
+    <AspectRatio ratio={request.params.width / request.params.height}>
+      <Card p={0} className={classes.imageWrapper}>
+        <Box className={classes.innerGlow} />
+        <Center className={classes.centeredAbsolute} p="xs">
+          <Stack align="center">
+            <Loader size={24} />
+            <Text color="dimmed" size="xs" align="center">
+              Generating
+            </Text>
+          </Stack>
+        </Center>
+      </Card>
+    </AspectRatio>
+  );
+}
+
 const useStyles = createStyles((theme, _params, getRef) => {
   const thumbActionRef = getRef('thumbAction');
 
@@ -432,10 +413,34 @@ const useStyles = createStyles((theme, _params, getRef) => {
       justifyContent: 'center',
     },
     imageWrapper: {
+      position: 'relative',
+      boxShadow:
+        '0 1px 3px rgba(0, 0, 0, .5), 0px 20px 25px -5px rgba(0, 0, 0, 0.2), 0px 10px 10px -5px rgba(0, 0, 0, 0.04)',
+      width: '100%',
+      height: '100%',
+      background: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2],
       [`&:hover .${thumbActionRef}`]: {
         opacity: 1,
         transition: 'opacity .3s',
       },
+    },
+    centeredAbsolute: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+    },
+    innerGlow: {
+      display: 'block',
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      width: '100%',
+      height: '100%',
+      boxShadow: 'inset 0px 0px 2px 1px rgba(255,255,255,0.2)',
+      borderRadius: theme.radius.sm,
+      pointerEvents: 'none',
     },
     actionsWrapper: {
       ref: thumbActionRef,

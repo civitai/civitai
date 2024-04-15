@@ -25,14 +25,16 @@ export function QueueSnackbar() {
   const slots = Array(requestLimit).fill(0);
   const includeQueueLink = !router.pathname.includes('/generate');
 
-  const { count, quantity } = queued.reduce(
+  const { complete, processing, quantity } = queued.reduce(
     (acc, request) => {
-      acc.count += request.count;
+      acc.complete += request.complete;
+      acc.processing += request.processing;
       acc.quantity += request.quantity;
       return acc;
     },
     {
-      count: 0,
+      complete: 0,
+      processing: 0,
       quantity: 0,
     }
   );
@@ -48,7 +50,12 @@ export function QueueSnackbar() {
       >
         <div className="flex items-center basis-20 py-2 pl-1">
           {queueStatus && (
-            <GenerationStatusBadge status={queueStatus} count={count} quantity={quantity} />
+            <GenerationStatusBadge
+              status={queueStatus}
+              complete={complete}
+              processing={processing}
+              quantity={quantity}
+            />
           )}
         </div>
         <div className="flex flex-col gap-1 items-center justify-center flex-1 py-2">
@@ -87,19 +94,28 @@ export function QueueSnackbar() {
                 color: item ? generationStatusColors[item.status] : 'gray',
                 variant: 'light',
               });
-
-              const progress = !item ? 0 : (item.count / item.quantity) * 100;
+              const quantity = item ? item.quantity : 0;
+              const complete = quantity ? item.complete / quantity : 0;
+              const processing = quantity ? item.processing / quantity : 0;
               return (
                 <Progress
                   key={i}
                   color={item ? generationStatusColors[item.status] : 'gray'}
                   radius="xl"
-                  value={progress}
+                  sections={[
+                    { value: complete * 100, color: 'green' },
+                    { value: processing * 100, color: 'yellow' },
+                  ]}
                   h={6}
                   w="100%"
                   maw={32}
                   style={{ backgroundColor: item ? colors.background : undefined }}
                   className="flex-1"
+                  styles={(theme) => ({
+                    bar: {
+                      transition: 'width 200ms, left 200ms',
+                    },
+                  })}
                 />
               );
             })}
