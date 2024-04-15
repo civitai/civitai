@@ -6,14 +6,16 @@ import { generationStatusColors } from '~/shared/constants/generation.constants'
 
 export function GenerationStatusBadge({
   status,
-  count,
+  complete,
+  processing = 0,
   quantity,
   tooltipLabel,
   progress,
   ...badgeProps
 }: {
   status: GenerationRequestStatus;
-  count: number;
+  processing?: number;
+  complete: number;
   quantity: number;
   tooltipLabel?: string;
   progress?: boolean;
@@ -46,20 +48,27 @@ export function GenerationStatusBadge({
         <div className="flex items-center gap-1">
           <IconPhoto size={16} />
           <Text size="sm" inline weight={500}>
-            {status !== GenerationRequestStatus.Succeeded ? `${count}/${quantity}` : count}
+            {status !== GenerationRequestStatus.Succeeded ? `${complete}/${quantity}` : complete}
           </Text>
           {progress && status === GenerationRequestStatus.Processing && (
             <Progress
-              color="yellow"
-              value={(count / quantity) * 100}
+              value={(complete / quantity) * 100}
+              animate
+              sections={[
+                { value: (complete / quantity) * 100, color: 'green' },
+                { value: (processing / quantity) * 100, color: 'yellow' },
+              ]}
               w={40}
               h={10}
               className="ml-1"
-              styles={(theme) => ({
+              styles={{
                 root: {
-                  backgroundColor: theme.fn.rgba(theme.black, 0.3),
+                  opacity: 0.5,
                 },
-              })}
+                bar: {
+                  transition: 'width 200ms, left 200ms',
+                },
+              }}
             />
           )}
         </div>

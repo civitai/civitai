@@ -70,6 +70,7 @@ import {
   IconArrowAutofitDown,
   IconCheck,
   IconCopy,
+  IconPlus,
 } from '@tabler/icons-react';
 import InputResourceSelectMultiple from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
@@ -171,7 +172,11 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
     const { data, type } = createData;
     const formData = getFormData(type, data);
     useGenerationStore.setState({ data: undefined });
-    form.reset(formData);
+    // form.reset(formData);
+    for (const key in formData) {
+      const _key = key as keyof typeof formData;
+      form.setValue(_key as any, formData[_key]);
+    }
   }, [createData]); // eslint-disable-line
 
   // #region [mutations]
@@ -333,6 +338,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                       {additionalResourcesCount > 0 && (
                         <Badge style={{ fontWeight: 590 }}>{additionalResourcesCount}</Badge>
                       )}
+
                       <Button
                         component="span"
                         compact
@@ -342,9 +348,15 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                           e.stopPropagation();
                           setOpened(true);
                         }}
+                        radius="xl"
                         ml="auto"
                       >
-                        Add resource
+                        <Group spacing={4} noWrap>
+                          <IconPlus size={16} />
+                          <Text size="sm" weight={500}>
+                            Add
+                          </Text>
+                        </Group>
                       </Button>
                     </Group>
                   </Accordion.Control>
@@ -359,6 +371,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                         canGenerate: true,
                         resources: getGenerationConfig(baseModel).additionalResourceTypes,
                       }}
+                      hideButton
                     />
                   </Accordion.Panel>
                 </Accordion.Item>

@@ -26,7 +26,7 @@ export function GenerationDrawer() {
       withCloseButton={false}
       transitionDuration={isGeneratePage ? 0 : 300}
     >
-      <GenerationTabs alwaysShowMaximize={false} />
+      <GenerationTabs alwaysShowMaximize={false} isDrawer />
     </Drawer>
   );
 }

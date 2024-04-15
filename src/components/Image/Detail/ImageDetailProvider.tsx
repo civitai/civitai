@@ -1,5 +1,4 @@
-import { useMantineTheme } from '@mantine/core';
-import { useHotkeys, useLocalStorage } from '@mantine/hooks';
+import { useDidUpdate, useHotkeys, useLocalStorage } from '@mantine/hooks';
 import { ImageGuardConnect } from '~/components/ImageGuard/ImageGuard2';
 import { useQueryImages } from '~/components/Image/image.utils';
 import { ReviewReactions } from '@prisma/client';
@@ -63,7 +62,6 @@ export function ImageDetailProvider({
     collectionId?: number;
   } & Record<string, unknown>;
 }) {
-  const theme = useMantineTheme();
   const isMobile = useIsMobile();
   const [active, setActive] = useLocalStorage({
     key: `image-detail-open`,
@@ -110,9 +108,11 @@ export function ImageDetailProvider({
     }
   }, [prefetchedImage]); // eslint-disable-line
 
-  useEffect(() => {
+  useDidUpdate(() => {
     if (isMobile && active) {
       setActive(false);
+    } else if (!isMobile && !active) {
+      setActive(true);
     }
   }, [isMobile]);
 

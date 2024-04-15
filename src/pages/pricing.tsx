@@ -142,7 +142,7 @@ export default function Pricing() {
                   <Text component={NextLink} td="underline" href="/user/membership">
                     current plan
                   </Text>{' '}
-                  or level up your membership here.
+                  or level up your support here.
                 </Text>
               </AlertWithIcon>
             )}

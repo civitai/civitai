@@ -17,7 +17,13 @@ import { UserTier } from '~/server/schema/user.schema';
 const POLLABLE_STATUSES = [GenerationRequestStatus.Pending, GenerationRequestStatus.Processing];
 
 type GenerationState = {
-  queued: { id: number; count: number; quantity: number; status: GenerationRequestStatus }[];
+  queued: {
+    id: number;
+    complete: number;
+    processing: number;
+    quantity: number;
+    status: GenerationRequestStatus;
+  }[];
   latestImage?: Generation.Image & { createdAt: number };
   queueStatus?: GenerationRequestStatus;
   requestLimit: number;
@@ -100,6 +106,8 @@ export function GenerationProvider({ children }: { children: React.ReactNode }) 
     const queuedRequests = queued.map((request) => ({
       id: request.id,
       count: request.images?.filter((x) => x.available).length ?? 0,
+      complete: request.images?.filter((x) => x.available).length ?? 0,
+      processing: request.images?.filter((x) => x.status === 'Started').length ?? 0,
       quantity: request.quantity,
       status: request.status,
     }));

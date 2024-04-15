@@ -16,6 +16,7 @@ type ResourceSelectMultipleProps = {
   options?: ResourceSelectOptions;
   modalOpened?: boolean;
   onCloseModal?: () => void;
+  hideButton?: boolean;
 } & Omit<InputWrapperProps, 'children'>;
 
 const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectMultipleProps>(
@@ -28,6 +29,7 @@ const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectMultiple
       options = {},
       modalOpened,
       onCloseModal,
+      hideButton = false,
       ...inputWrapperProps
     },
     ref
@@ -123,10 +125,15 @@ const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectMultiple
               </React.Fragment>
             );
           })}
-          {canAdd && (
+          {canAdd && !hideButton && (
             <Button variant="light" leftIcon={<IconPlus size={18} />} onClick={handleOpenModal}>
               {buttonLabel}
             </Button>
+          )}
+          {hideButton && !_values.length && (
+            <Text color="dimmed" size="sm">
+              No resources selected
+            </Text>
           )}
         </Stack>
       </Input.Wrapper>

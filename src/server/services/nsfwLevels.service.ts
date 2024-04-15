@@ -317,15 +317,18 @@ export async function updateCollectionsNsfwLevels(collectionIds: number[]) {
   const collections = await dbWrite.$queryRaw<{ id: number }[]>(Prisma.sql`
     UPDATE "Collection" c
     SET "nsfwLevel" = (
-      SELECT COALESCE(bit_or(COALESCE(i."nsfwLevel", p."nsfwLevel", m."nsfwLevel", a."nsfwLevel",0)), 0)
-      FROM "CollectionItem" ci
-      LEFT JOIN "Image" i on i.id = ci."imageId" AND c.type = 'Image'
-      LEFT JOIN "Post" p on p.id = ci."postId" AND c.type = 'Post' AND p."publishedAt" IS NOT NULL
-      LEFT JOIN "Model" m on m.id = ci."modelId" AND c.type = 'Model' AND m."status" = 'Published'
-      LEFT JOIN "Article" a on a.id = ci."articleId" AND c.type = 'Article' AND a."publishedAt" IS NOT NULL
-      WHERE ci."collectionId" = c.id AND ci.status = ${
-        CollectionItemStatus.ACCEPTED
-      }::"CollectionItemStatus"
+      CASE WHEN c.nsfw = TRUE THEN ${nsfwBrowsingLevelsFlag}
+      ELSE (
+        SELECT COALESCE(bit_or(COALESCE(i."nsfwLevel", p."nsfwLevel", m."nsfwLevel", a."nsfwLevel",0)), 0)
+        FROM "CollectionItem" ci
+        LEFT JOIN "Image" i on i.id = ci."imageId" AND c.type = 'Image'
+        LEFT JOIN "Post" p on p.id = ci."postId" AND c.type = 'Post' AND p."publishedAt" IS NOT NULL
+        LEFT JOIN "Model" m on m.id = ci."modelId" AND c.type = 'Model' AND m."status" = 'Published'
+        LEFT JOIN "Article" a on a.id = ci."articleId" AND c.type = 'Article' AND a."publishedAt" IS NOT NULL
+        WHERE ci."collectionId" = c.id AND ci.status = ${
+          CollectionItemStatus.ACCEPTED
+        }::"CollectionItemStatus"
+      )
     )
     WHERE c.id IN (${Prisma.join(collectionIds)})
     RETURNING c.id;
