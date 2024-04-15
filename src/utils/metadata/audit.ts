@@ -225,20 +225,21 @@ export function checkable(
       if (matcher) {
         const result = matcher(prompt, { regex, word });
         if (result !== false) return result;
+        else continue;
       }
       if (regex.test(prompt)) return word;
     }
     return false;
   }
   function highlight(prompt: string, replaceFn: (word: string) => string) {
-    prompt = preprocessor(prompt);
+    const target = preprocessor(prompt);
     for (const { regex } of regexes) {
-      if (regex.test(prompt)) {
-        const match = regex.exec(prompt);
+      if (regex.test(target)) {
+        const match = regex.exec(target);
         const word = trimNonAlphanumeric(match?.[0]);
         if (!word) continue;
         // prompt = prompt.replace(word, replaceFn(word));
-        prompt = highlightReplacement(prompt, match, replaceFn);
+        prompt = highlightReplacement(target, match, replaceFn);
       }
     }
     return prompt;
@@ -270,6 +271,7 @@ function inPromptEdit(prompt: string, { regex }: Checkable) {
         .filter((x) => x.trim().length > 0).length > 2;
     return hasPipe || hasColon;
   });
+  console.log(prompt, wrapped);
   return wrapped;
 }
 
@@ -284,7 +286,7 @@ const words = {
     }),
   },
   poi: checkable(poiWords, {
-    preprocessor: (word) => word.replace(/[^\w\s]/g, ''),
+    preprocessor: (word) => word.replace(/[^\w\s\|\:\[\]]/g, ''),
   }),
   tags: Object.entries(promptTags).map(([tag, words]) => ({ tag, words: checkable(words) })),
 };
@@ -310,8 +312,12 @@ export function includesPoi(prompt: string | undefined, includeEdit = false) {
   if (!prompt) return false;
   let matcher = undefined;
   if (!includeEdit)
-    matcher = (prompt: string, checkable: Checkable) =>
-      !inPromptEdit(prompt, checkable) ? checkable.word : false;
+    matcher = (prompt: string, checkable: Checkable) => {
+      if (inPromptEdit(prompt, checkable)) return false;
+      const found = checkable.regex.test(prompt);
+      if (found) return checkable.word;
+      return false;
+    };
 
   return words.poi.inPrompt(prompt, matcher);
 }
