@@ -1,4 +1,4 @@
-import { CosmeticType } from '@prisma/client';
+import { CosmeticType, CosmeticEntity } from '@prisma/client';
 import { z } from 'zod';
 import { paginationSchema } from '~/server/schema/base.schema';
 
@@ -10,3 +10,10 @@ export const getPaginatedCosmeticsSchema = paginationSchema.merge(
     types: z.array(z.nativeEnum(CosmeticType)).optional(),
   })
 );
+
+export type EquipCosmeticInput = z.infer<typeof equipCosmeticSchema>;
+export const equipCosmeticSchema = z.object({
+  cosmeticId: z.number(),
+  equippedToId: z.number(),
+  equippedToType: z.nativeEnum(CosmeticEntity),
+});

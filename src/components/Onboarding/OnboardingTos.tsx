@@ -1,4 +1,13 @@
-import { Button, Center, Group, Loader, ScrollArea, Stack, Title } from '@mantine/core';
+import {
+  Button,
+  Center,
+  Group,
+  Loader,
+  ScrollArea,
+  Stack,
+  Title,
+  TypographyStylesProvider,
+} from '@mantine/core';
 import { IconCheck } from '@tabler/icons-react';
 import ReactMarkdown from 'react-markdown';
 import { OnboardingAbortButton } from '~/components/Onboarding/OnboardingAbortButton';
@@ -57,9 +66,11 @@ export function OnboardingTos() {
           terms && (
             <>
               <Title order={1}>{terms.title}</Title>
-              <ReactMarkdown rehypePlugins={[rehypeRaw]} className="markdown-content">
-                {terms.content}
-              </ReactMarkdown>
+              <TypographyStylesProvider>
+                <ReactMarkdown rehypePlugins={[rehypeRaw]} className="markdown-content">
+                  {terms.content}
+                </ReactMarkdown>
+              </TypographyStylesProvider>
             </>
           )
         )}

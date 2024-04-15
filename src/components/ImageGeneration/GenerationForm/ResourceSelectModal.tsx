@@ -71,17 +71,23 @@ import { ResourceSelectOptions } from './resource-select.types';
 type ResourceSelectModalProps = {
   title?: React.ReactNode;
   onSelect: (value: Generation.Resource) => void;
+  onClose?: () => void;
   options?: ResourceSelectOptions;
   isTraining?: boolean;
 };
 
-export const openResourceSelectModal = ({ title, ...innerProps }: ResourceSelectModalProps) =>
+export const openResourceSelectModal = ({
+  title,
+  onClose,
+  ...innerProps
+}: ResourceSelectModalProps) =>
   openContextModal({
     modal: 'resourceSelectModal',
     title,
     zIndex: 400,
     innerProps,
     size: 1200,
+    onClose,
   });
 
 const ResourceSelectContext = React.createContext<{

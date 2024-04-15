@@ -1,45 +1,82 @@
-import { Center, Loader, createStyles, Stack } from '@mantine/core';
+import { Center, Loader, createStyles, Stack, Alert, Text } from '@mantine/core';
+import { IconInbox } from '@tabler/icons-react';
 import { GeneratedImage } from '~/components/ImageGeneration/GeneratedImage';
 import { useGetGenerationRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { InViewLoader } from '~/components/InView/InViewLoader';
+import { generationPanel } from '~/store/generation.store';
 import { isDefined } from '~/utils/type-guards';
+import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 
-export function Feed({
-  requests,
-  images: feed,
-  fetchNextPage,
-  hasNextPage,
-  isRefetching,
-  isFetchingNextPage,
-  isFetching,
-}: ReturnType<typeof useGetGenerationRequests>) {
+export function Feed() {
   const { classes } = useStyles();
+  const { requests, images, isLoading, fetchNextPage, hasNextPage, isRefetching, isError } =
+    useGetGenerationRequests();
+
+  if (isError)
+    return (
+      <Alert color="red">
+        <Text align="center">Could not retrieve images</Text>
+      </Alert>
+    );
+
+  if (isLoading)
+    return (
+      <Center p="xl">
+        <Loader />
+      </Center>
+    );
+
+  if (!images.length)
+    return (
+      <Center h="100%">
+        <Stack spacing="xs" align="center" py="16">
+          <IconInbox size={64} stroke={1} />
+          <Stack spacing={0}>
+            <Text size="md" align="center">
+              The queue is empty
+            </Text>
+            <Text size="sm" color="dimmed">
+              Try{' '}
+              <Text
+                variant="link"
+                onClick={() => generationPanel.setView('generate')}
+                sx={{ cursor: 'pointer' }}
+                span
+              >
+                generating
+              </Text>{' '}
+              new images with our resources
+            </Text>
+          </Stack>
+        </Stack>
+      </Center>
+    );
 
   return (
-    <Stack
-      spacing="xs"
-      sx={{ position: 'relative', flex: 1, overflow: 'hidden', containerType: 'inline-size' }}
-    >
-      <div className={classes.grid}>
-        {feed
-          .map((image) => {
-            const request = requests.find((request) =>
-              request.images?.some((x) => x.id === image.id)
-            );
-            if (!request) return null;
+    <>
+      <ScrollArea scrollRestore={{ key: 'feed' }} py={0} className="flex flex-col gap-2 px-3">
+        {/* <GeneratedImagesBuzzPrompt /> */}
+        <div className={classes.grid}>
+          {images
+            .map((image) => {
+              const request = requests.find((request) =>
+                request.images?.some((x) => x.id === image.id)
+              );
+              if (!request) return null;
 
-            return <GeneratedImage key={image.id} request={request} image={image} />;
-          })
-          .filter(isDefined)}
-      </div>
-      {hasNextPage && (
-        <InViewLoader loadFn={fetchNextPage} loadCondition={!isFetching && !isFetchingNextPage}>
-          <Center sx={{ height: 60 }}>
-            <Loader />
-          </Center>
-        </InViewLoader>
-      )}
-    </Stack>
+              return <GeneratedImage key={image.id} request={request} image={image} />;
+            })
+            .filter(isDefined)}
+        </div>
+        {hasNextPage && (
+          <InViewLoader loadFn={fetchNextPage} loadCondition={!isRefetching}>
+            <Center sx={{ height: 60 }}>
+              <Loader />
+            </Center>
+          </InViewLoader>
+        )}
+      </ScrollArea>
+    </>
   );
 }
 

@@ -24,7 +24,7 @@ export function PostCard({ data }: Props) {
   const image = data.images[0];
 
   return (
-    <FeedCard href={`/posts/${data.id}`} aspectRatio="square">
+    <FeedCard href={`/posts/${data.id}`} aspectRatio="square" frameDecoration={data.cosmetic}>
       <div className={classes.root}>
         <ImageGuard2 image={image} connectType="post" connectId={data.id}>
           {(safe) => (

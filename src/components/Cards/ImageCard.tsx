@@ -44,7 +44,7 @@ function UnroutedImageCard({ data }: Props) {
 
   return (
     <HolidayFrame {...cardDecoration}>
-      <FeedCard className={sharedClasses.link}>
+      <FeedCard className={sharedClasses.link} frameDecoration={data.cosmetic}>
         <div className={sharedClasses.root}>
           <ImageGuard2 image={data}>
             {(safe) => (

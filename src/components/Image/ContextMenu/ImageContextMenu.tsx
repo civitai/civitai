@@ -30,7 +30,7 @@ import { openContext } from '~/providers/CustomModalsProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { IconBookmark } from '@tabler/icons-react';
-import { CollectionType, ImageIngestionStatus } from '@prisma/client';
+import { CollectionType, CosmeticEntity, ImageIngestionStatus } from '@prisma/client';
 import { IconBan } from '@tabler/icons-react';
 import { useRescanImage } from '~/components/Image/hooks/useRescanImage';
 import { useReportTosViolation } from '~/components/Image/hooks/useReportTosViolation';
@@ -45,18 +45,20 @@ import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import React, { createContext, useContext } from 'react';
 import { trpc } from '~/utils/trpc';
 import { imageStore, useImageStore } from '~/store/image.store';
+import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
+import { ImageProps } from '~/components/ImageViewer/ImageViewer';
 
-type ImageProps = {
-  id: number;
-  postId?: number | null;
-  userId?: number;
-  user?: { id: number };
-  needsReview?: string | null;
-  ingestion?: ImageIngestionStatus;
-};
+// type ImageProps = Pick<ImagesInfiniteModel, 'id' | 'url' | 'width' | 'height' | 'nsfwLevel'> & {
+//   id: number;
+//   postId?: number | null;
+//   userId?: number;
+//   user?: { id: number };
+//   needsReview?: string | null;
+//   ingestion?: ImageIngestionStatus;
+// };
 
 type ImageContextMenuProps = {
-  image: ImageProps;
+  image: Omit<ImageProps, 'tags'> & { ingestion?: ImageIngestionStatus };
   context?: 'image' | 'post';
   additionalMenuItems?: React.ReactNode;
 };
@@ -168,7 +170,12 @@ function ImageMenuItems(
     <>
       {additionalMenuItemsBefore?.(image)}
       {/* GENERAL */}
-      {isOwner && <AddToShowcaseMenuItem entityType="Image" entityId={imageId} />}
+      {isOwner && (
+        <>
+          <AddToShowcaseMenuItem entityType="Image" entityId={imageId} />
+          <AddArtFrameMenuItem data={image} entityType={CosmeticEntity.Image} />
+        </>
+      )}
       <LoginRedirect reason="add-to-collection">
         <Menu.Item icon={<IconBookmark size={14} stroke={1.5} />} onClick={handleSaveClick}>
           Save {context} to collection

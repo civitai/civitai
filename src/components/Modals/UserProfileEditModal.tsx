@@ -29,6 +29,7 @@ import {
   useForm,
   InputProfileSectionsSettingsInput,
   InputSelect,
+  InputCosmeticSelect,
 } from '~/libs/form';
 import { ProfileSectionSchema, userProfileUpdateSchema } from '~/server/schema/user-profile.schema';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -55,6 +56,7 @@ const schema = userProfileUpdateSchema.merge(
       badgeId: true,
       profilePicture: true,
       nameplateId: true,
+      profileDecorationId: true,
       leaderboardShowcase: true,
     })
     .extend({ profileImage: z.string().nullish() })
@@ -67,7 +69,7 @@ const { openModal, Modal } = createContextModal({
   closeOnEscape: false,
   size: 'xl',
   Element: ({ context }) => {
-    const utils = trpc.useContext();
+    const utils = trpc.useUtils();
     const currentUser = useCurrentUser();
     const theme = useMantineTheme();
 
@@ -121,10 +123,10 @@ const { openModal, Modal } = createContextModal({
         user
           ? user.cosmetics
               .filter(({ cosmetic: c }) => c.type === CosmeticType.Badge && !!c.data)
-              .map((c) => ({
+              .map(({ cosmetic, cosmeticId, ...c }) => ({
                 ...c,
-                ...c.cosmetic,
-                data: c.cosmetic.data as any,
+                ...cosmetic,
+                data: cosmetic.data as BadgeCosmetic['data'],
               }))
           : [],
       [user]
@@ -135,7 +137,25 @@ const { openModal, Modal } = createContextModal({
         user
           ? user.cosmetics
               .filter(({ cosmetic: c }) => c.type === CosmeticType.NamePlate && !!c.data)
-              .map((c) => ({ ...c, ...c.cosmetic, data: c.cosmetic.data as any }))
+              .map(({ cosmetic, cosmeticId, ...c }) => ({
+                ...c,
+                ...cosmetic,
+                data: cosmetic.data as NamePlateCosmetic['data'],
+              }))
+          : [],
+      [user]
+    );
+
+    const decorations = useMemo(
+      () =>
+        user
+          ? user.cosmetics
+              .filter(({ cosmetic: c }) => c.type === CosmeticType.ProfileDecoration && !!c.data)
+              .map(({ cosmetic, cosmeticId, ...c }) => ({
+                ...c,
+                ...cosmetic,
+                data: cosmetic.data as BadgeCosmetic['data'],
+              }))
           : [],
       [user]
     );
@@ -159,6 +179,7 @@ const { openModal, Modal } = createContextModal({
     const [
       badgeId,
       nameplateId,
+      profileDecorationId,
       message,
       bio,
       location,
@@ -168,6 +189,7 @@ const { openModal, Modal } = createContextModal({
     ] = form.watch([
       'badgeId',
       'nameplateId',
+      'profileDecorationId',
       'message',
       'bio',
       'location',
@@ -179,15 +201,17 @@ const { openModal, Modal } = createContextModal({
       const sections = (profileSectionsSettings ?? []) as ProfileSectionSchema[];
       return !!sections.find((s) => s.key === 'showcase' && s.enabled);
     }, [profileSectionsSettings]);
-    const equippedCosmetics = useMemo(
-      () => (user?.cosmetics ?? []).filter((c) => !!c.equippedAt).map((c) => c.cosmetic),
-      [user]
-    );
 
     useEffect(() => {
       if (user && user?.profile) {
+        const equippedCosmetics = user.cosmetics
+          .filter((c) => !!c.equippedAt)
+          .map((c) => c.cosmetic);
         const selectedBadge = equippedCosmetics.find((c) => c.type === CosmeticType.Badge);
         const selectedNameplate = equippedCosmetics.find((c) => c.type === CosmeticType.NamePlate);
+        const selectedProfileDecoration = equippedCosmetics.find(
+          (c) => c.type === CosmeticType.ProfileDecoration
+        );
         const formData = {
           ...user.profile,
           // TODO: Fix typing at some point :grimacing:.
@@ -209,6 +233,7 @@ const { openModal, Modal } = createContextModal({
             })),
           badgeId: selectedBadge?.id ?? null,
           nameplateId: selectedNameplate?.id ?? null,
+          profileDecorationId: selectedProfileDecoration?.id ?? null,
           leaderboardShowcase: user?.leaderboardShowcase ?? null,
           profilePicture: user.profilePicture
             ? (user.profilePicture as FormDataSchema['profilePicture'])
@@ -221,7 +246,7 @@ const { openModal, Modal } = createContextModal({
 
         form.reset(formData);
       }
-    }, [equippedCosmetics, user]);
+    }, [user]);
 
     const handleClose = () => context.close();
     const handleSubmit = (data: FormDataSchema) => {
@@ -229,14 +254,23 @@ const { openModal, Modal } = createContextModal({
         profilePicture: prevProfilePicture,
         badgeId: prevBadgeId,
         nameplateId: prevNameplateId,
+        profileDecorationId: prevProfileDecorationId,
         leaderboardShowcase: prevLeaderboardShowcase,
         ...prevProfileData
       } = previousData.current ?? {};
-      const { profilePicture, badgeId, nameplateId, leaderboardShowcase, ...profileData } = data;
+      const {
+        profilePicture,
+        badgeId,
+        nameplateId,
+        profileDecorationId,
+        leaderboardShowcase,
+        ...profileData
+      } = data;
       const shouldUpdateUser =
         prevProfilePicture?.url !== profilePicture?.url ||
         badgeId !== prevBadgeId ||
         nameplateId !== prevNameplateId ||
+        profileDecorationId !== prevProfileDecorationId ||
         leaderboardShowcase !== prevLeaderboardShowcase;
       const shouldUpdateProfile = !isEqual(prevProfileData, profileData);
 
@@ -247,6 +281,7 @@ const { openModal, Modal } = createContextModal({
           profilePicture,
           badgeId,
           nameplateId,
+          profileDecorationId,
           leaderboardShowcase,
         });
     };
@@ -310,11 +345,22 @@ const { openModal, Modal } = createContextModal({
               user={user}
               badge={badgeId ? badges.find((c) => c.id === badgeId) : undefined}
               nameplate={nameplateId ? nameplates.find((c) => c.id === nameplateId) : undefined}
+              profileDecoration={
+                profileDecorationId
+                  ? decorations.find((c) => c.id === profileDecorationId)
+                  : undefined
+              }
               profileImage={profilePicture?.url ?? profileImage}
             />
-            <Stack spacing={8}>
+            <Stack spacing="md">
               <InputProfileImageUpload name="profilePicture" label="Edit profile image" />
               <ProfilePictureAlert ingestion={user?.profilePicture?.ingestion} />
+              <InputCosmeticSelect
+                name="profileDecorationId"
+                label="Profile decoration"
+                shopUrl="/shop/profile-decorations"
+                data={decorations}
+              />
             </Stack>
             <Stack>
               <InputSelect
@@ -545,11 +591,16 @@ type ProfilePreviewProps = {
   badge?: BadgeCosmetic;
   nameplate?: NamePlateCosmetic;
   profileImage?: string | null;
+  profileDecoration?: BadgeCosmetic;
 };
-function ProfilePreview({ user, badge, nameplate, profileImage }: ProfilePreviewProps) {
-  if (!user) {
-    return null;
-  }
+function ProfilePreview({
+  user,
+  badge,
+  nameplate,
+  profileImage,
+  profileDecoration,
+}: ProfilePreviewProps) {
+  if (!user) return null;
 
   const userWithCosmetics: UserWithCosmetics = {
     ...user,
@@ -566,6 +617,11 @@ function ProfilePreview({ user, badge, nameplate, profileImage }: ProfilePreview
     userWithCosmetics.cosmetics.push({ cosmetic: { ...badge, type: 'Badge' }, data: null });
   if (nameplate)
     userWithCosmetics.cosmetics.push({ cosmetic: { ...nameplate, type: 'NamePlate' }, data: null });
+  if (profileDecoration)
+    userWithCosmetics.cosmetics.push({
+      cosmetic: { ...profileDecoration, type: 'ProfileDecoration' },
+      data: null,
+    });
 
   return (
     <Stack spacing={4}>

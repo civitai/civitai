@@ -10,18 +10,20 @@ export const simpleCosmeticSelect = Prisma.validator<Prisma.CosmeticSelect>()({
   data: true,
 });
 
-const simpleUser = Prisma.validator<Prisma.CosmeticArgs>()({
+const simpleCosmetic = Prisma.validator<Prisma.CosmeticDefaultArgs>()({
   select: simpleCosmeticSelect,
 });
 
-export type SimpleCosmetic = Prisma.CosmeticGetPayload<typeof simpleUser>;
+export type SimpleCosmetic = Prisma.CosmeticGetPayload<typeof simpleCosmetic>;
 
 export type BadgeCosmetic = Omit<SimpleCosmetic, 'data' | 'type'> & {
   data: { url?: string; animated?: boolean };
   obtainedAt: Date;
+  inUse?: boolean;
 };
 export type NamePlateCosmetic = Omit<SimpleCosmetic, 'data' | 'type'> & {
   obtainedAt: Date;
+  inUse?: boolean;
   data: Pick<TextProps, 'variant' | 'color'> & {
     gradient?: {
       from: string;

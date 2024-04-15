@@ -1,7 +1,7 @@
 import fs from 'fs';
 import matter from 'gray-matter';
 import { GetStaticPaths, GetStaticProps, InferGetStaticPropsType } from 'next';
-import { Container, Table, Title } from '@mantine/core';
+import { Container, Table, Title, TypographyStylesProvider } from '@mantine/core';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
@@ -62,33 +62,35 @@ export default function ContentPage({
       />
       <Container size="md">
         <Title order={1}>{title}</Title>
-        <ReactMarkdown
-          rehypePlugins={[rehypeRaw, remarkGfm]}
-          className="markdown-content"
-          components={{
-            a: ({ node, ...props }) => {
-              return (
-                <Link href={props.href as string} passHref>
-                  <a
-                    target={props.href?.includes('http') ? '_blank' : '_self'}
-                    rel="nofollow noreferrer"
-                  >
-                    {props.children?.[0]}
-                  </a>
-                </Link>
-              );
-            },
-            table: ({ node, ...props }) => {
-              return (
-                <Table {...props} striped withBorder withColumnBorders>
-                  {props.children}
-                </Table>
-              );
-            },
-          }}
-        >
-          {content}
-        </ReactMarkdown>
+        <TypographyStylesProvider>
+          <ReactMarkdown
+            rehypePlugins={[rehypeRaw, remarkGfm]}
+            className="markdown-content"
+            components={{
+              a: ({ node, ...props }) => {
+                return (
+                  <Link href={props.href as string} passHref>
+                    <a
+                      target={props.href?.includes('http') ? '_blank' : '_self'}
+                      rel="nofollow noreferrer"
+                    >
+                      {props.children?.[0]}
+                    </a>
+                  </Link>
+                );
+              },
+              table: ({ node, ...props }) => {
+                return (
+                  <Table {...props} striped withBorder withColumnBorders>
+                    {props.children}
+                  </Table>
+                );
+              },
+            }}
+          >
+            {content}
+          </ReactMarkdown>
+        </TypographyStylesProvider>
       </Container>
     </>
   );

@@ -13,7 +13,6 @@ import {
   checkResourcesCoverage,
   createGenerationRequest,
   deleteAllGenerationRequests,
-  deleteGeneratedImage,
   deleteGenerationRequest,
   getGenerationRequests,
   getGenerationResources,
@@ -73,10 +72,6 @@ export const generationRouter = router({
     .input(getByIdSchema)
     .use(isFlagProtected('imageGeneration'))
     .mutation(({ input, ctx }) => deleteGenerationRequest({ ...input, userId: ctx.user.id })),
-  deleteImage: protectedProcedure
-    .input(getByIdSchema)
-    .use(isFlagProtected('imageGeneration'))
-    .mutation(({ input, ctx }) => deleteGeneratedImage({ ...input, userId: ctx.user.id })),
   bulkDeleteImages: protectedProcedure
     .input(bulkDeleteGeneratedImagesSchema)
     .use(isFlagProtected('imageGeneration'))

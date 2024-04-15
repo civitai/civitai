@@ -6,9 +6,7 @@ import React from 'react';
 import { AppFooter } from '~/components/AppLayout/AppFooter';
 import { AppHeader, RenderSearchComponentProps } from '~/components/AppLayout/AppHeader';
 import { AssistantButton } from '~/components/Assistant/AssistantButton';
-import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvider';
 import { FloatingActionButton2 } from '~/components/FloatingActionButton/FloatingActionButton';
-import { GenerationSidebar } from '~/components/ImageGeneration/GenerationSidebar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NewsletterDialog } from '../NewsletterDialog/NewsletterDialog';
@@ -64,26 +62,19 @@ export function AppLayout({
   return (
     <>
       <AppHeader fixed={false} renderSearchComponent={renderSearchComponent} />
-      <div className={classes.wrapper}>
-        <GenerationSidebar />
-
-        <ContainerProvider containerName="main">
-          <main className={classes.main}>
-            {content}
-            {/* {flags.assistant && (
+      <main className={classes.main}>
+        {content}
+        {/* {flags.assistant && (
               <div className={classes.assistant}>
                 <AssistantButton />
               </div>
             )} */}
 
-            <FloatingActionButton2 mounted={flags.assistant} transition="slide-up">
-              <AssistantButton />
-            </FloatingActionButton2>
-          </main>
-          <AppFooter fixed={false} />
-        </ContainerProvider>
-      </div>
-
+        <FloatingActionButton2 mounted={flags.assistant} transition="slide-up">
+          <AssistantButton />
+        </FloatingActionButton2>
+      </main>
+      <AppFooter fixed={false} />
       <NewsletterDialog />
     </>
   );

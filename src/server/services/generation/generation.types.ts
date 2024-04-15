@@ -1,5 +1,6 @@
 import { ModelType } from '@prisma/client';
-import { BaseModelSetType } from '~/server/common/constants';
+import { JobStatus } from '~/libs/orchestrator/jobs';
+import { GenerationRequestStatus } from '~/server/common/enums';
 
 export namespace Generation {
   export type AdditionalNetwork = Partial<{
@@ -8,7 +9,7 @@ export namespace Generation {
     maxStrength: number;
   }>;
 
-  export type ImageStatus = 'Success' | 'Started' | 'Error' | 'RemovedForSafety';
+  export type ImageStatus = 'Success' | 'Started' | 'Error' | 'RemovedForSafety' | 'Cancelled';
   export type Image = {
     id: number;
     hash: string;
@@ -17,7 +18,10 @@ export namespace Generation {
     requestId: number;
     seed?: number; // TODO.generation - check if this prop will be set
     status?: ImageStatus;
+    type?: JobStatus;
     removedForSafety: boolean;
+    jobToken?: string;
+    duration?: number | null;
   };
 
   export type Data = {
@@ -84,17 +88,18 @@ export namespace Generation {
 
   export type Request = {
     id: number;
-    alternativesAvailable?: boolean;
+    // alternativesAvailable?: boolean;
     createdAt: Date;
-    estimatedCompletionDate: Date;
+    // estimatedCompletionDate: Date;
     status: GenerationRequestStatus;
     quantity: number;
     priority: number;
     params: Params;
     resources: Resource[];
     images?: Image[];
-    queuePosition?: QueuePosition;
+    // queuePosition?: QueuePosition;
     cost?: number;
+    sequential?: boolean;
   };
 
   export type Coverage = {
@@ -133,12 +138,4 @@ export namespace Generation {
       requests: RequestProps[];
     };
   }
-}
-
-export enum GenerationRequestStatus {
-  Pending = 'Pending',
-  Processing = 'Processing',
-  Cancelled = 'Cancelled',
-  Error = 'Error',
-  Succeeded = 'Succeeded',
 }

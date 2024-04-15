@@ -25,9 +25,6 @@ export const useResizeObserver = <T extends HTMLElement = any>(
 
     if (!resizeObserver)
       resizeObserver = new ResizeObserver((entries: ResizeObserverEntry[]) => {
-        const callbacks = callbackMap.get(node) ?? [];
-        if (!callbacks.length) return;
-
         if (entries.length > 0) cancelAnimationFrame(frameID.current);
         frameID.current = requestAnimationFrame(() => {
           for (const entry of entries) {
@@ -42,7 +39,8 @@ export const useResizeObserver = <T extends HTMLElement = any>(
 
   useEffect(() => {
     const node = ref.current;
-    if (!node || !resizeObserver) return;
+    const observer = resizeObserver;
+    if (!node || !observer) return;
 
     const cbRef = callbackRef as { current: ResizeFunc };
 
@@ -52,7 +50,7 @@ export const useResizeObserver = <T extends HTMLElement = any>(
     const observeElements = (elems: Element[]) => {
       for (const elem of elems) {
         const callbacks = callbackMap.get(elem as Element) ?? [];
-        resizeObserver?.observe(elem);
+        observer.observe(elem);
         observedElements.push(elem);
         callbackMap.set(elem, callbacks.concat(cbRef));
       }
@@ -69,7 +67,7 @@ export const useResizeObserver = <T extends HTMLElement = any>(
         if (filtered.length) {
           callbackMap.set(elem, filtered);
         } else {
-          resizeObserver?.unobserve(elem);
+          observer.unobserve(elem);
           callbackMap.delete(elem);
         }
       }

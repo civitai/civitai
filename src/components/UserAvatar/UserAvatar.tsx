@@ -27,6 +27,7 @@ import { EdgeMedia } from '../EdgeMedia/EdgeMedia';
 import { MediaHash } from '../ImageHash/ImageHash';
 import { IconEye, IconEyeOff, IconUser } from '@tabler/icons-react';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
+import { BadgeCosmetic } from '~/server/selectors/cosmetic.selector';
 import { UserAvatarProfilePicture } from '~/components/UserAvatar/UserAvatarProfilePicture';
 
 const mapAvatarTextSize: Record<MantineSize, { textSize: MantineSize; subTextSize: MantineSize }> =
@@ -89,6 +90,7 @@ export function UserAvatar({
   userId,
   indicatorProps,
   badgeSize,
+  withDecorations = true,
 }: Props) {
   const currentUser = useCurrentUser();
   const theme = useMantineTheme();
@@ -98,7 +100,7 @@ export function UserAvatar({
     { enabled: !user && !!userId && userId > -1, cacheTime: Infinity, staleTime: Infinity }
   );
 
-  const avatarUser = user ?? fallbackUser;
+  const avatarUser = user ?? { ...fallbackUser, cosmetics: [] };
 
   // If no user or user is civitai, return null
   if (!avatarUser || avatarUser.id === -1) return null;
@@ -114,6 +116,12 @@ export function UserAvatar({
     theme.colorScheme === 'dark' ? 'rgba(255,255,255,0.31)' : 'rgba(0,0,0,0.31)';
 
   const image = avatarUser.profilePicture;
+  const decoration = withDecorations
+    ? (avatarUser.cosmetics?.find((c) => c.cosmetic.type === 'ProfileDecoration')?.cosmetic as Omit<
+        BadgeCosmetic,
+        'description' | 'obtainedAt' | 'name'
+      >)
+    : undefined;
 
   return (
     <Group align="center" spacing={spacing} noWrap>
@@ -127,6 +135,24 @@ export function UserAvatar({
             disabled={!indicatorProps}
             withBorder
           >
+            {decoration && decoration.data.url && (
+              <EdgeMedia
+                src={decoration.data.url}
+                type="image"
+                name="user avatar decoration"
+                style={{
+                  position: 'absolute',
+                  top: '50%',
+                  left: '50%',
+                  maxWidth: 'fit-content',
+                  transform: 'translate(-50%,-50%)',
+                  width: '115%',
+                  height: '115%',
+                  zIndex: 1,
+                }}
+                width="original"
+              />
+            )}
             {avatarUser.profilePicture &&
             avatarUser.profilePicture.id &&
             !blockedProfilePicture &&
@@ -230,6 +256,7 @@ type Props = {
   userId?: number;
   indicatorProps?: Omit<IndicatorProps, 'children'>;
   badgeSize?: number;
+  withDecorations?: boolean;
 };
 
 const UserProfileLink = ({

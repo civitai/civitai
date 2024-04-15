@@ -58,37 +58,6 @@ export function GenerationSidebar() {
       defaultWidth={400}
     >
       <ContainerProvider containerName="generation-sidebar">
-        <Group
-          position="right"
-          p="xs"
-          spacing="xs"
-          sx={(theme) => ({
-            position: 'relative',
-            borderBottom: `1px solid ${
-              theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
-            }`,
-          })}
-        >
-          <FeatureIntroductionHelpButton
-            feature="image-generator"
-            contentSlug={['feature-introduction', 'image-generator']}
-          />
-          {!isGeneratePage && (
-            <>
-              <GeneratedImageActions />
-              <Tooltip label="Maximize">
-                <ActionIcon size="lg" onClick={() => router.push('/generate')} variant="light">
-                  <IconArrowsDiagonal size={20} />
-                </ActionIcon>
-              </Tooltip>
-            </>
-          )}
-          <CloseButton
-            onClick={!isGeneratePage ? generationPanel.close : () => history.go(-1)}
-            size="lg"
-            variant="light"
-          />
-        </Group>
         <GenerationTabs tabs={isGeneratePage ? ['generate'] : undefined} />
       </ContainerProvider>
     </ResizableSidebar>

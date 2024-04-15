@@ -49,6 +49,7 @@ export function ArticleCard({ data, aspectRatio }: Props) {
         href={`/articles/${id}/${slugit(title)}`}
         aspectRatio={aspectRatio}
         className={classes.link}
+        frameDecoration={data.cosmetic}
       >
         <div className={classes.root}>
           {coverImage && (

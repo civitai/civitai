@@ -79,6 +79,7 @@ import {
 } from './../schema/model.schema';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
+import { BadgeCosmetic } from '~/server/selectors/cosmetic.selector';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
@@ -155,6 +156,7 @@ type ModelRaw = {
     deletedAt: Date | null;
     image: string;
   };
+  cosmetic?: BadgeCosmetic | null;
 };
 
 export const getModelsRaw = async ({
@@ -166,7 +168,7 @@ export const getModelsRaw = async ({
     take?: number;
     skip?: number;
   };
-  include?: Array<'details'>;
+  include?: Array<'details' | 'cosmetics'>;
   user?: { id: number; isModerator?: boolean; username?: string };
 }) => {
   const {
@@ -211,6 +213,7 @@ export const getModelsRaw = async ({
   }
 
   const includeDetails = !!include?.includes('details');
+  const includeCosmetics = !!include?.includes('cosmetics');
   function ifDetails(sql: TemplateStringsArray) {
     return includeDetails ? Prisma.raw(sql[0]) : Prisma.empty;
   }
@@ -578,6 +581,19 @@ export const getModelsRaw = async ({
           : Prisma.sql`1 = 1`
       }
   )`);
+  if (includeCosmetics) {
+    WITH.push(Prisma.sql`
+      "modelCosmetic" AS (
+        SELECT
+          c.id,
+          c.data,
+          uc."equippedToId"
+        FROM "UserCosmetic" uc
+        JOIN "Cosmetic" c ON uc."cosmeticId" = c.id
+        WHERE uc."equippedToType" = 'Model' AND c.type = 'ContentDecoration'
+      )
+    `);
+  }
 
   const queryWith = WITH.length > 0 ? Prisma.sql`WITH ${Prisma.join(WITH, ', ')}` : Prisma.sql``;
 
@@ -648,6 +664,12 @@ export const getModelsRaw = async ({
             FROM (SELECT row_to_json(lmv) AS data) as t
             ) as "modelVersions",`
       }
+      (
+        SELECT jsonb_build_object(
+          'id', mc.id,
+          'data', mc.data
+        ) FROM "modelCosmetic" mc WHERE mc."equippedToId" = m.id
+      ) as "cosmetic",
       jsonb_build_object(
         'id', u."id",
         'username', u."username",
@@ -1013,6 +1035,7 @@ export const getModelsWithImagesAndModelVersions = async ({
   const { items, isPrivate, nextCursor } = await getModelsRaw({
     input: { ...input, take },
     user,
+    include: ['cosmetics'],
   });
 
   const modelVersionIds = items

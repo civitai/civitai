@@ -28,7 +28,7 @@ import {
   GenerationResourceSelect,
   generationResourceSelect,
 } from '~/server/selectors/generation.selector';
-import { Generation, GenerationRequestStatus } from '~/server/services/generation/generation.types';
+import { Generation } from '~/server/services/generation/generation.types';
 import { isDefined } from '~/utils/type-guards';
 import { QS } from '~/utils/qs';
 import { env } from '~/env/server.mjs';
@@ -62,7 +62,7 @@ import { modelsSearchIndex } from '~/server/search-index';
 import { createLimiter } from '~/server/utils/rate-limiting';
 import { clickhouse } from '~/server/clickhouse/client';
 import dayjs from 'dayjs';
-import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { SearchIndexUpdateQueueAction, GenerationRequestStatus } from '~/server/common/enums';
 import { UserTier } from '~/server/schema/user.schema';
 import { Orchestrator } from '~/server/http/orchestrator/orchestrator.types';
 import { generatorFeedbackReward } from '~/server/rewards';
@@ -287,9 +287,9 @@ const formatGenerationRequests = async (requests: Generation.Api.RequestProps[])
       )?.[0] as BaseModelSetType)
     : undefined;
 
-  const alternativesAvailable =
-    ((await redis.hGet(REDIS_KEYS.SYSTEM.FEATURES, 'generation:alternatives')) ?? 'false') ===
-    'true';
+  // const alternativesAvailable =
+  //   ((await redis.hGet(REDIS_KEYS.SYSTEM.FEATURES, 'generation:alternatives')) ?? 'false') ===
+  //   'true';
 
   return requests.map((x): Generation.Request => {
     const { additionalNetworks = {}, params, ...job } = x.job;
@@ -311,11 +311,11 @@ const formatGenerationRequests = async (requests: Generation.Api.RequestProps[])
 
     const request = {
       id: x.id,
-      alternativesAvailable,
+      // alternativesAvailable,
       createdAt: x.createdAt,
-      estimatedCompletionDate: x.estimatedCompletedAt,
+      // estimatedCompletionDate: x.estimatedCompletedAt,
       status: mapRequestStatus(x.status),
-      queuePosition: x.queuePosition,
+      // queuePosition: x.queuePosition,
       cost: x.cost,
       params: {
         ...params,
@@ -344,10 +344,12 @@ const formatGenerationRequests = async (requests: Generation.Api.RequestProps[])
         })
         .filter(isDefined),
       ...job,
-      images: x.images,
+      images: x.images
+        ?.map(({ jobToken, ...image }) => image)
+        .sort((a, b) => (b.duration ?? 1) - (a.duration ?? 1)),
     };
 
-    if (alternativesAvailable) request.alternativesAvailable = true;
+    // if (alternativesAvailable) request.alternativesAvailable = true;
 
     return request;
   });
@@ -839,20 +841,12 @@ export async function deleteGenerationRequest({ id, userId }: GetByIdInput & { u
   if (!deleteResponse.ok) throw throwNotFoundError();
 }
 
-export async function deleteGeneratedImage({ id, userId }: GetByIdInput & { userId: number }) {
-  const deleteResponse = await fetch(`${env.SCHEDULER_ENDPOINT}/images/${id}?userId=${userId}`, {
-    method: 'DELETE',
-  });
-  if (!deleteResponse.ok) throw throwNotFoundError();
-
-  return deleteResponse.ok;
-}
-
 export async function bulkDeleteGeneratedImages({
   ids,
   userId,
+  cancelled,
 }: BulkDeleteGeneratedImagesInput & { userId: number }) {
-  const queryString = QS.stringify({ imageId: ids, userId });
+  const queryString = QS.stringify({ imageId: ids, userId, cancelled });
   const deleteResponse = await fetch(`${env.SCHEDULER_ENDPOINT}/images?${queryString}`, {
     method: 'DELETE',
   });
@@ -875,8 +869,6 @@ export async function getGenerationStatus() {
   const status = generationStatusSchema.parse(
     JSON.parse((await redis.hGet(REDIS_KEYS.SYSTEM.FEATURES, REDIS_KEYS.GENERATION.STATUS)) ?? '{}')
   );
-
-  status;
 
   return status as GenerationStatus;
 }

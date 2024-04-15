@@ -12,15 +12,16 @@ import type { ArticleGetAll } from '~/server/services/article.service';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionMenuItem';
-import { CollectionType } from '@prisma/client';
+import { CollectionType, CosmeticEntity } from '@prisma/client';
 import React from 'react';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ToggleLockComments } from '../CommentsV2';
 import { IconLock } from '@tabler/icons-react';
 import { ToggleSearchableMenuItem } from '../MenuItems/ToggleSearchableMenuItem';
+import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
 
 export function ArticleContextMenu({ article, ...props }: Props) {
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const router = useRouter();
   const currentUser = useCurrentUser();
   const isModerator = currentUser?.isModerator ?? false;
@@ -121,6 +122,7 @@ export function ArticleContextMenu({ article, ...props }: Props) {
         />
         {currentUser && (isOwner || isModerator) && (
           <>
+            {isOwner && <AddArtFrameMenuItem data={article} entityType={CosmeticEntity.Article} />}
             <Menu.Item
               color="red"
               icon={<IconTrash size={14} stroke={1.5} />}

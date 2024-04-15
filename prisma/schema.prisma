@@ -1980,16 +1980,16 @@ enum CosmeticEntity {
 }
 
 model UserCosmetic {
-  userId        Int
-  user          User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  cosmeticId    Int
-  cosmetic      Cosmetic        @relation(fields: [cosmeticId], references: [id], onDelete: Cascade)
-  obtainedAt    DateTime        @default(now()) // createdAt
-  equippedAt    DateTime?
-  data          Json?
-  claimKey      String          @default("claimed")
-  equippedToId  Int?
-  equppedToType CosmeticEntity?
+  userId         Int
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  cosmeticId     Int
+  cosmetic       Cosmetic        @relation(fields: [cosmeticId], references: [id], onDelete: Cascade)
+  obtainedAt     DateTime        @default(now()) // createdAt
+  equippedAt     DateTime?
+  data           Json?
+  claimKey       String          @default("claimed")
+  equippedToId   Int?
+  equippedToType CosmeticEntity?
 
   @@id([userId, cosmeticId, claimKey])
 }

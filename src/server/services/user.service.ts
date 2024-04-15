@@ -701,6 +701,7 @@ export const getUserCosmetics = ({
         where: equipped ? { equippedAt: { not: null } } : undefined,
         select: {
           obtainedAt: true,
+          equippedToId: true,
           cosmetic: {
             select: {
               id: true,
@@ -1172,8 +1173,8 @@ export const createUserReferral = async ({
     refereeId: number;
     referrerId: number;
   }) => {
-    await refereeCreatedReward.apply({ refereeId, referrerId }, ip);
-    await userReferredReward.apply({ refereeId, referrerId }, ip);
+    // await refereeCreatedReward.apply({ refereeId, referrerId }, ip);
+    // await userReferredReward.apply({ refereeId, referrerId }, ip);
   };
 
   if (userReferralCode || source || landingPage || loginRedirectReason) {

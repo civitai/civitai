@@ -16,6 +16,7 @@ import { SimpleUser } from '~/server/selectors/user.selector';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { Modal } from '@mantine/core';
 import { NsfwLevel } from '~/server/common/enums';
+import { BadgeCosmetic } from '~/server/selectors/cosmetic.selector';
 
 type ImageGuardConnect = {
   entityType:
@@ -51,6 +52,7 @@ export interface ImageProps {
   userId?: number;
   user?: SimpleUser;
   tags?: Array<{ id: number }>;
+  cosmetic?: BadgeCosmetic | null;
 }
 
 type ImageViewerState = {

@@ -150,7 +150,7 @@ export async function getLeaderboard(input: GetLeaderboardInput) {
         FROM "UserCosmetic" uc
         JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
         AND "equippedAt" IS NOT NULL
-        WHERE uc."userId" = lr."userId"
+        WHERE uc."userId" = lr."userId" AND uc."equippedToId" IS NULL
       ) cosmetics,
       (
         SELECT jsonb_build_object(
