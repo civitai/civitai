@@ -29,7 +29,9 @@ export function CivitaiSessionProvider({ children }: { children: React.ReactNode
     key: `civitai-accounts`,
     defaultValue: {},
   });
-  const { data: userAccounts = [] } = trpc.account.getAll.useQuery();
+  const { data: userAccounts = [] } = trpc.account.getAll.useQuery(undefined, {
+    enabled: !!data?.user,
+  });
 
   const { useStore } = useBrowsingModeContext();
   const browsingModeState = useStore((state) => state);
