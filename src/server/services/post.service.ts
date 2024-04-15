@@ -301,12 +301,18 @@ export const getPostsInfinite = async ({
         FROM "PostMetric" pm
         WHERE pm."postId" = p.id AND pm."timeframe" = ${period}::"MetricTimeframe"
       ) "stats",
-      (
-        SELECT jsonb_build_object(
-          'id', pc.id,
-          'data', pc.data
-        ) FROM "postCosmetic" pc WHERE pc."equippedToId" = a.id
-      ) as "cosmetic",
+      ${
+        includeCosmetics
+          ? Prisma.raw(`
+              (
+                SELECT jsonb_build_object(
+                  'id', pc.id,
+                  'data', pc.data
+                ) FROM "postCosmetic" pc WHERE pc."equippedToId" = p.id
+              ) as "cosmetic",
+            `)
+          : Prisma.empty
+      }
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} "cursorId"
     FROM "Post" p
     JOIN "User" u ON u.id = p."userId"

@@ -1,5 +1,6 @@
 import { TextProps } from '@mantine/core';
 import { Prisma } from '@prisma/client';
+import { ImageProps } from '~/components/ImageViewer/ImageViewer';
 
 export const simpleCosmeticSelect = Prisma.validator<Prisma.CosmeticSelect>()({
   id: true,
@@ -20,6 +21,7 @@ export type BadgeCosmetic = Omit<SimpleCosmetic, 'data' | 'type'> & {
   data: { url?: string; animated?: boolean };
   obtainedAt: Date;
   inUse?: boolean;
+  entityImage?: ImageProps;
 };
 export type NamePlateCosmetic = Omit<SimpleCosmetic, 'data' | 'type'> & {
   obtainedAt: Date;
@@ -32,6 +34,7 @@ export type NamePlateCosmetic = Omit<SimpleCosmetic, 'data' | 'type'> & {
     };
   };
 };
+export type ContentDecorationCosmetic = BadgeCosmetic & { data: { offset?: string } };
 export type ProfileBackgroundCosmetic = BadgeCosmetic & {
-  data: { textColor?: string; backgroundColor?: string };
+  data: { textColor?: string; backgroundColor?: string; offset?: string };
 };

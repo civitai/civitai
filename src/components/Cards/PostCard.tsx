@@ -14,14 +14,19 @@ import { truncate } from 'lodash-es';
 import { constants } from '~/server/common/constants';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
+import { CosmeticEntity } from '@prisma/client';
 
 const IMAGE_CARD_WIDTH = 332;
 
 export function PostCard({ data }: Props) {
+  const currentUser = useCurrentUser();
   const { classes, cx } = useCardStyles({ aspectRatio: 1 });
   const router = useRouter();
 
   const image = data.images[0];
+  const isOwner = currentUser?.id === data.user.id;
 
   return (
     <FeedCard href={`/posts/${data.id}`} aspectRatio="square" frameDecoration={data.cosmetic}>
@@ -37,7 +42,21 @@ export function PostCard({ data }: Props) {
                 style={{ pointerEvents: 'none' }}
               >
                 <ImageGuard2.BlurToggle sx={{ pointerEvents: 'auto' }} />
-                <ImageContextMenu image={image} context="post" style={{ pointerEvents: 'auto' }} />
+                <ImageContextMenu
+                  image={image}
+                  context="post"
+                  style={{ pointerEvents: 'auto' }}
+                  additionalMenuItems={
+                    isOwner ? (
+                      <AddArtFrameMenuItem
+                        entityType={CosmeticEntity.Post}
+                        entityId={data.id}
+                        image={image}
+                        currentCosmetic={data.cosmetic}
+                      />
+                    ) : null
+                  }
+                />
               </Group>
               {!safe ? (
                 <MediaHash {...image} />

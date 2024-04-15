@@ -34,7 +34,12 @@ import {
   UserOnboardingSchema,
   UserUpdateInput,
 } from '~/server/schema/user.schema';
-import { BadgeCosmetic, NamePlateCosmetic } from '~/server/selectors/cosmetic.selector';
+import {
+  BadgeCosmetic,
+  NamePlateCosmetic,
+  ProfileBackgroundCosmetic,
+  ContentDecorationCosmetic,
+} from '~/server/selectors/cosmetic.selector';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import {
   claimCosmetic,
@@ -88,7 +93,7 @@ import { getUserBuzzBonusAmount } from '../common/user-helpers';
 import { TransactionType } from '../schema/buzz.schema';
 import { createBuzzTransaction } from '../services/buzz.service';
 import { firstDailyFollowReward } from '~/server/rewards/active/firstDailyFollow.reward';
-import { deleteImageById, ingestImage } from '../services/image.service';
+import { deleteImageById, getEntityCoverImage, ingestImage } from '../services/image.service';
 import {
   createCustomer,
   deleteCustomerPaymentMethod,
@@ -995,30 +1000,55 @@ export const getUserCosmeticsHandler = async ({
     const user = await getUserCosmetics({ equipped, userId });
     if (!user) throw throwNotFoundError(`No user with id ${userId}`);
 
+    const inUseCosmeticEntities = user.cosmetics
+      .map(({ equippedToId, equippedToType }) =>
+        equippedToId && equippedToType
+          ? { entityType: equippedToType, entityId: equippedToId }
+          : null
+      )
+      .filter(isDefined);
+    const coverImages = await getEntityCoverImage({ entities: inUseCosmeticEntities });
+
     const cosmetics = user.cosmetics.reduce(
-      (acc, { obtainedAt, equippedToId, cosmetic }) => {
+      (acc, { obtainedAt, equippedToId, equippedToType, cosmetic }) => {
         const { type, data, ...rest } = cosmetic;
-        const sharedData = { ...rest, obtainedAt, inUse: !!equippedToId };
+        const sharedData = {
+          ...rest,
+          obtainedAt,
+          inUse: !!equippedToId,
+          entityImage: coverImages.find(
+            (x) => x.entityId === equippedToId && x.entityType === equippedToType
+          ),
+        };
 
         if (type === CosmeticType.Badge)
           acc.badges.push({ ...sharedData, data: data as BadgeCosmetic['data'] });
         else if (type === CosmeticType.NamePlate)
           acc.nameplates.push({ ...sharedData, data: data as NamePlateCosmetic['data'] });
         else if (type === CosmeticType.ProfileDecoration)
-          acc.profileDecorations.push({ ...sharedData, data: data as BadgeCosmetic['data'] });
+          acc.profileDecorations.push({
+            ...sharedData,
+            data: data as ContentDecorationCosmetic['data'],
+          });
         else if (type === CosmeticType.ContentDecoration)
-          acc.contentDecorations.push({ ...sharedData, data: data as BadgeCosmetic['data'] });
+          acc.contentDecorations.push({
+            ...sharedData,
+            data: data as ContentDecorationCosmetic['data'],
+          });
         else if (type === CosmeticType.ProfileBackground)
-          acc.profileBackground.push({ ...sharedData, data: data as BadgeCosmetic['data'] });
+          acc.profileBackground.push({
+            ...sharedData,
+            data: data as ProfileBackgroundCosmetic['data'],
+          });
 
         return acc;
       },
       {
         badges: [] as BadgeCosmetic[],
         nameplates: [] as NamePlateCosmetic[],
-        profileDecorations: [] as BadgeCosmetic[],
-        profileBackground: [] as BadgeCosmetic[],
-        contentDecorations: [] as BadgeCosmetic[],
+        profileDecorations: [] as ContentDecorationCosmetic[],
+        profileBackground: [] as ProfileBackgroundCosmetic[],
+        contentDecorations: [] as ContentDecorationCosmetic[],
       }
     );
 

@@ -425,12 +425,18 @@ export const getArticles = async ({
           WHERE uc."userId" = a."userId" AND uc."equippedToId" IS NULL
           GROUP BY uc."userId"
         ) as "userCosmetics",
-        (
-          SELECT jsonb_build_object(
-            'id', ac.id,
-            'data', ac.data
-          ) FROM "articleCosmetic" ac WHERE ac."equippedToId" = a.id
-        ) as "cosmetic",
+        ${
+          includeCosmetics
+            ? Prisma.raw(`
+                (
+                  SELECT jsonb_build_object(
+                    'id', ac.id,
+                    'data', ac.data
+                  ) FROM "articleCosmetic" ac WHERE ac."equippedToId" = a.id
+                ) as "cosmetic",
+              `)
+            : Prisma.empty
+        }
         ${Prisma.raw(cursorProp ? cursorProp : 'null')} as "cursorId"
       ${queryFrom}
       ORDER BY ${Prisma.raw(orderBy)}

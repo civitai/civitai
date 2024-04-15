@@ -130,7 +130,13 @@ export function ModelCard({ data, forceInView }: Props) {
   if (features.profileOverhaul && currentUser?.id === data.user.id) {
     contextMenuItems = contextMenuItems.concat([
       <AddToShowcaseMenuItem key="add-to-showcase" entityType="Model" entityId={data.id} />,
-      <AddArtFrameMenuItem key="add-art-frame" data={data} entityType={CosmeticEntity.Model} />,
+      <AddArtFrameMenuItem
+        key="add-art-frame"
+        entityType={CosmeticEntity.Model}
+        entityId={data.id}
+        image={data.images[0]}
+        currentCosmetic={data.cosmetic}
+      />,
     ]);
   }
 

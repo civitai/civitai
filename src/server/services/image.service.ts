@@ -907,12 +907,18 @@ export const getAllImages = async ({
       ) "baseModel",`
           : ''
       )}
-      (
-        SELECT jsonb_build_object(
-          'id', ic.id,
-          'data', ic.data
-        ) FROM "imageCosmetic" ic WHERE ic."equippedToId" = i.id
-      ) as "cosmetic",
+      ${
+        includeCosmetics
+          ? Prisma.raw(`
+              (
+                SELECT jsonb_build_object(
+                  'id', ic.id,
+                  'data', ic.data
+                ) FROM "imageCosmetic" ic WHERE ic."equippedToId" = i.id
+              ) as "cosmetic",
+            `)
+          : Prisma.empty
+      }
       im."cryCount",
       im."laughCount",
       im."likeCount",
@@ -1305,7 +1311,7 @@ type ImagesForModelVersions = {
   height: number;
   hash: string;
   modelVersionId: number;
-  meta?: Prisma.JsonValue;
+  meta?: ImageMetaProps | null;
   type: MediaType;
   metadata: Prisma.JsonValue;
   tags?: number[];
@@ -2046,7 +2052,7 @@ export const getEntityCoverImage = async ({
   }
 
   // Returns 1 cover image for:
-  // Models, Images, Bounties, BountyEntries.
+  // Models, Images, Bounties, BountyEntries, Article and Post.
   const images = await dbRead.$queryRaw<GetEntityImageRaw[]>`
     WITH entities AS (
       SELECT * FROM jsonb_to_recordset(${JSON.stringify(entities)}::jsonb) AS v(
@@ -2092,7 +2098,26 @@ export const getEntityCoverImage = async ({
                   LIMIT 1
                 )
         WHEN e."entityType" = 'Image'
-            THEN e."entityId"
+          THEN e."entityId"
+        WHEN e."entityType" = 'Article'
+          THEN (
+            SELECT "coverId" FROM "Article" WHERE id = e."entityId"
+          )
+        WHEN e."entityType" = 'Post'
+          THEN (
+            SELECT pi."imageId" FROM (
+              SELECT
+                p.id,
+                i.id as "imageId"
+              FROM "Image" i
+              JOIN "Post" p ON p.id = i."postId"
+              WHERE p."id" = e."entityId"
+                  AND i."ingestion" = 'Scanned'
+                  AND i."needsReview" IS NULL
+              ORDER BY i."postId", i.index
+            ) pi
+            LIMIT 1
+          )
         ELSE (
             SELECT
                 i.id

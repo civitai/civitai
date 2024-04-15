@@ -664,12 +664,18 @@ export const getModelsRaw = async ({
             FROM (SELECT row_to_json(lmv) AS data) as t
             ) as "modelVersions",`
       }
-      (
-        SELECT jsonb_build_object(
-          'id', mc.id,
-          'data', mc.data
-        ) FROM "modelCosmetic" mc WHERE mc."equippedToId" = m.id
-      ) as "cosmetic",
+      ${
+        includeCosmetics
+          ? Prisma.raw(`
+              (
+                SELECT jsonb_build_object(
+                  'id', mc.id,
+                  'data', mc.data
+                ) FROM "modelCosmetic" mc WHERE mc."equippedToId" = m.id
+              ) as "cosmetic",
+            `)
+          : Prisma.empty
+      }
       jsonb_build_object(
         'id', u."id",
         'username', u."username",
