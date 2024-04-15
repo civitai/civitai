@@ -27,6 +27,7 @@ import { createLimiter } from '~/server/utils/rate-limiting';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { CacheTTL } from '~/server/common/constants';
 import dayjs from 'dayjs';
+import { v4 as uuid } from 'uuid';
 
 const setUserName = async (id: number, setTo: string) => {
   try {
@@ -86,6 +87,7 @@ export function createAuthOptions(): NextAuthOptions {
           const { deletedAt, ...restUser } = token.user as User;
           token.user = { ...restUser };
         }
+        if (!token.id) token.id = uuid();
 
         return token;
       },
