@@ -2,6 +2,7 @@ import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   getAllCosmeticShopSections,
   getPaginatedCosmeticShopItemInput,
+  purchaseCosmeticShopItemInput,
   updateCosmeticShopSectionsOrderInput,
   upsertCosmeticShopItemInput,
   upsertCosmeticShopSectionInput,
@@ -14,6 +15,7 @@ import {
   getShopItemById,
   getShopSections,
   getShopSectionsWithItems,
+  purchaseCosmeticShopItem,
   reorderCosmeticShopSections,
   upsertCosmeticShopItem,
   upsertCosmeticShopSection,
@@ -70,5 +72,13 @@ export const cosmeticShopRouter = router({
   getShop: publicProcedure.query(() => {
     return getShopSectionsWithItems();
   }),
+  purchaseShopItem: protectedProcedure
+    .input(purchaseCosmeticShopItemInput)
+    .mutation(({ input, ctx }) => {
+      return purchaseCosmeticShopItem({
+        ...input,
+        userId: ctx.user.id,
+      });
+    }),
   // #endregion
 });

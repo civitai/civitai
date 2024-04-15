@@ -3,6 +3,7 @@ import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   GetAllCosmeticShopSections,
   GetPaginatedCosmeticShopItemInput,
+  PurchaseCosmeticShopItemInput,
   UpdateCosmeticShopSectionsOrderInput,
   UpsertCosmeticShopItemInput,
   UpsertCosmeticShopSectionInput,
@@ -163,6 +164,15 @@ export const useMutateCosmeticShop = () => {
     },
   });
 
+  const purchaseShopItemMutation = trpc.cosmeticShop.purchaseShopItem.useMutation({
+    async onSuccess() {
+      console.log('Success');
+    },
+    onError(error) {
+      onError(error, 'Failed to purchase cosmetic');
+    },
+  });
+
   const handleUpsertShopItem = (data: UpsertCosmeticShopItemInput) => {
     return upsertShopItemMutation.mutateAsync(data);
   };
@@ -178,6 +188,9 @@ export const useMutateCosmeticShop = () => {
   const handleDeleteShopItemMutation = (data: GetByIdInput) => {
     return deleteShopItemMutation.mutateAsync(data);
   };
+  const handlePurchaseShopItemMutation = (data: PurchaseCosmeticShopItemInput) => {
+    return purchaseShopItemMutation.mutateAsync(data);
+  };
 
   return {
     upsertShopItem: handleUpsertShopItem,
@@ -190,6 +203,8 @@ export const useMutateCosmeticShop = () => {
     updatingShopSectionsOrder: updateShopSectionsOrderMutation.isLoading,
     deleteShopItem: handleDeleteShopItemMutation,
     deletingShopItem: deleteShopItemMutation.isLoading,
+    purchaseShopItem: handlePurchaseShopItemMutation,
+    purchasingShopItem: purchaseShopItemMutation.isLoading,
   };
 };
 

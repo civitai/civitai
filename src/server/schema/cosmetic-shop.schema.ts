@@ -51,3 +51,8 @@ export type UpdateCosmeticShopSectionsOrderInput = z.infer<
 export const updateCosmeticShopSectionsOrderInput = z.object({
   sortedSectionIds: z.array(z.number()),
 });
+
+export type PurchaseCosmeticShopItemInput = z.infer<typeof purchaseCosmeticShopItemInput>;
+export const purchaseCosmeticShopItemInput = z.object({
+  shopItemId: z.number(),
+});
