@@ -271,7 +271,6 @@ function inPromptEdit(prompt: string, { regex }: Checkable) {
         .filter((x) => x.trim().length > 0).length > 2;
     return hasPipe || hasColon;
   });
-  console.log(prompt, wrapped);
   return wrapped;
 }
 
