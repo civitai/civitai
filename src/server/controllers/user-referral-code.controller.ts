@@ -19,21 +19,22 @@ export const getUserReferralCodesHandler = async ({
   input: GetUserReferralCodesSchema;
   ctx: DeepNonNullable<Context>;
 }) => {
-  const userId = input.userId || ctx.user.id;
-
-  return await getUserReferralCodes({ userId, includeCount: !!input.includeCount });
+  return await getUserReferralCodes({ userId: ctx.user.id, includeCount: !!input.includeCount });
 };
 
 export const upsertUserReferralCodeHandler = async ({
   input,
   ctx,
 }: {
-  input: UpsertUserReferralCodesSchema;
+  input?: UpsertUserReferralCodesSchema;
   ctx: DeepNonNullable<Context>;
 }) => {
-  const userId = input.userId || ctx.user.id;
   try {
-    return await upsertUserReferralCode({ ...input, userId, isModerator: ctx.user.isModerator });
+    return await upsertUserReferralCode({
+      ...(input ?? {}),
+      userId: ctx.user.id,
+      isModerator: ctx.user.isModerator,
+    });
   } catch (error) {
     throw throwDbError(error);
   }
