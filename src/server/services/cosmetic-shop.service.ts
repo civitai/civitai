@@ -235,12 +235,14 @@ export const upsertCosmeticShopSection = async ({
 
     // Recreate them:
     if (items.length > 0 && !!id) {
+      const data = items.map((itemId, index) => ({
+        shopSectionId: id as number,
+        shopItemId: itemId,
+        index,
+      }));
+
       await dbWrite.cosmeticShopSectionItem.createMany({
-        data: items.map((itemId, index) => ({
-          shopSectionId: id,
-          shopItemId: itemId,
-          index,
-        })),
+        data,
       });
     }
   }

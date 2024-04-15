@@ -15,6 +15,7 @@ import {
   Box,
   TextInput,
   Badge,
+  MantineSize,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
@@ -37,7 +38,7 @@ import { trpc } from '~/utils/trpc';
 
 const cosmeticSampleSizeMap: Record<
   'sm' | 'md' | 'lg',
-  { badgeSize: number; textSize: string; avatarSize: string }
+  { badgeSize: number; textSize: MantineSize; avatarSize: MantineSize }
 > = {
   sm: { badgeSize: 50, textSize: 'sm', avatarSize: 'md' },
   md: { badgeSize: 100, textSize: 'md', avatarSize: 'lg' },
