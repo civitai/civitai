@@ -1,5 +1,5 @@
 import { PrismaAdapter } from '@next-auth/prisma-adapter';
-import { User } from '@prisma/client';
+import { Prisma, PrismaClient, User } from '@prisma/client';
 import NextAuth, { Session, type NextAuthOptions } from 'next-auth';
 import DiscordProvider from 'next-auth/providers/discord';
 import GithubProvider from 'next-auth/providers/github';
@@ -48,9 +48,32 @@ const setUserName = async (id: number, setTo: string) => {
 
 const { hostname } = new URL(env.NEXTAUTH_URL);
 
+function CustomPrismaAdapter(prismaClient: PrismaClient) {
+  const adapter = PrismaAdapter(prismaClient);
+  adapter.useVerificationToken = async (identifier_token) => {
+    try {
+      // We are going to stop deleting this token to handle email services that scan for malicious links
+      // const verificationToken = await prismaClient.verificationToken.delete({
+      //   where: { identifier_token },
+      // });
+      const verificationToken = await prismaClient.verificationToken.findUniqueOrThrow({
+        where: { identifier_token },
+      });
+      return verificationToken;
+    } catch (error) {
+      // If token already used/deleted, just return null
+      // https://www.prisma.io/docs/reference/api-reference/error-reference#p2025
+      if ((error as Prisma.PrismaClientKnownRequestError).code === 'P2025') return null;
+      throw error;
+    }
+  };
+
+  return adapter;
+}
+
 export function createAuthOptions(): NextAuthOptions {
   return {
-    adapter: PrismaAdapter(dbWrite),
+    adapter: CustomPrismaAdapter(dbWrite),
     session: {
       strategy: 'jwt',
       maxAge: 30 * 24 * 60 * 60, // 30 days

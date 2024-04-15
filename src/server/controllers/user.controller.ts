@@ -47,11 +47,9 @@ import {
   getUserCreator,
   getUserEngagedModelVersions,
   getUserEngagedModels,
-  getUserTags,
   getUsers,
   isUsernamePermitted,
   toggleBan,
-  toggleBlockedTag,
   toggleFollowUser,
   toggleHideUser,
   toggleModelNotify,
@@ -872,60 +870,6 @@ export const getUserTagsHandler = async ({
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
-  }
-};
-
-export const toggleBlockedTagHandler = async ({
-  input,
-  ctx,
-}: {
-  input: ToggleBlockedTagSchema;
-  ctx: DeepNonNullable<Context>;
-}) => {
-  try {
-    const { id: userId } = ctx.user;
-    const isHidden = await toggleBlockedTag({ ...input, userId });
-    ctx.track.tagEngagement({
-      type: isHidden ? 'Hide' : 'Allow',
-      tagId: input.tagId,
-    });
-  } catch (error) {
-    throw throwDbError(error);
-  }
-};
-
-export const batchBlockTagsHandler = async ({
-  input,
-  ctx,
-}: {
-  input: BatchBlockTagsSchema;
-  ctx: DeepNonNullable<Context>;
-}) => {
-  try {
-    const { id: userId } = ctx.user;
-    const { tagIds } = input;
-    const currentBlockedTags = await getUserTags({ userId, type: 'Hide' });
-    const blockedTagIds = currentBlockedTags.map(({ tagId }) => tagId);
-    const tagsToRemove = blockedTagIds.filter((id) => !tagIds.includes(id));
-
-    const updatedUser = await updateUserById({
-      id: userId,
-      data: {
-        tagsEngaged: {
-          deleteMany: { userId, tagId: { in: tagsToRemove } },
-          upsert: tagIds.map((tagId) => ({
-            where: { userId_tagId: { userId, tagId } },
-            update: { type: 'Hide' },
-            create: { type: 'Hide', tagId },
-          })),
-        },
-      },
-    });
-    if (!updatedUser) throw throwNotFoundError(`No user with id ${userId}`);
-
-    return updatedUser;
-  } catch (error) {
-    throw throwDbError(error);
   }
 };
 
