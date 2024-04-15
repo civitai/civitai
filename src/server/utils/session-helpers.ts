@@ -1,12 +1,11 @@
 import { User } from '@prisma/client';
 import { Session } from 'next-auth';
 import { JWT } from 'next-auth/jwt';
+import { v4 as uuid } from 'uuid';
 import { redis } from '~/server/redis/client';
 import { getSessionUser } from '~/server/services/user.service';
 import { generateSecretHash } from '~/server/utils/key-generator';
 import { createLogger } from '~/utils/logging';
-import { Session } from 'next-auth';
-import { v4 as uuid } from 'uuid';
 
 const DEFAULT_EXPIRATION = 60 * 60 * 24 * 30; // 30 days
 const log = createLogger('session-helpers', 'green');
@@ -18,6 +17,7 @@ declare global {
 }
 
 const TOKEN_ID_ENFORCEMENT = 1713139200000;
+
 export async function invalidateToken(token: JWT) {
   if (!token?.id || typeof token.id !== 'string') return;
 

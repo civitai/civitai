@@ -1,7 +1,7 @@
 import { civitaiTokenCookieName } from '~/libs/auth';
-import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
+import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
 
-export default AuthedEndpoint(async function handler(req, res) {
+export default MixedAuthEndpoint(async function handler(req, res) {
   // export default async function fetchToken(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'GET') return res.status(405).send('Method Not Allowed');
 

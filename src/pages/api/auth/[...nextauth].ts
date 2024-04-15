@@ -1,5 +1,6 @@
 import { PrismaAdapter } from '@next-auth/prisma-adapter';
 import { User } from '@prisma/client';
+import dayjs from 'dayjs';
 import { NextApiRequest, NextApiResponse } from 'next';
 import NextAuth, { type NextAuthOptions, Session } from 'next-auth';
 import DiscordProvider from 'next-auth/providers/discord';
@@ -7,27 +8,24 @@ import EmailProvider, { SendVerificationRequestParams } from 'next-auth/provider
 import GithubProvider from 'next-auth/providers/github';
 import GoogleProvider from 'next-auth/providers/google';
 import RedditProvider from 'next-auth/providers/reddit';
+import { v4 as uuid } from 'uuid';
 import { isDev } from '~/env/other';
 import { env } from '~/env/server.mjs';
 import { civitaiTokenCookieName, useSecureCookies } from '~/libs/auth';
 import { Tracker } from '~/server/clickhouse/client';
+import { CacheTTL } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { verificationEmail } from '~/server/email/templates';
-import { getRandomInt } from '~/utils/number-helpers';
-import { refreshToken, invalidateSession, invalidateToken } from '~/server/utils/session-helpers';
+import { REDIS_KEYS } from '~/server/redis/client';
 import {
   createUserReferral,
   getSessionUser,
   updateAccountScope,
 } from '~/server/services/user.service';
 import blockedDomains from '~/server/utils/email-domain-blocklist.json';
-import { invalidateSession, refreshToken } from '~/server/utils/session-helpers';
-import { getRandomInt } from '~/utils/number-helpers';
 import { createLimiter } from '~/server/utils/rate-limiting';
-import { REDIS_KEYS } from '~/server/redis/client';
-import { CacheTTL } from '~/server/common/constants';
-import dayjs from 'dayjs';
-import { v4 as uuid } from 'uuid';
+import { invalidateSession, invalidateToken, refreshToken } from '~/server/utils/session-helpers';
+import { getRandomInt } from '~/utils/number-helpers';
 
 const setUserName = async (id: number, setTo: string) => {
   try {
@@ -205,6 +203,7 @@ const emailLimiter = createLimiter({
   fetchCount: async () => 0,
   refetchInterval: CacheTTL.day,
 });
+
 async function sendVerificationRequest({
   identifier: to,
   url,

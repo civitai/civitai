@@ -49,6 +49,8 @@ export default function Login({ providers }: Props) {
 
   const redirectReason = loginRedirectReasons[reason];
 
+  console.log(providers);
+
   useEffect(() => {
     if (
       setLoginRedirectReason &&

@@ -3,6 +3,7 @@ import dayjs from 'dayjs';
 import { Session, SessionUser } from 'next-auth';
 import { signIn, useSession } from 'next-auth/react';
 import dynamic from 'next/dynamic';
+import { useRouter } from 'next/router';
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useBrowsingModeContext } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -16,6 +17,7 @@ export type CivitaiAccounts = {
   [k in string]: {
     jwt: string;
     // avatarUrl: string;
+    email: string;
     expireAt: string;
     active: boolean;
   };
@@ -23,13 +25,14 @@ export type CivitaiAccounts = {
 
 export function CivitaiSessionProvider({ children }: { children: React.ReactNode }) {
   const { data, update } = useSession();
-
+  const router = useRouter();
   const [accounts, setAccounts] = useLocalStorage({
     key: `civitai-accounts`,
     defaultValue: {} as CivitaiAccounts,
   });
 
   console.log(accounts);
+  console.log(data?.user);
 
   const { useStore } = useBrowsingModeContext();
   const browsingModeState = useStore((state) => state);
@@ -50,8 +53,6 @@ export function CivitaiSessionProvider({ children }: { children: React.ReactNode
     };
   }, [data?.expires, update, browsingModeState]); // eslint-disable-line
 
-  console.log(data?.user);
-
   useEffect(() => {
     if (data?.error === 'RefreshAccessTokenError') signIn();
   }, [data?.error]);
@@ -63,38 +64,60 @@ export function CivitaiSessionProvider({ children }: { children: React.ReactNode
     // console.log(data?.user);
     // console.log({ expires: data?.expires });
     const getAndSetData = async () => {
-      if (!(userIdStr in accounts)) {
-        const resp = await fetch('/api/auth/gettoken');
-        const respJson: { token: string | null } = await resp.json();
-        console.log('about to set accounts');
-        const { token } = respJson;
-        if (!!token) {
-          setAccounts((current) => {
-            const old = { ...current };
-            Object.keys(old).forEach((k) => {
-              old[k]['active'] = false;
-            });
-            console.log(old);
+      console.log({ userIdStr });
+      console.log({ stored: accounts[userIdStr]?.expireAt, data: data?.expires });
+      console.log('expire match', accounts[userIdStr]?.expireAt === data?.expires);
+      console.log(accounts);
 
-            return {
-              ...old,
-              [userIdStr]: {
-                jwt: token,
-                // avatarUrl: data?.user?.image ?? '',
-                expireAt: data?.expires ?? dayjs().add(30, 'day').toISOString(),
-                active: true,
-              },
-            };
-          });
+      let token: string | null = null;
+      if (!(userIdStr in accounts) || accounts[userIdStr]?.expireAt !== data?.expires) {
+        const resp = await fetch('/api/auth/gettoken');
+        if (resp.ok) {
+          const respJson: { token: string | null } = await resp.json();
+          token = respJson.token;
         } else {
-          console.log('no token');
+          console.log('bad token', resp);
         }
+      } else {
+        token = accounts[userIdStr].jwt;
+      }
+
+      if (token !== null) {
+        setAccounts((current) => {
+          const old = { ...current };
+          Object.keys(old).forEach((k) => {
+            old[k]['active'] = false;
+          });
+
+          return {
+            ...old,
+            [userIdStr]: {
+              jwt: token as string, // wtf typescript?
+              // avatarUrl: data?.user?.image ?? '',
+              email: data?.user?.email ?? 'unk',
+              expireAt: data?.expires ?? dayjs().add(30, 'day').toISOString(),
+              active: true,
+            },
+          };
+        });
+      } else {
+        console.log('no token');
       }
     };
     getAndSetData().catch((e) => console.log(e));
-  }, [data?.user]);
+  }, [data]);
 
-  // TODO add listener to find out if current session is active one, if not - refresh
+  useEffect(() => {
+    const reloadFn = () => {
+      console.log('reload event');
+      router.reload();
+    };
+
+    addEventListener('account-swap', reloadFn);
+    return () => {
+      removeEventListener('account-swap', reloadFn);
+    };
+  }, []);
 
   useEffect(() => {
     const onboarding = value?.onboarding;

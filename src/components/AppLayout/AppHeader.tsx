@@ -16,7 +16,6 @@ import {
   Paper,
   Portal,
   ScrollArea,
-  Stack,
   Switch,
   Text,
   Transition,
@@ -32,7 +31,6 @@ import {
   IconBookmarkEdit,
   IconBrush,
   IconChevronDown,
-  IconChevronLeft,
   IconChevronRight,
   IconCloudLock,
   IconClubs,
@@ -63,18 +61,17 @@ import { signOut } from 'next-auth/react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import {
-  type Dispatch,
   Fragment,
   ReactElement,
   ReactNode,
   RefObject,
-  type SetStateAction,
   useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
 } from 'react';
+import { AccountSwitcher } from '~/components/AppLayout/AccountSwitcher';
 import { BrowsingModeIcon, BrowsingModeMenu } from '~/components/BrowsingMode/BrowsingMode';
 import { ChatButton } from '~/components/Chat/ChatButton';
 import { CivitaiLinkPopover } from '~/components/CivitaiLink/CivitaiLinkPopover';
@@ -96,7 +93,7 @@ import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import { deleteCookies } from '~/utils/cookies-helpers';
-import { getLoginLink, LoginRedirectReason } from '~/utils/login-helpers';
+import { LoginRedirectReason } from '~/utils/login-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { AutocompleteSearch } from '../AutocompleteSearch/AutocompleteSearch';
 import { openBuyBuzzModal } from '../Modals/BuyBuzzModal';
@@ -247,102 +244,6 @@ function defaultRenderSearchComponent({ onSearchDone, isMobile, ref }: RenderSea
 
   return <AutocompleteSearch />;
 }
-
-const AccountSwitcher = ({
-  inMenu = true,
-  setUserSwitching,
-  accounts,
-  logout,
-  close,
-}: {
-  inMenu?: boolean;
-  setUserSwitching: Dispatch<SetStateAction<boolean>>;
-  accounts: CivitaiAccounts;
-  logout: ({ removeLS, redirect }?: { removeLS?: boolean; redirect?: boolean }) => Promise<void>;
-  close: () => void;
-}) => {
-  const { classes } = useStyles();
-  // const { data: userData } = useSession();
-  const router = useRouter();
-
-  console.log(accounts);
-
-  const swapAccount = async (jwt: string) => {
-    console.log(jwt);
-    const resp = await fetch(`/api/auth/switchaccounts?token=${jwt}`);
-
-    if (resp.ok) {
-      router.reload();
-    } else {
-      const respJson: { error: string } = await resp.json();
-      console.log(respJson.error);
-    }
-  };
-
-  if (inMenu) {
-    return (
-      <>
-        <Menu.Item onClick={() => setUserSwitching(false)} closeMenuOnClick={false}>
-          <Group>
-            <IconChevronLeft />
-            <Text>Back</Text>
-          </Group>
-        </Menu.Item>
-        <Divider />
-        {Object.entries(accounts).map(([k, v]) => (
-          <Menu.Item
-            key={k}
-            onClick={v.active ? undefined : () => swapAccount(v.jwt)}
-            sx={v.active ? { cursor: 'initial' } : {}}
-          >
-            <Group>
-              <UserAvatar userId={Number(k)} withUsername />
-              {v.active && <Text color="dimmed">Active</Text>}
-            </Group>
-          </Menu.Item>
-        ))}
-        <Divider mb={8} />
-        <Stack spacing="xs">
-          <Button
-            // component={NextLink}
-            // href={getLoginLink({ returnUrl: router.asPath, reason: 'switch-accounts' })}
-            variant="light"
-            onClick={async () => {
-              close();
-              await logout({ removeLS: false, redirect: false });
-              console.log('awaited logout, pushing');
-              router.push(
-                getLoginLink({
-                  returnUrl: router.asPath,
-                  reason: 'switch-accounts',
-                })
-              );
-            }}
-          >
-            Add Account
-          </Button>
-          <Button variant="light" color="grape" onClick={() => logout()}>
-            Logout
-          </Button>
-        </Stack>
-      </>
-    );
-  }
-
-  return (
-    <>
-      <Group
-        onClick={() => setUserSwitching(false)}
-        className={classes.link}
-        sx={{ cursor: 'pointer', justifyContent: 'flex-start !important' }}
-      >
-        <IconChevronLeft />
-        <Text>Back</Text>
-      </Group>
-      <Text>sup</Text>
-    </>
-  );
-};
 
 export function AppHeader({
   renderSearchComponent = defaultRenderSearchComponent,
@@ -901,6 +802,8 @@ export function AppHeader({
     // Removes referral cookies on sign out
     deleteCookies(['ref_code', 'ref_source']);
 
+    console.log({ removeLS, redirect });
+
     // When logging out, remove from localStorage
     if (removeLS) {
       const userId = currentUser?.id;
@@ -912,8 +815,10 @@ export function AppHeader({
     }
 
     if (!redirect) {
+      console.log('sign out without redirect');
       await signOut({ redirect: false });
     } else {
+      console.log('regular signout');
       await signOut();
     }
   };
@@ -1111,13 +1016,16 @@ export function AppHeader({
                     // ref={ref}
                   >
                     {userSwitching ? (
-                      <AccountSwitcher
-                        inMenu={false}
-                        setUserSwitching={setUserSwitching}
-                        accounts={accounts}
-                        logout={handleSignOut}
-                        close={handleCloseMenu}
-                      />
+                      // maybe move this to account switcher
+                      <ScrollArea.Autosize maxHeight={'calc(100dvh - 135px)'}>
+                        <AccountSwitcher
+                          inMenu={false}
+                          setUserSwitching={setUserSwitching}
+                          accounts={accounts}
+                          logout={handleSignOut}
+                          close={handleCloseMenu}
+                        />
+                      </ScrollArea.Autosize>
                     ) : (
                       <>
                         {/* Calculate maxHeight based off total viewport height minus header + footer + static menu options inside dropdown sizes */}
