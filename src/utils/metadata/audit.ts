@@ -6,7 +6,6 @@ import nsfwWords from './lists/words-nsfw.json';
 import youngWords from './lists/words-young.json';
 import poiWords from './lists/words-poi.json';
 import promptTags from './lists/prompt-tags.json';
-import he from 'he';
 
 // #region [audit]
 const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -204,16 +203,27 @@ export function promptWordReplace(prompt: string, word: string, replacement = ''
 
 type Checkable = { regex: RegExp; word: string };
 type MatcherFn = (prompt: string, checkable: Checkable) => string | false;
-export function checkable(words: string[], options?: { pluralize?: boolean; matcher?: MatcherFn }) {
+type PreprocessorFn = (word: string) => string;
+export function checkable(
+  words: string[],
+  options?: { pluralize?: boolean; matcher?: MatcherFn; preprocessor?: PreprocessorFn }
+) {
   const regexes = words.map((word) => {
     const regex = prepareWordRegex(word, options?.pluralize);
     return { regex, word } as Checkable;
   });
-  function inPrompt(prompt: string, matcher?: MatcherFn) {
+  function preprocessor(prompt: string) {
     prompt = prompt.trim();
+    if (options?.preprocessor) return options.preprocessor(prompt);
+    return prompt;
+  }
+
+  function inPrompt(prompt: string, matcher?: MatcherFn) {
+    prompt = preprocessor(prompt);
+    matcher ??= options?.matcher;
     for (const { regex, word } of regexes) {
-      if (options?.matcher) {
-        const result = (matcher ?? options.matcher)(prompt, { regex, word });
+      if (matcher) {
+        const result = matcher(prompt, { regex, word });
         if (result !== false) return result;
       }
       if (regex.test(prompt)) return word;
@@ -221,7 +231,7 @@ export function checkable(words: string[], options?: { pluralize?: boolean; matc
     return false;
   }
   function highlight(prompt: string, replaceFn: (word: string) => string) {
-    prompt = prompt.trim();
+    prompt = preprocessor(prompt);
     for (const { regex } of regexes) {
       if (regex.test(prompt)) {
         const match = regex.exec(prompt);
@@ -273,7 +283,9 @@ const words = {
       pluralize: true,
     }),
   },
-  poi: checkable(poiWords),
+  poi: checkable(poiWords, {
+    preprocessor: (word) => word.replace(/[^\w\s]/g, ''),
+  }),
   tags: Object.entries(promptTags).map(([tag, words]) => ({ tag, words: checkable(words) })),
 };
 
