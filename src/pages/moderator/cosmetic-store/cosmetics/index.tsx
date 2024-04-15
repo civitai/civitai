@@ -59,10 +59,6 @@ export const CosmeticSample = ({
   );
   const values = cosmeticSampleSizeMap[size];
 
-  if (!user) {
-    return <Loader />;
-  }
-
   switch (cosmetic.type) {
     case CosmeticType.Badge:
       return (
@@ -78,11 +74,15 @@ export const CosmeticSample = ({
       const data = cosmetic.data as NamePlateCosmetic['data'];
       return (
         <Text weight="bold" {...data} size={values.textSize}>
-          {user.username ?? 'Username'}
+          {user?.username ?? 'Username'}
         </Text>
       );
     case CosmeticType.ProfileDecoration:
       // TODO.cosmetic-shop: Confirm this is enough?
+      if (!user) {
+        return null;
+      }
+
       return (
         <UserAvatar
           user={{
