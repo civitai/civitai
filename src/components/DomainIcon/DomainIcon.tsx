@@ -20,6 +20,7 @@ import {
   IconWorld,
   Icon as TablerIcon,
   TablerIconsProps,
+  IconBrandLinkedin,
 } from '@tabler/icons-react';
 import { IconCivitai } from '~/components/SVG/IconCivitai';
 import { IconBrandHuggingFace } from '~/components/SVG/IconHuggingFace';
@@ -57,4 +58,5 @@ const tablerIconMap: { [key in DomainLink]: TablerIcon } = {
   vk: IconBrandVk,
   bilibili: IconBrandBilibili,
   civitai: IconCivitai,
+  linkedin: IconBrandLinkedin,
 };
