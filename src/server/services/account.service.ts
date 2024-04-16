@@ -15,8 +15,8 @@ export const getUserAccounts = <TSelect extends Prisma.AccountSelect = Prisma.Ac
   });
 };
 
-export const deleteAccount = ({ id }: GetByIdInput) => {
+export const deleteAccount = ({ id, userId }: GetByIdInput & { userId: number }) => {
   return dbWrite.account.delete({
-    where: { id },
+    where: { id, userId },
   });
 };
