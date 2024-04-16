@@ -143,6 +143,7 @@ export function ImageDetail() {
                         )}
                       </Text>
                     }
+                    withOverlay={!!backgroundImage}
                     subTextForce
                     withUsername
                     linkToProfile

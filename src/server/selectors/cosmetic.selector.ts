@@ -34,7 +34,9 @@ export type NamePlateCosmetic = Omit<SimpleCosmetic, 'data' | 'type'> & {
     };
   };
 };
-export type ContentDecorationCosmetic = BadgeCosmetic & { data: { offset?: string } };
+export type ContentDecorationCosmetic = BadgeCosmetic & {
+  data: { offset?: string; crop?: string };
+};
 export type ProfileBackgroundCosmetic = BadgeCosmetic & {
   data: { textColor?: string; backgroundColor?: string; offset?: string };
 };

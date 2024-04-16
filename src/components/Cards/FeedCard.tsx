@@ -1,9 +1,8 @@
 import { AspectRatio, Card, CardProps, createStyles } from '@mantine/core';
 import Link from 'next/link';
 import React, { forwardRef } from 'react';
-import { BadgeCosmetic, ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
+import { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
+import { DecorationFrame } from '~/components/Decorations/DecorationFrame';
 
 type AspectRatio = 'portrait' | 'landscape' | 'square' | 'flat';
 const aspectRatioValues: Record<
@@ -87,29 +86,7 @@ export const FeedCard = forwardRef<HTMLAnchorElement, Props>(
         ) : (
           card
         )}
-        {frameDecoration && frameDecoration.data.url ? (
-          <EdgeMedia
-            src={frameDecoration.data.url}
-            type="image"
-            name="card decoration"
-            style={{
-              position: 'absolute',
-              top: '50%',
-              left: '50%',
-              transform: 'translate(-50%,-50%)',
-              width: frameDecoration.data.offset
-                ? `calc(100% + ${frameDecoration.data.offset})`
-                : '100%',
-              height: frameDecoration.data.offset
-                ? `calc(100% + ${frameDecoration.data.offset})`
-                : '100%',
-              zIndex: 20,
-              pointerEvents: 'none',
-            }}
-            width={frameDecoration.data.animated ? 'original' : DEFAULT_EDGE_IMAGE_WIDTH}
-            anim={frameDecoration.data.animated}
-          />
-        ) : null}
+        {frameDecoration && <DecorationFrame decoration={frameDecoration} />}
       </div>
     );
   }

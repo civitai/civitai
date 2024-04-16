@@ -74,6 +74,7 @@ export function CreatorCard({
                 avatarProps={{ size: 32 }}
                 user={creator}
                 subText={creator.createdAt ? `Joined ${formatDate(creator.createdAt)}` : undefined}
+                withOverlay={!!backgroundImage}
                 withUsername
                 linkToProfile
               />

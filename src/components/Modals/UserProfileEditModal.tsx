@@ -687,6 +687,7 @@ function ProfilePreview({
             user={userWithCosmetics}
             size="lg"
             subText={user.createdAt ? `Member since ${formatDate(user.createdAt)}` : ''}
+            withOverlay={!!profileBackground}
             withUsername
           />
         </BackgroundImage>

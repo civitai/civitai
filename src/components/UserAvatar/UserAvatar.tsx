@@ -87,6 +87,7 @@ export function UserAvatar({
   indicatorProps,
   badgeSize,
   withDecorations = true,
+  withOverlay = false,
 }: Props) {
   const currentUser = useCurrentUser();
   const theme = useMantineTheme();
@@ -122,11 +123,15 @@ export function UserAvatar({
   return (
     <Group
       align="center"
-      sx={{
-        padding: '0 10px 0 0',
-        backgroundColor: 'rgba(0, 0, 0, 0.31)',
-        borderRadius: '1000px',
-      }}
+      sx={
+        withOverlay
+          ? {
+              padding: '0 10px 0 0',
+              backgroundColor: 'rgba(0, 0, 0, 0.31)',
+              borderRadius: '1000px',
+            }
+          : undefined
+      }
       spacing={spacing}
       noWrap
     >
@@ -265,6 +270,7 @@ type Props = {
   indicatorProps?: Omit<IndicatorProps, 'children'>;
   badgeSize?: number;
   withDecorations?: boolean;
+  withOverlay?: boolean;
 };
 
 const UserProfileLink = ({

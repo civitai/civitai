@@ -107,6 +107,11 @@ export function CardDecorationModal({ entityType, entityId, image, currentCosmet
     await completeSubmission();
   };
 
+  const handleClose = () => {
+    if (isLoading) return;
+    dialog.onClose();
+  };
+
   const { isDirty } = form.formState;
   const cosmeticId = form.watch('cosmeticId');
   const items = userCosmetics?.contentDecorations.filter(({ data }) => data.url) ?? [];
@@ -115,9 +120,12 @@ export function CardDecorationModal({ entityType, entityId, image, currentCosmet
   return (
     <Modal
       {...dialog}
+      onClose={handleClose}
       title="Card Decoration"
       closeButtonLabel="Close card decoration modal"
       size="lg"
+      closeOnClickOutside={!isLoading}
+      closeOnEscape={!isLoading}
     >
       <Form form={form} onSubmit={handleSubmit}>
         <Grid gutter="xl">
@@ -151,45 +159,47 @@ export function CardDecorationModal({ entityType, entityId, image, currentCosmet
           </Grid.Col>
           <Grid.Col xs={12} sm={6} className={classes.preview}>
             <Stack align="center" spacing="xl">
-              {selectedItem && selectedItem.entityImage && (
-                <Group noWrap>
-                  <Image
-                    src={getEdgeUrl(selectedItem.entityImage.url, {
-                      width: 'original',
-                      transcode: false,
-                      anim: false,
-                    })}
-                    alt={
-                      selectedItem.entityImage.meta
-                        ? truncate(selectedItem.entityImage.meta.prompt, {
-                            length: constants.altTruncateLength,
-                          })
-                        : undefined
-                    }
-                    radius="md"
-                    width={48}
-                    height={62}
-                  />
-                  <IconArrowRight size={24} style={{ flexShrink: 0 }} />
-                  <Image
-                    src={getEdgeUrl(image.url, {
-                      width: 'original',
-                      transcode: false,
-                      anim: false,
-                    })}
-                    alt={
-                      image.meta
-                        ? truncate(image.meta.prompt, {
-                            length: constants.altTruncateLength,
-                          })
-                        : undefined
-                    }
-                    radius="md"
-                    width={48}
-                    height={62}
-                  />
-                </Group>
-              )}
+              {selectedItem &&
+                selectedItem.entityImage &&
+                image.url !== selectedItem.entityImage.url && (
+                  <Group noWrap>
+                    <Image
+                      src={getEdgeUrl(selectedItem.entityImage.url, {
+                        width: 'original',
+                        transcode: false,
+                        anim: false,
+                      })}
+                      alt={
+                        selectedItem.entityImage.meta
+                          ? truncate(selectedItem.entityImage.meta.prompt, {
+                              length: constants.altTruncateLength,
+                            })
+                          : undefined
+                      }
+                      radius="md"
+                      width={48}
+                      height={62}
+                    />
+                    <IconArrowRight size={24} style={{ flexShrink: 0 }} />
+                    <Image
+                      src={getEdgeUrl(image.url, {
+                        width: 'original',
+                        transcode: false,
+                        anim: false,
+                      })}
+                      alt={
+                        image.meta
+                          ? truncate(image.meta.prompt, {
+                              length: constants.altTruncateLength,
+                            })
+                          : undefined
+                      }
+                      radius="md"
+                      width={48}
+                      height={62}
+                    />
+                  </Group>
+                )}
               <PreviewCard image={image} decoration={selectedItem} />
               <Button
                 radius="xl"

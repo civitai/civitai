@@ -1311,7 +1311,7 @@ type ImagesForModelVersions = {
   height: number;
   hash: string;
   modelVersionId: number;
-  meta?: ImageMetaProps | null;
+  meta: ImageMetaProps | null;
   type: MediaType;
   metadata: Prisma.JsonValue;
   tags?: number[];
@@ -2098,10 +2098,25 @@ export const getEntityCoverImage = async ({
                   LIMIT 1
                 )
         WHEN e."entityType" = 'Image'
-          THEN e."entityId"
+          THEN (
+            SELECT i.id FROM "Image" i
+            WHERE i.id = e."entityId"
+              AND i."ingestion" = 'Scanned'
+              AND i."needsReview" IS NULL
+          )
         WHEN e."entityType" = 'Article'
           THEN (
-            SELECT "coverId" FROM "Article" WHERE id = e."entityId"
+            SELECT ai."imageId" FROM (
+              SELECT
+                a.id,
+                i.id as "imageId"
+              FROM "Image" i
+              JOIN "Article" a ON a."coverId" = i.id
+              WHERE a."id" = e."entityId"
+                  AND i."ingestion" = 'Scanned'
+                  AND i."needsReview" IS NULL
+            ) ai
+            LIMIT 1
           )
         WHEN e."entityType" = 'Post'
           THEN (
