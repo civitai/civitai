@@ -515,10 +515,11 @@ export const saveItemInCollections = async ({
 export const upsertCollection = async ({
   input,
 }: {
-  input: UpsertCollectionInput & { userId: number };
+  input: UpsertCollectionInput & { userId: number; isModerator?: boolean };
 }) => {
   const {
     userId,
+    isModerator,
     id,
     name,
     description,
@@ -534,6 +535,15 @@ export const upsertCollection = async ({
   } = input;
 
   if (id) {
+    const permission = await getUserCollectionPermissionsById({
+      id,
+      userId,
+      isModerator,
+    });
+    if (!permission.manage) {
+      throw throwAuthorizationError('You do not have permission to manage this collection');
+    }
+
     // Get current collection values for comparison
     const currentCollection = await dbWrite.collection.findUnique({
       where: { id },

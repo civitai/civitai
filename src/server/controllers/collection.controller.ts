@@ -245,7 +245,9 @@ export const upsertCollectionHandler = async ({
   const { user } = ctx;
 
   try {
-    const collection = await upsertCollection({ input: { ...input, userId: user.id } });
+    const collection = await upsertCollection({
+      input: { ...input, userId: user.id, isModerator: user.isModerator },
+    });
 
     return collection;
   } catch (error) {
