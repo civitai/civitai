@@ -593,7 +593,7 @@ type ProfilePreviewProps = {
   profileImage?: string | null;
   profileDecoration?: BadgeCosmetic;
 };
-function ProfilePreview({
+export function ProfilePreview({
   user,
   badge,
   nameplate,

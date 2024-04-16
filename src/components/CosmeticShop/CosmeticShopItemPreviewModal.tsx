@@ -1,17 +1,32 @@
-import { Center, Grid, Modal, Stack } from '@mantine/core';
+import { Box, Center, Grid, Modal, Stack, createStyles, Text } from '@mantine/core';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { useMutateCosmeticShop } from '~/components/CosmeticShop/cosmetic-shop.util';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
-import { CosmeticSample } from '~/pages/moderator/cosmetic-store/cosmetics';
+import { CosmeticPreview, CosmeticSample } from '~/pages/moderator/cosmetic-store/cosmetics';
 import { CosmeticShopItemGetById } from '~/types/router';
 import { showSuccessNotification } from '~/utils/notifications';
+import { getDisplayName } from '~/utils/string-helpers';
 
 type Props = { shopItem: CosmeticShopItemGetById };
+
+const useStyles = createStyles((theme) => ({
+  sample: {
+    padding: theme.spacing.lg,
+  },
+  preview: {
+    background: theme.colorScheme === 'dark' ? theme.colors.dark[8] : theme.colors.gray[0],
+    padding: theme.spacing.lg,
+  },
+  text: {
+    color: theme.colorScheme === 'dark' ? theme.colors.white : theme.colors.black,
+  },
+}));
 
 export const CosmeticShopItemPreviewModal = ({ shopItem }: Props) => {
   const dialog = useDialogContext();
   const { cosmetic } = shopItem;
   const { purchaseShopItem, purchasingShopItem } = useMutateCosmeticShop();
+  const { classes } = useStyles();
 
   const handlePurchaseShopItem = async () => {
     try {
@@ -26,28 +41,47 @@ export const CosmeticShopItemPreviewModal = ({ shopItem }: Props) => {
   };
 
   return (
-    <Modal {...dialog} title="Preview cosmetic">
-      <Stack>
-        <Grid>
-          <Grid.Col span={12} md={6}>
-            <Stack spacing="lg">
-              <Center my="lg">
-                <CosmeticSample cosmetic={cosmetic} size="lg" />
-              </Center>
-              <BuzzTransactionButton
-                disabled={purchasingShopItem}
-                loading={purchasingShopItem}
-                buzzAmount={shopItem.unitAmount}
-                radius="md"
-                onPerformTransaction={handlePurchaseShopItem}
-                label="Purchase"
-                color="yellow.7"
-              />
-            </Stack>
-          </Grid.Col>
-          <Grid.Col span={12} md={6}></Grid.Col>
-        </Grid>
-      </Stack>
+    <Modal
+      {...dialog}
+      size="xl"
+      withCloseButton={false}
+      radius="xl"
+      styles={{
+        modal: {
+          padding: '0 !important',
+          overflow: 'hidden',
+        },
+      }}
+    >
+      <Grid m={0}>
+        <Grid.Col span={12} md={5} className={classes.sample}>
+          <Stack spacing="lg" px="md">
+            <Text className={classes.text} size="sm">
+              {getDisplayName(cosmetic.type)}
+            </Text>
+            <Center my="lg" h={250}>
+              <CosmeticSample cosmetic={cosmetic} size="lg" />
+            </Center>
+            <Text className={classes.text} weight="bold" size="lg">
+              {shopItem.title}
+            </Text>
+            <BuzzTransactionButton
+              disabled={purchasingShopItem}
+              loading={purchasingShopItem}
+              buzzAmount={shopItem.unitAmount}
+              radius="xl"
+              onPerformTransaction={handlePurchaseShopItem}
+              label="Purchase"
+              color="yellow.7"
+            />
+          </Stack>
+        </Grid.Col>
+        <Grid.Col span={12} md={7} className={classes.preview}>
+          <Stack px="md" h="100%" justify="center">
+            <CosmeticPreview cosmetic={cosmetic} />
+          </Stack>
+        </Grid.Col>
+      </Grid>
     </Modal>
   );
 };

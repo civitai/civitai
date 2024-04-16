@@ -26,6 +26,7 @@ import { CosmeticsFiltersDropdown } from '~/components/Cosmetics/CosmeticsFilter
 import { useQueryCosmeticsPaged } from '~/components/Cosmetics/cosmetics.util';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { Meta } from '~/components/Meta/Meta';
+import { ProfilePreview } from '~/components/Modals/UserProfileEditModal';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { PurchasableRewardModeratorViewMode } from '~/server/common/enums';
@@ -41,8 +42,8 @@ const cosmeticSampleSizeMap: Record<
   { badgeSize: number; textSize: MantineSize; avatarSize: MantineSize }
 > = {
   sm: { badgeSize: 50, textSize: 'sm', avatarSize: 'md' },
-  md: { badgeSize: 100, textSize: 'md', avatarSize: 'lg' },
-  lg: { badgeSize: 150, textSize: 'lg', avatarSize: 'lg' },
+  md: { badgeSize: 80, textSize: 'md', avatarSize: 'xl' },
+  lg: { badgeSize: 120, textSize: 'lg', avatarSize: 'xl' },
 };
 
 export const CosmeticSample = ({
@@ -52,15 +53,12 @@ export const CosmeticSample = ({
   cosmetic: Pick<CosmeticGetById, 'id' | 'data' | 'type' | 'name' | 'source'>;
   size?: 'sm' | 'md' | 'lg';
 }) => {
-  const currentUser = useCurrentUser();
-  const { data: user } = trpc.user.getById.useQuery(
-    { id: currentUser?.id ?? 0 },
-    { enabled: !!currentUser }
-  );
   const values = cosmeticSampleSizeMap[size];
 
   switch (cosmetic.type) {
     case CosmeticType.Badge:
+    case CosmeticType.ProfileDecoration:
+    case CosmeticType.ContentDecoration:
       return (
         <Box w={values.badgeSize}>
           <EdgeMedia
@@ -74,27 +72,77 @@ export const CosmeticSample = ({
       const data = cosmetic.data as NamePlateCosmetic['data'];
       return (
         <Text weight="bold" {...data} size={values.textSize}>
-          {user?.username ?? 'Username'}
+          Sample Text
         </Text>
       );
-    case CosmeticType.ProfileDecoration:
-      // TODO.cosmetic-shop: Confirm this is enough?
-      if (!user) {
-        return null;
-      }
-
+    case CosmeticType.ProfileBackground:
       return (
-        <UserAvatar
-          user={{
-            ...user,
-            cosmetics: [{ data: {}, cosmetic }],
+        <Box
+          style={{
+            height: values.badgeSize,
+            width: '100%',
+            overflow: 'hidden',
+            borderRadius: 10,
           }}
-          size={values.avatarSize}
-        />
+        >
+          <EdgeMedia
+            src={(cosmetic.data as { url: string })?.url}
+            alt={cosmetic.name}
+            width="original"
+            style={{
+              objectFit: 'cover',
+              objectPosition: 'right bottom',
+              width: '100%',
+              height: '100%',
+            }}
+          />
+        </Box>
       );
-    case CosmeticType.ContentDecoration:
-      // TODO.cosmetic-shop: Implement this
+    default:
       return null;
+  }
+};
+
+export const CosmeticPreview = ({
+  cosmetic,
+}: {
+  cosmetic: Pick<CosmeticGetById, 'id' | 'data' | 'type' | 'name' | 'source'>;
+}) => {
+  const currentUser = useCurrentUser();
+  const { data: user, isLoading } = trpc.user.getById.useQuery(
+    { id: currentUser?.id ?? 0 },
+    { enabled: !!currentUser }
+  );
+
+  if (isLoading || !user) {
+    return (
+      <Center>
+        <Loader />
+      </Center>
+    );
+  }
+
+  switch (cosmetic.type) {
+    case CosmeticType.Badge:
+      return <ProfilePreview user={user} badge={cosmetic} />;
+    case CosmeticType.ProfileDecoration:
+      return (
+        <Center>
+          <UserAvatar
+            withDecorations
+            user={{
+              ...user,
+              cosmetics: [{ data: {}, cosmetic }],
+            }}
+            size="xl"
+          />
+        </Center>
+      );
+    case CosmeticType.NamePlate:
+      return <ProfilePreview user={user} nameplate={cosmetic} />;
+    case CosmeticType.ProfileBackground:
+    case CosmeticType.ContentDecoration:
+      return <Box>TODO</Box>;
     default:
       return null;
   }

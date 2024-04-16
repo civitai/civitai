@@ -123,6 +123,23 @@ const useStyles = createStyles((theme) => ({
       display: 'none',
     },
   },
+  card: {
+    height: '100%',
+    background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[1],
+    borderRadius: theme.radius.md,
+    padding: theme.spacing.md,
+    overflow: 'hidden',
+  },
+  cardHeader: {
+    background: theme.colorScheme === 'dark' ? theme.colors.dark[9] : theme.colors.gray[2],
+    margin: -theme.spacing.md,
+    padding: theme.spacing.md,
+    marginBottom: theme.spacing.md,
+    height: 250,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 }));
 
 export const getServerSideProps = createServerSideProps({
@@ -134,16 +151,15 @@ export const getServerSideProps = createServerSideProps({
 
 export const CosmeticShopItem = ({ item }: { item: CosmeticShopItemGetById }) => {
   const cosmetic = item.cosmetic;
+  const { classes } = useStyles();
   return (
-    <Card shadow="xs" radius="md" h="100%">
-      <Stack spacing="md" h="100%">
+    <Paper className={classes.card}>
+      <Stack h="100%">
         <Stack spacing="md">
-          <Center mb="lg">
-            <CosmeticSample cosmetic={cosmetic} size="md" />
-          </Center>
-
-          <Group spacing={4}>
-            <Title order={3}>{item.title}</Title>
+          <Box className={classes.cardHeader}>
+            <CosmeticSample cosmetic={cosmetic} size="lg" />
+          </Box>
+          <Stack spacing={4} align="flex-start">
             <CurrencyBadge
               currency={Currency.BUZZ}
               unitAmount={item.unitAmount}
@@ -151,7 +167,8 @@ export const CosmeticShopItem = ({ item }: { item: CosmeticShopItemGetById }) =>
               variant="transparent"
               px={0}
             />
-          </Group>
+            <Title order={3}>{item.title}</Title>
+          </Stack>
           {item.description && (
             <ContentClamp maxHeight={200}>
               <RenderHtml html={item.description} />
@@ -172,7 +189,7 @@ export const CosmeticShopItem = ({ item }: { item: CosmeticShopItemGetById }) =>
           Preview
         </Button>
       </Stack>
-    </Card>
+    </Paper>
   );
 };
 

@@ -321,6 +321,7 @@ export const getShopSectionsWithItems = async () => {
           },
         },
         take: 8,
+        orderBy: { index: 'asc' },
       },
     },
     where: {
@@ -383,7 +384,8 @@ export const purchaseCosmeticShopItem = async ({
   const onlySupportsSinglePurchase =
     shopItem.cosmetic.type == CosmeticType.Badge ||
     shopItem.cosmetic.type == CosmeticType.NamePlate ||
-    shopItem.cosmetic.type == CosmeticType.ProfileBackground;
+    shopItem.cosmetic.type == CosmeticType.ProfileBackground ||
+    shopItem.cosmetic.type == CosmeticType.ProfileDecoration;
 
   if (onlySupportsSinglePurchase) {
     // Confirm the user doesn't own it already:
