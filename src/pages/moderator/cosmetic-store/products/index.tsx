@@ -15,6 +15,7 @@ import {
   Box,
   TextInput,
   Badge,
+  Anchor,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
@@ -22,6 +23,7 @@ import { NextLink } from '@mantine/next';
 import { BuzzWithdrawalRequestStatus, CosmeticType, Currency } from '@prisma/client';
 import { IconCloudOff, IconEdit, IconPlus, IconTrash } from '@tabler/icons-react';
 import { useState } from 'react';
+import { BackButton } from '~/components/BackButton/BackButton';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import {
   useMutateCosmeticShop,
@@ -44,6 +46,7 @@ import { NamePlateCosmetic } from '~/server/selectors/cosmetic.selector';
 import { CosmeticGetById } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { showSuccessNotification } from '~/utils/notifications';
+import { getDisplayName } from '~/utils/string-helpers';
 
 import { trpc } from '~/utils/trpc';
 
@@ -93,10 +96,16 @@ export default function CosmeticStoreProducts() {
       <Meta title="Cosmetic Shop Products" deIndex />
       <Container size="lg">
         <Stack spacing={0} mb="xl">
-          <Title order={1}>Cosmetic Shop Products</Title>
+          <Group>
+            <BackButton url="/moderator/cosmetic-store" />
+            <Title order={1}>Cosmetic Shop Products</Title>
+          </Group>
           <Text size="sm" color="dimmed">
             You can add and manage shop products here. A cosmetic must be created before hand for it
-            to be created into a shop product.
+            to be created into a shop product. After creating, remember to add it to a section{' '}
+            <Anchor component={NextLink} href="/moderator/cosmetic-store/sections">
+              here.
+            </Anchor>
           </Text>
         </Stack>
         <Group position="apart" mb="md">
@@ -140,7 +149,9 @@ export default function CosmeticStoreProducts() {
                   <th>Title</th>
                   <th>Cosmetic Name</th>
                   <th>Type</th>
-                  <th>Sample</th>
+                  <th>
+                    <Text align="center">Sample</Text>
+                  </th>
                   <th>Price</th>
                   <th>Available From</th>
                   <th>Available To</th>
@@ -168,9 +179,11 @@ export default function CosmeticStoreProducts() {
                           <Text>{shopItem.cosmetic.name}</Text>
                         </Stack>
                       </td>
-                      <td>{shopItem.cosmetic.type}</td>
+                      <td>{getDisplayName(shopItem.cosmetic.type)}</td>
                       <td>
-                        <CosmeticSample cosmetic={shopItem.cosmetic} />
+                        <Center>
+                          <CosmeticSample cosmetic={shopItem.cosmetic} />
+                        </Center>
                       </td>
                       <td>
                         <CurrencyBadge unitAmount={shopItem.unitAmount} currency={Currency.BUZZ} />
@@ -182,7 +195,7 @@ export default function CosmeticStoreProducts() {
                       </td>{' '}
                       <td>{shopItem.archivedAt ? formatDate(shopItem.archivedAt) : '-'}</td>
                       <td>
-                        <Group>
+                        <Group spacing={4} noWrap>
                           <ActionIcon
                             component={NextLink}
                             href={`/moderator/cosmetic-store/products/${shopItem.id}/edit`}

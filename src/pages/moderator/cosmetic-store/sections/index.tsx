@@ -30,6 +30,7 @@ import { NextLink } from '@mantine/next';
 import { IconCloudOff, IconEdit, IconPlus, IconTrash } from '@tabler/icons-react';
 import { indexOf, isEqual } from 'lodash';
 import { useEffect, useState } from 'react';
+import { BackButton } from '~/components/BackButton/BackButton';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import {
   useMutateCosmeticShop,
@@ -148,7 +149,10 @@ export default function CosmeticStoreSections() {
       <Meta title="Cosmetic Shop Sections" deIndex />
       <Container size="md">
         <Stack spacing={0} mb="xl">
-          <Title order={1}>Cosmetic Shop Sections</Title>
+          <Group>
+            <BackButton url="/moderator/cosmetic-store" />
+            <Title order={1}>Cosmetic Shop Sections</Title>
+          </Group>
           <Text size="sm" color="dimmed">
             You can add and manage shop sections here. Products must be created before hand. If you
             have not created any product, please go{' '}
