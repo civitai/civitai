@@ -34,7 +34,12 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { PurchasableRewardModeratorViewMode } from '~/server/common/enums';
 import { GetPaginatedCosmeticsInput } from '~/server/schema/cosmetic.schema';
 import { GetPaginatedPurchasableRewardsModeratorSchema } from '~/server/schema/purchasable-reward.schema';
-import { ContentDecorationCosmetic, NamePlateCosmetic } from '~/server/selectors/cosmetic.selector';
+import {
+  BadgeCosmetic,
+  ContentDecorationCosmetic,
+  NamePlateCosmetic,
+  ProfileBackgroundCosmetic,
+} from '~/server/selectors/cosmetic.selector';
 import { CosmeticGetById } from '~/types/router';
 
 import { trpc } from '~/utils/trpc';
@@ -110,22 +115,28 @@ export const CosmeticPreview = ({
 }: {
   cosmetic: Pick<CosmeticGetById, 'id' | 'data' | 'type' | 'name' | 'source' | 'description'>;
 }) => {
+  const isProfileRelated =
+    cosmetic.type === CosmeticType.Badge ||
+    cosmetic.type === CosmeticType.NamePlate ||
+    cosmetic.type === CosmeticType.ProfileBackground ||
+    cosmetic.type === CosmeticType.ProfileDecoration;
+
   const currentUser = useCurrentUser();
-  const { isLoading: isLoadingUser, data: user } = trpc.userProfile.get.useQuery(
+  const { data: user } = trpc.userProfile.get.useQuery(
     { username: currentUser ? currentUser.username : '' },
-    { enabled: !!currentUser?.username && cosmetic.type !== CosmeticType.ContentDecoration }
+    { enabled: !!currentUser?.username && isProfileRelated }
   );
-  const { isLoading: isLoadingImages, data: images } = trpc.cosmeticShop.getPreviewImages.useQuery(
+  const { data: images = [] } = trpc.cosmeticShop.getPreviewImages.useQuery(
     {
-      browsingLevel: currentUser?.browsingLevel,
+      browsingLevel: currentUser?.browsingLevel ?? 0,
     },
     {
-      enabled: !!currentUser && cosmetic.type === CosmeticType.ContentDecoration,
+      enabled: !!currentUser && !isProfileRelated,
     }
   );
   const [activeImageIndex, setActiveImageIndex] = useState(0);
 
-  if (!user && !images) {
+  if ((!user && isProfileRelated) || (!images && !isProfileRelated)) {
     return (
       <Center>
         <Loader />
@@ -136,29 +147,51 @@ export const CosmeticPreview = ({
   const activeCosmetics = user
     ? {
         badge: user.cosmetics.find((c) => c.cosmetic.type === CosmeticType.Badge && !!c.equippedAt)
-          ?.cosmetic,
+          ?.cosmetic as BadgeCosmetic,
         nameplate: user.cosmetics.find(
           (c) => c.cosmetic.type === CosmeticType.NamePlate && !!c.equippedAt
-        )?.cosmetic,
+        )?.cosmetic as NamePlateCosmetic,
         profileBackground: user.cosmetics.find(
           (c) => c.cosmetic.type === CosmeticType.ProfileBackground && !!c.equippedAt
-        )?.cosmetic,
+        )?.cosmetic as ProfileBackgroundCosmetic,
         profileDecoration: user.cosmetics.find(
           (c) => c.cosmetic.type === CosmeticType.ProfileDecoration && !!c.equippedAt
-        )?.cosmetic,
+        )?.cosmetic as ContentDecorationCosmetic,
       }
     : {};
 
   switch (cosmetic.type) {
     case CosmeticType.Badge:
-      return <ProfilePreview user={user} {...activeCosmetics} badge={cosmetic} />;
+      return <ProfilePreview user={user} {...activeCosmetics} badge={cosmetic as BadgeCosmetic} />;
     case CosmeticType.ProfileDecoration:
-      return <ProfilePreview user={user} {...activeCosmetics} profileDecoration={cosmetic} />;
+      return (
+        <ProfilePreview
+          user={user}
+          {...activeCosmetics}
+          profileDecoration={cosmetic as ContentDecorationCosmetic}
+        />
+      );
     case CosmeticType.NamePlate:
-      return <ProfilePreview user={user} {...activeCosmetics} nameplate={cosmetic} />;
+      return (
+        <ProfilePreview
+          user={user}
+          {...activeCosmetics}
+          nameplate={cosmetic as NamePlateCosmetic}
+        />
+      );
     case CosmeticType.ProfileBackground:
-      return <ProfilePreview user={user} {...activeCosmetics} profileBackground={cosmetic} />;
+      return (
+        <ProfilePreview
+          user={user}
+          {...activeCosmetics}
+          profileBackground={cosmetic as ProfileBackgroundCosmetic}
+        />
+      );
     case CosmeticType.ContentDecoration:
+      if (!images.length) {
+        return null;
+      }
+
       return (
         <Stack>
           <Box style={{ transform: 'scale(0.75)' }}>

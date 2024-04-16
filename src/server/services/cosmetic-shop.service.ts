@@ -284,8 +284,6 @@ export const deleteCosmeticShopSection = async ({ id }: GetByIdInput) => {
 export const reorderCosmeticShopSections = async ({
   sortedSectionIds,
 }: UpdateCosmeticShopSectionsOrderInput) => {
-  console.log(sortedSectionIds);
-
   await dbWrite.$queryRaw`
     UPDATE "CosmeticShopSection" AS "css" 
     SET "placement" = "idx"
@@ -466,7 +464,7 @@ export const getUserPreviewImagesForCosmetics = async ({
   }
 
   const userImages = await getAllImages({
-    username: user.username,
+    username: user.username ?? '',
     limit: 2 * limit,
     sort: ImageSort.MostReactions,
     browsingLevel,
@@ -489,8 +487,6 @@ export const getUserPreviewImagesForCosmetics = async ({
         mode: null,
       },
     });
-
-    console.log(featuredImagesCollection);
 
     if (!featuredImagesCollection) {
       return images;

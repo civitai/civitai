@@ -85,6 +85,7 @@ export const cosmeticShopRouter = router({
   getPreviewImages: protectedProcedure.input(getPreviewImagesInput).query(({ input, ctx }) => {
     return getUserPreviewImagesForCosmetics({
       userId: ctx.user.id,
+      ...input,
     });
   }),
   // #endregion

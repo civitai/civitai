@@ -19,12 +19,12 @@ export type SimpleCosmetic = Prisma.CosmeticGetPayload<typeof simpleCosmetic>;
 
 export type BadgeCosmetic = Omit<SimpleCosmetic, 'data' | 'type'> & {
   data: { url?: string; animated?: boolean };
-  obtainedAt: Date;
+  obtainedAt?: Date;
   inUse?: boolean;
   entityImage?: ImageProps;
 };
 export type NamePlateCosmetic = Omit<SimpleCosmetic, 'data' | 'type'> & {
-  obtainedAt: Date;
+  obtainedAt?: Date;
   inUse?: boolean;
   data: Pick<TextProps, 'variant' | 'color'> & {
     gradient?: {
