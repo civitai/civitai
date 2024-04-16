@@ -86,13 +86,14 @@ export const AccountSwitcher = ({
   const { classes } = useStyles();
   const router = useRouter();
 
-  const swapAccount = async (accountData: CivitaiAccount) => {
+  const swapAccount = async ({ provider, email }: CivitaiAccount) => {
     await logout({ removeLS: false, redirect: false });
-    await signIn(
-      accountData.provider,
-      { callbackUrl: router.asPath },
-      { login_hint: accountData.email }
-    );
+
+    if (provider !== 'email') {
+      await signIn(provider, { callbackUrl: router.asPath }, { login_hint: email });
+    } else {
+      signIn('email', { email, redirect: false });
+    }
   };
 
   if (inMenu) {
