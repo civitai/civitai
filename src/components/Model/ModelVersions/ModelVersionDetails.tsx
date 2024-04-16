@@ -661,7 +661,7 @@ export function ModelVersionDetails({
                       {primaryFile ? (
                         <>
                           Download{' '}
-                          <Text className="hide-mobile" span>{`(${formatKBytes(
+                          <Text className="inline sm:max-md:hidden" span>{`(${formatKBytes(
                             primaryFile?.sizeKB
                           )})`}</Text>
                         </>
