@@ -79,7 +79,7 @@ import {
 } from './../schema/model.schema';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
-import { BadgeCosmetic } from '~/server/selectors/cosmetic.selector';
+import { BadgeCosmetic, ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
@@ -156,7 +156,7 @@ type ModelRaw = {
     deletedAt: Date | null;
     image: string;
   };
-  cosmetic?: BadgeCosmetic | null;
+  cosmetic?: ContentDecorationCosmetic | null;
 };
 
 export const getModelsRaw = async ({
@@ -664,12 +664,18 @@ export const getModelsRaw = async ({
             FROM (SELECT row_to_json(lmv) AS data) as t
             ) as "modelVersions",`
       }
-      (
-        SELECT jsonb_build_object(
-          'id', mc.id,
-          'data', mc.data
-        ) FROM "modelCosmetic" mc WHERE mc."equippedToId" = m.id
-      ) as "cosmetic",
+      ${
+        includeCosmetics
+          ? Prisma.raw(`
+              (
+                SELECT jsonb_build_object(
+                  'id', mc.id,
+                  'data', mc.data
+                ) FROM "modelCosmetic" mc WHERE mc."equippedToId" = m.id
+              ) as "cosmetic",
+            `)
+          : Prisma.empty
+      }
       jsonb_build_object(
         'id', u."id",
         'username', u."username",

@@ -1,4 +1,5 @@
 import {
+  BackgroundImage,
   Box,
   Button,
   Center,
@@ -43,12 +44,18 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { formatDate } from '~/utils/date-helpers';
-import { BadgeCosmetic, NamePlateCosmetic } from '~/server/selectors/cosmetic.selector';
+import {
+  BadgeCosmetic,
+  ContentDecorationCosmetic,
+  NamePlateCosmetic,
+  ProfileBackgroundCosmetic,
+} from '~/server/selectors/cosmetic.selector';
 import { titleCase } from '~/utils/string-helpers';
 import { UserWithProfile } from '~/types/router';
 import { userUpdateSchema } from '~/server/schema/user.schema';
 import { isEqual } from 'lodash-es';
 import { ProfilePictureAlert } from '../User/ProfilePictureAlert';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 
 const schema = userProfileUpdateSchema.merge(
   userUpdateSchema
@@ -57,6 +64,7 @@ const schema = userProfileUpdateSchema.merge(
       profilePicture: true,
       nameplateId: true,
       profileDecorationId: true,
+      profileBackgroundId: true,
       leaderboardShowcase: true,
     })
     .extend({ profileImage: z.string().nullish() })
@@ -154,7 +162,21 @@ const { openModal, Modal } = createContextModal({
               .map(({ cosmetic, cosmeticId, ...c }) => ({
                 ...c,
                 ...cosmetic,
-                data: cosmetic.data as BadgeCosmetic['data'],
+                data: cosmetic.data as ContentDecorationCosmetic['data'],
+              }))
+          : [],
+      [user]
+    );
+
+    const backgrounds = useMemo(
+      () =>
+        user
+          ? user.cosmetics
+              .filter(({ cosmetic: c }) => c.type === CosmeticType.ProfileBackground && !!c.data)
+              .map(({ cosmetic, cosmeticId, ...c }) => ({
+                ...c,
+                ...cosmetic,
+                data: cosmetic.data as ProfileBackgroundCosmetic['data'],
               }))
           : [],
       [user]
@@ -180,6 +202,7 @@ const { openModal, Modal } = createContextModal({
       badgeId,
       nameplateId,
       profileDecorationId,
+      profileBackgroundId,
       message,
       bio,
       location,
@@ -190,6 +213,7 @@ const { openModal, Modal } = createContextModal({
       'badgeId',
       'nameplateId',
       'profileDecorationId',
+      'profileBackgroundId',
       'message',
       'bio',
       'location',
@@ -211,6 +235,9 @@ const { openModal, Modal } = createContextModal({
         const selectedNameplate = equippedCosmetics.find((c) => c.type === CosmeticType.NamePlate);
         const selectedProfileDecoration = equippedCosmetics.find(
           (c) => c.type === CosmeticType.ProfileDecoration
+        );
+        const selectedProfileBackground = equippedCosmetics.find(
+          (c) => c.type === CosmeticType.ProfileBackground
         );
         const formData = {
           ...user.profile,
@@ -234,6 +261,7 @@ const { openModal, Modal } = createContextModal({
           badgeId: selectedBadge?.id ?? null,
           nameplateId: selectedNameplate?.id ?? null,
           profileDecorationId: selectedProfileDecoration?.id ?? null,
+          profileBackgroundId: selectedProfileBackground?.id ?? null,
           leaderboardShowcase: user?.leaderboardShowcase ?? null,
           profilePicture: user.profilePicture
             ? (user.profilePicture as FormDataSchema['profilePicture'])
@@ -255,6 +283,7 @@ const { openModal, Modal } = createContextModal({
         badgeId: prevBadgeId,
         nameplateId: prevNameplateId,
         profileDecorationId: prevProfileDecorationId,
+        profileBackgroundId: prevProfileBackgroundId,
         leaderboardShowcase: prevLeaderboardShowcase,
         ...prevProfileData
       } = previousData.current ?? {};
@@ -263,6 +292,7 @@ const { openModal, Modal } = createContextModal({
         badgeId,
         nameplateId,
         profileDecorationId,
+        profileBackgroundId,
         leaderboardShowcase,
         ...profileData
       } = data;
@@ -271,6 +301,7 @@ const { openModal, Modal } = createContextModal({
         badgeId !== prevBadgeId ||
         nameplateId !== prevNameplateId ||
         profileDecorationId !== prevProfileDecorationId ||
+        profileBackgroundId !== prevProfileBackgroundId ||
         leaderboardShowcase !== prevLeaderboardShowcase;
       const shouldUpdateProfile = !isEqual(prevProfileData, profileData);
 
@@ -282,6 +313,7 @@ const { openModal, Modal } = createContextModal({
           badgeId,
           nameplateId,
           profileDecorationId,
+          profileBackgroundId,
           leaderboardShowcase,
         });
     };
@@ -350,6 +382,11 @@ const { openModal, Modal } = createContextModal({
                   ? decorations.find((c) => c.id === profileDecorationId)
                   : undefined
               }
+              profileBackground={
+                profileBackgroundId
+                  ? backgrounds.find((c) => c.id === profileBackgroundId)
+                  : undefined
+              }
               profileImage={profilePicture?.url ?? profileImage}
             />
             <Stack spacing="md">
@@ -358,8 +395,16 @@ const { openModal, Modal } = createContextModal({
               <InputCosmeticSelect
                 name="profileDecorationId"
                 label="Profile decoration"
+                // TODO.cosmetics: update these to the correct url
                 shopUrl="/shop/profile-decorations"
                 data={decorations}
+              />
+              <InputCosmeticSelect
+                name="profileBackgroundId"
+                label="Profile background"
+                shopUrl="/shop/profile-backgrounds"
+                nothingFound="Your earned backgrounds will appear here"
+                data={backgrounds}
               />
             </Stack>
             <Stack>
@@ -591,7 +636,8 @@ type ProfilePreviewProps = {
   badge?: BadgeCosmetic;
   nameplate?: NamePlateCosmetic;
   profileImage?: string | null;
-  profileDecoration?: BadgeCosmetic;
+  profileDecoration?: ContentDecorationCosmetic;
+  profileBackground?: ProfileBackgroundCosmetic;
 };
 export function ProfilePreview({
   user,
@@ -599,6 +645,7 @@ export function ProfilePreview({
   nameplate,
   profileImage,
   profileDecoration,
+  profileBackground,
 }: ProfilePreviewProps) {
   if (!user) return null;
 
@@ -626,13 +673,24 @@ export function ProfilePreview({
   return (
     <Stack spacing={4}>
       <Input.Label>Preview</Input.Label>
-      <Paper p="sm" withBorder>
-        <UserAvatar
-          user={userWithCosmetics}
-          size="lg"
-          subText={user.createdAt ? `Member since ${formatDate(user.createdAt)}` : ''}
-          withUsername
-        />
+      <Paper p={0} radius="sm" withBorder>
+        <BackgroundImage
+          src={
+            profileBackground && profileBackground.data.url
+              ? getEdgeUrl(profileBackground.data.url, { width: 'original', transcode: false })
+              : ''
+          }
+          radius="sm"
+          p="sm"
+        >
+          <UserAvatar
+            user={userWithCosmetics}
+            size="lg"
+            subText={user.createdAt ? `Member since ${formatDate(user.createdAt)}` : ''}
+            withOverlay={!!profileBackground}
+            withUsername
+          />
+        </BackgroundImage>
       </Paper>
     </Stack>
   );

@@ -6,7 +6,7 @@ import {
   Props as CardDecorationModalProps,
 } from '~/components/Modals/CardDecorationModal';
 
-export function AddArtFrameMenuItem({ data, entityType }: CardDecorationModalProps) {
+export function AddArtFrameMenuItem(props: CardDecorationModalProps) {
   return (
     <Menu.Item
       icon={<IconDeviceTabletStar size={16} stroke={1.5} />}
@@ -14,7 +14,7 @@ export function AddArtFrameMenuItem({ data, entityType }: CardDecorationModalPro
         e.preventDefault();
         e.stopPropagation();
 
-        dialogStore.trigger({ component: CardDecorationModal, props: { data, entityType } });
+        dialogStore.trigger({ component: CardDecorationModal, props });
       }}
     >
       Add Art Frame
