@@ -33,6 +33,16 @@ export const comfyMetaSchema = z
   })
   .partial();
 
+export const baseImageMetaSchema = z.object({
+  prompt: z.string().optional(),
+  negativePrompt: z.string().optional(),
+  cfgScale: z.coerce.number().optional(),
+  steps: z.coerce.number().optional(),
+  sampler: z.string().optional(),
+  seed: z.coerce.number().optional(),
+  clipSkip: z.coerce.number().optional(),
+});
+
 export const imageGenerationSchema = z.object({
   prompt: undefinedString,
   negativePrompt: undefinedString,
@@ -92,8 +102,7 @@ export const createImageSchema = z.object({
   hash: z.string().nullish(),
   height: z.number().nullish(),
   width: z.number().nullish(),
-  entityId: z.number().optional(),
-  entityType: imageEntitiesSchema.optional(),
+  postId: z.number().nullish(),
   modelVersionId: z.number().optional(),
   index: z.number().optional(),
   mimeType: z.string().optional(),

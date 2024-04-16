@@ -1,0 +1,63 @@
+import { useEffect } from 'react';
+import { z } from 'zod';
+import { Form, InputRTE, InputTextArea, useForm } from '~/libs/form';
+import { PostDetailEditable } from '~/server/services/post.service';
+import { trpc } from '~/utils/trpc';
+import { showErrorNotification } from '~/utils/notifications';
+import { useDebouncer } from '~/utils/debouncer';
+import { EditPostTags } from '~/components/Post/Edit/EditPostTags';
+
+const titleCharLimit = 255;
+const formSchema = z.object({ title: z.string().nullish(), detail: z.string().nullish() });
+
+export function PostDetailForm({ post }: { post: PostDetailEditable }) {
+  const form = useForm({ schema: formSchema, defaultValues: post });
+  const debounce = useDebouncer(1000);
+
+  const { mutate } = trpc.post.update.useMutation({
+    onError(error) {
+      showErrorNotification({
+        title: 'Failed to update post',
+        error: new Error(error.message),
+      });
+    },
+  });
+
+  useEffect(() => {
+    const subscription = form.watch(({ title, detail }, { name }) => {
+      const state = name ? form.getFieldState(name) : ({} as ReturnType<typeof form.getFieldState>);
+      if (state.isDirty || state.isTouched)
+        debounce(() =>
+          mutate({
+            id: post.id,
+            title:
+              title && title.length > titleCharLimit ? title.substring(0, titleCharLimit) : title,
+            detail,
+          })
+        );
+    });
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, []); // eslint-disable-line
+
+  return (
+    <Form form={form} className="flex flex-col gap-3">
+      <InputTextArea
+        name="title"
+        placeholder="Add a title..."
+        size="xl"
+        variant="unstyled"
+        styles={{ input: { fontWeight: 600, padding: 0 } }}
+        autosize
+      />
+      <EditPostTags post={post} />
+      <InputRTE
+        name="detail"
+        placeholder="Add a description..."
+        includeControls={['heading', 'formatting', 'list', 'link', 'media', 'mentions']}
+        editorSize="md"
+      />
+    </Form>
+  );
+}

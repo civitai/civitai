@@ -33,7 +33,7 @@ import { useCFUploadStore } from '~/store/cf-upload.store';
 import { EditImageDrawer } from '~/components/Post/Edit/EditImageDrawer';
 import { PostEditImage } from '~/server/controllers/post.controller';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
-import { POST_IMAGE_LIMIT } from '~/server/common/constants';
+import { POST_IMAGE_LIMIT, constants } from '~/server/common/constants';
 import { ImageIngestionStatus } from '@prisma/client';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import { useEditPostContext } from './EditPostProvider';
@@ -48,23 +48,38 @@ import { useRouter } from 'next/router';
 import { getIsPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { BrowsingLevelBadge } from '~/components/ImageGuard/ImageGuard2';
 import { openSetBrowsingLevelModal } from '~/components/Dialog/dialog-registry';
-import {
-  MediaDropzone,
-  MediaDropzoneCallbackProps,
-} from '~/components/Image/ImageDropzone/MediaDropzone';
+import { MediaDropzone } from '~/components/Image/ImageDropzone/MediaDropzone';
+import { trpc } from '~/utils/trpc';
+import { useMediaUpload } from '~/hooks/useMediaUpload';
 
 export function EditPostImages({ max = POST_IMAGE_LIMIT }: { max?: number }) {
   const currentUser = useCurrentUser();
   const postId = useEditPostContext((state) => state.id);
   const modelVersionId = useEditPostContext((state) => state.modelVersionId);
-  const upload = useEditPostContext((state) => state.upload);
+  // const upload = useEditPostContext((state) => state.upload);
   const images = useEditPostContext((state) => state.images);
+  const setImages = useEditPostContext((state) => state.setImages);
   const router = useRouter();
   const src = router.query.src as string;
 
-  const handleDrop = async (files: File[]) => {
-    if (currentUser?.muted) return;
-    upload({ postId, modelVersionId }, files);
+  const { mutate } = trpc.post.addImage.useMutation({
+    onSuccess: (data) => {
+      setImages((images) => [...images, data].sort((a, b) => a.index - b.index));
+    },
+  });
+  const { files, canAdd, error, upload } = useMediaUpload({
+    count: images.length,
+    max,
+    maxSize: [{ type: 'image', maxSize: constants.mediaUpload.maxImageFileSize }],
+    onComplete: ({ type, data }) => {
+      if (type === 'upload') {
+        mutate({ ...data, postId, modelVersionId });
+      }
+    },
+  });
+
+  const handleDrop = (files: File[]) => {
+    if (!currentUser?.muted) upload(files);
   };
 
   useEffect(() => {
@@ -75,27 +90,28 @@ export function EditPostImages({ max = POST_IMAGE_LIMIT }: { max?: number }) {
     handleSrc();
   }, []);
 
-  const handleUploaded = (data: MediaDropzoneCallbackProps) => {
-    console.log(data);
-  };
-  const handleBlocked = (data: MediaDropzoneCallbackProps) => {
-    console.log(data);
-  };
-
   return (
     <Stack>
       <MediaDropzone
-        count={images.length}
-        max={max}
+        onDrop={handleDrop}
         accept={[...IMAGE_MIME_TYPE, ...VIDEO_MIME_TYPE]}
-        onUploaded={handleUploaded}
-        onBlocked={handleBlocked}
+        disabled={!canAdd}
+        error={error}
+        max={max}
       />
+      <div className="flex flex-col">
+        {files.map((tracked) => (
+          <div key={tracked.url} className="flex justify-between align-center">
+            <Text lineClamp={1}>{tracked.file.name}</Text>
+            <Text>{Math.floor(tracked.progress)}%</Text>
+          </div>
+        ))}
+      </div>
       <DismissibleAlert
         id="image-tagging"
         content="Images are tagged automatically by our tagging system. You can always downvote tags that you think are wrongly placed on your images for moderators to review."
       />
-      <Stack>
+      {/* <Stack>
         {images.map(({ discriminator: type, data }, index) => (
           <Fragment key={index}>
             {type === 'image' && <ImageController image={data} />}
@@ -103,7 +119,7 @@ export function EditPostImages({ max = POST_IMAGE_LIMIT }: { max?: number }) {
             {type === 'blocked' && <ImageBlocked {...data} />}
           </Fragment>
         ))}
-      </Stack>
+      </Stack> */}
       <EditImageDrawer />
     </Stack>
   );

@@ -123,6 +123,7 @@ function MyApp(props: CustomAppProps) {
         toggleColorScheme={toggleColorScheme}
       >
         <MantineProvider
+          withCSSVariables
           theme={{
             colorScheme,
             components: {

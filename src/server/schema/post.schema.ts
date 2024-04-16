@@ -45,8 +45,8 @@ export const postsQuerySchema = baseQuerySchema.merge(
 export type PostCreateInput = z.infer<typeof postCreateSchema>;
 export const postCreateSchema = z.object({
   modelVersionId: z.number().optional(),
-  title: z.string().trim().optional(),
-  tag: z.number().optional(),
+  title: z.string().trim().nullish(),
+  tag: z.number().nullish(),
   publishedAt: z.date().optional(),
   collectionId: z.number().optional(),
 });
@@ -54,8 +54,8 @@ export const postCreateSchema = z.object({
 export type PostUpdateInput = z.infer<typeof postUpdateSchema>;
 export const postUpdateSchema = z.object({
   id: z.number(),
-  title: z.string().optional(),
-  detail: z.string().optional(),
+  title: z.string().nullish(),
+  detail: z.string().nullish(),
   publishedAt: z.date().optional(),
   collectionId: z.number().nullish(),
 });
@@ -98,11 +98,16 @@ export const addPostImageSchema = z.object({
 export type UpdatePostImageInput = z.infer<typeof updatePostImageSchema>;
 export const updatePostImageSchema = z.object({
   id: z.number(),
-  meta: z.preprocess((value) => {
-    if (typeof value !== 'object') return null;
-    if (value && !Object.values(value).filter(isDefined).length) return null;
-    return value;
-  }, imageMetaSchema.nullish()),
+  // meta: z.preprocess((value) => {
+  //   if (typeof value !== 'object') return null;
+  //   if (value && !Object.values(value).filter(isDefined).length) return null;
+  //   return value;
+  // }, imageMetaSchema.nullish()),
+  meta: imageMetaSchema.nullish().transform((val) => {
+    if (!val) return val;
+    if (!Object.values(val).filter(isDefined).length) return null;
+    return val;
+  }),
   hideMeta: z.boolean().optional(),
   // resources: z.array(imageResourceUpsertSchema),
 });

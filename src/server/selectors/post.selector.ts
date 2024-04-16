@@ -20,16 +20,14 @@ export const editPostImageSelect = Prisma.validator<Prisma.ImageSelect>()({
   ingestion: true,
   blockedFor: true,
   nsfwLevel: true,
-  // tagComposites: {
-  //   where: { OR: [{ score: { gt: 0 } }, { tagType: 'Moderation' }] },
-  //   select: imageTagCompositeSelect,
-  //   orderBy: { score: 'desc' },
-  // },
+  index: true,
 });
-type PostImageNavigationProps = { previewUrl?: string };
-export type PostImage = Omit<Prisma.ImageGetPayload<typeof postImage>, 'meta'> &
-  PostImageNavigationProps & { _count: { tags: number }; meta: ImageMetaProps | null };
-const postImage = Prisma.validator<Prisma.ImageArgs>()({ select: editPostImageSelect });
+
+type PostImageNavigationProps = { previewUrl?: string; objectUrl?: string };
+export type PostImageEditSelect = Prisma.ImageGetPayload<typeof postImage>;
+export type PostImageEditProps = Omit<PostImageEditSelect, 'meta'> &
+  PostImageNavigationProps & { meta: ImageMetaProps | null };
+const postImage = Prisma.validator<Prisma.ImageDefaultArgs>()({ select: editPostImageSelect });
 
 export const editPostSelect = Prisma.validator<Prisma.PostSelect>()({
   id: true,

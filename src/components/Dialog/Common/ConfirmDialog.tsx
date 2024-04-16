@@ -1,4 +1,4 @@
-import { Button, Group, Modal, Stack, ButtonProps } from '@mantine/core';
+import { Button, Group, Modal, Stack, ButtonProps, Text } from '@mantine/core';
 import { useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 
@@ -39,7 +39,12 @@ export function ConfirmDialog({
   };
 
   return (
-    <Modal {...dialog} title={title} onClose={handleCancel}>
+    <Modal
+      {...dialog}
+      title={<Text className="font-semibold">{title}</Text>}
+      onClose={handleCancel}
+      centered
+    >
       <Stack>
         {message}
         <Group position="right">

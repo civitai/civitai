@@ -75,6 +75,7 @@ import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { nsfwBrowsingLevelsArray } from '~/shared/constants/browsingLevel.constants';
 import { getVotableTags2 } from '~/server/services/tag.service';
+import { Flags } from '~/shared/utils';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -2747,7 +2748,12 @@ export async function getImageRatingRequests({
   }
 
   const imageIds = results.map((x) => x.id);
-  const tags = await getVotableTags2({ ids: imageIds, user, type: 'image' });
+  const tags = await getVotableTags2({
+    ids: imageIds,
+    user,
+    type: 'image',
+    nsfwLevel: Flags.arrayToInstance([NsfwLevel.PG13, NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX]),
+  });
 
   return {
     nextCursor,

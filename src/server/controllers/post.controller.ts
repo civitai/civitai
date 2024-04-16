@@ -201,7 +201,6 @@ export const updatePostHandler = async ({
   }
 };
 
-export type PostDetail = AsyncReturnType<typeof getPostHandler>;
 export const getPostHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
   try {
     const post = await getPostDetail({ ...input, user: ctx.user });
@@ -214,20 +213,20 @@ export const getPostHandler = async ({ input, ctx }: { input: GetByIdInput; ctx:
   }
 };
 
-export type PostEditDetail = AsyncReturnType<typeof getPostEditHandler>;
-export type PostEditImage = PostEditDetail['images'][0] & { previewUrl?: string };
-export const getPostEditHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
-  try {
-    const post = await getPostEditDetail(input);
-    if (!post) throw throwNotFoundError();
-    const isOwnerOrModerator = post.userId === ctx.user?.id || ctx.user?.isModerator;
-    if (!isOwnerOrModerator) throw throwAuthorizationError();
-    return post;
-  } catch (error) {
-    if (error instanceof TRPCError) throw error;
-    else throw throwDbError(error);
-  }
-};
+// export type PostEditDetail = AsyncReturnType<typeof getPostEditHandler>;
+// export type PostEditImage = PostEditDetail['images'][0] & { previewUrl?: string };
+// export const getPostEditHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
+//   try {
+//     const post = await getPostEditDetail(input);
+//     if (!post) throw throwNotFoundError();
+//     const isOwnerOrModerator = post.userId === ctx.user?.id || ctx.user?.isModerator;
+//     if (!isOwnerOrModerator) throw throwAuthorizationError();
+//     return post;
+//   } catch (error) {
+//     if (error instanceof TRPCError) throw error;
+//     else throw throwDbError(error);
+//   }
+// };
 
 export const deletePostHandler = async ({
   input,
@@ -253,7 +252,7 @@ export const addPostImageHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
-    return await addPostImage({ ...input, userId: ctx.user.id });
+    return await addPostImage({ ...input, user: ctx.user });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

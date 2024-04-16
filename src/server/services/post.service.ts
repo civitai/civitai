@@ -12,7 +12,11 @@ import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { ImageMetaProps, getInfiniteImagesSchema } from '~/server/schema/image.schema';
-import { editPostImageSelect } from '~/server/selectors/post.selector';
+import {
+  PostImageEditProps,
+  PostImageEditSelect,
+  editPostImageSelect,
+} from '~/server/selectors/post.selector';
 import { simpleTagSelect } from '~/server/selectors/tag.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
@@ -22,9 +26,17 @@ import {
   getImagesForPosts,
   ingestImage,
 } from '~/server/services/image.service';
-import { getTagCountForImages, getTypeCategories } from '~/server/services/tag.service';
+import {
+  getTagCountForImages,
+  getTypeCategories,
+  getVotableImageTags,
+} from '~/server/services/tag.service';
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
-import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
+import {
+  throwAuthorizationError,
+  throwDbError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
 import { isDefined } from '~/utils/type-guards';
 import {
   AddPostImageInput,
@@ -417,6 +429,7 @@ export const getPostsInfinite = async ({
   };
 };
 
+export type PostDetail = AsyncReturnType<typeof getPostDetail>;
 export const getPostDetail = async ({ id, user }: GetByIdInput & { user?: SessionUser }) => {
   const post = await dbRead.post.findFirst({
     where: {
@@ -453,31 +466,33 @@ export const getPostDetail = async ({ id, user }: GetByIdInput & { user?: Sessio
   };
 };
 
-export const getPostEditDetail = async ({ id }: GetByIdInput) => {
-  const postRaw = await dbWrite.post.findUnique({
-    where: { id },
-    select: editPostSelect,
-  });
-  if (!postRaw) throw throwNotFoundError();
+export type PostDetailEditable = AsyncReturnType<typeof getPostEditDetail>;
+export const getPostEditDetail = async ({ id, user }: GetByIdInput & { user: SessionUser }) => {
+  const post = await getPostDetail({ id });
+  if (post.user.id !== user.id && !user.isModerator) throw throwAuthorizationError();
+  const images = await getPostEditImages({ id, user });
 
-  const { images: rawImages, ...post } = postRaw;
-  const imageIds = rawImages.map((x) => x.id);
-  const imageTagCounts = await getTagCountForImages(imageIds);
-  const images = rawImages.map((x) => ({
-    ...x,
-    meta: x.meta as ImageMetaProps | null,
-    _count: { tags: imageTagCounts[x.id] },
+  return { ...post, images };
+};
+
+async function combinePostEditImageData(images: PostImageEditSelect[], user: SessionUser) {
+  const imageIds = images.map((x) => x.id);
+  const _images = images as PostImageEditProps[];
+  const tags = await getVotableImageTags({ ids: imageIds, user });
+  // TODO - get tools
+  return _images.map((image) => ({
+    ...image,
+    tags: tags.filter((x) => x.imageId === image.id),
   }));
+}
 
-  const castedPost = {
-    ...post,
-    images,
-  };
-
-  return {
-    ...castedPost,
-    tags: castedPost.tags.flatMap((x) => x.tag),
-  };
+export type PostImageEditable = AsyncReturnType<typeof getPostEditImages>[number];
+export const getPostEditImages = async ({ id, user }: GetByIdInput & { user: SessionUser }) => {
+  const images = await dbRead.image.findMany({
+    where: { postId: id },
+    select: editPostImageSelect,
+  });
+  return combinePostEditImageData(images, user);
 };
 
 export const createPost = async ({
@@ -518,8 +533,8 @@ export const updatePost = async ({
     where: { id },
     data: {
       ...data,
-      title: data.title !== undefined ? (data.title.length > 0 ? data.title : null) : undefined,
-      detail: data.detail !== undefined ? (data.detail.length > 0 ? data.detail : null) : undefined,
+      title: !!data.title?.length ? (data.title.length > 0 ? data.title : null) : undefined,
+      detail: !!data.detail?.length ? (data.detail.length > 0 ? data.detail : null) : undefined,
     },
   });
 
@@ -629,11 +644,13 @@ export const removePostTag = ({ tagId, id: postId }: RemovePostTagInput) => {
 export const addPostImage = async ({
   modelVersionId,
   meta,
+  user,
   ...props
-}: AddPostImageInput & { userId: number }) => {
+}: AddPostImageInput & { user: SessionUser }) => {
   const partialResult = await dbWrite.image.create({
     data: {
       ...props,
+      userId: user.id,
       meta: (meta as Prisma.JsonObject) ?? Prisma.JsonNull,
       generationProcess: meta ? getImageGenerationProcess(meta as Prisma.JsonObject) : null,
     },
@@ -651,15 +668,16 @@ export const addPostImage = async ({
     },
   });
 
-  const image = await dbWrite.image.findUnique({
+  const result = await dbWrite.image.findUnique({
     where: { id: partialResult.id },
     select: editPostImageSelect,
   });
-  if (!image) throw throwDbError(`Image not found`);
+  if (!result) throw throwDbError(`Image not found`);
+  const [image] = await combinePostEditImageData([result], user);
 
   const modelVersionIds = image.resourceHelper.map((r) => r.modelVersionId).filter(isDefined);
   // Cache Busting
-  await bustCacheTag(`images-user:${props.userId}`);
+  await bustCacheTag(`images-user:${user.id}`);
   if (!!modelVersionIds.length) {
     for (const modelVersionId of modelVersionIds) {
       await bustCacheTag(`images-modelVersion:${modelVersionId}`);
@@ -696,30 +714,14 @@ export async function bustCachesForPost(postId: number) {
 }
 
 export const updatePostImage = async (image: UpdatePostImageInput) => {
-  // const updateResources = image.resources.filter(isImageResource);
-  // const createResources = image.resources.filter(isNotImageResource);
-
-  const rawResult = await dbWrite.image.update({
+  await dbWrite.image.update({
     where: { id: image.id },
     data: {
       ...image,
       meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
-      // resources: {
-      //   deleteMany: {
-      //     NOT: updateResources.map((r) => ({ id: r.id })),
-      //   },
-      //   createMany: { data: createResources.map((r) => ({ modelVersionId: r.id, name: r.name })) },
-      // },
     },
-    select: editPostImageSelect,
+    select: { id: true },
   });
-  const imageTags = await getTagCountForImages([image.id]);
-
-  return {
-    ...rawResult,
-    meta: rawResult.meta as ImageMetaProps | null,
-    _count: { tags: imageTags[image.id] },
-  };
 };
 
 export const reorderPostImages = async ({ id: postId, imageIds }: ReorderPostImagesInput) => {

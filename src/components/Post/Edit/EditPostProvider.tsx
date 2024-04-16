@@ -6,7 +6,7 @@ import { devtools } from 'zustand/middleware';
 import { isDefined } from '~/utils/type-guards';
 import { trpc } from '~/utils/trpc';
 import { useCFUploadStore } from '~/store/cf-upload.store';
-import { PostImage } from '~/server/selectors/post.selector';
+import { PostImageEditSelect } from '~/server/selectors/post.selector';
 import { getDataFromFile } from '~/utils/metadata';
 import { MediaType } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
@@ -104,7 +104,7 @@ const createEditPostStore = ({
   post?: PostEditDetail;
   handleUpload: (
     props: HandleUploadProps,
-    cb: (created: PostImage) => Promise<void>
+    cb: (created: PostImageEditSelect) => Promise<void>
   ) => Promise<void>;
 }) => {
   return createStore<EditPostState>()(
@@ -270,13 +270,13 @@ export const EditPostProvider = ({
 
   const handleUpload = async (
     { postId, modelVersionId, file, ...data }: HandleUploadProps,
-    cb: (created: PostImage) => Promise<void>
+    cb: (created: PostImageEditSelect) => Promise<void>
   ) => {
     await upload(file, async (result) => {
       if (!result.success) return;
       const { id } = result.data;
       mutateAsync({ ...data, url: id, postId, modelVersionId }).then((data) =>
-        cb(data as PostImage)
+        cb(data as PostImageEditSelect)
       );
     });
   };
