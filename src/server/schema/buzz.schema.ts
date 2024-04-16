@@ -91,7 +91,7 @@ export const buzzTransactionSchema = z.object({
   toAccountId: z.number().optional(),
   type: z.nativeEnum(TransactionType),
   amount: z.number().min(1),
-  description: z.string().trim().nonempty().nullish(),
+  description: z.string().trim().max(100).nonempty().nullish(),
   details: z.object({}).passthrough().nullish(),
   entityId: z.number().optional(),
   entityType: z.string().optional(),
