@@ -55,7 +55,6 @@ export default function Downloads() {
       hideDownloadMutation.mutate({
         modelVersionId: modelVersion?.id,
         all,
-        userId: currentUser.id,
       });
   };
 

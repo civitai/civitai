@@ -33,7 +33,10 @@ export function deleteRedeemableCode({ code }: DeleteRedeemableCodeInput) {
     .catch(throwDbCustomError('Code does not exists or has been redeemed'));
 }
 
-export async function consumeRedeemableCode({ code, userId }: ConsumeRedeemableCodeInput) {
+export async function consumeRedeemableCode({
+  code,
+  userId,
+}: ConsumeRedeemableCodeInput & { userId: number }) {
   const consumedCode = await dbWrite.redeemableCode
     .update({
       where: {

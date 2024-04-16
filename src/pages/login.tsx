@@ -111,7 +111,7 @@ export default function Login({ providers }: Props) {
               Welcome to Civitai, sign in with
             </Text>
 
-            <Stack mb={error ? 'md' : undefined} mt="md">
+            <Stack mt="md">
               {providers
                 ? Object.values(providers)
                     .filter((x) => x.id !== 'email')

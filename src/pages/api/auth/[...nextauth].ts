@@ -1,31 +1,32 @@
 import { PrismaAdapter } from '@next-auth/prisma-adapter';
-import { User } from '@prisma/client';
-import dayjs from 'dayjs';
-import { NextApiRequest, NextApiResponse } from 'next';
-import NextAuth, { type NextAuthOptions, Session } from 'next-auth';
+import { Prisma, PrismaClient, User } from '@prisma/client';
+import NextAuth, { Session, type NextAuthOptions } from 'next-auth';
 import DiscordProvider from 'next-auth/providers/discord';
-import EmailProvider, { SendVerificationRequestParams } from 'next-auth/providers/email';
 import GithubProvider from 'next-auth/providers/github';
 import GoogleProvider from 'next-auth/providers/google';
 import RedditProvider from 'next-auth/providers/reddit';
-import { v4 as uuid } from 'uuid';
-import { isDev } from '~/env/other';
+import EmailProvider, { SendVerificationRequestParams } from 'next-auth/providers/email';
+
 import { env } from '~/env/server.mjs';
-import { civitaiTokenCookieName, useSecureCookies } from '~/libs/auth';
-import { Tracker } from '~/server/clickhouse/client';
-import { CacheTTL } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
-import { verificationEmail } from '~/server/email/templates';
-import { REDIS_KEYS } from '~/server/redis/client';
+import { getRandomInt } from '~/utils/number-helpers';
+import { refreshToken, invalidateSession, invalidateToken } from '~/server/utils/session-helpers';
 import {
   createUserReferral,
   getSessionUser,
   updateAccountScope,
 } from '~/server/services/user.service';
+import { Tracker } from '~/server/clickhouse/client';
+import { NextApiRequest, NextApiResponse } from 'next';
+import { civitaiTokenCookieName, useSecureCookies } from '~/libs/auth';
+import { isDev } from '~/env/other';
+import { verificationEmail } from '~/server/email/templates';
 import blockedDomains from '~/server/utils/email-domain-blocklist.json';
 import { createLimiter } from '~/server/utils/rate-limiting';
-import { invalidateSession, invalidateToken, refreshToken } from '~/server/utils/session-helpers';
-import { getRandomInt } from '~/utils/number-helpers';
+import { REDIS_KEYS } from '~/server/redis/client';
+import { CacheTTL } from '~/server/common/constants';
+import dayjs from 'dayjs';
+import { v4 as uuid } from 'uuid';
 
 const setUserName = async (id: number, setTo: string) => {
   try {
@@ -47,9 +48,32 @@ const setUserName = async (id: number, setTo: string) => {
 
 const { hostname } = new URL(env.NEXTAUTH_URL);
 
+function CustomPrismaAdapter(prismaClient: PrismaClient) {
+  const adapter = PrismaAdapter(prismaClient);
+  adapter.useVerificationToken = async (identifier_token) => {
+    try {
+      // We are going to stop deleting this token to handle email services that scan for malicious links
+      // const verificationToken = await prismaClient.verificationToken.delete({
+      //   where: { identifier_token },
+      // });
+      const verificationToken = await prismaClient.verificationToken.findUniqueOrThrow({
+        where: { identifier_token },
+      });
+      return verificationToken;
+    } catch (error) {
+      // If token already used/deleted, just return null
+      // https://www.prisma.io/docs/reference/api-reference/error-reference#p2025
+      if ((error as Prisma.PrismaClientKnownRequestError).code === 'P2025') return null;
+      throw error;
+    }
+  };
+
+  return adapter;
+}
+
 export function createAuthOptions(): NextAuthOptions {
   return {
-    adapter: PrismaAdapter(dbWrite),
+    adapter: CustomPrismaAdapter(dbWrite),
     session: {
       strategy: 'jwt',
       maxAge: 30 * 24 * 60 * 60, // 30 days
@@ -203,7 +227,6 @@ const emailLimiter = createLimiter({
   fetchCount: async () => 0,
   refetchInterval: CacheTTL.day,
 });
-
 async function sendVerificationRequest({
   identifier: to,
   url,

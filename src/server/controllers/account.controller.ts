@@ -22,12 +22,13 @@ export const getUserAccountsHandler = async ({ ctx }: { ctx: DeepNonNullable<Con
 
 export const deleteAccountHandler = async ({
   input,
+  ctx,
 }: {
   ctx: DeepNonNullable<Context>;
   input: GetByIdInput;
 }) => {
   try {
-    const deleted = await deleteAccount(input);
+    const deleted = await deleteAccount({ ...input, userId: ctx.user.id });
 
     if (!deleted) throw throwNotFoundError(`No account with id ${input.id}`);
 

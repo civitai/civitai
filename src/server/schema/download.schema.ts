@@ -9,7 +9,6 @@ export const getUserDownloadsSchema = getAllQuerySchema.extend({
 export type GetUserDownloadsSchema = z.infer<typeof getUserDownloadsSchema>;
 
 export const hideDownloadInput = z.object({
-  userId: z.number(),
   modelVersionId: z.number().optional(),
   all: z.boolean().optional(),
 });

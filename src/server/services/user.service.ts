@@ -17,7 +17,6 @@ import {
   CosmeticType,
   ModelEngagementType,
   Prisma,
-  TagEngagementType,
 } from '@prisma/client';
 import { SearchIndexUpdateQueueAction, NsfwLevel } from '~/server/common/enums';
 import { dbWrite, dbRead } from '~/server/db/client';
@@ -318,10 +317,6 @@ export const getUserEngagedModelByModelId = ({
   return dbRead.modelEngagement.findUnique({ where: { userId_modelId: { userId, modelId } } });
 };
 
-export const getUserTags = ({ userId, type }: { userId: number; type?: TagEngagementType }) => {
-  return dbRead.tagEngagement.findMany({ where: { userId, type } });
-};
-
 export const getCreators = async <TSelect extends Prisma.UserSelect>({
   query,
   take,
@@ -518,33 +513,6 @@ export async function softDeleteUser({ id }: { id: number }) {
   await dbWrite.user.update({ where: { id }, data: { bannedAt: new Date() } });
   await invalidateSession(id);
 }
-
-export const toggleBlockedTag = async ({
-  tagId,
-  userId,
-}: ToggleBlockedTagSchema & { userId: number }) => {
-  const matchedTag = await dbWrite.tagEngagement.findUnique({
-    where: { userId_tagId: { userId, tagId } },
-    select: { type: true },
-  });
-
-  let isHidden = false;
-  if (matchedTag) {
-    if (matchedTag.type === 'Hide')
-      await dbWrite.tagEngagement.delete({
-        where: { userId_tagId: { userId, tagId } },
-      });
-    else if (matchedTag.type === 'Follow')
-      await dbWrite.tagEngagement.update({
-        where: { userId_tagId: { userId, tagId } },
-        data: { type: 'Hide' },
-      });
-  } else {
-    await dbWrite.tagEngagement.create({ data: { userId, tagId, type: 'Hide' } });
-    isHidden = true;
-  }
-  return isHidden;
-};
 
 export const updateAccountScope = async ({
   providerAccountId,
