@@ -47,6 +47,9 @@ import { CosmeticShopItemGetById } from '~/types/router';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Currency } from '@prisma/client';
 import { CosmeticSample } from '~/pages/moderator/cosmetic-store/cosmetics';
+import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import { CosmeticShopItemPreviewModal } from '~/components/CosmeticShop/CosmeticShopItemPreviewModal';
 
 const buildBudgets = Object.keys(BuildBudget) as BuildBudget[];
 const processors = ['AMD', 'Intel'] as const;
@@ -132,8 +135,8 @@ export const getServerSideProps = createServerSideProps({
 export const CosmeticShopItem = ({ item }: { item: CosmeticShopItemGetById }) => {
   const cosmetic = item.cosmetic;
   return (
-    <Card shadow="xs" radius="md">
-      <Stack spacing="md">
+    <Card shadow="xs" radius="md" h="100%">
+      <Stack spacing="md" h="100%">
         <Stack spacing="md">
           <Center mb="lg">
             <CosmeticSample cosmetic={cosmetic} size="md" />
@@ -154,10 +157,20 @@ export const CosmeticShopItem = ({ item }: { item: CosmeticShopItemGetById }) =>
               <RenderHtml html={item.description} />
             </ContentClamp>
           )}
-          <Button color="gray" radius="xl">
-            Preview
-          </Button>
         </Stack>
+        <Button
+          color="gray"
+          radius="xl"
+          onClick={() => {
+            dialogStore.trigger({
+              component: CosmeticShopItemPreviewModal,
+              props: { shopItem: item },
+            });
+          }}
+          mt="auto"
+        >
+          Preview
+        </Button>
       </Stack>
     </Card>
   );

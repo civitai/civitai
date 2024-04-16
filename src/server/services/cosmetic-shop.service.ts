@@ -1,9 +1,11 @@
-import { Prisma } from '@prisma/client';
+import { CosmeticType, Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
+import { TransactionType } from '~/server/schema/buzz.schema';
 import {
   GetAllCosmeticShopSections,
   GetPaginatedCosmeticShopItemInput,
+  PurchaseCosmeticShopItemInput,
   UpdateCosmeticShopSectionsOrderInput,
   UpsertCosmeticShopItemInput,
   UpsertCosmeticShopSectionInput,
@@ -11,6 +13,7 @@ import {
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { cosmeticShopItemSelect } from '~/server/selectors/cosmetic-shop.selector';
 import { imageSelect } from '~/server/selectors/image.selector';
+import { createBuzzTransaction } from '~/server/services/buzz.service';
 import { createEntityImages } from '~/server/services/image.service';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 
@@ -78,8 +81,6 @@ export const upsertCosmeticShopItem = async ({
   if (availableTo && availableFrom && availableTo < availableFrom) {
     throw new Error('Available to date cannot be before available from date');
   }
-
-  console.log(archived);
 
   if (id) {
     return dbWrite.cosmeticShopItem.update({
@@ -342,4 +343,105 @@ export const getShopSectionsWithItems = async () => {
         }
       : section.image,
   }));
+};
+
+export const purchaseCosmeticShopItem = async ({
+  userId,
+  shopItemId,
+}: PurchaseCosmeticShopItemInput & {
+  userId: number;
+}) => {
+  const shopItem = await dbRead.cosmeticShopItem.findUnique({
+    where: { id: shopItemId },
+    select: {
+      id: true,
+      cosmeticId: true,
+      availableQuantity: true,
+      unitAmount: true,
+      title: true,
+      cosmetic: {
+        select: {
+          type: true,
+        },
+      },
+      _count: {
+        select: {
+          purchases: true,
+        },
+      },
+    },
+  });
+
+  if (!shopItem) {
+    throw new Error('Cosmetic not found');
+  }
+
+  if (shopItem.availableQuantity && shopItem.availableQuantity <= shopItem._count.purchases) {
+    throw new Error('Cosmetic is out of stock');
+  }
+
+  const onlySupportsSinglePurchase =
+    shopItem.cosmetic.type == CosmeticType.Badge ||
+    shopItem.cosmetic.type == CosmeticType.NamePlate ||
+    shopItem.cosmetic.type == CosmeticType.ProfileBackground;
+
+  if (onlySupportsSinglePurchase) {
+    // Confirm the user doesn't own it already:
+    const userCosmetic = await dbRead.userCosmetic.findFirst({
+      where: {
+        userId,
+        cosmeticId: shopItem.cosmeticId,
+      },
+    });
+
+    if (userCosmetic) {
+      throw new Error('You already own this cosmetic');
+    }
+  }
+
+  // Confirm user has enough buzz:
+  const transaction = await createBuzzTransaction({
+    fromAccountId: userId, // bank
+    toAccountId: 0,
+    amount: shopItem.unitAmount,
+    type: TransactionType.Purchase,
+    description: `Cosmetic purchase - ${shopItem.title}`,
+  });
+
+  try {
+    await dbWrite.$transaction(async (tx) => {
+      // Create purchase:
+      await tx.userCosmeticShopPurchases.create({
+        data: {
+          userId,
+          cosmeticId: shopItem.cosmeticId,
+          shopItemId,
+          unitAmount: shopItem.unitAmount,
+          buzzTransactionId: transaction.transactionId,
+          refunded: false,
+        },
+      });
+
+      // Create cosmetic:
+      await tx.userCosmetic.create({
+        data: {
+          userId,
+          cosmeticId: shopItem.cosmeticId,
+          claimKey: transaction.transactionId,
+        },
+      });
+    });
+
+    return true;
+  } catch (error) {
+    await createBuzzTransaction({
+      fromAccountId: 0,
+      toAccountId: userId,
+      amount: shopItem.unitAmount,
+      type: TransactionType.Refund,
+      description: 'Reason: An error happening while grating the cosmetic',
+    });
+
+    throw new Error('Failed to purchase cosmetic');
+  }
 };
