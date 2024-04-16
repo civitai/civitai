@@ -56,3 +56,9 @@ export type PurchaseCosmeticShopItemInput = z.infer<typeof purchaseCosmeticShopI
 export const purchaseCosmeticShopItemInput = z.object({
   shopItemId: z.number(),
 });
+
+export type GetPreviewImagesInput = z.infer<typeof getPreviewImagesInput>;
+export const getPreviewImagesInput = z.object({
+  browsingLevel: z.number(),
+  limit: z.number().optional(),
+});

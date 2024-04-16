@@ -16,6 +16,7 @@ import {
   TextInput,
   Badge,
   MantineSize,
+  UnstyledButton,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
@@ -26,13 +27,14 @@ import { CosmeticsFiltersDropdown } from '~/components/Cosmetics/CosmeticsFilter
 import { useQueryCosmeticsPaged } from '~/components/Cosmetics/cosmetics.util';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { Meta } from '~/components/Meta/Meta';
+import { PreviewCard } from '~/components/Modals/CardDecorationModal';
 import { ProfilePreview } from '~/components/Modals/UserProfileEditModal';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { PurchasableRewardModeratorViewMode } from '~/server/common/enums';
 import { GetPaginatedCosmeticsInput } from '~/server/schema/cosmetic.schema';
 import { GetPaginatedPurchasableRewardsModeratorSchema } from '~/server/schema/purchasable-reward.schema';
-import { NamePlateCosmetic } from '~/server/selectors/cosmetic.selector';
+import { ContentDecorationCosmetic, NamePlateCosmetic } from '~/server/selectors/cosmetic.selector';
 import { CosmeticGetById } from '~/types/router';
 
 import { trpc } from '~/utils/trpc';
@@ -106,15 +108,24 @@ export const CosmeticSample = ({
 export const CosmeticPreview = ({
   cosmetic,
 }: {
-  cosmetic: Pick<CosmeticGetById, 'id' | 'data' | 'type' | 'name' | 'source'>;
+  cosmetic: Pick<CosmeticGetById, 'id' | 'data' | 'type' | 'name' | 'source' | 'description'>;
 }) => {
   const currentUser = useCurrentUser();
-  const { data: user, isLoading } = trpc.user.getById.useQuery(
-    { id: currentUser?.id ?? 0 },
-    { enabled: !!currentUser }
+  const { isLoading: isLoadingUser, data: user } = trpc.userProfile.get.useQuery(
+    { username: currentUser ? currentUser.username : '' },
+    { enabled: !!currentUser?.username && cosmetic.type !== CosmeticType.ContentDecoration }
   );
+  const { isLoading: isLoadingImages, data: images } = trpc.cosmeticShop.getPreviewImages.useQuery(
+    {
+      browsingLevel: currentUser?.browsingLevel,
+    },
+    {
+      enabled: !!currentUser && cosmetic.type === CosmeticType.ContentDecoration,
+    }
+  );
+  const [activeImageIndex, setActiveImageIndex] = useState(0);
 
-  if (isLoading || !user) {
+  if (!user && !images) {
     return (
       <Center>
         <Loader />
@@ -122,27 +133,66 @@ export const CosmeticPreview = ({
     );
   }
 
+  const activeCosmetics = user
+    ? {
+        badge: user.cosmetics.find((c) => c.cosmetic.type === CosmeticType.Badge && !!c.equippedAt)
+          ?.cosmetic,
+        nameplate: user.cosmetics.find(
+          (c) => c.cosmetic.type === CosmeticType.NamePlate && !!c.equippedAt
+        )?.cosmetic,
+        profileBackground: user.cosmetics.find(
+          (c) => c.cosmetic.type === CosmeticType.ProfileBackground && !!c.equippedAt
+        )?.cosmetic,
+        profileDecoration: user.cosmetics.find(
+          (c) => c.cosmetic.type === CosmeticType.ProfileDecoration && !!c.equippedAt
+        )?.cosmetic,
+      }
+    : {};
+
   switch (cosmetic.type) {
     case CosmeticType.Badge:
-      return <ProfilePreview user={user} badge={cosmetic} />;
+      return <ProfilePreview user={user} {...activeCosmetics} badge={cosmetic} />;
     case CosmeticType.ProfileDecoration:
-      return (
-        <Center>
-          <UserAvatar
-            withDecorations
-            user={{
-              ...user,
-              cosmetics: [{ data: {}, cosmetic }],
-            }}
-            size="xl"
-          />
-        </Center>
-      );
+      return <ProfilePreview user={user} {...activeCosmetics} profileDecoration={cosmetic} />;
     case CosmeticType.NamePlate:
-      return <ProfilePreview user={user} nameplate={cosmetic} />;
+      return <ProfilePreview user={user} {...activeCosmetics} nameplate={cosmetic} />;
     case CosmeticType.ProfileBackground:
+      return <ProfilePreview user={user} {...activeCosmetics} profileBackground={cosmetic} />;
     case CosmeticType.ContentDecoration:
-      return <Box>TODO</Box>;
+      return (
+        <Stack>
+          <Box style={{ transform: 'scale(0.75)' }}>
+            <PreviewCard
+              decoration={cosmetic as ContentDecorationCosmetic}
+              image={images[activeImageIndex]}
+            />
+          </Box>
+          <Group spacing="xs" position="center">
+            {images.map((image, index) => {
+              const isSelected = index === activeImageIndex;
+              return (
+                <UnstyledButton
+                  key={image.id}
+                  onClick={() => setActiveImageIndex(index)}
+                  style={{
+                    opacity: isSelected ? 1 : 0.5,
+                    width: 40,
+                    height: 50,
+                    borderRadius: 5,
+                    overflow: 'hidden',
+                  }}
+                >
+                  <EdgeMedia
+                    style={{ objectFit: 'cover', width: '100%', height: '100%' }}
+                    src={image.url}
+                    width={100}
+                  />
+                </UnstyledButton>
+              );
+            })}
+          </Group>
+        </Stack>
+      );
     default:
       return null;
   }

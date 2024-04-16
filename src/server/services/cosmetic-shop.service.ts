@@ -1,10 +1,12 @@
-import { CosmeticType, Prisma } from '@prisma/client';
+import { CollectionType, CosmeticType, MetricTimeframe, Prisma } from '@prisma/client';
+import { ImageSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import {
   GetAllCosmeticShopSections,
   GetPaginatedCosmeticShopItemInput,
+  GetPreviewImagesInput,
   PurchaseCosmeticShopItemInput,
   UpdateCosmeticShopSectionsOrderInput,
   UpsertCosmeticShopItemInput,
@@ -14,7 +16,7 @@ import { ImageMetaProps } from '~/server/schema/image.schema';
 import { cosmeticShopItemSelect } from '~/server/selectors/cosmetic-shop.selector';
 import { imageSelect } from '~/server/selectors/image.selector';
 import { createBuzzTransaction } from '~/server/services/buzz.service';
-import { createEntityImages } from '~/server/services/image.service';
+import { createEntityImages, getAllImages } from '~/server/services/image.service';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 
 export const getShopItemById = async ({ id }: GetByIdInput) => {
@@ -446,4 +448,66 @@ export const purchaseCosmeticShopItem = async ({
 
     throw new Error('Failed to purchase cosmetic');
   }
+};
+
+export const getUserPreviewImagesForCosmetics = async ({
+  userId,
+  browsingLevel,
+  limit = 5,
+}: {
+  userId: number;
+} & GetPreviewImagesInput) => {
+  const user = await dbRead.user.findUnique({
+    where: { id: userId },
+  });
+
+  if (!user) {
+    return [];
+  }
+
+  const userImages = await getAllImages({
+    username: user.username,
+    limit: 2 * limit,
+    sort: ImageSort.MostReactions,
+    browsingLevel,
+    include: [],
+    period: MetricTimeframe.AllTime,
+    periodMode: 'stats',
+  });
+
+  const images = userImages.items.slice(0, limit);
+
+  if (images.length <= limit) {
+    // Get some of the civit ones:
+    const featuredImagesCollection = await dbRead.collection.findFirst({
+      where: {
+        userId: -1, // Civit
+        type: CollectionType.Image,
+        name: {
+          contains: 'Featured',
+        },
+        mode: null,
+      },
+    });
+
+    console.log(featuredImagesCollection);
+
+    if (!featuredImagesCollection) {
+      return images;
+    }
+
+    const collectionImages = await getAllImages({
+      collectionId: featuredImagesCollection.id,
+      limit,
+      browsingLevel,
+      include: [],
+      period: MetricTimeframe.AllTime,
+      periodMode: 'stats',
+      sort: ImageSort.Newest,
+    });
+
+    return [...images, ...collectionImages.items].slice(0, limit);
+  }
+
+  return images;
 };

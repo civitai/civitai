@@ -55,14 +55,14 @@ export const CosmeticShopItemPreviewModal = ({ shopItem }: Props) => {
     >
       <Grid m={0}>
         <Grid.Col span={12} md={5} className={classes.sample}>
-          <Stack spacing="lg" px="md">
+          <Stack spacing="lg" px="md" h="100%">
             <Text className={classes.text} size="sm">
               {getDisplayName(cosmetic.type)}
             </Text>
-            <Center my="lg" h={250}>
+            <Center my="auto" h={250}>
               <CosmeticSample cosmetic={cosmetic} size="lg" />
             </Center>
-            <Text className={classes.text} weight="bold" size="lg">
+            <Text className={classes.text} mt="auto" weight="bold" size="lg">
               {shopItem.title}
             </Text>
             <BuzzTransactionButton

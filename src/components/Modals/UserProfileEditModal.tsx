@@ -395,8 +395,7 @@ const { openModal, Modal } = createContextModal({
               <InputCosmeticSelect
                 name="profileDecorationId"
                 label="Profile decoration"
-                // TODO.cosmetics: update these to the correct url
-                shopUrl="/shop/profile-decorations"
+                shopUrl="/cosmetic-shop"
                 data={decorations}
               />
               <InputCosmeticSelect

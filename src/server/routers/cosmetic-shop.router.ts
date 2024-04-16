@@ -2,6 +2,7 @@ import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   getAllCosmeticShopSections,
   getPaginatedCosmeticShopItemInput,
+  getPreviewImagesInput,
   purchaseCosmeticShopItemInput,
   updateCosmeticShopSectionsOrderInput,
   upsertCosmeticShopItemInput,
@@ -15,6 +16,7 @@ import {
   getShopItemById,
   getShopSections,
   getShopSectionsWithItems,
+  getUserPreviewImagesForCosmetics,
   purchaseCosmeticShopItem,
   reorderCosmeticShopSections,
   upsertCosmeticShopItem,
@@ -80,5 +82,10 @@ export const cosmeticShopRouter = router({
         userId: ctx.user.id,
       });
     }),
+  getPreviewImages: protectedProcedure.input(getPreviewImagesInput).query(({ input, ctx }) => {
+    return getUserPreviewImagesForCosmetics({
+      userId: ctx.user.id,
+    });
+  }),
   // #endregion
 });

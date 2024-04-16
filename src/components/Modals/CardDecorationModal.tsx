@@ -13,6 +13,7 @@ import { openConfirmModal } from '@mantine/modals';
 import { CosmeticEntity } from '@prisma/client';
 import { IconArrowRight } from '@tabler/icons-react';
 import { truncate } from 'lodash';
+import { CSSProperties } from 'react';
 import { z } from 'zod';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 
@@ -227,7 +228,7 @@ export type Props = {
   currentCosmetic?: ContentDecorationCosmetic | null;
 };
 
-const PreviewCard = ({
+export const PreviewCard = ({
   image,
   decoration,
 }: Pick<Props, 'image'> & { decoration?: ContentDecorationCosmetic }) => {
