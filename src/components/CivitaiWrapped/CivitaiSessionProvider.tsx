@@ -18,7 +18,6 @@ export function CivitaiSessionProvider({ children }: { children: React.ReactNode
 
   const value = useMemo(() => {
     if (!data?.user) return null;
-    if (typeof window !== 'undefined') window.isAuthed = true;
 
     return {
       ...data.user,

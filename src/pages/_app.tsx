@@ -97,6 +97,11 @@ function MyApp(props: CustomAppProps) {
     [colorScheme]
   );
 
+  if (typeof window !== 'undefined' && !window.authChecked) {
+    window.authChecked = true;
+    window.isAuthed = !!session;
+  }
+
   useEffect(() => {
     if (colorScheme === undefined && typeof window !== 'undefined') {
       const osColor = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';

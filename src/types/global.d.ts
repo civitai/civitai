@@ -108,5 +108,6 @@ declare global {
     logSignal: (target: string) => void;
     Twitch: any;
     isAuthed?: boolean;
+    authChecked?: boolean;
   }
 }
