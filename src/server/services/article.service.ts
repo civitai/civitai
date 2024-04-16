@@ -40,7 +40,7 @@ import { getFilesByEntity } from './file.service';
 import { imageSelect, profileImageSelect } from '~/server/selectors/image.selector';
 import { createImage, deleteImageById } from '~/server/services/image.service';
 import { ImageMetaProps } from '~/server/schema/image.schema';
-import { BadgeCosmetic } from '~/server/selectors/cosmetic.selector';
+import { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 
 type ArticleRaw = {
   id: number;
@@ -89,7 +89,7 @@ type ArticleRaw = {
       source: CosmeticSource;
     };
   }[];
-  cosmetic?: BadgeCosmetic | null;
+  cosmetic?: ContentDecorationCosmetic | null;
 };
 
 export type ArticleGetAllRecord = Awaited<ReturnType<typeof getArticles>>['items'][number];
@@ -425,12 +425,18 @@ export const getArticles = async ({
           WHERE uc."userId" = a."userId" AND uc."equippedToId" IS NULL
           GROUP BY uc."userId"
         ) as "userCosmetics",
-        (
-          SELECT jsonb_build_object(
-            'id', ac.id,
-            'data', ac.data
-          ) FROM "articleCosmetic" ac WHERE ac."equippedToId" = a.id
-        ) as "cosmetic",
+        ${
+          includeCosmetics
+            ? Prisma.raw(`
+                (
+                  SELECT jsonb_build_object(
+                    'id', ac.id,
+                    'data', ac.data
+                  ) FROM "articleCosmetic" ac WHERE ac."equippedToId" = a.id
+                ) as "cosmetic",
+              `)
+            : Prisma.empty
+        }
         ${Prisma.raw(cursorProp ? cursorProp : 'null')} as "cursorId"
       ${queryFrom}
       ORDER BY ${Prisma.raw(orderBy)}

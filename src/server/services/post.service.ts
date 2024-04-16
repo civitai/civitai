@@ -42,7 +42,7 @@ import { postgresSlugify } from '~/utils/string-helpers';
 import { bustCacheTag, queryCache } from '~/server/utils/cache-helpers';
 import { env } from 'process';
 import { CacheTTL } from '../common/constants';
-import { BadgeCosmetic } from '~/server/selectors/cosmetic.selector';
+import { BadgeCosmetic, ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 
 type GetAllPostsRaw = {
   id: number;
@@ -67,7 +67,7 @@ type GetAllPostsRaw = {
     laughCount: number;
     cryCount: number;
   } | null;
-  cosmetic?: BadgeCosmetic | null;
+  cosmetic?: ContentDecorationCosmetic | null;
 };
 export type PostsInfiniteModel = AsyncReturnType<typeof getPostsInfinite>['items'][0];
 export const getPostsInfinite = async ({
@@ -301,12 +301,18 @@ export const getPostsInfinite = async ({
         FROM "PostMetric" pm
         WHERE pm."postId" = p.id AND pm."timeframe" = ${period}::"MetricTimeframe"
       ) "stats",
-      (
-        SELECT jsonb_build_object(
-          'id', pc.id,
-          'data', pc.data
-        ) FROM "postCosmetic" pc WHERE pc."equippedToId" = a.id
-      ) as "cosmetic",
+      ${
+        includeCosmetics
+          ? Prisma.raw(`
+              (
+                SELECT jsonb_build_object(
+                  'id', pc.id,
+                  'data', pc.data
+                ) FROM "postCosmetic" pc WHERE pc."equippedToId" = p.id
+              ) as "cosmetic",
+            `)
+          : Prisma.empty
+      }
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} "cursorId"
     FROM "Post" p
     JOIN "User" u ON u.id = p."userId"

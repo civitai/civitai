@@ -142,12 +142,12 @@ function ImageMenuItems(
   const features = useFeatureFlags();
   const { id: imageId, postId, user, userId } = image;
   const _userId = user?.id ?? userId;
+  const isImage = context === 'image';
 
   const handleSaveClick = () => {
     if (context === 'post' && postId)
       openContext('addToCollection', { postId, type: CollectionType.Post });
-    if (context === 'image')
-      openContext('addToCollection', { imageId, type: CollectionType.Image });
+    if (isImage) openContext('addToCollection', { imageId, type: CollectionType.Image });
   };
 
   const handleReportClick = () =>
@@ -173,7 +173,14 @@ function ImageMenuItems(
       {isOwner && (
         <>
           <AddToShowcaseMenuItem entityType="Image" entityId={imageId} />
-          <AddArtFrameMenuItem data={image} entityType={CosmeticEntity.Image} />
+          {isImage && (
+            <AddArtFrameMenuItem
+              entityType={CosmeticEntity.Image}
+              entityId={imageId}
+              image={image}
+              currentCosmetic={image.cosmetic}
+            />
+          )}
         </>
       )}
       <LoginRedirect reason="add-to-collection">
@@ -318,14 +325,14 @@ function NeedsReviewBadge({
           }}
         >
           <Menu.Item
-            onClick={(e) => handleModerate('accept')}
+            onClick={() => handleModerate('accept')}
             icon={<IconCheck size={14} stroke={1.5} />}
           >
             Approve
           </Menu.Item>
           {needsReview === 'poi' && (
             <Menu.Item
-              onClick={(e) => handleModerate('mistake')}
+              onClick={() => handleModerate('mistake')}
               icon={<IconUserOff size={14} stroke={1.5} />}
             >
               Not POI
@@ -333,14 +340,14 @@ function NeedsReviewBadge({
           )}
           {needsReview === 'poi' && (
             <Menu.Item
-              onClick={(e) => handleModerate('removeName')}
+              onClick={() => handleModerate('removeName')}
               icon={<IconUserMinus size={14} stroke={1.5} />}
             >
               Remove Name
             </Menu.Item>
           )}
           <Menu.Item
-            onClick={(e) => handleModerate('delete')}
+            onClick={() => handleModerate('delete')}
             icon={<IconTrash size={14} stroke={1.5} />}
           >
             Reject

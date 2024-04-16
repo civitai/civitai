@@ -1,9 +1,7 @@
 import {
-  ActionIcon,
   Avatar,
   AvatarProps,
   BadgeProps,
-  Center,
   Group,
   Indicator,
   IndicatorProps,
@@ -24,10 +22,8 @@ import { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { getInitials } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { EdgeMedia } from '../EdgeMedia/EdgeMedia';
-import { MediaHash } from '../ImageHash/ImageHash';
-import { IconEye, IconEyeOff, IconUser } from '@tabler/icons-react';
-import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
-import { BadgeCosmetic } from '~/server/selectors/cosmetic.selector';
+import { IconUser } from '@tabler/icons-react';
+import { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 import { UserAvatarProfilePicture } from '~/components/UserAvatar/UserAvatarProfilePicture';
 
 const mapAvatarTextSize: Record<MantineSize, { textSize: MantineSize; subTextSize: MantineSize }> =
@@ -91,6 +87,7 @@ export function UserAvatar({
   indicatorProps,
   badgeSize,
   withDecorations = true,
+  withOverlay = false,
 }: Props) {
   const currentUser = useCurrentUser();
   const theme = useMantineTheme();
@@ -118,13 +115,26 @@ export function UserAvatar({
   const image = avatarUser.profilePicture;
   const decoration = withDecorations
     ? (avatarUser.cosmetics?.find((c) => c.cosmetic.type === 'ProfileDecoration')?.cosmetic as Omit<
-        BadgeCosmetic,
+        ContentDecorationCosmetic,
         'description' | 'obtainedAt' | 'name'
       >)
     : undefined;
 
   return (
-    <Group align="center" spacing={spacing} noWrap>
+    <Group
+      align="center"
+      sx={
+        withOverlay
+          ? {
+              padding: '0 10px 0 0',
+              backgroundColor: 'rgba(0, 0, 0, 0.31)',
+              borderRadius: '1000px',
+            }
+          : undefined
+      }
+      spacing={spacing}
+      noWrap
+    >
       {includeAvatar && (
         <UserProfileLink user={avatarUser} linkToProfile={linkToProfile}>
           <Indicator
@@ -146,11 +156,14 @@ export function UserAvatar({
                   left: '50%',
                   maxWidth: 'fit-content',
                   transform: 'translate(-50%,-50%)',
-                  width: '115%',
-                  height: '115%',
+                  width: decoration.data.offset ? `calc(100% + ${decoration.data.offset})` : '100%',
+                  height: decoration.data.offset
+                    ? `calc(100% + ${decoration.data.offset})`
+                    : '100%',
                   zIndex: 1,
                 }}
                 width="original"
+                anim={decoration.data.animated}
               />
             )}
             {avatarUser.profilePicture &&
@@ -257,6 +270,7 @@ type Props = {
   indicatorProps?: Omit<IndicatorProps, 'children'>;
   badgeSize?: number;
   withDecorations?: boolean;
+  withOverlay?: boolean;
 };
 
 const UserProfileLink = ({

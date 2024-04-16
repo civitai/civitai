@@ -128,7 +128,7 @@ function UnroutedImageCard({ data }: Props) {
                 <UserAvatar
                   // Explicit casting to comply with ts
                   user={data.user as ImagesInfiniteModel['user']}
-                  avatarProps={{ radius: 'md', size: 32 }}
+                  avatarProps={{ radius: 'xl', size: 32 }}
                   withUsername
                 />
               </UnstyledButton>

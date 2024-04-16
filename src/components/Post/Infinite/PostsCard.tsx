@@ -12,18 +12,23 @@ import { truncate } from 'lodash-es';
 import { constants } from '~/server/common/constants';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
+import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
+import { CosmeticEntity } from '@prisma/client';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export function PostsCard({
-  data: { images, id, stats, imageCount, cosmetic },
+  data: { images, id, stats, imageCount, cosmetic, user },
   height,
 }: {
   data: PostsInfiniteModel;
   height?: number;
 }) {
+  const currentUser = useCurrentUser();
   const { ref, inView } = useInView({ rootMargin: '600px' });
   const { classes } = useStyles();
 
   const image = images[0];
+  const isOwner = currentUser?.id === user.id;
 
   return (
     <MasonryCard withBorder shadow="sm" p={0} height={height} ref={ref} frameDecoration={cosmetic}>
@@ -40,6 +45,16 @@ export function PostsCard({
                     image={image}
                     context="post"
                     className="absolute top-2 right-2 z-10"
+                    additionalMenuItems={
+                      isOwner ? (
+                        <AddArtFrameMenuItem
+                          entityType={CosmeticEntity.Post}
+                          entityId={id}
+                          image={image}
+                          currentCosmetic={cosmetic}
+                        />
+                      ) : null
+                    }
                   />
                 )}
 
