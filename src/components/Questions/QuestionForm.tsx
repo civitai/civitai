@@ -99,7 +99,7 @@ export function QuestionForm({ question }: { question?: QuestionDetailProps }) {
           </ThemeIcon>
           <Title order={1}>Restricted Area</Title>
           <Text size="xl">
-            You are not able to create/edit a question because your account has been muted
+            You are not able to create/edit a question because your account has been restricted
           </Text>
           <Link href="/">
             <Button>Go back home</Button>
