@@ -13,7 +13,10 @@ const log = (data: MixedObject) => {
   logToAxiom({ name: 'paypal-service', type: 'error', ...data }).catch();
 };
 
-export const createBuzzOrder = async ({ amount, userId }: PaypalPurchaseBuzzSchema) => {
+export const createBuzzOrder = async ({
+  amount,
+  userId,
+}: PaypalPurchaseBuzzSchema & { userId: number }) => {
   if (amount / constants.buzz.buzzDollarRatio < constants.buzz.minChargeAmount / 100) {
     throw throwBadRequestError(
       `Minimum purchase amount is $${(constants.buzz.minChargeAmount / 100).toFixed(2)} USD`
