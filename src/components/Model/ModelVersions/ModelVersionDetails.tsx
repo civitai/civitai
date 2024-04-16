@@ -513,9 +513,9 @@ export function ModelVersionDetails({
       model.allowDifferentLicense);
 
   return (
-    <ContainerGrid gutter="xl">
+    <ContainerGrid gutter="xl" gutterSm="sm">
       <TrackView entityId={version.id} entityType="ModelVersion" type="ModelVersionView" />
-      <ContainerGrid.Col xs={12} md={4} orderMd={2}>
+      <ContainerGrid.Col xs={12} sm={5} orderSm={2}>
         <Stack>
           {model.mode !== ModelModifier.TakenDown && (
             <ModelCarousel
@@ -658,7 +658,16 @@ export function ModelVersionDetails({
                     sx={{ flex: 1 }}
                   >
                     <Text align="center">
-                      {primaryFile ? `Download (${formatKBytes(primaryFile?.sizeKB)})` : 'No file'}
+                      {primaryFile ? (
+                        <>
+                          Download{' '}
+                          <Text className="hide-mobile" span>{`(${formatKBytes(
+                            primaryFile?.sizeKB
+                          )})`}</Text>
+                        </>
+                      ) : (
+                        'No file'
+                      )}
                     </Text>
                   </DownloadButton>
                 )}
@@ -1115,8 +1124,8 @@ export function ModelVersionDetails({
 
       <ContainerGrid.Col
         xs={12}
-        md={8}
-        orderMd={1}
+        sm={7}
+        orderSm={1}
         sx={(theme: MantineTheme) => ({
           [containerQuery.largerThan('xs')]: {
             padding: `0 ${theme.spacing.sm}px`,
