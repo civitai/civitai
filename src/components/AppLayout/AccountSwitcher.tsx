@@ -11,6 +11,7 @@ import {
   Tooltip,
   useMantineTheme,
 } from '@mantine/core';
+import { useLocalStorage } from '@mantine/hooks';
 import { IconChevronLeft, IconCircleCheck } from '@tabler/icons-react';
 import { signIn } from 'next-auth/react';
 import { useRouter } from 'next/router';
@@ -111,18 +112,21 @@ const UserRow = ({ data }: { data: CivitaiAccount }) => {
 export const AccountSwitcher = ({
   inMenu = true,
   setUserSwitching,
-  accounts,
   logout,
   close,
 }: {
   inMenu?: boolean;
   setUserSwitching: Dispatch<SetStateAction<boolean>>;
-  accounts: CivitaiAccounts;
   logout: () => Promise<void>;
   close: () => void;
 }) => {
   const { classes } = useStyles();
   const router = useRouter();
+  const [accounts] = useLocalStorage<CivitaiAccounts>({
+    key: `civitai-accounts`,
+    defaultValue: {},
+    getInitialValueInEffect: false,
+  });
 
   const swapAccount = async ({ token }: CivitaiAccount) => {
     await signIn('account-switch', { callbackUrl: router.asPath, ...token });

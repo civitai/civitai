@@ -22,7 +22,6 @@ import {
   UnstyledButton,
   useMantineColorScheme,
 } from '@mantine/core';
-import { useLocalStorage } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
 import { Currency } from '@prisma/client';
 import {
@@ -75,7 +74,6 @@ import { AccountSwitcher } from '~/components/AppLayout/AccountSwitcher';
 import { BrowsingModeIcon, BrowsingModeMenu } from '~/components/BrowsingMode/BrowsingMode';
 import { ChatButton } from '~/components/Chat/ChatButton';
 import { CivitaiLinkPopover } from '~/components/CivitaiLink/CivitaiLinkPopover';
-import { CivitaiAccounts } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 import { useSystemCollections } from '~/components/Collections/collection.utils';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -255,10 +253,6 @@ export function AppHeader({
   const router = useRouter();
   const features = useFeatureFlags();
   const isMobile = useIsMobile();
-  const [accounts, setAccounts] = useLocalStorage<CivitaiAccounts>({
-    key: `civitai-accounts`,
-    defaultValue: {},
-  });
   const [burgerOpened, setBurgerOpened] = useState(false);
   const [userMenuOpened, setUserMenuOpened] = useState(false);
   const [userSwitching, setUserSwitching] = useState(false);
@@ -900,7 +894,6 @@ export function AppHeader({
                   {userSwitching ? (
                     <AccountSwitcher
                       setUserSwitching={setUserSwitching}
-                      accounts={accounts}
                       logout={handleSignOut}
                       close={handleCloseMenu}
                     />
@@ -994,7 +987,6 @@ export function AppHeader({
                         <AccountSwitcher
                           inMenu={false}
                           setUserSwitching={setUserSwitching}
-                          accounts={accounts}
                           logout={handleSignOut}
                           close={handleCloseMenu}
                         />
