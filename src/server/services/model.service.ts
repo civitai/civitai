@@ -1246,9 +1246,14 @@ export const upsertModel = async ({
   templateId,
   bountyId,
   meta,
+  isModerator,
   ...data
 }: // TODO.manuel: hardcoding meta type since it causes type issues in lots of places if we set it in the schema
-ModelUpsertInput & { userId: number; meta?: Prisma.ModelCreateInput['meta'] }) => {
+ModelUpsertInput & {
+  userId: number;
+  meta?: Prisma.ModelCreateInput['meta'];
+  isModerator?: boolean;
+}) => {
   if (!id || templateId) {
     const result = await dbWrite.model.create({
       select: { id: true, nsfwLevel: true },
@@ -1284,8 +1289,9 @@ ModelUpsertInput & { userId: number; meta?: Prisma.ModelCreateInput['meta'] }) =
   } else {
     const beforeUpdate = await dbRead.model.findUnique({
       where: { id },
-      select: { poi: true },
+      select: { poi: true, userId: true },
     });
+    if (!beforeUpdate) return null;
 
     const result = await dbWrite.model.update({
       select: { id: true, nsfwLevel: true, poi: true },

@@ -45,7 +45,7 @@ export const articleRouter = router({
     .input(getByIdSchema)
     .use(isFlagProtected('articleCreate'))
     .mutation(({ input, ctx }) =>
-      deleteArticleById({ ...input, userId: ctx.user.isModerator ? ctx.user.id : undefined })
+      deleteArticleById({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
     ),
   getAllForImageProcessing: protectedProcedure.query(() => getAllArticlesForImageProcessing()),
 });
