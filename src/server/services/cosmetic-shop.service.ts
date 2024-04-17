@@ -411,7 +411,7 @@ export const purchaseCosmeticShopItem = async ({
   });
 
   try {
-    await dbWrite.$transaction(async (tx) => {
+    return await dbWrite.$transaction(async (tx) => {
       // Create purchase:
       await tx.userCosmeticShopPurchases.create({
         data: {
@@ -425,16 +425,16 @@ export const purchaseCosmeticShopItem = async ({
       });
 
       // Create cosmetic:
-      await tx.userCosmetic.create({
+      const userCosmetic = await tx.userCosmetic.create({
         data: {
           userId,
           cosmeticId: shopItem.cosmeticId,
           claimKey: transaction.transactionId,
         },
       });
-    });
 
-    return true;
+      return userCosmetic;
+    });
   } catch (error) {
     await createBuzzTransaction({
       fromAccountId: 0,

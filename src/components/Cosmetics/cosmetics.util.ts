@@ -1,6 +1,7 @@
 import { TRPCClientErrorBase } from '@trpc/client';
 import { DefaultErrorShape } from '@trpc/server';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { GetByIdInput } from '~/server/schema/base.schema';
 import { EquipCosmeticInput, GetPaginatedCosmeticsInput } from '~/server/schema/cosmetic.schema';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -50,6 +51,42 @@ export const useQueryUserCosmetics = () => {
   const currentUser = useCurrentUser();
 
   return trpc.user.getCosmetics.useQuery(undefined, { enabled: !!currentUser });
+};
+
+export const useEquipProfileDecoration = () => {
+  const queryUtils = trpc.useUtils();
+
+  const equipMutation = trpc.user.equipCosmetic.useMutation({
+    async onSuccess() {
+      await queryUtils.user.getCosmetics.invalidate();
+      await queryUtils.userProfile.get.invalidate();
+    },
+    onError(error: TRPCClientErrorBase<DefaultErrorShape>) {
+      try {
+        // If failed in the FE - TRPC error is a JSON string that contains an array of errors.
+        const parsedError = JSON.parse(error.message);
+        showErrorNotification({
+          title: 'Failed to assign decoration',
+          error: parsedError,
+        });
+      } catch (e) {
+        // Report old error as is:
+        showErrorNotification({
+          title: 'Failed to assign decoration',
+          error: new Error(error.message),
+        });
+      }
+    },
+  });
+
+  const handleEquipMutation = (data: GetByIdInput) => {
+    return equipMutation.mutateAsync(data);
+  };
+
+  return {
+    equip: handleEquipMutation,
+    isLoading: equipMutation.isLoading,
+  };
 };
 
 export const useEquipContentDecoration = () => {
