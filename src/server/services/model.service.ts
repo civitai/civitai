@@ -1293,6 +1293,9 @@ ModelUpsertInput & {
     });
     if (!beforeUpdate) return null;
 
+    const isOwner = beforeUpdate.userId === userId || isModerator;
+    if (!isOwner) return null;
+
     const result = await dbWrite.model.update({
       select: { id: true, nsfwLevel: true, poi: true },
       where: { id },

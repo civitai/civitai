@@ -378,7 +378,7 @@ export const upsertModelHandler = async ({
         );
     }
 
-    const model = await upsertModel({ ...input, userId });
+    const model = await upsertModel({ ...input, userId, isModerator: ctx.user.isModerator });
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
 
     await ctx.track.modelEvent({

@@ -613,7 +613,6 @@ export const getArticleById = async ({ id, user }: GetByIdInput & { user?: Sessi
 export const upsertArticle = async ({
   id,
   userId,
-  isModerator,
   tags,
   attachments,
   coverImage,
