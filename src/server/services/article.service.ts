@@ -609,11 +609,12 @@ export const getArticleById = async ({ id, user }: GetByIdInput & { user?: Sessi
 export const upsertArticle = async ({
   id,
   userId,
+  isModerator,
   tags,
   attachments,
   coverImage,
   ...data
-}: UpsertArticleInput & { userId: number }) => {
+}: UpsertArticleInput & { userId: number; isModerator?: boolean }) => {
   try {
     // create image entity to be attached to article
     let coverId = coverImage?.id;
@@ -664,7 +665,7 @@ export const upsertArticle = async ({
     }
 
     const article = await dbWrite.article.findUnique({
-      where: { id },
+      where: { id, userId: isModerator ? undefined : userId },
       select: { id: true, cover: true, coverId: true },
     });
     if (!article) throw throwNotFoundError();
@@ -762,10 +763,10 @@ export const upsertArticle = async ({
   }
 };
 
-export const deleteArticleById = async ({ id }: GetByIdInput) => {
+export const deleteArticleById = async ({ id, userId }: GetByIdInput & { userId?: number }) => {
   try {
     const deleted = await dbWrite.$transaction(async (tx) => {
-      const article = await tx.article.delete({ where: { id }, select: { coverId: true } });
+      const article = await tx.article.delete({ where: { id, userId }, select: { coverId: true } });
       if (!article) return null;
 
       await tx.file.deleteMany({ where: { entityId: id, entityType: 'Article' } });

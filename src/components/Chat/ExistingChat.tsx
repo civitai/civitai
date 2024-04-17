@@ -729,7 +729,7 @@ function ChatInputBox({
       <Textarea
         sx={{ flexGrow: 1 }}
         disabled={isMuted}
-        placeholder={isMuted ? 'Your account has been muted' : 'Send message'}
+        placeholder={isMuted ? 'Your account has been restricted' : 'Send message'}
         autosize
         minRows={1}
         maxRows={4}

@@ -46,7 +46,7 @@ export function CreatorCard({
     <Card p="xs" withBorder>
       <Card.Section py="xs" inheritPadding>
         <Stack spacing="xs">
-          <Group align="center" position="apart" noWrap>
+          <Group align="center" position="apart">
             <UserAvatar
               size="sm"
               avatarProps={{ size: 32 }}

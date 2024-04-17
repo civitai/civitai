@@ -87,7 +87,7 @@ const isMuted = middleware(async ({ ctx, next }) => {
   if (user.muted)
     throw new TRPCError({
       code: 'FORBIDDEN',
-      message: 'You cannot perform this action because your account has been muted',
+      message: 'You cannot perform this action because your account has been restricted',
     });
 
   return next({
