@@ -11,12 +11,12 @@ export const mantineContainerSizes: Record<MantineSize, number> = {
 export const containerQuery = {
   largerThan: (size: MantineNumberSize, containerName?: string) => {
     const value = typeof size === 'string' ? mantineContainerSizes[size] : size;
-    if (containerName) return `@container ${containerName} (width >=  ${value}px)`;
+    if (containerName) return `@container ${containerName} (width >= ${value}px)`;
     return `@container (width >=  ${value}px)`;
   },
   smallerThan: (size: MantineNumberSize, containerName?: string) => {
     const value = typeof size === 'string' ? mantineContainerSizes[size] : size;
-    if (containerName) return `@container ${containerName} (width < ${value - 1}px)`;
-    return `@container (width < ${value - 1}px)`;
+    if (containerName) return `@container ${containerName} (width < ${value}px)`;
+    return `@container (width < ${value}px)`;
   },
 };

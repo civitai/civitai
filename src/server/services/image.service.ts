@@ -600,10 +600,10 @@ export const getAllImages = async ({
     AND.push(Prisma.sql`NOT (i.meta IS NULL OR jsonb_typeof(i.meta) = 'null')`);
   }
 
-  if (fromPlatform && types?.includes(MediaType.image)) {
+  if (fromPlatform) {
     AND.push(Prisma.sql`(i.meta IS NOT NULL AND i.meta ? 'civitaiResources')`);
   }
-  if (notPublished && isModerator && types?.includes(MediaType.image)) {
+  if (notPublished && isModerator) {
     AND.push(Prisma.sql`(p."publishedAt" IS NULL)`);
   }
 
