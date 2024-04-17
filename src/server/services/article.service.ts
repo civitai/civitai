@@ -664,14 +664,14 @@ export const upsertArticle = async ({
     }
 
     const article = await dbWrite.article.findUnique({
-      where: { id },
+      where: { id, userId },
       select: { id: true, cover: true, coverId: true },
     });
     if (!article) throw throwNotFoundError();
 
     const result = await dbWrite.$transaction(async (tx) => {
       const updated = await tx.article.update({
-        where: { id },
+        where: { id, userId },
         data: {
           ...data,
           coverId,
@@ -762,10 +762,10 @@ export const upsertArticle = async ({
   }
 };
 
-export const deleteArticleById = async ({ id }: GetByIdInput) => {
+export const deleteArticleById = async ({ id, userId }: GetByIdInput & { userId: number }) => {
   try {
     const deleted = await dbWrite.$transaction(async (tx) => {
-      const article = await tx.article.delete({ where: { id }, select: { coverId: true } });
+      const article = await tx.article.delete({ where: { id, userId }, select: { coverId: true } });
       if (!article) return null;
 
       await tx.file.deleteMany({ where: { entityId: id, entityType: 'Article' } });
