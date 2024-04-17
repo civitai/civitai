@@ -5,14 +5,17 @@ import { mergeWithPartial } from '~/utils/object-helpers';
 import { createStore, useStore } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import { useDidUpdate } from '@mantine/hooks';
-import { usePostEditContext } from '~/components/Post/EditV2/PostEditProvider';
+import { usePostEditContext } from '~/components/Post/EditV2/PostEditor';
 
 // #region [Types]
-type ControlledImage = Partial<PostDetailEditable['images'][number]> & MediaUploadOnCompleteProps;
+export type ControlledImage = Partial<PostDetailEditable['images'][number]> &
+  MediaUploadOnCompleteProps;
 type StoreState = {
+  isReordering: boolean;
   images: ControlledImage[];
   setImages: (cb: (images: ControlledImage[]) => ControlledImage[]) => void;
   updateImage: (data: Partial<Omit<ControlledImage, 'id'>> & { id: number }) => void;
+  toggleReordering: () => void;
 };
 // #endregion
 
@@ -21,6 +24,7 @@ type Store = ReturnType<typeof createProviderStore>;
 const createProviderStore = (post?: PostDetailEditable) =>
   createStore<StoreState>()(
     immer((set) => ({
+      isReordering: false,
       images: post?.images.map((data) => ({ status: 'added', ...data } as ControlledImage)) ?? [],
       setImages: (cb) =>
         set((state) => {
@@ -34,6 +38,10 @@ const createProviderStore = (post?: PostDetailEditable) =>
               state.images[index],
               data as Partial<ControlledImage>
             );
+        }),
+      toggleReordering: () =>
+        set((state) => {
+          state.isReordering = !state.isReordering;
         }),
     }))
   );

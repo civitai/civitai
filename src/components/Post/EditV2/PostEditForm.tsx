@@ -5,7 +5,7 @@ import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';
 import { useDebouncer } from '~/utils/debouncer';
 import { EditPostTags } from '~/components/Post/Edit/EditPostTags';
-import { usePostEditContext } from '~/components/Post/EditV2/PostEditProvider';
+import { usePostEditContext } from '~/components/Post/EditV2/PostEditor';
 
 const titleCharLimit = 255;
 const formSchema = z.object({ title: z.string().nullish(), detail: z.string().nullish() });

@@ -2,8 +2,7 @@ import { Anchor, Progress, Text } from '@mantine/core';
 import { useEffect } from 'react';
 import { ContentPolicyLink } from '~/components/ContentPolicyLink/ContentPolicyLink';
 import { MediaDropzone } from '~/components/Image/ImageDropzone/MediaDropzone';
-import { usePostEditContext } from '~/components/Post/EditV2/PostEditProvider';
-import { usePostImagesContext } from '~/components/Post/EditV2/PostImagesProvider';
+import { usePostEditContext } from '~/components/Post/EditV2/PostEditor';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { MediaUploadOnCompleteProps, useMediaUpload } from '~/hooks/useMediaUpload';
 import { POST_IMAGE_LIMIT, constants } from '~/server/common/constants';
@@ -13,6 +12,7 @@ import { orchestratorMediaTransmitter } from '~/store/post-image-transmitter.sto
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';
 import { addPostImageSchema } from '~/server/schema/post.schema';
+import { usePostImagesContext } from '~/components/Post/EditV2/PostImagesProvider';
 
 const max = POST_IMAGE_LIMIT;
 

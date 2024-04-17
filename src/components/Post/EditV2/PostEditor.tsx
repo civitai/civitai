@@ -1,19 +1,24 @@
 import { PostDetailEditable } from '~/server/services/post.service';
-import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
+import React, { createContext, useContext, useEffect } from 'react';
 import { PostEditQuerySchema } from '~/server/schema/post.schema';
 import { trpc } from '~/utils/trpc';
 import { PostEditForm } from '~/components/Post/EditV2/PostEditForm';
-import { PostImagesProvider } from '~/components/Post/EditV2/PostImagesProvider';
 import { PostImageDropzone } from '~/components/Post/EditV2/PostImageDropzone';
-import { PostImages } from '~/components/Post/EditV2/PostImages';
+import { PostImageCards } from '~/components/Post/EditV2/PostImageCards';
 import { Loader } from '@mantine/core';
 import { PostEditSidebar } from '~/components/Post/EditV2/PostEditSidebar';
+import {
+  PostImagesProvider,
+  usePostImagesContext,
+} from '~/components/Post/EditV2/PostImagesProvider';
+import { PostReorderImages } from '~/components/Post/EditV2/PostReorderImages';
 
 // #region [types]
 type ContextProps = {
   post?: PostDetailEditable;
   params: PostEditQuerySchema;
-  isReordering: boolean;
+  onCreate?: (post: PostDetailEditable) => void;
+  onPublish?: (post: PostDetailEditable) => void;
 };
 
 type Props = {
@@ -33,11 +38,10 @@ export const usePostEditContext = () => {
 };
 // #endregion
 
-export function PostEditProvider({ post, params = {}, onCreate, onPublish }: Props) {
+export function PostEditor({ post, params = {}, onCreate, onPublish }: Props) {
   // #region [state]
   const queryUtils = trpc.useUtils();
   const enableQuery = !!params.postId;
-  const [isReordering, setIsReordering] = useState(false);
   const { data = post, isLoading } = trpc.post.getEdit.useQuery(
     { id: params.postId ?? 0 },
     { enabled: enableQuery, initialData: post }
@@ -78,24 +82,42 @@ export function PostEditProvider({ post, params = {}, onCreate, onPublish }: Pro
   if (enableQuery && !data) return <></>;
   // #endregion
 
-  // #region [content]
+  // #region [providers]
   return (
-    <Context.Provider value={{ post: data, params, isReordering }}>
-      <div className="@container flex gap-3">
-        <div className="flex flex-col gap-3 @md:w-9/12">
-          {data && <PostEditForm />}
-          <PostImagesProvider>
-            <PostImageDropzone onCreatePost={onCreate} />
-            <PostImages />
-          </PostImagesProvider>
-        </div>
-        {data && (
-          <div className="flex flex-col gap-3 @md:w-3/12">
-            <PostEditSidebar />
-          </div>
-        )}
-      </div>
+    <Context.Provider value={{ post: data, params, onCreate, onPublish }}>
+      <PostImagesProvider>
+        <PostEditorInner />
+      </PostImagesProvider>
     </Context.Provider>
   );
   // #endregion
 }
+
+// #region [content]
+function PostEditorInner() {
+  const { post, onCreate } = usePostEditContext();
+  const isReordering = usePostImagesContext((state) => state.isReordering);
+
+  return (
+    <div className="@container flex gap-3">
+      <div className="flex flex-col gap-3 @md:w-9/12">
+        {post && <PostEditForm />}
+        {!isReordering ? (
+          <>
+            <PostImageDropzone onCreatePost={onCreate} />
+            <PostImageCards />
+          </>
+        ) : (
+          <PostReorderImages />
+        )}
+      </div>
+      {post && (
+        <div className="flex flex-col gap-3 @md:w-3/12">
+          <PostEditSidebar />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// #endregion

@@ -1,6 +1,7 @@
 import { Button, Title, Badge } from '@mantine/core';
 import { useIsMutating } from '@tanstack/react-query';
-import { usePostEditContext } from '~/components/Post/EditV2/PostEditProvider';
+import { ReorderImagesButton } from '~/components/Post/EditV2/PostReorderImages';
+import { usePostEditContext } from '~/components/Post/EditV2/PostEditor';
 
 export function PostEditSidebar() {
   const mutating = useIsMutating();
@@ -15,6 +16,7 @@ export function PostEditSidebar() {
         </Badge>
       </div>
       <Button>Publish</Button>
+      <ReorderImagesButton />
     </>
   );
 }

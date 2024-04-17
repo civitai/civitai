@@ -17,12 +17,12 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { ConfirmDialog } from '~/components/Dialog/Common/ConfirmDialog';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import { usePostImagesContext } from '~/components/Post/EditV2/PostImagesProvider';
 import { ImageMetaModal } from '~/components/Post/EditV2/ImageMetaModal';
+import { usePostImagesContext } from '~/components/Post/EditV2/PostImagesProvider';
 
 type ControlledImage = Partial<PostDetailEditable['images'][number]> & MediaUploadOnCompleteProps;
 
-export function PostImages() {
+export function PostImageCards() {
   const images = usePostImagesContext((state) => state.images);
   if (!images.length) return null;
   return (
@@ -30,7 +30,7 @@ export function PostImages() {
       {[...images]
         .sort((a, b) => (a.index ?? 0) - (b.index ?? 0))
         .map((image) => (
-          <PostImage key={image.url} image={image} />
+          <PostImageCard key={image.url} image={image} />
         ))}
     </div>
   );
@@ -43,7 +43,7 @@ const simpleMetaProps = {
   sampler: 'Sampler',
   seed: 'Seed',
 } as const;
-function PostImage({ image }: { image: ControlledImage }) {
+function PostImageCard({ image }: { image: ControlledImage }) {
   const setImages = usePostImagesContext((state) => state.setImages);
   const updateImage = usePostImagesContext((state) => state.updateImage);
 

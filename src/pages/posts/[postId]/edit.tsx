@@ -15,7 +15,7 @@ import { EditPostTags } from '~/components/Post/Edit/EditPostTags';
 import { EditPostTitle } from '~/components/Post/Edit/EditPostTitle';
 import { PostEditLayout } from '~/components/Post/Edit/PostEditLayout';
 import { ReorderImages } from '~/components/Post/Edit/ReorderImages';
-import { PostEditProvider } from '~/components/Post/EditV2/PostEditProvider';
+import { PostEditor } from '~/components/Post/EditV2/PostEditor';
 import { useCatchNavigation } from '~/hooks/useCatchNavigation';
 import { postEditQuerySchema } from '~/server/schema/post.schema';
 import { trpc } from '~/utils/trpc';
@@ -35,7 +35,7 @@ export default function PostEdit() {
 
   return (
     <Container size="xl">
-      <PostEditProvider params={params} />
+      <PostEditor params={params} />
     </Container>
   );
 }

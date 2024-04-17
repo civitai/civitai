@@ -33,7 +33,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { ResourceReviewThumbActions } from '~/components/ResourceReview/ResourceReviewThumbActions';
 import { z } from 'zod';
-import { PostEditProvider } from '~/components/Post/EditV2/PostEditProvider';
+import { PostEditor } from '~/components/Post/EditV2/PostEditor';
 import { postEditQuerySchema } from '~/server/schema/post.schema';
 import {
   getBrowserRouter,
@@ -247,7 +247,7 @@ export default function PostCreate() {
           )}
         </>
       )}
-      <PostEditProvider
+      <PostEditor
         params={{ ...params, ...browserRouter.query }}
         onCreate={(post) => {
           browserRouter.replace({
