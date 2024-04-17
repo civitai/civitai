@@ -140,7 +140,7 @@ export function CardDecorationModal({ entityType, entityId, image, currentCosmet
                 <InputCosmeticSelect
                   name="cosmeticId"
                   data={items}
-                  shopUrl="/shop/content-decorations"
+                  shopUrl="/shop/cosmetic-shop"
                   gridProps={{
                     breakpoints: [{ cols: 3, minWidth: 'xs' }],
                   }}
