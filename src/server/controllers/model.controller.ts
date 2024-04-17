@@ -497,8 +497,6 @@ export const deleteModelHandler = async ({
     const model = await deleteModel({ id, userId: ctx.user.id });
     if (!model) throw throwNotFoundError(`No model with id ${id}`);
 
-    await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
-
     await ctx.track.modelEvent({
       type: permanently ? 'PermanentDelete' : 'Delete',
       modelId: model.id,

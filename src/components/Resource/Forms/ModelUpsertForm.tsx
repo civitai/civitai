@@ -48,7 +48,9 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 const schema = modelUpsertSchema
   .extend({
     category: z.number().optional(),
-    description: getSanitizedStringSchema(),
+    description: getSanitizedStringSchema().refine((data) => {
+      return data && data.length > 0 && data !== '<p></p>';
+    }, 'Cannot be empty'),
   })
   .refine((data) => (data.type === 'Checkpoint' ? !!data.checkpointType : true), {
     message: 'Please select the checkpoint type',
@@ -166,7 +168,7 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
         lockedPropertiesRef.current = [...new Set([...lockedPropertiesRef.current, 'nsfw'])];
       else lockedPropertiesRef.current = lockedPropertiesRef.current.filter((x) => x !== 'nsfw');
     }
-  }, [nsfw]);
+  }, [currentUser?.isModerator, nsfw]);
 
   useEffect(() => {
     if (model)

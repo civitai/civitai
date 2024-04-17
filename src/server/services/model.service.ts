@@ -1140,24 +1140,26 @@ export const deleteModelById = async ({
     if (!model) return null;
 
     // TODO - account for case that a user restores a model and doesn't want all posts to be re-published
-    await tx.$executeRaw`
-      UPDATE "Post"
-      SET "metadata" = "metadata" || jsonb_build_object(
-        'unpublishedAt', ${new Date().toISOString()},
-        'unpublishedBy', ${userId}
-      )
-      WHERE "publishedAt" IS NOT NULL
-      AND "userId" = ${model.userId}
-      AND "modelVersionId" IN (${Prisma.join(
-        model.modelVersions.map(({ id }) => id),
-        ','
-      )})
-    `;
-
-    await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
+    const versionIds = model.modelVersions.map(({ id }) => id);
+    if (versionIds.length > 0)
+      await tx.$executeRaw`
+        UPDATE "Post"
+        SET "metadata" = "metadata" || jsonb_build_object(
+          'unpublishedAt', ${new Date().toISOString()},
+          'unpublishedBy', ${userId}
+        )
+        WHERE "publishedAt" IS NOT NULL
+        AND "userId" = ${model.userId}
+        AND "modelVersionId" IN (${Prisma.join(
+          model.modelVersions.map(({ id }) => id),
+          ','
+        )})
+      `;
 
     return model;
   });
+
+  await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
 
   return deletedModel;
 };
@@ -1198,6 +1200,8 @@ export const permaDeleteModelById = async ({
     const deletedModel = await tx.model.delete({ where: { id } });
     return deletedModel;
   });
+
+  await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
 
   return deletedModel;
 };
