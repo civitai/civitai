@@ -1,12 +1,12 @@
-import { trpc } from '~/utils/trpc';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useSession } from 'next-auth/react';
 import { useCallback } from 'react';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { SignalMessages } from '~/server/common/enums';
-import { BuzzUpdateSignalSchema } from '~/server/schema/signals.schema';
 import { BuzzAccountType } from '~/server/schema/buzz.schema';
-import { useSession } from 'next-auth/react';
+import { BuzzUpdateSignalSchema } from '~/server/schema/signals.schema';
+import { trpc } from '~/utils/trpc';
 
 export const useBuzz = (accountId?: number, accountType?: BuzzAccountType) => {
   const currentUser = useCurrentUser();

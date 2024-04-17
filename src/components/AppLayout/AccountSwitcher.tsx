@@ -1,15 +1,29 @@
-import { Box, Button, createStyles, Divider, Group, Menu, Stack, Text } from '@mantine/core';
-import { IconChevronLeft, IconExclamationCircle } from '@tabler/icons-react';
+import {
+  Avatar,
+  Box,
+  Button,
+  createStyles,
+  Divider,
+  Group,
+  Menu,
+  Stack,
+  Text,
+  Tooltip,
+  useMantineTheme,
+} from '@mantine/core';
+import { IconChevronLeft, IconCircleCheck } from '@tabler/icons-react';
 import { signIn } from 'next-auth/react';
 import { useRouter } from 'next/router';
-import { Dispatch, SetStateAction, useState } from 'react';
+import React, { Dispatch, SetStateAction, useState } from 'react';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import {
   CivitaiAccount,
   CivitaiAccounts,
 } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
-import { socialItems } from '~/components/Social/Social';
-import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { Username } from '~/components/User/Username';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getLoginLink } from '~/utils/login-helpers';
+import { getInitials } from '~/utils/string-helpers';
 
 const useStyles = createStyles((theme) => ({
   link: {
@@ -24,49 +38,73 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
-const ActionButtons = ({
-  logout,
-  close,
-}: {
-  logout: ({ removeLS, redirect }?: { removeLS?: boolean; redirect?: boolean }) => Promise<void>;
-  close: () => void;
-}) => {
+const ActionButtons = ({ logout, close }: { logout: () => Promise<void>; close: () => void }) => {
   const router = useRouter();
   const [waiting, setWaiting] = useState(false);
 
+  const handleAdd = () => {
+    setWaiting(true);
+    router
+      .push(
+        getLoginLink({
+          returnUrl: router.asPath,
+          reason: 'switch-accounts',
+        })
+      )
+      .then(() => {
+        close();
+        setWaiting(false);
+      });
+  };
+
   return (
     <Stack spacing="xs">
-      <Button
-        // component={NextLink}
-        // href={getLoginLink({ returnUrl: router.asPath, reason: 'switch-accounts' })}
-        variant="light"
-        loading={waiting}
-        onClick={async () => {
-          setWaiting(true);
-          // TODO is this not working?
-          // await logout({ removeLS: false, redirect: false });
-          await logout({ removeLS: false });
-
-          console.log('awaited logout, pushing');
-          router
-            .push(
-              getLoginLink({
-                returnUrl: router.asPath,
-                reason: 'switch-accounts',
-              })
-            )
-            .then(() => {
-              close();
-              setWaiting(false);
-            });
-        }}
-      >
-        {waiting ? 'Logging out...' : 'Add Account'}
+      <Button variant="light" loading={waiting} onClick={handleAdd}>
+        {waiting ? 'Redirecting...' : 'Add Account'}
       </Button>
+      {/* TODO when logging out this way, log back into another existing account */}
       <Button variant="light" color="grape" onClick={() => logout()}>
         Logout
       </Button>
     </Stack>
+  );
+};
+
+const UserRow = ({ data }: { data: CivitaiAccount }) => {
+  const currentUser = useCurrentUser();
+  const theme = useMantineTheme();
+
+  const { avatarUrl, email, username, active } = data;
+
+  const avatarBgColor =
+    theme.colorScheme === 'dark' ? 'rgba(255,255,255,0.31)' : 'rgba(0,0,0,0.31)';
+
+  return (
+    <>
+      <Group spacing={8}>
+        <Tooltip label={email}>
+          <Avatar
+            src={
+              !!avatarUrl
+                ? getEdgeUrl(avatarUrl, {
+                    width: 96,
+                    anim: currentUser ? (!currentUser.autoplayGifs ? false : undefined) : undefined,
+                  })
+                : undefined
+            }
+            alt={email}
+            radius="xl"
+            size="sm"
+            imageProps={{ loading: 'lazy', referrerPolicy: 'no-referrer' }}
+            sx={{ backgroundColor: avatarBgColor }}
+          >
+            {getInitials(username)}
+          </Avatar>
+        </Tooltip>
+        <Username username={username} />
+      </Group>
+      {active && <IconCircleCheck size={20} color="green" />}
+    </>
   );
 };
 
@@ -80,20 +118,15 @@ export const AccountSwitcher = ({
   inMenu?: boolean;
   setUserSwitching: Dispatch<SetStateAction<boolean>>;
   accounts: CivitaiAccounts;
-  logout: ({ removeLS, redirect }?: { removeLS?: boolean; redirect?: boolean }) => Promise<void>;
+  logout: () => Promise<void>;
   close: () => void;
 }) => {
   const { classes } = useStyles();
   const router = useRouter();
 
-  const swapAccount = async ({ provider, email }: CivitaiAccount) => {
-    await logout({ removeLS: false, redirect: false });
-
-    if (provider !== 'email') {
-      await signIn(provider, { callbackUrl: router.asPath }, { login_hint: email });
-    } else {
-      signIn('email', { email, redirect: false });
-    }
+  const swapAccount = async ({ token }: CivitaiAccount) => {
+    await signIn('account-switch', { callbackUrl: router.asPath, ...token });
+    // dispatchEvent(new CustomEvent('account-swap'));
   };
 
   if (inMenu) {
@@ -106,22 +139,17 @@ export const AccountSwitcher = ({
           </Group>
         </Menu.Item>
         <Divider />
-        {Object.entries(accounts).map(([k, v]) => {
-          const { Icon } = socialItems[v.provider] ?? {};
-          return (
-            <Menu.Item
-              key={k}
-              onClick={v.active ? undefined : () => swapAccount(v)}
-              sx={v.active ? { cursor: 'initial' } : {}}
-            >
-              <Group>
-                {Icon ? <Icon size={16} /> : <IconExclamationCircle size={26} />}
-                <UserAvatar userId={Number(k)} withUsername />
-                {v.active && <Text color="dimmed">Active</Text>}
-              </Group>
-            </Menu.Item>
-          );
-        })}
+        {Object.entries(accounts).map(([k, v]) => (
+          <Menu.Item
+            key={k}
+            onClick={v.active ? undefined : () => swapAccount(v)}
+            sx={v.active ? { cursor: 'initial' } : {}}
+          >
+            <Group position="apart" w="100%">
+              <UserRow data={v} />
+            </Group>
+          </Menu.Item>
+        ))}
         <Divider mb={8} />
         <ActionButtons logout={logout} close={close} />
       </>
@@ -135,21 +163,18 @@ export const AccountSwitcher = ({
         <Text>Back</Text>
       </Group>
       <Divider />
-      {Object.entries(accounts).map(([k, v]) => {
-        const { Icon } = socialItems[v.provider] ?? {};
-        return (
-          <Group
-            key={k}
-            onClick={v.active ? undefined : () => swapAccount(v)}
-            className={classes.link}
-            sx={v.active ? { cursor: 'initial' } : {}}
-          >
-            {Icon ? <Icon size={16} /> : <IconExclamationCircle size={26} />}
-            <UserAvatar userId={Number(k)} withUsername />
-            {v.active && <Text color="dimmed">Active</Text>}
-          </Group>
-        );
-      })}
+      {Object.entries(accounts).map(([k, v]) => (
+        <Group
+          key={k}
+          onClick={v.active ? undefined : () => swapAccount(v)}
+          className={classes.link}
+          sx={v.active ? { cursor: 'initial' } : {}}
+          position="apart"
+          w="100%"
+        >
+          <UserRow data={v} />
+        </Group>
+      ))}
       <Divider />
       <Box p="md">
         <ActionButtons logout={logout} close={close} />

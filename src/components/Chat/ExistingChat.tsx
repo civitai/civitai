@@ -625,7 +625,7 @@ function ChatInputBox({
       if (!currentUser) return;
 
       const newEntry = {
-        [currentUser.username]: false,
+        [currentUser.username ?? 'Unknown user']: false,
       };
       const { newTotalStatus, isTypingText } = getTypingStatus(newEntry);
 

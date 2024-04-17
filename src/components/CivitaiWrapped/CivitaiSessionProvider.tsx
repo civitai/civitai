@@ -1,6 +1,5 @@
 import { useLocalStorage } from '@mantine/hooks';
 import { Session, SessionUser } from 'next-auth';
-import { BuiltInProviderType } from 'next-auth/providers';
 import { signIn, useSession } from 'next-auth/react';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
@@ -8,29 +7,29 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState } from 
 import { useBrowsingModeContext } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { onboardingSteps } from '~/components/Onboarding/onboarding.utils';
+import { civTokenEndpoint, EncryptedDataSchema } from '~/server/schema/civToken.schema';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils';
-import { trpc } from '~/utils/trpc';
 
 const OnboardingModal = dynamic(() => import('~/components/Onboarding/OnboardingWizard'));
 
 export type CivitaiAccount = {
-  email: string;
-  provider: BuiltInProviderType;
+  token: EncryptedDataSchema;
   active: boolean;
-  // avatarUrl: string;
+
+  email: string;
+  username: string;
+  avatarUrl?: string;
 };
 export type CivitaiAccounts = Record<string, CivitaiAccount>;
 
 export function CivitaiSessionProvider({ children }: { children: React.ReactNode }) {
   const { data, update } = useSession();
   const router = useRouter();
-  const [, setAccounts] = useLocalStorage<CivitaiAccounts>({
-    key: `civitai-accounts`,
+  const [accounts, setAccounts] = useLocalStorage<CivitaiAccounts>({
+    key: 'civitai-accounts',
     defaultValue: {},
-  });
-  const { data: userAccounts = [] } = trpc.account.getAll.useQuery(undefined, {
-    enabled: !!data?.user,
+    getInitialValueInEffect: false,
   });
 
   const { useStore } = useBrowsingModeContext();
@@ -57,50 +56,70 @@ export function CivitaiSessionProvider({ children }: { children: React.ReactNode
   }, [data?.error]);
 
   useEffect(() => {
-    console.log(data);
+    // console.log(data?.user?.id, data?.user?.email, data?.user?.username, data?.user?.image);
     const userId = data?.user?.id;
     const email = data?.user?.email;
-    if (!userId || !email) return;
+    const username = data?.user?.username;
+    if (!userId || !email || !username) return;
 
     const userIdStr = userId.toString();
 
-    // console.log({ userIdStr });
-    // console.log(accounts);
-    // console.log(userAccounts);
+    const getToken = async () => {
+      if (!(userIdStr in accounts)) {
+        const tokenResp = await fetch(civTokenEndpoint);
+        const tokenJson: { token: EncryptedDataSchema } = await tokenResp.json();
+        return tokenJson.token;
+      } else {
+        return accounts[userIdStr].token;
+      }
+    };
 
-    if (!userAccounts.length) {
-      return;
-    }
+    getToken().then((token) => {
+      setAccounts((current) => {
+        // console.log('setting accounts', token);
 
-    setAccounts((current) => {
-      const old = { ...current };
-      Object.keys(old).forEach((k) => {
-        old[k]['active'] = false;
+        const old = { ...current };
+        Object.keys(old).forEach((k) => {
+          old[k]['active'] = false;
+        });
+
+        return {
+          ...old,
+          [userIdStr]: {
+            token,
+            active: true,
+
+            email,
+            username,
+            avatarUrl: data?.user?.image,
+          },
+        };
       });
-
-      return {
-        ...old,
-        [userIdStr]: {
-          email,
-          provider: userAccounts[0].provider as BuiltInProviderType,
-          active: true,
-          // avatarUrl: data?.user?.image ?? '',
-        },
-      };
     });
-  }, [data, userAccounts]);
+  }, [data?.user?.id, setAccounts]);
 
   useEffect(() => {
-    const reloadFn = () => {
-      console.log('reload event');
-      router.reload();
-    };
+    const userId = data?.user?.id;
+    if (!userId) return;
+    const thisAccount = accounts[userId.toString()];
+    if (!thisAccount) return;
 
-    addEventListener('account-swap', reloadFn);
-    return () => {
-      removeEventListener('account-swap', reloadFn);
-    };
-  }, []);
+    if (!thisAccount.active && router.isReady) {
+      router.reload();
+    }
+  }, [accounts, data?.user?.id, router]);
+
+  // useEffect(() => {
+  //   const reloadFn = () => {
+  //     console.log('reload event');
+  //     router.reload();
+  //   };
+  //
+  //   addEventListener('account-swap', reloadFn);
+  //   return () => {
+  //     removeEventListener('account-swap', reloadFn);
+  //   };
+  // }, [router]);
 
   useEffect(() => {
     const onboarding = value?.onboarding;

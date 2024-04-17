@@ -790,33 +790,10 @@ export function AppHeader({
     </Menu>
   );
 
-  const handleSignOut = async (
-    {
-      removeLS,
-      redirect,
-    }: {
-      removeLS?: boolean;
-      redirect?: boolean;
-    } = { removeLS: true, redirect: true }
-  ) => {
+  const handleSignOut = async () => {
     // Removes referral cookies on sign out
     deleteCookies(['ref_code', 'ref_source']);
-
-    // When logging out, remove from localStorage
-    if (removeLS) {
-      const userId = currentUser?.id;
-      const userIdStr = !!userId ? userId.toString() : undefined;
-      if (!!userIdStr && userIdStr in accounts) {
-        delete accounts[userIdStr];
-        setAccounts(accounts);
-      }
-    }
-
-    if (!redirect) {
-      await signOut({ redirect: false });
-    } else {
-      await signOut();
-    }
+    await signOut();
   };
 
   return (

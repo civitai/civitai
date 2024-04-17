@@ -1,13 +1,14 @@
-import type { DefaultSession } from 'next-auth';
+import type { User as PrismaUser } from '@prisma/client';
+import { DefaultSession, DefaultUser } from 'next-auth';
 import { UserTier } from '~/server/schema/user.schema';
 
 interface ExtendedUser {
   id: number;
   showNsfw: boolean;
   blurNsfw: boolean; // client only
-  username: string;
   browsingLevel: number;
   onboarding: number;
+  username?: string;
   image?: string;
   email?: string;
   emailVerified?: Date;
@@ -32,13 +33,12 @@ interface ExtendedUser {
 }
 
 declare module 'next-auth' {
-  interface DefaultUser extends ExtendedUser {
-    name?: string | null;
-    email?: string | null;
-    image?: string | null;
+  interface User extends ExtendedUser, Omit<DefaultUser, 'id'> {
+    id: PrismaUser['id'];
   }
 
   interface SessionUser extends ExtendedUser, DefaultSession['user'] {}
+
   /**
    * Returned by `useSession`, `getSession` and received as a prop on the `SessionProvider` React Context
    */

@@ -128,7 +128,7 @@ export default function Login({ providers }: Props) {
                     })
                 : null}
               <Divider label="Or" labelPosition="center" />
-              <EmailLogin />
+              <EmailLogin returnUrl={returnUrl} />
             </Stack>
             {error && (
               <SignInError
