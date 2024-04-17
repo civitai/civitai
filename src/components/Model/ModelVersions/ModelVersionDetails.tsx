@@ -513,9 +513,9 @@ export function ModelVersionDetails({
       model.allowDifferentLicense);
 
   return (
-    <ContainerGrid gutter="xl" gutterSm="sm">
+    <ContainerGrid gutter="xl" gutterSm="sm" gutterMd="xl">
       <TrackView entityId={version.id} entityType="ModelVersion" type="ModelVersionView" />
-      <ContainerGrid.Col xs={12} sm={5} orderSm={2}>
+      <ContainerGrid.Col xs={12} sm={5} md={4} orderSm={2}>
         <Stack>
           {model.mode !== ModelModifier.TakenDown && (
             <ModelCarousel
@@ -1125,6 +1125,7 @@ export function ModelVersionDetails({
       <ContainerGrid.Col
         xs={12}
         sm={7}
+        md={8}
         orderSm={1}
         sx={(theme: MantineTheme) => ({
           [containerQuery.largerThan('xs')]: {
