@@ -1,7 +1,6 @@
 import { z } from 'zod';
 
 export const civTokenEndpoint = '/api/auth/civ-token';
-export const civTokenEndpointPost = '/api/auth/decode-civ-token';
 
 export const encryptedDataSchema = z.object({
   iv: z.string(),
