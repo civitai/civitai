@@ -42,13 +42,13 @@ const useStyles = createStyles((theme) => ({
   },
   carousel: {
     display: 'block',
-    [containerQuery.smallerThan('md')]: {
+    [containerQuery.smallerThan('sm')]: {
       display: 'none',
     },
   },
   mobileBlock: {
     display: 'block',
-    [containerQuery.largerThan('md')]: {
+    [containerQuery.largerThan('sm')]: {
       display: 'none',
     },
   },
@@ -158,10 +158,10 @@ function ModelCarouselContent({
       className={cx(!mobile && classes.carousel, mobile && classes.mobileBlock)}
       classNames={classes}
       slideSize="50%"
-      breakpoints={[{ maxWidth: 'sm', slideSize: '100%', slideGap: 2 }]}
+      breakpoints={[{ maxWidth: 'md', slideSize: '100%', slideGap: 2 }]}
       slideGap="xl"
       align={images.length > 2 ? 'start' : 'center'}
-      slidesToScroll={mobile ? 1 : 2}
+      slidesToScroll="auto"
       withControls={images.length > 2 ? true : false}
       controlSize={mobile ? 32 : 56}
       loop

@@ -34,10 +34,17 @@ export const getUserDownloadsInfiniteHandler = async ({
   }
 };
 
-export const hideDownloadHandler = async ({ input }: { input: HideDownloadInput }) => {
+export const hideDownloadHandler = async ({
+  input,
+  ctx,
+}: {
+  input: HideDownloadInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
   try {
     const download = await updateUserActivityById({
       ...input,
+      userId: ctx.user.id,
       data: { hidden: true },
     });
 

@@ -17,7 +17,6 @@ import {
   CosmeticType,
   ModelEngagementType,
   Prisma,
-  TagEngagementType,
 } from '@prisma/client';
 import { SearchIndexUpdateQueueAction, NsfwLevel } from '~/server/common/enums';
 import { dbWrite, dbRead } from '~/server/db/client';
@@ -315,10 +314,6 @@ export const getUserEngagedModelByModelId = ({
   modelId: number;
 }) => {
   return dbRead.modelEngagement.findUnique({ where: { userId_modelId: { userId, modelId } } });
-};
-
-export const getUserTags = ({ userId, type }: { userId: number; type?: TagEngagementType }) => {
-  return dbRead.tagEngagement.findMany({ where: { userId, type } });
 };
 
 export const getCreators = async <TSelect extends Prisma.UserSelect>({

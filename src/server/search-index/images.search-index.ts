@@ -57,7 +57,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   const searchableAttributes: SearchableAttributes = [
     'meta.prompt',
     'generationProcess',
-    'tags.name',
+    'tagNames',
     'user.username',
   ];
 
@@ -71,7 +71,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
 
   const filterableAttributes: FilterableAttributes = [
     'createdAtUnix',
-    'tags.name',
+    'tagNames',
     'user.username',
     'baseModel',
     'generationTool',
@@ -156,7 +156,8 @@ type ImageForSearchIndex = {
       source: CosmeticSource;
     };
   }[];
-  tags: { tag: { id: number; name: string } }[];
+  tagNames: string[];
+  tagIds: number[];
   stats: {
     cryCountAllTime: number;
     dislikeCountAllTime: number;
@@ -358,7 +359,10 @@ const onFetchItemsToIndex = async ({
       }
 
       const indexReadyRecords = images.map(({ user, cosmetics, meta, ...imageRecord }) => {
-        const parsed = imageGenerationSchema.omit({ comfy: true }).partial().safeParse(meta);
+        const parsed = imageGenerationSchema
+          .omit({ comfy: true, hashes: true })
+          .partial()
+          .safeParse(meta);
         const tags = rawTags
           .filter((rt) => rt.imageId === imageRecord.id)
           .map((rt) => ({ id: rt.tagId, name: rt.tagName }));
@@ -387,7 +391,8 @@ const onFetchItemsToIndex = async ({
             cosmetics: cosmetics ?? [],
             profilePicture,
           },
-          tags,
+          tagNames: tags.map((t) => t.name),
+          tagIds: tags.map((t) => t.id),
           reactions: [],
         };
       });

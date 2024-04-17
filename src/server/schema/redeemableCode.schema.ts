@@ -22,5 +22,4 @@ export const consumeRedeemableCodeSchema = z.object({
     .length(12)
     .toUpperCase()
     .regex(/^[A-Z0-9]{2}-[A-Z0-9]{4}-[A-Z0-9]{4}$/, { message: 'Invalid code format' }),
-  userId: z.number().optional(),
 });

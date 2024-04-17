@@ -56,6 +56,7 @@ export const constants = {
     'SD 2.1 Unclip',
     'SDXL 0.9',
     'SDXL 1.0',
+    'SD 3',
     'Pony',
     'SDXL 1.0 LCM',
     'SDXL Distilled',
@@ -66,9 +67,10 @@ export const constants = {
     'SVD XT',
     'Playground v2',
     'PixArt a',
+    'PixArt E',
     'Other',
   ],
-  hiddenBaseModels: [] as string[],
+  hiddenBaseModels: ['ODOR', 'SD 2.1 768', 'SD 2.1 Unclip', 'SDXL Distilled'] as string[],
   modelFileTypes: [
     'Model',
     'Text Encoder',
@@ -341,6 +343,7 @@ export type BaseModel = (typeof constants.baseModels)[number];
 export const baseModelSetTypes = [
   'SD1',
   'SD2',
+  'SD3',
   'SDXL',
   'SDXLDistilled',
   'SCascade',
@@ -351,6 +354,7 @@ export type BaseModelSetType = (typeof baseModelSetTypes)[number];
 export const baseModelSets: Record<BaseModelSetType, BaseModel[]> = {
   SD1: ['SD 1.4', 'SD 1.5', 'SD 1.5 LCM'],
   SD2: ['SD 2.0', 'SD 2.0 768', 'SD 2.1', 'SD 2.1 768', 'SD 2.1 Unclip'],
+  SD3: ['SD 3'],
   SDXL: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM', 'SDXL Lightning'],
   SDXLDistilled: ['SDXL Distilled'],
   SCascade: ['Stable Cascade'],
@@ -413,6 +417,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'SD 2.1': baseLicenses['openrail'],
   'SD 2.1 768': baseLicenses['openrail'],
   'SD 2.1 Unclip': baseLicenses['openrail'],
+  'SD 3': baseLicenses['SAI NCRC'],
   'SDXL 0.9': baseLicenses['sdxl 0.9'],
   'SDXL 1.0': baseLicenses['openrail++'],
   'SDXL 1.0 LCM': baseLicenses['openrail++'],
@@ -423,6 +428,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'SVD XT': baseLicenses['svd'],
   'Playground v2': baseLicenses['playground v2'],
   'PixArt a': baseLicenses['agpl'],
+  'PixArt E': baseLicenses['agpl'],
   'Stable Cascade': baseLicenses['SAI NCRC'],
   Pony: baseLicenses['openrail++'],
   ODOR: undefined,
@@ -620,7 +626,7 @@ export const getGenerationConfig = (baseModel?: string) => {
 };
 
 export const MODELS_SEARCH_INDEX = 'models_v8';
-export const IMAGES_SEARCH_INDEX = 'images_v4';
+export const IMAGES_SEARCH_INDEX = 'images_v5';
 export const ARTICLES_SEARCH_INDEX = 'articles_v4';
 export const USERS_SEARCH_INDEX = 'users_v2';
 export const COLLECTIONS_SEARCH_INDEX = 'collections_v2';

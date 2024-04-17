@@ -79,7 +79,7 @@ export const getPlans = async () => {
 export type StripePlan = Awaited<ReturnType<typeof getPlans>>[number];
 
 export const getUserSubscription = async ({ userId }: Schema.GetUserSubscriptionInput) => {
-  const subscription = await dbWrite.customerSubscription.findUnique({
+  const subscription = await dbRead.customerSubscription.findUnique({
     where: { userId },
     select: {
       id: true,

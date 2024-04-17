@@ -30,7 +30,6 @@ function imagesTransform(items: Hit<ImageSearchIndexRecord>[]) {
   return items.map((item) => ({
     ...item,
     nsfwLevel: flagifyBrowsingLevel(item.nsfwLevel),
-    tagIds: item.tags?.map((t) => t.id),
     ingestion: ImageIngestionStatus.Scanned,
   }));
 }

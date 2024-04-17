@@ -47,7 +47,6 @@ import {
   getUserCreator,
   getUserEngagedModelVersions,
   getUserEngagedModels,
-  getUserTags,
   getUsers,
   isUsernamePermitted,
   toggleBan,

@@ -513,9 +513,9 @@ export function ModelVersionDetails({
       model.allowDifferentLicense);
 
   return (
-    <ContainerGrid gutter="xl">
+    <ContainerGrid gutter="xl" gutterSm="sm" gutterMd="xl">
       <TrackView entityId={version.id} entityType="ModelVersion" type="ModelVersionView" />
-      <ContainerGrid.Col xs={12} md={4} orderMd={2}>
+      <ContainerGrid.Col xs={12} sm={5} md={4} orderSm={2}>
         <Stack>
           {model.mode !== ModelModifier.TakenDown && (
             <ModelCarousel
@@ -572,8 +572,12 @@ export function ModelVersionDetails({
           ) : (
             <Stack spacing={4}>
               <Group spacing="xs" style={{ alignItems: 'flex-start', flexWrap: 'nowrap' }}>
+                {canGenerate && (
+                  <GenerateButton modelVersionId={version.id} data-activity="create:model" />
+                )}
+
                 {displayCivitaiLink && (
-                  <Stack sx={{ flex: 1 }} spacing={4}>
+                  <Stack sx={canGenerate ? undefined : { flex: 1 }} spacing={4}>
                     <CivitaiLinkManageButton
                       modelId={model.id}
                       modelVersionId={version.id}
@@ -582,29 +586,41 @@ export function ModelVersionDetails({
                       hashes={version.hashes}
                       noTooltip
                     >
-                      {({ color, onClick, ref, icon, label }) => (
-                        <Button
-                          ref={ref}
-                          color={color}
-                          onClick={onClick}
-                          leftIcon={icon}
-                          disabled={!primaryFile}
-                        >
-                          {label}
-                        </Button>
-                      )}
+                      {({ color, onClick, ref, icon, label }) =>
+                        !canGenerate ? (
+                          <Button
+                            ref={ref}
+                            color={color}
+                            onClick={onClick}
+                            leftIcon={icon}
+                            disabled={!primaryFile}
+                          >
+                            {label}
+                          </Button>
+                        ) : (
+                          <Tooltip label={label}>
+                            <Button
+                              ref={ref}
+                              color={color}
+                              onClick={onClick}
+                              disabled={!primaryFile}
+                              variant="light"
+                              sx={{
+                                cursor: 'pointer',
+                                paddingLeft: 0,
+                                paddingRight: 0,
+                                width: '36px',
+                              }}
+                            >
+                              {icon}
+                            </Button>
+                          </Tooltip>
+                        )
+                      }
                     </CivitaiLinkManageButton>
-                    {/* {primaryFileDetails} */}
                   </Stack>
                 )}
 
-                {canGenerate && (
-                  <GenerateButton
-                    iconOnly={displayCivitaiLink}
-                    modelVersionId={version.id}
-                    data-activity="create:model"
-                  />
-                )}
                 {displayCivitaiLink || canGenerate ? (
                   filesCount === 1 ? (
                     <DownloadButton
@@ -614,6 +630,7 @@ export function ModelVersionDetails({
                         versionId: version.id,
                         primary: true,
                       })}
+                      tooltip="Download"
                       disabled={!primaryFile || archived}
                       iconOnly
                     />
@@ -641,7 +658,16 @@ export function ModelVersionDetails({
                     sx={{ flex: 1 }}
                   >
                     <Text align="center">
-                      {primaryFile ? `Download (${formatKBytes(primaryFile?.sizeKB)})` : 'No file'}
+                      {primaryFile ? (
+                        <>
+                          Download{' '}
+                          <Text className="inline sm:max-md:hidden" span>{`(${formatKBytes(
+                            primaryFile?.sizeKB
+                          )})`}</Text>
+                        </>
+                      ) : (
+                        'No file'
+                      )}
                     </Text>
                   </DownloadButton>
                 )}
@@ -1098,8 +1124,9 @@ export function ModelVersionDetails({
 
       <ContainerGrid.Col
         xs={12}
+        sm={7}
         md={8}
-        orderMd={1}
+        orderSm={1}
         sx={(theme: MantineTheme) => ({
           [containerQuery.largerThan('xs')]: {
             padding: `0 ${theme.spacing.sm}px`,

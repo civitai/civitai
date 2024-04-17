@@ -37,8 +37,7 @@ export function SocialLinkModal({
 
   const handleSubmit = (data: z.infer<typeof schema>) => {
     if (!session?.user?.id || !selected) return;
-    const userId = session.user.id;
-    mutate({ ...selected, ...data, userId });
+    mutate({ ...selected, ...data });
   };
 
   useEffect(() => {

@@ -1,5 +1,6 @@
-import { ActionIcon, Group, Text, Tooltip } from '@mantine/core';
+import { ActionIcon, Group, Text } from '@mantine/core';
 import { IconPencil, IconTrash } from '@tabler/icons-react';
+import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
 import { GetUserLinksResult } from '~/server/controllers/user-link.controller';
 import { trpc } from '~/utils/trpc';
@@ -26,12 +27,12 @@ export function SocialLink({
         {link.url}
       </Text>
       <Group noWrap spacing="xs">
-        <Tooltip label="Edit link">
+        <ButtonTooltip label="Edit link">
           <ActionIcon onClick={() => setSelected(link)} variant="default" size="md">
             <IconPencil size={14} />
           </ActionIcon>
-        </Tooltip>
-        <Tooltip label="Delete link">
+        </ButtonTooltip>
+        <ButtonTooltip label="Delete link">
           <ActionIcon
             color="red"
             onClick={() => mutate({ id: link.id })}
@@ -41,7 +42,7 @@ export function SocialLink({
           >
             <IconTrash size={14} />
           </ActionIcon>
-        </Tooltip>
+        </ButtonTooltip>
       </Group>
     </Group>
   );

@@ -79,7 +79,6 @@ import { Logo } from '~/components/Logo/Logo';
 import { ModerationNav } from '~/components/Moderation/ModerationNav';
 import { NotificationBell } from '~/components/Notifications/NotificationBell';
 import { UploadTracker } from '~/components/Resource/UploadTracker';
-import { BlurToggle } from '~/components/Settings/BlurToggle';
 import { SupportButton } from '~/components/SupportButton/SupportButton';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -109,7 +108,7 @@ const useStyles = createStyles((theme) => ({
     paddingLeft: theme.spacing.xs * 1.6, // 16px
     paddingRight: theme.spacing.xs * 1.6, // 16px
 
-    [containerQuery.smallerThan('sm')]: {
+    [containerQuery.smallerThan('md')]: {
       paddingLeft: theme.spacing.xs * 0.8, // 8px
       paddingRight: theme.spacing.xs * 0.8, // 8px
     },
@@ -118,7 +117,7 @@ const useStyles = createStyles((theme) => ({
   burger: {
     display: 'flex',
     justifyContent: 'flex-end',
-    [containerQuery.largerThan('sm')]: {
+    [containerQuery.largerThan('md')]: {
       display: 'none',
     },
   },
@@ -154,7 +153,7 @@ const useStyles = createStyles((theme) => ({
 
   links: {
     display: 'flex',
-    [containerQuery.smallerThan('sm')]: {
+    [containerQuery.smallerThan('md')]: {
       display: 'none',
     },
   },
@@ -199,7 +198,7 @@ const useStyles = createStyles((theme) => ({
       backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[8] : theme.colors.gray[0],
     },
 
-    [containerQuery.smallerThan('sm')]: {
+    [containerQuery.smallerThan('md')]: {
       display: 'none',
     },
   },
@@ -699,7 +698,7 @@ export function AppHeader({
       radius="sm"
       mode="toggle"
       compact
-      className="show-mobile"
+      className="inline-block md:hidden"
       data-activity="create:navbar"
     />
   );
@@ -788,7 +787,7 @@ export function AppHeader({
   };
 
   return (
-    <Header height={HEADER_HEIGHT} fixed={fixed} zIndex={100}>
+    <Header height={HEADER_HEIGHT} fixed={fixed} zIndex={200}>
       <Box className={cx(classes.mobileSearchWrapper, { [classes.dNone]: !showSearch })}>
         {renderSearchComponent({ onSearchDone, isMobile: true, ref: searchRef })}
       </Box>

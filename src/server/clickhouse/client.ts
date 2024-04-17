@@ -336,6 +336,7 @@ export class Tracker {
     nsfw: NsfwLevelDeprecated;
     tags: string[];
     ownerId: number;
+    tosReason?: string;
   }) {
     return this.track('images', values);
   }

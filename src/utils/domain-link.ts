@@ -21,6 +21,7 @@ export const domainLinks = {
   vk: ['vk.com'],
   bilibili: ['bilibili.com'],
   civitai: ['civitai.com'],
+  linkedin: ['linkedin.com'],
 };
 
 const sortArray = (Object.keys(domainLinks) as (string | undefined)[]).concat(undefined);

@@ -56,8 +56,7 @@ export const updateUserActivityById = ({
   userId,
   data,
   all = false,
-}: HideDownloadInput & { data: Prisma.DownloadHistoryUpdateInput }) => {
-  console.log(data);
+}: HideDownloadInput & { data: Prisma.DownloadHistoryUpdateInput; userId: number }) => {
   return dbWrite.downloadHistory.updateMany({
     where: { modelVersionId: !all ? modelVersionId : undefined, userId, hidden: { equals: false } },
     data,

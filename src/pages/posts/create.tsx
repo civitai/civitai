@@ -129,7 +129,9 @@ export default function PostCreate() {
         <Center p="xl">
           <Stack align="center">
             <AlertWithIcon color="yellow" icon={<IconLock />} iconSize={32} iconColor="yellow">
-              <Text size="md">You cannot create a post because your account has been muted.</Text>
+              <Text size="md">
+                You cannot create a post because your account has been restricted.
+              </Text>
             </AlertWithIcon>
           </Stack>
         </Center>

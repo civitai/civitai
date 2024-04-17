@@ -75,7 +75,8 @@ export function AppLayout({
         </FloatingActionButton2>
       </main>
       <AppFooter fixed={false} />
-      <NewsletterDialog />
+      {/* Disabling because this is popping in too frequently */}
+      {/* <NewsletterDialog /> */}
     </>
   );
 }
