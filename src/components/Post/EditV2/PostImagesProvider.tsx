@@ -1,5 +1,5 @@
 import { PostDetailEditable } from '~/server/services/post.service';
-import React, { createContext, useContext, useEffect, useRef } from 'react';
+import React, { createContext, useContext, useRef } from 'react';
 import { MediaUploadOnCompleteProps } from '~/hooks/useMediaUpload';
 import { mergeWithPartial } from '~/utils/object-helpers';
 import { createStore, useStore } from 'zustand';
@@ -55,10 +55,8 @@ export function PostImagesProvider({ children }: { children: React.ReactNode }) 
   if (!storeRef.current) storeRef.current = createProviderStore(post);
 
   useDidUpdate(() => {
-    const store = storeRef.current;
-    console.log('didUpdate: post');
-    if (store && post?.images)
-      store.setState({
+    if (post?.images)
+      storeRef.current?.setState({
         images: post.images.map((data) => ({ status: 'added', ...data } as ControlledImage)),
       });
   }, [post]);

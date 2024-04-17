@@ -500,12 +500,11 @@ export const createPost = async ({
 
 export const updatePost = async ({
   id,
-  userId,
-  isModerator,
+  user,
   ...data
-}: PostUpdateInput & { userId?: number; isModerator?: boolean }) => {
+}: PostUpdateInput & { user: SessionUser }) => {
   const post = await dbWrite.post.update({
-    where: { id },
+    where: { id, userId: !user.isModerator ? user.id : undefined },
     data: {
       ...data,
       title: !!data.title ? (data.title.length > 0 ? data.title : null) : undefined,

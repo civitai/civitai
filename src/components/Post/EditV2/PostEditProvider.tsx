@@ -1,5 +1,5 @@
 import { PostDetailEditable } from '~/server/services/post.service';
-import React, { createContext, useContext, useEffect, useRef } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { PostEditQuerySchema } from '~/server/schema/post.schema';
 import { trpc } from '~/utils/trpc';
 import { PostEditForm } from '~/components/Post/EditV2/PostEditForm';
@@ -7,11 +7,13 @@ import { PostImagesProvider } from '~/components/Post/EditV2/PostImagesProvider'
 import { PostImageDropzone } from '~/components/Post/EditV2/PostImageDropzone';
 import { PostImages } from '~/components/Post/EditV2/PostImages';
 import { Loader } from '@mantine/core';
+import { PostEditSidebar } from '~/components/Post/EditV2/PostEditSidebar';
 
 // #region [types]
 type ContextProps = {
   post?: PostDetailEditable;
   params: PostEditQuerySchema;
+  isReordering: boolean;
 };
 
 type Props = {
@@ -23,7 +25,6 @@ type Props = {
 // #endregion
 
 // #region [context]
-
 const Context = createContext<ContextProps | null>(null);
 export const usePostEditContext = () => {
   const context = useContext(Context);
@@ -36,6 +37,7 @@ export function PostEditProvider({ post, params = {}, onCreate, onPublish }: Pro
   // #region [state]
   const queryUtils = trpc.useUtils();
   const enableQuery = !!params.postId;
+  const [isReordering, setIsReordering] = useState(false);
   const { data = post, isLoading } = trpc.post.getEdit.useQuery(
     { id: params.postId ?? 0 },
     { enabled: enableQuery, initialData: post }
@@ -78,15 +80,20 @@ export function PostEditProvider({ post, params = {}, onCreate, onPublish }: Pro
 
   // #region [content]
   return (
-    <Context.Provider value={{ post: data, params }}>
-      <div className="@container">
-        <div className="flex flex-col gap-3">
+    <Context.Provider value={{ post: data, params, isReordering }}>
+      <div className="@container flex gap-3">
+        <div className="flex flex-col gap-3 @md:w-9/12">
           {data && <PostEditForm />}
           <PostImagesProvider>
             <PostImageDropzone onCreatePost={onCreate} />
             <PostImages />
           </PostImagesProvider>
         </div>
+        {data && (
+          <div className="flex flex-col gap-3 @md:w-3/12">
+            <PostEditSidebar />
+          </div>
+        )}
       </div>
     </Context.Provider>
   );

@@ -98,12 +98,14 @@ function PostImage({ image }: { image: ControlledImage }) {
          // #region [image]
          */}
           <div className="relative">
-            <EdgeMedia
-              src={image.url}
-              width={450}
-              type={image.type}
-              className="rounded-lg mx-auto"
-            />
+            <div style={{ aspectRatio: `${image.metadata.width}/${image.metadata.height}` }}>
+              <EdgeMedia
+                src={image.url}
+                width={450}
+                type={image.type}
+                className="rounded-lg mx-auto"
+              />
+            </div>
             <Menu withArrow>
               <Menu.Target>
                 <ActionIcon className="absolute top-2 right-2">

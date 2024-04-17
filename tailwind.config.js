@@ -17,6 +17,13 @@ module.exports = {
         sm: '0 1px 2px var(--tw-shadow-color)',
         default: '0 2px 4px var(--tw-shadow-color)',
       },
+      containers: {
+        xs: '576px',
+        sm: '768px',
+        md: '992px',
+        lg: '1200px',
+        xl: '1400px',
+      }
     },
     colors: {
       dark: {
