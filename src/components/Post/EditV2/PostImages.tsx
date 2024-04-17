@@ -1,6 +1,5 @@
 import { ActionIcon, Alert, Badge, Button, Divider, Menu, Text } from '@mantine/core';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { PostImageDropzone } from '~/components/Post/EditV2/PostImageDropzone';
 import { PostDetailEditable } from '~/server/services/post.service';
 import React, { useState } from 'react';
 import { MediaUploadOnCompleteProps } from '~/hooks/useMediaUpload';
@@ -18,25 +17,14 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { ConfirmDialog } from '~/components/Dialog/Common/ConfirmDialog';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import {
-  PostImagesProvider,
-  usePostImagesContext,
-} from '~/components/Post/EditV2/PostImagesProvider';
+import { usePostImagesContext } from '~/components/Post/EditV2/PostImagesProvider';
 import { ImageMetaModal } from '~/components/Post/EditV2/ImageMetaModal';
 
 type ControlledImage = Partial<PostDetailEditable['images'][number]> & MediaUploadOnCompleteProps;
 
-export function PostImages({ post }: { post: PostDetailEditable }) {
-  return (
-    <PostImagesProvider post={post}>
-      <PostImageDropzone />
-      <PostImagesList />
-    </PostImagesProvider>
-  );
-}
-
-function PostImagesList() {
+export function PostImages() {
   const images = usePostImagesContext((state) => state.images);
+  if (!images.length) return null;
   return (
     <div className="flex flex-col gap-3 ">
       {[...images]

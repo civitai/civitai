@@ -44,7 +44,7 @@ export const postsQuerySchema = baseQuerySchema.merge(
 
 export type PostCreateInput = z.infer<typeof postCreateSchema>;
 export const postCreateSchema = z.object({
-  modelVersionId: z.number().optional(),
+  modelVersionId: z.number().nullish(),
   title: z.string().trim().nullish(),
   tag: z.number().nullish(),
   publishedAt: z.date().optional(),
@@ -83,7 +83,7 @@ export const addPostImageSchema = z.object({
   height: z.number().nullish(),
   width: z.number().nullish(),
   postId: z.number(),
-  modelVersionId: z.number().optional(),
+  modelVersionId: z.number().nullish(),
   index: z.number(),
   mimeType: z.string().optional(),
   meta: z.preprocess((value) => {
@@ -123,4 +123,17 @@ export const getPostTagsSchema = z.object({
   query: z.string().optional(),
   limit: z.number().default(10),
   nsfwLevel: z.number().default(sfwBrowsingLevelsFlag),
+});
+
+export type PostEditQuerySchema = z.input<typeof postEditQuerySchema>;
+export const postEditQuerySchema = z.object({
+  postId: z.coerce.number().optional(),
+  modelId: z.coerce.number().optional(),
+  modelVersionId: z.coerce.number().nullish(),
+  tag: z.coerce.number().optional(),
+  video: z.coerce.boolean().optional(),
+  returnUrl: z.string().optional(),
+  clubId: z.coerce.number().optional(),
+  reviewing: z.string().optional(),
+  src: z.coerce.string().optional(),
 });

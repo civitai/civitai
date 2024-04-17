@@ -1,5 +1,5 @@
 import { MediaType } from '@prisma/client';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useFileUpload } from '~/hooks/useFileUpload';
 import { constants } from '~/server/common/constants';
 import { MEDIA_TYPE } from '~/server/common/mime-types';
@@ -38,7 +38,9 @@ export function useMediaUpload({ max, count, maxSize, onComplete }: UseMediaUplo
   // #region [state]
   const canAdd = max - count > 0;
   const [error, setError] = useState<Error>();
-  const { files, upload } = useFileUpload();
+  const { files, upload, reset, removeFile } = useFileUpload();
+  const onCompleteRef = useRef(onComplete);
+  onCompleteRef.current = onComplete;
   // #endregion
 
   // #region [file processor]
@@ -94,6 +96,7 @@ export function useMediaUpload({ max, count, maxSize, onComplete }: UseMediaUplo
       setError(undefined);
 
       // begin uploads
+      const onComplete = onCompleteRef.current;
       for (const [i, { file, ...data }] of mapped.entries()) {
         const index = start + i;
         if (!!data.blockedFor) {
@@ -120,5 +123,20 @@ export function useMediaUpload({ max, count, maxSize, onComplete }: UseMediaUplo
   }
   // #endregion
 
-  return { canAdd, upload: processFiles, error, files };
+  // #region [progress]
+  const progress = files.reduce((acc, value) => (acc += value.progress), 0) / files.length;
+  const timeoutRef = useRef<NodeJS.Timeout>();
+  useEffect(() => {
+    if (!files.length) return;
+    if (files.every((file) => file.progress === 100)) {
+      timeoutRef.current = setTimeout(() => {
+        for (const file of files) {
+          removeFile(file.url);
+        }
+      }, 3000);
+    } else clearTimeout(timeoutRef.current);
+  }, [files]); // eslint-disable-line
+  // #endregion
+
+  return { canAdd, upload: processFiles, error, files, progress, reset, removeFile };
 }

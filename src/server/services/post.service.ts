@@ -16,6 +16,7 @@ import {
   PostImageEditProps,
   PostImageEditSelect,
   editPostImageSelect,
+  postSelect,
 } from '~/server/selectors/post.selector';
 import { simpleTagSelect } from '~/server/selectors/tag.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
@@ -444,17 +445,7 @@ export const getPostDetail = async ({ id, user }: GetByIdInput & { user?: Sessio
           ],
       // modelVersion: user?.isModerator ? undefined : { status: 'Published' },
     },
-    select: {
-      id: true,
-      nsfwLevel: true,
-      title: true,
-      detail: true,
-      modelVersionId: true,
-      user: { select: userWithCosmeticsSelect },
-      publishedAt: true,
-      availability: true,
-      tags: { select: { tag: { select: simpleTagSelect } } },
-    },
+    select: postSelect,
   });
 
   if (!post) throw throwNotFoundError();
@@ -499,28 +490,12 @@ export const createPost = async ({
   userId,
   tag,
   ...data
-}: PostCreateInput & { userId: number }) => {
-  const rawResult = await dbWrite.post.create({
+}: PostCreateInput & { userId: number }): Promise<PostDetailEditable> => {
+  const post = await dbWrite.post.create({
     data: { ...data, userId, tags: tag ? { create: { tagId: tag } } : undefined },
-    select: editPostSelect,
+    select: postSelect,
   });
-  const imageIds = rawResult.images.map((x) => x.id);
-  const imageTagCounts = await getTagCountForImages(imageIds);
-  const images = rawResult.images.map((x) => ({
-    ...x,
-    meta: x.meta as ImageMetaProps,
-    _count: { tags: imageTagCounts[x.id] },
-  }));
-
-  const result = {
-    ...rawResult,
-    images,
-  };
-
-  return {
-    ...result,
-    tags: result.tags.flatMap((x) => x.tag),
-  };
+  return { ...post, tags: post.tags.flatMap((x) => x.tag), images: [] as PostImageEditable[] };
 };
 
 export const updatePost = async ({
@@ -533,8 +508,8 @@ export const updatePost = async ({
     where: { id },
     data: {
       ...data,
-      title: !!data.title?.length ? (data.title.length > 0 ? data.title : null) : undefined,
-      detail: !!data.detail?.length ? (data.detail.length > 0 ? data.detail : null) : undefined,
+      title: !!data.title ? (data.title.length > 0 ? data.title : null) : undefined,
+      detail: !!data.detail ? (data.detail.length > 0 ? data.detail : null) : undefined,
     },
   });
 

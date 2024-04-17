@@ -1,6 +1,7 @@
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { simpleTagSelect, imageTagCompositeSelect } from './tag.selector';
 import { Prisma } from '@prisma/client';
+import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 
 export const editPostImageSelect = Prisma.validator<Prisma.ImageSelect>()({
   id: true,
@@ -41,6 +42,18 @@ export const editPostSelect = Prisma.validator<Prisma.PostSelect>()({
     orderBy: { index: 'asc' },
     select: editPostImageSelect,
   },
+  tags: { select: { tag: { select: simpleTagSelect } } },
+});
+
+export const postSelect = Prisma.validator<Prisma.PostSelect>()({
+  id: true,
+  nsfwLevel: true,
+  title: true,
+  detail: true,
+  modelVersionId: true,
+  user: { select: userWithCosmeticsSelect },
+  publishedAt: true,
+  availability: true,
   tags: { select: { tag: { select: simpleTagSelect } } },
 });
 

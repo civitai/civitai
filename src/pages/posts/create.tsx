@@ -29,49 +29,36 @@ import {
   UserResourceReviewComposite,
 } from '~/components/ResourceReview/EditUserResourceReview';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { POST_IMAGE_LIMIT } from '~/server/common/constants';
-import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { ResourceReviewThumbActions } from '~/components/ResourceReview/ResourceReviewThumbActions';
 import { z } from 'zod';
-
-const querySchema = z.object({
-  modelId: z.coerce.number().optional(),
-  modelVersionId: z.coerce.number().optional(),
-  tag: z.coerce.number().optional(),
-  video: z.preprocess((val) => val != null && val !== 'false', z.boolean()).optional(),
-  returnUrl: z.string().optional(),
-  clubId: z.coerce.number().optional(),
-  reviewing: z.string().optional(),
-});
+import { PostEditProvider } from '~/components/Post/EditV2/PostEditProvider';
+import { postEditQuerySchema } from '~/server/schema/post.schema';
+import {
+  getBrowserRouter,
+  useBrowserRouter,
+} from '~/components/BrowserRouter/BrowserRouterProvider';
 
 export default function PostCreate() {
   const currentUser = useCurrentUser();
   const router = useRouter();
-  const parsed = querySchema.safeParse(router.query);
-  const tagId = parsed.success ? parsed.data.tag : undefined;
-  const modelId = parsed.success ? parsed.data.modelId : undefined;
-  const modelVersionId = parsed.success ? parsed.data.modelVersionId : undefined;
-  const clubId = parsed.success ? parsed.data.clubId : undefined;
-  const postingVideo = parsed.success ? parsed.data.video : false;
-  const reviewing = parsed.success ? parsed.data.reviewing : false;
-  const returnUrl = parsed.success ? parsed.data.returnUrl : undefined;
+  const browserRouter = useBrowserRouter();
+  const params = postEditQuerySchema.parse({ ...router.query, ...browserRouter.query });
+  const {
+    modelId,
+    modelVersionId,
+    tag: tagId,
+    video: postingVideo,
+    clubId,
+    reviewing,
+    postId,
+  } = params;
+
   const isMuted = currentUser?.muted ?? false;
   const displayReview = !isMuted && !!reviewing && !!modelVersionId && !!modelId;
   const reviewEditRef = useRef<ReviewEditCommandsRef | null>(null);
-
-  if (!parsed.success) {
-    showErrorNotification({
-      title: 'Failed to parse query parameters',
-      error: new Error(parsed.error.issues.map((i) => i.path + '\n' + i.message).join('\n')),
-    });
-  }
-
-  const reset = useEditPostContext((state) => state.reset);
-  const images = useEditPostContext((state) => state.images);
-  const upload = useEditPostContext((state) => state.upload);
-  const queryUtils = trpc.useUtils();
+  const view = !postId ? 'create' : 'edit';
 
   const { data: versions, isLoading: versionsLoading } = trpc.model.getVersions.useQuery(
     { id: modelId ?? 0, excludeUnpublished: true },
@@ -93,43 +80,41 @@ export default function PostCreate() {
       { enabled: !!currentUser && displayReview }
     );
 
-  const [selected, setSelected] = useState<string | undefined>(modelVersionId?.toString());
+  // const { mutate, isLoading } = trpc.post.create.useMutation();
+  // const handleDrop = (files: File[]) => {
+  //   const versionId = selected ? Number(selected) : modelVersionId;
+  //   const title =
+  //     reviewing && version ? `${version.model.name} - ${version.name} Review` : undefined;
 
-  const { mutate, isLoading } = trpc.post.create.useMutation();
-  const handleDrop = (files: File[]) => {
-    const versionId = selected ? Number(selected) : modelVersionId;
-    const title =
-      reviewing && version ? `${version.model.name} - ${version.name} Review` : undefined;
+  //   reviewEditRef.current?.save();
 
-    reviewEditRef.current?.save();
+  //   mutate(
+  //     { modelVersionId: versionId, title, tag: tagId },
+  //     {
+  //       onSuccess: async (response) => {
+  //         reset(response);
+  //         const postId = response.id;
+  //         queryUtils.post.getEdit.setData({ id: postId }, () => response);
+  //         upload({ postId, modelVersionId: versionId }, files);
 
-    mutate(
-      { modelVersionId: versionId, title, tag: tagId },
-      {
-        onSuccess: async (response) => {
-          reset(response);
-          const postId = response.id;
-          queryUtils.post.getEdit.setData({ id: postId }, () => response);
-          upload({ postId, modelVersionId: versionId }, files);
+  //         let pathname = `/posts/${postId}/edit`;
+  //         const queryParams: string[] = [];
+  //         if (returnUrl) queryParams.push(`returnUrl=${returnUrl}`);
+  //         if (reviewing) queryParams.push('reviewing=true');
+  //         if (clubId) queryParams.push(`clubId=${clubId}`);
+  //         if (queryParams.length > 0) pathname += `?${queryParams.join('&')}`;
 
-          let pathname = `/posts/${postId}/edit`;
-          const queryParams: string[] = [];
-          if (returnUrl) queryParams.push(`returnUrl=${returnUrl}`);
-          if (reviewing) queryParams.push('reviewing=true');
-          if (clubId) queryParams.push(`clubId=${clubId}`);
-          if (queryParams.length > 0) pathname += `?${queryParams.join('&')}`;
-
-          await router.push(pathname);
-        },
-        onError(error) {
-          showErrorNotification({
-            title: 'Failed to create post',
-            error: new Error(error.message),
-          });
-        },
-      }
-    );
-  };
+  //         await router.push(pathname);
+  //       },
+  //       onError(error) {
+  //         showErrorNotification({
+  //           title: 'Failed to create post',
+  //           error: new Error(error.message),
+  //         });
+  //       },
+  //     }
+  //   );
+  // };
 
   let backButtonUrl = modelId ? `/models/${modelId}` : '/';
   if (modelVersionId) backButtonUrl += `?modelVersionId=${modelVersionId}`;
@@ -138,30 +123,35 @@ export default function PostCreate() {
 
   const loading = (loadingCurrentUserReview || versionLoading) && !currentUserReview && !version;
 
+  if (currentUser?.muted)
+    return (
+      <Container size="xs">
+        <Center p="xl">
+          <Stack align="center">
+            <AlertWithIcon color="yellow" icon={<IconLock />} iconSize={32} iconColor="yellow">
+              <Text size="md">You cannot create a post because your account has been muted.</Text>
+            </AlertWithIcon>
+          </Stack>
+        </Center>
+      </Container>
+    );
+
   return (
-    <Container size="xs">
-      <Group spacing="xs" mb="md" noWrap>
-        <BackButton url={backButtonUrl} />
-        <Title>
-          {displayReview ? 'Create a Review' : `Create ${postingVideo ? 'Video' : 'Image'} Post`}
-        </Title>
-        <FeatureIntroductionHelpButton
-          feature="post-create"
-          contentSlug={['feature-introduction', 'post-images']}
-        />
-      </Group>
-      {currentUser?.muted ? (
-        <Container size="xs">
-          <Center p="xl">
-            <Stack align="center">
-              <AlertWithIcon color="yellow" icon={<IconLock />} iconSize={32} iconColor="yellow">
-                <Text size="md">You cannot create a post because your account has been muted.</Text>
-              </AlertWithIcon>
-            </Stack>
-          </Center>
-        </Container>
-      ) : (
-        <Stack spacing={8}>
+    <Container size={view === 'create' ? 'xs' : 'xl'} className="flex flex-col gap-3">
+      {view === 'create' && (
+        <>
+          <div className="flex justify-between items-center">
+            <BackButton url={backButtonUrl} />
+            <Title>
+              {displayReview
+                ? 'Create a Review'
+                : `Create ${postingVideo ? 'Video' : 'Image'} Post`}
+            </Title>
+            <FeatureIntroductionHelpButton
+              feature="post-create"
+              contentSlug={['feature-introduction', 'post-images']}
+            />
+          </div>
           {tagId && (tag || tagLoading) && (
             <Group spacing="xs">
               {tagLoading && <Loader size="sm" />}
@@ -188,12 +178,14 @@ export default function PostCreate() {
             <Select
               description="Select a resource to ensure that all uploaded images receive correct resource attribution"
               placeholder="Select a resource"
-              value={selected}
+              value={modelVersionId ? String(modelVersionId) : undefined}
               nothingFound={versionsLoading ? 'Loading...' : 'No resources found'}
               data={versions.map(({ id, name }) => ({ label: name, value: id.toString() }))}
-              onChange={(value) => {
-                if (value) setSelected(value);
-              }}
+              onChange={(value) =>
+                router.replace({ query: { ...params, modelVersionId: value } }, undefined, {
+                  shallow: true,
+                })
+              }
             />
           )}
           {displayReview && version && (
@@ -251,25 +243,19 @@ export default function PostCreate() {
               .
             </Text>
           )}
-          <ImageDropzone
-            mt="md"
-            onDrop={handleDrop}
-            loading={isLoading}
-            count={images.length}
-            max={POST_IMAGE_LIMIT}
-            accept={[...IMAGE_MIME_TYPE, ...VIDEO_MIME_TYPE]}
-          />
-          <Text size="xs">
-            By uploading images to our site you agree to our{' '}
-            <Anchor href="/content/tos" target="_blank" rel="nofollow" span>
-              Terms of service
-            </Anchor>
-            . Be sure to read our <ContentPolicyLink /> before uploading any images.
-          </Text>
-        </Stack>
+        </>
       )}
+      <PostEditProvider
+        params={{ ...params, ...browserRouter.query }}
+        onCreate={(post) => {
+          browserRouter.replace({
+            pathname: `/posts/${post.id}/edit`,
+            query: { ...params, postId: post.id },
+          });
+        }}
+      />
     </Container>
   );
 }
 
-setPageOptions(PostCreate, { innerLayout: PostEditLayout });
+// setPageOptions(PostCreate, { innerLayout: PostEditLayout });

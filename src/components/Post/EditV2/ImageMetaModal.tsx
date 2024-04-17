@@ -36,7 +36,7 @@ export function ImageMetaModal({
       mutate(
         { id, meta: { ...meta, ...data } },
         {
-          onSuccess: (response, body) => {
+          onSuccess: () => {
             updateImage({ id, meta: { ...meta, ...data } });
             dialog.onClose();
           },

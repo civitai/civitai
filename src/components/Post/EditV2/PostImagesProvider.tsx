@@ -1,15 +1,15 @@
 import { PostDetailEditable } from '~/server/services/post.service';
-import React, { createContext, useContext, useRef } from 'react';
+import React, { createContext, useContext, useEffect, useRef } from 'react';
 import { MediaUploadOnCompleteProps } from '~/hooks/useMediaUpload';
 import { mergeWithPartial } from '~/utils/object-helpers';
 import { createStore, useStore } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
+import { useDidUpdate } from '@mantine/hooks';
+import { usePostEditContext } from '~/components/Post/EditV2/PostEditProvider';
 
 // #region [Types]
 type ControlledImage = Partial<PostDetailEditable['images'][number]> & MediaUploadOnCompleteProps;
 type StoreState = {
-  postId: number;
-  modelVersionId?: number;
   images: ControlledImage[];
   setImages: (cb: (images: ControlledImage[]) => ControlledImage[]) => void;
   updateImage: (data: Partial<Omit<ControlledImage, 'id'>> & { id: number }) => void;
@@ -18,12 +18,10 @@ type StoreState = {
 
 // #region [State]
 type Store = ReturnType<typeof createProviderStore>;
-const createProviderStore = (post: PostDetailEditable) =>
+const createProviderStore = (post?: PostDetailEditable) =>
   createStore<StoreState>()(
     immer((set) => ({
-      postId: post.id,
-      modelVersionId: post.modelVersionId ?? undefined,
-      images: post.images.map((data) => ({ status: 'added', ...data } as ControlledImage)),
+      images: post?.images.map((data) => ({ status: 'added', ...data } as ControlledImage)) ?? [],
       setImages: (cb) =>
         set((state) => {
           state.images = cb(state.images);
@@ -51,15 +49,19 @@ export function usePostImagesContext<T>(selector: (state: StoreState) => T) {
 // #endregion
 
 // #region [Provider]
-export function PostImagesProvider({
-  children,
-  post,
-}: {
-  children: React.ReactNode;
-  post: PostDetailEditable;
-}) {
+export function PostImagesProvider({ children }: { children: React.ReactNode }) {
+  const { post } = usePostEditContext();
   const storeRef = useRef<Store>();
   if (!storeRef.current) storeRef.current = createProviderStore(post);
+
+  useDidUpdate(() => {
+    const store = storeRef.current;
+    console.log('didUpdate: post');
+    if (store && post?.images)
+      store.setState({
+        images: post.images.map((data) => ({ status: 'added', ...data } as ControlledImage)),
+      });
+  }, [post]);
 
   return <Context.Provider value={storeRef.current}>{children}</Context.Provider>;
 }

@@ -130,7 +130,7 @@ export function useFileUpload() {
       const toAbort = files.filter((x) => pendingProcessing.includes(x.status));
       for (const item of toAbort) item.abort();
     }
-    setFiles((state) => state.filter((x) => pendingProcessing.includes(x.status)));
+    setFiles([]);
   }
 
   function removeFile(url: string, abort?: boolean) {
@@ -143,6 +143,7 @@ export function useFileUpload() {
 
   useEffect(() => {
     return () => {
+      console.log('reset');
       reset();
     };
   }, []);

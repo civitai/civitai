@@ -1,6 +1,7 @@
-import { Badge, Button, Container, Group, Stack, Title } from '@mantine/core';
+import { Badge, Button, Container, Group, Stack, Title, Center, Loader } from '@mantine/core';
 import { IconTrash } from '@tabler/icons-react';
 import { useIsMutating } from '@tanstack/react-query';
+import { useRouter } from 'next/router';
 
 import { setPageOptions } from '~/components/AppLayout/AppLayout';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
@@ -14,11 +15,29 @@ import { EditPostTags } from '~/components/Post/Edit/EditPostTags';
 import { EditPostTitle } from '~/components/Post/Edit/EditPostTitle';
 import { PostEditLayout } from '~/components/Post/Edit/PostEditLayout';
 import { ReorderImages } from '~/components/Post/Edit/ReorderImages';
-import { PostDetail } from '~/components/Post/EditV2/PostDetail';
+import { PostEditProvider } from '~/components/Post/EditV2/PostEditProvider';
 import { useCatchNavigation } from '~/hooks/useCatchNavigation';
+import { postEditQuerySchema } from '~/server/schema/post.schema';
+import { trpc } from '~/utils/trpc';
 
 export default function PostEdit() {
-  return <PostDetail />;
+  const router = useRouter();
+  const params = postEditQuerySchema.parse(router.query);
+
+  // const { data, isLoading } = trpc.post.getEdit.useQuery({ id: params.postId });
+
+  // if (isLoading)
+  //   return (
+  //     <Center p="xl">
+  //       <Loader />
+  //     </Center>
+  //   );
+
+  return (
+    <Container size="xl">
+      <PostEditProvider params={params} />
+    </Container>
+  );
 }
 
 // export default function PostEdit() {
