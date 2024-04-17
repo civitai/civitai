@@ -176,6 +176,7 @@ export const setTosViolationHandler = async ({
         nsfw: 'Blocked',
         nsfwLevel: NsfwLevel.Blocked,
         blockedFor: BlockedReason.Moderated,
+        updatedAt: new Date(),
       },
     });
 

@@ -167,6 +167,7 @@ export const moderateImages = async ({
         ingestion: 'Blocked',
         nsfwLevel: NsfwLevel.Blocked,
         blockedFor: BlockedReason.Moderated,
+        updatedAt: new Date(),
       },
     });
 
