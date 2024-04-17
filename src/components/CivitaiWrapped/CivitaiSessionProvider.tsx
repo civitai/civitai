@@ -97,6 +97,7 @@ export function CivitaiSessionProvider({ children }: { children: React.ReactNode
     });
   }, [data?.user?.id, setAccounts]);
 
+  // TODO: this isn't quite right, it shouldn't reload if you're currently on the page
   useEffect(() => {
     const userId = data?.user?.id;
     if (!userId) return;

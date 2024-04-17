@@ -199,11 +199,8 @@ export function createAuthOptions(): NextAuthOptions {
 
           try {
             const userId = Number(civTokenDecrypt(inputData));
-
             const user = await getSessionUser({ userId });
-
             if (!user) throw new Error('No user found.');
-
             return user;
           } catch (e: unknown) {
             // TODO are these not being shown? do we need an error page?
@@ -240,7 +237,7 @@ export default async function auth(req: NextApiRequest, res: NextApiResponse) {
   // Yes, this is intended. Without this, you can't log in to a user
   // while already logged in as another
   if (req.url?.startsWith('/api/auth/callback/')) {
-    delete req.cookies['civitai-token'];
+    delete req.cookies[civitaiTokenCookieName];
   }
 
   customAuthOptions.events ??= {};

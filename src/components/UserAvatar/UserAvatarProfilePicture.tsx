@@ -24,6 +24,7 @@ export function UserAvatarProfilePicture({
         <>
           {!isSelf && !safe ? (
             <Center h="100%" className="relative">
+              {/* TODO: this nests a button inside a button */}
               <ImageGuard2.BlurToggle>
                 {(toggle) => (
                   <ActionIcon

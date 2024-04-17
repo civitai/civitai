@@ -870,19 +870,19 @@ export function AppHeader({
               withinPortal
             >
               <Menu.Target>
-                <UnstyledButton
-                  className={cx(classes.user, { [classes.userActive]: userMenuOpened })}
-                  onClick={() => setUserMenuOpened(true)}
-                >
-                  {!!currentUser ? (
+                {!!currentUser ? (
+                  <UnstyledButton
+                    className={cx(classes.user, { [classes.userActive]: userMenuOpened })}
+                    onClick={() => setUserMenuOpened(true)}
+                  >
                     <Group spacing={8} noWrap>
                       <UserAvatar user={currentUser} size="md" />
                       {features.buzz && currentUser && <UserBuzz pr="sm" />}
                     </Group>
-                  ) : (
-                    <Burger opened={userMenuOpened} size="sm" />
-                  )}
-                </UnstyledButton>
+                  </UnstyledButton>
+                ) : (
+                  <Burger opened={userMenuOpened} size="sm" />
+                )}
               </Menu.Target>
 
               <Menu.Dropdown>
