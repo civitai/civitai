@@ -31,7 +31,11 @@ import {
   getUserCollectionPermissionsById,
 } from '~/server/services/collection.service';
 import { getCategoryTags } from '~/server/services/system-cache';
-import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
+import {
+  throwAuthorizationError,
+  throwDbError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { decreaseDate } from '~/utils/date-helpers';
 import { postgresSlugify, removeTags } from '~/utils/string-helpers';
@@ -609,10 +613,10 @@ export const getArticleById = async ({ id, user }: GetByIdInput & { user?: Sessi
 export const upsertArticle = async ({
   id,
   userId,
-  isModerator,
   tags,
   attachments,
   coverImage,
+  isModerator,
   ...data
 }: UpsertArticleInput & { userId: number; isModerator?: boolean }) => {
   try {
@@ -665,10 +669,13 @@ export const upsertArticle = async ({
     }
 
     const article = await dbWrite.article.findUnique({
-      where: { id, userId: isModerator ? undefined : userId },
-      select: { id: true, cover: true, coverId: true },
+      where: { id },
+      select: { id: true, cover: true, coverId: true, userId: true },
     });
     if (!article) throw throwNotFoundError();
+
+    const isOwner = article.userId === userId || isModerator;
+    if (!isOwner) throw throwAuthorizationError('You cannot perform this action');
 
     const result = await dbWrite.$transaction(async (tx) => {
       const updated = await tx.article.update({
@@ -763,17 +770,28 @@ export const upsertArticle = async ({
   }
 };
 
-export const deleteArticleById = async ({ id, userId }: GetByIdInput & { userId?: number }) => {
+export const deleteArticleById = async ({
+  id,
+  userId,
+  isModerator,
+}: GetByIdInput & { userId: number; isModerator?: boolean }) => {
   try {
+    const article = await dbWrite.article.findUnique({
+      where: { id },
+      select: { userId: true },
+    });
+    if (!article) throw throwNotFoundError(`No article with id ${id}`);
+
+    const isOwner = article.userId === userId || isModerator;
+    if (!isOwner) throw throwAuthorizationError(`You cannot perform this action`);
+
     const deleted = await dbWrite.$transaction(async (tx) => {
-      const article = await tx.article.delete({ where: { id, userId }, select: { coverId: true } });
-      if (!article) return null;
+      const article = await tx.article.delete({ where: { id }, select: { coverId: true } });
 
       await tx.file.deleteMany({ where: { entityId: id, entityType: 'Article' } });
 
       return article;
     });
-    if (!deleted) throw throwNotFoundError(`No article with id ${id}`);
 
     if (deleted.coverId) await deleteImageById({ id: deleted.coverId });
     await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);

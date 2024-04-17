@@ -182,7 +182,10 @@ export const modelRouter = router({
     .input(getByIdSchema)
     .use(isOwnerOrModerator)
     .mutation(requestReviewHandler),
-  declineReview: protectedProcedure.input(declineReviewSchema).mutation(declineReviewHandler),
+  declineReview: protectedProcedure
+    .input(declineReviewSchema)
+    .use(isOwnerOrModerator)
+    .mutation(declineReviewHandler),
   changeMode: protectedProcedure
     .input(changeModelModifierSchema)
     .use(isOwnerOrModerator)
