@@ -46,12 +46,24 @@ export const moderateImageHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
-    await moderateImages(input);
+    const affected = await moderateImages(input);
     await trackModActivity(ctx.user.id, {
       entityType: 'image',
       entityId: input.ids,
       activity: 'review',
     });
+    if (affected) {
+      for (const { id, userId, nsfwLevel } of affected) {
+        await ctx.track.image({
+          type: 'DeleteTOS',
+          imageId: id,
+          nsfw: getNsfwLevelDeprecatedReverseMapping(nsfwLevel),
+          tags: [input.reviewType ?? 'other'],
+          tosReason: input.reviewType ?? 'other',
+          ownerId: userId,
+        });
+      }
+    }
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -172,6 +184,7 @@ export const setTosViolationHandler = async ({
       imageId: id,
       nsfw: getNsfwLevelDeprecatedReverseMapping(image.nsfwLevel),
       tags: image.tags.map((x) => x.tag.name),
+      tosReason: 'manual',
       ownerId: image.userId,
     });
     return image;

@@ -155,6 +155,11 @@ export const moderateImages = async ({
   reviewAction,
 }: ImageModerationSchema) => {
   if (reviewAction === 'delete') {
+    const affected = await dbWrite.$queryRaw<{ id: number; userId: number; nsfwLevel: number }[]>`
+      SELECT id, "userId", "nsfwLevel" FROM "Image"
+      WHERE id IN (${Prisma.join(ids)});
+    `;
+
     await dbWrite.image.updateMany({
       where: { id: { in: ids } },
       data: {
@@ -168,6 +173,7 @@ export const moderateImages = async ({
     await imagesSearchIndex.queueUpdate(
       ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Delete }))
     );
+    return affected;
   } else if (reviewAction === 'removeName') {
     removeNameReference(ids);
   } else if (reviewAction === 'mistake') {
@@ -210,6 +216,7 @@ export const moderateImages = async ({
     if (resetLevels.length) await updateNsfwLevel(resetLevels);
     else if (changeTags) await updateNsfwLevel(ids);
   }
+  return null;
 };
 
 export async function updateNsfwLevel(ids: number | number[]) {
