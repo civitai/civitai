@@ -2,7 +2,6 @@ import { z } from 'zod';
 
 export type PaypalPurchaseBuzzSchema = z.infer<typeof paypalPurchaseBuzzSchema>;
 export const paypalPurchaseBuzzSchema = z.object({
-  userId: z.number().optional(),
   amount: z.number(),
 });
 

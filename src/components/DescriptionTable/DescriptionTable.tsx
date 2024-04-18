@@ -22,11 +22,14 @@ export function DescriptionTable({
             backgroundColor:
               theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
             width: labelWidth,
+            padding: '7px 7px !important',
           })}
         >
           {typeof item.label === 'string' ? <Text weight="500">{item.label}</Text> : item.label}
         </Box>
-        <Box component="td">{item.value}</Box>
+        <Box component="td" sx={{ padding: '7px 7px !important' }}>
+          {item.value}
+        </Box>
       </Box>
     );
   }

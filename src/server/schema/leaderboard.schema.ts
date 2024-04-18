@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 export type GetLeaderboardPositionsInput = z.infer<typeof getLeaderboardPositionsSchema>;
 export const getLeaderboardPositionsSchema = z.object({
-  userId: z.number().optional(),
+  userId: z.number().optional(), // This is ok, it's used for caching purposes
   date: z.date().optional(),
   top: z.number().optional(),
   isModerator: z.boolean().optional().default(false),

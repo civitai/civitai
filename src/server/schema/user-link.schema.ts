@@ -8,7 +8,6 @@ export const getUserLinksSchema = z.object({ userId: z.number().optional() });
 export type UpsertUserLinkParams = z.infer<typeof upsertUserLinkSchema>;
 export const upsertUserLinkSchema = z.object({
   id: z.number().optional(),
-  userId: z.number(),
   url: zc.safeUrl,
   type: z.nativeEnum(LinkType),
 });

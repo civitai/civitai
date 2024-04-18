@@ -1,10 +1,10 @@
 import {
   Button,
   ButtonProps,
+  Group,
+  ThemeIcon,
   Tooltip,
   createPolymorphicComponent,
-  useMantineTheme,
-  ThemeIcon,
 } from '@mantine/core';
 import { IconBolt, IconDownload } from '@tabler/icons-react';
 import { forwardRef } from 'react';
@@ -34,9 +34,12 @@ const _DownloadButton = forwardRef<HTMLButtonElement, Props>(
         </Button>
       </Tooltip>
     ) : (
-      <Button pos="relative" ref={ref} {...buttonProps} leftIcon={<IconDownload size={20} />}>
-        {downloadRequiresPurchase && <>{purchaseIcon}</>}
-        {children}
+      <Button pos="relative" ref={ref} {...buttonProps}>
+        <Group spacing={8} noWrap>
+          <IconDownload size={20} />
+          {downloadRequiresPurchase && <>{purchaseIcon}</>}
+          {children}
+        </Group>
       </Button>
     );
 

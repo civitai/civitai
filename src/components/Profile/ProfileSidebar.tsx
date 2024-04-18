@@ -174,7 +174,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
 
   const mutedAlert = isCurrentUser && muted && (
     <AlertWithIcon icon={<IconAlertCircle />} iconSize="sm">
-      You cannot edit your profile because your account has been muted
+      You cannot edit your profile because your account has been restricted
     </AlertWithIcon>
   );
 

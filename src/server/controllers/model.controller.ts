@@ -378,7 +378,7 @@ export const upsertModelHandler = async ({
         );
     }
 
-    const model = await upsertModel({ ...input, userId });
+    const model = await upsertModel({ ...input, userId, isModerator: ctx.user.isModerator });
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
 
     await ctx.track.modelEvent({
@@ -496,8 +496,6 @@ export const deleteModelHandler = async ({
     const deleteModel = permanently ? permaDeleteModelById : deleteModelById;
     const model = await deleteModel({ id, userId: ctx.user.id });
     if (!model) throw throwNotFoundError(`No model with id ${id}`);
-
-    await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
 
     await ctx.track.modelEvent({
       type: permanently ? 'PermanentDelete' : 'Delete',

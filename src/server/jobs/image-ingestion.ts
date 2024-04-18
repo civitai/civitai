@@ -81,12 +81,19 @@ async function sendImagesForScanBulk(images: IngestImageInput[]) {
 
 export const removeBlockedImages = createJob('remove-blocked-images', '0 23 * * *', async () => {
   if (!isProd) return;
+  const cutoff = decreaseDate(new Date(), 7, 'days');
   const images = await dbRead.image.findMany({
     where: {
       ingestion: ImageIngestionStatus.Blocked,
       OR: [
-        { createdAt: { lte: decreaseDate(new Date(), 7, 'days') } },
-        { blockedFor: BlockedReason.Moderated },
+        {
+          blockedFor: { not: BlockedReason.Moderated },
+          createdAt: { lte: cutoff },
+        },
+        {
+          blockedFor: BlockedReason.Moderated,
+          updatedAt: { lte: cutoff },
+        },
       ],
     },
     select: { id: true },

@@ -24,7 +24,7 @@ export const upsertArticleHandler = async ({
     // Only users with adminTags featureFlag can add adminOnly tags
     if (includesAdminOnlyTag && !features.adminTags) throw throwAuthorizationError();
 
-    return upsertArticle({ ...input, userId: ctx.user?.id });
+    return upsertArticle({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);

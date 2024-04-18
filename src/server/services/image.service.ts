@@ -156,6 +156,11 @@ export const moderateImages = async ({
   reviewAction,
 }: ImageModerationSchema) => {
   if (reviewAction === 'delete') {
+    const affected = await dbWrite.$queryRaw<{ id: number; userId: number; nsfwLevel: number }[]>`
+      SELECT id, "userId", "nsfwLevel" FROM "Image"
+      WHERE id IN (${Prisma.join(ids)});
+    `;
+
     await dbWrite.image.updateMany({
       where: { id: { in: ids } },
       data: {
@@ -163,12 +168,14 @@ export const moderateImages = async ({
         ingestion: 'Blocked',
         nsfwLevel: NsfwLevel.Blocked,
         blockedFor: BlockedReason.Moderated,
+        updatedAt: new Date(),
       },
     });
 
     await imagesSearchIndex.queueUpdate(
       ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Delete }))
     );
+    return affected;
   } else if (reviewAction === 'removeName') {
     removeNameReference(ids);
   } else if (reviewAction === 'mistake') {
@@ -211,6 +218,7 @@ export const moderateImages = async ({
     if (resetLevels.length) await updateNsfwLevel(resetLevels);
     else if (changeTags) await updateNsfwLevel(ids);
   }
+  return null;
 };
 
 export async function updateNsfwLevel(ids: number | number[]) {
@@ -595,10 +603,10 @@ export const getAllImages = async ({
     AND.push(Prisma.sql`NOT (i.meta IS NULL OR jsonb_typeof(i.meta) = 'null')`);
   }
 
-  if (fromPlatform && types?.includes(MediaType.image)) {
+  if (fromPlatform) {
     AND.push(Prisma.sql`(i.meta IS NOT NULL AND i.meta ? 'civitaiResources')`);
   }
-  if (notPublished && isModerator && types?.includes(MediaType.image)) {
+  if (notPublished && isModerator) {
     AND.push(Prisma.sql`(p."publishedAt" IS NULL)`);
   }
 

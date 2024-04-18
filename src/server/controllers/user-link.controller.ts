@@ -29,37 +29,28 @@ export const upsertManyUserLinksHandler = async ({
   input,
   ctx,
 }: {
-  ctx: Context;
+  ctx: DeepNonNullable<Context>;
   input: UpsertManyUserLinkParams;
 }) => {
-  if (!ctx.user) {
-    throw throwAuthorizationError();
-  }
-  await upsertManyUserLinks({ data: input, user: ctx.user });
+  await upsertManyUserLinks({ data: input, userId: ctx.user.id });
 };
 
 export const upsertUserLinkHandler = async ({
   input,
   ctx,
 }: {
-  ctx: Context;
+  ctx: DeepNonNullable<Context>;
   input: UpsertUserLinkParams;
 }) => {
-  if (!ctx.user) {
-    throw throwAuthorizationError();
-  }
-  await upsertUserLink({ data: input });
+  await upsertUserLink({ ...input, userId: ctx.user.id });
 };
 
 export const deleteUserLinkHandler = async ({
   input,
   ctx,
 }: {
-  ctx: Context;
+  ctx: DeepNonNullable<Context>;
   input: GetByIdInput;
 }) => {
-  if (!ctx.user) {
-    throw throwAuthorizationError();
-  }
-  await deleteUserLink(input);
+  await deleteUserLink({ id: input.id, userId: ctx.user.id });
 };

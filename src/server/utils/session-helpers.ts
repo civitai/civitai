@@ -52,7 +52,8 @@ export async function refreshToken(token: JWT) {
       userDate && allInvalidationDate
         ? new Date(Math.max(userDate.getTime(), allInvalidationDate.getTime()))
         : userDate ?? allInvalidationDate;
-    shouldRefresh = !invalidationDate || new Date(token.signedAt as string) < invalidationDate;
+    shouldRefresh =
+      !invalidationDate || !token.signedAt || new Date(token.signedAt as number) < invalidationDate;
   }
 
   if (!shouldRefresh) return token;
@@ -79,7 +80,7 @@ function setToken(token: JWT, session: AsyncReturnType<typeof getSessionUser>) {
   }
 
   token.id = token.id ?? uuid();
-  token.signedAt = new Date();
+  token.signedAt = Date.now();
 }
 
 export async function invalidateSession(userId: number) {

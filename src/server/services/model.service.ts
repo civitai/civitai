@@ -1169,24 +1169,26 @@ export const deleteModelById = async ({
     if (!model) return null;
 
     // TODO - account for case that a user restores a model and doesn't want all posts to be re-published
-    await tx.$executeRaw`
-      UPDATE "Post"
-      SET "metadata" = "metadata" || jsonb_build_object(
-        'unpublishedAt', ${new Date().toISOString()},
-        'unpublishedBy', ${userId}
-      )
-      WHERE "publishedAt" IS NOT NULL
-      AND "userId" = ${model.userId}
-      AND "modelVersionId" IN (${Prisma.join(
-        model.modelVersions.map(({ id }) => id),
-        ','
-      )})
-    `;
-
-    await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
+    const versionIds = model.modelVersions.map(({ id }) => id);
+    if (versionIds.length > 0)
+      await tx.$executeRaw`
+        UPDATE "Post"
+        SET "metadata" = "metadata" || jsonb_build_object(
+          'unpublishedAt', ${new Date().toISOString()},
+          'unpublishedBy', ${userId}
+        )
+        WHERE "publishedAt" IS NOT NULL
+        AND "userId" = ${model.userId}
+        AND "modelVersionId" IN (${Prisma.join(
+          model.modelVersions.map(({ id }) => id),
+          ','
+        )})
+      `;
 
     return model;
   });
+
+  await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
 
   return deletedModel;
 };
@@ -1227,6 +1229,8 @@ export const permaDeleteModelById = async ({
     const deletedModel = await tx.model.delete({ where: { id } });
     return deletedModel;
   });
+
+  await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
 
   return deletedModel;
 };
@@ -1271,9 +1275,14 @@ export const upsertModel = async ({
   templateId,
   bountyId,
   meta,
+  isModerator,
   ...data
 }: // TODO.manuel: hardcoding meta type since it causes type issues in lots of places if we set it in the schema
-ModelUpsertInput & { userId: number; meta?: Prisma.ModelCreateInput['meta'] }) => {
+ModelUpsertInput & {
+  userId: number;
+  meta?: Prisma.ModelCreateInput['meta'];
+  isModerator?: boolean;
+}) => {
   if (!id || templateId) {
     const result = await dbWrite.model.create({
       select: { id: true, nsfwLevel: true },
@@ -1309,8 +1318,12 @@ ModelUpsertInput & { userId: number; meta?: Prisma.ModelCreateInput['meta'] }) =
   } else {
     const beforeUpdate = await dbRead.model.findUnique({
       where: { id },
-      select: { poi: true },
+      select: { poi: true, userId: true },
     });
+    if (!beforeUpdate) return null;
+
+    const isOwner = beforeUpdate.userId === userId || isModerator;
+    if (!isOwner) return null;
 
     const result = await dbWrite.model.update({
       select: { id: true, nsfwLevel: true, poi: true },

@@ -26,7 +26,6 @@ import { Currency } from '@prisma/client';
 
 export function UserReferralCodesCard() {
   const { copied, copy } = useClipboard();
-  const currentUser = useCurrentUser();
   const features = useFeatureFlags();
 
   const { data: userReferralCodes = [], isLoading } = trpc.userReferralCode.getAll.useQuery({
@@ -35,10 +34,12 @@ export function UserReferralCodesCard() {
   const queryUtils = trpc.useContext();
   const { mutate: upsertUserReferralCode, isLoading: upsertingCode } =
     trpc.userReferralCode.upsert.useMutation({
-      onSuccess: async (_, { id }) => {
+      onSuccess: async (_, req) => {
         showSuccessNotification({
           title: 'Success',
-          message: id ? 'Referral code updated successfully' : 'Referral code created successfully',
+          message: req?.id
+            ? 'Referral code updated successfully'
+            : 'Referral code created successfully',
         });
         await queryUtils.userReferralCode.getAll.invalidate();
       },
@@ -152,7 +153,7 @@ export function UserReferralCodesCard() {
           <Button
             disabled={userReferralCodes.length >= constants.referrals.referralCodeMaxCount}
             loading={upsertingCode || isLoading}
-            onClick={() => upsertUserReferralCode({ userId: currentUser?.id })}
+            onClick={() => upsertUserReferralCode()}
           >
             Generate new referral code
           </Button>
