@@ -159,15 +159,14 @@ export const getServerSideProps = createServerSideProps({
   resolver: async ({ session, ctx }) => {
     if (session) {
       const { callbackUrl, error, reason } = ctx.query;
-
-      const destinationURL = new URL(
-        typeof callbackUrl === 'string' ? callbackUrl : '/',
-        getBaseUrl()
-      );
-      if (error) destinationURL.searchParams.set('error', error as string);
-      const destination = `${destinationURL.pathname}${destinationURL.search}${destinationURL.hash}`;
-
       if (reason !== 'switch-accounts') {
+        const destinationURL = new URL(
+          typeof callbackUrl === 'string' ? callbackUrl : '/',
+          getBaseUrl()
+        );
+        if (error) destinationURL.searchParams.set('error', error as string);
+        const destination = `${destinationURL.pathname}${destinationURL.search}${destinationURL.hash}`;
+
         return {
           redirect: {
             destination: destination.toString(),
