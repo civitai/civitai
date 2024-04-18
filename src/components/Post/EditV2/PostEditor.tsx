@@ -12,6 +12,7 @@ import {
   usePostImagesContext,
 } from '~/components/Post/EditV2/PostImagesProvider';
 import { PostReorderImages } from '~/components/Post/EditV2/PostReorderImages';
+import { produce } from 'immer';
 
 // #region [types]
 type ContextProps = {
@@ -19,6 +20,7 @@ type ContextProps = {
   params: PostEditQuerySchema;
   onCreate?: (post: PostDetailEditable) => void;
   onPublish?: (post: PostDetailEditable) => void;
+  updatePostState: (cb: (data: PostDetailEditable) => void) => void;
 };
 
 type Props = {
@@ -69,6 +71,17 @@ export function PostEditor({ post, params = {}, onCreate, onPublish }: Props) {
   }, [postId]); // eslint-disable-line
   // #endregion
 
+  // #region [update Post State]
+  const updatePostState = (cb: (data: PostDetailEditable) => void) => {
+    queryUtils.post.getEdit.setData(
+      { id: post?.id ?? 0 },
+      produce((data) => {
+        if (data) cb(data);
+      })
+    );
+  };
+  // #endregion
+
   // #region [render loader]
   if (enableQuery && isLoading)
     return (
@@ -84,7 +97,7 @@ export function PostEditor({ post, params = {}, onCreate, onPublish }: Props) {
 
   // #region [providers]
   return (
-    <Context.Provider value={{ post: data, params, onCreate, onPublish }}>
+    <Context.Provider value={{ post: data, params, onCreate, onPublish, updatePostState }}>
       <PostImagesProvider>
         <PostEditorInner />
       </PostImagesProvider>
@@ -113,7 +126,7 @@ function PostEditorInner() {
       </div>
       {post && (
         <div className="flex flex-col gap-3 @md:w-3/12">
-          <PostEditSidebar />
+          <PostEditSidebar post={post} />
         </div>
       )}
     </div>

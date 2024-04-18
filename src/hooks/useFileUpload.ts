@@ -143,7 +143,6 @@ export function useFileUpload() {
 
   useEffect(() => {
     return () => {
-      console.log('reset');
       reset();
     };
   }, []);

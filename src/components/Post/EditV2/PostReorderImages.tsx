@@ -179,8 +179,6 @@ export function ReorderImagesButton() {
     }
   };
 
-  if (images.length <= 1) return null;
-
   return (
     <Button
       onClick={onClick}
