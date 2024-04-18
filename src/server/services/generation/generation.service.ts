@@ -404,6 +404,7 @@ const samplersToSchedulers: Record<Sampler, string> = {
 const baseModelToOrchestration: Record<BaseModelSetType, string | undefined> = {
   SD1: 'SD_1_5',
   SD2: undefined,
+  SD3: 'SD_3',
   SDXL: 'SDXL',
   SDXLDistilled: 'SDXL_Distilled',
   SCascade: 'SCascade',

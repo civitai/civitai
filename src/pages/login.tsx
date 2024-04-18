@@ -156,12 +156,13 @@ type Props = {
 export const getServerSideProps = createServerSideProps({
   useSession: true,
   resolver: async ({ session, ctx }) => {
-    const { reason } = ctx.query as { reason: string };
-
-    if (session && reason !== 'switch-accounts') {
+    if (session) {
+      const { callbackUrl, error, reason } = ctx.query;
+      const destination = new URL(typeof callbackUrl === 'string' ? callbackUrl : '/');
+      if (error) destination.searchParams.set('error', error as string);
       return {
         redirect: {
-          destination: '/',
+          destination: destination.toString(),
           permanent: false,
         },
       };
