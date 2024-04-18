@@ -195,9 +195,8 @@ export function createAuthOptions(): NextAuthOptions {
         async authorize(credentials) {
           if (!credentials) throw new Error('No credentials provided.');
 
-          const inputData = encryptedDataSchema.parse(credentials);
-
           try {
+            const inputData = encryptedDataSchema.parse(credentials);
             const userId = Number(civTokenDecrypt(inputData));
             const user = await getSessionUser({ userId });
             if (!user) throw new Error('No user found.');
