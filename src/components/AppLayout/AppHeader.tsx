@@ -881,7 +881,11 @@ export function AppHeader({
                     </Group>
                   </UnstyledButton>
                 ) : (
-                  <Burger opened={userMenuOpened} size="sm" />
+                  <Burger
+                    opened={userMenuOpened}
+                    onClick={() => setUserMenuOpened(true)}
+                    size="sm"
+                  />
                 )}
               </Menu.Target>
 

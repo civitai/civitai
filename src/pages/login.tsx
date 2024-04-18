@@ -25,6 +25,7 @@ import { SocialButton } from '~/components/Social/SocialButton';
 import { useTrackEvent } from '~/components/TrackView/track.utils';
 import { env } from '~/env/client.mjs';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { getBaseUrl } from '~/server/utils/url-helpers';
 import { LoginRedirectReason, loginRedirectReasons, trackedReasons } from '~/utils/login-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -158,14 +159,22 @@ export const getServerSideProps = createServerSideProps({
   resolver: async ({ session, ctx }) => {
     if (session) {
       const { callbackUrl, error, reason } = ctx.query;
-      const destination = new URL(typeof callbackUrl === 'string' ? callbackUrl : '/');
-      if (error) destination.searchParams.set('error', error as string);
-      return {
-        redirect: {
-          destination: destination.toString(),
-          permanent: false,
-        },
-      };
+
+      const destinationURL = new URL(
+        typeof callbackUrl === 'string' ? callbackUrl : '/',
+        getBaseUrl()
+      );
+      if (error) destinationURL.searchParams.set('error', error as string);
+      const destination = `${destinationURL.pathname}${destinationURL.search}${destinationURL.hash}`;
+
+      if (reason !== 'switch-accounts') {
+        return {
+          redirect: {
+            destination: destination.toString(),
+            permanent: false,
+          },
+        };
+      }
     }
 
     const providers = await getProviders();
