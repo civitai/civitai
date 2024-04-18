@@ -119,10 +119,17 @@ export function CardDecorationModal({ entityType, entityId, image, currentCosmet
 
   const { isDirty } = form.formState;
   const cosmetic = form.watch('cosmetic');
-  const items = userCosmetics?.contentDecorations.filter(({ data }) => data.url) ?? [];
+  const items =
+    userCosmetics?.contentDecorations.filter(
+      ({ data, forId, forType }) =>
+        data.url &&
+        // Ensure we only show cosmetics available for this item.
+        (!forId || (forId && forType && forId === entityId && forType === entityType))
+    ) ?? [];
   const selectedItem = items.find(
     (item) => item.id === cosmetic?.id && item.claimKey === cosmetic?.claimKey
   );
+  console.log(userCosmetics?.contentDecorations);
 
   return (
     <Modal

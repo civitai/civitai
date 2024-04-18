@@ -955,7 +955,7 @@ export const getUserCosmeticsHandler = async ({
     const coverImages = await getEntityCoverImage({ entities: inUseCosmeticEntities });
 
     const cosmetics = user.cosmetics.reduce(
-      (acc, { obtainedAt, equippedToId, equippedToType, claimKey, cosmetic }) => {
+      (acc, { obtainedAt, equippedToId, equippedToType, claimKey, cosmetic, forId, forType }) => {
         const { type, data, ...rest } = cosmetic;
         const sharedData = {
           ...rest,
@@ -965,6 +965,8 @@ export const getUserCosmeticsHandler = async ({
           entityImage: coverImages.find(
             (x) => x.entityId === equippedToId && x.entityType === equippedToType
           ),
+          forId,
+          forType,
         };
 
         if (type === CosmeticType.Badge)

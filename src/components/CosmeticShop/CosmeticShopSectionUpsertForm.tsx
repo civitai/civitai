@@ -13,7 +13,10 @@ import {
 import { z } from 'zod';
 import { CosmeticShopSectionGetById } from '~/types/router';
 import { useMutateCosmeticShop } from '~/components/CosmeticShop/cosmetic-shop.util';
-import { upsertCosmeticShopSectionInput } from '~/server/schema/cosmetic-shop.schema';
+import {
+  CosmeticShopSectionMeta,
+  upsertCosmeticShopSectionInput,
+} from '~/server/schema/cosmetic-shop.schema';
 import { constants } from '~/server/common/constants';
 
 const formSchema = upsertCosmeticShopSectionInput.extend({
@@ -33,6 +36,10 @@ export const CosmeticShopSectionUpsertForm = ({ section, onSuccess, onCancel }: 
     schema: formSchema,
     defaultValues: {
       ...section,
+      meta: {
+        hideTitle: false,
+        ...((section?.meta ?? {}) as CosmeticShopSectionMeta),
+      },
       items:
         (section?.items ?? []).map((item) => ({
           id: item.shopItem.id,

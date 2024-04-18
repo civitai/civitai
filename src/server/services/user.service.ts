@@ -671,6 +671,8 @@ export const getUserCosmetics = ({
           obtainedAt: true,
           equippedToId: true,
           equippedToType: true,
+          forId: true,
+          forType: true,
           claimKey: true,
           cosmetic: {
             select: {

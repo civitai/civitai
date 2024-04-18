@@ -69,11 +69,32 @@ export async function equipCosmeticToEntity({
   equippedToId,
   userId,
 }: EquipCosmeticInput & { userId: number }) {
-  const userCosmetics = await dbWrite.userCosmetic.findMany({
+  const userCosmetic = await dbWrite.userCosmetic.findFirst({
     where: { userId, cosmeticId, claimKey },
-    select: { obtainedAt: true, equippedToId: true, cosmetic: { select: { type: true } } },
+    select: {
+      obtainedAt: true,
+      equippedToId: true,
+      forId: true,
+      forType: true,
+      cosmetic: { select: { type: true } },
+    },
   });
-  if (!userCosmetics.length) throw new Error("You don't have that cosmetic");
+
+  if (!userCosmetic) throw new Error("You don't have that cosmetic");
+  if (
+    userCosmetic.forId &&
+    userCosmetic.forType &&
+    userCosmetic.forId !== equippedToId &&
+    userCosmetic.forType !== equippedToType
+  ) {
+    throw new Error('You cannot equip this cosmetic to this entity');
+  }
+
+  // Unquip whaetver version of this cosmetic is equipped on that card
+  await dbWrite.userCosmetic.updateMany({
+    where: { userId, cosmeticId, equippedToId, equippedToType },
+    data: { equippedToId: null, equippedToType: null, equippedAt: null },
+  });
 
   const updated = await dbWrite.userCosmetic.updateMany({
     where: { userId, cosmeticId, claimKey },
