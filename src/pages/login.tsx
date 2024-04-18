@@ -169,7 +169,7 @@ export const getServerSideProps = createServerSideProps({
 
       return {
         redirect: {
-          destination: destination.toString(),
+          destination,
           permanent: false,
         },
       };
