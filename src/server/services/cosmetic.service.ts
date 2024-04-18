@@ -64,18 +64,19 @@ export const getPaginatedCosmetics = async (input: GetPaginatedCosmeticsInput) =
 
 export async function equipCosmeticToEntity({
   cosmeticId,
+  claimKey,
   equippedToType,
   equippedToId,
   userId,
 }: EquipCosmeticInput & { userId: number }) {
   const userCosmetics = await dbWrite.userCosmetic.findMany({
-    where: { userId, cosmeticId },
+    where: { userId, cosmeticId, claimKey },
     select: { obtainedAt: true, equippedToId: true, cosmetic: { select: { type: true } } },
   });
   if (!userCosmetics.length) throw new Error("You don't have that cosmetic");
 
   const updated = await dbWrite.userCosmetic.updateMany({
-    where: { userId, cosmeticId },
+    where: { userId, cosmeticId, claimKey },
     data: { equippedToId, equippedToType, equippedAt: new Date() },
   });
 
@@ -86,9 +87,10 @@ export async function unequipCosmetic({
   cosmeticId,
   equippedToId,
   userId,
+  claimKey,
 }: EquipCosmeticInput & { userId: number }) {
   return dbWrite.userCosmetic.updateMany({
-    where: { cosmeticId, equippedToId, userId },
+    where: { cosmeticId, equippedToId, userId, claimKey },
     data: { equippedToId: null, equippedToType: null, equippedAt: null },
   });
 }
