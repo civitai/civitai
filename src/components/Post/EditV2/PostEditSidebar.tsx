@@ -9,7 +9,7 @@ import { useRouter } from 'next/router';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { CollectionType } from '@prisma/client';
 import { formatDate } from '~/utils/date-helpers';
-import { useEffect, useRef } from 'react';
+import { useRef } from 'react';
 import { IconClock } from '@tabler/icons-react';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { ReorderImagesButton } from '~/components/Post/EditV2/PostReorderImages';

@@ -21,7 +21,9 @@ import { isDefined } from '~/utils/type-guards';
 import { usePostEditContext } from '~/components/Post/EditV2/PostEditor';
 
 export function PostReorderImages() {
-  const images = usePostImagesContext((state) => state.images);
+  const images = usePostImagesContext((state) =>
+    [...state.images].sort((a, b) => (a.index ?? 0) - (b.index ?? 0))
+  );
   const setImages = usePostImagesContext((state) => state.setImages);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));

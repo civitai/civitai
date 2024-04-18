@@ -23,15 +23,15 @@ import { usePostImagesContext } from '~/components/Post/EditV2/PostImagesProvide
 type ControlledImage = Partial<PostDetailEditable['images'][number]> & MediaUploadOnCompleteProps;
 
 export function PostImageCards() {
-  const images = usePostImagesContext((state) => state.images);
+  const images = usePostImagesContext((state) =>
+    [...state.images].sort((a, b) => (a.index ?? 0) - (b.index ?? 0))
+  );
   if (!images.length) return null;
   return (
     <div className="flex flex-col gap-3 ">
-      {[...images]
-        .sort((a, b) => (a.index ?? 0) - (b.index ?? 0))
-        .map((image) => (
-          <PostImageCard key={image.url} image={image} />
-        ))}
+      {images.map((image) => (
+        <PostImageCard key={image.url} image={image} />
+      ))}
     </div>
   );
 }
