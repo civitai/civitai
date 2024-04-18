@@ -9,6 +9,7 @@ import {
   CloseButton,
   Group,
   Button,
+  Loader,
 } from '@mantine/core';
 import { CosmeticType } from '@prisma/client';
 import { useRouter } from 'next/router';
@@ -17,6 +18,7 @@ import { useMutateCosmeticShop } from '~/components/CosmeticShop/cosmetic-shop.u
 import {
   useEquipContentDecoration,
   useEquipProfileDecoration,
+  useQueryUserCosmetics,
 } from '~/components/Cosmetics/cosmetics.util';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -81,9 +83,17 @@ export const CosmeticShopItemPurchaseCompleteModal = ({
           <CosmeticPreview cosmetic={cosmetic} />
         </Box>
 
-        <Button radius="xl" mx="auto" onClick={handleApplyDecoration} loading={isLoading}>
-          Apply decoration
-        </Button>
+        <Stack spacing={4}>
+          {cosmetic.type === CosmeticType.ContentDecoration && (
+            <Text size="xs" color="dimmed" align="center">
+              This decoration is now available to apply to your content. You can select which piece
+              to apply it on from your profile.
+            </Text>
+          )}
+          <Button radius="xl" mx="auto" onClick={handleApplyDecoration} loading={isLoading}>
+            {cosmetic.type === CosmeticType.ContentDecoration ? 'Go to my profile' : 'Apply now'}
+          </Button>
+        </Stack>
       </Stack>
     </Modal>
   );
@@ -94,6 +104,12 @@ export const CosmeticShopItemPreviewModal = ({ shopItem }: Props) => {
   const { cosmetic } = shopItem;
   const { purchaseShopItem, purchasingShopItem } = useMutateCosmeticShop();
   const { classes } = useStyles();
+  const { data: userCosmetics, isLoading } = useQueryUserCosmetics();
+  const { equip, isLoading: isEquipping } = useEquipProfileDecoration();
+  const hasCosmetic = Object.values(userCosmetics ?? {})
+    .flat()
+    .some(({ id }) => id === cosmetic.id);
+  const canPurchase = cosmetic.type === CosmeticType.ContentDecoration || !hasCosmetic;
 
   const handlePurchaseShopItem = async () => {
     try {
@@ -110,6 +126,18 @@ export const CosmeticShopItemPreviewModal = ({ shopItem }: Props) => {
     } catch (error) {
       // Do nothing, handled within the hook
     }
+  };
+
+  const handleEquipDecoration = async () => {
+    await equip({
+      id: cosmetic.id,
+    });
+
+    showSuccessNotification({
+      message: 'Your cosmetic has been applied to your profile!',
+    });
+
+    dialog.onClose();
   };
 
   return (
@@ -137,15 +165,41 @@ export const CosmeticShopItemPreviewModal = ({ shopItem }: Props) => {
             <Text className={classes.text} mt="auto" weight="bold" size="lg">
               {shopItem.title}
             </Text>
-            <BuzzTransactionButton
-              disabled={purchasingShopItem}
-              loading={purchasingShopItem}
-              buzzAmount={shopItem.unitAmount}
-              radius="xl"
-              onPerformTransaction={handlePurchaseShopItem}
-              label="Purchase"
-              color="yellow.7"
-            />
+            {isLoading && (
+              <Center>
+                <Loader variant="bars" />
+              </Center>
+            )}
+            {!isLoading && (
+              <>
+                {canPurchase ? (
+                  <BuzzTransactionButton
+                    disabled={purchasingShopItem}
+                    loading={purchasingShopItem}
+                    buzzAmount={shopItem.unitAmount}
+                    radius="xl"
+                    onPerformTransaction={handlePurchaseShopItem}
+                    label="Purchase"
+                    color="yellow.7"
+                  />
+                ) : (
+                  <Stack spacing={4}>
+                    <Button radius="xl" onClick={handleEquipDecoration} loading={isEquipping}>
+                      Equip now
+                    </Button>
+                    <Text size="sm" align="center" color="dimmed">
+                      You already own this cosmetic
+                    </Text>
+                  </Stack>
+                )}
+              </>
+            )}
+            {cosmetic.type === CosmeticType.ContentDecoration && (
+              <Text size="xs" color="dimmed">
+                Decorations can be applied to a single piece of content. additional copies are
+                needed for each additional piece of content.
+              </Text>
+            )}
           </Stack>
         </Grid.Col>
         <Grid.Col span={12} md={7} className={classes.preview}>

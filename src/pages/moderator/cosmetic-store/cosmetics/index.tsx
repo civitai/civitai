@@ -194,6 +194,14 @@ export const CosmeticPreview = ({
 
       return (
         <Stack>
+          <Stack spacing={0}>
+            <Text weight="bold" align="center">
+              Preview
+            </Text>
+            <Text size="sm" color="dimmed" align="center">
+              You can apply this cosmetic to any image, model, article or post you own.
+            </Text>
+          </Stack>
           <Box style={{ transform: 'scale(0.75)' }}>
             <PreviewCard
               decoration={cosmetic as ContentDecorationCosmetic}
@@ -223,7 +231,7 @@ export const CosmeticPreview = ({
                 </UnstyledButton>
               );
             })}
-          </Group>
+          </Group>{' '}
         </Stack>
       );
     default:
