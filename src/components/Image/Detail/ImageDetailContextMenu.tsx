@@ -243,7 +243,7 @@ function ReportCsamButton({ children, onSuccess }: ButtonCallbackProps) {
   const onClick = () => {
     if (!image) return;
     if (csamReports) router.push(`/moderator/csam/${image.user.id}?imageId=${image.id}`);
-    else mutate([image.id]);
+    else mutate({ imageIds: [image.id] });
   };
 
   return children({ onClick, isLoading });
