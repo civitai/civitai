@@ -13,7 +13,6 @@ import { openConfirmModal } from '@mantine/modals';
 import { CosmeticEntity } from '@prisma/client';
 import { IconArrowRight } from '@tabler/icons-react';
 import { truncate } from 'lodash';
-import { CSSProperties } from 'react';
 import { z } from 'zod';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 
@@ -28,8 +27,9 @@ import { ImageProps } from '~/components/ImageViewer/ImageViewer';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
 import { Form, InputCosmeticSelect, useForm } from '~/libs/form';
 import { DEFAULT_EDGE_IMAGE_WIDTH, constants } from '~/server/common/constants';
-import { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
+import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+import { cosmeticInputSchema } from '~/server/schema/cosmetic.schema';
 
 const useStyles = createStyles((theme) => ({
   preview: {
@@ -62,35 +62,39 @@ const useStyles = createStyles((theme) => ({
 }));
 
 const schema = z.object({
-  cosmeticId: z.number().nullish(),
+  cosmetic: cosmeticInputSchema.nullish(),
 });
 
 export function CardDecorationModal({ entityType, entityId, image, currentCosmetic }: Props) {
   const dialog = useDialogContext();
-  const form = useForm({ schema, defaultValues: { cosmeticId: currentCosmetic?.id ?? null } });
+  const form = useForm({ schema, defaultValues: { cosmetic: currentCosmetic } });
   const { classes } = useStyles();
 
   const { data: userCosmetics, isInitialLoading } = useQueryUserCosmetics();
 
   const { equip, unequip, isLoading } = useEquipContentDecoration();
-  const handleSubmit = async ({ cosmeticId }: z.infer<typeof schema>) => {
-    const unequipping = currentCosmetic && !cosmeticId;
+  const handleSubmit = async ({ cosmetic }: z.infer<typeof schema>) => {
+    const unequipping = currentCosmetic && !cosmetic;
 
     if (unequipping && currentCosmetic) {
       await unequip({
         equippedToId: entityId,
         equippedToType: entityType,
         cosmeticId: currentCosmetic.id,
+        claimKey: currentCosmetic.claimKey,
       }).catch(() => null); // error is handled in the custom hook
       dialog.onClose();
       return;
     }
 
     async function completeSubmission() {
-      if (cosmeticId)
-        await equip({ equippedToId: entityId, equippedToType: entityType, cosmeticId }).catch(
-          () => null
-        ); // error is handled in the custom hook
+      if (cosmetic)
+        await equip({
+          equippedToId: entityId,
+          equippedToType: entityType,
+          cosmeticId: cosmetic.id,
+          claimKey: cosmetic.claimKey,
+        }).catch(() => null); // error is handled in the custom hook
 
       dialog.onClose();
     }
@@ -114,9 +118,11 @@ export function CardDecorationModal({ entityType, entityId, image, currentCosmet
   };
 
   const { isDirty } = form.formState;
-  const cosmeticId = form.watch('cosmeticId');
+  const cosmetic = form.watch('cosmetic');
   const items = userCosmetics?.contentDecorations.filter(({ data }) => data.url) ?? [];
-  const selectedItem = items.find((item) => item.id === cosmeticId);
+  const selectedItem = items.find(
+    (item) => item.id === cosmetic?.id && item.claimKey === cosmetic?.claimKey
+  );
 
   return (
     <Modal
@@ -138,7 +144,7 @@ export function CardDecorationModal({ entityType, entityId, image, currentCosmet
             ) : (
               <Stack>
                 <InputCosmeticSelect
-                  name="cosmeticId"
+                  name="cosmetic"
                   data={items}
                   shopUrl="/shop/cosmetic-shop"
                   gridProps={{
@@ -225,7 +231,7 @@ export type Props = {
   entityType: CosmeticEntity;
   entityId: number;
   image: Pick<ImageProps, 'id' | 'url' | 'width' | 'height' | 'meta'>;
-  currentCosmetic?: ContentDecorationCosmetic | null;
+  currentCosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
 };
 
 export const PreviewCard = ({

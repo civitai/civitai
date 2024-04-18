@@ -15,5 +15,13 @@ export type EquipCosmeticInput = z.infer<typeof equipCosmeticSchema>;
 export const equipCosmeticSchema = z.object({
   cosmeticId: z.number(),
   equippedToId: z.number(),
+  claimKey: z.string().min(1),
   equippedToType: z.nativeEnum(CosmeticEntity),
+});
+
+export type CosmeticInputSchema = z.infer<typeof cosmeticInputSchema>;
+export const cosmeticInputSchema = z.object({
+  id: z.number(),
+  claimKey: z.string(),
+  // data: z.object({}).passthrough().nullable(),
 });

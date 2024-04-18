@@ -39,6 +39,7 @@ import {
   NamePlateCosmetic,
   ProfileBackgroundCosmetic,
   ContentDecorationCosmetic,
+  WithClaimKey,
 } from '~/server/selectors/cosmetic.selector';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import {
@@ -954,11 +955,12 @@ export const getUserCosmeticsHandler = async ({
     const coverImages = await getEntityCoverImage({ entities: inUseCosmeticEntities });
 
     const cosmetics = user.cosmetics.reduce(
-      (acc, { obtainedAt, equippedToId, equippedToType, cosmetic }) => {
+      (acc, { obtainedAt, equippedToId, equippedToType, claimKey, cosmetic }) => {
         const { type, data, ...rest } = cosmetic;
         const sharedData = {
           ...rest,
           obtainedAt,
+          claimKey,
           inUse: !!equippedToId,
           entityImage: coverImages.find(
             (x) => x.entityId === equippedToId && x.entityType === equippedToType
@@ -988,11 +990,11 @@ export const getUserCosmeticsHandler = async ({
         return acc;
       },
       {
-        badges: [] as BadgeCosmetic[],
-        nameplates: [] as NamePlateCosmetic[],
-        profileDecorations: [] as ContentDecorationCosmetic[],
-        profileBackground: [] as ProfileBackgroundCosmetic[],
-        contentDecorations: [] as ContentDecorationCosmetic[],
+        badges: [] as WithClaimKey<BadgeCosmetic>[],
+        nameplates: [] as WithClaimKey<NamePlateCosmetic>[],
+        profileDecorations: [] as WithClaimKey<ContentDecorationCosmetic>[],
+        profileBackground: [] as WithClaimKey<ProfileBackgroundCosmetic>[],
+        contentDecorations: [] as WithClaimKey<ContentDecorationCosmetic>[],
       }
     );
 

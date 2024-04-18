@@ -12,7 +12,7 @@ import {
   createStyles,
 } from '@mantine/core';
 import { IconBuildingStore } from '@tabler/icons-react';
-import { BadgeCosmetic } from '~/server/selectors/cosmetic.selector';
+import { BadgeCosmetic, SimpleCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import Link from 'next/link';
 
@@ -37,7 +37,7 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
-export function CosmeticSelect({
+export function CosmeticSelect<TData extends CosmeticItem>({
   data,
   value = null,
   onChange,
@@ -45,11 +45,11 @@ export function CosmeticSelect({
   nothingFound,
   shopUrl,
   ...props
-}: Props) {
+}: Props<TData>) {
   const { classes, cx } = useStyles();
 
-  const handleClick = (id: number | null) => {
-    onChange?.(id);
+  const handleClick = (value: TData | null) => {
+    onChange?.(value);
   };
 
   const hasItems = data.length > 0;
@@ -80,13 +80,13 @@ export function CosmeticSelect({
         )}
         {hasItems ? (
           data.map((item) => {
-            const data = item.data ?? {};
+            const data = item.data as BadgeCosmetic['data'];
             const url = data.url ?? '';
-            const isSelected = value === item.id;
+            const isSelected = value && value.id === item.id && value.claimKey === item.claimKey;
 
             return (
               <Indicator
-                key={item.id}
+                key={`${item.id}:${item.claimKey}`}
                 label="In use"
                 position="top-center"
                 disabled={!item.inUse}
@@ -99,7 +99,7 @@ export function CosmeticSelect({
                 <UnstyledButton
                   className={cx(classes.decoration, isSelected && classes.selected)}
                   p="sm"
-                  onClick={() => handleClick(!isSelected ? item.id : null)}
+                  onClick={() => handleClick(!isSelected ? item : null)}
                 >
                   <EdgeMedia src={url} width={data.animated ? 'original' : 64} />
                 </UnstyledButton>
@@ -124,11 +124,14 @@ export function CosmeticSelect({
   );
 }
 
-type Props = Omit<InputWrapperProps, 'onChange' | 'children'> & {
-  data: Pick<BadgeCosmetic, 'id' | 'data' | 'name' | 'inUse'>[];
+type CosmeticItem = WithClaimKey<
+  Pick<SimpleCosmetic, 'id' | 'data' | 'equippedToId' | 'equippedToType' | 'inUse' | 'obtainedAt'>
+>;
+type Props<TData extends CosmeticItem> = Omit<InputWrapperProps, 'onChange' | 'children'> & {
+  data: TData[];
   shopUrl?: string;
-  onChange?: (id: number | null) => void;
-  value?: number | null;
+  onChange?: (value: TData | null) => void;
+  value?: TData | null;
   nothingFound?: React.ReactNode;
   gridProps?: SimpleGridProps;
 };

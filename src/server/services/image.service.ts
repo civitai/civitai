@@ -75,7 +75,7 @@ import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { nsfwBrowsingLevelsArray } from '~/shared/constants/browsingLevel.constants';
 import { getVotableTags2 } from '~/server/services/tag.service';
-import { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
+import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -514,7 +514,7 @@ type GetAllImagesRaw = {
   metadata: Prisma.JsonValue;
   baseModel?: string;
   availability: Availability;
-  cosmetic?: ContentDecorationCosmetic | null;
+  cosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
 };
 export type ImagesInfiniteModel = AsyncReturnType<typeof getAllImages>['items'][0];
 export const getAllImages = async ({
@@ -839,6 +839,7 @@ export const getAllImages = async ({
         SELECT
           c.id,
           c.data,
+          uc."claimKey",
           uc."equippedToId"
         FROM "UserCosmetic" uc
         JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
@@ -921,6 +922,7 @@ export const getAllImages = async ({
               (
                 SELECT jsonb_build_object(
                   'id', ic.id,
+                  'claimKey', ic."claimKey",
                   'data', ic.data
                 ) FROM "imageCosmetic" ic WHERE ic."equippedToId" = i.id
               ) as "cosmetic",
@@ -1034,7 +1036,7 @@ export const getAllImages = async ({
       baseModel?: string | null;
       availability?: Availability;
       nsfwLevel: NsfwLevel;
-      cosmetic?: ContentDecorationCosmetic | null;
+      cosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
     }
   > = rawImages
     .filter((x) => {
