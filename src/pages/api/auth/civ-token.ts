@@ -15,7 +15,7 @@ function encrypt(data: string): EncryptedDataSchema {
   return {
     iv: iv.toString(encoding),
     data: encrypted.toString(encoding),
-    signedAt: new Date().toString(),
+    signedAt: new Date().toISOString(),
   };
 }
 
