@@ -55,7 +55,6 @@ export function CivitaiSessionProvider({ children }: { children: React.ReactNode
   }, [data?.error]);
 
   useEffect(() => {
-    // console.log(data?.user?.id, data?.user?.email, data?.user?.username, data?.user?.image);
     const userId = data?.user?.id;
     const email = data?.user?.email;
     const username = data?.user?.username;
@@ -75,8 +74,6 @@ export function CivitaiSessionProvider({ children }: { children: React.ReactNode
 
     getToken().then((token) => {
       setAccounts((current) => {
-        // console.log('setting accounts', token);
-
         const old = { ...current };
         Object.keys(old).forEach((k) => {
           old[k]['active'] = false;
@@ -98,6 +95,7 @@ export function CivitaiSessionProvider({ children }: { children: React.ReactNode
   }, [data?.user?.id, setAccounts]);
 
   // TODO: this isn't quite right, it shouldn't reload if you're currently on the page
+  //  also, maybe only reload when the tab comes into focus
   useEffect(() => {
     const userId = data?.user?.id;
     if (!userId) return;
@@ -108,18 +106,6 @@ export function CivitaiSessionProvider({ children }: { children: React.ReactNode
       router.reload();
     }
   }, [accounts, data?.user?.id, router]);
-
-  // useEffect(() => {
-  //   const reloadFn = () => {
-  //     console.log('reload event');
-  //     router.reload();
-  //   };
-  //
-  //   addEventListener('account-swap', reloadFn);
-  //   return () => {
-  //     removeEventListener('account-swap', reloadFn);
-  //   };
-  // }, [router]);
 
   useEffect(() => {
     const onboarding = value?.onboarding;

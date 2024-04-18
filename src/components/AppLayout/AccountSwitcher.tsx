@@ -12,7 +12,7 @@ import {
   useMantineTheme,
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
-import { IconChevronLeft, IconCircleCheck } from '@tabler/icons-react';
+import { IconChevronLeft, IconCircleCheck, IconLogout } from '@tabler/icons-react';
 import { signIn } from 'next-auth/react';
 import { useRouter } from 'next/router';
 import React, { Dispatch, SetStateAction, useState } from 'react';
@@ -59,12 +59,17 @@ const ActionButtons = ({ logout, close }: { logout: () => Promise<void>; close: 
   };
 
   return (
-    <Stack spacing="xs">
+    <Stack spacing="xs" mb={4} px={4}>
       <Button variant="light" loading={waiting} onClick={handleAdd}>
         {waiting ? 'Redirecting...' : 'Add Account'}
       </Button>
       {/* TODO when logging out this way, log back into another existing account */}
-      <Button variant="light" color="grape" onClick={() => logout()}>
+      {/* TODO also add "log out all" option */}
+      <Button
+        variant="default"
+        leftIcon={<IconLogout stroke={1.5} size={18} />}
+        onClick={() => logout()}
+      >
         Logout
       </Button>
     </Stack>
@@ -130,7 +135,6 @@ export const AccountSwitcher = ({
 
   const swapAccount = async ({ token }: CivitaiAccount) => {
     await signIn('account-switch', { callbackUrl: router.asPath, ...token });
-    // dispatchEvent(new CustomEvent('account-swap'));
   };
 
   if (inMenu) {

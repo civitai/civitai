@@ -986,7 +986,7 @@ export function AppHeader({
                     // ref={ref}
                   >
                     {userSwitching ? (
-                      // maybe move this to account switcher
+                      // TODO maybe move this to account switcher
                       <ScrollArea.Autosize maxHeight={'calc(100dvh - 135px)'}>
                         <AccountSwitcher
                           inMenu={false}

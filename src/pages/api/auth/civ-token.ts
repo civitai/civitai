@@ -33,7 +33,6 @@ export default AuthedEndpoint(async function handler(req, res, user) {
 
   try {
     const token = encrypt(user.id.toString());
-    // console.log(civTokenDecrypt(token));
     return res.status(200).json({ token });
   } catch (error: unknown) {
     res.status(500).send(error);

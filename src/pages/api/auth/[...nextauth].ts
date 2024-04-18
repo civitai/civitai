@@ -171,7 +171,7 @@ export function createAuthOptions(): NextAuthOptions {
         sendVerificationRequest,
         from: env.EMAIL_FROM,
       }),
-      // TODO remove this from getproviders list
+      // TODO do we need to remove this from getproviders() list?
       CredentialsProvider({
         id: 'account-switch',
         name: 'Account Switch',
@@ -287,11 +287,7 @@ async function sendVerificationRequest({
   identifier: to,
   url,
   theme,
-}: // token,
-SendVerificationRequestParams) {
-  // console.log({ url, token });
-  // for url, replace token
-
+}: SendVerificationRequestParams) {
   const emailDomain = to.split('@')[1];
   if (blockedDomains.includes(emailDomain)) {
     throw new Error(`Email domain ${emailDomain} is not allowed`);
