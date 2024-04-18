@@ -254,9 +254,6 @@ export default function CosmeticShopMain() {
                           <Title order={2} className={classes.sectionTitle}>
                             {section.title}
                           </Title>
-                          <Button color="gray" radius="xl" className={classes.hideMobile}>
-                            View All <IconArrowUpRight />
-                          </Button>
                         </Group>
                       </Stack>
                     </Box>
