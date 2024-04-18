@@ -35,6 +35,11 @@ export const getAllCosmeticShopSections = z.object({
   archived: z.boolean().optional(),
 });
 
+export type CosmeticShopSectionMeta = z.infer<typeof cosmeticShopSectionMeta>;
+export const cosmeticShopSectionMeta = z.object({
+  hideTitle: z.boolean().optional(),
+});
+
 export type UpsertCosmeticShopSectionInput = z.infer<typeof upsertCosmeticShopSectionInput>;
 export const upsertCosmeticShopSectionInput = z.object({
   id: z.number().optional(),
@@ -43,6 +48,7 @@ export const upsertCosmeticShopSectionInput = z.object({
   placement: z.number().optional(),
   items: z.array(z.number()).optional(),
   image: comfylessImageSchema.nullish(),
+  meta: cosmeticShopSectionMeta.optional(),
 });
 
 export type UpdateCosmeticShopSectionsOrderInput = z.infer<

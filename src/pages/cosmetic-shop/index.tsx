@@ -50,6 +50,8 @@ import { CosmeticSample } from '~/pages/moderator/cosmetic-store/cosmetics';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { CosmeticShopItemPreviewModal } from '~/components/CosmeticShop/CosmeticShopItemPreviewModal';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { CosmeticShopSectionMeta } from '~/server/schema/cosmetic-shop.schema';
 
 const buildBudgets = Object.keys(BuildBudget) as BuildBudget[];
 const processors = ['AMD', 'Intel'] as const;
@@ -80,13 +82,9 @@ const useStyles = createStyles((theme) => ({
   },
 
   sectionHeaderContainerWithBackground: {
-    height: 0,
-    paddingBottom: `${(constants.cosmeticShop.sectionImageAspectRatio * 100).toFixed(3)}%`,
+    height: 250,
     background: 'transparent',
-
-    [theme.fn.smallerThan('sm')]: {
-      paddingBottom: `${(constants.cosmeticShop.sectionImageMobileAspectRatio * 100).toFixed(3)}%`,
-    },
+    borderRadius: theme.radius.md,
   },
 
   backgroundImage: {
@@ -104,10 +102,19 @@ const useStyles = createStyles((theme) => ({
     zIndex: 1,
     width: '100%',
     height: '100%',
+    top: 0,
+    left: 0,
   },
 
   sectionTitle: {
     color: theme.colorScheme === 'dark' ? theme.white : theme.black,
+    width: '100%',
+    backdropFilter: 'blur(10px)',
+    background:
+      theme.colorScheme === 'dark'
+        ? theme.fn.rgba(theme.colors.dark[9], 0.3)
+        : theme.fn.rgba(theme.colors.gray[0], 0.3),
+    padding: theme.spacing.lg,
     [theme.fn.smallerThan('sm')]: {
       fontSize: 18,
     },
@@ -221,6 +228,7 @@ export default function CosmeticShopMain() {
           ) : cosmeticShopSections ? (
             cosmeticShopSections.map((section) => {
               const { image, items } = section;
+              const meta = section.meta as CosmeticShopSectionMeta;
 
               return (
                 <Stack key={section.id} className={classes.section}>
@@ -230,33 +238,27 @@ export default function CosmeticShopMain() {
                     })}
                   >
                     {image && (
-                      <ImageCSSAspectRatioWrap
-                        aspectRatio={
-                          isMobile
-                            ? constants.cosmeticShop.sectionImageMobileAspectRatio
-                            : constants.cosmeticShop.sectionImageAspectRatio
-                        }
-                        style={{ borderRadius: 0 }}
-                        className={classes.backgroundImage}
-                      >
-                        <ImagePreview
-                          image={image}
-                          edgeImageProps={{ width: 450 }}
-                          radius="md"
-                          style={{ width: '100%', height: '100%' }}
-                          aspectRatio={0}
-                        />
-                      </ImageCSSAspectRatioWrap>
+                      <EdgeMedia
+                        src={image.url}
+                        width={450}
+                        style={{
+                          objectFit: 'cover',
+                          objectPosition: 'center',
+                          width: '100%',
+                          height: '100%',
+                          maxWidth: '100%',
+                        }}
+                      />
                     )}
-                    <Box className={cx({ [classes.sectionHeaderContentWrap]: !!image })}>
-                      <Stack p="md" mih="100%" justify="center" style={{ flexGrow: 1 }}>
-                        <Group position="apart">
-                          <Title order={2} className={classes.sectionTitle}>
+                    {!meta?.hideTitle && (
+                      <Box className={cx({ [classes.sectionHeaderContentWrap]: !!image })}>
+                        <Stack mih="100%" justify="center" style={{ flexGrow: 1 }}>
+                          <Title order={2} className={classes.sectionTitle} align="center">
                             {section.title}
                           </Title>
-                        </Group>
-                      </Stack>
-                    </Box>
+                        </Stack>
+                      </Box>
+                    )}
                   </Box>
 
                   <Stack>

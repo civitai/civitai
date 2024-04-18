@@ -3,6 +3,7 @@ import React from 'react';
 
 import {
   Form,
+  InputCheckbox,
   InputRTE,
   InputSectionItems,
   InputSimpleImageUpload,
@@ -77,6 +78,11 @@ export const CosmeticShopSectionUpsertForm = ({ section, onSuccess, onCancel }: 
             label="Title"
             description="This title will be shown in the shop. It can be different from the cosmetic's original name"
             withAsterisk
+          />
+          <InputCheckbox
+            name="meta.hideTitle"
+            label="Hide Title"
+            description="Hides the title from the shop section. Useful if the image already contains the title"
           />
           <InputRTE
             name="description"

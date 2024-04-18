@@ -129,6 +129,7 @@ export const getShopSections = async (input: GetAllCosmeticShopSections) => {
       title: true,
       description: true,
       placement: true,
+      meta: true,
       image: {
         select: imageSelect,
       },
@@ -301,6 +302,7 @@ export const getShopSectionsWithItems = async () => {
       title: true,
       description: true,
       placement: true,
+      meta: true,
       image: {
         select: imageSelect,
       },
@@ -318,6 +320,20 @@ export const getShopSectionsWithItems = async () => {
         where: {
           shopItem: {
             archivedAt: null,
+            OR: [
+              {
+                availableFrom: {
+                  gt: new Date(),
+                },
+                availableTo: {
+                  lt: new Date(),
+                },
+              },
+              {
+                availableFrom: null,
+                availableTo: null,
+              },
+            ],
           },
         },
         take: 8,

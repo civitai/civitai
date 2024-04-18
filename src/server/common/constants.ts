@@ -310,10 +310,9 @@ export const constants = {
     },
   },
   cosmeticShop: {
-    sectionImageAspectRatio: 1 / 10,
-    sectionImageMobileAspectRatio: 1 / 4,
-    sectionImageHeight: 400,
-    sectionImageWidth: 1600,
+    sectionImageAspectRatio: 250 / 1288,
+    sectionImageHeight: 250,
+    sectionImageWidth: 1288,
   },
 } as const;
 export const activeBaseModels = constants.baseModels.filter(
