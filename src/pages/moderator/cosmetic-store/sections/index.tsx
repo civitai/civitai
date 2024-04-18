@@ -236,6 +236,7 @@ export default function CosmeticStoreSections() {
                                 {section.title}
                               </Text>
                               <Badge>{section._count.items} Items in section</Badge>
+                              {!section.published && <Badge color="yellow">Unpublished</Badge>}
                             </Group>
                             {section.description && (
                               <ContentClamp maxHeight={200}>

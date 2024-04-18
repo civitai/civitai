@@ -130,6 +130,7 @@ export const getShopSections = async (input: GetAllCosmeticShopSections) => {
       description: true,
       placement: true,
       meta: true,
+      published: true,
       image: {
         select: imageSelect,
       },
