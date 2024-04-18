@@ -35,6 +35,6 @@ export default AuthedEndpoint(async function handler(req, res, user) {
     const token = encrypt(user.id.toString());
     return res.status(200).json({ token });
   } catch (error: unknown) {
-    res.status(500).send(error);
+    return res.status(500).send(error);
   }
 });
