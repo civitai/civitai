@@ -156,11 +156,14 @@ type Props = {
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
-  resolver: async ({ session }) => {
+  resolver: async ({ session, ctx }) => {
     if (session) {
+      const { callbackUrl, error } = ctx.query;
+      const destination = new URL(typeof callbackUrl === 'string' ? callbackUrl : '/');
+      if (error) destination.searchParams.set('error', error as string);
       return {
         redirect: {
-          destination: '/',
+          destination: destination.toString(),
           permanent: false,
         },
       };
