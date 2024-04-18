@@ -18,6 +18,8 @@ const simpleCosmetic = Prisma.validator<Prisma.CosmeticDefaultArgs>()({
 export type SimpleCosmetic = Prisma.CosmeticGetPayload<typeof simpleCosmetic> & {
   equippedToId?: number | null;
   equippedToType?: CosmeticEntity | null;
+  forId?: number | null;
+  forType?: CosmeticEntity | null;
   obtainedAt?: Date;
   inUse?: boolean;
 };
