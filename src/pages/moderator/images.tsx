@@ -564,7 +564,7 @@ function ModerationControls({
       const userIds = Object.keys(userImages);
       router.push(`/moderator/csam/${userIds.join(',')}`);
     } else {
-      createCsamReport.mutate(selected);
+      createCsamReport.mutate({ imageIds: selected });
     }
   };
 
