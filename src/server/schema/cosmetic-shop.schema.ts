@@ -48,6 +48,7 @@ export const upsertCosmeticShopSectionInput = z.object({
   placement: z.number().optional(),
   items: z.array(z.number()).optional(),
   image: comfylessImageSchema.nullish(),
+  published: z.boolean().optional(),
   meta: cosmeticShopSectionMeta.optional(),
 });
 

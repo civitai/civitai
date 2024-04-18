@@ -1990,6 +1990,8 @@ model UserCosmetic {
   claimKey       String          @default("claimed")
   equippedToId   Int?
   equippedToType CosmeticEntity?
+  forId          Int? // Locks the cosmetic to a specific entity
+  forType        CosmeticEntity?
 
   @@id([userId, cosmeticId, claimKey])
 }
@@ -2004,6 +2006,7 @@ model CosmeticShopSection {
   meta        Json                      @default("{}")
   imageId     Int?
   image       Image?                    @relation(fields: [imageId], references: [id], onDelete: SetNull)
+  published   Boolean                   @default(true)
   items       CosmeticShopSectionItem[]
 }
 

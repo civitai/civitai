@@ -84,6 +84,11 @@ export const CosmeticShopSectionUpsertForm = ({ section, onSuccess, onCancel }: 
             label="Hide Title"
             description="Hides the title from the shop section. Useful if the image already contains the title"
           />
+          <InputCheckbox
+            name="published"
+            label="Published"
+            description="Makes this section visible on the store"
+          />
           <InputRTE
             name="description"
             description="This description will be shown in the shop"

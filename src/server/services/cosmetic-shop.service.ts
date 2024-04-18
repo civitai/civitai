@@ -167,6 +167,8 @@ export const getSectionById = async ({ id }: GetByIdInput) => {
       image: {
         select: imageSelect,
       },
+      published: true,
+      meta: true,
       items: {
         select: {
           shopItem: {
@@ -344,6 +346,7 @@ export const getShopSectionsWithItems = async () => {
       items: {
         some: {},
       },
+      published: true,
     },
     orderBy: {
       placement: 'asc',
