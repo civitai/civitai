@@ -12,7 +12,7 @@ import {
   createStyles,
 } from '@mantine/core';
 import { IconBuildingStore } from '@tabler/icons-react';
-import { BadgeCosmetic, SimpleCosmetic } from '~/server/selectors/cosmetic.selector';
+import { BadgeCosmetic, SimpleCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import Link from 'next/link';
 
@@ -124,9 +124,8 @@ export function CosmeticSelect<TData extends CosmeticItem>({
   );
 }
 
-type CosmeticItem = Pick<
-  SimpleCosmetic,
-  'id' | 'claimKey' | 'data' | 'equippedToId' | 'equippedToType' | 'inUse' | 'obtainedAt'
+type CosmeticItem = WithClaimKey<
+  Pick<SimpleCosmetic, 'id' | 'data' | 'equippedToId' | 'equippedToType' | 'inUse' | 'obtainedAt'>
 >;
 type Props<TData extends CosmeticItem> = Omit<InputWrapperProps, 'onChange' | 'children'> & {
   data: TData[];

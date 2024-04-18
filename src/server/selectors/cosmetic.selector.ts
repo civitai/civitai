@@ -20,7 +20,6 @@ export type SimpleCosmetic = Prisma.CosmeticGetPayload<typeof simpleCosmetic> & 
   equippedToType?: CosmeticEntity | null;
   obtainedAt?: Date;
   inUse?: boolean;
-  claimKey: string;
 };
 
 export type BadgeCosmetic = Omit<SimpleCosmetic, 'data' | 'type'> & {
@@ -42,3 +41,5 @@ export type ContentDecorationCosmetic = BadgeCosmetic & {
 export type ProfileBackgroundCosmetic = BadgeCosmetic & {
   data: { textColor?: string; backgroundColor?: string; offset?: string };
 };
+
+export type WithClaimKey<T> = T & { claimKey: string };

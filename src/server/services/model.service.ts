@@ -79,7 +79,11 @@ import {
 } from './../schema/model.schema';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
-import { BadgeCosmetic, ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
+import {
+  BadgeCosmetic,
+  ContentDecorationCosmetic,
+  WithClaimKey,
+} from '~/server/selectors/cosmetic.selector';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
@@ -156,7 +160,7 @@ type ModelRaw = {
     deletedAt: Date | null;
     image: string;
   };
-  cosmetic?: ContentDecorationCosmetic | null;
+  cosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
 };
 
 export const getModelsRaw = async ({
@@ -587,6 +591,7 @@ export const getModelsRaw = async ({
         SELECT
           c.id,
           c.data,
+          uc."claimKey",
           uc."equippedToId"
         FROM "UserCosmetic" uc
         JOIN "Cosmetic" c ON uc."cosmeticId" = c.id
@@ -670,6 +675,7 @@ export const getModelsRaw = async ({
               (
                 SELECT jsonb_build_object(
                   'id', mc.id,
+                  'claimKey', mc."claimKey",
                   'data', mc.data
                 ) FROM "modelCosmetic" mc WHERE mc."equippedToId" = m.id
               ) as "cosmetic",

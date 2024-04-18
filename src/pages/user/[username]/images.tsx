@@ -102,7 +102,9 @@ export function UserImagesPage() {
   } = useImageQueryParams();
 
   const isSameUser =
-    !!currentUser && postgresSlugify(currentUser.username) === postgresSlugify(username);
+    !!currentUser &&
+    !!currentUser.username &&
+    postgresSlugify(currentUser.username) === postgresSlugify(username);
   const section = isSameUser ? query.section ?? 'images' : 'images';
 
   const viewingReactions = section === 'reactions';

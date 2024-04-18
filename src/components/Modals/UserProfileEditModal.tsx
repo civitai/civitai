@@ -56,6 +56,7 @@ import { userUpdateSchema } from '~/server/schema/user.schema';
 import { isEqual } from 'lodash-es';
 import { ProfilePictureAlert } from '../User/ProfilePictureAlert';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { cosmeticInputSchema } from '~/server/schema/cosmetic.schema';
 
 const schema = userProfileUpdateSchema.merge(
   userUpdateSchema
@@ -63,11 +64,13 @@ const schema = userProfileUpdateSchema.merge(
       badgeId: true,
       profilePicture: true,
       nameplateId: true,
-      profileDecorationId: true,
-      profileBackgroundId: true,
       leaderboardShowcase: true,
     })
-    .extend({ profileImage: z.string().nullish() })
+    .extend({
+      profileImage: z.string().nullish(),
+      profileDecoration: cosmeticInputSchema.nullish(),
+      profileBackground: cosmeticInputSchema.nullish(),
+    })
 );
 type FormDataSchema = z.infer<typeof schema>;
 
@@ -201,8 +204,8 @@ const { openModal, Modal } = createContextModal({
     const [
       badgeId,
       nameplateId,
-      profileDecorationId,
-      profileBackgroundId,
+      profileDecoration,
+      profileBackground,
       message,
       bio,
       location,
@@ -212,8 +215,8 @@ const { openModal, Modal } = createContextModal({
     ] = form.watch([
       'badgeId',
       'nameplateId',
-      'profileDecorationId',
-      'profileBackgroundId',
+      'profileDecoration',
+      'profileBackground',
       'message',
       'bio',
       'location',
@@ -230,7 +233,7 @@ const { openModal, Modal } = createContextModal({
       if (user && user?.profile) {
         const equippedCosmetics = user.cosmetics
           .filter((c) => !!c.equippedAt)
-          .map((c) => c.cosmetic);
+          .map(({ cosmetic, data, ...rest }) => ({ ...rest, ...cosmetic }));
         const selectedBadge = equippedCosmetics.find((c) => c.type === CosmeticType.Badge);
         const selectedNameplate = equippedCosmetics.find((c) => c.type === CosmeticType.NamePlate);
         const selectedProfileDecoration = equippedCosmetics.find(
@@ -260,8 +263,8 @@ const { openModal, Modal } = createContextModal({
             })),
           badgeId: selectedBadge?.id ?? null,
           nameplateId: selectedNameplate?.id ?? null,
-          profileDecorationId: selectedProfileDecoration?.id ?? null,
-          profileBackgroundId: selectedProfileBackground?.id ?? null,
+          profileDecoration: selectedProfileDecoration ?? null,
+          profileBackground: selectedProfileBackground ?? null,
           leaderboardShowcase: user?.leaderboardShowcase ?? null,
           profilePicture: user.profilePicture
             ? (user.profilePicture as FormDataSchema['profilePicture'])
@@ -282,8 +285,8 @@ const { openModal, Modal } = createContextModal({
         profilePicture: prevProfilePicture,
         badgeId: prevBadgeId,
         nameplateId: prevNameplateId,
-        profileDecorationId: prevProfileDecorationId,
-        profileBackgroundId: prevProfileBackgroundId,
+        profileDecoration: prevProfileDecorationId,
+        profileBackground: prevProfileBackgroundId,
         leaderboardShowcase: prevLeaderboardShowcase,
         ...prevProfileData
       } = previousData.current ?? {};
@@ -291,8 +294,8 @@ const { openModal, Modal } = createContextModal({
         profilePicture,
         badgeId,
         nameplateId,
-        profileDecorationId,
-        profileBackgroundId,
+        profileDecoration,
+        profileBackground,
         leaderboardShowcase,
         ...profileData
       } = data;
@@ -300,8 +303,8 @@ const { openModal, Modal } = createContextModal({
         prevProfilePicture?.url !== profilePicture?.url ||
         badgeId !== prevBadgeId ||
         nameplateId !== prevNameplateId ||
-        profileDecorationId !== prevProfileDecorationId ||
-        profileBackgroundId !== prevProfileBackgroundId ||
+        profileDecoration !== prevProfileDecorationId ||
+        profileBackground !== prevProfileBackgroundId ||
         leaderboardShowcase !== prevLeaderboardShowcase;
       const shouldUpdateProfile = !isEqual(prevProfileData, profileData);
 
@@ -312,8 +315,8 @@ const { openModal, Modal } = createContextModal({
           profilePicture,
           badgeId,
           nameplateId,
-          profileDecorationId,
-          profileBackgroundId,
+          profileDecorationId: profileDecoration?.id ?? null,
+          profileBackgroundId: profileBackground?.id ?? null,
           leaderboardShowcase,
         });
     };
@@ -378,13 +381,13 @@ const { openModal, Modal } = createContextModal({
               badge={badgeId ? badges.find((c) => c.id === badgeId) : undefined}
               nameplate={nameplateId ? nameplates.find((c) => c.id === nameplateId) : undefined}
               profileDecoration={
-                profileDecorationId
-                  ? decorations.find((c) => c.id === profileDecorationId)
+                profileDecoration
+                  ? decorations.find((c) => c.id === profileDecoration.id)
                   : undefined
               }
               profileBackground={
-                profileBackgroundId
-                  ? backgrounds.find((c) => c.id === profileBackgroundId)
+                profileBackground
+                  ? backgrounds.find((c) => c.id === profileBackground.id)
                   : undefined
               }
               profileImage={profilePicture?.url ?? profileImage}
@@ -393,13 +396,13 @@ const { openModal, Modal } = createContextModal({
               <InputProfileImageUpload name="profilePicture" label="Edit profile image" />
               <ProfilePictureAlert ingestion={user?.profilePicture?.ingestion} />
               <InputCosmeticSelect
-                name="profileDecorationId"
+                name="profileDecoration"
                 label="Profile decoration"
                 shopUrl="/cosmetic-shop"
                 data={decorations}
               />
               <InputCosmeticSelect
-                name="profileBackgroundId"
+                name="profileBackground"
                 label="Profile background"
                 shopUrl="/shop/profile-backgrounds"
                 nothingFound="Your earned backgrounds will appear here"
@@ -635,8 +638,8 @@ type ProfilePreviewProps = {
   badge?: BadgeCosmetic;
   nameplate?: NamePlateCosmetic;
   profileImage?: string | null;
-  profileDecoration?: ContentDecorationCosmetic;
-  profileBackground?: ProfileBackgroundCosmetic;
+  profileDecoration?: ContentDecorationCosmetic | null;
+  profileBackground?: ProfileBackgroundCosmetic | null;
 };
 export function ProfilePreview({
   user,

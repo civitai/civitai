@@ -42,7 +42,11 @@ import { postgresSlugify } from '~/utils/string-helpers';
 import { bustCacheTag, queryCache } from '~/server/utils/cache-helpers';
 import { env } from 'process';
 import { CacheTTL } from '../common/constants';
-import { BadgeCosmetic, ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
+import {
+  BadgeCosmetic,
+  ContentDecorationCosmetic,
+  WithClaimKey,
+} from '~/server/selectors/cosmetic.selector';
 
 type GetAllPostsRaw = {
   id: number;
@@ -67,7 +71,7 @@ type GetAllPostsRaw = {
     laughCount: number;
     cryCount: number;
   } | null;
-  cosmetic?: ContentDecorationCosmetic | null;
+  cosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
 };
 export type PostsInfiniteModel = AsyncReturnType<typeof getPostsInfinite>['items'][0];
 export const getPostsInfinite = async ({
@@ -262,6 +266,7 @@ export const getPostsInfinite = async ({
         SELECT
           c.id,
           c.data,
+          uc."claimKey",
           uc."equippedToId"
         FROM "UserCosmetic" uc
         JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
@@ -307,6 +312,7 @@ export const getPostsInfinite = async ({
               (
                 SELECT jsonb_build_object(
                   'id', pc.id,
+                  'claimKey', pc."claimKey",
                   'data', pc.data
                 ) FROM "postCosmetic" pc WHERE pc."equippedToId" = p.id
               ) as "cosmetic",

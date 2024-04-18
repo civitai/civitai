@@ -27,7 +27,7 @@ import { ImageProps } from '~/components/ImageViewer/ImageViewer';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
 import { Form, InputCosmeticSelect, useForm } from '~/libs/form';
 import { DEFAULT_EDGE_IMAGE_WIDTH, constants } from '~/server/common/constants';
-import { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
+import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { cosmeticInputSchema } from '~/server/schema/cosmetic.schema';
 
@@ -231,7 +231,7 @@ export type Props = {
   entityType: CosmeticEntity;
   entityId: number;
   image: Pick<ImageProps, 'id' | 'url' | 'width' | 'height' | 'meta'>;
-  currentCosmetic?: ContentDecorationCosmetic | null;
+  currentCosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
 };
 
 export const PreviewCard = ({

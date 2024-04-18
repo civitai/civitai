@@ -23,4 +23,5 @@ export type CosmeticInputSchema = z.infer<typeof cosmeticInputSchema>;
 export const cosmeticInputSchema = z.object({
   id: z.number(),
   claimKey: z.string(),
+  // data: z.object({}).passthrough().nullable(),
 });

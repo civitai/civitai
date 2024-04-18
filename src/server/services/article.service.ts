@@ -44,7 +44,7 @@ import { getFilesByEntity } from './file.service';
 import { imageSelect, profileImageSelect } from '~/server/selectors/image.selector';
 import { createImage, deleteImageById } from '~/server/services/image.service';
 import { ImageMetaProps } from '~/server/schema/image.schema';
-import { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
+import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 
 type ArticleRaw = {
   id: number;
@@ -93,7 +93,7 @@ type ArticleRaw = {
       source: CosmeticSource;
     };
   }[];
-  cosmetic?: ContentDecorationCosmetic | null;
+  cosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
 };
 
 export type ArticleGetAllRecord = Awaited<ReturnType<typeof getArticles>>['items'][number];
@@ -341,6 +341,7 @@ export const getArticles = async ({
           SELECT
             c.id,
             c.data,
+            uc."claimKey",
             uc."equippedToId"
           FROM "UserCosmetic" uc
           JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
@@ -435,6 +436,7 @@ export const getArticles = async ({
                 (
                   SELECT jsonb_build_object(
                     'id', ac.id,
+                    'claimKey', ac."claimKey",
                     'data', ac.data
                   ) FROM "articleCosmetic" ac WHERE ac."equippedToId" = a.id
                 ) as "cosmetic",
