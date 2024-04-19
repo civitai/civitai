@@ -19,6 +19,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { ImageMetaModal } from '~/components/Post/EditV2/ImageMetaModal';
 import { usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
+import { ImageTools } from '~/components/Post/EditV2/ImageTools';
 
 type ControlledImage = Partial<PostDetailEditable['images'][number]> & MediaUploadOnCompleteProps;
 
@@ -295,6 +296,12 @@ function PostImageCard({ image }: { image: ControlledImage }) {
               </div>
             </Alert>
           )}
+          {/* #endregion */}
+
+          {/*
+           // #region [tools]
+           */}
+          <ImageTools />
           {/* #endregion */}
         </div>
       </div>

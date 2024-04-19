@@ -96,6 +96,8 @@ export const isNotImageResource = (
 
 export type CreateImageSchema = z.infer<typeof createImageSchema>;
 export const createImageSchema = z.object({
+  entityId: z.number().optional(),
+  entityType: imageEntitiesSchema.optional(),
   id: z.number().optional(),
   name: z.string().nullish(),
   url: z.string().url().or(z.string().uuid()),
@@ -326,3 +328,15 @@ export type ReportCsamImagesInput = z.infer<typeof reportCsamImagesSchema>;
 export const reportCsamImagesSchema = z.object({
   imageIds: z.array(z.number()).min(1),
 });
+
+// #region [image tools]
+const baseImageToolSchema = z.object({
+  imageId: z.number(),
+  toolId: z.number(),
+});
+export type AddOrRemoveImageToolsOutput = z.output<typeof addOrRemoveImageToolsSchema>;
+export const addOrRemoveImageToolsSchema = baseImageToolSchema.array();
+
+export type UpdateImageToolsOutput = z.output<typeof updateImageTools>;
+export const updateImageTools = baseImageToolSchema.extend({ notes: z.string().nullish() }).array();
+// #endregion

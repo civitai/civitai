@@ -1208,7 +1208,7 @@ model Image {
   clubPostCoverImage ClubPost[]
   article            Article?
   purchasableRewards PurchasableReward[]
-  ImageTool          ImageTool[]
+  tools              ImageTool[]
 
   @@index([featuredAt])
   @@index([postId], type: Hash)
@@ -2900,11 +2900,11 @@ model RedeemableCode {
 }
 
 model Tool {
-  id        Int         @id @default(autoincrement())
-  name      String
-  icon      String?
-  createdAt DateTime    @default(now())
-  ImageTool ImageTool[]
+  id         Int         @id @default(autoincrement())
+  name       String
+  icon       String?
+  createdAt  DateTime    @default(now())
+  imageTools ImageTool[]
 }
 
 model ImageTool {

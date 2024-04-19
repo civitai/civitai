@@ -37,6 +37,8 @@ import {
   UpdateImageInput,
   ImageRatingReviewOutput,
   ReportCsamImagesInput,
+  AddOrRemoveImageToolsOutput,
+  UpdateImageToolsOutput,
 } from '~/server/schema/image.schema';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { articlesSearchIndex, imagesSearchIndex } from '~/server/search-index';
@@ -2768,3 +2770,73 @@ export async function getImageRatingRequests({
     items: results.map((item) => ({ ...item, tags: tags.filter((x) => x.imageId === item.id) })),
   };
 }
+
+// #region [image tools]
+async function authorizeImageToolsUse({
+  imageIds,
+  user,
+}: {
+  imageIds: number[];
+  user: SessionUser;
+}) {
+  if (!user.isModerator) {
+    const images = await dbRead.image.findMany({
+      where: { id: { in: imageIds }, userId: user.id },
+      select: { id: true },
+    });
+    const validatedIds = images.map((x) => x.id);
+    if (!imageIds.every((id) => validatedIds.includes(id))) throw throwAuthorizationError();
+  }
+}
+
+export async function addImageTools({
+  data,
+  user,
+}: {
+  data: AddOrRemoveImageToolsOutput;
+  user: SessionUser;
+}) {
+  await authorizeImageToolsUse({ imageIds: data.map((x) => x.imageId), user });
+  await dbWrite.imageTool.createMany({ data });
+}
+
+export async function removeImageTools({
+  data,
+  user,
+}: {
+  data: AddOrRemoveImageToolsOutput;
+  user: SessionUser;
+}) {
+  await authorizeImageToolsUse({ imageIds: data.map((x) => x.imageId), user });
+  const toolsByImage = data.reduce<Record<number, number[]>>((acc, { imageId, toolId }) => {
+    if (!acc[imageId]) acc[imageId] = [];
+    acc[imageId].push(toolId);
+    return acc;
+  }, {});
+
+  await dbWrite.$transaction(
+    Object.entries(toolsByImage).map(([imageId, toolIds]) =>
+      dbWrite.imageTool.deleteMany({ where: { imageId: Number(imageId), toolId: { in: toolIds } } })
+    )
+  );
+}
+
+export async function updateImageTools({
+  data,
+  user,
+}: {
+  data: UpdateImageToolsOutput;
+  user: SessionUser;
+}) {
+  await authorizeImageToolsUse({ imageIds: data.map((x) => x.imageId), user });
+  await dbWrite.$transaction(
+    data.map(({ imageId, toolId, notes }) =>
+      dbWrite.imageTool.update({
+        where: { imageId_toolId: { imageId, toolId } },
+        data: { notes },
+        select: { imageId: true },
+      })
+    )
+  );
+}
+// #endregion

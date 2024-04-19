@@ -22,6 +22,18 @@ export const editPostImageSelect = Prisma.validator<Prisma.ImageSelect>()({
   blockedFor: true,
   nsfwLevel: true,
   index: true,
+  tools: {
+    select: {
+      notes: true,
+      tool: {
+        select: {
+          id: true,
+          name: true,
+          icon: true,
+        },
+      },
+    },
+  },
 });
 
 type PostImageNavigationProps = { previewUrl?: string; objectUrl?: string };
@@ -29,21 +41,6 @@ export type PostImageEditSelect = Prisma.ImageGetPayload<typeof postImage>;
 export type PostImageEditProps = Omit<PostImageEditSelect, 'meta'> &
   PostImageNavigationProps & { meta: ImageMetaProps | null };
 const postImage = Prisma.validator<Prisma.ImageDefaultArgs>()({ select: editPostImageSelect });
-
-export const editPostSelect = Prisma.validator<Prisma.PostSelect>()({
-  id: true,
-  nsfwLevel: true,
-  title: true,
-  detail: true,
-  modelVersionId: true,
-  userId: true,
-  publishedAt: true,
-  images: {
-    orderBy: { index: 'asc' },
-    select: editPostImageSelect,
-  },
-  tags: { select: { tag: { select: simpleTagSelect } } },
-});
 
 export const postSelect = Prisma.validator<Prisma.PostSelect>()({
   id: true,
@@ -56,20 +53,3 @@ export const postSelect = Prisma.validator<Prisma.PostSelect>()({
   availability: true,
   tags: { select: { tag: { select: simpleTagSelect } } },
 });
-
-// export const postForHomePageSelector = Prisma.validator<Prisma.PostSelect>()({
-//   id: true,
-//   nsfwLevel: true,
-//   title: true,
-//   publishedAt: true,
-//   stats: {
-//     select: {
-//       commentCountAllTime: true,
-//       likeCountAllTime: true,
-//       dislikeCountAllTime: true,
-//       heartCountAllTime: true,
-//       laughCountAllTime: true,
-//       cryCountAllTime: true,
-//     },
-//   },
-// });
