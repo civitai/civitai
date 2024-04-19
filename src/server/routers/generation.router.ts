@@ -27,6 +27,7 @@ import {
 import {
   guardedProcedure,
   isFlagProtected,
+  moderatorProcedure,
   protectedProcedure,
   publicProcedure,
   router,
@@ -94,7 +95,7 @@ export const generationRouter = router({
     .use(edgeCacheIt({ ttl: CacheTTL.sm }))
     .query(() => getUnstableResources()),
   getUnavailableResources: publicProcedure.query(() => getUnavailableResources()),
-  toggleUnavailableResource: protectedProcedure
+  toggleUnavailableResource: moderatorProcedure
     .input(getByIdSchema)
     .mutation(({ input, ctx }) =>
       toggleUnavailableResource({ ...input, isModerator: ctx.user.isModerator })
