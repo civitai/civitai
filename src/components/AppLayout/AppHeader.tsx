@@ -34,7 +34,6 @@ import {
   IconCloudLock,
   IconClubs,
   IconCrown,
-  IconHeart,
   IconHistory,
   IconInfoSquareRounded,
   IconLink,
@@ -97,6 +96,7 @@ import { AutocompleteSearch } from '../AutocompleteSearch/AutocompleteSearch';
 import { openBuyBuzzModal } from '../Modals/BuyBuzzModal';
 import { GenerateButton } from '../RunStrategy/GenerateButton';
 import { UserBuzz } from '../User/UserBuzz';
+import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 
 const HEADER_HEIGHT = 70;
 
@@ -409,7 +409,7 @@ export function AppHeader({
         visible: !!currentUser,
         label: (
           <Group align="center" spacing="xs">
-            <IconHeart stroke={1.5} color={theme.colors.pink[theme.fn.primaryShade()]} />
+            <ThumbsUpIcon stroke={1.5} color={theme.colors.green[theme.fn.primaryShade()]} />
             Liked models
           </Group>
         ),
