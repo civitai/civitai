@@ -132,7 +132,7 @@ export function removeTags(str: string) {
   return stringWithoutExtraSpaces.trim();
 }
 
-export function postgresSlugify(str: string) {
+export function postgresSlugify(str?: string) {
   if (!str) return '';
 
   return str

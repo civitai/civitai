@@ -24,9 +24,7 @@ import { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { getInitials } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { EdgeMedia } from '../EdgeMedia/EdgeMedia';
-import { IconUser } from '@tabler/icons-react';
 import { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
-import { UserAvatarProfilePicture } from '~/components/UserAvatar/UserAvatarProfilePicture';
 
 const mapAvatarTextSize: Record<MantineSize, { textSize: MantineSize; subTextSize: MantineSize }> =
   {
