@@ -814,7 +814,14 @@ const renderLink: OptFn<(ir: IntermediateRepresentation) => ReactElement | undef
 
   if (externalRegex.test(modHref)) {
     return (
-      <Anchor href={modHref} target="_blank" rel="noopener noreferrer" variant="link" {...props}>
+      <Anchor
+        href={modHref}
+        target="_blank"
+        rel="noopener noreferrer"
+        variant="link"
+        sx={{ textDecoration: 'underline', color: 'unset' }}
+        {...props}
+      >
         {content}
       </Anchor>
     );
@@ -822,7 +829,7 @@ const renderLink: OptFn<(ir: IntermediateRepresentation) => ReactElement | undef
 
   return (
     <Link href={modHref} passHref {...props}>
-      <Text variant="link" component="a">
+      <Text variant="link" component="a" sx={{ textDecoration: 'underline', color: 'unset' }}>
         {content}
       </Text>
     </Link>
