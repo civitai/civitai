@@ -98,21 +98,20 @@ function MyApp(props: CustomAppProps) {
   const getLayout =
     Component.getLayout ??
     ((page: ReactElement) => {
-      const InnerLayout =
-        Component.options?.InnerLayout ?? Component.options?.innerLayout ?? InnerLayoutDefault;
+      const InnerLayout = Component.options?.InnerLayout ?? Component.options?.innerLayout;
       const withScrollArea = Component.options?.withScrollArea ?? true;
       return (
         <AppLayout>
-          <InnerLayout>
+          {/* <InnerLayout>
             {withScrollArea ? <ScrollAreaMain>{page}</ScrollAreaMain> : page}
-          </InnerLayout>
-          {/* {InnerLayout ? (
+          </InnerLayout> */}
+          {InnerLayout ? (
             <InnerLayout>{page}</InnerLayout>
           ) : withScrollArea ? (
             <ScrollAreaMain>{page}</ScrollAreaMain>
           ) : (
             page
-          )} */}
+          )}
         </AppLayout>
       );
     });

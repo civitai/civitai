@@ -10,7 +10,6 @@ import { FloatingActionButton2 } from '~/components/FloatingActionButton/Floatin
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NewsletterDialog } from '../NewsletterDialog/NewsletterDialog';
-import { ScrollAreaMain } from '~/components/ScrollArea/ScrollAreaMain';
 
 type AppLayoutProps = {
   innerLayout?: ({ children }: { children: React.ReactNode }) => React.ReactNode;

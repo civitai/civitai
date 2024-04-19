@@ -473,6 +473,7 @@ async function combinePostEditImageData(images: PostImageEditSelect[], user: Ses
   return _images.map((image) => ({
     ...image,
     tags: tags.filter((x) => x.imageId === image.id),
+    tools: image.tools.map(({ notes, tool }) => ({ ...tool, notes })),
   }));
 }
 

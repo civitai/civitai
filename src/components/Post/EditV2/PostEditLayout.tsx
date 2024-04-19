@@ -3,6 +3,7 @@ import { useRouter } from 'next/router';
 import React from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { PostEditProvider } from '~/components/Post/EditV2/PostEditProvider';
+import { ScrollAreaMain } from '~/components/ScrollArea/ScrollAreaMain';
 import { postEditQuerySchema } from '~/server/schema/post.schema';
 import { trpc } from '~/utils/trpc';
 
@@ -22,15 +23,17 @@ export function PostEditLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <PostEditProvider post={data} params={params}>
-      {is404 ? (
-        <NotFound />
-      ) : loading ? (
-        <Center p="xl">
-          <Loader />
-        </Center>
-      ) : (
-        children
-      )}
+      <ScrollAreaMain>
+        {is404 ? (
+          <NotFound />
+        ) : loading ? (
+          <Center p="xl">
+            <Loader />
+          </Center>
+        ) : (
+          children
+        )}
+      </ScrollAreaMain>
     </PostEditProvider>
   );
 }

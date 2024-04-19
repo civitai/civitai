@@ -86,7 +86,7 @@ export function useMediaUpload({ max, count, maxSize, onComplete }: UseMediaUplo
               );
             if (metadata.width > MAX_VIDEO_DIMENSIONS || metadata.height > MAX_VIDEO_DIMENSIONS)
               throw new Error(
-                `Images cannot be larger than ${MAX_VIDEO_DIMENSIONS}px from either side. Please resize your image and try again.`
+                `Videos cannot be larger than ${MAX_VIDEO_DIMENSIONS}px from either side. Please resize your image and try again.`
               );
           }
           return processing;

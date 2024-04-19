@@ -11,6 +11,7 @@ import {
   IconEyeOff,
   IconInfoCircle,
   IconPencil,
+  IconPlus,
   IconTrash,
 } from '@tabler/icons-react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -19,7 +20,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { ImageMetaModal } from '~/components/Post/EditV2/ImageMetaModal';
 import { usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
-import { ImageTools } from '~/components/Post/EditV2/ImageTools';
+import { ImageTools, ImageToolsPopover } from '~/components/Post/EditV2/ImageToolsPopover';
 
 type ControlledImage = Partial<PostDetailEditable['images'][number]> & MediaUploadOnCompleteProps;
 
@@ -153,9 +154,10 @@ function PostImageCard({ image }: { image: ControlledImage }) {
                   classNames={{ label: 'flex gap-1' }}
                   size="md"
                   onClick={handleEditMetaClick}
+                  className="text-sm"
                 >
                   <IconPencil size={16} />
-                  <span>Edit</span>
+                  <span>EDIT</span>
                 </Button>
               </div>
             </>
@@ -181,8 +183,9 @@ function PostImageCard({ image }: { image: ControlledImage }) {
                     compact
                     size="md"
                     onClick={handleEditMetaClick}
+                    className="text-sm"
                   >
-                    Edit
+                    EDIT
                   </Button>
                   {image.meta?.prompt && (
                     <Button
@@ -190,10 +193,10 @@ function PostImageCard({ image }: { image: ControlledImage }) {
                       color="blue"
                       compact
                       size="md"
-                      classNames={{ label: 'flex gap-1' }}
+                      classNames={{ label: 'flex gap-1 text-sm' }}
                     >
                       <IconEyeOff size={16} />
-                      <span>Hide Prompt</span>
+                      <span>HIDE PROMPT</span>
                     </Button>
                   )}
                 </div>
@@ -301,7 +304,32 @@ function PostImageCard({ image }: { image: ControlledImage }) {
           {/*
            // #region [tools]
            */}
-          <ImageTools />
+          <CustomCard className="flex flex-col gap-2">
+            <div className="flex justify-between items-center">
+              <div className="flex items-center gap-2">
+                <h3 className=" text-lg font-semibold leading-none text-dark-7 dark:text-gray-0 ">
+                  Tools
+                </h3>
+                <ActionIcon variant="transparent" size="sm">
+                  <IconInfoCircle />
+                </ActionIcon>
+              </div>
+              <ImageToolsPopover image={image}>
+                <Button
+                  variant="light"
+                  color="blue"
+                  compact
+                  size="md"
+                  classNames={{ label: 'flex gap-1' }}
+                  onClick={() => undefined}
+                  className="text-sm"
+                >
+                  <IconPlus size={16} />
+                  <span>TOOL</span>
+                </Button>
+              </ImageToolsPopover>
+            </div>
+          </CustomCard>
           {/* #endregion */}
         </div>
       </div>

@@ -12,7 +12,6 @@ export function useFileUpload() {
   const state = useState<TrackedFile[]>([]);
   const fileUploadContext = useFileUploadContext();
   const [files, setFiles] = fileUploadContext ?? state;
-  console.log({ fileUploadContext });
 
   async function upload(file: File) {
     setFiles(

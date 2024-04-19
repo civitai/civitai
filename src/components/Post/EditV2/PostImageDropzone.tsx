@@ -17,6 +17,14 @@ const max = POST_IMAGE_LIMIT;
 
 type ControlledImage = Partial<PostDetailEditable['images'][number]> & MediaUploadOnCompleteProps;
 
+// type test = {
+//   status: 'added',
+//   data: PostDetailEditable['images'][number]
+// } | {
+//   status: 'blocked',
+//   data: MediaUploadOnCompleteProps
+// }
+
 export function PostImageDropzone({
   onCreatePost,
 }: {
