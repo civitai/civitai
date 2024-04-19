@@ -843,7 +843,7 @@ export const createMessageFn = async ({
               const embedData = {
                 title: hrefData.title ?? hrefData.open_graph?.title ?? null,
                 description: hrefData.description ?? hrefData.open_graph?.description ?? null,
-                image: hrefData.open_graph?.images?.[0]?.url ?? null,
+                image: hrefData.open_graph?.images?.[0]?.url ?? hrefData.favicon ?? null,
                 href,
               };
               const embedMsg = JSON.stringify(embedData);
