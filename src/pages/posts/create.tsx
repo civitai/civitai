@@ -213,5 +213,5 @@ export default createPage(
       </Container>
     );
   },
-  { layout: PostEditLayout }
+  { InnerLayout: PostEditLayout }
 );

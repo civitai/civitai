@@ -1,7 +1,6 @@
 import { Center, Loader } from '@mantine/core';
 import { useRouter } from 'next/router';
 import React, { useEffect } from 'react';
-import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { PostEditProvider } from '~/components/Post/EditV2/PostEditProvider';
 import { postEditQuerySchema } from '~/server/schema/post.schema';
@@ -22,7 +21,7 @@ export function PostEditLayout({ children }: { children: React.ReactNode }) {
   const loading = (isLoading || isRefetching) && !isCreatePage;
 
   return (
-    <AppLayout>
+    <PostEditProvider post={data} param={params}>
       {is404 ? (
         <NotFound />
       ) : loading ? (
@@ -30,10 +29,8 @@ export function PostEditLayout({ children }: { children: React.ReactNode }) {
           <Loader />
         </Center>
       ) : (
-        <PostEditProvider post={data} params={params}>
-          {children}
-        </PostEditProvider>
+        children
       )}
-    </AppLayout>
+    </PostEditProvider>
   );
 }

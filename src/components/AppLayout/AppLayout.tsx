@@ -12,10 +12,6 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NewsletterDialog } from '../NewsletterDialog/NewsletterDialog';
 import { ScrollAreaMain } from '~/components/ScrollArea/ScrollAreaMain';
 
-function EmptyLayout({ children }: { children: React.ReactNode }) {
-  return <>{children}</>;
-}
-
 type AppLayoutProps = {
   innerLayout?: ({ children }: { children: React.ReactNode }) => React.ReactNode;
   withScrollArea?: boolean;
@@ -24,13 +20,13 @@ type AppLayoutProps = {
 export function AppLayout({
   children,
   renderSearchComponent,
-  innerLayout = EmptyLayout,
-  withScrollArea = true,
-}: {
+}: // innerLayout = EmptyLayout,
+// withScrollArea = true,
+{
   children: React.ReactNode;
   renderSearchComponent?: (opts: RenderSearchComponentProps) => React.ReactElement;
 } & AppLayoutProps) {
-  const InnerLayout: any = innerLayout;
+  // const InnerLayout: any = innerLayout;
   const { classes } = useStyles();
   const user = useCurrentUser();
   // TODO - move the bannedAt check to _app.tsx
@@ -54,7 +50,7 @@ export function AppLayout({
         </Stack>
       </Center>
     );
-  const innerContent = withScrollArea ? <ScrollAreaMain>{children}</ScrollAreaMain> : children;
+  // const innerContent = withScrollArea ? <ScrollAreaMain>{children}</ScrollAreaMain> : children;
   // const content = InnerLayout ? <InnerLayout>{innerContent}</InnerLayout> : innerContent;
 
   // const content = InnerLayout ? (
@@ -68,8 +64,9 @@ export function AppLayout({
   return (
     <>
       <AppHeader fixed={false} renderSearchComponent={renderSearchComponent} />
-      <main className={classes.main}>
-        <InnerLayout>{innerContent}</InnerLayout>
+      <main className="flex flex-col flex-1 w-full h-full relative overflow-hidden">
+        {/* <InnerLayout>{innerContent}</InnerLayout> */}
+        {children}
         {/* {flags.assistant && (
               <div className={classes.assistant}>
                 <AssistantButton />
@@ -93,13 +90,7 @@ const useStyles = createStyles((theme) => ({
     flex: 1,
     overflow: 'hidden',
   },
-  main: {
-    flex: 1,
-    display: 'flex',
-    flexDirection: 'column',
-    overflow: 'hidden',
-    position: 'relative',
-  },
+
   assistant: {
     position: 'absolute',
     // top: '100%',

@@ -2,8 +2,9 @@ import { NextPage } from 'next';
 import React, { ReactElement } from 'react';
 
 export type InnerLayoutOptions = {
-  innerLayout: (page: { children: React.ReactNode }) => JSX.Element;
+  InnerLayout?: (page: { children: React.ReactElement }) => JSX.Element;
   withScrollArea?: boolean;
+  innerLayout?: (page: { children: React.ReactNode }) => JSX.Element; // this needs to go away
 };
 
 export type OuterLayoutOptions = {
@@ -27,4 +28,8 @@ export function createPage(Component: CustomNextPage, options?: CreatePageOption
   }
 
   return Component;
+}
+
+export function InnerLayoutDefault({ children }: { children: React.ReactElement }) {
+  return children;
 }

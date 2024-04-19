@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState } from 'react';
+import React, { createContext, useContext, useEffect, useState } from 'react';
 
 // #region [types]
 type Status = 'pending' | 'error' | 'success' | 'uploading';
@@ -26,5 +26,15 @@ export function useFileUploadContext() {
 
 export function FileUploadProvider({ children }: { children: React.ReactNode }) {
   const state = useState<TrackedFile[]>([]);
+  const [files] = state;
+
+  useEffect(() => {
+    return () => {
+      for (const file of files) {
+        file.abort();
+      }
+    };
+  }, []); // eslint-disable-line
+
   return <Context.Provider value={state}>{children}</Context.Provider>;
 }

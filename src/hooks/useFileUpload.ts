@@ -12,6 +12,7 @@ export function useFileUpload() {
   const state = useState<TrackedFile[]>([]);
   const fileUploadContext = useFileUploadContext();
   const [files, setFiles] = fileUploadContext ?? state;
+  console.log({ fileUploadContext });
 
   async function upload(file: File) {
     setFiles(
@@ -131,9 +132,11 @@ export function useFileUpload() {
   }
 
   useEffect(() => {
-    return () => {
-      reset();
-    };
+    if (!fileUploadContext) {
+      return () => {
+        reset(true);
+      };
+    }
   }, []); // eslint-disable-line
 
   return { files, upload, reset, removeFile };

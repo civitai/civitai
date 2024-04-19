@@ -23,6 +23,7 @@ export function PostImageDropzone({
   onCreatePost?: (post: PostDetailEditable) => void;
 }) {
   // #region [state]
+  const queryUtils = trpc.useUtils();
   const [post, images, setImages, setPost] = usePostEditStore((state) => [
     state.post,
     state.images,
@@ -79,6 +80,7 @@ export function PostImageDropzone({
         {
           onSuccess: async (data) => {
             setPost(data);
+            queryUtils.post.getEdit.setData({ id: data.id }, () => data);
             onCreatePost?.(data);
             paramsRef.current.postId = data.id;
             upload(files);
@@ -105,6 +107,8 @@ export function PostImageDropzone({
     handleSrc();
   }, []); // eslint-disable-line
   // #endregion
+
+  useEffect(() => console.log({ files }), [files]);
 
   return (
     <div className={`flex flex-col gap-1`}>

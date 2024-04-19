@@ -1208,6 +1208,7 @@ model Image {
   clubPostCoverImage ClubPost[]
   article            Article?
   purchasableRewards PurchasableReward[]
+  ImageTool          ImageTool[]
 
   @@index([featuredAt])
   @@index([postId], type: Hash)
@@ -2896,6 +2897,26 @@ model RedeemableCode {
   expiresAt     DateTime?
   redeemedAt    DateTime?
   transactionId String?
+}
+
+model Tool {
+  id        Int         @id @default(autoincrement())
+  name      String
+  icon      String?
+  createdAt DateTime    @default(now())
+  ImageTool ImageTool[]
+}
+
+model ImageTool {
+  imageId   Int
+  image     Image    @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  toolId    Int
+  tool      Tool     @relation(fields: [toolId], references: [id], onDelete: Cascade)
+  notes     String?
+  createdAt DateTime @default(now())
+
+  @@id([imageId, toolId])
+  @@index([toolId])
 }
 
 /// @view

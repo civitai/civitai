@@ -120,6 +120,12 @@ export function PostEditProvider({ post, params = {}, children }: Props) {
     }
   }, []); // eslint-disable-line
 
+  useEffect(() => {
+    return () => {
+      console.log('dismount');
+    };
+  }, []);
+
   if (post) {
     params.postId = post.id;
     params.modelVersionId = post.modelVersionId;
