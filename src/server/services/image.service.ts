@@ -1643,9 +1643,7 @@ export const getImagesForPosts = async ({
   }));
 };
 
-export const removeImageResource = async ({ id, user }: GetByIdInput & { user?: SessionUser }) => {
-  if (!user?.isModerator) throw throwAuthorizationError();
-
+export const removeImageResource = async ({ id }: GetByIdInput) => {
   try {
     const resource = await dbWrite.imageResource.delete({
       where: { id },

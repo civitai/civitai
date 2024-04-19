@@ -20,6 +20,7 @@ import {
   publicProcedure,
   protectedProcedure,
   guardedProcedure,
+  moderatorProcedure,
 } from '~/server/trpc';
 import { dbRead } from '~/server/db/client';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
@@ -47,15 +48,6 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   });
 });
 
-const isModerator = middleware(async ({ ctx, next }) => {
-  if (!ctx.user?.isModerator) throw throwAuthorizationError();
-  return next({
-    ctx: {
-      user: ctx.user,
-    },
-  });
-});
-
 export const commentv2Router = router({
   getInfinite: publicProcedure.input(getCommentsV2Schema).query(getInfiniteCommentsV2Handler),
   getCount: publicProcedure.input(commentConnectorSchema).query(getCommentCountV2Handler),
@@ -72,9 +64,8 @@ export const commentv2Router = router({
   getThreadDetails: publicProcedure
     .input(commentConnectorSchema)
     .query(getCommentsThreadDetailsHandler),
-  toggleLockThread: protectedProcedure
+  toggleLockThread: moderatorProcedure
     .input(commentConnectorSchema)
-    .use(isModerator)
     .mutation(toggleLockThreadDetailsHandler),
   toggleHide: protectedProcedure.input(toggleHideCommentSchema).mutation(toggleHideCommentHandler),
 });

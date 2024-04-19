@@ -165,7 +165,7 @@ export const modelRouter = router({
   getModelDetailsForReview: publicProcedure
     .input(getByIdSchema)
     .query(getModelDetailsForReviewHandler),
-  restore: protectedProcedure.input(getByIdSchema).mutation(restoreModelHandler),
+  restore: moderatorProcedure.input(getByIdSchema).mutation(restoreModelHandler),
   getDownloadCommand: protectedProcedure.input(getDownloadSchema).query(getDownloadCommandHandler),
   reorderVersions: protectedProcedure
     .input(reorderModelVersionsSchema)
