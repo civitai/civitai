@@ -321,3 +321,8 @@ export const imageRatingReviewInput = z.object({
   limit: z.number(),
   cursor: z.string().optional(),
 });
+
+export type ReportCsamImagesInput = z.infer<typeof reportCsamImagesSchema>;
+export const reportCsamImagesSchema = z.object({
+  imageIds: z.array(z.number()).min(1),
+});

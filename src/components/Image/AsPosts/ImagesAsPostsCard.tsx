@@ -55,11 +55,18 @@ export function ImagesAsPostsCard({
   const { data: gallerySettings } = trpc.model.getGallerySettings.useQuery({ id: model.id });
   const toggleGallerySettings = useToggleGallerySettings({ modelId: model.id });
 
-  const handleUpdateGallerySettings = async (imageId: number) => {
+  const handleUpdateGallerySettings = async ({
+    imageId,
+    user,
+  }: {
+    imageId?: number;
+    user?: { id: number; username: string | null };
+  }) => {
     if (showModerationOptions && model) {
       await toggleGallerySettings({
         modelId: model.id,
-        images: [{ id: imageId }],
+        images: imageId ? [{ id: imageId }] : undefined,
+        users: user ? [user] : undefined,
       }).catch(() => null); // Error is handled in the mutation events
 
       if (filters.hidden)
@@ -81,17 +88,29 @@ export function ImagesAsPostsCard({
   const imageIdsString = data.images.map((x) => x.id).join('_');
   const carouselKey = useMemo(() => `${imageIdsString}_${cardWidth}`, [imageIdsString, cardWidth]);
 
-  const moderationOptions = (imageId: number) => {
+  const moderationOptions = (image: (typeof data.images)[number]) => {
     if (!showModerationOptions) return null;
-    const alreadyHidden = gallerySettings
-      ? gallerySettings.hiddenImages.indexOf(imageId) > -1
+    const imageAlreadyHidden = gallerySettings
+      ? gallerySettings.hiddenImages.indexOf(image.id) > -1
+      : false;
+    const userAlreadyHidden = gallerySettings
+      ? gallerySettings.hiddenUsers.findIndex((u) => u.id === image.user.id) > -1
       : false;
 
     return (
       <>
         <Menu.Label key="menu-label">Gallery Moderation</Menu.Label>
-        <Menu.Item key="hide-image-gallery" onClick={() => handleUpdateGallerySettings(imageId)}>
-          {alreadyHidden ? 'Unhide image from gallery' : 'Hide image from gallery'}
+        <Menu.Item
+          key="hide-image-gallery"
+          onClick={() => handleUpdateGallerySettings({ imageId: image.id })}
+        >
+          {imageAlreadyHidden ? 'Unhide image from gallery' : 'Hide image from gallery'}
+        </Menu.Item>
+        <Menu.Item
+          key="hide-user-gallery"
+          onClick={() => handleUpdateGallerySettings({ user: image.user })}
+        >
+          {userAlreadyHidden ? 'Show content from this user' : 'Hide content from this user'}
         </Menu.Item>
       </>
     );
@@ -167,7 +186,7 @@ export function ImagesAsPostsCard({
                         <Stack spacing="xs" className="absolute top-2 right-2 z-10">
                           <ImageContextMenu
                             image={image}
-                            additionalMenuItems={moderationOptions(image.id)}
+                            additionalMenuItems={moderationOptions(image)}
                           />
                           {features.imageGeneration && image.meta && (
                             <HoverActionButton
@@ -297,7 +316,7 @@ export function ImagesAsPostsCard({
                                 <Stack spacing="xs" className="absolute top-2 right-2 z-10">
                                   <ImageContextMenu
                                     image={image}
-                                    additionalMenuItems={moderationOptions(image.id)}
+                                    additionalMenuItems={moderationOptions(image)}
                                   />
                                   {features.imageGeneration && image.meta && (
                                     <HoverActionButton

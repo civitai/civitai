@@ -25,22 +25,24 @@ import {
 import { NextLink } from '@mantine/next';
 import { Currency } from '@prisma/client';
 import {
-  IconLink,
   IconBarbell,
   IconBookmark,
+  IconBookmarkEdit,
   IconBrush,
   IconChevronDown,
+  IconChevronRight,
+  IconCloudLock,
+  IconClubs,
   IconCrown,
-  IconHeart,
   IconHistory,
   IconInfoSquareRounded,
+  IconLink,
   IconLogout,
   IconMoneybag,
   IconMoonStars,
   IconPalette,
   IconPhotoUp,
   IconPlayerPlayFilled,
-  IconBookmarkEdit,
   IconPlus,
   IconProgressBolt,
   IconSearch,
@@ -52,8 +54,6 @@ import {
   IconUsers,
   IconVideoPlus,
   IconWriting,
-  IconClubs,
-  IconCloudLock,
 } from '@tabler/icons-react';
 import { signOut } from 'next-auth/react';
 import Link from 'next/link';
@@ -69,10 +69,14 @@ import {
   useRef,
   useState,
 } from 'react';
+import { AccountSwitcher } from '~/components/AppLayout/AccountSwitcher';
 import { BrowsingModeIcon, BrowsingModeMenu } from '~/components/BrowsingMode/BrowsingMode';
 import { ChatButton } from '~/components/Chat/ChatButton';
 import { CivitaiLinkPopover } from '~/components/CivitaiLink/CivitaiLinkPopover';
+import { useSystemCollections } from '~/components/Collections/collection.utils';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import { FeatureIntroductionModal } from '~/components/FeatureIntroduction/FeatureIntroduction';
 import { ListSearch } from '~/components/ListSearch/ListSearch';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Logo } from '~/components/Logo/Logo';
@@ -87,14 +91,12 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import { deleteCookies } from '~/utils/cookies-helpers';
 import { LoginRedirectReason } from '~/utils/login-helpers';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 import { AutocompleteSearch } from '../AutocompleteSearch/AutocompleteSearch';
 import { openBuyBuzzModal } from '../Modals/BuyBuzzModal';
 import { GenerateButton } from '../RunStrategy/GenerateButton';
 import { UserBuzz } from '../User/UserBuzz';
-import { FeatureIntroductionModal } from '~/components/FeatureIntroduction/FeatureIntroduction';
-import { useSystemCollections } from '~/components/Collections/collection.utils';
-import { dialogStore } from '~/components/Dialog/dialogStore';
-import { containerQuery } from '~/utils/mantine-css-helpers';
+import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 
 const HEADER_HEIGHT = 70;
 
@@ -253,6 +255,7 @@ export function AppHeader({
   const isMobile = useIsMobile();
   const [burgerOpened, setBurgerOpened] = useState(false);
   const [userMenuOpened, setUserMenuOpened] = useState(false);
+  const [userSwitching, setUserSwitching] = useState(false);
   // const ref = useClickOutside(() => setBurgerOpened(false));
   const searchRef = useRef<HTMLInputElement>(null);
 
@@ -406,7 +409,7 @@ export function AppHeader({
         visible: !!currentUser,
         label: (
           <Group align="center" spacing="xs">
-            <IconHeart stroke={1.5} color={theme.colors.pink[theme.fn.primaryShade()]} />
+            <ThumbsUpIcon stroke={1.5} color={theme.colors.green[theme.fn.primaryShade()]} />
             Liked models
           </Group>
         ),
@@ -465,6 +468,7 @@ export function AppHeader({
       },
       {
         href: '',
+        visible: !!currentUser,
         label: <Divider my={4} />,
       },
       {
@@ -621,6 +625,7 @@ export function AppHeader({
   const onSearchDone = () => setShowSearch(false);
 
   const handleCloseMenu = useCallback(() => {
+    setUserSwitching(false);
     setBurgerOpened(false);
     setUserMenuOpened(false);
   }, [setBurgerOpened]);
@@ -649,7 +654,6 @@ export function AppHeader({
             p="sm"
             position="apart"
             mx={-4}
-            mt={-4}
             mb={4}
             sx={(theme) => ({
               backgroundColor:
@@ -859,61 +863,95 @@ export function AppHeader({
               transition="pop-top-right"
               zIndex={constants.imageGeneration.drawerZIndex + 1}
               // radius="lg"
-              onClose={() => setUserMenuOpened(false)}
+              onClose={() => {
+                setUserSwitching(false);
+                setUserMenuOpened(false);
+              }}
               withinPortal
             >
               <Menu.Target>
-                <UnstyledButton
-                  className={cx(classes.user, { [classes.userActive]: userMenuOpened })}
-                  onClick={() => setUserMenuOpened(true)}
-                >
-                  <Group spacing={8} noWrap>
-                    <UserAvatar user={currentUser} size="md" />
-                    {features.buzz && currentUser && <UserBuzz pr="sm" />}
-                  </Group>
-                </UnstyledButton>
+                {!!currentUser ? (
+                  <UnstyledButton
+                    className={cx(classes.user, { [classes.userActive]: userMenuOpened })}
+                    onClick={() => setUserMenuOpened(true)}
+                  >
+                    <Group spacing={8} noWrap>
+                      <UserAvatar user={currentUser} size="md" />
+                      {features.buzz && currentUser && <UserBuzz pr="sm" />}
+                    </Group>
+                  </UnstyledButton>
+                ) : (
+                  <Burger
+                    opened={userMenuOpened}
+                    onClick={() => setUserMenuOpened(true)}
+                    size="sm"
+                  />
+                )}
               </Menu.Target>
+
               <Menu.Dropdown>
                 <ScrollArea.Autosize
                   maxHeight="calc(90vh - var(--mantine-header-height))"
                   styles={{ root: { margin: -4 }, viewport: { padding: 4 } }}
                   offsetScrollbars
                 >
-                  <BuzzMenuItem withAbbreviation={false} />
-                  {userMenuItems}
-                  <Divider my={4} />
-                  <Menu.Item
-                    closeMenuOnClick={false}
-                    icon={<IconPalette stroke={1.5} />}
-                    onClick={() => toggleColorScheme()}
-                  >
-                    <Group align="center" position="apart">
-                      Dark mode
-                      <Switch
-                        checked={colorScheme === 'dark'}
-                        sx={{ display: 'flex', alignItems: 'center' }}
-                        onClick={(e) => e.stopPropagation()}
-                      />
-                    </Group>
-                  </Menu.Item>
-
-                  {currentUser ? (
+                  {userSwitching ? (
+                    <AccountSwitcher
+                      setUserSwitching={setUserSwitching}
+                      logout={handleSignOut}
+                      close={handleCloseMenu}
+                    />
+                  ) : (
                     <>
+                      {!!currentUser && (
+                        <Menu.Item
+                          onClick={() => setUserSwitching(true)}
+                          closeMenuOnClick={false}
+                          mb={4}
+                        >
+                          <Group w="100%" position="apart">
+                            <UserAvatar user={currentUser} withUsername />
+                            <IconChevronRight />
+                          </Group>
+                        </Menu.Item>
+                      )}
+                      <BuzzMenuItem withAbbreviation={false} />
+                      {userMenuItems}
+                      <Divider my={4} />
                       <Menu.Item
-                        icon={<IconSettings stroke={1.5} />}
-                        component={NextLink}
-                        href="/user/account"
+                        closeMenuOnClick={false}
+                        icon={<IconPalette stroke={1.5} />}
+                        onClick={() => toggleColorScheme()}
                       >
-                        Account settings
+                        <Group align="center" position="apart">
+                          Dark mode
+                          <Switch
+                            checked={colorScheme === 'dark'}
+                            sx={{ display: 'flex', alignItems: 'center' }}
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                        </Group>
                       </Menu.Item>
-                      <Menu.Item
-                        icon={<IconLogout color={theme.colors.red[9]} stroke={1.5} />}
-                        onClick={handleSignOut}
-                      >
-                        Logout
-                      </Menu.Item>
+
+                      {currentUser ? (
+                        <>
+                          <Menu.Item
+                            icon={<IconSettings stroke={1.5} />}
+                            component={NextLink}
+                            href="/user/account"
+                          >
+                            Account settings
+                          </Menu.Item>
+                          <Menu.Item
+                            icon={<IconLogout color={theme.colors.red[9]} stroke={1.5} />}
+                            onClick={() => handleSignOut()}
+                          >
+                            Logout
+                          </Menu.Item>
+                        </>
+                      ) : null}
                     </>
-                  ) : null}
+                  )}
                 </ScrollArea.Autosize>
               </Menu.Dropdown>
             </Menu>
@@ -947,41 +985,65 @@ export function AppHeader({
                     sx={{ zIndex: 1002 }}
                     // ref={ref}
                   >
-                    {/* Calculate maxHeight based off total viewport height minus header + footer + static menu options inside dropdown sizes */}
-                    <ScrollArea.Autosize maxHeight={'calc(100dvh - 135px)'}>
-                      <BuzzMenuItem mx={0} mt={0} textSize="sm" withAbbreviation={false} />
-                      {burgerMenuItems}
-                      {currentUser && (
-                        <>
-                          <Divider />
-                          <Box px="md" pt="md">
-                            <BrowsingModeMenu closeMenu={() => setBurgerOpened(false)} />
-                          </Box>
-                        </>
-                      )}
-                    </ScrollArea.Autosize>
+                    {userSwitching ? (
+                      // TODO maybe move this to account switcher
+                      <ScrollArea.Autosize maxHeight={'calc(100dvh - 135px)'}>
+                        <AccountSwitcher
+                          inMenu={false}
+                          setUserSwitching={setUserSwitching}
+                          logout={handleSignOut}
+                          close={handleCloseMenu}
+                        />
+                      </ScrollArea.Autosize>
+                    ) : (
+                      <>
+                        {/* Calculate maxHeight based off total viewport height minus header + footer + static menu options inside dropdown sizes */}
+                        <ScrollArea.Autosize maxHeight={'calc(100dvh - 135px)'}>
+                          {!!currentUser && (
+                            <Group
+                              className={classes.link}
+                              w="100%"
+                              position="apart"
+                              sx={{ cursor: 'pointer' }}
+                              onClick={() => setUserSwitching(true)}
+                            >
+                              <UserAvatar user={currentUser} withUsername />
+                              <IconChevronRight />
+                            </Group>
+                          )}
+                          <BuzzMenuItem mx={0} mt={0} textSize="sm" withAbbreviation={false} />
+                          {burgerMenuItems}
+                          {currentUser && (
+                            <>
+                              <Divider />
+                              <Box px="md" pt="md">
+                                <BrowsingModeMenu closeMenu={() => setBurgerOpened(false)} />
+                              </Box>
+                            </>
+                          )}
+                        </ScrollArea.Autosize>
 
-                    <Group p="md" position="apart" grow>
-                      <ActionIcon
-                        variant="default"
-                        onClick={() => toggleColorScheme()}
-                        size="lg"
-                        sx={(theme) => ({
-                          color:
-                            theme.colorScheme === 'dark'
-                              ? theme.colors.yellow[theme.fn.primaryShade()]
-                              : theme.colors.blue[theme.fn.primaryShade()],
-                        })}
-                      >
-                        {colorScheme === 'dark' ? (
-                          <IconSun size={18} />
-                        ) : (
-                          <IconMoonStars size={18} />
-                        )}
-                      </ActionIcon>
-                      {currentUser && (
-                        <>
-                          {/* {currentUser?.showNsfw && (
+                        <Group p="md" position="apart" grow>
+                          <ActionIcon
+                            variant="default"
+                            onClick={() => toggleColorScheme()}
+                            size="lg"
+                            sx={(theme) => ({
+                              color:
+                                theme.colorScheme === 'dark'
+                                  ? theme.colors.yellow[theme.fn.primaryShade()]
+                                  : theme.colors.blue[theme.fn.primaryShade()],
+                            })}
+                          >
+                            {colorScheme === 'dark' ? (
+                              <IconSun size={18} />
+                            ) : (
+                              <IconMoonStars size={18} />
+                            )}
+                          </ActionIcon>
+                          {currentUser && (
+                            <>
+                              {/* {currentUser?.showNsfw && (
                             <BlurToggle iconProps={{ stroke: 1.5 }}>
                               {({ icon, toggle }) => (
                                 <ActionIcon variant="default" size="lg" onClick={() => toggle()}>
@@ -990,24 +1052,26 @@ export function AppHeader({
                               )}
                             </BlurToggle>
                           )} */}
-                          <Link href="/user/account">
-                            <ActionIcon
-                              variant="default"
-                              size="lg"
-                              onClick={() => setBurgerOpened(false)}
-                            >
-                              <IconSettings stroke={1.5} />
-                            </ActionIcon>
-                          </Link>
-                          <ActionIcon variant="default" onClick={() => signOut()} size="lg">
-                            <IconLogout
-                              stroke={1.5}
-                              color={theme.colors.red[theme.fn.primaryShade()]}
-                            />
-                          </ActionIcon>
-                        </>
-                      )}
-                    </Group>
+                              <Link href="/user/account">
+                                <ActionIcon
+                                  variant="default"
+                                  size="lg"
+                                  onClick={() => setBurgerOpened(false)}
+                                >
+                                  <IconSettings stroke={1.5} />
+                                </ActionIcon>
+                              </Link>
+                              <ActionIcon variant="default" onClick={() => signOut()} size="lg">
+                                <IconLogout
+                                  stroke={1.5}
+                                  color={theme.colors.red[theme.fn.primaryShade()]}
+                                />
+                              </ActionIcon>
+                            </>
+                          )}
+                        </Group>
+                      </>
+                    )}
                   </Paper>
                 </Portal>
               )}

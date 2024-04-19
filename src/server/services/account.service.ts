@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { dbWrite, dbRead } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 
 export const getUserAccounts = <TSelect extends Prisma.AccountSelect = Prisma.AccountSelect>({
@@ -12,6 +12,7 @@ export const getUserAccounts = <TSelect extends Prisma.AccountSelect = Prisma.Ac
   return dbRead.account.findMany({
     where: { userId },
     select,
+    orderBy: { id: 'asc' },
   });
 };
 

@@ -17,6 +17,7 @@ import {
   createImageSchema,
   updateImageNsfwLevelSchema,
   imageRatingReviewInput,
+  reportCsamImagesSchema,
 } from './../schema/image.schema';
 import {
   deleteImageHandler,
@@ -129,10 +130,8 @@ export const imageRouter = router({
     .use(cacheIt({ ttl: CacheTTL.week }))
     .query(() => get404Images()),
   reportCsamImages: moderatorProcedure
-    .input(z.number().array())
-    .mutation(({ input: imageIds, ctx }) =>
-      reportCsamImages({ imageIds, user: ctx.user, ip: ctx.ip })
-    ),
+    .input(reportCsamImagesSchema)
+    .mutation(({ input, ctx }) => reportCsamImages({ ...input, user: ctx.user, ip: ctx.ip })),
   updateImageNsfwLevel: protectedProcedure
     .input(updateImageNsfwLevelSchema)
     .mutation(({ input, ctx }) => updateImageNsfwLevel({ ...input, user: ctx.user })),
