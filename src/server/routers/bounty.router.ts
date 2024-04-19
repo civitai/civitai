@@ -14,6 +14,7 @@ import {
   guardedProcedure,
   isFlagProtected,
   middleware,
+  moderatorProcedure,
   protectedProcedure,
   publicProcedure,
   router,
@@ -41,25 +42,6 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
     const ownerId = (await dbWrite.bounty.findUnique({ where: { id }, select: { userId: true } }))
       ?.userId;
     if (ownerId !== userId) throw throwAuthorizationError();
-  }
-
-  return next({
-    ctx: {
-      // infers the `user` as non-nullable
-      user: ctx.user,
-    },
-  });
-});
-
-const isModerator = middleware(async ({ ctx, next, input = {} }) => {
-  if (!ctx.user) throw throwAuthorizationError();
-
-  const { id } = input as { id: number };
-
-  const isModerator = ctx?.user?.isModerator;
-
-  if (!isModerator && !!id) {
-    throw throwAuthorizationError();
   }
 
   return next({
@@ -110,9 +92,8 @@ export const bountyRouter = router({
     .input(addBenefactorUnitAmountInputSchema)
     .use(isFlagProtected('bounties'))
     .mutation(addBenefactorUnitAmountHandler),
-  refund: protectedProcedure
+  refund: moderatorProcedure
     .input(getByIdSchema)
     .use(isFlagProtected('bounties'))
-    .use(isModerator)
     .mutation(refundBountyHandler),
 });
