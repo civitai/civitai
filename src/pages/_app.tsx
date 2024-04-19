@@ -110,12 +110,9 @@ function MyApp(props: CustomAppProps) {
     }
   }, [colorScheme]);
 
-  const getLayout = useMemo(
-    () =>
-      Component.getLayout ??
-      ((page: React.ReactElement) => <AppLayout {...Component.options}>{page}</AppLayout>),
-    [Component.getLayout, Component.options]
-  );
+  const getLayout =
+    Component.getLayout ??
+    ((page: ReactElement) => <AppLayout {...Component.options}>{page}</AppLayout>);
 
   return (
     <>

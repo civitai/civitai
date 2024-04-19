@@ -12,6 +12,10 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NewsletterDialog } from '../NewsletterDialog/NewsletterDialog';
 import { ScrollAreaMain } from '~/components/ScrollArea/ScrollAreaMain';
 
+function EmptyLayout({ children }: { children: React.ReactNode }) {
+  return <>{children}</>;
+}
+
 type AppLayoutProps = {
   innerLayout?: ({ children }: { children: React.ReactNode }) => React.ReactNode;
   withScrollArea?: boolean;
@@ -20,7 +24,7 @@ type AppLayoutProps = {
 export function AppLayout({
   children,
   renderSearchComponent,
-  innerLayout,
+  innerLayout = EmptyLayout,
   withScrollArea = true,
 }: {
   children: React.ReactNode;
@@ -50,20 +54,22 @@ export function AppLayout({
         </Stack>
       </Center>
     );
+  const innerContent = withScrollArea ? <ScrollAreaMain>{children}</ScrollAreaMain> : children;
+  // const content = InnerLayout ? <InnerLayout>{innerContent}</InnerLayout> : innerContent;
 
-  const content = InnerLayout ? (
-    <InnerLayout>{children}</InnerLayout>
-  ) : withScrollArea ? (
-    <ScrollAreaMain>{children}</ScrollAreaMain>
-  ) : (
-    children
-  );
+  // const content = InnerLayout ? (
+  //   <InnerLayout>{children}</InnerLayout>
+  // ) : withScrollArea ? (
+  //   <ScrollAreaMain>{children}</ScrollAreaMain>
+  // ) : (
+  //   children
+  // );
 
   return (
     <>
       <AppHeader fixed={false} renderSearchComponent={renderSearchComponent} />
       <main className={classes.main}>
-        {content}
+        <InnerLayout>{innerContent}</InnerLayout>
         {/* {flags.assistant && (
               <div className={classes.assistant}>
                 <AssistantButton />

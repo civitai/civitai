@@ -18,12 +18,12 @@ import { ConfirmDialog } from '~/components/Dialog/Common/ConfirmDialog';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { ImageMetaModal } from '~/components/Post/EditV2/ImageMetaModal';
-import { usePostImagesContext } from '~/components/Post/EditV2/PostImagesProvider';
+import { usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
 
 type ControlledImage = Partial<PostDetailEditable['images'][number]> & MediaUploadOnCompleteProps;
 
 export function PostImageCards() {
-  const images = usePostImagesContext((state) =>
+  const images = usePostEditStore((state) =>
     [...state.images].sort((a, b) => (a.index ?? 0) - (b.index ?? 0))
   );
   if (!images.length) return null;
@@ -44,8 +44,10 @@ const simpleMetaProps = {
   seed: 'Seed',
 } as const;
 function PostImageCard({ image }: { image: ControlledImage }) {
-  const setImages = usePostImagesContext((state) => state.setImages);
-  const updateImage = usePostImagesContext((state) => state.updateImage);
+  const [setImages, updateImage] = usePostEditStore((state) => [
+    state.setImages,
+    state.updateImage,
+  ]);
 
   const [showMoreResources, setShowMoreResources] = useState(false);
   const resources = image.resourceHelper?.filter((x) => x.modelId);

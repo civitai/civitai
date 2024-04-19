@@ -1,4 +1,3 @@
-import { ControlledImage, usePostImagesContext } from '~/components/Post/EditV2/PostImagesProvider';
 import {
   DndContext,
   DragEndEvent,
@@ -18,13 +17,13 @@ import { CSSProperties } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
-import { usePostEditContext } from '~/components/Post/EditV2/PostEditor';
+import { ControlledImage, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
 
 export function PostReorderImages() {
-  const images = usePostImagesContext((state) =>
-    [...state.images].sort((a, b) => (a.index ?? 0) - (b.index ?? 0))
-  );
-  const setImages = usePostImagesContext((state) => state.setImages);
+  const [images, setImages] = usePostEditStore((state) => [
+    [...state.images].sort((a, b) => (a.index ?? 0) - (b.index ?? 0)),
+    state.setImages,
+  ]);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
 
@@ -159,8 +158,12 @@ const useStyles = createStyles((theme) => ({
 
 export function ReorderImagesButton() {
   const queryUtils = trpc.useUtils();
-  const { post } = usePostEditContext();
-  const { images, isReordering, toggleReordering } = usePostImagesContext((state) => state);
+  const [post, images, isReordering, toggleReordering] = usePostEditStore((state) => [
+    state.post,
+    state.images,
+    state.isReordering,
+    state.toggleReordering,
+  ]);
 
   const { mutate, isLoading } = trpc.post.reorderImages.useMutation({
     async onSuccess() {

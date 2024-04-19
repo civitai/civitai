@@ -5,13 +5,13 @@ import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';
 import { useDebouncer } from '~/utils/debouncer';
 import { EditPostTags } from '~/components/Post/Edit/EditPostTags';
-import { usePostEditContext } from '~/components/Post/EditV2/PostEditor';
+import { usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
 
 const titleCharLimit = 255;
 const formSchema = z.object({ title: z.string().nullish(), detail: z.string().nullish() });
 
 export function PostEditForm() {
-  const { post } = usePostEditContext();
+  const post = usePostEditStore((state) => state.post);
   const form = useForm({ schema: formSchema, defaultValues: post });
   const debounce = useDebouncer(1000);
 

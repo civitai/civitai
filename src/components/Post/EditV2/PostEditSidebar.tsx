@@ -1,7 +1,5 @@
 import { Button, Title, Badge, Tooltip, Text, TooltipProps, ThemeIcon } from '@mantine/core';
 import { useIsMutating } from '@tanstack/react-query';
-import { usePostEditContext } from '~/components/Post/EditV2/PostEditor';
-import { usePostImagesContext } from '~/components/Post/EditV2/PostImagesProvider';
 import { useCurrentUserRequired } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 import { PostDetailEditable } from '~/server/services/post.service';
@@ -13,15 +11,22 @@ import { useRef } from 'react';
 import { IconClock } from '@tabler/icons-react';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { ReorderImagesButton } from '~/components/Post/EditV2/PostReorderImages';
+import { usePostEditParams, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
 
 export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
   // #region [state]
   const router = useRouter();
   const currentUser = useCurrentUserRequired();
-  const { params, updatePostState } = usePostEditContext();
+  const params = usePostEditParams();
   const { returnUrl } = params;
-  const { images, isReordering } = usePostImagesContext((state) => state);
-  const canPublish = images.filter((x) => !!x.id).length > 0 && !isReordering;
+  const [updatePost, isReordering, hasImages, showReorder] = usePostEditStore((state) => [
+    state.updatePost,
+    state.isReordering,
+    state.images.filter((x) => !!x.id).length > 0,
+    state.images.length > 1,
+  ]);
+
+  const canPublish = hasImages && !isReordering;
   const queryUtils = trpc.useUtils();
   const mutating = useIsMutating();
   const todayRef = useRef(new Date());
@@ -34,7 +39,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
       { id: post.id ?? 0, publishedAt: new Date() },
       {
         onSuccess: async (_, { publishedAt }) => {
-          updatePostState((data) => {
+          updatePost((data) => {
             data.publishedAt = publishedAt ?? null;
           });
           await queryUtils.image.getImagesAsPostsInfinite.invalidate();
@@ -44,10 +49,6 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
         },
       }
     );
-
-  // useEffect(() => {
-  //   throw new Error();
-  // }, []);
 
   return (
     <>
@@ -67,16 +68,13 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
             width={260}
             withArrow
           >
-            <div style={{ display: 'flex', flex: 2 }}>
-              <Button
-                disabled={!canPublish}
-                style={{ flex: 1 }}
-                onClick={handlePublish}
-                loading={updatePostMutation.isLoading}
-              >
-                Publish
-              </Button>
-            </div>
+            <Button
+              disabled={!canPublish}
+              onClick={handlePublish}
+              loading={updatePostMutation.isLoading}
+            >
+              Publish
+            </Button>
           </Tooltip>
         ) : (
           <ShareButton
@@ -84,9 +82,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
             url={`/posts/${post.id}`}
             collect={{ type: CollectionType.Post, postId: post.id }}
           >
-            <Button variant="default" style={{ flex: 1 }}>
-              Share
-            </Button>
+            <Button variant="default">Share</Button>
           </ShareButton>
         )}
         <Text size="xs">
@@ -103,7 +99,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
               </Tooltip>
             </>
           ) : post.publishedAt > todayRef.current ? (
-            <div className="flex gap-1">
+            <div className="flex items-center gap-1">
               <ThemeIcon color="gray" variant="filled" radius="xl">
                 <IconClock size={20} />
               </ThemeIcon>
@@ -117,7 +113,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
         </Text>
       </div>
 
-      {images.length > 1 && <ReorderImagesButton />}
+      {showReorder && <ReorderImagesButton />}
     </>
   );
 }

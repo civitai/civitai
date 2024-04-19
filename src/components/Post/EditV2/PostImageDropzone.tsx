@@ -1,8 +1,7 @@
 import { Anchor, Progress, Text } from '@mantine/core';
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { ContentPolicyLink } from '~/components/ContentPolicyLink/ContentPolicyLink';
 import { MediaDropzone } from '~/components/Image/ImageDropzone/MediaDropzone';
-import { usePostEditContext } from '~/components/Post/EditV2/PostEditor';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { MediaUploadOnCompleteProps, useMediaUpload } from '~/hooks/useMediaUpload';
 import { POST_IMAGE_LIMIT, constants } from '~/server/common/constants';
@@ -12,7 +11,7 @@ import { orchestratorMediaTransmitter } from '~/store/post-image-transmitter.sto
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';
 import { addPostImageSchema } from '~/server/schema/post.schema';
-import { usePostImagesContext } from '~/components/Post/EditV2/PostImagesProvider';
+import { usePostEditParams, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
 
 const max = POST_IMAGE_LIMIT;
 
@@ -24,11 +23,17 @@ export function PostImageDropzone({
   onCreatePost?: (post: PostDetailEditable) => void;
 }) {
   // #region [state]
-  const queryUtils = trpc.useUtils();
-  const { post, params } = usePostEditContext();
-  const { images, setImages } = usePostImagesContext((state) => state);
+  const [post, images, setImages, setPost] = usePostEditStore((state) => [
+    state.post,
+    state.images,
+    state.setImages,
+    state.setPost,
+  ]);
+  const params = usePostEditParams();
   const currentUser = useCurrentUser();
   const { src, modelVersionId, tag } = params;
+  const paramsRef = useRef(params);
+  paramsRef.current = params;
   // #endregion
 
   // #region [mutations]
@@ -45,7 +50,7 @@ export function PostImageDropzone({
     max,
     maxSize: [{ type: 'image', maxSize: constants.mediaUpload.maxImageFileSize }],
     onComplete: (props) => {
-      const { postId, modelVersionId } = params;
+      const { postId, modelVersionId } = paramsRef.current;
       if (!postId) throw new Error('missing post id');
       const index = Math.max(0, ...images.map((x) => x.index)) + 1;
       switch (props.status) {
@@ -72,10 +77,11 @@ export function PostImageDropzone({
       createPostMutation.mutate(
         { modelVersionId, tag },
         {
-          onSuccess: (data) => {
-            queryUtils.post.getEdit.setData({ id: data.id }, () => data);
-            upload(files);
+          onSuccess: async (data) => {
+            setPost(data);
             onCreatePost?.(data);
+            paramsRef.current.postId = data.id;
+            upload(files);
           },
           onError(error) {
             showErrorNotification({

@@ -26,7 +26,7 @@ export function PostEditWrapper({
 }) {
   const router = useRouter();
   const postId = initialPostId ?? (router.query.postId ? Number(router.query.postId) : 0);
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
 
   const { data, isLoading, isRefetching } = trpc.post.getEdit.useQuery(
     { id: postId },

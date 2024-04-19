@@ -1,28 +1,17 @@
 import { useEffect, useState } from 'react';
 import { produce } from 'immer';
-import { Queue } from '~/utils/queue';
 import plimit from 'p-limit';
+import { useFileUploadContext, TrackedFile } from '~/components/FileUpload/FileUploadProvider';
 
-type Status = 'pending' | 'error' | 'success' | 'uploading';
-type TrackedFile = {
-  file: File;
-  progress: number;
-  uploaded: number;
-  size: number;
-  speed: number;
-  timeRemaining: number;
-  status: Status;
-  abort: () => void;
-  url: string;
-};
-
-const pendingProcessing: Status[] = ['pending', 'uploading'];
+const pendingProcessing: TrackedFile['status'][] = ['pending', 'uploading'];
 const maxConcurrency = 5;
 const concurrency = typeof navigator !== 'undefined' ? navigator?.hardwareConcurrency ?? 1 : 1;
 const limit = plimit(Math.min(maxConcurrency, concurrency));
 
 export function useFileUpload() {
-  const [files, setFiles] = useState<TrackedFile[]>([]);
+  const state = useState<TrackedFile[]>([]);
+  const fileUploadContext = useFileUploadContext();
+  const [files, setFiles] = fileUploadContext ?? state;
 
   async function upload(file: File) {
     setFiles(
@@ -145,7 +134,7 @@ export function useFileUpload() {
     return () => {
       reset();
     };
-  }, []);
+  }, []); // eslint-disable-line
 
   return { files, upload, reset, removeFile };
 }
