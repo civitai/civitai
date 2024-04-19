@@ -33,6 +33,7 @@ export const loginRedirectReasons = {
   'civitai-vault': 'You need to be logged in to access your Civitai Vault',
   'favorite-model': 'You need to be logged in to favorite a model',
   rater: 'You need to be logged in to play the rating game',
+  'switch-accounts': 'Log into the account you wish to add',
 };
 
 export type LoginRedirectReason = keyof typeof loginRedirectReasons;

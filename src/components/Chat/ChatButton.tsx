@@ -47,7 +47,15 @@ export function ChatButton() {
         // processing={unreadLoading} (this doesn't work)
         label={totalUnread}
         inline
-        size={14}
+        size={16}
+        offset={4}
+        withBorder
+        styles={{
+          indicator: {
+            height: '20px !important',
+            '> span': { marginBottom: '2px' },
+          },
+        }}
       >
         <ActionIcon
           variant={state.open ? 'filled' : undefined}

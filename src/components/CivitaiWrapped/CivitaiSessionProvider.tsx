@@ -1,17 +1,36 @@
-import { Session } from 'next-auth';
-import { SessionUser } from 'next-auth';
+import { useLocalStorage } from '@mantine/hooks';
+import { Session, SessionUser } from 'next-auth';
 import { signIn, useSession } from 'next-auth/react';
-import { createContext, useContext, useMemo, useEffect, useRef, useState } from 'react';
-import { onboardingSteps } from '~/components/Onboarding/onboarding.utils';
-import { Flags } from '~/shared/utils';
-import { dialogStore } from '~/components/Dialog/dialogStore';
 import dynamic from 'next/dynamic';
+import { useRouter } from 'next/router';
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useBrowsingModeContext } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import { onboardingSteps } from '~/components/Onboarding/onboarding.utils';
+import { civTokenEndpoint, EncryptedDataSchema } from '~/server/schema/civToken.schema';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { Flags } from '~/shared/utils';
+
 const OnboardingModal = dynamic(() => import('~/components/Onboarding/OnboardingWizard'));
+
+export type CivitaiAccount = {
+  token: EncryptedDataSchema;
+  active: boolean;
+
+  email: string;
+  username: string;
+  avatarUrl?: string;
+};
+export type CivitaiAccounts = Record<string, CivitaiAccount>;
 
 export function CivitaiSessionProvider({ children }: { children: React.ReactNode }) {
   const { data, update } = useSession();
+  const router = useRouter();
+  const [accounts, setAccounts] = useLocalStorage<CivitaiAccounts>({
+    key: 'civitai-accounts',
+    defaultValue: {},
+    getInitialValueInEffect: false,
+  });
 
   const { useStore } = useBrowsingModeContext();
   const browsingModeState = useStore((state) => state);
@@ -34,6 +53,59 @@ export function CivitaiSessionProvider({ children }: { children: React.ReactNode
   useEffect(() => {
     if (data?.error === 'RefreshAccessTokenError') signIn();
   }, [data?.error]);
+
+  useEffect(() => {
+    const userId = data?.user?.id;
+    const email = data?.user?.email;
+    const username = data?.user?.username;
+    if (!userId || !email || !username) return;
+
+    const userIdStr = userId.toString();
+
+    const getToken = async () => {
+      if (!(userIdStr in accounts)) {
+        const tokenResp = await fetch(civTokenEndpoint);
+        const tokenJson: { token: EncryptedDataSchema } = await tokenResp.json();
+        return tokenJson.token;
+      } else {
+        return accounts[userIdStr].token;
+      }
+    };
+
+    getToken().then((token) => {
+      setAccounts((current) => {
+        const old = { ...current };
+        Object.keys(old).forEach((k) => {
+          old[k]['active'] = false;
+        });
+
+        return {
+          ...old,
+          [userIdStr]: {
+            token,
+            active: true,
+
+            email,
+            username,
+            avatarUrl: data?.user?.image,
+          },
+        };
+      });
+    });
+  }, [data?.user?.id, setAccounts]);
+
+  // TODO: this isn't quite right, it shouldn't reload if you're currently on the page
+  //  also, maybe only reload when the tab comes into focus
+  useEffect(() => {
+    const userId = data?.user?.id;
+    if (!userId) return;
+    const thisAccount = accounts[userId.toString()];
+    if (!thisAccount) return;
+
+    if (!thisAccount.active && router.isReady) {
+      router.reload();
+    }
+  }, [accounts, data?.user?.id, router]);
 
   useEffect(() => {
     const onboarding = value?.onboarding;

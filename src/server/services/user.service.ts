@@ -1,14 +1,4 @@
 import {
-  ToggleUserArticleEngagementsInput,
-  UserByReferralCodeSchema,
-  UserSettingsSchema,
-} from './../schema/user.schema';
-import {
-  throwBadRequestError,
-  throwConflictError,
-  throwNotFoundError,
-} from '~/server/utils/errorHandling';
-import {
   ArticleEngagementType,
   BountyEngagementType,
   CollectionMode,
@@ -18,23 +8,27 @@ import {
   ModelEngagementType,
   Prisma,
 } from '@prisma/client';
-import { SearchIndexUpdateQueueAction, NsfwLevel } from '~/server/common/enums';
-import { dbWrite, dbRead } from '~/server/db/client';
+import { env } from '~/env/server.mjs';
+import { constants } from '~/server/common/constants';
+import { NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { dbRead, dbWrite } from '~/server/db/client';
+import {
+  articleMetrics,
+  imageMetrics,
+  modelMetrics,
+  postMetrics,
+  userMetrics,
+} from '~/server/metrics';
+import { playfab } from '~/server/playfab/client';
+import { REDIS_KEYS } from '~/server/redis/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   DeleteUserInput,
   GetAllUsersInput,
   GetByUsernameSchema,
   GetUserCosmeticsSchema,
-  ToggleBlockedTagSchema,
   ToggleUserBountyEngagementsInput,
 } from '~/server/schema/user.schema';
-import { invalidateSession } from '~/server/utils/session-helpers';
-import { env } from '~/env/server.mjs';
-import { cancelSubscription } from '~/server/services/stripe.service';
-import { playfab } from '~/server/playfab/client';
-import blockedUsernames from '~/utils/blocklist-username.json';
-import { getSystemPermissions } from '~/server/services/system-cache';
 import {
   articlesSearchIndex,
   bountiesSearchIndex,
@@ -43,26 +37,31 @@ import {
   modelsSearchIndex,
   usersSearchIndex,
 } from '~/server/search-index';
-import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
-import {
-  articleMetrics,
-  imageMetrics,
-  modelMetrics,
-  postMetrics,
-  userMetrics,
-} from '~/server/metrics';
-import { refereeCreatedReward, userReferredReward } from '~/server/rewards';
-import { handleLogError } from '~/server/utils/errorHandling';
-import { isCosmeticAvailable } from '~/server/services/cosmetic.service';
-import { ProfileImage, profileImageSelect } from '../selectors/image.selector';
-import { bustCachedArray, cachedObject } from '~/server/utils/cache-helpers';
-import { constants } from '~/server/common/constants';
-import { REDIS_KEYS } from '~/server/redis/client';
-import { removeEmpty } from '~/utils/object-helpers';
 import { purchasableRewardDetails } from '~/server/selectors/purchasableReward.selector';
-import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
-import { HiddenModels } from '~/server/services/user-preferences.service';
+import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import { isCosmeticAvailable } from '~/server/services/cosmetic.service';
 import { deleteImageById } from '~/server/services/image.service';
+import { cancelSubscription } from '~/server/services/stripe.service';
+import { getSystemPermissions } from '~/server/services/system-cache';
+import { HiddenModels } from '~/server/services/user-preferences.service';
+import { bustCachedArray, cachedObject } from '~/server/utils/cache-helpers';
+import {
+  handleLogError,
+  throwBadRequestError,
+  throwConflictError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
+import { invalidateSession } from '~/server/utils/session-helpers';
+import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
+import blockedUsernames from '~/utils/blocklist-username.json';
+import { removeEmpty } from '~/utils/object-helpers';
+import { ProfileImage, profileImageSelect } from '../selectors/image.selector';
+import {
+  ToggleUserArticleEngagementsInput,
+  UserByReferralCodeSchema,
+  UserSettingsSchema,
+  UserTier,
+} from './../schema/user.schema';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
 export const getUserCreator = async ({
@@ -168,20 +167,18 @@ export const getUsers = async ({ limit, query, email, ids, include }: GetAllUser
     );
 
   const result = await dbRead.$queryRaw<GetUsersRow[]>`
-    SELECT
-      ${Prisma.raw(select.join(','))}
+    SELECT ${Prisma.raw(select.join(','))}
     FROM "User" u
-    ${Prisma.raw(
-      include?.includes('avatar') ? 'LEFT JOIN "Image" i ON i.id = u."profilePictureId"' : ''
-    )}
-    WHERE
-      ${ids && ids.length > 0 ? Prisma.sql`u.id IN (${Prisma.join(ids)})` : Prisma.sql`TRUE`}
+      ${Prisma.raw(
+        include?.includes('avatar') ? 'LEFT JOIN "Image" i ON i.id = u."profilePictureId"' : ''
+      )}
+    WHERE ${ids && ids.length > 0 ? Prisma.sql`u.id IN (${Prisma.join(ids)})` : Prisma.sql`TRUE`}
       AND ${query ? Prisma.sql`u.username LIKE ${query + '%'}` : Prisma.sql`TRUE`}
       AND ${email ? Prisma.sql`u.email ILIKE ${email + '%'}` : Prisma.sql`TRUE`}
       AND u."deletedAt" IS NULL
-      AND u."id" != -1
-    ${Prisma.raw(query ? 'ORDER BY LENGTH(username) ASC' : '')}
-    ${Prisma.raw(limit ? 'LIMIT ' + limit : '')}
+      AND u."id" != -1 ${Prisma.raw(query ? 'ORDER BY LENGTH(username) ASC' : '')} ${Prisma.raw(
+    limit ? 'LIMIT ' + limit : ''
+  )}
   `;
   return result.map(({ avatarNsfwLevel, ...user }) => ({
     ...user,
@@ -240,7 +237,8 @@ export async function setUserSetting(userId: number, settings: UserSettingsSchem
   const toSet = removeEmpty(settings);
   if (Object.keys(toSet).length) {
     await dbWrite.$executeRawUnsafe(`
-      UPDATE "User" SET settings = COALESCE(settings,'{}') || '${JSON.stringify(toSet)}'::jsonb
+      UPDATE "User"
+      SET settings = COALESCE(settings, '{}') || '${JSON.stringify(toSet)}'::jsonb
       WHERE id = ${userId}
     `);
   }
@@ -250,7 +248,8 @@ export async function setUserSetting(userId: number, settings: UserSettingsSchem
     .map(([key]) => `'${key}'`);
   if (toRemove.length) {
     await dbWrite.$executeRawUnsafe(`
-      UPDATE "User" SET settings = settings - ${toRemove.join(' - ')}}'
+      UPDATE "User"
+      SET settings = settings - ${toRemove.join(' - ')}}'
       WHERE id = ${userId}
     `);
   }
@@ -258,7 +257,9 @@ export async function setUserSetting(userId: number, settings: UserSettingsSchem
 
 export async function getUserSettings(userId: number) {
   const settings = await dbWrite.$queryRaw<{ settings: UserSettingsSchema }[]>`
-    SELECT settings FROM "User" WHERE id = ${userId}
+    SELECT settings
+    FROM "User"
+    WHERE id = ${userId}
   `;
   return settings[0]?.settings ?? {};
 }
@@ -542,7 +543,7 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
   if (userId) where.id = userId;
   else if (token) where.keys = { some: { key: token } };
 
-  const user = await dbWrite.user.findFirst({
+  const response = await dbWrite.user.findFirst({
     where,
     include: {
       subscription: { select: { status: true, product: { select: { metadata: true } } } },
@@ -558,16 +559,38 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
       },
     },
   });
-  if (!user) return undefined;
+  if (!response) return undefined;
+
+  // nb: doing this because these fields are technically nullable, but prisma
+  // likes returning them as undefined. that messes with the typing.
+  const user = {
+    ...response,
+    image: response.image ?? undefined,
+    referral: response.referral ?? undefined,
+    name: response.name ?? undefined,
+    username: response.username ?? undefined,
+    email: response.email ?? undefined,
+    emailVerified: response.emailVerified ?? undefined,
+    isModerator: response.isModerator ?? undefined,
+    deletedAt: response.deletedAt ?? undefined,
+    customerId: response.customerId ?? undefined,
+    subscriptionId: response.subscriptionId ?? undefined,
+    mutedAt: response.mutedAt ?? undefined,
+    bannedAt: response.bannedAt ?? undefined,
+    autoplayGifs: response.autoplayGifs ?? undefined,
+    leaderboardShowcase: response.leaderboardShowcase ?? undefined,
+    filePreferences: (response.filePreferences ?? undefined) as UserFilePreferences | undefined,
+  };
 
   const { subscription, profilePicture, profilePictureId, settings, ...rest } = user;
-  const tier: string | undefined =
+  const tier: UserTier | undefined =
     subscription && ['active', 'trialing'].includes(subscription.status)
       ? (subscription.product.metadata as any)[env.STRIPE_METADATA_KEY]
       : undefined;
   const memberInBadState =
-    subscription &&
-    ['incomplete', 'incomplete_expired', 'past_due', 'unpaid'].includes(subscription.status);
+    (subscription &&
+      ['incomplete', 'incomplete_expired', 'past_due', 'unpaid'].includes(subscription.status)) ??
+    undefined;
 
   const permissions: string[] = [];
   const systemPermissions = await getSystemPermissions();
@@ -698,6 +721,7 @@ type UserCosmeticLookup = {
     data: Prisma.JsonValue;
   }[];
 };
+
 export async function getCosmeticsForUsers(userIds: number[]) {
   const userCosmetics = await cachedObject<UserCosmeticLookup>({
     key: REDIS_KEYS.COSMETICS,
@@ -724,6 +748,7 @@ export async function getCosmeticsForUsers(userIds: number[]) {
 
   return Object.fromEntries(Object.values(userCosmetics).map((x) => [x.userId, x.cosmetics]));
 }
+
 export async function deleteUserCosmeticCache(userId: number) {
   await bustCachedArray(REDIS_KEYS.COSMETICS, 'userId', userId);
 }
@@ -735,20 +760,19 @@ export async function getProfilePicturesForUsers(userIds: number[]) {
     ids: userIds,
     lookupFn: async (ids) => {
       const profilePictures = await dbRead.$queryRaw<ProfileImage[]>`
-        SELECT
-          i.id,
-          i.name,
-          i.url,
-          i."nsfwLevel",
-          i.hash,
-          i."userId",
-          i.ingestion,
-          i.type,
-          i.width,
-          i.height,
-          i.metadata
+        SELECT i.id,
+               i.name,
+               i.url,
+               i."nsfwLevel",
+               i.hash,
+               i."userId",
+               i.ingestion,
+               i.type,
+               i.width,
+               i.height,
+               i.metadata
         FROM "User" u
-        JOIN "Image" i ON i.id = u."profilePictureId"
+               JOIN "Image" i ON i.id = u."profilePictureId"
         WHERE u.id IN (${Prisma.join(ids as number[])})
       `;
       return Object.fromEntries(profilePictures.map((x) => [x.userId, x]));
@@ -756,6 +780,7 @@ export async function getProfilePicturesForUsers(userIds: number[]) {
     ttl: 60 * 60 * 24, // 24 hours
   });
 }
+
 export async function deleteUserProfilePictureCache(userId: number) {
   await bustCachedArray(REDIS_KEYS.PROFILE_PICTURES, 'userId', userId);
 }
@@ -815,56 +840,52 @@ export const updateLeaderboardRank = async ({
 
   await dbWrite.$transaction([
     dbWrite.$executeRaw`
-      UPDATE "UserRank" SET "leaderboardRank" = null, "leaderboardId" = null, "leaderboardTitle" = null, "leaderboardCosmetic" = null
+      UPDATE "UserRank"
+      SET "leaderboardRank"     = null,
+          "leaderboardId"       = null,
+          "leaderboardTitle"    = null,
+          "leaderboardCosmetic" = null
       WHERE ${Prisma.join(WHERE, ' AND ')};
     `,
     dbWrite.$executeRaw`
-      WITH user_positions AS (
-        SELECT
-          lr."userId",
-          lr."leaderboardId",
-          l."title",
-          lr.position,
-          row_number() OVER (PARTITION BY "userId" ORDER BY "position") row_num
-        FROM "User" u
-        JOIN "LeaderboardResult" lr ON lr."userId" = u.id
-        JOIN "Leaderboard" l ON l.id = lr."leaderboardId" AND l.public
-        WHERE lr.date = current_date
-          AND (
-            u."leaderboardShowcase" IS NULL
-            OR lr."leaderboardId" = u."leaderboardShowcase"
-          )
-      ), lowest_position AS (
-        SELECT
-          up."userId",
-          up.position,
-          up."leaderboardId",
-          up."title" "leaderboardTitle",
-          (
-            SELECT data->>'url'
-            FROM "Cosmetic" c
-            WHERE c."leaderboardId" = up."leaderboardId"
-              AND up.position <= c."leaderboardPosition"
-            ORDER BY c."leaderboardPosition"
-            LIMIT 1
-          ) as "leaderboardCosmetic"
-        FROM user_positions up
-        WHERE row_num = 1
-      )
-      INSERT INTO "UserRank" ("userId", "leaderboardRank", "leaderboardId", "leaderboardTitle", "leaderboardCosmetic")
-      SELECT
-      "userId",
-      position,
-      "leaderboardId",
-      "leaderboardTitle",
-      "leaderboardCosmetic"
+      WITH user_positions AS (SELECT lr."userId",
+                                     lr."leaderboardId",
+                                     l."title",
+                                     lr.position,
+                                     row_number() OVER (PARTITION BY "userId" ORDER BY "position") row_num
+                              FROM "User" u
+                                     JOIN "LeaderboardResult" lr ON lr."userId" = u.id
+                                     JOIN "Leaderboard" l ON l.id = lr."leaderboardId" AND l.public
+                              WHERE lr.date = current_date
+                                AND (
+                                u."leaderboardShowcase" IS NULL
+                                  OR lr."leaderboardId" = u."leaderboardShowcase"
+                                )),
+           lowest_position AS (SELECT up."userId",
+                                      up.position,
+                                      up."leaderboardId",
+                                      up."title"   "leaderboardTitle",
+                                      (SELECT data ->> 'url'
+                                       FROM "Cosmetic" c
+                                       WHERE c."leaderboardId" = up."leaderboardId"
+                                         AND up.position <= c."leaderboardPosition"
+                                       ORDER BY c."leaderboardPosition"
+                                       LIMIT 1) as "leaderboardCosmetic"
+                               FROM user_positions up
+                               WHERE row_num = 1)
+      INSERT
+      INTO "UserRank" ("userId", "leaderboardRank", "leaderboardId", "leaderboardTitle", "leaderboardCosmetic")
+      SELECT "userId",
+             position,
+             "leaderboardId",
+             "leaderboardTitle",
+             "leaderboardCosmetic"
       FROM lowest_position
       WHERE ${Prisma.join(WHERE, ' AND ')}
-      ON CONFLICT ("userId") DO UPDATE SET
-        "leaderboardId" = excluded."leaderboardId",
-        "leaderboardRank" = excluded."leaderboardRank",
-        "leaderboardTitle" = excluded."leaderboardTitle",
-        "leaderboardCosmetic" = excluded."leaderboardCosmetic";
+      ON CONFLICT ("userId") DO UPDATE SET "leaderboardId"       = excluded."leaderboardId",
+                                           "leaderboardRank"     = excluded."leaderboardRank",
+                                           "leaderboardTitle"    = excluded."leaderboardTitle",
+                                           "leaderboardCosmetic" = excluded."leaderboardCosmetic";
     `,
   ]);
 };
@@ -1052,6 +1073,7 @@ export async function toggleReview({
 
   return setTo;
 }
+
 // #endregion
 
 //#region [bounty engagement]

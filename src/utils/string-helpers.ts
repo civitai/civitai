@@ -1,9 +1,9 @@
+import he from 'he';
 import { truncate } from 'lodash-es';
 import slugify from 'slugify';
 
 import allowedUrls from '~/utils/allowed-third-party-urls.json';
 import { toJson } from '~/utils/json-helpers';
-import he from 'he';
 
 function getUrlDomain(url: string) {
   // convert url string into a URL object and extract just the domain, avoiding subdomains
@@ -70,6 +70,7 @@ export function getInitials(value: string) {
 
 const tokenCharacters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
 const tokenCharactersLength = tokenCharacters.length;
+
 export function generateToken(length: number) {
   let result = '';
   for (let i = 0; i < length; i++)
@@ -129,7 +130,8 @@ export function removeTags(str: string) {
   return stringWithoutExtraSpaces.trim();
 }
 
-export function postgresSlugify(str: string) {
+export function postgresSlugify(str?: string) {
+  if (!str) return '';
   return str
     .replace(' ', '_')
     .replace(/[^a-zA-Z0-9_]/g, '')
