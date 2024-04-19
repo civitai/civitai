@@ -64,6 +64,7 @@ export function QueueItem({ request }: Props) {
     (isDraft
       ? request.images?.every((x) => !x.status)
       : request.images?.some((x) => !x.status || x.status === 'Started'));
+  const processing = status === GenerationRequestStatus.Processing;
   const failed = status === GenerationRequestStatus.Error;
 
   const deleteImageMutation = useDeleteGenerationRequestImages();
@@ -232,9 +233,9 @@ export function QueueItem({ request }: Props) {
           </Text>
         </ContentClamp>
         <Collection items={request.resources} limit={3} renderItem={ResourceBadge} grouped />
-        {(!!images?.length || pendingProcessing) && (
+        {(!!images?.length || processing) && (
           <div className={classes.grid}>
-            {pendingProcessing && <GenerationPlaceholder request={request} />}
+            {processing && <GenerationPlaceholder request={request} />}
             {images?.map((image) => (
               <GeneratedImage key={image.id} image={image} request={request} />
             ))}
