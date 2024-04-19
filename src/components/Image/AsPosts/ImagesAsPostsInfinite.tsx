@@ -129,13 +129,22 @@ export default function ImagesAsPostsInfinite({
       }
     );
 
+  const hiddenUsers = useMemo(
+    () => gallerySettings?.hiddenUsers.map((x) => x.id),
+    [gallerySettings?.hiddenUsers]
+  );
+  const hiddenTags = useMemo(
+    () => gallerySettings?.hiddenTags.map((x) => x.id),
+    [gallerySettings?.hiddenTags]
+  );
+
   const flatData = useMemo(() => data?.pages.flatMap((x) => (!!x ? x.items : [])), [data]);
   const { items } = useApplyHiddenPreferences({
     type: 'posts',
     data: flatData,
     hiddenImages: !showHidden ? gallerySettings?.hiddenImages : undefined,
-    hiddenUsers: !showHidden ? gallerySettings?.hiddenUsers.map((x) => x.id) : undefined,
-    hiddenTags: !showHidden ? gallerySettings?.hiddenTags.map((x) => x.id) : undefined,
+    hiddenUsers: !showHidden ? hiddenUsers : undefined,
+    hiddenTags: !showHidden ? hiddenTags : undefined,
     browsingLevel: intersection,
   });
 

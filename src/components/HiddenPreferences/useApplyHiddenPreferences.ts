@@ -21,9 +21,9 @@ export function useApplyHiddenPreferences<
   showImageless,
   disabled,
   isRefetching,
-  hiddenImages,
-  hiddenUsers,
-  hiddenTags,
+  hiddenImages = [],
+  hiddenUsers = [],
+  hiddenTags = [],
   browsingLevel: browsingLevelOverride,
   allowLowerLevels,
 }: {
@@ -46,19 +46,21 @@ export function useApplyHiddenPreferences<
 
   const hiddenPreferences = useHiddenPreferencesContext();
 
+  // We need to stringify the hidden preferences to trigger a re-render when they change.
+  const stringified = JSON.stringify([...hiddenImages, ...hiddenUsers, ...hiddenTags]);
   const { items, hidden } = useMemo(() => {
     const preferences = { ...hiddenPreferences };
-    if (hiddenImages)
+    if (hiddenImages.length > 0)
       preferences.hiddenImages = new Map([
         ...preferences.hiddenImages,
         ...hiddenImages.map((id): [number, boolean] => [id, true]),
       ]);
-    if (hiddenUsers)
+    if (hiddenUsers.length > 0)
       preferences.hiddenUsers = new Map([
         ...preferences.hiddenUsers,
         ...hiddenUsers.map((id): [number, boolean] => [id, true]),
       ]);
-    if (hiddenTags) {
+    if (hiddenTags.length > 0) {
       preferences.hiddenTags = new Map([
         ...preferences.hiddenTags,
         ...hiddenTags.map((id): [number, boolean] => [id, true]),
@@ -81,16 +83,7 @@ export function useApplyHiddenPreferences<
       hidden,
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    data,
-    hiddenPreferences,
-    hiddenUsers,
-    hiddenImages,
-    hiddenTags,
-    showHidden,
-    disabled,
-    browsingLevel,
-  ]);
+  }, [data, hiddenPreferences, stringified, showHidden, disabled, browsingLevel]);
 
   useEffect(() => setPrevious(items), [items]);
 
