@@ -9,10 +9,10 @@ export const dailyBoostReward = createBuzzEvent({
   cap: 50,
   onDemand: true,
   getKey: async (input: DailyBoostInput) => {
-    const date = dayjs().startOf('day').format('YYYY-MM-DD');
+    const date = +dayjs().startOf('day').format('YYYYMMDD');
     return {
       toUserId: input.userId,
-      forId: date,
+      forId: date, // Must be a number
       byUserId: input.userId,
       type: `dailyBoost`,
     };
