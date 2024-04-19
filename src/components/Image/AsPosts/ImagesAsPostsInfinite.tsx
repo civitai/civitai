@@ -133,9 +133,9 @@ export default function ImagesAsPostsInfinite({
   const { items } = useApplyHiddenPreferences({
     type: 'posts',
     data: flatData,
-    hiddenImages: gallerySettings?.hiddenImages,
-    hiddenUsers: gallerySettings?.hiddenUsers.map((x) => x.id),
-    hiddenTags: gallerySettings?.hiddenTags.map((x) => x.id),
+    hiddenImages: !showHidden ? gallerySettings?.hiddenImages : undefined,
+    hiddenUsers: !showHidden ? gallerySettings?.hiddenUsers.map((x) => x.id) : undefined,
+    hiddenTags: !showHidden ? gallerySettings?.hiddenTags.map((x) => x.id) : undefined,
     browsingLevel: intersection,
   });
 

@@ -46,52 +46,53 @@ export function useApplyHiddenPreferences<
 
   const hiddenPreferences = useHiddenPreferencesContext();
 
-  const { items, hidden } = useMemo(
-    () => {
-      const preferences = { ...hiddenPreferences };
-      if (hiddenImages)
-        preferences.hiddenImages = new Map([
-          ...preferences.hiddenImages,
-          ...hiddenImages.map((id): [number, boolean] => [id, true]),
-        ]);
-      if (hiddenUsers)
-        preferences.hiddenUsers = new Map([
-          ...preferences.hiddenUsers,
-          ...hiddenUsers.map((id): [number, boolean] => [id, true]),
-        ]);
-      if (hiddenTags) {
-        preferences.hiddenTags = new Map([
-          ...preferences.hiddenTags,
-          ...hiddenTags.map((id): [number, boolean] => [id, true]),
-        ]);
-      }
-      const { items, hidden } = filterPreferences({
-        type,
-        data,
-        showHidden,
-        showImageless,
-        disabled,
-        browsingLevel,
-        hiddenPreferences: preferences,
-        currentUser,
-        allowLowerLevels,
-      });
-
-      return {
-        items,
-        hidden,
-      };
-    },
-    // eslint-disable-next-line
-  [
+  const { items, hidden } = useMemo(() => {
+    const preferences = { ...hiddenPreferences };
+    if (hiddenImages)
+      preferences.hiddenImages = new Map([
+        ...preferences.hiddenImages,
+        ...hiddenImages.map((id): [number, boolean] => [id, true]),
+      ]);
+    if (hiddenUsers)
+      preferences.hiddenUsers = new Map([
+        ...preferences.hiddenUsers,
+        ...hiddenUsers.map((id): [number, boolean] => [id, true]),
+      ]);
+    if (hiddenTags) {
+      preferences.hiddenTags = new Map([
+        ...preferences.hiddenTags,
+        ...hiddenTags.map((id): [number, boolean] => [id, true]),
+      ]);
+    }
+    const { items, hidden } = filterPreferences({
+      type,
       data,
-      hiddenPreferences,
+      showHidden,
+      showImageless,
       disabled,
       browsingLevel,
-    ]
-  );
+      hiddenPreferences: preferences,
+      currentUser,
+      allowLowerLevels,
+    });
 
-  useEffect(() => setPrevious(items), [data]);
+    return {
+      items,
+      hidden,
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    data,
+    hiddenPreferences,
+    hiddenUsers,
+    hiddenImages,
+    hiddenTags,
+    showHidden,
+    disabled,
+    browsingLevel,
+  ]);
+
+  useEffect(() => setPrevious(items), [items]);
 
   // We will not be counting `noImages` because the user can't do anything about these.
   const hiddenCount =
