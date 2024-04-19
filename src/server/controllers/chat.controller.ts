@@ -821,7 +821,7 @@ export const createMessageFn = async ({
             .create({
               data: {
                 chatId: input.chatId,
-                content: JSON.stringify({ image: href }),
+                content: JSON.stringify({ image: href, href }),
                 contentType: ChatMessageType.Embed,
                 userId: -1,
                 referenceMessageId: resp.id,
@@ -841,9 +841,10 @@ export const createMessageFn = async ({
           unfurl(href)
             .then(async (hrefData) => {
               const embedData = {
-                title: hrefData.title ?? null,
-                description: hrefData.description ?? null,
+                title: hrefData.title ?? hrefData.open_graph?.title ?? null,
+                description: hrefData.description ?? hrefData.open_graph?.description ?? null,
                 image: hrefData.open_graph?.images?.[0]?.url ?? null,
+                href,
               };
               const embedMsg = JSON.stringify(embedData);
 

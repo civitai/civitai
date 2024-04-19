@@ -1,5 +1,6 @@
 import {
   ActionIcon,
+  Anchor,
   Box,
   Button,
   Center,
@@ -20,6 +21,7 @@ import {
   useMantineTheme,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
+import { NextLink } from '@mantine/next';
 import { ChatMemberStatus, ChatMessageType } from '@prisma/client';
 import {
   IconArrowBack,
@@ -758,22 +760,20 @@ function ChatInputBox({
   );
 }
 
-// TODO add github but make sure the domain is not replaced
 const civRegex = new RegExp(
   `^(?:https?:\/\/)?(?:image\.)?(?:${(env.NEXT_PUBLIC_BASE_URL ?? 'civitai.com').replace(
     /^https?:\/\//,
     ''
   )}|civitai.com)`
 );
+const externalRegex = new RegExp('^(?:https?://)?(github.com|twitter.com|x.com)');
 // const airRegex = /^(?:urn:air:\w+:\w+:)?civitai:(?<mId>\d+)@(?<mvId>\d+)$/i;
 export const airRegex = /^civitai:(?<mId>\d+)@(?<mvId>\d+)$/i;
 
-const renderLink: OptFn<(ir: IntermediateRepresentation) => ReactElement | undefined> = ({
-  attributes,
-  content,
-}) => {
-  const { href, ...props }: { href?: string } = attributes;
+function getLinkHref(href: string | undefined) {
   if (!href) return;
+
+  if (externalRegex.test(href)) return href;
 
   let newHref: string;
   const airMatch = href.match(airRegex);
@@ -783,17 +783,53 @@ const renderLink: OptFn<(ir: IntermediateRepresentation) => ReactElement | undef
   } else {
     newHref = href.replace(civRegex, '') || '/';
   }
+  return newHref;
+}
+
+const EmbedLink = ({ href, title }: { href?: string; title: string }) => {
+  if (!href) return <Title order={6}>{title}</Title>;
+
+  if (externalRegex.test(href)) {
+    return (
+      <Anchor href={href} target="_blank" rel="noopener noreferrer" variant="link">
+        <Title order={6}>{title}</Title>
+      </Anchor>
+    );
+  }
 
   return (
-    <Link href={newHref} passHref {...props}>
-      <Text variant="link" component="a" style={{ color: 'revert', textDecoration: 'underline' }}>
+    <Anchor component={NextLink} href={href} variant="link">
+      <Title order={6}>{title}</Title>
+    </Anchor>
+  );
+};
+const renderLink: OptFn<(ir: IntermediateRepresentation) => ReactElement | undefined> = ({
+  attributes,
+  content,
+}) => {
+  const { href, ...props }: { href?: string } = attributes;
+
+  const modHref = getLinkHref(href);
+  if (!modHref) return;
+
+  if (externalRegex.test(modHref)) {
+    return (
+      <Anchor href={modHref} target="_blank" rel="noopener noreferrer" variant="link" {...props}>
+        {content}
+      </Anchor>
+    );
+  }
+
+  return (
+    <Link href={modHref} passHref {...props}>
+      <Text variant="link" component="a">
         {content}
       </Text>
     </Link>
   );
 };
 const validateLink = {
-  url: (value: string) => civRegex.test(value) || airRegex.test(value),
+  url: (value: string) => civRegex.test(value) || airRegex.test(value) || externalRegex.test(value),
 };
 export const linkifyOptions: Opts = {
   render: renderLink,
@@ -803,14 +839,23 @@ export const linkifyOptions: Opts = {
 const EmbedMessage = ({ content }: { content: string }) => {
   const { classes, cx } = useStyles();
 
-  let contentObj: { title: string | null; description: string | null; image: string | null };
+  let contentObj: {
+    title: string | null;
+    description: string | null;
+    image: string | null;
+    href?: string;
+  };
   try {
     contentObj = JSON.parse(content);
   } catch {
     return <></>;
   }
 
-  if (!contentObj.title && !contentObj.description && !contentObj.image) return <></>;
+  const { title, description, image, href } = contentObj;
+
+  if (!title && !description && !image) return <></>;
+
+  const modHref = getLinkHref(href);
 
   return (
     <Group
@@ -821,15 +866,15 @@ const EmbedMessage = ({ content }: { content: string }) => {
       className={cx(classes.chatMessage)}
       noWrap
     >
-      {(!!contentObj.title || !!contentObj.description) && (
+      {(!!title || !!description) && (
         <Stack>
-          {!!contentObj.title && <Title order={6}>{contentObj.title ?? 'Civitai'}</Title>}
-          {!!contentObj.description && <Text size="xs">{contentObj.description}</Text>}
+          {!!title && <EmbedLink href={modHref} title={title} />}
+          {!!description && <Text size="xs">{description}</Text>}
         </Stack>
       )}
-      {!!contentObj.image && (
+      {!!image && (
         <EdgeMedia
-          src={contentObj.image}
+          src={image}
           width={75}
           height={75}
           alt="Link preview"
