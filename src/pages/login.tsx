@@ -129,7 +129,7 @@ export default function Login({ providers }: Props) {
                     })
                 : null}
               <Divider label="Or" labelPosition="center" />
-              <EmailLogin />
+              <EmailLogin returnUrl={returnUrl} />
             </Stack>
             {error && (
               <SignInError
@@ -158,21 +158,22 @@ export const getServerSideProps = createServerSideProps({
   useSession: true,
   resolver: async ({ session, ctx }) => {
     if (session) {
-      const { callbackUrl, error } = ctx.query;
+      const { callbackUrl, error, reason } = ctx.query;
+      if (reason !== 'switch-accounts') {
+        const destinationURL = new URL(
+          typeof callbackUrl === 'string' ? callbackUrl : '/',
+          getBaseUrl()
+        );
+        if (error) destinationURL.searchParams.set('error', error as string);
+        const destination = `${destinationURL.pathname}${destinationURL.search}${destinationURL.hash}`;
 
-      const destinationURL = new URL(
-        typeof callbackUrl === 'string' ? callbackUrl : '/',
-        getBaseUrl()
-      );
-      if (error) destinationURL.searchParams.set('error', error as string);
-      const destination = `${destinationURL.pathname}${destinationURL.search}${destinationURL.hash}`;
-
-      return {
-        redirect: {
-          destination,
-          permanent: false,
-        },
-      };
+        return {
+          redirect: {
+            destination,
+            permanent: false,
+          },
+        };
+      }
     }
 
     const providers = await getProviders();

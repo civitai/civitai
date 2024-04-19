@@ -1,9 +1,9 @@
+import he from 'he';
 import { truncate } from 'lodash-es';
 import slugify from 'slugify';
 
 import allowedUrls from '~/utils/allowed-third-party-urls.json';
 import { toJson } from '~/utils/json-helpers';
-import he from 'he';
 
 function getUrlDomain(url: string) {
   // convert url string into a URL object and extract just the domain, avoiding subdomains
@@ -72,6 +72,7 @@ export function getInitials(value: string) {
 
 const tokenCharacters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
 const tokenCharactersLength = tokenCharacters.length;
+
 export function generateToken(length: number) {
   let result = '';
   for (let i = 0; i < length; i++)

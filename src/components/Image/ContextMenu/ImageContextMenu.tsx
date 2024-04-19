@@ -161,7 +161,7 @@ function ImageMenuItems(
     if (!_userId) return;
     if (features.csamReports)
       window.open(`/moderator/csam/${_userId}?imageId=${imageId}`, '_blank');
-    else reportCsamMutation.mutate([imageId]);
+    else reportCsamMutation.mutate({ imageIds: [imageId] });
   };
 
   const { additionalMenuItemsAfter, additionalMenuItemsBefore } = useImageContextMenuContext();

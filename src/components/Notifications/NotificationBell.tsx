@@ -67,6 +67,7 @@ export function NotificationBell() {
             indicator: {
               height: '20px !important',
               cursor: 'pointer',
+              '> span': { marginBottom: '2px' },
             },
             common: {
               fontWeight: 500,

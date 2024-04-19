@@ -5,6 +5,7 @@ import {
   Group,
   Indicator,
   IndicatorProps,
+  Loader,
   MantineNumberSize,
   MantineSize,
   MantineTheme,
@@ -14,9 +15,10 @@ import {
   useMantineTheme,
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
-
+import { IconUser } from '@tabler/icons-react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { Username } from '~/components/User/Username';
+import { UserAvatarProfilePicture } from '~/components/UserAvatar/UserAvatarProfilePicture';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { getInitials } from '~/utils/string-helpers';
@@ -92,13 +94,21 @@ export function UserAvatar({
   const currentUser = useCurrentUser();
   const theme = useMantineTheme();
 
-  const { data: fallbackUser } = trpc.user.getById.useQuery(
+  const { data: fallbackUser, isInitialLoading } = trpc.user.getById.useQuery(
     { id: userId as number },
     { enabled: !user && !!userId && userId > -1, cacheTime: Infinity, staleTime: Infinity }
   );
 
   const avatarUser = user ?? { ...fallbackUser, cosmetics: [] };
 
+  // If using a userId, show loading
+  if (isInitialLoading)
+    return (
+      <Group>
+        <Loader size="sm" />
+        <Text size="sm">Loading user...</Text>
+      </Group>
+    );
   // If no user or user is civitai, return null
   if (!avatarUser || avatarUser.id === -1) return null;
   const userDeleted = !!avatarUser.deletedAt;
@@ -232,7 +242,13 @@ export function UserAvatar({
           {withUsername && (
             <UserProfileLink user={avatarUser} linkToProfile={linkToProfile}>
               <Group spacing={4} align="center">
-                <Username {...avatarUser} size={textSize} badgeSize={badgeSize} />
+                <Username
+                  username={avatarUser.username}
+                  deletedAt={avatarUser.deletedAt}
+                  cosmetics={(avatarUser as Partial<UserWithCosmetics>).cosmetics ?? []}
+                  size={textSize}
+                  badgeSize={badgeSize}
+                />
                 {badge}
               </Group>
             </UserProfileLink>

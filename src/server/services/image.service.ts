@@ -36,6 +36,7 @@ import {
   UpdateImageNsfwLevelOutput,
   UpdateImageInput,
   ImageRatingReviewOutput,
+  ReportCsamImagesInput,
 } from '~/server/schema/image.schema';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { articlesSearchIndex, imagesSearchIndex } from '~/server/search-index';
@@ -2689,8 +2690,7 @@ export async function reportCsamImages({
   imageIds,
   user,
   ip,
-}: {
-  imageIds: number[];
+}: ReportCsamImagesInput & {
   user: SessionUser;
   ip?: string;
 }) {
