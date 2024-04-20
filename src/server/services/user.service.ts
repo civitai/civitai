@@ -62,6 +62,7 @@ import {
   UserSettingsSchema,
   UserTier,
 } from './../schema/user.schema';
+import { simpleCosmeticSelect } from '../selectors/cosmetic.selector';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
 export const getUserCreator = async ({
@@ -87,6 +88,7 @@ export const getUserCreator = async ({
       username: true,
       muted: true,
       bannedAt: true,
+      deletedAt: true,
       createdAt: true,
       links: {
         select: {
@@ -117,13 +119,7 @@ export const getUserCreator = async ({
         select: {
           data: true,
           cosmetic: {
-            select: {
-              id: true,
-              data: true,
-              type: true,
-              source: true,
-              name: true,
-            },
+            select: simpleCosmeticSelect,
           },
         },
       },

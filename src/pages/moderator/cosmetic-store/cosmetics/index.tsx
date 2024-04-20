@@ -25,6 +25,7 @@ import { IconCloudOff, IconEdit, IconPlus } from '@tabler/icons-react';
 import { useState } from 'react';
 import { CosmeticsFiltersDropdown } from '~/components/Cosmetics/CosmeticsFiltersDropdown';
 import { useQueryCosmeticsPaged } from '~/components/Cosmetics/cosmetics.util';
+import { CreatorCardV2 } from '~/components/CreatorCard/CreatorCard';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { Meta } from '~/components/Meta/Meta';
 import { PreviewCard } from '~/components/Modals/CardDecorationModal';
@@ -144,48 +145,29 @@ export const CosmeticPreview = ({
     );
   }
 
-  const activeCosmetics = user
+  const userWithEquippedCosmetics = user
     ? {
-        badge: user.cosmetics.find((c) => c.cosmetic.type === CosmeticType.Badge && !!c.equippedAt)
-          ?.cosmetic as BadgeCosmetic,
-        nameplate: user.cosmetics.find(
-          (c) => c.cosmetic.type === CosmeticType.NamePlate && !!c.equippedAt
-        )?.cosmetic as NamePlateCosmetic,
-        profileBackground: user.cosmetics.find(
-          (c) => c.cosmetic.type === CosmeticType.ProfileBackground && !!c.equippedAt
-        )?.cosmetic as ProfileBackgroundCosmetic,
-        profileDecoration: user.cosmetics.find(
-          (c) => c.cosmetic.type === CosmeticType.ProfileDecoration && !!c.equippedAt
-        )?.cosmetic as ContentDecorationCosmetic,
+        ...user,
+        cosmetics: user?.cosmetics?.filter((c) => !!c.equippedAt) ?? [],
       }
-    : {};
+    : undefined;
 
   switch (cosmetic.type) {
     case CosmeticType.Badge:
-      return <ProfilePreview user={user} {...activeCosmetics} badge={cosmetic as BadgeCosmetic} />;
     case CosmeticType.ProfileDecoration:
-      return (
-        <ProfilePreview
-          user={user}
-          {...activeCosmetics}
-          profileDecoration={cosmetic as ContentDecorationCosmetic}
-        />
-      );
     case CosmeticType.NamePlate:
-      return (
-        <ProfilePreview
-          user={user}
-          {...activeCosmetics}
-          nameplate={cosmetic as NamePlateCosmetic}
-        />
-      );
     case CosmeticType.ProfileBackground:
+      if (!userWithEquippedCosmetics) {
+        return null;
+      }
+
       return (
-        <ProfilePreview
-          user={user}
-          {...activeCosmetics}
-          profileBackground={cosmetic as ProfileBackgroundCosmetic}
-        />
+        <Stack spacing={0}>
+          <Text weight="bold" align="center">
+            Preview
+          </Text>
+          <CreatorCardV2 user={userWithEquippedCosmetics} cosmeticOverwrites={[cosmetic]} />
+        </Stack>
       );
     case CosmeticType.ContentDecoration:
       if (!images.length) {

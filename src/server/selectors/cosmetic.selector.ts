@@ -15,7 +15,11 @@ const simpleCosmetic = Prisma.validator<Prisma.CosmeticDefaultArgs>()({
   select: simpleCosmeticSelect,
 });
 
-export type SimpleCosmetic = Prisma.CosmeticGetPayload<typeof simpleCosmetic> & {
+export type SimpleCosmetic = Omit<
+  Prisma.CosmeticGetPayload<typeof simpleCosmetic>,
+  'description'
+> & {
+  description?: string | null;
   equippedToId?: number | null;
   equippedToType?: CosmeticEntity | null;
   forId?: number | null;
