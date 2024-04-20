@@ -785,15 +785,15 @@ export const createGenerationRequest = async ({
   // console.log(JSON.stringify(generationRequest));
   // console.log('________');
 
-  const charge = status.charge;
-  const response = await fetch(
-    `${env.SCHEDULER_ENDPOINT}/requests${charge ? '?charge=true' : ''}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(generationRequest),
-    }
-  );
+  const schedulerUrl = new URL(`${env.SCHEDULER_ENDPOINT}/requests`);
+  if (status.charge) schedulerUrl.searchParams.set('charge', 'true');
+  if (params.staging) schedulerUrl.searchParams.set('staging', 'true');
+
+  const response = await fetch(schedulerUrl.toString(), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(generationRequest),
+  });
 
   // console.log('________');
   // console.log(response);
