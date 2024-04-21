@@ -2735,6 +2735,7 @@ export async function getImageRatingRequests({
         FROM "ImageRatingRequest" irr
         JOIN "Image" i on i.id = irr."imageId"
         WHERE irr.status = ${ReportStatus.Pending}::"ReportStatus"
+          AND i."nsfwLevel" != ${NsfwLevel.Blocked}
         GROUP BY irr."imageId", i.id
     )
     SELECT
