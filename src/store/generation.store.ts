@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
+import { generation } from '~/server/common/constants';
 import { GetGenerationDataInput } from '~/server/schema/generation.schema';
 import { Generation } from '~/server/services/generation/generation.types';
 import { showErrorNotification } from '~/utils/notifications';
@@ -62,6 +63,11 @@ export const useGenerationStore = create<GenerationState>()(
       setData: ({ data, type }) =>
         set((state) => {
           state.view = 'generate';
+          if (
+            data.params?.sampler &&
+            !(generation.samplers as string[]).includes(data.params.sampler)
+          )
+            data.params.sampler = generation.defaultValues.sampler;
           state.data = { type, data };
         }),
       randomize: async (includeResources) => {
