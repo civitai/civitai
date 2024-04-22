@@ -72,7 +72,9 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
               ? castedFiles.map(({ hashes, metadata, ...file }) => ({
                   ...file,
                   metadata: removeEmpty(metadata),
-                  name: getDownloadFilename({ model, modelVersion: version, file }),
+                  name: decodeURIComponent(
+                    getDownloadFilename({ model, modelVersion: version, file })
+                  ),
                   hashes: hashesAsObject(hashes),
                   downloadUrl: `${baseUrl}${createModelFileDownloadUrl({
                     versionId: version.id,

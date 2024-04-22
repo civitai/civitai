@@ -79,7 +79,7 @@ export async function prepareModelVersionResponse(
           ...file,
           metadata: reduceToBasicFileMetadata(metadata),
           hashes: hashesAsObject(hashes),
-          name: getDownloadFilename({ model, modelVersion: version, file }),
+          name: decodeURIComponent(getDownloadFilename({ model, modelVersion: version, file })),
           primary: primaryFile.id === file.id,
           downloadUrl: `${baseUrl.origin}${createModelFileDownloadUrl({
             versionId: version.id,
