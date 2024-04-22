@@ -57,6 +57,8 @@ import { isEqual } from 'lodash-es';
 import { ProfilePictureAlert } from '../User/ProfilePictureAlert';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { cosmeticInputSchema } from '~/server/schema/cosmetic.schema';
+import { CreatorCardV2 } from '~/components/CreatorCard/CreatorCard';
+import { isDefined } from '~/utils/type-guards';
 
 const schema = userProfileUpdateSchema.merge(
   userUpdateSchema
@@ -349,6 +351,20 @@ const { openModal, Modal } = createContextModal({
 
     const loading = isUpdating || updateUserMutation.isLoading;
 
+    const templateImage = profilePicture?.url ?? profileImage;
+    const userWithCosmetics: UserWithCosmetics = user
+      ? {
+          ...user,
+          image: templateImage || user.image,
+          cosmetics: [],
+          deletedAt: null,
+          profilePicture: {
+            ...user.profilePicture,
+            url: templateImage || user.image,
+          } as UserWithCosmetics['profilePicture'],
+        }
+      : null;
+
     return (
       <Form form={form} onSubmit={handleSubmit}>
         <Stack>
@@ -376,7 +392,23 @@ const { openModal, Modal } = createContextModal({
           </Group>
           <Divider label="Profile" />
           <Stack>
-            <ProfilePreview
+            {userWithCosmetics && (
+              <CreatorCardV2
+                user={userWithCosmetics}
+                cosmeticOverwrites={[
+                  badgeId ? badges.find((c) => c.id === badgeId) : undefined,
+                  nameplateId ? nameplates.find((c) => c.id === nameplateId) : undefined,
+                  profileDecoration
+                    ? decorations.find((c) => c.id === profileDecoration.id)
+                    : undefined,
+                  profileBackground
+                    ? backgrounds.find((c) => c.id === profileBackground.id)
+                    : undefined,
+                ].filter(isDefined)}
+                fetchUser={false}
+              />
+            )}
+            {/* <ProfilePreview
               user={user}
               badge={badgeId ? badges.find((c) => c.id === badgeId) : undefined}
               nameplate={nameplateId ? nameplates.find((c) => c.id === nameplateId) : undefined}
@@ -391,7 +423,7 @@ const { openModal, Modal } = createContextModal({
                   : undefined
               }
               profileImage={profilePicture?.url ?? profileImage}
-            />
+            /> */}
             <Stack spacing="md">
               <InputProfileImageUpload name="profilePicture" label="Edit profile image" />
               <ProfilePictureAlert ingestion={user?.profilePicture?.ingestion} />
@@ -480,7 +512,6 @@ const { openModal, Modal } = createContextModal({
                 </Popover.Dropdown>
               </Popover>
             </Group>
-
             {badges.length > 0 ? (
               <Group spacing={8}>
                 {badges.map((cosmetic) => {

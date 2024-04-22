@@ -9,7 +9,7 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { BountyGetById } from '~/types/router';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getBountyCurrency } from '~/components/Bounty/bounty.utils';
-import { CreatorCard } from '~/components/CreatorCard/CreatorCard';
+import { CreatorCardV2 } from '~/components/CreatorCard/CreatorCard';
 import { formatDate } from '~/utils/date-helpers';
 import { useTrackEvent } from '../TrackView/track.utils';
 
@@ -172,7 +172,7 @@ export const AwardBountyAction = ({
                 <Text size="xs" color="dimmed">
                   Entry added on {formatDate(bountyEntry.createdAt)} by
                 </Text>
-                <CreatorCard user={bountyEntry.user} />
+                <CreatorCardV2 user={bountyEntry.user} />
               </Stack>
             </Center>
           )}

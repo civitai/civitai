@@ -38,6 +38,7 @@ const useStyles = createStyles((theme) => ({
     background: theme.fn.rgba(theme.colors.dark[9], 0.6),
     margin: -theme.spacing.md,
     marginTop: 0,
+    minHeight: 60,
   },
 
   profileDetails: {
@@ -198,11 +199,12 @@ export const CreatorCardV2 = ({
   tipBuzzEntityId,
   withActions = true,
   cosmeticOverwrites,
+  fetchUser = true,
 }: PropsV2) => {
   const { classes, theme } = useStyles();
   const { data } = trpc.user.getCreator.useQuery(
     { id: user.id },
-    { enabled: user.id !== constants.system.user.id }
+    { enabled: user.id !== constants.system.user.id && fetchUser }
   );
 
   const creator = data || {
@@ -276,7 +278,13 @@ export const CreatorCardV2 = ({
                     <Box className={classes.avatar}>
                       <UserAvatar
                         size="lg"
-                        avatarProps={{ size: 60 }}
+                        avatarProps={{
+                          size: 60,
+                          style: {
+                            minHeight: '100%',
+                            objectFit: 'cover',
+                          },
+                        }}
                         user={creatorWithCosmetics}
                         linkToProfile
                       />
@@ -367,4 +375,5 @@ type PropsV2 = {
   tipBuzzEntityType?: string;
   withActions?: boolean;
   cosmeticOverwrites?: SimpleCosmetic[];
+  fetchUser?: boolean;
 };
