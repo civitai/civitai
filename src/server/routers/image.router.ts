@@ -134,7 +134,6 @@ export const imageRouter = router({
     .mutation(({ input, ctx }) => reportCsamImages({ ...input, user: ctx.user, ip: ctx.ip })),
   updateImageNsfwLevel: protectedProcedure
     .input(updateImageNsfwLevelSchema)
-    .use(isOwnerOrModerator)
     .mutation(({ input, ctx }) => updateImageNsfwLevel({ ...input, user: ctx.user })),
   getImageRatingRequests: moderatorProcedure
     .input(imageRatingReviewInput)
