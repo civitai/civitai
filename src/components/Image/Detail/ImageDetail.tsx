@@ -56,6 +56,7 @@ import { containerQuery } from '~/utils/mantine-css-helpers';
 import { ProfileBackgroundCosmetic } from '~/server/selectors/cosmetic.selector';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { applyCosmeticThemeColors } from '~/libs/sx-helpers';
+import { CreatorCardV2 } from '~/components/CreatorCard/CreatorCard';
 
 export function ImageDetail() {
   const { classes, cx, theme } = useStyles();
@@ -112,100 +113,7 @@ export function ImageDetail() {
           </div>
           <Card className={cx(classes.sidebar)}>
             <Card.Section withBorder>
-              <BackgroundImage
-                sx={{
-                  backgroundRepeat: 'no-repeat',
-                  backgroundPosition: 'right',
-                  backgroundSize: 'cover',
-                }}
-                src={
-                  backgroundImage && backgroundImage.data.url
-                    ? getEdgeUrl(backgroundImage.data.url, {
-                        width: 'original',
-                        transcode: false,
-                      })
-                    : ''
-                }
-              >
-                <Group position="apart" p="xs" spacing={8}>
-                  <UserAvatar
-                    user={image.user}
-                    avatarProps={{ size: 32 }}
-                    size="sm"
-                    subText={
-                      <Text size="xs" color="dimmed">
-                        {image.publishedAt ? (
-                          <>
-                            Uploaded <DaysFromNow date={image.publishedAt} />
-                          </>
-                        ) : (
-                          'Not published'
-                        )}
-                      </Text>
-                    }
-                    withOverlay={!!backgroundImage}
-                    subTextForce
-                    withUsername
-                    linkToProfile
-                  />
-                  <Group spacing={8} noWrap>
-                    <TipBuzzButton
-                      toUserId={image.user.id}
-                      entityId={image.id}
-                      label=""
-                      entityType="Image"
-                      size="md"
-                      styles={
-                        backgroundImage ? applyCosmeticThemeColors(backgroundImage.data) : undefined
-                      }
-                      compact
-                    />
-                    <ChatUserButton
-                      user={image.user}
-                      label=""
-                      size="md"
-                      styles={
-                        backgroundImage ? applyCosmeticThemeColors(backgroundImage.data) : undefined
-                      }
-                      compact
-                    />
-                    <FollowUserButton
-                      userId={image.user.id}
-                      size="md"
-                      styles={
-                        backgroundImage ? applyCosmeticThemeColors(backgroundImage.data) : undefined
-                      }
-                      compact
-                    />
-                    <ActionIcon
-                      onClick={toggleInfo}
-                      size="md"
-                      radius="xl"
-                      className={classes.mobileOnly}
-                      styles={
-                        backgroundImage ? applyCosmeticThemeColors(backgroundImage.data) : undefined
-                      }
-                    >
-                      <IconX size={20} />
-                    </ActionIcon>
-                    <CloseButton
-                      size="md"
-                      radius="xl"
-                      variant="transparent"
-                      ml="auto"
-                      iconSize={20}
-                      className={classes.desktopOnly}
-                      styles={
-                        backgroundImage ? applyCosmeticThemeColors(backgroundImage.data) : undefined
-                      }
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        close();
-                      }}
-                    />
-                  </Group>
-                </Group>
-              </BackgroundImage>
+              <CreatorCardV2 user={image.user} style={{ border: 0 }} />
             </Card.Section>
             <Card.Section
               py="xs"

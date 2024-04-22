@@ -97,6 +97,7 @@ import { openBuyBuzzModal } from '../Modals/BuyBuzzModal';
 import { GenerateButton } from '../RunStrategy/GenerateButton';
 import { UserBuzz } from '../User/UserBuzz';
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
+import { trpc } from '~/utils/trpc';
 
 const HEADER_HEIGHT = 70;
 
@@ -260,13 +261,17 @@ export function AppHeader({
   const searchRef = useRef<HTMLInputElement>(null);
 
   const isMuted = currentUser?.muted ?? false;
-  const isMember = !!currentUser?.tier;
   const {
     groupedCollections: {
       Article: bookmarkedArticlesCollection,
       Model: bookmarkedModelsCollection,
     },
   } = useSystemCollections();
+
+  const { data: creator } = trpc.user.getCreator.useQuery(
+    { id: currentUser?.id as number },
+    { enabled: !!currentUser }
+  );
 
   const mainActions = useMemo<MenuLink[]>(
     () => [
@@ -876,7 +881,7 @@ export function AppHeader({
                     onClick={() => setUserMenuOpened(true)}
                   >
                     <Group spacing={8} noWrap>
-                      <UserAvatar user={currentUser} size="md" />
+                      <UserAvatar user={creator ?? currentUser} size="md" />
                       {features.buzz && currentUser && <UserBuzz pr="sm" />}
                     </Group>
                   </UnstyledButton>
@@ -910,7 +915,7 @@ export function AppHeader({
                           mb={4}
                         >
                           <Group w="100%" position="apart">
-                            <UserAvatar user={currentUser} withUsername />
+                            <UserAvatar user={creator ?? currentUser} withUsername />
                             <IconChevronRight />
                           </Group>
                         </Menu.Item>
@@ -1007,7 +1012,7 @@ export function AppHeader({
                               sx={{ cursor: 'pointer' }}
                               onClick={() => setUserSwitching(true)}
                             >
-                              <UserAvatar user={currentUser} withUsername />
+                              <UserAvatar user={creator ?? currentUser} withUsername />
                               <IconChevronRight />
                             </Group>
                           )}

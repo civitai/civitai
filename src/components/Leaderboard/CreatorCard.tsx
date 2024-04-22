@@ -61,6 +61,8 @@ export function CreatorCard({
       document.getElementById(queryPosition)?.scrollIntoView({ block: 'center', inline: 'center' });
   }, [queryPosition]);
 
+  console.log(user);
+
   return (
     <div className={classes.wrapper} ref={ref} id={position.toString()}>
       {inView && (

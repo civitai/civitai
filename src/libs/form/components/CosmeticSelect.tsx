@@ -44,6 +44,7 @@ export function CosmeticSelect<TData extends CosmeticItem>({
   gridProps,
   nothingFound,
   shopUrl,
+  onShopClick,
   ...props
 }: Props<TData>) {
   const { classes, cx } = useStyles();
@@ -68,7 +69,7 @@ export function CosmeticSelect<TData extends CosmeticItem>({
       >
         {shopUrl && (
           <Link href={shopUrl}>
-            <UnstyledButton p="sm" className={classes.decoration}>
+            <UnstyledButton p="sm" className={classes.decoration} onClick={onShopClick}>
               <Stack spacing={4} align="center" justify="center">
                 <IconBuildingStore size={24} />
                 <Text size="sm" weight={500}>
@@ -108,15 +109,9 @@ export function CosmeticSelect<TData extends CosmeticItem>({
           })
         ) : (
           <Paper className={classes.noContent} p="sm" radius="md">
-            <Center>
-              {nothingFound ? (
-                nothingFound
-              ) : (
-                <Text size="sm" weight={500}>
-                  No decorations
-                </Text>
-              )}
-            </Center>
+            <Stack h="100%" justify="center">
+              <Center>{nothingFound ? nothingFound : <Text size="xs">No decorations</Text>}</Center>
+            </Stack>
           </Paper>
         )}
       </SimpleGrid>
@@ -134,4 +129,5 @@ type Props<TData extends CosmeticItem> = Omit<InputWrapperProps, 'onChange' | 'c
   value?: TData | null;
   nothingFound?: React.ReactNode;
   gridProps?: SimpleGridProps;
+  onShopClick?: () => void;
 };

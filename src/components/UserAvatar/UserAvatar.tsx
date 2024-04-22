@@ -121,12 +121,11 @@ export function UserAvatar({
     theme.colorScheme === 'dark' ? 'rgba(255,255,255,0.31)' : 'rgba(0,0,0,0.31)';
 
   const image = avatarUser.profilePicture;
-  const decoration = withDecorations
-    ? (avatarUser.cosmetics?.find((c) => c.cosmetic.type === 'ProfileDecoration')?.cosmetic as Omit<
-        ContentDecorationCosmetic,
-        'description' | 'obtainedAt' | 'name'
-      >)
-    : undefined;
+  const decoration =
+    withDecorations && avatarUser
+      ? (avatarUser.cosmetics?.find((c) => c.cosmetic?.type === 'ProfileDecoration')
+          ?.cosmetic as Omit<ContentDecorationCosmetic, 'description' | 'obtainedAt' | 'name'>)
+      : undefined;
 
   return (
     <Group
@@ -287,7 +286,7 @@ type Props = {
   withOverlay?: boolean;
 };
 
-const UserProfileLink = ({
+export const UserProfileLink = ({
   children,
   user,
   linkToProfile,

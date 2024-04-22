@@ -139,13 +139,16 @@ export async function getLeaderboard(input: GetLeaderboardInput) {
       (
         SELECT
           jsonb_agg(jsonb_build_object(
-            'id', c.id,
-            'data', c.data,
-            'type', c.type,
-            'source', c.source,
-            'name', c.name,
-            'leaderboardId', c."leaderboardId",
-            'leaderboardPosition', c."leaderboardPosition"
+            'data', uc.data,
+            'cosmetic', jsonb_build_object(
+              'id', c.id,
+              'data', c.data,
+              'type', c.type,
+              'source', c.source,
+              'name', c.name,
+              'leaderboardId', c."leaderboardId",
+              'leaderboardPosition', c."leaderboardPosition"
+            )
           ))
         FROM "UserCosmetic" uc
         JOIN "Cosmetic" c ON c.id = uc."cosmeticId"

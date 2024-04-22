@@ -8,13 +8,14 @@ import {
   Stack,
   createStyles,
   Text,
+  CardProps,
 } from '@mantine/core';
 import { ChatUserButton } from '~/components/Chat/ChatUserButton';
 
 import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
 import { RankBadge } from '~/components/Leaderboard/RankBadge';
-import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { UserAvatar, UserProfileLink } from '~/components/UserAvatar/UserAvatar';
 import { constants } from '~/server/common/constants';
 import { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { formatDate } from '~/utils/date-helpers';
@@ -32,13 +33,18 @@ import { applyCosmeticThemeColors } from '~/libs/sx-helpers';
 import { CosmeticType } from '@prisma/client';
 import { isDefined } from '~/utils/type-guards';
 import { BadgeDisplay, Username } from '../User/Username';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
 const useStyles = createStyles((theme) => ({
   profileDetailsContainer: {
     background: theme.fn.rgba(theme.colors.dark[9], 0.6),
     margin: -theme.spacing.md,
     marginTop: 0,
-    minHeight: 60,
+    minHeight: 50,
+    display: 'flex',
+    justifyContent: 'center',
+    flexDirection: 'column',
+    color: theme.white,
   },
 
   profileDetails: {
@@ -49,7 +55,7 @@ const useStyles = createStyles((theme) => ({
   },
   avatar: {
     position: 'absolute',
-    top: -4,
+    bottom: 4,
     overflow: 'visible',
   },
 }));
@@ -200,6 +206,7 @@ export const CreatorCardV2 = ({
   withActions = true,
   cosmeticOverwrites,
   fetchUser = true,
+  ...cardProps
 }: PropsV2) => {
   const { classes, theme } = useStyles();
   const { data } = trpc.user.getCreator.useQuery(
@@ -243,7 +250,7 @@ export const CreatorCardV2 = ({
   const badge = cosmetics.find(({ cosmetic }) => cosmetic?.type === CosmeticType.Badge)?.cosmetic;
 
   return (
-    <Card p="md" withBorder>
+    <Card p="md" withBorder {...cardProps}>
       <Card.Section>
         <BackgroundImage
           sx={{
@@ -272,38 +279,39 @@ export const CreatorCardV2 = ({
               <BadgeDisplay badge={badge ? (badge as BadgeCosmetic) : undefined} badgeSize={60} />
             </Group>
             <Box className={classes.profileDetailsContainer}>
-              <Stack spacing="xs" className={classes.profileDetails} py="md">
+              <Stack spacing="xs" className={classes.profileDetails} py={8} h="100%">
                 <Group align="center" position="apart">
-                  <Group>
-                    <Box className={classes.avatar}>
-                      <UserAvatar
-                        size="lg"
-                        avatarProps={{
-                          size: 60,
-                          style: {
-                            minHeight: '100%',
-                            objectFit: 'cover',
-                          },
-                        }}
-                        user={creatorWithCosmetics}
-                        linkToProfile
-                      />
-                    </Box>
-                    <Stack spacing={0} ml={70}>
-                      <Username
-                        username={creator?.username}
-                        deletedAt={creator?.deletedAt}
-                        cosmetics={cosmetics ?? []}
-                        size="md"
-                        badgeSize={0}
-                      />
-                      {creator.createdAt && (
-                        <Text size="xs" lh={1} lineClamp={1}>
-                          Joined {formatDate(creator.createdAt)}
-                        </Text>
-                      )}
-                    </Stack>
-                  </Group>
+                  <UserProfileLink user={creator} linkToProfile>
+                    <Group>
+                      <Box className={classes.avatar}>
+                        <UserAvatar
+                          size="lg"
+                          avatarProps={{
+                            size: 60,
+                            style: {
+                              minHeight: '100%',
+                              objectFit: 'cover',
+                            },
+                          }}
+                          user={creatorWithCosmetics}
+                        />
+                      </Box>
+                      <Stack spacing={0} ml={70}>
+                        <Username
+                          username={creator?.username}
+                          deletedAt={creator?.deletedAt}
+                          cosmetics={cosmetics ?? []}
+                          size="md"
+                          badgeSize={0}
+                        />
+                        {creator.createdAt && (
+                          <Text size="xs" lh={1} lineClamp={1} color="dimmed">
+                            Joined {formatDate(creator.createdAt)}
+                          </Text>
+                        )}
+                      </Stack>
+                    </Group>
+                  </UserProfileLink>
                   {withActions && (
                     <Group spacing={8} noWrap>
                       <TipBuzzButton
@@ -313,18 +321,28 @@ export const CreatorCardV2 = ({
                         label=""
                         entityType={tipBuzzEntityType}
                         radius="xl"
-                        color="yellow"
-                        variant="light"
+                        color="gray"
+                        variant="filled"
+                        w={32}
+                        h={32}
                       />
                       <ChatUserButton
                         user={creator}
                         size="xs"
                         label=""
                         radius="xl"
-                        color="green"
-                        variant="light"
+                        color="gray"
+                        variant="filled"
+                        w={32}
+                        h={32}
                       />
-                      <FollowUserButton userId={creator.id} size="xs" radius="xl" variant="light" />
+                      <FollowUserButton
+                        userId={creator.id}
+                        size="xs"
+                        radius="xl"
+                        variant="filled"
+                        h={32}
+                      />
                     </Group>
                   )}
                 </Group>
@@ -376,4 +394,4 @@ type PropsV2 = {
   withActions?: boolean;
   cosmeticOverwrites?: SimpleCosmetic[];
   fetchUser?: boolean;
-};
+} & Omit<CardProps, 'children'>;

@@ -23,6 +23,7 @@ import {
   UserSettingsChat,
 } from '~/server/schema/chat.schema';
 import { profileImageSelect } from '~/server/selectors/image.selector';
+import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { getUserSettings, setUserSetting } from '~/server/services/user.service';
 import {
   throwBadRequestError,
@@ -57,6 +58,7 @@ const singleChatSelect = {
       // unkickedAt: true,
       user: {
         select: {
+          ...userWithCosmeticsSelect,
           id: true,
           username: true,
           isModerator: true,
