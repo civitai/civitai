@@ -178,3 +178,23 @@ export function normalizeText(input?: string): string {
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '');
 }
+
+const regex =
+  /^(?:urn:)?(?:air:)?(?:(?<ecosystem>[a-zA-Z0-9_\-\/]+):)?(?:(?<type>[a-zA-Z0-9_\-\/]+):)?(?<source>[a-zA-Z0-9_\-\/]+):(?<id>[a-zA-Z0-9_\-\/]+)(?:@(?<version>[a-zA-Z0-9_\-]+))?(?:\.(?<format>[a-zA-Z0-9_\-]+))?$/i;
+
+export function parseAIR(identifier: string) {
+  const match = regex.exec(identifier);
+  if (!match) {
+    throw new Error(`Invalid identifier: ${identifier}`);
+  }
+
+  const { ecosystem, type, source, id, version, format } = match.groups!;
+  return {
+    ecosystem,
+    type,
+    source,
+    model: Number(id),
+    version: Number(version),
+    format,
+  };
+}
