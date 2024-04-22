@@ -352,7 +352,7 @@ const { openModal, Modal } = createContextModal({
     const loading = isUpdating || updateUserMutation.isLoading;
 
     const templateImage = profilePicture?.url ?? profileImage;
-    const userWithCosmetics: UserWithCosmetics = user
+    const userWithCosmetics: UserWithCosmetics | null = user
       ? {
           ...user,
           image: templateImage || user.image,
