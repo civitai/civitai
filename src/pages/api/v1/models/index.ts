@@ -130,7 +130,9 @@ export default MixedAuthEndpoint(async function handler(
               files: includeDownloadUrl
                 ? castedFiles.map(({ hashes, ...file }) => ({
                     ...file,
-                    name: getDownloadFilename({ model, modelVersion: version, file }),
+                    name: decodeURIComponent(
+                      getDownloadFilename({ model, modelVersion: version, file })
+                    ),
                     hashes: hashesAsObject(hashes),
                     downloadUrl: `${baseUrl.origin}${createModelFileDownloadUrl({
                       versionId: version.id,

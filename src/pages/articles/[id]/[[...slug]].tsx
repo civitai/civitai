@@ -18,7 +18,6 @@ import { InferGetServerSidePropsType } from 'next';
 import Link from 'next/link';
 import React from 'react';
 import { z } from 'zod';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { ArticleContextMenu } from '~/components/Article/ArticleContextMenu';
 import { ArticleDetailComments } from '~/components/Article/Detail/ArticleDetailComments';
@@ -55,7 +54,10 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { hasPublicBrowsingLevel } from '../../../shared/constants/browsingLevel.constants';
-import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
+import { setPageOptions } from '~/components/AppLayout/AppLayout';
+import { ImageViewer, useImageViewerCtx } from '~/components/ImageViewer/ImageViewer';
+import { ScrollAreaMain } from '~/components/ScrollArea/ScrollAreaMain';
+import { getHotkeyHandler } from '@mantine/hooks';
 
 const querySchema = z.object({
   id: z.preprocess(parseNumericString, z.number()),
@@ -77,12 +79,15 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
+const MAX_WIDTH = 1320;
+
 export default function ArticleDetailsPage({
   id,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const currentUser = useCurrentUser();
   const { classes, theme } = useStyles();
   const mobile = useContainerSmallerThan('sm');
+  const { setImages, onSetImage, images } = useImageViewerCtx();
 
   const { data: article, isLoading } = trpc.article.getById.useQuery({ id });
   const tippedAmount = useBuzzTippingStore({ entityType: 'Article', entityId: id });
@@ -167,8 +172,14 @@ export default function ArticleDetailsPage({
     </Group>
   );
 
+  const handleOpenCoverImage =
+    (imageId: number) => (e: React.KeyboardEvent<HTMLElement> | KeyboardEvent) => {
+      e.preventDefault();
+      onSetImage(imageId);
+    };
+
   const image = article.coverImage;
-  const maxWidth = 1320;
+  if (image && !images.length) setImages([image]);
 
   return (
     <>
@@ -247,7 +258,16 @@ export default function ArticleDetailsPage({
                 {image && (
                   <ImageGuard2 image={image} connectType="article" connectId={article.id}>
                     {(safe) => (
-                      <RoutedDialogLink name="imageDetail" state={{ imageId: image.id }}>
+                      <Box
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => onSetImage(image.id)}
+                        onKeyDown={getHotkeyHandler([
+                          ['Enter', handleOpenCoverImage(image.id)],
+                          ['Space', handleOpenCoverImage(image.id)],
+                        ])}
+                        sx={{ cursor: 'pointer', height: '100%' }}
+                      >
                         <ImageGuard2.BlurToggle className="absolute top-2 left-2 z-10" />
                         <ImageContextMenu image={image} className="absolute top-2 right-2 z-10" />
                         {!safe ? (
@@ -265,11 +285,11 @@ export default function ArticleDetailsPage({
                             name={image.name}
                             alt={article.title}
                             type={image.type}
-                            width={maxWidth}
+                            width={MAX_WIDTH}
                             anim={safe}
                           />
                         )}
-                      </RoutedDialogLink>
+                      </Box>
                     )}
                   </ImageGuard2>
                 )}
@@ -311,6 +331,16 @@ export default function ArticleDetailsPage({
     </>
   );
 }
+
+setPageOptions(ArticleDetailsPage, {
+  innerLayout({ children }) {
+    return (
+      <ImageViewer>
+        <ScrollAreaMain>{children}</ScrollAreaMain>
+      </ImageViewer>
+    );
+  },
+});
 
 const useStyles = createStyles((theme) => ({
   titleWrapper: {

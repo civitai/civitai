@@ -84,7 +84,7 @@ export const imageRouter = router({
   create: protectedProcedure
     .input(createImageSchema)
     .mutation(({ input, ctx }) => createImage({ ...input, userId: ctx.user.id })),
-  createArticleCoverImage: protectedProcedure
+  createArticleCoverImage: moderatorProcedure
     .input(createImageSchema.extend({ userId: z.number() }))
     .mutation(({ input }) => createArticleCoverImage({ ...input })),
   ingestArticleImages: protectedProcedure
@@ -119,9 +119,9 @@ export const imageRouter = router({
       })
     )
     .query(getImageResourcesHandler),
-  removeResource: protectedProcedure
+  removeResource: moderatorProcedure
     .input(getByIdSchema)
-    .mutation(({ input, ctx }) => removeImageResource({ ...input, user: ctx.user })),
+    .mutation(({ input }) => removeImageResource(input)),
   rescan: moderatorProcedure.input(getByIdSchema).mutation(({ input }) => ingestImageById(input)),
   getEntitiesCoverImage: publicProcedure
     .input(getEntitiesCoverImage)

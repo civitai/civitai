@@ -122,7 +122,7 @@ export function ImageCarouselContent({
     () =>
       images.map((image) => ({
         ...image,
-        tagIds: image.tags?.map((x) => x.id),
+        tagIds: image.tags?.map((x) => (typeof x === 'number' ? x : x.id)),
       })),
     [images]
   );

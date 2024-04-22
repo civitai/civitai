@@ -132,7 +132,7 @@ export const useEstimateTextToImageJobCost = () => {
   const input = useGenerationFormStore(
     useCallback(
       (state) => {
-        const { aspectRatio, steps, quantity, sampler, draft } = state;
+        const { aspectRatio, steps, quantity, sampler, draft, staging } = state;
         if (!status.charge || !baseModel) return null;
 
         return {
@@ -141,6 +141,7 @@ export const useEstimateTextToImageJobCost = () => {
           steps: steps ?? generation.defaultValues.steps,
           quantity: quantity ?? generation.defaultValues.quantity,
           sampler: sampler ?? generation.defaultValues.sampler,
+          staging,
           draft,
         };
       },

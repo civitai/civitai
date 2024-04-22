@@ -1646,9 +1646,7 @@ export const getImagesForPosts = async ({
   }));
 };
 
-export const removeImageResource = async ({ id, user }: GetByIdInput & { user?: SessionUser }) => {
-  if (!user?.isModerator) throw throwAuthorizationError();
-
+export const removeImageResource = async ({ id }: GetByIdInput) => {
   try {
     const resource = await dbWrite.imageResource.delete({
       where: { id },
@@ -2740,6 +2738,7 @@ export async function getImageRatingRequests({
         FROM "ImageRatingRequest" irr
         JOIN "Image" i on i.id = irr."imageId"
         WHERE irr.status = ${ReportStatus.Pending}::"ReportStatus"
+          AND i."nsfwLevel" != ${NsfwLevel.Blocked}
         GROUP BY irr."imageId", i.id
     )
     SELECT

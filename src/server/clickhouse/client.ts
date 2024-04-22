@@ -156,7 +156,13 @@ export type CommentType =
   | 'BountyEntry';
 export type CommentActivity = 'Create' | 'Delete' | 'Update' | 'Hide' | 'Unhide';
 export type PostActivityType = 'Create' | 'Publish' | 'Tags';
-export type ImageActivityType = 'Create' | 'Delete' | 'DeleteTOS' | 'Tags' | 'Resources';
+export type ImageActivityType =
+  | 'Create'
+  | 'Delete'
+  | 'DeleteTOS'
+  | 'Tags'
+  | 'Resources'
+  | 'Restore';
 export type QuestionType = 'Create' | 'Delete';
 export type AnswerType = 'Create' | 'Delete';
 export type PartnerActivity = 'Run' | 'Update';
