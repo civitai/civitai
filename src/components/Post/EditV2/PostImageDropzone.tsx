@@ -3,7 +3,7 @@ import { useEffect, useRef } from 'react';
 import { ContentPolicyLink } from '~/components/ContentPolicyLink/ContentPolicyLink';
 import { MediaDropzone } from '~/components/Image/ImageDropzone/MediaDropzone';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { MediaUploadOnCompleteProps, useMediaUpload } from '~/hooks/useMediaUpload';
+import { useMediaUpload } from '~/hooks/useMediaUpload';
 import { POST_IMAGE_LIMIT, constants } from '~/server/common/constants';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
 import { PostDetailEditable } from '~/server/services/post.service';
@@ -14,16 +14,6 @@ import { addPostImageSchema } from '~/server/schema/post.schema';
 import { usePostEditParams, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
 
 const max = POST_IMAGE_LIMIT;
-
-type ControlledImage = Partial<PostDetailEditable['images'][number]> & MediaUploadOnCompleteProps;
-
-// type test = {
-//   status: 'added',
-//   data: PostDetailEditable['images'][number]
-// } | {
-//   status: 'blocked',
-//   data: MediaUploadOnCompleteProps
-// }
 
 export function PostImageDropzone({
   onCreatePost,
@@ -49,7 +39,10 @@ export function PostImageDropzone({
   const createPostMutation = trpc.post.create.useMutation();
   const addImageMutation = trpc.post.addImage.useMutation({
     onSuccess: (data) =>
-      setImages((images) => [...images, { status: 'added', ...data } as ControlledImage]),
+      setImages((images) => [
+        ...images,
+        { type: 'added', data: { ...data, index: images.length } },
+      ]),
   });
   // #endregion
 
@@ -61,7 +54,7 @@ export function PostImageDropzone({
     onComplete: (props) => {
       const { postId, modelVersionId } = paramsRef.current;
       if (!postId) throw new Error('missing post id');
-      const index = Math.max(0, ...images.map((x) => x.index)) + 1;
+      const index = Math.max(0, ...images.map((x) => x.data.index)) + 1;
       switch (props.status) {
         case 'added':
           const payload = addPostImageSchema.parse({
@@ -72,7 +65,7 @@ export function PostImageDropzone({
           });
           return addImageMutation.mutate(payload);
         case 'blocked':
-          return setImages((images) => [...images, { ...props, index }]);
+          return setImages((images) => [...images, { type: 'blocked', data: { ...props, index } }]);
       }
     },
   });
@@ -115,8 +108,6 @@ export function PostImageDropzone({
     handleSrc();
   }, []); // eslint-disable-line
   // #endregion
-
-  useEffect(() => console.log({ files }), [files]);
 
   return (
     <div className={`flex flex-col gap-1`}>

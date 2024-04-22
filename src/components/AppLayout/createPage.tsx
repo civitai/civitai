@@ -29,7 +29,3 @@ export function createPage(Component: CustomNextPage, options?: CreatePageOption
 
   return Component;
 }
-
-export function InnerLayoutDefault({ children }: { children: React.ReactElement }) {
-  return children;
-}

@@ -1,4 +1,5 @@
 const plugin = require('tailwindcss/plugin')
+const colors = require('tailwindcss/colors')
 
 /** @type {import('tailwindcss').Config} */
 module.exports = {
@@ -26,6 +27,7 @@ module.exports = {
       }
     },
     colors: {
+      ...colors,
       dark: {
         0: '#C1C2C5',
         1: '#A6A7AB',
@@ -49,6 +51,30 @@ module.exports = {
         7: '#495057',
         8: '#343a40',
         9: '#212529',
+      },
+      yellow: {
+        0: '#FFF9DB',
+        1: '#FFF3BF',
+        2: '#FFEC99',
+        3: '#FFE066',
+        4: '#FFD43B',
+        5: '#FCC419',
+        6: '#FAB005',
+        7: '#F59F00',
+        8: '#F08C00',
+        9: '#E67700',
+      },
+      green: {
+        0: '#EBFBEE',
+        1: '#D3F9D8',
+        2: '#B2F2BB',
+        3: '#8CE99A',
+        4: '#69DB7C',
+        5: '#51CF66',
+        6: '#40C057',
+        7: '#37B24D',
+        8: '#2F9E44',
+        9: '#2B8A3E',
       }
     }
   },

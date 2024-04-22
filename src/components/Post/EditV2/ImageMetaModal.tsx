@@ -21,7 +21,10 @@ export function ImageMetaModal({
   meta?: z.infer<typeof baseImageMetaSchema>;
   blockedFor?: string;
   nsfwLevel?: number;
-  updateImage: (data: { id: number; meta?: z.infer<typeof baseImageMetaSchema> }) => void;
+  updateImage: (
+    id: number,
+    cb: (props: { meta?: z.infer<typeof baseImageMetaSchema> | null }) => void
+  ) => void;
 }) {
   const dialog = useDialogContext();
   const [blockedFor, setBlockedFor] = useState(props.blockedFor);
@@ -37,7 +40,9 @@ export function ImageMetaModal({
         { id, meta: { ...meta, ...data } },
         {
           onSuccess: () => {
-            updateImage({ id, meta: { ...meta, ...data } });
+            updateImage(id, (image) => {
+              image.meta = { ...image.meta, ...data };
+            });
             dialog.onClose();
           },
         }

@@ -1,8 +1,6 @@
 import { ActionIcon, Alert, Badge, Button, Divider, Menu, Text } from '@mantine/core';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { PostDetailEditable } from '~/server/services/post.service';
 import React, { useState } from 'react';
-import { MediaUploadOnCompleteProps } from '~/hooks/useMediaUpload';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import {
   IconChevronDown,
@@ -19,25 +17,12 @@ import { ConfirmDialog } from '~/components/Dialog/Common/ConfirmDialog';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { ImageMetaModal } from '~/components/Post/EditV2/ImageMetaModal';
-import { usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
-import { ImageTools, ImageToolsPopover } from '~/components/Post/EditV2/ImageToolsPopover';
+import { ControlledImage, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
+import { ImageToolsPopover } from '~/components/Post/EditV2/PostImageToolsPopover';
+import { PostImageTool } from '~/components/Post/EditV2/PostImageTool';
+import { sortAlphabeticallyBy } from '~/utils/array-helpers';
 
-type ControlledImage = Partial<PostDetailEditable['images'][number]> & MediaUploadOnCompleteProps;
-
-export function PostImageCards() {
-  const images = usePostEditStore((state) =>
-    [...state.images].sort((a, b) => (a.index ?? 0) - (b.index ?? 0))
-  );
-  if (!images.length) return null;
-  return (
-    <div className="flex flex-col gap-3 ">
-      {images.map((image) => (
-        <PostImageCard key={image.url} image={image} />
-      ))}
-    </div>
-  );
-}
-
+// #region [types]
 type SimpleMetaPropsKey = keyof typeof simpleMetaProps;
 const simpleMetaProps = {
   cfgScale: 'Guidance',
@@ -45,42 +30,63 @@ const simpleMetaProps = {
   sampler: 'Sampler',
   seed: 'Seed',
 } as const;
+// #endregion
+
+export function PostImageCards() {
+  const images = usePostEditStore((state) =>
+    [...state.images].sort((a, b) => (a.data.index ?? 0) - (b.data.index ?? 0))
+  );
+  if (!images.length) return null;
+  return (
+    <div className="flex flex-col gap-3 ">
+      {images.map((image) => (
+        <PostImageCard key={image.data.url} image={image} />
+      ))}
+    </div>
+  );
+}
+
 function PostImageCard({ image }: { image: ControlledImage }) {
+  const [showMoreResources, setShowMoreResources] = useState(false);
   const [setImages, updateImage] = usePostEditStore((state) => [
     state.setImages,
     state.updateImage,
   ]);
 
-  const [showMoreResources, setShowMoreResources] = useState(false);
-  const resources = image.resourceHelper?.filter((x) => x.modelId);
+  const { metadata, type, url } = image.data;
+  const resources =
+    image.type === 'added' ? image.data.resourceHelper?.filter((x) => x.modelId) : undefined;
+  const meta = image.type === 'added' ? image.data.meta : undefined;
 
   // #region [delete image]
   const deleteImageMutation = trpc.image.delete.useMutation({
-    onSuccess: (_, { id }) => setImages((state) => state.filter((x) => x.id !== id)),
+    onSuccess: (_, { id }) =>
+      setImages((state) => state.filter((x) => x.type === 'blocked' || x.data.id !== id)),
     onError: (error: any) => showErrorNotification({ error: new Error(error.message) }),
   });
 
   const handleDelete = () => {
-    const id = image.id;
-    id
-      ? dialogStore.trigger({
-          component: ConfirmDialog,
-          props: {
-            title: 'Delete image',
-            message: 'Are you sure you want to delete this image?',
-            labels: { cancel: `Cancel`, confirm: `Yes, I am sure` },
-            confirmProps: { color: 'red', loading: deleteImageMutation.isLoading },
-            onConfirm: async () => await deleteImageMutation.mutateAsync({ id }),
-          },
-        })
-      : setImages((state) => state.filter((x) => x.url !== image.url));
+    if (image.type === 'added') {
+      dialogStore.trigger({
+        component: ConfirmDialog,
+        props: {
+          title: 'Delete image',
+          message: 'Are you sure you want to delete this image?',
+          labels: { cancel: `Cancel`, confirm: `Yes, I am sure` },
+          confirmProps: { color: 'red', loading: deleteImageMutation.isLoading },
+          onConfirm: async () => await deleteImageMutation.mutateAsync({ id: image.data.id }),
+        },
+      });
+    } else {
+      setImages((state) => state.filter((x) => x.data.url !== image.data.url));
+    }
   };
   // #endregion
 
   // #region [image meta]
   const handleEditMetaClick = () => {
-    const { id, meta, nsfwLevel, blockedFor } = image;
-    if (!!id)
+    if (image.type === 'added') {
+      const { id, meta, nsfwLevel, blockedFor } = image.data;
       dialogStore.trigger({
         component: ImageMetaModal,
         props: {
@@ -91,24 +97,21 @@ function PostImageCard({ image }: { image: ControlledImage }) {
           updateImage,
         },
       });
+    }
   };
   // #endregion
 
   return (
     <div className="bg-gray-0 dark:bg-dark-8 border border-gray-1 dark:border-dark-6 rounded-lg p-3 flex flex-col gap-3">
       <div className="flex flex-row-reverse flex-wrap md:flex-nowrap gap-3">
-        <div className="flex flex-col gap-3 w-full md:w-4/12">
-          {/*
+        {/*
          // #region [image]
          */}
+        <div className="flex flex-col gap-3 w-full md:w-4/12">
           <div className="relative">
-            <div style={{ aspectRatio: `${image.metadata.width}/${image.metadata.height}` }}>
-              <EdgeMedia
-                src={image.url}
-                width={450}
-                type={image.type}
-                className="rounded-lg mx-auto"
-              />
+            {/* TODO - ensure that metadata width/height always have value */}
+            <div style={{ aspectRatio: `${metadata.width}/${metadata.height}` }}>
+              <EdgeMedia src={url} width={450} type={type} className="rounded-lg mx-auto" />
             </div>
             <Menu withArrow>
               <Menu.Target>
@@ -134,15 +137,15 @@ function PostImageCard({ image }: { image: ControlledImage }) {
               </Menu.Dropdown>
             </Menu>
           </div>
-          {image.meta && (
+          {meta && (
             <>
               <div className="flex flex-col not-last:*:border-b *:border-gray-4 dark:*:border-dark-4">
                 {Object.entries(simpleMetaProps)
-                  .filter(([key]) => image.meta?.[key])
+                  .filter(([key]) => meta?.[key])
                   .map(([key, label]) => (
                     <div key={key} className="flex justify-between py-0.5">
                       <Text>{label}</Text>
-                      <Text>{image.meta?.[key as SimpleMetaPropsKey]}</Text>
+                      <Text>{meta?.[key as SimpleMetaPropsKey]}</Text>
                     </div>
                   ))}
               </div>
@@ -162,8 +165,8 @@ function PostImageCard({ image }: { image: ControlledImage }) {
               </div>
             </>
           )}
-          {/* #endregion */}
         </div>
+        {/* #endregion */}
 
         <div className="flex flex-col gap-3 w-full md:w-8/12">
           {/*
@@ -187,7 +190,7 @@ function PostImageCard({ image }: { image: ControlledImage }) {
                   >
                     EDIT
                   </Button>
-                  {image.meta?.prompt && (
+                  {meta?.prompt && (
                     <Button
                       variant="light"
                       color="blue"
@@ -201,16 +204,14 @@ function PostImageCard({ image }: { image: ControlledImage }) {
                   )}
                 </div>
               </div>
-              {image.meta?.prompt && (
-                <Text className="leading-5 line-clamp-3 ">{image.meta.prompt}</Text>
-              )}
-              {image.meta?.negativePrompt && (
+              {meta?.prompt && <Text className="leading-5 line-clamp-3 ">{meta.prompt}</Text>}
+              {meta?.negativePrompt && (
                 <>
                   <Divider />
                   <h3 className=" text-lg font-semibold leading-none text-dark-7 dark:text-gray-0 ">
                     Negative Prompt
                   </h3>
-                  <Text className="leading-5 line-clamp-3">{image.meta.negativePrompt}</Text>
+                  <Text className="leading-5 line-clamp-3">{meta.negativePrompt}</Text>
                 </>
               )}
             </div>
@@ -304,32 +305,44 @@ function PostImageCard({ image }: { image: ControlledImage }) {
           {/*
            // #region [tools]
            */}
-          <CustomCard className="flex flex-col gap-2">
-            <div className="flex justify-between items-center">
-              <div className="flex items-center gap-2">
-                <h3 className=" text-lg font-semibold leading-none text-dark-7 dark:text-gray-0 ">
-                  Tools
-                </h3>
-                <ActionIcon variant="transparent" size="sm">
-                  <IconInfoCircle />
-                </ActionIcon>
+          {image.type === 'added' && (
+            <CustomCard className="flex flex-col gap-2">
+              <div className="flex justify-between items-center">
+                <div className="flex items-center gap-2">
+                  <h3 className=" text-lg font-semibold leading-none text-dark-7 dark:text-gray-0 ">
+                    Tools
+                  </h3>
+                  <ActionIcon variant="transparent" size="sm">
+                    <IconInfoCircle />
+                  </ActionIcon>
+                </div>
+                <ImageToolsPopover image={image.data}>
+                  <Button
+                    variant="light"
+                    color="blue"
+                    compact
+                    size="md"
+                    classNames={{ label: 'flex gap-1' }}
+                    onClick={() => undefined}
+                    className="text-sm"
+                  >
+                    <IconPlus size={16} />
+                    <span>TOOL</span>
+                  </Button>
+                </ImageToolsPopover>
               </div>
-              <ImageToolsPopover image={image}>
-                <Button
-                  variant="light"
-                  color="blue"
-                  compact
-                  size="md"
-                  classNames={{ label: 'flex gap-1' }}
-                  onClick={() => undefined}
-                  className="text-sm"
-                >
-                  <IconPlus size={16} />
-                  <span>TOOL</span>
-                </Button>
-              </ImageToolsPopover>
-            </div>
-          </CustomCard>
+              {!!image.data.tools.length && (
+                <ul className="flex flex-col">
+                  {sortAlphabeticallyBy([...image.data.tools], (x) => x.name).map((tool, index) => (
+                    <li key={tool.id} className="list-none">
+                      {index !== 0 && <Divider />}
+                      <PostImageTool image={image.data} tool={tool} />
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </CustomCard>
+          )}
           {/* #endregion */}
         </div>
       </div>
@@ -337,10 +350,10 @@ function PostImageCard({ image }: { image: ControlledImage }) {
       {/*
        // #region [tags]
        */}
-      {image.id && !!image.tags?.length && (
+      {image.type === 'added' && image.data.id && !!image.data.tags?.length && (
         <>
           <Divider />
-          <VotableTags entityId={image.id} entityType="image" tags={image.tags} />
+          <VotableTags entityId={image.data.id} entityType="image" tags={image.data.tags} />
         </>
       )}
       {/* #endregion */}

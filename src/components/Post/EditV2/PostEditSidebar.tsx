@@ -52,39 +52,14 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
 
   return (
     <>
-      <div className="flex justify-between items-center">
-        <Title size="sm">POST</Title>
-        <Badge color={mutating > 0 ? 'yellow' : 'green'} size="lg">
-          {mutating > 0 ? 'Saving' : 'Saved'}
-        </Badge>
-      </div>
+      <div className="flex flex-col gap-0 5">
+        <div className="flex justify-between items-center">
+          <Title size="sm">POST</Title>
+          <Badge color={mutating > 0 ? 'yellow' : 'green'} size="lg">
+            {mutating > 0 ? 'Saving' : 'Saved'}
+          </Badge>
+        </div>
 
-      <div className="flex flex-col gap-0.5">
-        {!post.publishedAt ? (
-          <Tooltip
-            disabled={canPublish}
-            label="At least one image is required in order to publish this post to the community"
-            multiline
-            width={260}
-            withArrow
-          >
-            <Button
-              disabled={!canPublish}
-              onClick={handlePublish}
-              loading={updatePostMutation.isLoading}
-            >
-              Publish
-            </Button>
-          </Tooltip>
-        ) : (
-          <ShareButton
-            title={post.title ?? undefined}
-            url={`/posts/${post.id}`}
-            collect={{ type: CollectionType.Post, postId: post.id }}
-          >
-            <Button variant="default">Share</Button>
-          </ShareButton>
-        )}
         <Text size="xs">
           {!post.publishedAt ? (
             <>
@@ -112,6 +87,32 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
           )}
         </Text>
       </div>
+
+      {!post.publishedAt ? (
+        <Tooltip
+          disabled={canPublish}
+          label="At least one image is required in order to publish this post to the community"
+          multiline
+          width={260}
+          withArrow
+        >
+          <Button
+            disabled={!canPublish}
+            onClick={handlePublish}
+            loading={updatePostMutation.isLoading}
+          >
+            Publish
+          </Button>
+        </Tooltip>
+      ) : (
+        <ShareButton
+          title={post.title ?? undefined}
+          url={`/posts/${post.id}`}
+          collect={{ type: CollectionType.Post, postId: post.id }}
+        >
+          <Button variant="default">Share</Button>
+        </ShareButton>
+      )}
 
       {showReorder && <ReorderImagesButton />}
     </>

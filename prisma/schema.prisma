@@ -2899,11 +2899,23 @@ model RedeemableCode {
   transactionId String?
 }
 
+enum ToolType {
+  Image
+  Video
+  MotionCapture
+  Upscalers
+  Audio
+  Compute
+  GameEngines
+}
+
 model Tool {
   id         Int         @id @default(autoincrement())
   name       String
   icon       String?
   createdAt  DateTime    @default(now())
+  enabled    Boolean     @default(true)
+  type       ToolType
   imageTools ImageTool[]
 }
 

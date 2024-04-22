@@ -54,6 +54,7 @@ import { postgresSlugify } from '~/utils/string-helpers';
 import { bustCacheTag, queryCache } from '~/server/utils/cache-helpers';
 import { env } from 'process';
 import { CacheTTL } from '../common/constants';
+import { PreprocessFileReturnType } from '~/utils/media-preprocessors';
 
 type GetAllPostsRaw = {
   id: number;
@@ -469,12 +470,14 @@ async function combinePostEditImageData(images: PostImageEditSelect[], user: Ses
   const imageIds = images.map((x) => x.id);
   const _images = images as PostImageEditProps[];
   const tags = await getVotableImageTags({ ids: imageIds, user });
-  // TODO - get tools
-  return _images.map((image) => ({
-    ...image,
-    tags: tags.filter((x) => x.imageId === image.id),
-    tools: image.tools.map(({ notes, tool }) => ({ ...tool, notes })),
-  }));
+  return _images
+    .map((image) => ({
+      ...image,
+      metadata: image.meta as PreprocessFileReturnType['metadata'],
+      tags: tags.filter((x) => x.imageId === image.id),
+      tools: image.tools.map(({ notes, tool }) => ({ ...tool, notes })),
+    }))
+    .sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
 }
 
 export type PostImageEditable = AsyncReturnType<typeof getPostEditImages>[number];

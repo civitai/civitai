@@ -2793,18 +2793,18 @@ export async function addImageTools({
   data,
   user,
 }: {
-  data: AddOrRemoveImageToolsOutput;
+  data: AddOrRemoveImageToolsOutput['data'];
   user: SessionUser;
 }) {
   await authorizeImageToolsUse({ imageIds: data.map((x) => x.imageId), user });
-  await dbWrite.imageTool.createMany({ data });
+  await dbWrite.imageTool.createMany({ data, skipDuplicates: true });
 }
 
 export async function removeImageTools({
   data,
   user,
 }: {
-  data: AddOrRemoveImageToolsOutput;
+  data: AddOrRemoveImageToolsOutput['data'];
   user: SessionUser;
 }) {
   await authorizeImageToolsUse({ imageIds: data.map((x) => x.imageId), user });
@@ -2825,7 +2825,7 @@ export async function updateImageTools({
   data,
   user,
 }: {
-  data: UpdateImageToolsOutput;
+  data: UpdateImageToolsOutput['data'];
   user: SessionUser;
 }) {
   await authorizeImageToolsUse({ imageIds: data.map((x) => x.imageId), user });

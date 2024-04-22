@@ -56,7 +56,7 @@ import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 import { trpc } from '~/utils/trpc';
 import '~/styles/globals.css';
 import ErrorBoundary from '~/components/ErrorBoundary/ErrorBoundary';
-import { InnerLayoutDefault, InnerLayoutOptions } from '~/components/AppLayout/createPage';
+import { InnerLayoutOptions } from '~/components/AppLayout/createPage';
 import { ScrollAreaMain } from '~/components/ScrollArea/ScrollAreaMain';
 import { ThemeProvider } from '~/providers/ThemeProvider';
 

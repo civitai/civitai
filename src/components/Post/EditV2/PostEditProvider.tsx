@@ -2,11 +2,11 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import { MediaUploadOnCompleteProps } from '~/hooks/useMediaUpload';
 import { PostEditQuerySchema } from '~/server/schema/post.schema';
 import { PostDetailEditable } from '~/server/services/post.service';
-import { createStore, useStore } from 'zustand';
+import { createStore } from 'zustand';
+import { useStoreWithEqualityFn } from 'zustand/traditional';
 import { useDidUpdate } from '@mantine/hooks';
 import { immer } from 'zustand/middleware/immer';
 import { devtools } from 'zustand/middleware';
-import { mergeWithPartial } from '~/utils/object-helpers';
 import { shallow } from 'zustand/shallow';
 import { trpc } from '~/utils/trpc';
 import Router from 'next/router';
@@ -19,8 +19,17 @@ type Props = {
   children: React.ReactNode;
 };
 
-export type ControlledImage = Partial<PostDetailEditable['images'][number]> &
-  MediaUploadOnCompleteProps;
+export type PostEditImageDetail = PostDetailEditable['images'][number] & { index: number };
+export type ControlledImage =
+  | {
+      type: 'added';
+      data: PostEditImageDetail;
+    }
+  | {
+      type: 'blocked';
+      data: Omit<MediaUploadOnCompleteProps, 'status'>;
+    };
+
 type PostParams = Omit<PostDetailEditable, 'images'>;
 type State = {
   post?: PostDetailEditable;
@@ -29,7 +38,7 @@ type State = {
   setPost: (data: PostParams) => void;
   updatePost: (cb: (data: PostParams) => void) => void;
   setImages: (cb: (images: ControlledImage[]) => ControlledImage[]) => void;
-  updateImage: (data: Partial<Omit<ControlledImage, 'id'>> & { id: number }) => void;
+  updateImage: (id: number, cb: (image: PostEditImageDetail) => void) => void;
   toggleReordering: () => void;
 };
 // #endregion
@@ -41,7 +50,11 @@ const createContextStore = (post?: PostDetailEditable) =>
     devtools(
       immer((set) => ({
         post,
-        images: post?.images.map((data) => ({ status: 'added', ...data } as ControlledImage)) ?? [],
+        images:
+          post?.images.map((data, index) => ({
+            type: 'added',
+            data: { ...data, index },
+          })) ?? [],
         isReordering: false,
         setPost: (post) => set({ post: { ...post, images: [] } }),
         updatePost: (cb) =>
@@ -53,14 +66,14 @@ const createContextStore = (post?: PostDetailEditable) =>
           set((state) => {
             state.images = cb(state.images);
           }),
-        updateImage: (data) =>
+        updateImage: (id, cb) =>
           set((state) => {
-            const index = state.images.findIndex((x) => x.id === data.id);
-            if (index > -1)
-              state.images[index] = mergeWithPartial(
-                state.images[index],
-                data as Partial<ControlledImage>
-              );
+            const index = state.images.findIndex((x) => x.type === 'added' && x.data.id === id);
+            if (index > -1) cb(state.images[index].data as PostEditImageDetail);
+            // state.images[index].data = mergeWithPartial(
+            //   state.images[index].data,
+            //   data as Partial<ImageDetail>
+            // );
           }),
         toggleReordering: () =>
           set((state) => {
@@ -77,7 +90,7 @@ const StoreContext = createContext<Store | null>(null);
 export function usePostEditStore<T>(selector: (state: State) => T) {
   const store = useContext(StoreContext);
   if (!store) throw new Error('missing PostEditProvider');
-  return useStore(store, selector, shallow);
+  return useStoreWithEqualityFn(store, selector, shallow);
 }
 // #endregion
 
@@ -100,7 +113,10 @@ export function PostEditProvider({ post, params = {}, children }: Props) {
     if (!post) return;
     store.setState({
       post,
-      images: post.images.map((data) => ({ status: 'added', ...data } as ControlledImage)),
+      images: post.images.map((data, index) => ({
+        type: 'added',
+        data: { ...data, index },
+      })),
     });
   }, [post]);
 

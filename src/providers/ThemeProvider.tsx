@@ -1,19 +1,20 @@
 import { ColorScheme, ColorSchemeProvider, MantineProvider } from '@mantine/core';
 import dayjs from 'dayjs';
 import { useCallback, useEffect, useState } from 'react';
-import { getCookie, getCookies, setCookie } from 'cookies-next';
+import { setCookie } from 'cookies-next';
 
 export function ThemeProvider({
   children,
-  colorScheme,
+  colorScheme: cookeColorScheme,
 }: {
   children: React.ReactNode;
   colorScheme: ColorScheme;
 }) {
-  const [_colorScheme, setColorScheme] = useState<ColorScheme>(colorScheme ?? 'dark');
+  const [colorScheme, setColorScheme] = useState<ColorScheme>(cookeColorScheme ?? 'dark');
   const toggleColorScheme = useCallback(
     (value?: ColorScheme) => {
       const nextColorScheme = value || (colorScheme === 'dark' ? 'light' : 'dark');
+      console.log({ value, nextColorScheme });
       setColorScheme(nextColorScheme);
       setCookie('mantine-color-scheme', nextColorScheme, {
         expires: dayjs().add(1, 'year').toDate(),
@@ -30,13 +31,13 @@ export function ThemeProvider({
   }, [colorScheme]);
 
   return (
-    <ColorSchemeProvider colorScheme={_colorScheme} toggleColorScheme={toggleColorScheme}>
+    <ColorSchemeProvider colorScheme={colorScheme} toggleColorScheme={toggleColorScheme}>
       <MantineProvider
         withCSSVariables
         withGlobalStyles
         withNormalizeCSS
         theme={{
-          colorScheme: _colorScheme,
+          colorScheme: colorScheme,
           components: {
             Modal: {
               styles: {

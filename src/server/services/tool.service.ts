@@ -6,6 +6,7 @@ export async function getAllTools() {
       id: true,
       name: true,
       icon: true,
+      type: true,
     },
   });
 }

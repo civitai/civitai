@@ -21,7 +21,10 @@ import { ControlledImage, usePostEditStore } from '~/components/Post/EditV2/Post
 
 export function PostReorderImages() {
   const [images, setImages] = usePostEditStore((state) => [
-    [...state.images].sort((a, b) => (a.index ?? 0) - (b.index ?? 0)),
+    [...state.images]
+      .map((x) => (x.type === 'added' ? x.data : undefined))
+      .filter(isDefined)
+      .sort((a, b) => (a.index ?? 0) - (b.index ?? 0)),
     state.setImages,
   ]);
 
@@ -34,11 +37,17 @@ export function PostReorderImages() {
     if (!over) return;
     if (active.id !== over.id) {
       setImages((images) => {
-        const ids = images.map((x): UniqueIdentifier => x.url);
+        const ids = images.map((x): UniqueIdentifier => x.data.url);
         const oldIndex = ids.indexOf(active.id);
         const newIndex = ids.indexOf(over.id);
         const sorted = arrayMove(images, oldIndex, newIndex);
-        return sorted.map((image, index) => ({ ...image, index: index + 1 }));
+        return sorted.map(
+          (image, index) =>
+            ({
+              type: image.type,
+              data: { ...image.data, index: index + 1 },
+            } as ControlledImage)
+        );
       });
     }
   }
@@ -60,7 +69,7 @@ export function PostReorderImages() {
 }
 
 type ItemProps = {
-  image: ControlledImage;
+  image: Extract<ControlledImage, { type: 'added' }>['data'];
   sortableId: UniqueIdentifier;
 };
 
@@ -172,14 +181,14 @@ export function ReorderImagesButton() {
     },
   });
   const previous = usePrevious(images);
-  const canReorder = !!images.filter((x) => x.id).length;
+  const canReorder = !!images.every((x) => x.type === 'added');
 
   const onClick = () => {
     toggleReordering();
     if (isReordering && !!previous && !isEqual(previous, images) && post) {
       mutate({
         id: post.id,
-        imageIds: images.map((x) => x.id).filter(isDefined),
+        imageIds: images.map((x) => (x.type === 'added' ? x.data.id : undefined)).filter(isDefined),
       });
     }
   };

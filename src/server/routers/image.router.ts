@@ -18,6 +18,8 @@ import {
   updateImageNsfwLevelSchema,
   imageRatingReviewInput,
   reportCsamImagesSchema,
+  addOrRemoveImageToolsSchema,
+  updateImageToolsSchema,
 } from './../schema/image.schema';
 import {
   deleteImageHandler,
@@ -25,7 +27,7 @@ import {
   moderateImageHandler,
 } from '~/server/controllers/image.controller';
 import { dbRead } from '~/server/db/client';
-import { getByIdSchema, infiniteQuerySchema } from '~/server/schema/base.schema';
+import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   middleware,
   moderatorProcedure,
@@ -46,6 +48,9 @@ import {
   getImagesForModelVersionCache,
   updateImageNsfwLevel,
   getImageRatingRequests,
+  addImageTools,
+  removeImageTools,
+  updateImageTools,
 } from '~/server/services/image.service';
 import { CacheTTL } from '~/server/common/constants';
 import { z } from 'zod';
@@ -138,4 +143,13 @@ export const imageRouter = router({
   getImageRatingRequests: moderatorProcedure
     .input(imageRatingReviewInput)
     .query(({ input, ctx }) => getImageRatingRequests({ ...input, user: ctx.user })),
+  addTools: protectedProcedure
+    .input(addOrRemoveImageToolsSchema)
+    .mutation(({ input, ctx }) => addImageTools({ ...input, user: ctx.user })),
+  removeTools: protectedProcedure
+    .input(addOrRemoveImageToolsSchema)
+    .mutation(({ input, ctx }) => removeImageTools({ ...input, user: ctx.user })),
+  updateTools: protectedProcedure
+    .input(updateImageToolsSchema)
+    .mutation(({ input, ctx }) => updateImageTools({ ...input, user: ctx.user })),
 });
