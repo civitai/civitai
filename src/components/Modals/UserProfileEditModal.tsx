@@ -436,7 +436,7 @@ const { openModal, Modal } = createContextModal({
               <InputCosmeticSelect
                 name="profileBackground"
                 label="Profile background"
-                shopUrl="/shop/profile-backgrounds"
+                shopUrl="/cosmetic-shop"
                 nothingFound="Your earned backgrounds will appear here"
                 data={backgrounds}
               />
