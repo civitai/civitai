@@ -14,7 +14,7 @@ const useOrchestratorUrlStore = create<{
         state.data[key] = urls.filter(
           (url) =>
             url.startsWith('https://orchestration.civitai.com') ||
-            url.startsWith('https://orchestration-stage.civitai.com/')
+            url.startsWith('https://orchestration-stage.civitai.com')
         );
       }),
     getData: (key) => {
