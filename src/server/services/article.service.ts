@@ -819,7 +819,7 @@ export const deleteArticleById = async ({
     if (!isOwner) throw throwAuthorizationError(`You cannot perform this action`);
 
     const deleted = await dbWrite.$transaction(async (tx) => {
-      const article = await tx.article.delete({ where: { id }, select: { coverId: true } });
+      const article = await tx.article.delete({ where: { id, userId }, select: { coverId: true } });
 
       await tx.file.deleteMany({ where: { entityId: id, entityType: 'Article' } });
 

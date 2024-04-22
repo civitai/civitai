@@ -36,7 +36,7 @@ import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { POST_IMAGE_LIMIT } from '~/server/common/constants';
 import { ImageIngestionStatus } from '@prisma/client';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
-import { useEditPostContext, ImageUpload, ImageBlocked } from './EditPostProvider';
+import { useEditPostContext, type ImageUpload, type ImageBlocked } from './EditPostProvider';
 import { orchestratorMediaTransmitter } from '~/store/post-image-transmitter.store';
 import { IMAGE_MIME_TYPE, MEDIA_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
 import { useCurrentUser } from '~/hooks/useCurrentUser';

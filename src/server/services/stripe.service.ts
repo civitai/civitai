@@ -694,10 +694,10 @@ export const manageInvoicePaid = async (invoice: Stripe.Invoice) => {
       createBuzzTransaction({
         fromAccountId: 0,
         toAccountId: user.id,
-        type: TransactionType.Reward,
+        type: TransactionType.Purchase,
         externalTransactionId: invoice.id,
         amount: billedProductMeta.monthlyBuzz ?? 3000, // assume a min of 3000.
-        description: `Membership bonus.`,
+        description: `Membership bonus`,
         details: { invoiceId: invoice.id },
       })
     ).catch(handleLogError);

@@ -135,6 +135,7 @@ const sharedGenerationParamsSchema = z.object({
   quantity: z.coerce.number().min(1).max(20),
   nsfw: z.boolean().optional(),
   draft: z.boolean().optional(),
+  staging: z.boolean().optional(),
   baseModel: z.string().optional(),
   aspectRatio: z.string(),
 });

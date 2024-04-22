@@ -76,7 +76,10 @@ export const collectionRouter = router({
     .input(getByIdSchema)
     .use(isFlagProtected('collections'))
     .query(getCollectionByIdHandler),
-  upsert: guardedProcedure.input(upsertCollectionInput).mutation(upsertCollectionHandler),
+  upsert: guardedProcedure
+    .input(upsertCollectionInput)
+    .use(isOwnerOrModerator)
+    .mutation(upsertCollectionHandler),
   updateCoverImage: guardedProcedure
     .input(updateCollectionCoverImageInput)
     .mutation(updateCollectionCoverImageHandler),

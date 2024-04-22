@@ -714,6 +714,9 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                       resources: [{ type: ModelType.VAE, baseModelSet: baseModel }],
                     }}
                   />
+                  {currentUser?.isModerator && (
+                    <InputSwitch name="staging" label="Test Mode" labelPosition="left" />
+                  )}
                 </Stack>
               </Accordion.Panel>
             </Accordion.Item>

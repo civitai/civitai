@@ -44,7 +44,7 @@ export const useGetGenerationRequests = (
     if (!isLoading) updateFromEvents();
   }, [isLoading]);
 
-  return { data, requests, images, isLoading, ...rest };
+  return { data, requests, images, isLoading: !currentUser ? false : isLoading, ...rest };
 };
 
 export const updateGenerationRequest = (
