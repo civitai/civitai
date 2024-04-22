@@ -290,8 +290,8 @@ export function ImageDetailByProps({
 }
 
 const useStyles = createStyles((theme, _props, getRef) => {
-  const isMobile = containerQuery.smallerThan('md');
-  const isDesktop = containerQuery.largerThan('md');
+  const isMobile = theme.fn.smallerThan('md');
+  const isDesktop = theme.fn.largerThan('md');
   return {
     root: {
       width: '100vw',
