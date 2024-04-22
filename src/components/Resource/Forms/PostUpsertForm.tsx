@@ -11,7 +11,7 @@ import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import { hiddenLabel } from '~/components/Post/Edit/EditPostControls';
 import { EditPostImages } from '~/components/Post/Edit/EditPostImages';
 import { useEditPostContext } from '~/components/Post/Edit/EditPostProvider';
-import { EditPostReviews } from '~/components/Post/Edit/EditPostReviews';
+import { EditPostReviews } from '~/components/Post/EditV2/EditPostReviews';
 import { EditPostTags } from '~/components/Post/Edit/EditPostTags';
 import { ReorderImages, ReorderImagesButton } from '~/components/Post/Edit/ReorderImages';
 import { useCurrentUser } from '~/hooks/useCurrentUser';

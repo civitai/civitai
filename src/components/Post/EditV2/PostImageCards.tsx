@@ -99,15 +99,20 @@ function PostImageCard({ image }: { image: ControlledImage }) {
       });
     }
   };
+
+  const updateImageMutation = trpc.post.updateImage.useMutation({ onSuccess: () => {} });
+  const toggleHidePrompt = () => {
+    updateImageMutation.mutate({ id });
+  };
   // #endregion
 
   return (
-    <div className="bg-gray-0 dark:bg-dark-8 border border-gray-1 dark:border-dark-6 rounded-lg p-3 flex flex-col gap-3">
-      <div className="flex flex-row-reverse flex-wrap md:flex-nowrap gap-3">
+    <div className="bg-gray-0 dark:bg-dark-8 border border-gray-1 dark:border-dark-6 rounded-lg p-3 flex flex-col gap-3 @container">
+      <div className="flex flex-row-reverse flex-wrap @sm:flex-nowrap gap-3">
         {/*
          // #region [image]
          */}
-        <div className="flex flex-col gap-3 w-full md:w-4/12">
+        <div className="flex flex-col gap-3 w-full @sm:w-4/12">
           <div className="relative">
             {/* TODO - ensure that metadata width/height always have value */}
             <div style={{ aspectRatio: `${metadata.width}/${metadata.height}` }}>
@@ -168,7 +173,7 @@ function PostImageCard({ image }: { image: ControlledImage }) {
         </div>
         {/* #endregion */}
 
-        <div className="flex flex-col gap-3 w-full md:w-8/12">
+        <div className="flex flex-col gap-3 w-full @sm:w-8/12">
           {/*
          // #region [prompt]
          */}

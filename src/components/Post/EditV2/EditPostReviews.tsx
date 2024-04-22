@@ -1,8 +1,6 @@
 import { Stack, Alert, Text, Divider } from '@mantine/core';
 import { IconLock } from '@tabler/icons-react';
 
-import { useEditPostContext } from '~/components/Post/Edit/EditPostProvider';
-import { PostEditImage } from '~/server/controllers/post.controller';
 import { trpc } from '~/utils/trpc';
 import { EditResourceReview } from '~/components/ResourceReview/EditResourceReview';
 import { useEffect, useMemo } from 'react';
@@ -11,17 +9,16 @@ import { isEqual, uniqWith } from 'lodash-es';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ModelType } from '@prisma/client';
+import { usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
+import { PostDetailEditable } from '~/server/services/post.service';
 
-export function EditPostReviews() {
+export function EditPostReviews({ post }: { post: PostDetailEditable }) {
   const currentUser = useCurrentUser();
-
-  const id = useEditPostContext((state) => state.id);
-  const items = useEditPostContext((state) => state.images);
-
-  const images = useMemo(
-    () => items.filter((x) => x.discriminator === 'image').map((x) => x.data) as PostEditImage[],
-    [items]
+  const id = post.id;
+  const images = usePostEditStore((state) =>
+    state.images.map((x) => (x.type === 'added' ? x.data : undefined)).filter(isDefined)
   );
+
   const imageResources = useMemo(() => {
     const resources = images
       .flatMap((x) => x.resourceHelper)
@@ -74,7 +71,7 @@ export function EditPostReviews() {
   }, [imageResources, isMuted, refetch]); //eslint-disable-line
 
   return (
-    <Stack mt="lg">
+    <div className="flex flex-col gap-3">
       <Text size="sm" tt="uppercase" weight="bold">
         Resource Reviews
       </Text>
@@ -92,7 +89,7 @@ export function EditPostReviews() {
               content="Take a moment to rate the resources you used in this post by clicking the thumbs below and optionally leaving a comment about the resource."
             />
           )}
-          <Stack>
+          <div className="flex flex-col gap-3">
             {reviews.pending.map((resource, index) => (
               <EditResourceReview
                 key={resource.id ?? resource.name ?? index}
@@ -130,7 +127,7 @@ export function EditPostReviews() {
                 ))}
               </>
             )}
-          </Stack>
+          </div>
           {reviews.warnAdditionalResource && (
             <DismissibleAlert
               id="additional-resource-alert"
@@ -159,6 +156,6 @@ export function EditPostReviews() {
           )}
         </>
       )}
-    </Stack>
+    </div>
   );
 }

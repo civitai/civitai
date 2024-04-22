@@ -62,17 +62,17 @@ export function PostImageTool({
     },
     onError: (error: any) => showErrorNotification({ error: new Error(error.message) }),
   });
-  useEffect(() => {
+  const handleUpdateTool = (notes: string) => {
     debouncer(() => {
       updateToolMutation.mutate({ data: [{ imageId: image.id, toolId: tool.id, notes }] });
     });
-  }, [notes]); // eslint-disable-line
+  };
 
   const dirty = notes.length && notes !== tool.notes;
   const saving = updateToolMutation.isLoading;
 
   return (
-    <div className="flex flex-col gap-1 py-1">
+    <div className="flex flex-col py-1">
       <div className="flex justify-between items-center gap-3">
         <div className="flex items-center gap-1">
           <span>{tool.name}</span>
@@ -98,7 +98,10 @@ export function PostImageTool({
           size="sm"
           placeholder={`How was ${getDisplayName(tool.name)} used?`}
           value={notes}
-          onChange={(e) => setNotes(e.target.value)}
+          onChange={(e) => {
+            setNotes(e.target.value);
+            handleUpdateTool(e.target.value);
+          }}
           classNames={{
             input: `px-2 py-1 min-h-8 mb-2 ${
               saving

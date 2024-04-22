@@ -8,10 +8,11 @@ import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { CollectionType } from '@prisma/client';
 import { formatDate } from '~/utils/date-helpers';
 import { useRef } from 'react';
-import { IconClock } from '@tabler/icons-react';
+import { IconClock, IconTrash } from '@tabler/icons-react';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { ReorderImagesButton } from '~/components/Post/EditV2/PostReorderImages';
 import { usePostEditParams, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
+import { DeletePostButton } from '~/components/Post/DeletePostButton';
 
 export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
   // #region [state]
@@ -22,7 +23,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
   const [updatePost, isReordering, hasImages, showReorder] = usePostEditStore((state) => [
     state.updatePost,
     state.isReordering,
-    state.images.filter((x) => !!x.id).length > 0,
+    state.images.filter((x) => x.type === 'added').length > 0,
     state.images.length > 1,
   ]);
 
@@ -115,6 +116,20 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
       )}
 
       {showReorder && <ReorderImagesButton />}
+
+      <DeletePostButton postId={post.id}>
+        {({ onClick, isLoading }) => (
+          <Button
+            onClick={() => onClick()}
+            color="red"
+            loading={isLoading}
+            variant="outline"
+            leftIcon={<IconTrash size={20} />}
+          >
+            Delete Post
+          </Button>
+        )}
+      </DeletePostButton>
     </>
   );
 }
