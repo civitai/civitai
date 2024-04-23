@@ -58,7 +58,7 @@ export const CosmeticSample = ({
   cosmetic,
   size = 'sm',
 }: {
-  cosmetic: Pick<CosmeticGetById, 'id' | 'data' | 'type' | 'name' | 'source'>;
+  cosmetic: Pick<CosmeticGetById, 'id' | 'data' | 'type' | 'name'>;
   size?: 'sm' | 'md' | 'lg';
 }) => {
   const values = cosmeticSampleSizeMap[size];
@@ -67,13 +67,12 @@ export const CosmeticSample = ({
     case CosmeticType.Badge:
     case CosmeticType.ProfileDecoration:
     case CosmeticType.ContentDecoration:
+      const decorationData = cosmetic.data as BadgeCosmetic['data'];
+      if (!decorationData.url) return null;
+
       return (
         <Box w={values.badgeSize}>
-          <EdgeMedia
-            src={(cosmetic.data as { url: string })?.url}
-            alt={cosmetic.name}
-            width="original"
-          />
+          <EdgeMedia src={decorationData.url} alt={cosmetic.name} width="original" />
         </Box>
       );
     case CosmeticType.NamePlate:
@@ -84,6 +83,9 @@ export const CosmeticSample = ({
         </Text>
       );
     case CosmeticType.ProfileBackground:
+      const backgroundData = cosmetic.data as ProfileBackgroundCosmetic['data'];
+      if (!backgroundData.url) return null;
+
       return (
         <Box
           style={{
@@ -94,15 +96,20 @@ export const CosmeticSample = ({
           }}
         >
           <EdgeMedia
-            src={(cosmetic.data as { url: string })?.url}
+            src={backgroundData.url}
             alt={cosmetic.name}
+            type={backgroundData.type}
             width="original"
             style={{
               objectFit: 'cover',
-              objectPosition: 'right bottom',
+              // objectPosition: 'right bottom',
               width: '100%',
               height: '100%',
             }}
+            wrapperProps={{
+              style: { height: '100%' },
+            }}
+            contain
           />
         </Box>
       );

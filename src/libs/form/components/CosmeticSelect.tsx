@@ -12,9 +12,9 @@ import {
   createStyles,
 } from '@mantine/core';
 import { IconBuildingStore } from '@tabler/icons-react';
-import { BadgeCosmetic, SimpleCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { SimpleCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import Link from 'next/link';
+import { CosmeticSample } from '~/pages/moderator/cosmetic-store/cosmetics';
 
 const useStyles = createStyles((theme) => ({
   decoration: {
@@ -81,8 +81,6 @@ export function CosmeticSelect<TData extends CosmeticItem>({
         )}
         {hasItems ? (
           data.map((item) => {
-            const data = item.data as BadgeCosmetic['data'];
-            const url = data.url ?? '';
             const isSelected = value && value.id === item.id && value.claimKey === item.claimKey;
 
             return (
@@ -102,7 +100,7 @@ export function CosmeticSelect<TData extends CosmeticItem>({
                   p="sm"
                   onClick={() => handleClick(!isSelected ? item : null)}
                 >
-                  <EdgeMedia src={url} width={data.animated ? 'original' : 64} />
+                  <CosmeticSample cosmetic={item} />
                 </UnstyledButton>
               </Indicator>
             );
@@ -120,7 +118,10 @@ export function CosmeticSelect<TData extends CosmeticItem>({
 }
 
 type CosmeticItem = WithClaimKey<
-  Pick<SimpleCosmetic, 'id' | 'data' | 'equippedToId' | 'equippedToType' | 'inUse' | 'obtainedAt'>
+  Pick<
+    SimpleCosmetic,
+    'id' | 'data' | 'type' | 'name' | 'equippedToId' | 'equippedToType' | 'inUse' | 'obtainedAt'
+  >
 >;
 type Props<TData extends CosmeticItem> = Omit<InputWrapperProps, 'onChange' | 'children'> & {
   data: TData[];

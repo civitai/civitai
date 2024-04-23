@@ -959,6 +959,7 @@ export const getUserCosmeticsHandler = async ({
         const { type, data, ...rest } = cosmetic;
         const sharedData = {
           ...rest,
+          type,
           obtainedAt,
           claimKey,
           inUse: !!equippedToId,

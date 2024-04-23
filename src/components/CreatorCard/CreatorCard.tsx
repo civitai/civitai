@@ -9,6 +9,7 @@ import {
   createStyles,
   Text,
   CardProps,
+  Image,
 } from '@mantine/core';
 import { ChatUserButton } from '~/components/Chat/ChatUserButton';
 
@@ -31,10 +32,9 @@ import {
 } from '~/server/selectors/cosmetic.selector';
 import { applyCosmeticThemeColors } from '~/libs/sx-helpers';
 import { CosmeticType } from '@prisma/client';
-import { isDefined } from '~/utils/type-guards';
 import { BadgeDisplay, Username } from '../User/Username';
-import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { UserPublicSettingsSchema } from '~/server/schema/user.schema';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 
 const useStyles = createStyles((theme) => ({
   profileDetailsContainer: {
@@ -46,6 +46,7 @@ const useStyles = createStyles((theme) => ({
     justifyContent: 'center',
     flexDirection: 'column',
     color: theme.white,
+    zIndex: 10,
   },
 
   profileDetails: {
@@ -210,7 +211,7 @@ export const CreatorCardV2 = ({
   startDisplayOverwrite,
   ...cardProps
 }: PropsV2) => {
-  const { classes, theme } = useStyles();
+  const { classes } = useStyles();
   const { data } = trpc.user.getCreator.useQuery(
     { id: user.id },
     { enabled: user.id !== constants.system.user.id }
@@ -252,7 +253,8 @@ export const CreatorCardV2 = ({
 
   const backgroundImage = cosmetics.find(
     ({ cosmetic }) => cosmetic?.type === CosmeticType.ProfileBackground
-  )?.cosmetic as Omit<ProfileBackgroundCosmetic, 'description' | 'obtainedAt'>;
+  )?.cosmetic as Omit<ProfileBackgroundCosmetic, 'description' | 'obtainedAt'> | undefined;
+  const isVideo = backgroundImage?.data?.type === 'video';
 
   const badge = cosmetics.find(({ cosmetic }) => cosmetic?.type === CosmeticType.Badge)?.cosmetic;
   const stats = creator?.stats;
@@ -265,120 +267,147 @@ export const CreatorCardV2 = ({
       [];
   return (
     <Card p="md" withBorder {...cardProps}>
-      <Card.Section>
-        <BackgroundImage
-          sx={{
-            backgroundRepeat: 'no-repeat',
-            backgroundPosition: 'right bottom',
-            backgroundSize: 'cover',
-            backgroundColor: theme.colors.dark[4],
-            padding: theme.spacing.md,
-          }}
-          src={
-            backgroundImage && backgroundImage.data.url
-              ? getEdgeUrl(backgroundImage.data.url, {
-                  width: 'original',
-                  transcode: false,
-                })
-              : '/images/civitai-default-account-bg.png'
-          }
-        >
-          <Stack>
-            <Group position="apart" align="flex-start" mih={60}>
-              <Group>
-                <Group spacing={8}>
-                  <RankBadge size="md" rank={creator.rank} />
-                  {stats && displayStats.length > 0 && (
-                    <UserStatBadges
-                      uploads={displayStats.includes('uploads') ? uploads : null}
-                      followers={
-                        displayStats.includes('followers') ? stats.followerCountAllTime : null
-                      }
-                      favorites={
-                        displayStats.includes('favorites') ? stats.thumbsUpCountAllTime : null
-                      }
-                      downloads={
-                        displayStats.includes('downloads') ? stats.downloadCountAllTime : null
-                      }
-                      colorOverrides={backgroundImage?.data}
-                    />
-                  )}
-                </Group>
+      <Card.Section style={{ position: 'relative' }}>
+        {backgroundImage && backgroundImage.data.url ? (
+          <EdgeMedia
+            src={backgroundImage.data.url}
+            width="original"
+            type={backgroundImage.data.type ?? 'image'}
+            transcode={isVideo}
+            wrapperProps={{
+              style: {
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                width: '100%',
+                height: '100%',
+              },
+            }}
+            contain
+            style={
+              isVideo
+                ? { height: '100%', objectFit: 'cover' }
+                : {
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    width: '100%',
+                    height: '100%',
+                    objectFit: 'cover',
+                  }
+            }
+          />
+        ) : (
+          <Image
+            src="/images/civitai-default-account-bg.png"
+            alt="default creator card background decoration"
+            pos="absolute"
+            top={0}
+            left={0}
+            w="100%"
+            h="100%"
+            styles={{
+              figure: { height: '100%' },
+              imageWrapper: { height: '100%' },
+              image: { objectFit: 'cover', height: '100% !important' },
+            }}
+          />
+        )}
+        <Stack p="md">
+          <Group position="apart" align="flex-start" mih={60} style={{ zIndex: 10 }}>
+            <Group>
+              <Group spacing={8}>
+                <RankBadge size="md" rank={creator.rank} />
+                {stats && displayStats.length > 0 && (
+                  <UserStatBadges
+                    uploads={displayStats.includes('uploads') ? uploads : null}
+                    followers={
+                      displayStats.includes('followers') ? stats.followerCountAllTime : null
+                    }
+                    favorites={
+                      displayStats.includes('favorites') ? stats.thumbsUpCountAllTime : null
+                    }
+                    downloads={
+                      displayStats.includes('downloads') ? stats.downloadCountAllTime : null
+                    }
+                    colorOverrides={backgroundImage?.data}
+                  />
+                )}
               </Group>
-              <BadgeDisplay badge={badge ? (badge as BadgeCosmetic) : undefined} badgeSize={60} />
             </Group>
-            <Box className={classes.profileDetailsContainer}>
-              <Stack spacing="xs" className={classes.profileDetails} py={8} h="100%">
-                <Group align="center" position="apart">
-                  <UserProfileLink user={creator} linkToProfile>
-                    <Group>
-                      <Box className={classes.avatar}>
-                        <UserAvatar
-                          size="lg"
-                          avatarProps={{
-                            size: 60,
-                            style: {
-                              minHeight: '100%',
-                              objectFit: 'cover',
-                            },
-                          }}
-                          user={creatorWithCosmetics}
-                        />
-                      </Box>
-                      <Stack spacing={0} ml={70}>
-                        <Username
-                          username={creator?.username}
-                          deletedAt={creator?.deletedAt}
-                          cosmetics={cosmetics ?? []}
-                          size="md"
-                          badgeSize={0}
-                        />
-                        {creator.createdAt && (
-                          <Text size="xs" lh={1} lineClamp={1} color="dimmed">
-                            Joined {formatDate(creator.createdAt)}
-                          </Text>
-                        )}
-                      </Stack>
-                    </Group>
-                  </UserProfileLink>
-                  {withActions && (
-                    <Group spacing={8} noWrap>
-                      <TipBuzzButton
-                        toUserId={creator.id}
-                        size="xs"
-                        entityId={tipBuzzEntityId}
-                        label=""
-                        entityType={tipBuzzEntityType}
-                        radius="xl"
-                        color="gray"
-                        variant="filled"
-                        w={32}
-                        h={32}
+            <BadgeDisplay badge={badge ? (badge as BadgeCosmetic) : undefined} badgeSize={60} />
+          </Group>
+          <Box className={classes.profileDetailsContainer}>
+            <Stack spacing="xs" className={classes.profileDetails} py={8} h="100%">
+              <Group align="center" position="apart">
+                <UserProfileLink user={creator} linkToProfile>
+                  <Group>
+                    <Box className={classes.avatar}>
+                      <UserAvatar
+                        size="lg"
+                        avatarProps={{
+                          size: 60,
+                          style: {
+                            minHeight: '100%',
+                            objectFit: 'cover',
+                          },
+                        }}
+                        user={creatorWithCosmetics}
                       />
-                      <ChatUserButton
-                        user={creator}
-                        size="xs"
-                        label=""
-                        radius="xl"
-                        color="gray"
-                        variant="filled"
-                        w={32}
-                        h={32}
+                    </Box>
+                    <Stack spacing={0} ml={70}>
+                      <Username
+                        username={creator?.username}
+                        deletedAt={creator?.deletedAt}
+                        cosmetics={cosmetics ?? []}
+                        size="md"
+                        badgeSize={0}
                       />
-                      <FollowUserButton
-                        userId={creator.id}
-                        size="xs"
-                        radius="xl"
-                        variant="filled"
-                        h={32}
-                      />
-                    </Group>
-                  )}
-                </Group>
-              </Stack>
-            </Box>
-          </Stack>
-        </BackgroundImage>
+                      {creator.createdAt && (
+                        <Text size="xs" lh={1} lineClamp={1} color="dimmed">
+                          Joined {formatDate(creator.createdAt)}
+                        </Text>
+                      )}
+                    </Stack>
+                  </Group>
+                </UserProfileLink>
+                {withActions && (
+                  <Group spacing={8} noWrap>
+                    <TipBuzzButton
+                      toUserId={creator.id}
+                      size="xs"
+                      entityId={tipBuzzEntityId}
+                      label=""
+                      entityType={tipBuzzEntityType}
+                      radius="xl"
+                      color="gray"
+                      variant="filled"
+                      w={32}
+                      h={32}
+                    />
+                    <ChatUserButton
+                      user={creator}
+                      size="xs"
+                      label=""
+                      radius="xl"
+                      color="gray"
+                      variant="filled"
+                      w={32}
+                      h={32}
+                    />
+                    <FollowUserButton
+                      userId={creator.id}
+                      size="xs"
+                      radius="xl"
+                      variant="filled"
+                      h={32}
+                    />
+                  </Group>
+                )}
+              </Group>
+            </Stack>
+          </Box>
+        </Stack>
       </Card.Section>
       {creator.links && creator.links.length > 0 ? (
         <Card.Section

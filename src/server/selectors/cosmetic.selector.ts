@@ -1,5 +1,5 @@
 import { TextProps } from '@mantine/core';
-import { CosmeticEntity, Prisma } from '@prisma/client';
+import { CosmeticEntity, Prisma, MediaType } from '@prisma/client';
 import { ImageProps } from '~/components/ImageViewer/ImageViewer';
 
 export const simpleCosmeticSelect = Prisma.validator<Prisma.CosmeticSelect>()({
@@ -28,11 +28,11 @@ export type SimpleCosmetic = Omit<
   inUse?: boolean;
 };
 
-export type BadgeCosmetic = Omit<SimpleCosmetic, 'data' | 'type'> & {
+export type BadgeCosmetic = Omit<SimpleCosmetic, 'data'> & {
   data: { url?: string; animated?: boolean };
   entityImage?: ImageProps;
 };
-export type NamePlateCosmetic = Omit<SimpleCosmetic, 'data' | 'type'> & {
+export type NamePlateCosmetic = Omit<SimpleCosmetic, 'data'> & {
   data: Pick<TextProps, 'variant' | 'color'> & {
     gradient?: {
       from: string;
@@ -45,7 +45,7 @@ export type ContentDecorationCosmetic = BadgeCosmetic & {
   data: { offset?: string; crop?: string };
 };
 export type ProfileBackgroundCosmetic = BadgeCosmetic & {
-  data: { textColor?: string; backgroundColor?: string; offset?: string };
+  data: { textColor?: string; backgroundColor?: string; offset?: string; type?: MediaType };
 };
 
 export type WithClaimKey<T> = T & { claimKey: string };
