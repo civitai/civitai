@@ -5,14 +5,18 @@ import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';
 import { useDebouncer } from '~/utils/debouncer';
 import { EditPostTags } from '~/components/Post/Edit/EditPostTags';
-import { usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
+import { usePostEditParams, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
 
 const titleCharLimit = 255;
 const formSchema = z.object({ title: z.string().nullish(), detail: z.string().nullish() });
 
 export function PostEditForm() {
   const post = usePostEditStore((state) => state.post);
-  const form = useForm({ schema: formSchema, defaultValues: post });
+  const { postTitle } = usePostEditParams();
+  const form = useForm({
+    schema: formSchema,
+    defaultValues: { ...post, title: post?.title ?? postTitle },
+  });
   const debounce = useDebouncer(1000);
 
   const { mutate } = trpc.post.update.useMutation({

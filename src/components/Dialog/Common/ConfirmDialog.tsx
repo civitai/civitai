@@ -11,7 +11,7 @@ export function ConfirmDialog({
   confirmProps,
   cancelProps,
 }: {
-  title?: string;
+  title?: React.ReactNode;
   message: React.ReactNode;
   onConfirm?: () => Promise<unknown> | unknown;
   onCancel?: () => void;

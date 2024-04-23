@@ -1,29 +1,34 @@
 const plugin = require('tailwindcss/plugin')
 const colors = require('tailwindcss/colors')
 
+const breakpoints = {
+  xs: '576px',
+  sm: '768px',
+  md: '992px',
+  lg: '1200px',
+  xl: '1400px',
+}
+
 /** @type {import('tailwindcss').Config} */
 module.exports = {
   content: ['./src/**/*.{ts,tsx}',],
   darkMode: 'selector',
   theme: {
-    screens: {
-      xs: '576px',
-      sm: '768px',
-      md: '992px',
-      lg: '1200px',
-      xl: '1400px',
-    },
+    screens: breakpoints,
+
     extend: {
       textShadow: {
         sm: '0 1px 2px var(--tw-shadow-color)',
         default: '0 2px 4px var(--tw-shadow-color)',
       },
-      containers: {
-        xs: '576px',
-        sm: '768px',
-        md: '992px',
-        lg: '1200px',
-        xl: '1400px',
+      // for container queries
+      containers: breakpoints,
+      width: breakpoints,
+      maxWidth: breakpoints,
+      minWidth: breakpoints,
+      container: {
+        padding: '1rem',
+        center: true,
       }
     },
     colors: {

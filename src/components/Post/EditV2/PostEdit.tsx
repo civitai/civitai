@@ -1,4 +1,3 @@
-import { Container } from '@mantine/core';
 import { EditPostReviews } from '~/components/Post/EditV2/EditPostReviews';
 import { PostEditForm } from '~/components/Post/EditV2/PostEditForm';
 import { usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
@@ -12,7 +11,7 @@ export function PostEdit() {
   if (!post) return null;
 
   return (
-    <Container size="lg" className="@container px-3">
+    <div className="@container">
       <div className="flex flex-col gap-3 @sm:flex-row">
         <div className="flex flex-col gap-3 flex-1 ">
           <PostEditForm />
@@ -30,6 +29,6 @@ export function PostEdit() {
           <EditPostReviews post={post} />
         </div>
       </div>
-    </Container>
+    </div>
   );
 }

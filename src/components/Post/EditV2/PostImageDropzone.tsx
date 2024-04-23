@@ -1,5 +1,5 @@
 import { Anchor, Progress, Text } from '@mantine/core';
-import { useEffect, useRef } from 'react';
+import { useEffect } from 'react';
 import { ContentPolicyLink } from '~/components/ContentPolicyLink/ContentPolicyLink';
 import { MediaDropzone } from '~/components/Image/ImageDropzone/MediaDropzone';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -22,17 +22,14 @@ export function PostImageDropzone({
 }) {
   // #region [state]
   const queryUtils = trpc.useUtils();
-  const [post, images, setImages, setPost] = usePostEditStore((state) => [
+  const [post, images, setImages] = usePostEditStore((state) => [
     state.post,
     state.images,
     state.setImages,
-    state.setPost,
   ]);
   const params = usePostEditParams();
   const currentUser = useCurrentUser();
   const { src, modelVersionId, tag } = params;
-  const paramsRef = useRef(params);
-  paramsRef.current = params;
   // #endregion
 
   // #region [mutations]
@@ -47,12 +44,12 @@ export function PostImageDropzone({
   // #endregion
 
   // #region [upload images]
-  const { files, canAdd, error, upload, progress } = useMediaUpload({
+  const { files, canAdd, error, upload, progress } = useMediaUpload<{ postId: number }>({
     count: images.length,
     max,
     maxSize: [{ type: 'image', maxSize: constants.mediaUpload.maxImageFileSize }],
-    onComplete: (props) => {
-      const { postId, modelVersionId } = paramsRef.current;
+    onComplete: (props, context) => {
+      const { postId = context?.postId, modelVersionId } = params;
       if (!postId) throw new Error('missing post id');
       const index = Math.max(0, ...images.map((x) => x.data.index)) + 1;
       switch (props.status) {
@@ -62,6 +59,9 @@ export function PostImageDropzone({
             postId,
             modelVersionId,
             index,
+            width: props.metadata.width,
+            height: props.metadata.height,
+            hash: props.metadata.hash,
           });
           return addImageMutation.mutate(payload);
         case 'blocked':
@@ -80,11 +80,9 @@ export function PostImageDropzone({
         { modelVersionId, tag },
         {
           onSuccess: async (data) => {
-            setPost(data);
             queryUtils.post.getEdit.setData({ id: data.id }, () => data);
             onCreatePost?.(data);
-            paramsRef.current.postId = data.id;
-            upload(files);
+            upload(files, { postId: data.id });
           },
           onError(error) {
             showErrorNotification({

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { MediaUploadOnCompleteProps } from '~/hooks/useMediaUpload';
 import { PostEditQuerySchema } from '~/server/schema/post.schema';
 import { PostDetailEditable } from '~/server/services/post.service';
@@ -12,14 +12,36 @@ import { trpc } from '~/utils/trpc';
 import Router from 'next/router';
 import { FileUploadProvider } from '~/components/FileUpload/FileUploadProvider';
 
+const replacerFunc = () => {
+  const visited = new WeakSet();
+  return (key: string, value: unknown) => {
+    if (typeof value === 'object' && value !== null) {
+      if (visited.has(value)) {
+        return;
+      }
+      visited.add(value);
+    }
+    return value;
+  };
+};
+
 // #region [types]
+type ExtendedParams = {
+  postTitle?: string;
+  confirmTitle?: React.ReactNode;
+  confirmPublish?: boolean;
+  confirmMessage?: string;
+  afterPublish?: (data: { postId: number; publishedAt: Date }) => void | Promise<void>;
+};
+type Params = PostEditQuerySchema & ExtendedParams;
 type Props = {
   post?: PostDetailEditable;
   params?: PostEditQuerySchema;
   children: React.ReactNode;
-};
+} & ExtendedParams;
 
 export type PostEditImageDetail = PostDetailEditable['images'][number] & { index: number };
+export type PostEditMediaDetail = Omit<MediaUploadOnCompleteProps, 'status'>;
 export type ControlledImage =
   | {
       type: 'added';
@@ -27,7 +49,7 @@ export type ControlledImage =
     }
   | {
       type: 'blocked';
-      data: Omit<MediaUploadOnCompleteProps, 'status'>;
+      data: PostEditMediaDetail;
     };
 
 type PostParams = Omit<PostDetailEditable, 'images'>;
@@ -70,10 +92,6 @@ const createContextStore = (post?: PostDetailEditable) =>
           set((state) => {
             const index = state.images.findIndex((x) => x.type === 'added' && x.data.id === id);
             if (index > -1) cb(state.images[index].data as PostEditImageDetail);
-            // state.images[index].data = mergeWithPartial(
-            //   state.images[index].data,
-            //   data as Partial<ImageDetail>
-            // );
           }),
         toggleReordering: () =>
           set((state) => {
@@ -95,7 +113,7 @@ export function usePostEditStore<T>(selector: (state: State) => T) {
 // #endregion
 
 // #region [params context]
-const ParamsContext = createContext<PostEditQuerySchema | null>(null);
+const ParamsContext = createContext<Params | null>(null);
 export function usePostEditParams() {
   const context = useContext(ParamsContext);
   if (!context) throw new Error('missing ParamsContext');
@@ -104,19 +122,30 @@ export function usePostEditParams() {
 // #endregion
 
 // #region [provider]
-export function PostEditProvider({ post, params = {}, children }: Props) {
+export function PostEditProvider({ post, params = {}, children, ...extendedParams }: Props) {
   const queryUtils = trpc.useUtils();
   const [store] = useState(() => createContextStore(post));
-  const { postId = 0 } = params;
+  const stringDependencies = JSON.stringify({ ...params, ...extendedParams }, replacerFunc);
+
+  const mergedParams = useMemo(() => {
+    return {
+      ...params,
+      ...extendedParams,
+      postId: post?.id ?? params.postId,
+      modelVersionId: post?.modelVersionId ?? params.modelVersionId,
+    };
+  }, [post, stringDependencies]); //eslint-disable-line
+
+  const { modelVersionId, modelId, postId } = mergedParams;
 
   useDidUpdate(() => {
-    if (!post) return;
     store.setState({
       post,
-      images: post.images.map((data, index) => ({
-        type: 'added',
-        data: { ...data, index },
-      })),
+      images:
+        post?.images?.map((data, index) => ({
+          type: 'added',
+          data: { ...data, index },
+        })) ?? [],
     });
   }, [post]);
 
@@ -127,6 +156,11 @@ export function PostEditProvider({ post, params = {}, children }: Props) {
         await queryUtils.post.getEdit.invalidate({ id: postId });
         await queryUtils.post.getInfinite.invalidate();
         await queryUtils.image.getInfinite.invalidate({ postId });
+        if (modelVersionId) {
+          await queryUtils.modelVersion.getById.invalidate({ id: modelVersionId });
+          await queryUtils.image.getImagesAsPostsInfinite.invalidate();
+        }
+        if (modelId) await queryUtils.model.getById.invalidate({ id: modelId });
       };
 
       Router.events.on('routeChangeComplete', handleBrowsingAway);
@@ -134,16 +168,11 @@ export function PostEditProvider({ post, params = {}, children }: Props) {
         Router.events.off('routeChangeComplete', handleBrowsingAway);
       };
     }
-  }, []); // eslint-disable-line
-
-  if (post) {
-    params.postId = post.id;
-    params.modelVersionId = post.modelVersionId;
-  }
+  }, [modelVersionId, modelId, postId]); // eslint-disable-line
 
   return (
     <StoreContext.Provider value={store}>
-      <ParamsContext.Provider value={params}>
+      <ParamsContext.Provider value={mergedParams}>
         <FileUploadProvider>{children}</FileUploadProvider>
       </ParamsContext.Provider>
     </StoreContext.Provider>

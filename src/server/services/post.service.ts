@@ -437,13 +437,7 @@ export const getPostDetail = async ({ id, user }: GetByIdInput & { user?: Sessio
       id,
       OR: user?.isModerator
         ? undefined
-        : [
-            { publishedAt: { lt: new Date() } },
-            { userId: user?.id },
-            { modelVersionId: null },
-            { modelVersion: { status: 'Published' } },
-          ],
-      // modelVersion: user?.isModerator ? undefined : { status: 'Published' },
+        : [{ userId: user?.id }, { publishedAt: { lt: new Date() }, nsfwLevel: { not: 0 } }],
     },
     select: postSelect,
   });
@@ -459,7 +453,7 @@ export const getPostDetail = async ({ id, user }: GetByIdInput & { user?: Sessio
 
 export type PostDetailEditable = AsyncReturnType<typeof getPostEditDetail>;
 export const getPostEditDetail = async ({ id, user }: GetByIdInput & { user: SessionUser }) => {
-  const post = await getPostDetail({ id });
+  const post = await getPostDetail({ id, user });
   if (post.user.id !== user.id && !user.isModerator) throw throwAuthorizationError();
   const images = await getPostEditImages({ id, user });
 
@@ -473,7 +467,7 @@ async function combinePostEditImageData(images: PostImageEditSelect[], user: Ses
   return _images
     .map((image) => ({
       ...image,
-      metadata: image.meta as PreprocessFileReturnType['metadata'],
+      metadata: image.metadata as PreprocessFileReturnType['metadata'],
       tags: tags.filter((x) => x.imageId === image.id),
       tools: image.tools.map(({ notes, tool }) => ({ ...tool, notes })),
     }))
@@ -498,7 +492,11 @@ export const createPost = async ({
     data: { ...data, userId, tags: tag ? { create: { tagId: tag } } : undefined },
     select: postSelect,
   });
-  return { ...post, tags: post.tags.flatMap((x) => x.tag), images: [] as PostImageEditable[] };
+  return {
+    ...post,
+    tags: post.tags.flatMap((x) => x.tag),
+    images: [] as PostImageEditable[],
+  };
 };
 
 export const updatePost = async ({
@@ -524,9 +522,9 @@ export const deletePost = async ({ id }: GetByIdInput) => {
     for (const image of images) await deleteImageById({ id: image.id, updatePost: false });
   }
 
-  await dbWrite.clubPost.deleteMany({
-    where: { entityId: id, entityType: 'Post' },
-  });
+  // await dbWrite.clubPost.deleteMany({
+  //   where: { entityId: id, entityType: 'Post' },
+  // });
 
   await bustCachesForPost(id);
   await dbWrite.post.delete({ where: { id } });
@@ -628,13 +626,17 @@ export const addPostImage = async ({
     data: {
       ...props,
       userId: user.id,
-      meta: (meta as Prisma.JsonObject) ?? Prisma.JsonNull,
+      meta: meta !== null ? (meta as Prisma.JsonObject) : Prisma.JsonNull,
       generationProcess: meta ? getImageGenerationProcess(meta as Prisma.JsonObject) : null,
     },
     select: { id: true },
   });
 
-  await dbWrite.$executeRaw`SELECT insert_image_resource(${partialResult.id}::int)`;
+  try {
+    await dbWrite.$executeRaw`SELECT insert_image_resource(${partialResult.id}::int)`;
+  } catch (e) {
+    console.error(e);
+  }
   await ingestImage({
     image: {
       id: partialResult.id,
@@ -695,7 +697,7 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
     where: { id: image.id },
     data: {
       ...image,
-      meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
+      meta: image.meta !== null ? (image.meta as Prisma.JsonObject) : Prisma.JsonNull,
     },
     select: { id: true },
   });

@@ -48,6 +48,7 @@ export const postSelect = Prisma.validator<Prisma.PostSelect>()({
   title: true,
   detail: true,
   modelVersionId: true,
+  modelVersion: { where: { publishedAt: { not: null } }, select: { id: true } },
   user: { select: userWithCosmeticsSelect },
   publishedAt: true,
   availability: true,

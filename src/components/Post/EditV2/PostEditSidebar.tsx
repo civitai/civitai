@@ -13,43 +13,81 @@ import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { ReorderImagesButton } from '~/components/Post/EditV2/PostReorderImages';
 import { usePostEditParams, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
 import { DeletePostButton } from '~/components/Post/DeletePostButton';
+import { useCatchNavigation } from '~/hooks/useCatchNavigation';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import { SchedulePostModal } from '~/components/Post/EditV2/SchedulePostModal';
+import { ConfirmDialog } from '~/components/Dialog/Common/ConfirmDialog';
 
 export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
   // #region [state]
   const router = useRouter();
   const currentUser = useCurrentUserRequired();
   const params = usePostEditParams();
-  const { returnUrl } = params;
+  const { returnUrl, afterPublish } = params;
   const [updatePost, isReordering, hasImages, showReorder] = usePostEditStore((state) => [
     state.updatePost,
     state.isReordering,
     state.images.filter((x) => x.type === 'added').length > 0,
     state.images.length > 1,
   ]);
-
   const canPublish = hasImages && !isReordering;
-  const queryUtils = trpc.useUtils();
-  const mutating = useIsMutating();
   const todayRef = useRef(new Date());
   // #endregion
 
+  // #region [mutations]
   const updatePostMutation = trpc.post.update.useMutation();
+  const mutating = useIsMutating({
+    predicate: (mutation) => mutation.options.mutationKey?.flat().includes('post') ?? false,
+    exact: false,
+  });
+  // #endregion
 
-  const handlePublish = () =>
+  // #region [publish post]
+  const publish = (publishedAt = new Date()) =>
     updatePostMutation.mutate(
-      { id: post.id ?? 0, publishedAt: new Date() },
+      { id: post.id ?? 0, title: !post.title ? params.postTitle : undefined, publishedAt },
       {
-        onSuccess: async (_, { publishedAt }) => {
+        onSuccess: async (_, post) => {
+          const { id, publishedAt } = post;
           updatePost((data) => {
             data.publishedAt = publishedAt ?? null;
           });
-          await queryUtils.image.getImagesAsPostsInfinite.invalidate();
-
-          if (returnUrl) router.push(returnUrl);
-          else router.push(`/user/${currentUser.username}/posts`);
+          if (publishedAt) await afterPublish?.({ postId: id, publishedAt });
+          else {
+            if (returnUrl) router.push(returnUrl);
+            else router.push(`/user/${currentUser.username}/posts`);
+          }
         },
       }
     );
+
+  const confirmPublish = (date?: Date) => {
+    dialogStore.trigger({
+      component: ConfirmDialog,
+      props: {
+        title: params.confirmTitle,
+        message: params.confirmMessage ?? 'Are you sure you want to publish this post?',
+        onConfirm: () => handlePublish(date),
+      },
+    });
+  };
+
+  const handlePublish = (date?: Date) => {
+    params.confirmPublish ? confirmPublish(date) : publish(date);
+  };
+
+  const handleScheduleClick = () => {
+    dialogStore.trigger({
+      component: SchedulePostModal,
+      props: { onSubmit: handlePublish, publishedAt: post.publishedAt },
+    });
+  };
+
+  useCatchNavigation({
+    unsavedChanges: !post.publishedAt,
+    message: `You haven't published this post, all images will stay hidden. Do you wish to continue?`,
+  });
+  // #endregion
 
   return (
     <>
@@ -97,22 +135,50 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
           width={260}
           withArrow
         >
-          <Button
-            disabled={!canPublish}
-            onClick={handlePublish}
-            loading={updatePostMutation.isLoading}
-          >
-            Publish
-          </Button>
+          <Button.Group>
+            <Button
+              disabled={!canPublish}
+              onClick={() => handlePublish()}
+              loading={updatePostMutation.isLoading}
+              className="flex-1"
+            >
+              Publish
+            </Button>
+            <Tooltip label="Schedule Publish" withArrow>
+              <Button
+                variant="outline"
+                loading={updatePostMutation.isLoading}
+                onClick={handleScheduleClick}
+                disabled={!canPublish}
+              >
+                <IconClock size={20} />
+              </Button>
+            </Tooltip>
+          </Button.Group>
         </Tooltip>
       ) : (
-        <ShareButton
-          title={post.title ?? undefined}
-          url={`/posts/${post.id}`}
-          collect={{ type: CollectionType.Post, postId: post.id }}
-        >
-          <Button variant="default">Share</Button>
-        </ShareButton>
+        <Button.Group>
+          <ShareButton
+            title={post.title ?? undefined}
+            url={`/posts/${post.id}`}
+            collect={{ type: CollectionType.Post, postId: post.id }}
+          >
+            <Button variant="default" className="flex-1">
+              Share
+            </Button>
+          </ShareButton>
+          <Tooltip label="Reschedule Publish" withArrow>
+            <Button
+              variant="filled"
+              color="gray"
+              loading={updatePostMutation.isLoading}
+              onClick={handleScheduleClick}
+              disabled={!canPublish}
+            >
+              <IconClock size={20} />
+            </Button>
+          </Tooltip>
+        </Button.Group>
       )}
 
       {showReorder && <ReorderImagesButton />}

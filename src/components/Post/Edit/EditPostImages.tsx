@@ -37,7 +37,7 @@ import { POST_IMAGE_LIMIT, constants } from '~/server/common/constants';
 import { ImageIngestionStatus } from '@prisma/client';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import { useEditPostContext } from './EditPostProvider';
-import type { type ImageUpload, type ImageBlocked } from './EditPostProvider';
+import type { ImageUpload, ImageBlocked } from './EditPostProvider';
 import { orchestratorMediaTransmitter } from '~/store/post-image-transmitter.store';
 import { IMAGE_MIME_TYPE, MEDIA_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
 import { useCurrentUser } from '~/hooks/useCurrentUser';

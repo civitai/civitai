@@ -1,4 +1,4 @@
-import { Stack, Alert, Text, Divider } from '@mantine/core';
+import { Alert, Text, Divider } from '@mantine/core';
 import { IconLock } from '@tabler/icons-react';
 
 import { trpc } from '~/utils/trpc';
@@ -69,6 +69,8 @@ export function EditPostReviews({ post }: { post: PostDetailEditable }) {
     const shouldRefetch = imageResources.length !== data.length && !isMuted;
     if (shouldRefetch) refetch();
   }, [imageResources, isMuted, refetch]); //eslint-disable-line
+
+  if (!reviews.pending.length && !reviews.previous.length) return null;
 
   return (
     <div className="flex flex-col gap-3">

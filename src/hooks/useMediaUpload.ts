@@ -26,15 +26,20 @@ export type MediaUploadOnCompleteProps = {
 
 export type MediaUploadMaxSizeByType = { type: MediaType; maxSize: number }[];
 
-export type UseMediaUploadProps = {
+export type UseMediaUploadProps<TContext> = {
   count: number;
   max: number;
   maxSize?: number | MediaUploadMaxSizeByType;
-  onComplete: (props: MediaUploadOnCompleteProps) => void;
+  onComplete: (props: MediaUploadOnCompleteProps, context?: TContext) => void;
 };
 // #endregion
 
-export function useMediaUpload({ max, count, maxSize, onComplete }: UseMediaUploadProps) {
+export function useMediaUpload<TContext extends Record<string, unknown>>({
+  max,
+  count,
+  maxSize,
+  onComplete,
+}: UseMediaUploadProps<TContext>) {
   // #region [state]
   const canAdd = max - count > 0;
   const [error, setError] = useState<Error>();
@@ -44,7 +49,7 @@ export function useMediaUpload({ max, count, maxSize, onComplete }: UseMediaUplo
   // #endregion
 
   // #region [file processor]
-  async function processFiles(files: File[]) {
+  async function processFiles(files: File[], context?: TContext) {
     try {
       const start = count + 1;
 
@@ -100,20 +105,23 @@ export function useMediaUpload({ max, count, maxSize, onComplete }: UseMediaUplo
       for (const [i, { file, ...data }] of mapped.entries()) {
         const index = start + i;
         if (!!data.blockedFor) {
-          onComplete?.({
-            status: 'blocked',
-            ...data,
-            url: data.objectUrl,
-            index,
-          });
+          onComplete?.(
+            {
+              status: 'blocked',
+              ...data,
+              url: data.objectUrl,
+              index,
+            },
+            context
+          );
         } else {
           upload(file)
             .then(({ id }) => {
-              onComplete({ status: 'added', ...data, url: id, index });
+              onComplete({ status: 'added', ...data, url: id, index }, context);
             })
             .catch((error) => {
               console.error(error);
-              onComplete({ status: 'error', ...data, url: data.objectUrl, index });
+              onComplete({ status: 'error', ...data, url: data.objectUrl, index }, context);
             });
         }
       }
