@@ -41,7 +41,7 @@ const useStyles = createStyles((theme) => ({
   root: {
     backgroundColor: 'transparent',
     gap: 8,
-    padding: 0,
+    marginLeft: -4,
 
     [containerQuery.smallerThan('sm')]: {
       overflow: 'auto hidden',
