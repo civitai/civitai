@@ -449,7 +449,7 @@ const { openModal, Modal } = createContextModal({
                       </Chip>
                     ))}
                   </InputChipGroup>
-                  {creatorCardStatsPreferences.length > creatorCardMaxStats && (
+                  {(creatorCardStatsPreferences?.length ?? 0) > creatorCardMaxStats && (
                     <Text color="red" size="xs">
                       A maximum of {creatorCardMaxStats} stats can be displayed
                     </Text>
