@@ -4,7 +4,7 @@ import { IconList, IconPaperclip } from '@tabler/icons-react';
 
 import { AttachmentCard } from '~/components/Article/Detail/AttachmentCard';
 import { TableOfContent } from '~/components/Article/Detail/TableOfContent';
-import { CreatorCardV2 } from '~/components/CreatorCard/CreatorCard';
+import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { useHeadingsData } from '~/hooks/useHeadingsData';
 import { hideMobile } from '~/libs/sx-helpers';
 import type { ArticleGetById } from '~/server/services/article.service';
@@ -78,7 +78,7 @@ export function Sidebar({ articleId, attachments, creator }: Props) {
             </Stack>
           </Accordion>
         )}
-        <CreatorCardV2 user={creator} tipBuzzEntityId={articleId} tipBuzzEntityType="Article" />
+        <SmartCreatorCard user={creator} tipBuzzEntityId={articleId} tipBuzzEntityType="Article" />
       </Stack>
     </aside>
   );

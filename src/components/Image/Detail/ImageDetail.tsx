@@ -56,7 +56,7 @@ import { containerQuery } from '~/utils/mantine-css-helpers';
 import { ProfileBackgroundCosmetic } from '~/server/selectors/cosmetic.selector';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { applyCosmeticThemeColors } from '~/libs/sx-helpers';
-import { CreatorCardV2 } from '~/components/CreatorCard/CreatorCard';
+import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
 
 export function ImageDetail() {
   const { classes, cx, theme } = useStyles();
@@ -113,7 +113,7 @@ export function ImageDetail() {
           </div>
           <Card className={cx(classes.sidebar)}>
             <Card.Section withBorder>
-              <CreatorCardV2 user={image.user} style={{ border: 0 }} />
+              <SmartCreatorCard user={image.user} style={{ border: 0 }} />
             </Card.Section>
             <Card.Section
               py="xs"
