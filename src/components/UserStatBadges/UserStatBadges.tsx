@@ -165,9 +165,9 @@ const BadgedIcon = ({
     </Box>
     <IconBadge
       size={size}
-      color="gray"
+      color="dark.6"
       // @ts-ignore
-      variant="light"
+      variant="filled"
       sx={{
         paddingLeft: 14,
         marginLeft: -14,

@@ -31,6 +31,7 @@ export function EdgeMedia({
   contain,
   fadeIn = false,
   mediaRef,
+  transcode: initialTranscode = false,
   ...imgProps
 }: EdgeMediaProps) {
   const { classes, cx } = useStyles({ maxWidth: width === 'original' ? undefined : width });
@@ -43,7 +44,7 @@ export function EdgeMedia({
   }, [mediaRef]);
 
   if (width && typeof width === 'number') width = Math.min(width, 4096);
-  let transcode = false;
+  let transcode = initialTranscode;
   const _name = name ?? imgProps.alt;
   const _inferredType =
     _name?.endsWith('.gif') || _name?.endsWith('.mp4') || _name?.endsWith('.webm')
