@@ -701,3 +701,5 @@ export const RECAPTCHA_ACTIONS = {
 } as const;
 
 export type RecaptchaAction = keyof typeof RECAPTCHA_ACTIONS;
+
+export const creatorCardStats = ['followers', 'favorites', 'uploads', 'downloads'];

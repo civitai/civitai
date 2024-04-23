@@ -90,6 +90,7 @@ export const getUserCreator = async ({
       bannedAt: true,
       deletedAt: true,
       createdAt: true,
+      publicSettings: true,
       links: {
         select: {
           url: true,

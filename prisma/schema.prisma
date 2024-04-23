@@ -172,6 +172,7 @@ model User {
   profilePictureId Int?               @unique
   profilePicture   Image?             @relation("profilePicture", fields: [profilePictureId], references: [id], onDelete: SetNull)
   settings         Json?              @default("{}")
+  publicSettings   Json?              @default("{}")
   connectedAccount UserStripeConnect?
 
   accounts             Account[]

@@ -16,7 +16,7 @@ import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
 import { RankBadge } from '~/components/Leaderboard/RankBadge';
 import { UserAvatar, UserProfileLink } from '~/components/UserAvatar/UserAvatar';
-import { constants } from '~/server/common/constants';
+import { constants, creatorCardStats } from '~/server/common/constants';
 import { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { formatDate } from '~/utils/date-helpers';
 import { sortDomainLinks } from '~/utils/domain-link';
@@ -34,6 +34,7 @@ import { CosmeticType } from '@prisma/client';
 import { isDefined } from '~/utils/type-guards';
 import { BadgeDisplay, Username } from '../User/Username';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { UserPublicSettingsSchema } from '~/server/schema/user.schema';
 
 const useStyles = createStyles((theme) => ({
   profileDetailsContainer: {
@@ -205,16 +206,17 @@ export const CreatorCardV2 = ({
   tipBuzzEntityId,
   withActions = true,
   cosmeticOverwrites,
-  fetchUser = true,
+  useEquippedCosmetics = true,
+  startDisplayOverwrite,
   ...cardProps
 }: PropsV2) => {
   const { classes, theme } = useStyles();
   const { data } = trpc.user.getCreator.useQuery(
     { id: user.id },
-    { enabled: user.id !== constants.system.user.id && fetchUser }
+    { enabled: user.id !== constants.system.user.id }
   );
 
-  const creator = data || {
+  const defaultData = {
     ...user,
     createdAt: null,
     _count: { models: 0 },
@@ -225,7 +227,12 @@ export const CreatorCardV2 = ({
       thumbsUpCountAllTime: 0,
       followerCountAllTime: 0,
     },
+    publicSettings: {
+      creatorCardStatsPreferences: [],
+    },
   };
+
+  const creator = data || defaultData;
 
   if (!creator || user.id === -1) return null;
 
@@ -233,7 +240,7 @@ export const CreatorCardV2 = ({
   const cosmetics = uniqBy(
     [
       ...(cosmeticOverwrites ?? []).map((c) => ({ cosmetic: c, data: {} })),
-      ...creator?.cosmetics?.filter(({ cosmetic }) => !!cosmetic),
+      ...(useEquippedCosmetics ? creator?.cosmetics?.filter(({ cosmetic }) => !!cosmetic) : []),
     ],
     'cosmetic.type'
   );
@@ -248,7 +255,14 @@ export const CreatorCardV2 = ({
   )?.cosmetic as Omit<ProfileBackgroundCosmetic, 'description' | 'obtainedAt'>;
 
   const badge = cosmetics.find(({ cosmetic }) => cosmetic?.type === CosmeticType.Badge)?.cosmetic;
-
+  const stats = creator?.stats;
+  const { models: uploads } = creator?._count ?? { models: 0 };
+  const displayStats = data
+    ? startDisplayOverwrite ??
+      ((data.publicSettings ?? {}) as UserPublicSettingsSchema)?.creatorCardStatsPreferences ??
+      creatorCardStats
+    : // Avoid displaying stats until we load the data
+      [];
   return (
     <Card p="md" withBorder {...cardProps}>
       <Card.Section>
@@ -274,6 +288,21 @@ export const CreatorCardV2 = ({
               <Group>
                 <Group spacing={8}>
                   <RankBadge size="md" rank={creator.rank} />
+                  {stats && displayStats.length > 0 && (
+                    <UserStatBadges
+                      uploads={displayStats.includes('uploads') ? uploads : null}
+                      followers={
+                        displayStats.includes('followers') ? stats.followerCountAllTime : null
+                      }
+                      favorites={
+                        displayStats.includes('favorites') ? stats.thumbsUpCountAllTime : null
+                      }
+                      downloads={
+                        displayStats.includes('downloads') ? stats.downloadCountAllTime : null
+                      }
+                      colorOverrides={backgroundImage?.data}
+                    />
+                  )}
                 </Group>
               </Group>
               <BadgeDisplay badge={badge ? (badge as BadgeCosmetic) : undefined} badgeSize={60} />
@@ -393,5 +422,6 @@ type PropsV2 = {
   tipBuzzEntityType?: string;
   withActions?: boolean;
   cosmeticOverwrites?: SimpleCosmetic[];
-  fetchUser?: boolean;
+  useEquippedCosmetics?: boolean;
+  startDisplayOverwrite?: string[];
 } & Omit<CardProps, 'children'>;

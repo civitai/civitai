@@ -3,6 +3,8 @@ import {
   Box,
   Button,
   Center,
+  Chip,
+  ChipProps,
   CloseButton,
   Divider,
   Group,
@@ -31,12 +33,13 @@ import {
   InputProfileSectionsSettingsInput,
   InputSelect,
   InputCosmeticSelect,
+  InputChipGroup,
 } from '~/libs/form';
 import { ProfileSectionSchema, userProfileUpdateSchema } from '~/server/schema/user-profile.schema';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { IconExclamationMark, IconInfoCircle } from '@tabler/icons-react';
-import { constants } from '~/server/common/constants';
+import { constants, creatorCardStats } from '~/server/common/constants';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { CosmeticType, LinkType } from '@prisma/client';
 import { z } from 'zod';
@@ -50,9 +53,9 @@ import {
   NamePlateCosmetic,
   ProfileBackgroundCosmetic,
 } from '~/server/selectors/cosmetic.selector';
-import { titleCase } from '~/utils/string-helpers';
+import { getDisplayName, titleCase } from '~/utils/string-helpers';
 import { UserWithProfile } from '~/types/router';
-import { userUpdateSchema } from '~/server/schema/user.schema';
+import { UserPublicSettingsSchema, userUpdateSchema } from '~/server/schema/user.schema';
 import { isEqual } from 'lodash-es';
 import { ProfilePictureAlert } from '../User/ProfilePictureAlert';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
@@ -74,6 +77,14 @@ const schema = userProfileUpdateSchema.merge(
       profileBackground: cosmeticInputSchema.nullish(),
     })
 );
+
+const chipProps: Partial<ChipProps> = {
+  size: 'sm',
+  radius: 'xl',
+  variant: 'filled',
+  tt: 'capitalize',
+};
+
 type FormDataSchema = z.infer<typeof schema>;
 
 const { openModal, Modal } = createContextModal({
@@ -214,6 +225,7 @@ const { openModal, Modal } = createContextModal({
       profileImage,
       profilePicture,
       profileSectionsSettings,
+      creatorCardStatsPreferences,
     ] = form.watch([
       'badge',
       'nameplateId',
@@ -225,11 +237,14 @@ const { openModal, Modal } = createContextModal({
       'profileImage',
       'profilePicture',
       'profileSectionsSettings',
+      'creatorCardStatsPreferences',
     ]);
     const displayShowcase = useMemo(() => {
       const sections = (profileSectionsSettings ?? []) as ProfileSectionSchema[];
       return !!sections.find((s) => s.key === 'showcase' && s.enabled);
     }, [profileSectionsSettings]);
+
+    const publicSettings = user?.publicSettings as UserPublicSettingsSchema;
 
     useEffect(() => {
       if (user && user?.profile) {
@@ -274,6 +289,8 @@ const { openModal, Modal } = createContextModal({
             : user.image
             ? { url: user.image, type: 'image' as const }
             : null,
+          creatorCardStatsPreferences:
+            publicSettings?.creatorCardStatsPreferences ?? creatorCardStats,
         };
 
         if (!previousData.current) previousData.current = formData;
@@ -366,6 +383,16 @@ const { openModal, Modal } = createContextModal({
         }
       : null;
 
+    // console.log(userWithCosmetics);
+    const cosmeticOverwrites = [
+      badge ? badges.find((c) => c.id === badge.id) : undefined,
+      nameplateId ? nameplates.find((c) => c.id === nameplateId) : undefined,
+      profileDecoration ? decorations.find((c) => c.id === profileDecoration.id) : undefined,
+      profileBackground ? backgrounds.find((c) => c.id === profileBackground.id) : undefined,
+    ].filter(isDefined);
+
+    console.log(cosmeticOverwrites, userWithCosmetics);
+
     return (
       <Form form={form} onSubmit={handleSubmit}>
         <Stack>
@@ -397,23 +424,24 @@ const { openModal, Modal } = createContextModal({
               <Stack align="center">
                 <CreatorCardV2
                   user={userWithCosmetics}
-                  cosmeticOverwrites={[
-                    badge ? badges.find((c) => c.id === badge.id) : undefined,
-                    nameplateId ? nameplates.find((c) => c.id === nameplateId) : undefined,
-                    profileDecoration
-                      ? decorations.find((c) => c.id === profileDecoration.id)
-                      : undefined,
-                    profileBackground
-                      ? backgrounds.find((c) => c.id === profileBackground.id)
-                      : undefined,
-                  ].filter(isDefined)}
-                  fetchUser={false}
+                  cosmeticOverwrites={cosmeticOverwrites}
+                  useEquippedCosmetics={false}
                   style={{ width: '100%', maxWidth: '500px' }}
+                  startDisplayOverwrite={creatorCardStatsPreferences}
                 />
               </Stack>
             )}
             <Stack spacing="md">
               <InputProfileImageUpload name="profilePicture" label="Edit profile image" />
+              <Divider label="Showcase Stats" />
+
+              <InputChipGroup spacing={8} name="creatorCardStatsPreferences" multiple>
+                {Object.values(creatorCardStats).map((type, index) => (
+                  <Chip key={index} value={type} {...chipProps}>
+                    {getDisplayName(type)}
+                  </Chip>
+                ))}
+              </InputChipGroup>
               <ProfilePictureAlert ingestion={user?.profilePicture?.ingestion} />
               <InputCosmeticSelect
                 name="profileDecoration"
@@ -612,16 +640,6 @@ export function ProfilePreview({
       url: profileImage || user.image,
     } as UserWithCosmetics['profilePicture'],
   };
-
-  if (badge)
-    userWithCosmetics.cosmetics.push({ cosmetic: { ...badge, type: 'Badge' }, data: null });
-  if (nameplate)
-    userWithCosmetics.cosmetics.push({ cosmetic: { ...nameplate, type: 'NamePlate' }, data: null });
-  if (profileDecoration)
-    userWithCosmetics.cosmetics.push({
-      cosmetic: { ...profileDecoration, type: 'ProfileDecoration' },
-      data: null,
-    });
 
   return (
     <Stack spacing={4}>
