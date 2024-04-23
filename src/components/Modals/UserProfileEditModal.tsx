@@ -259,7 +259,6 @@ const { openModal, Modal } = createContextModal({
         const selectedProfileBackground = equippedCosmetics.find(
           (c) => c.type === CosmeticType.ProfileBackground
         );
-        console.log(selectedBadge);
         const formData = {
           ...user.profile,
           // TODO: Fix typing at some point :grimacing:.
@@ -390,8 +389,6 @@ const { openModal, Modal } = createContextModal({
       profileDecoration ? decorations.find((c) => c.id === profileDecoration.id) : undefined,
       profileBackground ? backgrounds.find((c) => c.id === profileBackground.id) : undefined,
     ].filter(isDefined);
-
-    console.log(cosmeticOverwrites, userWithCosmetics);
 
     return (
       <Form form={form} onSubmit={handleSubmit}>

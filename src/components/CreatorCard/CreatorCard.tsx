@@ -271,7 +271,7 @@ export const CreatorCardV2 = ({
             backgroundRepeat: 'no-repeat',
             backgroundPosition: 'right bottom',
             backgroundSize: 'cover',
-            backgroundColor: theme.colors[theme.primaryColor][theme.fn.primaryShade()],
+            backgroundColor: theme.colors.dark[4],
             padding: theme.spacing.md,
           }}
           src={
