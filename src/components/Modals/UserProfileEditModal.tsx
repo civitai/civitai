@@ -480,7 +480,7 @@ const { openModal, Modal } = createContextModal({
                   />
                   <InputCosmeticSelect
                     name="profileBackground"
-                    label="Creator Card Background"
+                    label="Creator Card Backgrounds"
                     shopUrl="/cosmetic-shop"
                     nothingFound={
                       <Text size="xs">You don&rsquo;t have any profile backgrounds yet</Text>

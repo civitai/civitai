@@ -166,7 +166,7 @@ export const useMutateCosmeticShop = () => {
 
   const purchaseShopItemMutation = trpc.cosmeticShop.purchaseShopItem.useMutation({
     async onSuccess() {
-      console.log('Success');
+      await queryUtils.userProfile.get.invalidate();
     },
     onError(error) {
       onError(error, 'Failed to purchase cosmetic');

@@ -20,7 +20,12 @@ import {
   Box,
   Grid,
 } from '@mantine/core';
-import { IconAlertCircle, IconBrandSpeedtest, IconCircleCheck } from '@tabler/icons-react';
+import {
+  IconAlertCircle,
+  IconBrandSpeedtest,
+  IconCircleCheck,
+  IconPencilMinus,
+} from '@tabler/icons-react';
 import { IconCheck } from '@tabler/icons-react';
 import { IconArrowUpRight } from '@tabler/icons-react';
 import { useState } from 'react';
@@ -52,6 +57,7 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { CosmeticShopItemPreviewModal } from '~/components/CosmeticShop/CosmeticShopItemPreviewModal';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { CosmeticShopSectionMeta } from '~/server/schema/cosmetic-shop.schema';
+import { openUserProfileEditModal } from '~/components/Modals/UserProfileEditModal';
 
 const useStyles = createStyles((theme) => ({
   section: {
@@ -210,7 +216,20 @@ export default function CosmeticShopMain() {
       <Container size="xl">
         <Stack spacing="xl">
           <Stack spacing={0}>
-            <Title>Civitai Cosmetic Shop</Title>
+            <Group noWrap position="apart">
+              <Title>Civitai Cosmetic Shop</Title>
+              <Button
+                leftIcon={<IconPencilMinus size={16} />}
+                onClick={() => {
+                  openUserProfileEditModal({});
+                }}
+                sx={{ fontSize: 14, fontWeight: 600, lineHeight: 1.5 }}
+                radius="xl"
+                compact
+              >
+                Edit profile
+              </Button>
+            </Group>
             <Text size="sm" color="dimmed" mb="sm">
               Any cosmetic purchases directly contributes to Civitai ❤️
             </Text>

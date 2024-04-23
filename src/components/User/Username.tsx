@@ -52,20 +52,31 @@ export function Username({
 export const BadgeDisplay = ({
   badge,
   badgeSize,
+  zIndex,
 }: {
   badge?: BadgeCosmetic;
   badgeSize?: number;
+  zIndex?: number;
 }) => {
   if (!badge?.data.url || badgeSize === 0) return null;
+
+  const filter = 'drop-shadow(3px 3px 1px rgba(0, 0, 0, 0.8))';
 
   return (
     <Tooltip color="dark" label={badge.name} withArrow withinPortal>
       {badge.data.animated ? (
-        <div style={{ display: 'flex', width: badgeSize }}>
+        <div
+          style={{
+            display: 'flex',
+            width: badgeSize,
+            zIndex,
+            filter,
+          }}
+        >
           <EdgeMedia src={badge.data.url} alt={badge.name} width="original" />
         </div>
       ) : (
-        <div style={{ display: 'flex' }}>
+        <div style={{ display: 'flex', zIndex, filter }}>
           <EdgeMedia src={badge.data.url} alt={badge.name} width={badgeSize} />
         </div>
       )}

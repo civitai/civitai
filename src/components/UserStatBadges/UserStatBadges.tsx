@@ -169,7 +169,7 @@ const BadgedIcon = ({
       // @ts-ignore
       variant="filled"
       sx={{
-        paddingLeft: 14,
+        paddingLeft: 16,
         marginLeft: -14,
         borderTopLeftRadius: 0,
         borderBottomLeftRadius: 0,

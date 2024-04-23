@@ -39,7 +39,7 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 
 const useStyles = createStyles((theme) => ({
   profileDetailsContainer: {
-    background: theme.fn.rgba(theme.colors.dark[9], 0.6),
+    background: theme.fn.rgba(theme.colors.dark[9], 0.8),
     margin: -theme.spacing.md,
     marginTop: 0,
     minHeight: 50,
@@ -173,7 +173,7 @@ export const CreatorCardV2 = ({
   startDisplayOverwrite,
   ...cardProps
 }: PropsV2) => {
-  const { classes } = useStyles();
+  const { classes, theme } = useStyles();
   const { data } = trpc.user.getCreator.useQuery(
     { id: user.id },
     { enabled: user.id !== constants.system.user.id }
@@ -295,7 +295,11 @@ export const CreatorCardV2 = ({
                 )}
               </Group>
             </Group>
-            <BadgeDisplay badge={badge ? (badge as BadgeCosmetic) : undefined} badgeSize={60} />
+            <BadgeDisplay
+              badge={badge ? (badge as BadgeCosmetic) : undefined}
+              badgeSize={60}
+              zIndex={1}
+            />
           </Group>
           <Box className={classes.profileDetailsContainer}>
             <Stack spacing="xs" className={classes.profileDetails} py={8} h="100%">
@@ -324,7 +328,12 @@ export const CreatorCardV2 = ({
                         badgeSize={0}
                       />
                       {creator.createdAt && (
-                        <Text size="xs" lh={1} lineClamp={1} color="dimmed">
+                        <Text
+                          size="xs"
+                          lh={1}
+                          lineClamp={1}
+                          style={{ color: theme.fn.rgba(theme.white, 0.75) }}
+                        >
                           Joined {formatDate(creator.createdAt)}
                         </Text>
                       )}
