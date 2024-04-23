@@ -29,13 +29,7 @@ const featureFlags = createFeatureFlags({
     description: `Generate images with any supported AI resource. This is a beta feature, so please report any issues you find!`,
     availability: ['public'],
   },
-  enhancedSearch: {
-    toggleable: true,
-    default: true,
-    displayName: 'Search (Beta)',
-    description: `We're improving our search experience! This is a beta feature, so please report any issues you find!`,
-    availability: ['public'],
-  },
+  enhancedSearch: ['public'],
   alternateHome: ['public'],
   collections: ['public'],
   air: {

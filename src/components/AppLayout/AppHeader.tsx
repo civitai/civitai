@@ -77,7 +77,6 @@ import { useSystemCollections } from '~/components/Collections/collection.utils'
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { FeatureIntroductionModal } from '~/components/FeatureIntroduction/FeatureIntroduction';
-import { ListSearch } from '~/components/ListSearch/ListSearch';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Logo } from '~/components/Logo/Logo';
 import { ModerationNav } from '~/components/Moderation/ModerationNav';
@@ -817,16 +816,8 @@ export function AppHeader({
             {/* <EventButton /> */}
           </Group>
         </Grid.Col>
-        <Grid.Col
-          span={6}
-          md={5}
-          className={features.enhancedSearch ? classes.searchArea : undefined}
-        >
-          {features.enhancedSearch ? (
-            <>{renderSearchComponent({ onSearchDone, isMobile: false })}</>
-          ) : (
-            <ListSearch onSearch={() => setBurgerOpened(false)} />
-          )}
+        <Grid.Col span={6} md={5} className={classes.searchArea}>
+          {renderSearchComponent({ onSearchDone, isMobile: false })}
         </Grid.Col>
         <Grid.Col span="auto" className={classes.links} sx={{ justifyContent: 'flex-end' }}>
           <Group spacing="md" align="center" noWrap>
@@ -960,11 +951,9 @@ export function AppHeader({
         <Grid.Col span="auto" className={classes.burger}>
           <Group spacing={4} noWrap>
             {mobileCreateButton}
-            {features.enhancedSearch && (
-              <ActionIcon onClick={() => setShowSearch(true)}>
-                <IconSearch />
-              </ActionIcon>
-            )}
+            <ActionIcon onClick={() => setShowSearch(true)}>
+              <IconSearch />
+            </ActionIcon>
             {currentUser && <CivitaiLinkPopover />}
             {currentUser && <NotificationBell />}
             {currentUser && features.chat && <ChatButton />}
