@@ -427,15 +427,28 @@ const { openModal, Modal } = createContextModal({
           <Divider label="Profile" />
           <Stack>
             {userWithCosmetics && (
-              <Stack align="center">
-                <CreatorCardV2
-                  user={userWithCosmetics}
-                  cosmeticOverwrites={cosmeticOverwrites}
-                  useEquippedCosmetics={false}
-                  style={{ width: '100%', maxWidth: '500px' }}
-                  startDisplayOverwrite={creatorCardStatsPreferences}
-                />
-              </Stack>
+              <>
+                {featureFlags.cosmeticShop ? (
+                  <Stack align="center">
+                    <CreatorCardV2
+                      user={userWithCosmetics}
+                      cosmeticOverwrites={cosmeticOverwrites}
+                      useEquippedCosmetics={false}
+                      style={{ width: '100%', maxWidth: '500px' }}
+                      startDisplayOverwrite={creatorCardStatsPreferences}
+                    />
+                  </Stack>
+                ) : (
+                  <ProfilePreview
+                    user={user}
+                    badge={badge ? badges.find((c) => c.id === badge.id) : undefined}
+                    nameplate={
+                      nameplateId ? nameplates.find((c) => c.id === nameplateId) : undefined
+                    }
+                    profileImage={profilePicture?.url ?? profileImage}
+                  />
+                )}
+              </>
             )}
             <Stack spacing="md">
               {featureFlags.cosmeticShop && (
@@ -635,12 +648,13 @@ type ProfilePreviewProps = {
   profileDecoration?: ContentDecorationCosmetic | null;
   profileBackground?: ProfileBackgroundCosmetic | null;
 };
+
 export function ProfilePreview({
+  // deprecated
   user,
   badge,
   nameplate,
   profileImage,
-  profileDecoration,
   profileBackground,
 }: ProfilePreviewProps) {
   if (!user) return null;
@@ -655,28 +669,25 @@ export function ProfilePreview({
       url: profileImage || user.image,
     } as UserWithCosmetics['profilePicture'],
   };
+  if (badge)
+    userWithCosmetics.cosmetics.push({ cosmetic: { ...badge, type: 'Badge' }, data: null });
+  if (nameplate)
+    userWithCosmetics.cosmetics.push({
+      cosmetic: { ...nameplate, type: 'NamePlate' },
+      data: null,
+    });
 
   return (
     <Stack spacing={4}>
       <Input.Label>Preview</Input.Label>
-      <Paper p={0} radius="sm" withBorder>
-        <BackgroundImage
-          src={
-            profileBackground && profileBackground.data.url
-              ? getEdgeUrl(profileBackground.data.url, { width: 'original', transcode: false })
-              : ''
-          }
-          radius="sm"
-          p="sm"
-        >
-          <UserAvatar
-            user={userWithCosmetics}
-            size="lg"
-            subText={user.createdAt ? `Member since ${formatDate(user.createdAt)}` : ''}
-            withOverlay={!!profileBackground}
-            withUsername
-          />
-        </BackgroundImage>
+      <Paper p="sm" withBorder>
+        <UserAvatar
+          user={userWithCosmetics}
+          size="lg"
+          subText={user.createdAt ? `Member since ${formatDate(user.createdAt)}` : ''}
+          withOverlay={!!profileBackground}
+          withUsername
+        />
       </Paper>
     </Stack>
   );

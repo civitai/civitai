@@ -53,14 +53,6 @@ import { CosmeticShopItemPreviewModal } from '~/components/CosmeticShop/Cosmetic
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { CosmeticShopSectionMeta } from '~/server/schema/cosmetic-shop.schema';
 
-const buildBudgets = Object.keys(BuildBudget) as BuildBudget[];
-const processors = ['AMD', 'Intel'] as const;
-
-type State = {
-  selectedBudget: BuildBudget;
-  selectedProcessor: (typeof processors)[number];
-};
-
 const useStyles = createStyles((theme) => ({
   section: {
     overflow: 'hidden',
@@ -151,7 +143,10 @@ const useStyles = createStyles((theme) => ({
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
-  resolver: async ({ ssg }) => {
+  useSession: true,
+  resolver: async ({ ssg, features }) => {
+    if (!features?.cosmeticShop) return { notFound: true };
+
     await ssg?.cosmeticShop.getShop.prefetch();
   },
 });
@@ -202,7 +197,6 @@ export const CosmeticShopItem = ({ item }: { item: CosmeticShopItemGetById }) =>
 
 export default function CosmeticShopMain() {
   const { classes, cx } = useStyles();
-  const [state, setState] = useState<State>({ selectedBudget: 'Mid', selectedProcessor: 'AMD' });
   const { cosmeticShopSections, isLoading } = useQueryShop();
   const isMobile = useIsMobile();
 

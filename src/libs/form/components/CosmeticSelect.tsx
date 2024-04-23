@@ -35,6 +35,9 @@ const useStyles = createStyles((theme) => ({
     backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[8] : theme.colors.gray[1],
     gridColumn: '2 / min-content',
   },
+  noContentNoUrl: {
+    gridColumn: '1 / min-content',
+  },
 }));
 
 export function CosmeticSelect<TData extends CosmeticItem>({
@@ -106,7 +109,13 @@ export function CosmeticSelect<TData extends CosmeticItem>({
             );
           })
         ) : (
-          <Paper className={classes.noContent} p="sm" radius="md">
+          <Paper
+            className={cx(classes.noContent, {
+              [classes.noContentNoUrl]: !shopUrl,
+            })}
+            p="sm"
+            radius="md"
+          >
             <Stack h="100%" justify="center">
               <Center>{nothingFound ? nothingFound : <Text size="xs">No decorations</Text>}</Center>
             </Stack>
