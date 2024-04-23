@@ -39,7 +39,12 @@ import { ProfileSectionSchema, userProfileUpdateSchema } from '~/server/schema/u
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { IconExclamationMark, IconInfoCircle } from '@tabler/icons-react';
-import { constants, creatorCardStats } from '~/server/common/constants';
+import {
+  constants,
+  creatorCardMaxStats,
+  creatorCardStats,
+  creatorCardStatsDefaults,
+} from '~/server/common/constants';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { CosmeticType, LinkType } from '@prisma/client';
 import { z } from 'zod';
@@ -62,6 +67,7 @@ import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { cosmeticInputSchema } from '~/server/schema/cosmetic.schema';
 import { CreatorCardV2 } from '~/components/CreatorCard/CreatorCard';
 import { isDefined } from '~/utils/type-guards';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 const schema = userProfileUpdateSchema.merge(
   userUpdateSchema
@@ -96,6 +102,7 @@ const { openModal, Modal } = createContextModal({
     const utils = trpc.useUtils();
     const currentUser = useCurrentUser();
     const theme = useMantineTheme();
+    const featureFlags = useFeatureFlags();
 
     // Keep track of old data to compare and make only the necessary requests
     const previousData = useRef<FormDataSchema>();
@@ -289,7 +296,7 @@ const { openModal, Modal } = createContextModal({
             ? { url: user.image, type: 'image' as const }
             : null,
           creatorCardStatsPreferences:
-            publicSettings?.creatorCardStatsPreferences ?? creatorCardStats,
+            publicSettings?.creatorCardStatsPreferences ?? creatorCardStatsDefaults,
         };
 
         if (!previousData.current) previousData.current = formData;
@@ -316,8 +323,10 @@ const { openModal, Modal } = createContextModal({
         profileDecoration,
         profileBackground,
         leaderboardShowcase,
+        creatorCardStatsPreferences,
         ...profileData
       } = data;
+
       const shouldUpdateUser =
         prevProfilePicture?.url !== profilePicture?.url ||
         badge !== prevBadgeId ||
@@ -327,7 +336,7 @@ const { openModal, Modal } = createContextModal({
         leaderboardShowcase !== prevLeaderboardShowcase;
       const shouldUpdateProfile = !isEqual(prevProfileData, profileData);
 
-      if (shouldUpdateProfile) mutate(profileData);
+      if (shouldUpdateProfile) mutate({ creatorCardStatsPreferences, ...profileData });
       if (user && shouldUpdateUser)
         updateUserMutation.mutate({
           id: user.id,
@@ -429,41 +438,50 @@ const { openModal, Modal } = createContextModal({
               </Stack>
             )}
             <Stack spacing="md">
-              <InputProfileImageUpload name="profilePicture" label="Edit profile image" />
-              <Divider label="Showcase Stats" />
+              {featureFlags.cosmeticShop && (
+                <>
+                  <InputProfileImageUpload name="profilePicture" label="Edit profile image" />
+                  <Divider label="Showcase Stats" />
+                  <InputChipGroup spacing={8} name="creatorCardStatsPreferences" multiple>
+                    {Object.values(creatorCardStats).map((type, index) => (
+                      <Chip key={index} value={type} {...chipProps}>
+                        {getDisplayName(type)}
+                      </Chip>
+                    ))}
+                  </InputChipGroup>
+                  {creatorCardStatsPreferences.length > creatorCardMaxStats && (
+                    <Text color="red" size="xs">
+                      A maximum of {creatorCardMaxStats} stats can be displayed
+                    </Text>
+                  )}
+                  <ProfilePictureAlert ingestion={user?.profilePicture?.ingestion} />
+                  <InputCosmeticSelect
+                    name="profileDecoration"
+                    label="Avatar decoration"
+                    shopUrl="/cosmetic-shop"
+                    data={decorations}
+                    nothingFound={
+                      <Text size="xs">You don&rsquo;t have any avatar decorations yet</Text>
+                    }
+                    onShopClick={handleClose}
+                  />
+                  <InputCosmeticSelect
+                    name="profileBackground"
+                    label="Creator Card Background"
+                    shopUrl="/cosmetic-shop"
+                    nothingFound={
+                      <Text size="xs">You don&rsquo;t have any profile backgrounds yet</Text>
+                    }
+                    data={backgrounds}
+                    onShopClick={handleClose}
+                  />
+                </>
+              )}
 
-              <InputChipGroup spacing={8} name="creatorCardStatsPreferences" multiple>
-                {Object.values(creatorCardStats).map((type, index) => (
-                  <Chip key={index} value={type} {...chipProps}>
-                    {getDisplayName(type)}
-                  </Chip>
-                ))}
-              </InputChipGroup>
-              <ProfilePictureAlert ingestion={user?.profilePicture?.ingestion} />
-              <InputCosmeticSelect
-                name="profileDecoration"
-                label="Avatar decoration"
-                shopUrl="/cosmetic-shop"
-                data={decorations}
-                nothingFound={
-                  <Text size="xs">You don&rsquo;t have any avatar decorations yet</Text>
-                }
-                onShopClick={handleClose}
-              />
-              <InputCosmeticSelect
-                name="profileBackground"
-                label="Creator Card Background"
-                shopUrl="/cosmetic-shop"
-                nothingFound={
-                  <Text size="xs">You don&rsquo;t have any profile backgrounds yet</Text>
-                }
-                data={backgrounds}
-                onShopClick={handleClose}
-              />
               <InputCosmeticSelect
                 name="badge"
                 label="Featured Badge"
-                shopUrl="/cosmetic-shop"
+                shopUrl={featureFlags.cosmeticShop ? '/cosmetic-shop' : undefined}
                 nothingFound={<Text size="xs">You don&rsquo;t have any badges yet</Text>}
                 data={badges}
                 onShopClick={handleClose}

@@ -72,7 +72,7 @@ export const profilePictureSchema = z.object({
   type: z.nativeEnum(MediaType).default(MediaType.image),
 });
 
-export const creatorCardStatsPreferences = z.array(z.string());
+export const creatorCardStatsPreferences = z.array(z.string()).max(3);
 
 export type UserPublicSettingsSchema = z.infer<typeof userPublicSettingsSchema>;
 export const userPublicSettingsSchema = z.object({

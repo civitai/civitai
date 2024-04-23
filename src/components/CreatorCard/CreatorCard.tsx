@@ -16,7 +16,7 @@ import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
 import { RankBadge } from '~/components/Leaderboard/RankBadge';
 import { UserAvatar, UserProfileLink } from '~/components/UserAvatar/UserAvatar';
-import { constants, creatorCardStats } from '~/server/common/constants';
+import { constants, creatorCardStats, creatorCardStatsDefaults } from '~/server/common/constants';
 import { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { formatDate } from '~/utils/date-helpers';
 import { sortDomainLinks } from '~/utils/domain-link';
@@ -222,7 +222,7 @@ export const CreatorCardV2 = ({
   const displayStats = data
     ? startDisplayOverwrite ??
       ((data.publicSettings ?? {}) as UserPublicSettingsSchema)?.creatorCardStatsPreferences ??
-      creatorCardStats
+      creatorCardStatsDefaults
     : // Avoid displaying stats until we load the data
       [];
   return (
@@ -256,9 +256,7 @@ export const CreatorCardV2 = ({
                       followers={
                         displayStats.includes('followers') ? stats.followerCountAllTime : null
                       }
-                      favorites={
-                        displayStats.includes('favorites') ? stats.thumbsUpCountAllTime : null
-                      }
+                      favorites={displayStats.includes('likes') ? stats.thumbsUpCountAllTime : null}
                       downloads={
                         displayStats.includes('downloads') ? stats.downloadCountAllTime : null
                       }
