@@ -9,7 +9,11 @@ export async function getOrchestratorMediaFilesFromUrls(
   const limit = pLimit(concurrencyLimit);
   const files = await Promise.all(
     urls
-      .filter((url) => url.startsWith('https://orchestration.civitai.com'))
+      .filter(
+        (url) =>
+          url.startsWith('https://orchestration.civitai.com') ||
+          url.startsWith('https://orchestration-stage.civitai.com')
+      )
       .map((url) =>
         limit(async () => {
           const blob = await fetchBlob(url);
