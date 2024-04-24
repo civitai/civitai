@@ -22,6 +22,7 @@ import {
   IconLayoutList,
   IconMoneybag,
   IconPhoto,
+  IconShoppingBag,
   IconVideo,
   TablerIconsProps,
 } from '@tabler/icons-react';
@@ -76,6 +77,10 @@ const homeOptions: Record<string, HomeOption> = {
   builds: {
     url: '/builds',
     icon: (props: TablerIconsProps) => <IconCpu {...props} />,
+  },
+  shop: {
+    url: '/cosmetic-shop',
+    icon: (props: TablerIconsProps) => <IconShoppingBag {...props} />,
   },
 };
 type HomeOptions = keyof typeof homeOptions;
@@ -167,9 +172,11 @@ export function HomeContentToggle({ size, sx, ...props }: Props) {
       </Link>
     ),
     value: key,
-    disabled: [key === 'bounties' && !features.bounties, key === 'clubs' && !features.clubs].some(
-      (b) => b
-    ),
+    disabled: [
+      key === 'bounties' && !features.bounties,
+      key === 'clubs' && !features.clubs,
+      key === 'shop' && !features.cosmeticShop,
+    ].some((b) => b),
   }));
 
   return (
@@ -238,9 +245,11 @@ export function HomeTabs({ sx, ...tabProps }: HomeTabProps) {
   const tabs = Object.entries(homeOptions)
     .filter(
       ([key]) =>
-        ![key === 'bounties' && !features.bounties, key === 'clubs' && !features.clubs].some(
-          (b) => b
-        )
+        ![
+          key === 'bounties' && !features.bounties,
+          key === 'clubs' && !features.clubs,
+          key === 'shop' && !features.cosmeticShop,
+        ].some((b) => b)
     )
     .map(([key, value]) => (
       <Link key={key} href={value.url} passHref>

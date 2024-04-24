@@ -1,7 +1,10 @@
 import {
+  BackgroundImage,
   Box,
   Button,
   Center,
+  Chip,
+  ChipProps,
   CloseButton,
   Divider,
   Group,
@@ -29,12 +32,19 @@ import {
   useForm,
   InputProfileSectionsSettingsInput,
   InputSelect,
+  InputCosmeticSelect,
+  InputChipGroup,
 } from '~/libs/form';
 import { ProfileSectionSchema, userProfileUpdateSchema } from '~/server/schema/user-profile.schema';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { IconExclamationMark, IconInfoCircle } from '@tabler/icons-react';
-import { constants } from '~/server/common/constants';
+import {
+  constants,
+  creatorCardMaxStats,
+  creatorCardStats,
+  creatorCardStatsDefaults,
+} from '~/server/common/constants';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { CosmeticType, LinkType } from '@prisma/client';
 import { z } from 'zod';
@@ -42,23 +52,45 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { formatDate } from '~/utils/date-helpers';
-import { BadgeCosmetic, NamePlateCosmetic } from '~/server/selectors/cosmetic.selector';
-import { titleCase } from '~/utils/string-helpers';
+import {
+  BadgeCosmetic,
+  ContentDecorationCosmetic,
+  NamePlateCosmetic,
+  ProfileBackgroundCosmetic,
+} from '~/server/selectors/cosmetic.selector';
+import { getDisplayName, titleCase } from '~/utils/string-helpers';
 import { UserWithProfile } from '~/types/router';
-import { userUpdateSchema } from '~/server/schema/user.schema';
+import { UserPublicSettingsSchema, userUpdateSchema } from '~/server/schema/user.schema';
 import { isEqual } from 'lodash-es';
 import { ProfilePictureAlert } from '../User/ProfilePictureAlert';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { cosmeticInputSchema } from '~/server/schema/cosmetic.schema';
+import { CreatorCardV2 } from '~/components/CreatorCard/CreatorCard';
+import { isDefined } from '~/utils/type-guards';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 const schema = userProfileUpdateSchema.merge(
   userUpdateSchema
     .pick({
-      badgeId: true,
       profilePicture: true,
       nameplateId: true,
       leaderboardShowcase: true,
     })
-    .extend({ profileImage: z.string().nullish() })
+    .extend({
+      badge: cosmeticInputSchema.nullish(),
+      profileImage: z.string().nullish(),
+      profileDecoration: cosmeticInputSchema.nullish(),
+      profileBackground: cosmeticInputSchema.nullish(),
+    })
 );
+
+const chipProps: Partial<ChipProps> = {
+  size: 'sm',
+  radius: 'xl',
+  variant: 'filled',
+  tt: 'capitalize',
+};
+
 type FormDataSchema = z.infer<typeof schema>;
 
 const { openModal, Modal } = createContextModal({
@@ -67,9 +99,10 @@ const { openModal, Modal } = createContextModal({
   closeOnEscape: false,
   size: 'xl',
   Element: ({ context }) => {
-    const utils = trpc.useContext();
+    const utils = trpc.useUtils();
     const currentUser = useCurrentUser();
     const theme = useMantineTheme();
+    const featureFlags = useFeatureFlags();
 
     // Keep track of old data to compare and make only the necessary requests
     const previousData = useRef<FormDataSchema>();
@@ -121,10 +154,10 @@ const { openModal, Modal } = createContextModal({
         user
           ? user.cosmetics
               .filter(({ cosmetic: c }) => c.type === CosmeticType.Badge && !!c.data)
-              .map((c) => ({
+              .map(({ cosmetic, cosmeticId, ...c }) => ({
                 ...c,
-                ...c.cosmetic,
-                data: c.cosmetic.data as any,
+                ...cosmetic,
+                data: cosmetic.data as BadgeCosmetic['data'],
               }))
           : [],
       [user]
@@ -135,7 +168,39 @@ const { openModal, Modal } = createContextModal({
         user
           ? user.cosmetics
               .filter(({ cosmetic: c }) => c.type === CosmeticType.NamePlate && !!c.data)
-              .map((c) => ({ ...c, ...c.cosmetic, data: c.cosmetic.data as any }))
+              .map(({ cosmetic, cosmeticId, ...c }) => ({
+                ...c,
+                ...cosmetic,
+                data: cosmetic.data as NamePlateCosmetic['data'],
+              }))
+          : [],
+      [user]
+    );
+
+    const decorations = useMemo(
+      () =>
+        user
+          ? user.cosmetics
+              .filter(({ cosmetic: c }) => c.type === CosmeticType.ProfileDecoration && !!c.data)
+              .map(({ cosmetic, cosmeticId, ...c }) => ({
+                ...c,
+                ...cosmetic,
+                data: cosmetic.data as ContentDecorationCosmetic['data'],
+              }))
+          : [],
+      [user]
+    );
+
+    const backgrounds = useMemo(
+      () =>
+        user
+          ? user.cosmetics
+              .filter(({ cosmetic: c }) => c.type === CosmeticType.ProfileBackground && !!c.data)
+              .map(({ cosmetic, cosmeticId, ...c }) => ({
+                ...c,
+                ...cosmetic,
+                data: cosmetic.data as ProfileBackgroundCosmetic['data'],
+              }))
           : [],
       [user]
     );
@@ -157,37 +222,50 @@ const { openModal, Modal } = createContextModal({
     });
 
     const [
-      badgeId,
+      badge,
       nameplateId,
+      profileDecoration,
+      profileBackground,
       message,
       bio,
       location,
       profileImage,
       profilePicture,
       profileSectionsSettings,
+      creatorCardStatsPreferences,
     ] = form.watch([
-      'badgeId',
+      'badge',
       'nameplateId',
+      'profileDecoration',
+      'profileBackground',
       'message',
       'bio',
       'location',
       'profileImage',
       'profilePicture',
       'profileSectionsSettings',
+      'creatorCardStatsPreferences',
     ]);
     const displayShowcase = useMemo(() => {
       const sections = (profileSectionsSettings ?? []) as ProfileSectionSchema[];
       return !!sections.find((s) => s.key === 'showcase' && s.enabled);
     }, [profileSectionsSettings]);
-    const equippedCosmetics = useMemo(
-      () => (user?.cosmetics ?? []).filter((c) => !!c.equippedAt).map((c) => c.cosmetic),
-      [user]
-    );
+
+    const publicSettings = user?.publicSettings as UserPublicSettingsSchema;
 
     useEffect(() => {
       if (user && user?.profile) {
+        const equippedCosmetics = user.cosmetics
+          .filter((c) => !!c.equippedAt)
+          .map(({ cosmetic, data, ...rest }) => ({ ...rest, ...cosmetic }));
         const selectedBadge = equippedCosmetics.find((c) => c.type === CosmeticType.Badge);
         const selectedNameplate = equippedCosmetics.find((c) => c.type === CosmeticType.NamePlate);
+        const selectedProfileDecoration = equippedCosmetics.find(
+          (c) => c.type === CosmeticType.ProfileDecoration
+        );
+        const selectedProfileBackground = equippedCosmetics.find(
+          (c) => c.type === CosmeticType.ProfileBackground
+        );
         const formData = {
           ...user.profile,
           // TODO: Fix typing at some point :grimacing:.
@@ -207,46 +285,66 @@ const { openModal, Modal } = createContextModal({
               url: link.url,
               type: link.type,
             })),
-          badgeId: selectedBadge?.id ?? null,
           nameplateId: selectedNameplate?.id ?? null,
+          badge: selectedBadge ?? null,
+          profileDecoration: selectedProfileDecoration ?? null,
+          profileBackground: selectedProfileBackground ?? null,
           leaderboardShowcase: user?.leaderboardShowcase ?? null,
           profilePicture: user.profilePicture
             ? (user.profilePicture as FormDataSchema['profilePicture'])
             : user.image
             ? { url: user.image, type: 'image' as const }
             : null,
+          creatorCardStatsPreferences:
+            publicSettings?.creatorCardStatsPreferences ?? creatorCardStatsDefaults,
         };
 
         if (!previousData.current) previousData.current = formData;
 
         form.reset(formData);
       }
-    }, [equippedCosmetics, user]);
+    }, [user]);
 
     const handleClose = () => context.close();
     const handleSubmit = (data: FormDataSchema) => {
       const {
         profilePicture: prevProfilePicture,
-        badgeId: prevBadgeId,
+        badge: prevBadgeId,
         nameplateId: prevNameplateId,
+        profileDecoration: prevProfileDecorationId,
+        profileBackground: prevProfileBackgroundId,
         leaderboardShowcase: prevLeaderboardShowcase,
         ...prevProfileData
       } = previousData.current ?? {};
-      const { profilePicture, badgeId, nameplateId, leaderboardShowcase, ...profileData } = data;
+      const {
+        profilePicture,
+        nameplateId,
+        badge,
+        profileDecoration,
+        profileBackground,
+        leaderboardShowcase,
+        creatorCardStatsPreferences,
+        ...profileData
+      } = data;
+
       const shouldUpdateUser =
         prevProfilePicture?.url !== profilePicture?.url ||
-        badgeId !== prevBadgeId ||
+        badge !== prevBadgeId ||
         nameplateId !== prevNameplateId ||
+        profileDecoration !== prevProfileDecorationId ||
+        profileBackground !== prevProfileBackgroundId ||
         leaderboardShowcase !== prevLeaderboardShowcase;
       const shouldUpdateProfile = !isEqual(prevProfileData, profileData);
 
-      if (shouldUpdateProfile) mutate(profileData);
+      if (shouldUpdateProfile) mutate({ creatorCardStatsPreferences, ...profileData });
       if (user && shouldUpdateUser)
         updateUserMutation.mutate({
           id: user.id,
           profilePicture,
-          badgeId,
+          badgeId: badge?.id ?? null,
           nameplateId,
+          profileDecorationId: profileDecoration?.id ?? null,
+          profileBackgroundId: profileBackground?.id ?? null,
           leaderboardShowcase,
         });
     };
@@ -279,6 +377,28 @@ const { openModal, Modal } = createContextModal({
 
     const loading = isUpdating || updateUserMutation.isLoading;
 
+    const templateImage = profilePicture?.url ?? profileImage;
+    const userWithCosmetics: UserWithCosmetics | null = user
+      ? {
+          ...user,
+          image: templateImage || user.image,
+          cosmetics: [],
+          deletedAt: null,
+          profilePicture: {
+            ...user.profilePicture,
+            url: templateImage || user.image,
+          } as UserWithCosmetics['profilePicture'],
+        }
+      : null;
+
+    // console.log(userWithCosmetics);
+    const cosmeticOverwrites = [
+      badge ? badges.find((c) => c.id === badge.id) : undefined,
+      nameplateId ? nameplates.find((c) => c.id === nameplateId) : undefined,
+      profileDecoration ? decorations.find((c) => c.id === profileDecoration.id) : undefined,
+      profileBackground ? backgrounds.find((c) => c.id === profileBackground.id) : undefined,
+    ].filter(isDefined);
+
     return (
       <Form form={form} onSubmit={handleSubmit}>
         <Stack>
@@ -306,15 +426,79 @@ const { openModal, Modal } = createContextModal({
           </Group>
           <Divider label="Profile" />
           <Stack>
-            <ProfilePreview
-              user={user}
-              badge={badgeId ? badges.find((c) => c.id === badgeId) : undefined}
-              nameplate={nameplateId ? nameplates.find((c) => c.id === nameplateId) : undefined}
-              profileImage={profilePicture?.url ?? profileImage}
-            />
-            <Stack spacing={8}>
-              <InputProfileImageUpload name="profilePicture" label="Edit profile image" />
-              <ProfilePictureAlert ingestion={user?.profilePicture?.ingestion} />
+            {userWithCosmetics && (
+              <>
+                {featureFlags.cosmeticShop ? (
+                  <Stack align="center">
+                    <CreatorCardV2
+                      user={userWithCosmetics}
+                      cosmeticOverwrites={cosmeticOverwrites}
+                      useEquippedCosmetics={false}
+                      style={{ width: '100%', maxWidth: '500px' }}
+                      startDisplayOverwrite={creatorCardStatsPreferences}
+                    />
+                  </Stack>
+                ) : (
+                  <ProfilePreview
+                    user={user}
+                    badge={badge ? badges.find((c) => c.id === badge.id) : undefined}
+                    nameplate={
+                      nameplateId ? nameplates.find((c) => c.id === nameplateId) : undefined
+                    }
+                    profileImage={profilePicture?.url ?? profileImage}
+                  />
+                )}
+              </>
+            )}
+            <Stack spacing="md">
+              {featureFlags.cosmeticShop && (
+                <>
+                  <InputProfileImageUpload name="profilePicture" label="Edit profile image" />
+                  <Divider label="Showcase Stats" />
+                  <InputChipGroup spacing={8} name="creatorCardStatsPreferences" multiple>
+                    {Object.values(creatorCardStats).map((type, index) => (
+                      <Chip key={index} value={type} {...chipProps}>
+                        {getDisplayName(type)}
+                      </Chip>
+                    ))}
+                  </InputChipGroup>
+                  {(creatorCardStatsPreferences?.length ?? 0) > creatorCardMaxStats && (
+                    <Text color="red" size="xs">
+                      A maximum of {creatorCardMaxStats} stats can be displayed
+                    </Text>
+                  )}
+                  <ProfilePictureAlert ingestion={user?.profilePicture?.ingestion} />
+                  <InputCosmeticSelect
+                    name="profileDecoration"
+                    label="Avatar decoration"
+                    shopUrl="/cosmetic-shop"
+                    data={decorations}
+                    nothingFound={
+                      <Text size="xs">You don&rsquo;t have any avatar decorations yet</Text>
+                    }
+                    onShopClick={handleClose}
+                  />
+                  <InputCosmeticSelect
+                    name="profileBackground"
+                    label="Creator Card Backgrounds"
+                    shopUrl="/cosmetic-shop"
+                    nothingFound={
+                      <Text size="xs">You don&rsquo;t have any profile backgrounds yet</Text>
+                    }
+                    data={backgrounds}
+                    onShopClick={handleClose}
+                  />
+                </>
+              )}
+
+              <InputCosmeticSelect
+                name="badge"
+                label="Featured Badge"
+                shopUrl={featureFlags.cosmeticShop ? '/cosmetic-shop' : undefined}
+                nothingFound={<Text size="xs">You don&rsquo;t have any badges yet</Text>}
+                data={badges}
+                onShopClick={handleClose}
+              />
             </Stack>
             <Stack>
               <InputSelect
@@ -365,90 +549,6 @@ const { openModal, Modal } = createContextModal({
                 clearable
               />
             </Stack>
-            <Group spacing={4}>
-              <Input.Label>Featured Badge</Input.Label>
-              <Popover withArrow width={300} withinPortal position="top">
-                <Popover.Target>
-                  <Box
-                    display="inline-block"
-                    sx={{ lineHeight: 0.8, cursor: 'pointer', opacity: 0.5 }}
-                  >
-                    <IconInfoCircle size={16} />
-                  </Box>
-                </Popover.Target>
-                <Popover.Dropdown>
-                  <Text weight={500} size="sm">
-                    Featured Badge
-                  </Text>
-                  <Text size="sm">
-                    Badges appear next your username and can even include special effects. You can
-                    earn badges by being a subscriber or earning trophies on the site.
-                  </Text>
-                </Popover.Dropdown>
-              </Popover>
-            </Group>
-
-            {badges.length > 0 ? (
-              <Group spacing={8}>
-                {badges.map((cosmetic) => {
-                  const data = (cosmetic.data ?? {}) as BadgeCosmetic['data'];
-                  const url = (data.url ?? '') as string;
-                  const isSelected = badgeId === cosmetic.id;
-
-                  return (
-                    <HoverCard
-                      key={cosmetic.id}
-                      position="top"
-                      width="auto"
-                      openDelay={300}
-                      withArrow
-                      withinPortal
-                    >
-                      <HoverCard.Target>
-                        <Button
-                          key={cosmetic.id}
-                          p={4}
-                          variant={isSelected ? 'light' : 'subtle'}
-                          style={
-                            isSelected
-                              ? {
-                                  border: '3px solid',
-                                  borderColor: theme.colors.blue[theme.fn.primaryShade()],
-                                }
-                              : undefined
-                          }
-                          onClick={() => {
-                            if (isSelected) {
-                              form.setValue('badgeId', null, { shouldDirty: true });
-                            } else {
-                              form.setValue('badgeId', cosmetic.id, { shouldDirty: true });
-                            }
-                          }}
-                          sx={{ height: 64, width: 64 }}
-                        >
-                          <EdgeMedia src={url} width={data.animated ? 'original' : 64} />
-                        </Button>
-                      </HoverCard.Target>
-                      <HoverCard.Dropdown>
-                        <Stack spacing={0}>
-                          <Text size="sm" weight={500}>
-                            {cosmetic.name}
-                          </Text>
-                        </Stack>
-                      </HoverCard.Dropdown>
-                    </HoverCard>
-                  );
-                })}
-              </Group>
-            ) : (
-              <Paper>
-                <Center sx={{ width: '100%', height: 72 }}>
-                  <Text size="sm" color="dimmed">
-                    Your not earned any awards yet.
-                  </Text>
-                </Center>
-              </Paper>
-            )}
           </Stack>
 
           <Divider label="Links" />
@@ -545,11 +645,19 @@ type ProfilePreviewProps = {
   badge?: BadgeCosmetic;
   nameplate?: NamePlateCosmetic;
   profileImage?: string | null;
+  profileDecoration?: ContentDecorationCosmetic | null;
+  profileBackground?: ProfileBackgroundCosmetic | null;
 };
-function ProfilePreview({ user, badge, nameplate, profileImage }: ProfilePreviewProps) {
-  if (!user) {
-    return null;
-  }
+
+export function ProfilePreview({
+  // deprecated
+  user,
+  badge,
+  nameplate,
+  profileImage,
+  profileBackground,
+}: ProfilePreviewProps) {
+  if (!user) return null;
 
   const userWithCosmetics: UserWithCosmetics = {
     ...user,
@@ -561,11 +669,13 @@ function ProfilePreview({ user, badge, nameplate, profileImage }: ProfilePreview
       url: profileImage || user.image,
     } as UserWithCosmetics['profilePicture'],
   };
-
   if (badge)
     userWithCosmetics.cosmetics.push({ cosmetic: { ...badge, type: 'Badge' }, data: null });
   if (nameplate)
-    userWithCosmetics.cosmetics.push({ cosmetic: { ...nameplate, type: 'NamePlate' }, data: null });
+    userWithCosmetics.cosmetics.push({
+      cosmetic: { ...nameplate, type: 'NamePlate' },
+      data: null,
+    });
 
   return (
     <Stack spacing={4}>
@@ -575,6 +685,7 @@ function ProfilePreview({ user, badge, nameplate, profileImage }: ProfilePreview
           user={userWithCosmetics}
           size="lg"
           subText={user.createdAt ? `Member since ${formatDate(user.createdAt)}` : ''}
+          withOverlay={!!profileBackground}
           withUsername
         />
       </Paper>

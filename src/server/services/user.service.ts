@@ -62,6 +62,7 @@ import {
   UserSettingsSchema,
   UserTier,
 } from './../schema/user.schema';
+import { simpleCosmeticSelect } from '../selectors/cosmetic.selector';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
 export const getUserCreator = async ({
@@ -87,7 +88,9 @@ export const getUserCreator = async ({
       username: true,
       muted: true,
       bannedAt: true,
+      deletedAt: true,
       createdAt: true,
+      publicSettings: true,
       links: {
         select: {
           url: true,
@@ -117,13 +120,7 @@ export const getUserCreator = async ({
         select: {
           data: true,
           cosmetic: {
-            select: {
-              id: true,
-              data: true,
-              type: true,
-              source: true,
-              name: true,
-            },
+            select: simpleCosmeticSelect,
           },
         },
       },
@@ -692,6 +689,11 @@ export const getUserCosmetics = ({
         where: equipped ? { equippedAt: { not: null } } : undefined,
         select: {
           obtainedAt: true,
+          equippedToId: true,
+          equippedToType: true,
+          forId: true,
+          forType: true,
+          claimKey: true,
           cosmetic: {
             select: {
               id: true,
@@ -729,7 +731,7 @@ export async function getCosmeticsForUsers(userIds: number[]) {
     ids: userIds,
     lookupFn: async (ids) => {
       const userCosmeticsRaw = await dbRead.userCosmetic.findMany({
-        where: { userId: { in: ids }, equippedAt: { not: null } },
+        where: { userId: { in: ids }, equippedAt: { not: null }, equippedToId: null },
         select: {
           userId: true,
           data: true,

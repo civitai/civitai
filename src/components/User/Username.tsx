@@ -44,22 +44,45 @@ export function Username({
       >
         {username}
       </Text>
-      {badge?.data.url && (
-        <Tooltip color="dark" label={badge.name} withArrow withinPortal>
-          {badge.data.animated ? (
-            <div style={{ display: 'flex', width: badgeSize }}>
-              <EdgeMedia src={badge.data.url} alt={badge.name} width="original" />
-            </div>
-          ) : (
-            <div style={{ display: 'flex' }}>
-              <EdgeMedia src={badge.data.url} alt={badge.name} width={badgeSize} />
-            </div>
-          )}
-        </Tooltip>
-      )}
+      <BadgeDisplay badge={badge as BadgeCosmetic} badgeSize={badgeSize} />
     </Group>
   );
 }
+
+export const BadgeDisplay = ({
+  badge,
+  badgeSize,
+  zIndex,
+}: {
+  badge?: BadgeCosmetic;
+  badgeSize?: number;
+  zIndex?: number;
+}) => {
+  if (!badge?.data.url || badgeSize === 0) return null;
+
+  const filter = 'drop-shadow(3px 3px 1px rgba(0, 0, 0, 0.8))';
+
+  return (
+    <Tooltip color="dark" label={badge.name} withArrow withinPortal>
+      {badge.data.animated ? (
+        <div
+          style={{
+            display: 'flex',
+            width: badgeSize,
+            zIndex,
+            filter,
+          }}
+        >
+          <EdgeMedia src={badge.data.url} alt={badge.name} width="original" />
+        </div>
+      ) : (
+        <div style={{ display: 'flex', zIndex, filter }}>
+          <EdgeMedia src={badge.data.url} alt={badge.name} width={badgeSize} />
+        </div>
+      )}
+    </Tooltip>
+  );
+};
 
 type Props = {
   username?: string | null;

@@ -64,7 +64,7 @@ import { IconDotsVertical } from '@tabler/icons-react';
 import { ReportMenuItem } from '~/components/MenuItems/ReportMenuItem';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { openContext } from '~/providers/CustomModalsProvider';
-import { CreatorCard } from '~/components/CreatorCard/CreatorCard';
+import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { formatDate } from '~/utils/date-helpers';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
@@ -262,7 +262,7 @@ export default function BountyEntryDetailsPage({
                 )}
               </NavigateBack>
             </Group>
-            <CreatorCard user={user} />
+            <SmartCreatorCard user={user} />
           </Stack>
         </Card.Section>
       )}

@@ -43,7 +43,7 @@ export const useQueryPosts = (
   filters ??= {};
   const browsingLevel = useBrowsingLevelDebounced();
   const { data, isLoading, ...rest } = trpc.post.getInfinite.useInfiniteQuery(
-    { ...filters, include: [], browsingLevel },
+    { ...filters, include: ['cosmetics'], browsingLevel },
     {
       getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
       getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),

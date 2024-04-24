@@ -21,6 +21,7 @@ export function ModerationNav() {
         { label: 'Sanity Images', href: '/moderator/research/rater-sanity' },
         { label: 'Metadata Tester', href: '/testing/metadata-test' },
         { label: 'Ratings Review', href: '/moderator/image-rating-review' },
+        { label: 'Cosmetic Shop', href: '/moderator/cosmetic-store' },
       ].map((link) => (
         <Menu.Item key={link.href} component={NextLink} href={link.href}>
           {link.label}

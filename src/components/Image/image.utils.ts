@@ -75,9 +75,7 @@ export const useQueryImages = (
   const { applyHiddenPreferences = true, ...queryOptions } = options ?? {};
   filters ??= {};
   const { data, isLoading, ...rest } = trpc.image.getInfinite.useInfiniteQuery(
-    {
-      ...filters,
-    },
+    { ...filters, include: ['cosmetics'] },
     {
       getNextPageParam: (lastPage) => lastPage.nextCursor,
       trpc: { context: { skipBatch: true } },

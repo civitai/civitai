@@ -77,7 +77,6 @@ import { useSystemCollections } from '~/components/Collections/collection.utils'
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { FeatureIntroductionModal } from '~/components/FeatureIntroduction/FeatureIntroduction';
-import { ListSearch } from '~/components/ListSearch/ListSearch';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Logo } from '~/components/Logo/Logo';
 import { ModerationNav } from '~/components/Moderation/ModerationNav';
@@ -97,6 +96,7 @@ import { openBuyBuzzModal } from '../Modals/BuyBuzzModal';
 import { GenerateButton } from '../RunStrategy/GenerateButton';
 import { UserBuzz } from '../User/UserBuzz';
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
+import { trpc } from '~/utils/trpc';
 
 const HEADER_HEIGHT = 70;
 
@@ -260,13 +260,17 @@ export function AppHeader({
   const searchRef = useRef<HTMLInputElement>(null);
 
   const isMuted = currentUser?.muted ?? false;
-  const isMember = !!currentUser?.tier;
   const {
     groupedCollections: {
       Article: bookmarkedArticlesCollection,
       Model: bookmarkedModelsCollection,
     },
   } = useSystemCollections();
+
+  const { data: creator } = trpc.user.getCreator.useQuery(
+    { id: currentUser?.id as number },
+    { enabled: !!currentUser }
+  );
 
   const mainActions = useMemo<MenuLink[]>(
     () => [
@@ -817,16 +821,8 @@ export function AppHeader({
             {/* <EventButton /> */}
           </Group>
         </Grid.Col>
-        <Grid.Col
-          span={6}
-          md={5}
-          className={features.enhancedSearch ? classes.searchArea : undefined}
-        >
-          {features.enhancedSearch ? (
-            <>{renderSearchComponent({ onSearchDone, isMobile: false })}</>
-          ) : (
-            <ListSearch onSearch={() => setBurgerOpened(false)} />
-          )}
+        <Grid.Col span={6} md={5} className={classes.searchArea}>
+          {renderSearchComponent({ onSearchDone, isMobile: false })}
         </Grid.Col>
         <Grid.Col span="auto" className={classes.links} sx={{ justifyContent: 'flex-end' }}>
           <Group spacing="md" align="center" noWrap>
@@ -876,7 +872,7 @@ export function AppHeader({
                     onClick={() => setUserMenuOpened(true)}
                   >
                     <Group spacing={8} noWrap>
-                      <UserAvatar user={currentUser} size="md" />
+                      <UserAvatar user={creator ?? currentUser} size="md" />
                       {features.buzz && currentUser && <UserBuzz pr="sm" />}
                     </Group>
                   </UnstyledButton>
@@ -910,7 +906,7 @@ export function AppHeader({
                           mb={4}
                         >
                           <Group w="100%" position="apart">
-                            <UserAvatar user={currentUser} withUsername />
+                            <UserAvatar user={creator ?? currentUser} withUsername />
                             <IconChevronRight />
                           </Group>
                         </Menu.Item>
@@ -960,11 +956,9 @@ export function AppHeader({
         <Grid.Col span="auto" className={classes.burger}>
           <Group spacing={4} noWrap>
             {mobileCreateButton}
-            {features.enhancedSearch && (
-              <ActionIcon onClick={() => setShowSearch(true)}>
-                <IconSearch />
-              </ActionIcon>
-            )}
+            <ActionIcon onClick={() => setShowSearch(true)}>
+              <IconSearch />
+            </ActionIcon>
             {currentUser && <CivitaiLinkPopover />}
             {currentUser && <NotificationBell />}
             {currentUser && features.chat && <ChatButton />}
@@ -1007,7 +1001,7 @@ export function AppHeader({
                               sx={{ cursor: 'pointer' }}
                               onClick={() => setUserSwitching(true)}
                             >
-                              <UserAvatar user={currentUser} withUsername />
+                              <UserAvatar user={creator ?? currentUser} withUsername />
                               <IconChevronRight />
                             </Group>
                           )}

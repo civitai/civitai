@@ -76,6 +76,7 @@ import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { nsfwBrowsingLevelsArray } from '~/shared/constants/browsingLevel.constants';
 import { getVotableTags2 } from '~/server/services/tag.service';
+import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -514,6 +515,7 @@ type GetAllImagesRaw = {
   metadata: Prisma.JsonValue;
   baseModel?: string;
   availability: Availability;
+  cosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
 };
 export type ImagesInfiniteModel = AsyncReturnType<typeof getAllImages>['items'][0];
 export const getAllImages = async ({
@@ -559,6 +561,7 @@ export const getAllImages = async ({
   let cacheTime = CacheTTL.xs;
   const userId = user?.id;
   const isModerator = user?.isModerator ?? false;
+  const includeCosmetics = false && include.includes('cosmetics'); // TODO: This must be done similar to user cosmetics.
 
   // Filter to specific user content
   let targetUserId: number | undefined;
@@ -831,6 +834,21 @@ export const getAllImages = async ({
     );
   }
 
+  if (includeCosmetics) {
+    WITH.push(Prisma.sql`
+      "imageCosmetic" AS (
+        SELECT
+          c.id,
+          c.data,
+          uc."claimKey",
+          uc."equippedToId"
+        FROM "UserCosmetic" uc
+        JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
+        WHERE uc."equippedToType" = 'Image' AND c.type = 'ContentDecoration'
+      )
+    `);
+  }
+
   // TODO: Adjust ImageMetric
   const queryFrom = Prisma.sql`
     ${Prisma.raw(from)}
@@ -899,6 +917,19 @@ export const getAllImages = async ({
       ) "baseModel",`
           : ''
       )}
+      ${
+        includeCosmetics
+          ? Prisma.raw(`
+              (
+                SELECT jsonb_build_object(
+                  'id', ic.id,
+                  'claimKey', ic."claimKey",
+                  'data', ic.data
+                ) FROM "imageCosmetic" ic WHERE ic."equippedToId" = i.id
+              ) as "cosmetic",
+            `)
+          : Prisma.empty
+      }
       im."cryCount",
       im."laughCount",
       im."likeCount",
@@ -1006,6 +1037,7 @@ export const getAllImages = async ({
       baseModel?: string | null;
       availability?: Availability;
       nsfwLevel: NsfwLevel;
+      cosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
     }
   > = rawImages
     .filter((x) => {
@@ -1290,7 +1322,7 @@ type ImagesForModelVersions = {
   height: number;
   hash: string;
   modelVersionId: number;
-  meta?: Prisma.JsonValue;
+  meta: ImageMetaProps | null;
   type: MediaType;
   metadata: Prisma.JsonValue;
   tags?: number[];
@@ -2029,7 +2061,7 @@ export const getEntityCoverImage = async ({
   }
 
   // Returns 1 cover image for:
-  // Models, Images, Bounties, BountyEntries.
+  // Models, Images, Bounties, BountyEntries, Article and Post.
   const images = await dbRead.$queryRaw<GetEntityImageRaw[]>`
     WITH entities AS (
       SELECT * FROM jsonb_to_recordset(${JSON.stringify(entities)}::jsonb) AS v(
@@ -2075,7 +2107,41 @@ export const getEntityCoverImage = async ({
                   LIMIT 1
                 )
         WHEN e."entityType" = 'Image'
-            THEN e."entityId"
+          THEN (
+            SELECT i.id FROM "Image" i
+            WHERE i.id = e."entityId"
+              AND i."ingestion" = 'Scanned'
+              AND i."needsReview" IS NULL
+          )
+        WHEN e."entityType" = 'Article'
+          THEN (
+            SELECT ai."imageId" FROM (
+              SELECT
+                a.id,
+                i.id as "imageId"
+              FROM "Image" i
+              JOIN "Article" a ON a."coverId" = i.id
+              WHERE a."id" = e."entityId"
+                  AND i."ingestion" = 'Scanned'
+                  AND i."needsReview" IS NULL
+            ) ai
+            LIMIT 1
+          )
+        WHEN e."entityType" = 'Post'
+          THEN (
+            SELECT pi."imageId" FROM (
+              SELECT
+                p.id,
+                i.id as "imageId"
+              FROM "Image" i
+              JOIN "Post" p ON p.id = i."postId"
+              WHERE p."id" = e."entityId"
+                  AND i."ingestion" = 'Scanned'
+                  AND i."needsReview" IS NULL
+              ORDER BY i."postId", i.index
+            ) pi
+            LIMIT 1
+          )
         ELSE (
             SELECT
                 i.id

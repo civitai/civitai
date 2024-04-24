@@ -6,7 +6,7 @@ import {
   TagEngagementType,
 } from '@prisma/client';
 import { z } from 'zod';
-import { constants } from '~/server/common/constants';
+import { creatorCardStats, constants } from '~/server/common/constants';
 import { OnboardingSteps } from '~/server/common/enums';
 import { getAllQuerySchema } from '~/server/schema/base.schema';
 import { userSettingsChat } from '~/server/schema/chat.schema';
@@ -72,6 +72,13 @@ export const profilePictureSchema = z.object({
   type: z.nativeEnum(MediaType).default(MediaType.image),
 });
 
+export const creatorCardStatsPreferences = z.array(z.string()).max(3);
+
+export type UserPublicSettingsSchema = z.infer<typeof userPublicSettingsSchema>;
+export const userPublicSettingsSchema = z.object({
+  creatorCardStatsPreferences: creatorCardStatsPreferences.optional(),
+});
+
 export const userUpdateSchema = z.object({
   id: z.number(),
   username: usernameInputSchema.optional(),
@@ -83,6 +90,8 @@ export const userUpdateSchema = z.object({
   profilePicture: profilePictureSchema.nullish(),
   badgeId: z.number().nullish(),
   nameplateId: z.number().nullish(),
+  profileDecorationId: z.number().nullish(),
+  profileBackgroundId: z.number().nullish(),
   autoplayGifs: z.boolean().optional(),
   filePreferences: z
     .object({

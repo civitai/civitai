@@ -49,6 +49,7 @@ export function ArticleCard({ data, aspectRatio }: Props) {
         href={`/articles/${id}/${slugit(title)}`}
         aspectRatio={aspectRatio}
         className={classes.link}
+        frameDecoration={data.cosmetic}
       >
         <div className={classes.root}>
           {coverImage && (
@@ -100,7 +101,7 @@ export function ArticleCard({ data, aspectRatio }: Props) {
                   router.push(`/user/${user.username}`);
                 }}
               >
-                <UserAvatar user={user} avatarProps={{ radius: 'md', size: 32 }} withUsername />
+                <UserAvatar user={user} avatarProps={{ radius: 'xl', size: 32 }} withUsername />
               </UnstyledButton>
             )}
             <Stack spacing={0}>

@@ -91,8 +91,8 @@ export function ProfileImageUpload({
             justifyContent: 'center',
             overflow: 'hidden',
             flexGrow: 0,
+            borderRadius: '50%',
           }}
-          radius="md"
         >
           {files.length === 0 && <IconUser size={40} />}
           {files.map((image, index) => {
@@ -108,8 +108,12 @@ export function ProfileImageUpload({
               );
 
             return (
-              <div key={index}>
-                <EdgeMedia src={image.previewUrl ?? image.url} width="original" />
+              <div key={index} style={{ width: '100%', height: '100%' }}>
+                <EdgeMedia
+                  src={image.previewUrl ?? image.url}
+                  width="original"
+                  style={{ minHeight: '100%', objectFit: 'cover' }}
+                />
               </div>
             );
           })}

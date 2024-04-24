@@ -39,7 +39,7 @@ export function TipBuzzButton({ toUserId, entityId, entityType, label, ...button
         color="gray"
         radius="xl"
         pl={8}
-        pr={12}
+        pr={label ? 12 : 8}
         onClick={handleClick}
         sx={{ fontSize: 12, fontWeight: 600, lineHeight: 1.5, color: theme.colors.accent[5] }}
         {...buttonProps}

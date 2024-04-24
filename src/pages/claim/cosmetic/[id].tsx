@@ -17,6 +17,7 @@ import { useEffect, useState } from 'react';
 import { z } from 'zod';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { NotFound } from '~/components/AppLayout/NotFound';
+import { useQueryCosmetic } from '~/components/Cosmetics/cosmetics.util';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { Meta } from '~/components/Meta/Meta';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
@@ -56,7 +57,7 @@ type ClaimStatus = 'unavailable' | 'pending' | 'claimed' | 'equipped';
 export default function ClaimCosmeticPage({ id }: { id: number }) {
   const queryUtils = trpc.useContext();
   const [status, setStatus] = useState<ClaimStatus | null>();
-  const { data: cosmetic, isLoading: cosmeticLoading } = trpc.cosmetic.getById.useQuery({ id });
+  const { cosmetic, isLoading: cosmeticLoading } = useQueryCosmetic({ id });
   const { data: cosmeticStatus, refetch } = trpc.user.cosmeticStatus.useQuery({ id });
 
   useEffect(() => {
