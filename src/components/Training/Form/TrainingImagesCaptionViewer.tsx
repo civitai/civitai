@@ -112,7 +112,7 @@ export const TrainingImagesCaptions = ({
           backgroundColor:
             theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
         }}
-        sx={{ overflowY: 'auto' }}
+        sx={{ overflowY: 'auto', scrollbarWidth: 'thin' }}
       >
         {tags.length > 0 ? (
           <Group spacing={8}>
@@ -123,6 +123,13 @@ export const TrainingImagesCaptions = ({
                 color={selectedTags.includes(cap) ? 'green' : 'gray'}
                 px={6}
                 className={classes.tagOverlay}
+                styles={{
+                  inner: {
+                    overflow: 'auto',
+                    overflowWrap: 'break-word',
+                    whiteSpace: 'normal',
+                  },
+                }}
               >
                 <Text>{cap}</Text>
                 <ActionIcon
@@ -154,10 +161,21 @@ export const TrainingImagesCaptions = ({
         onChange={(event) => {
           setAddCaptionTxt(event.target.value);
         }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            if (!e.shiftKey) {
+              e.preventDefault();
+              if (!addCaptionTxt.length) return;
+              addCaptions();
+              setAddCaptionTxt('');
+            }
+          }
+        }}
+        styles={{ input: { scrollbarWidth: 'thin' } }}
+        rightSectionWidth={52}
         rightSection={
           <ActionIcon
             h="100%"
-            w={60}
             onClick={() => {
               if (!addCaptionTxt.length) return;
               addCaptions();
