@@ -276,7 +276,7 @@ export const CreatorCardV2 = ({
           />
         )}
         <Stack p="md">
-          <Group position="apart" align="flex-start" mih={60} zIndex={1}>
+          <Group position="apart" align="flex-start" mih={60} style={{ zIndex: 1 }}>
             <Group>
               <Group spacing={8}>
                 <RankBadge size="md" rank={creator.rank} />
