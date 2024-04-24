@@ -532,7 +532,10 @@ function AddedImage({ image }: { image: PostEditImageDetail }) {
 }
 
 function BlockedImage({ image }: { image: PostEditMediaDetail }) {
+  const setImages = usePostEditStore((state) => state.setImages);
   const meta = image.type === 'image' ? image.meta : undefined;
+  const handleRemoveClick = () =>
+    setImages((images) => images.filter((x) => x.data.url !== image.url));
   return (
     <Alert
       color="red"
@@ -555,7 +558,9 @@ function BlockedImage({ image }: { image: PostEditMediaDetail }) {
             {image.blockedFor}
           </Text>
         </Text>
-        <Button color="red">Remove</Button>
+        <Button color="red" onClick={handleRemoveClick}>
+          Remove
+        </Button>
       </CustomCard>
     </Alert>
   );
