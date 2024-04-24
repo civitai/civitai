@@ -238,7 +238,7 @@ export default function CosmeticShopMain() {
             <Center p="xl">
               <Loader />
             </Center>
-          ) : cosmeticShopSections ? (
+          ) : cosmeticShopSections?.length > 0 ? (
             cosmeticShopSections.map((section) => {
               const { image, items } = section;
               const meta = section.meta as CosmeticShopSectionMeta;
@@ -296,7 +296,7 @@ export default function CosmeticShopMain() {
               );
             })
           ) : (
-            <NoContent message="We couldn't match what you're looking for. Please try again later." />
+            <NoContent message="It looks like we're still working on some changes. Please come back later." />
           )}
         </Stack>
       </Container>
