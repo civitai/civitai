@@ -1,5 +1,5 @@
 import { Grid, Card, Text, Anchor, Stack, Group } from '@mantine/core';
-import { IconBug, IconQuestionMark, IconWand, TablerIconsProps } from '@tabler/icons-react';
+import { IconMail, IconQuestionMark, IconWand, TablerIconsProps } from '@tabler/icons-react';
 import { IconBook, IconBrandDiscord } from '@tabler/icons-react';
 import { AssistantChat } from '~/components/Assistant/AssistantChat';
 import { trpc } from '~/utils/trpc';
@@ -28,9 +28,9 @@ const SUPPORT_OPTIONS = [
   },
   {
     title: 'Report a Bug',
-    description: 'Receiving an error message? Let us know!',
-    icon: (props: TablerIconsProps) => <IconBug {...props} />,
-    link: { label: 'Report a bug', href: '/bugs' },
+    description: 'Questions, bugs or errors? Reach out!',
+    icon: (props: TablerIconsProps) => <IconMail {...props} />,
+    link: { label: 'Ticket portal', href: '/bugs' },
   },
   {
     title: 'Feature Requests',
