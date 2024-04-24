@@ -15,6 +15,7 @@ import {
   Box,
   Alert,
   Anchor,
+  Tooltip,
 } from '@mantine/core';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
@@ -27,7 +28,12 @@ import { trpc } from '~/utils/trpc';
 import { getPlanDetails } from '~/components/Stripe/PlanCard';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { PlanBenefitList } from '~/components/Stripe/PlanBenefitList';
-import { IconDotsVertical, IconInfoTriangleFilled, IconRotateClockwise } from '@tabler/icons-react';
+import {
+  IconDotsVertical,
+  IconInfoCircle,
+  IconInfoTriangleFilled,
+  IconRotateClockwise,
+} from '@tabler/icons-react';
 import { ProductMetadata } from '~/server/schema/stripe.schema';
 import { constants } from '~/server/common/constants';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -106,6 +112,7 @@ export default function UserMembership() {
   const price = subscription.price;
   const product = subscription.product;
   const { image, benefits } = getPlanDetails(subscription.product, features);
+  console.log(price);
 
   return (
     <>
@@ -176,11 +183,26 @@ export default function UserMembership() {
                     </Group>
                     <Group>
                       {subscription.canceledAt && (
-                        <SubscribeButton priceId={price.id}>
-                          <Button radius="xl" rightIcon={<IconRotateClockwise size={16} />}>
-                            Resume
-                          </Button>
-                        </SubscribeButton>
+                        <>
+                          {price.active && (
+                            <SubscribeButton priceId={price.id}>
+                              <Button radius="xl" rightIcon={<IconRotateClockwise size={16} />}>
+                                Resume
+                              </Button>
+                            </SubscribeButton>
+                          )}
+                          {!price.active && (
+                            <Tooltip
+                              maw={350}
+                              multiline
+                              label="Your old subscription price has been discontinued and cannot be restored. If you'd like to keep supporting us, consider upgrading"
+                            >
+                              <ActionIcon variant="light" color="dark" size="lg">
+                                <IconInfoCircle color="white" strokeWidth={2.5} size={26} />
+                              </ActionIcon>
+                            </Tooltip>
+                          )}
+                        </>
                       )}
                       {canUpgrade && (
                         <Button component={NextLink} href="/pricing" radius="xl">
@@ -201,7 +223,7 @@ export default function UserMembership() {
                         </Menu.Target>
                         <Menu.Dropdown>
                           <ManageSubscriptionButton>
-                            <Menu.Item>Manage</Menu.Item>
+                            <Menu.Item>View Details</Menu.Item>
                           </ManageSubscriptionButton>
                           {!subscription?.canceledAt && (
                             <Menu.Item

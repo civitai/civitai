@@ -106,6 +106,7 @@ export const getUserSubscription = async ({ userId }: Schema.GetUserSubscription
           interval: true,
           intervalCount: true,
           currency: true,
+          active: true,
         },
       },
     },

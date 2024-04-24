@@ -28,24 +28,16 @@ export function SubscriptionCard() {
           <Title id="manage-subscription" order={2}>
             Membership
           </Title>
-          {subscription?.canceledAt ? (
-            <SubscribeButton priceId={subscription?.price.id}>
-              <Button compact radius="xl" rightIcon={<IconRotateClockwise size={16} />}>
-                Resume
-              </Button>
-            </SubscribeButton>
-          ) : (
-            <Button
-              compact
-              radius="xl"
-              color="gray"
-              rightIcon={<IconSettings size={16} />}
-              component={NextLink}
-              href="/user/membership"
-            >
-              Manage
-            </Button>
-          )}
+          <Button
+            compact
+            radius="xl"
+            color="gray"
+            rightIcon={<IconSettings size={16} />}
+            component={NextLink}
+            href="/user/membership"
+          >
+            Manage
+          </Button>
         </Group>
         {subscriptionLoading ? (
           <Center p="xl">
