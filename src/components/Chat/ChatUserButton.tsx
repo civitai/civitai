@@ -38,7 +38,7 @@ export function ChatUserButton({
         color="gray"
         radius="xl"
         pl={8}
-        pr={12}
+        pr={label ? 12 : 8}
         onClick={handleClick}
         // TODO do we like this color
         sx={{ fontSize: 12, fontWeight: 600, lineHeight: 1.5, color: theme.colors.success[2] }}

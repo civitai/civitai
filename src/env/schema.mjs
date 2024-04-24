@@ -144,6 +144,10 @@ export const serverSchema = z.object({
   HEALTHCHECK_TIMEOUT: z.coerce.number().optional().default(1500),
   DRAFT_MODE_PROVIDERS: commaDelimitedStringArray().optional(),
   DRAFT_MODE_PRIORITY: z.coerce.number().optional(),
+  FRESHDESK_JWT_SECRET: z.string().optional(),
+  FRESHDESK_JWT_URL: z.string().optional(),
+  FRESHDESK_DOMAIN: z.string().optional(),
+  FRESHDESK_TOKEN: z.string().optional(),
 });
 
 /**

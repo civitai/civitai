@@ -1,5 +1,6 @@
 import {
   ActionIcon,
+  BackgroundImage,
   Box,
   Button,
   Card,
@@ -52,6 +53,10 @@ import { ReportEntity } from '~/server/schema/report.schema';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { useImageStore } from '~/store/image.store';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+import { ProfileBackgroundCosmetic } from '~/server/selectors/cosmetic.selector';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { applyCosmeticThemeColors } from '~/libs/sx-helpers';
+import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
 
 export function ImageDetail() {
   const { classes, cx, theme } = useStyles();
@@ -62,6 +67,10 @@ export function ImageDetail() {
   if (!image) return <NotFound />;
 
   const nsfw = !getIsSafeBrowsingLevel(image.nsfwLevel);
+
+  const backgroundImage = image.user?.cosmetics.find(({ cosmetic }) =>
+    cosmetic ? cosmetic.type === 'ProfileBackground' : undefined
+  )?.cosmetic as Omit<ProfileBackgroundCosmetic, 'description' | 'obtainedAt'>;
 
   return (
     <>
@@ -103,59 +112,24 @@ export function ImageDetail() {
             </ReactionSettingsProvider>
           </div>
           <Card className={cx(classes.sidebar)}>
-            <Card.Section py="xs" withBorder inheritPadding>
-              <Group position="apart" spacing={8}>
-                <UserAvatar
-                  user={image.user}
-                  avatarProps={{ size: 32 }}
-                  size="sm"
-                  subText={
-                    <Text size="xs" color="dimmed">
-                      {image.publishedAt ? (
-                        <>
-                          Uploaded <DaysFromNow date={image.publishedAt} />
-                        </>
-                      ) : (
-                        'Not published'
-                      )}
-                    </Text>
-                  }
-                  subTextForce
-                  withUsername
-                  linkToProfile
-                />
-                <Group spacing={8} noWrap>
-                  <TipBuzzButton
-                    toUserId={image.user.id}
-                    entityId={image.id}
-                    entityType="Image"
-                    size="md"
-                    compact
-                  />
-                  <ChatUserButton user={image.user} size="md" compact />
-                  <FollowUserButton userId={image.user.id} size="md" compact />
-                  <ActionIcon
-                    onClick={toggleInfo}
-                    size="md"
-                    radius="xl"
-                    className={classes.mobileOnly}
-                  >
-                    <IconX size={20} />
-                  </ActionIcon>
-                  <CloseButton
-                    size="md"
-                    radius="xl"
-                    variant="transparent"
-                    ml="auto"
-                    iconSize={20}
-                    className={classes.desktopOnly}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      close();
-                    }}
-                  />
-                </Group>
-              </Group>
+            <Card.Section withBorder>
+              <SmartCreatorCard
+                user={image.user}
+                style={{ border: 0 }}
+                subText={
+                  <Text size="xs" color="dimmed">
+                    {image.publishedAt ? (
+                      <>
+                        Uploaded <DaysFromNow date={image.publishedAt} />
+                      </>
+                    ) : (
+                      'Not published'
+                    )}
+                  </Text>
+                }
+                tipBuzzEntityId={image.id}
+                tipBuzzEntityType="Image"
+              />
             </Card.Section>
             <Card.Section
               py="xs"

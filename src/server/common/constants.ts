@@ -309,6 +309,11 @@ export const constants = {
       badgeType: 'none',
     },
   },
+  cosmeticShop: {
+    sectionImageAspectRatio: 250 / 1288,
+    sectionImageHeight: 250,
+    sectionImageWidth: 1288,
+  },
 } as const;
 export const activeBaseModels = constants.baseModels.filter(
   (model) => !constants.hiddenBaseModels.includes(model)
@@ -696,3 +701,7 @@ export const RECAPTCHA_ACTIONS = {
 } as const;
 
 export type RecaptchaAction = keyof typeof RECAPTCHA_ACTIONS;
+
+export const creatorCardStats = ['followers', 'likes', 'uploads', 'downloads'];
+export const creatorCardStatsDefaults = ['followers', 'likes'];
+export const creatorCardMaxStats = 3;

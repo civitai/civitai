@@ -24,7 +24,9 @@ export const articleRouter = router({
   getInfinite: publicProcedure
     .input(getInfiniteArticlesSchema)
     .use(isFlagProtected('articles'))
-    .query(({ input, ctx }) => getArticles({ ...input, sessionUser: ctx?.user })),
+    .query(({ input, ctx }) =>
+      getArticles({ ...input, sessionUser: ctx?.user, include: ['cosmetics'] })
+    ),
   getCivitaiNews: publicProcedure
     .use(edgeCacheIt({ ttl: CacheTTL.sm }))
     .query(() => getCivitaiNews()),

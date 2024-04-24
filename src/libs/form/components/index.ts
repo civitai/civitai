@@ -35,6 +35,8 @@ import { ShowcaseItemsInput } from '~/components/Profile/ShowcaseItemsInput';
 import { ProfileSectionsSettingsInput } from '~/components/Profile/ProfileSectionsSettingsInput';
 import { ClubResourceManagementInput } from '~/components/Club/ClubResourceManagementInput';
 import { FlagInput } from '~/libs/form/components/FlagInput';
+import { SectionItemsInput } from '~/components/CosmeticShop/SectionItemsInput';
+import { CosmeticSelect } from '~/libs/form/components/CosmeticSelect';
 
 export * from './Form';
 
@@ -93,3 +95,5 @@ export const InputCheckbox = withWatcher(
   }))
 );
 export const InputFlag = withWatcher(withController(FlagInput));
+export const InputSectionItems = withWatcher(withController(SectionItemsInput));
+export const InputCosmeticSelect = withWatcher(withController(CosmeticSelect));

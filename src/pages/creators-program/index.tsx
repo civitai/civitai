@@ -227,7 +227,7 @@ const ExclusivePerksSection = () => {
                     <CurrencyIcon
                       currency={Currency.BUZZ}
                       stroke={0}
-                      style={{ position: 'relative', top: 5 }}
+                      style={{ display: 'inline' }}
                     />
                     {numberWithCommas(constants.buzz.buzzDollarRatio)}
                   </Text>
@@ -279,14 +279,7 @@ const EarnBuzzSection = () => {
     <Stack className={classes.section}>
       <Stack spacing={0} mb="sm">
         <Title order={2} size={sizing.sections.title} className={classes.highlightColor}>
-          New ways to earn{' '}
-          <CurrencyIcon
-            currency={Currency.BUZZ}
-            stroke={0}
-            style={{ position: 'relative', top: 5 }}
-            size={26}
-          />{' '}
-          Buzz
+          New ways to earn Buzz
         </Title>
         <Text size={sizing.sections.subtitle}>
           As a valued member of the Creators Program, you get 3 new ways to earn buzz{' '}
@@ -316,8 +309,9 @@ const EarnBuzzSection = () => {
         sustainable way.
       </Alert>
       <Text className={classes.highlightColor} size="xs">
-        <IconAsterisk className={classes.highlightColor} size={12} /> Resources may only be in early
-        access for a maximum of 14 days and then must be made available to all users
+        <IconAsterisk className={classes.highlightColor} size={12} style={{ display: 'inline' }} />{' '}
+        Resources may only be in early access for a maximum of 14 days and then must be made
+        available to all users
       </Text>
     </Stack>
   );

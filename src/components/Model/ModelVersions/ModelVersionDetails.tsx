@@ -44,7 +44,7 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useCivitaiLink } from '~/components/CivitaiLink/CivitaiLinkProvider';
 import { CivitaiLinkManageButton } from '~/components/CivitaiLink/CivitaiLinkManageButton';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
-import { CreatorCard } from '~/components/CreatorCard/CreatorCard';
+import { CreatorCard, SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
 import {
   DescriptionTable,
   type Props as DescriptionTableProps,
@@ -1026,7 +1026,11 @@ export function ModelVersionDetails({
             )}
           </Accordion>
 
-          <CreatorCard user={model.user} tipBuzzEntityType="Model" tipBuzzEntityId={model.id} />
+          <SmartCreatorCard
+            user={model.user}
+            tipBuzzEntityType="Model"
+            tipBuzzEntityId={model.id}
+          />
           {onSite && (
             <Group
               align="flex-start"

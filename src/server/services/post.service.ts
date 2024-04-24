@@ -55,6 +55,12 @@ import { bustCacheTag, queryCache } from '~/server/utils/cache-helpers';
 import { env } from 'process';
 import { CacheTTL } from '../common/constants';
 import { PreprocessFileReturnType } from '~/utils/media-preprocessors';
+import {
+  BadgeCosmetic,
+  ContentDecorationCosmetic,
+  WithClaimKey,
+} from '~/server/selectors/cosmetic.selector';
+import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 
 type GetAllPostsRaw = {
   id: number;
@@ -79,6 +85,7 @@ type GetAllPostsRaw = {
     laughCount: number;
     cryCount: number;
   } | null;
+  cosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
 };
 export type PostsInfiniteModel = AsyncReturnType<typeof getPostsInfinite>['items'][0];
 export const getPostsInfinite = async ({
@@ -111,6 +118,7 @@ export const getPostsInfinite = async ({
   let cacheTime = CacheTTL.xs;
   const userId = user?.id;
   const isModerator = user?.isModerator ?? false;
+  const includeCosmetics = !!include?.includes('cosmetics');
 
   const isOwnerRequest =
     !!user?.username && !!username && postgresSlugify(user.username) === postgresSlugify(username);
@@ -339,9 +347,10 @@ export const getPostsInfinite = async ({
 
   // Get user cosmetics
   const userIds = postsRaw.map((i) => i.userId);
-  const userCosmetics = include?.includes('cosmetics')
-    ? await getCosmeticsForUsers(userIds)
-    : undefined;
+  const userCosmetics = includeCosmetics ? await getCosmeticsForUsers(userIds) : undefined;
+  const cosmetics = includeCosmetics
+    ? await getCosmeticsForEntity({ ids: postsRaw.map((p) => p.id), entity: 'Post' })
+    : {};
 
   const profilePictures = await getProfilePicturesForUsers(userIds);
 
@@ -424,6 +433,7 @@ export const getPostsInfinite = async ({
           },
           stats,
           images: _images,
+          cosmetic: cosmetics[post.id] ?? null,
         };
       })
       .filter((x) => x.imageCount !== 0),

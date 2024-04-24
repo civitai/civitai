@@ -25,26 +25,28 @@ export const deliverPurchasedCosmetics = createJob(
           JOIN "User" u ON u."customerId" = p."customerId"
           WHERE p."createdAt" >= ${lastDelivered}
         )
-        INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "obtainedAt")
+        INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "obtainedAt", "claimKey")
         SELECT DISTINCT
           p."userId",
           c.id "cosmeticId",
-          now()
+          now(),
+          'claimed'
         FROM recent_purchases p
         JOIN "Cosmetic" c ON
           c."productId" = p."productId"
           AND (c."availableStart" IS NULL OR p."createdAt" >= c."availableStart")
           AND (c."availableEnd" IS NULL OR p."createdAt" <= c."availableEnd")
-        ON CONFLICT ("userId", "cosmeticId") DO NOTHING;
+        ON CONFLICT ("userId", "cosmeticId", "claimKey") DO NOTHING;
     `;
 
     const deliverSupporterUpgradeCosmetic = async () =>
       dbWrite.$executeRaw`
         -- Deliver supporter upgrade cosmetic
-        INSERT INTO "UserCosmetic"("userId", "cosmeticId")
+        INSERT INTO "UserCosmetic"("userId", "cosmeticId", "claimKey")
         SELECT
           u.id "userId",
-          c.id as "cosmeticId"
+          c.id as "cosmeticId",
+          'claimed'
         FROM "Purchase" p
         JOIN "Product" pd ON pd.id = p."productId"
         JOIN "User" u ON u."customerId" = p."customerId"

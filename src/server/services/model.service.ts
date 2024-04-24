@@ -79,6 +79,12 @@ import {
 } from './../schema/model.schema';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
+import {
+  BadgeCosmetic,
+  ContentDecorationCosmetic,
+  WithClaimKey,
+} from '~/server/selectors/cosmetic.selector';
+import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
@@ -155,6 +161,7 @@ type ModelRaw = {
     deletedAt: Date | null;
     image: string;
   };
+  cosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
 };
 
 export const getModelsRaw = async ({
@@ -166,7 +173,7 @@ export const getModelsRaw = async ({
     take?: number;
     skip?: number;
   };
-  include?: Array<'details'>;
+  include?: Array<'details' | 'cosmetics'>;
   user?: { id: number; isModerator?: boolean; username?: string };
 }) => {
   const {
@@ -211,6 +218,7 @@ export const getModelsRaw = async ({
   }
 
   const includeDetails = !!include?.includes('details');
+  const includeCosmetics = !!include?.includes('cosmetics');
   function ifDetails(sql: TemplateStringsArray) {
     return includeDetails ? Prisma.raw(sql[0]) : Prisma.empty;
   }
@@ -678,6 +686,9 @@ export const getModelsRaw = async ({
   const userIds = models.map((m) => m.user.id);
   const profilePictures = await getProfilePicturesForUsers(userIds);
   const userCosmetics = await getCosmeticsForUsers(userIds);
+  const cosmetics = includeCosmetics
+    ? await getCosmeticsForEntity({ ids: models.map((m) => m.id), entity: 'Model' })
+    : {};
 
   let nextCursor: string | bigint | undefined;
   if (take && models.length > take) {
@@ -704,6 +715,7 @@ export const getModelsRaw = async ({
         profilePicture: profilePictures?.[model.user.id] ?? null,
         cosmetics: userCosmetics[model.user.id] ?? [],
       },
+      cosmetic: cosmetics[model.id] ?? null,
     })),
     nextCursor,
     isPrivate,
@@ -1013,6 +1025,7 @@ export const getModelsWithImagesAndModelVersions = async ({
   const { items, isPrivate, nextCursor } = await getModelsRaw({
     input: { ...input, take },
     user,
+    include: ['cosmetics'],
   });
 
   const modelVersionIds = items

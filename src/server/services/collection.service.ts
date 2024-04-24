@@ -317,6 +317,7 @@ export const getCollectionById = async ({ input }: { input: GetByIdInput }) => {
       write: true,
       type: true,
       user: { select: userWithCosmeticsSelect },
+      nsfw: true,
       nsfwLevel: true,
       image: { select: imageSelect },
       mode: true,

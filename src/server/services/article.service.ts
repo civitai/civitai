@@ -44,6 +44,8 @@ import { getFilesByEntity } from './file.service';
 import { imageSelect, profileImageSelect } from '~/server/selectors/image.selector';
 import { createImage, deleteImageById } from '~/server/services/image.service';
 import { ImageMetaProps } from '~/server/schema/image.schema';
+import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
+import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 
 type ArticleRaw = {
   id: number;
@@ -92,6 +94,7 @@ type ArticleRaw = {
       source: CosmeticSource;
     };
   }[];
+  cosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
 };
 
 export type ArticleGetAllRecord = Awaited<ReturnType<typeof getArticles>>['items'][number];
@@ -120,11 +123,14 @@ export const getArticles = async ({
   clubId,
   pending,
   browsingLevel,
+  include,
 }: GetInfiniteArticlesSchema & {
   sessionUser?: { id: number; isModerator?: boolean; username?: string };
+  include?: Array<'cosmetics'>;
 }) => {
   const userId = sessionUser?.id;
   const isModerator = sessionUser?.isModerator ?? false;
+  const includeCosmetics = !!include?.includes('cosmetics');
   try {
     const take = limit + 1;
     const isMod = sessionUser?.isModerator ?? false;
@@ -407,7 +413,7 @@ export const getArticles = async ({
           FROM "UserCosmetic" uc
           JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
               AND "equippedAt" IS NOT NULL
-          WHERE uc."userId" = a."userId"
+          WHERE uc."userId" = a."userId" AND uc."equippedToId" IS NULL
           GROUP BY uc."userId"
         ) as "userCosmetics",
         ${Prisma.raw(cursorProp ? cursorProp : 'null')} as "cursorId"
@@ -436,6 +442,9 @@ export const getArticles = async ({
       : [];
 
     const articleCategories = await getCategoryTags('article');
+    const cosmetics = includeCosmetics
+      ? await getCosmeticsForEntity({ ids: articles.map((x) => x.id), entity: 'Article' })
+      : {};
 
     const items = articles
       .filter((a) => {
@@ -475,6 +484,7 @@ export const getArticles = async ({
                 tags: coverImage?.tags.flatMap((x) => x.tag.id),
               }
             : undefined,
+          cosmetic: cosmetics[article.id] ?? null,
         };
       });
 

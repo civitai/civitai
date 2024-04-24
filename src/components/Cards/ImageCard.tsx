@@ -44,7 +44,7 @@ function UnroutedImageCard({ data }: Props) {
 
   return (
     <HolidayFrame {...cardDecoration}>
-      <FeedCard className={sharedClasses.link}>
+      <FeedCard className={sharedClasses.link} frameDecoration={data.cosmetic}>
         <div className={sharedClasses.root}>
           <ImageGuard2 image={data}>
             {(safe) => (
@@ -128,7 +128,7 @@ function UnroutedImageCard({ data }: Props) {
                 <UserAvatar
                   // Explicit casting to comply with ts
                   user={data.user as ImagesInfiniteModel['user']}
-                  avatarProps={{ radius: 'md', size: 32 }}
+                  avatarProps={{ radius: 'xl', size: 32 }}
                   withUsername
                 />
               </UnstyledButton>

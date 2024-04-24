@@ -80,9 +80,9 @@ export function SupportContent() {
       </Grid.Col>
       <Grid.Col>
         <Text size="md">
-          Still unsure? Drop us an email at{' '}
-          <Anchor href="mailto:support@civitai.com" td="underline">
-            support@civitai.com
+          Still unsure? Contact us through our{' '}
+          <Anchor href="/support-portal" td="underline">
+            Support Portal
           </Anchor>
         </Text>
       </Grid.Col>

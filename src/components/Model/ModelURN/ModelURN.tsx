@@ -4,33 +4,15 @@ import { ModelType } from '@prisma/client';
 import { IconCheck, IconCopy, IconInfoSquareRounded } from '@tabler/icons-react';
 import { useMemo } from 'react';
 import { BaseModel, baseModelSets } from '~/server/common/constants';
+import { stringifyAIR } from '~/utils/string-helpers';
 
-const typeUrnMap: Partial<Record<ModelType, string>> = {
-  [ModelType.AestheticGradient]: 'ag',
-  [ModelType.Checkpoint]: 'checkpoint',
-  [ModelType.Hypernetwork]: 'hypernet',
-  [ModelType.TextualInversion]: 'embedding',
-  [ModelType.MotionModule]: 'motion',
-  [ModelType.Upscaler]: 'upscaler',
-  [ModelType.VAE]: 'vae',
-  [ModelType.LORA]: 'lora',
-  [ModelType.DoRA]: 'dora',
-  [ModelType.LoCon]: 'lycoris',
-  [ModelType.Controlnet]: 'controlnet',
-};
-
-export const ModelURN = ({ baseModel, type, modelId, modelVersionId, full = false }: Props) => {
+export const ModelURN = ({ baseModel, type, modelId, modelVersionId }: Props) => {
   const { copied, copy } = useClipboard();
-  const urnType = typeUrnMap[type];
-  const urnEcosystem = useMemo(() => {
-    return (
-      Object.entries(baseModelSets).find(([, value]) => value.includes(baseModel))?.[0] ?? 'sd1'
-    ).toLowerCase();
-  }, [baseModel]);
-  if (!urnType) return null;
-
-  const shortUrn = `civitai:${modelId}@${modelVersionId}`;
-  const urn = `urn:air:${urnEcosystem}:${urnType}:${shortUrn}`;
+  const urn = useMemo(
+    () => stringifyAIR({ baseModel, type, modelId, id: modelVersionId }),
+    [baseModel, type, modelId, modelVersionId]
+  );
+  if (!urn) return null;
 
   return (
     <Group spacing={4}>
@@ -46,13 +28,7 @@ export const ModelURN = ({ baseModel, type, modelId, modelVersionId, full = fals
           },
         }}
       >
-        {full ? (
-          <Code>
-            urn:air:{urnEcosystem}:{urnType}:civitai:
-          </Code>
-        ) : (
-          <Code>civitai:</Code>
-        )}
+        <Code>civitai:</Code>
         <CopyTooltip copied={copied} label="Model ID">
           <Code color="blue" onClick={() => copy(modelId)}>
             {modelId}
@@ -143,5 +119,4 @@ type Props = {
   type: ModelType;
   modelId: number;
   modelVersionId: number;
-  full?: boolean;
 };

@@ -23,6 +23,8 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { getInitials } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import { EdgeMedia } from '../EdgeMedia/EdgeMedia';
+import { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 
 const mapAvatarTextSize: Record<MantineSize, { textSize: MantineSize; subTextSize: MantineSize }> =
   {
@@ -84,6 +86,8 @@ export function UserAvatar({
   userId,
   indicatorProps,
   badgeSize,
+  withDecorations = true,
+  withOverlay = false,
 }: Props) {
   const currentUser = useCurrentUser();
   const theme = useMantineTheme();
@@ -93,7 +97,7 @@ export function UserAvatar({
     { enabled: !user && !!userId && userId > -1, cacheTime: Infinity, staleTime: Infinity }
   );
 
-  const avatarUser = user ?? fallbackUser;
+  const avatarUser = user ?? { ...fallbackUser, cosmetics: [] };
 
   // If using a userId, show loading
   if (isInitialLoading)
@@ -117,9 +121,27 @@ export function UserAvatar({
     theme.colorScheme === 'dark' ? 'rgba(255,255,255,0.31)' : 'rgba(0,0,0,0.31)';
 
   const image = avatarUser.profilePicture;
+  const decoration =
+    withDecorations && avatarUser
+      ? (avatarUser.cosmetics?.find((c) => c.cosmetic?.type === 'ProfileDecoration')
+          ?.cosmetic as Omit<ContentDecorationCosmetic, 'description' | 'obtainedAt' | 'name'>)
+      : undefined;
 
   return (
-    <Group align="center" spacing={spacing} noWrap>
+    <Group
+      align="center"
+      sx={
+        withOverlay
+          ? {
+              padding: '0 10px 0 0',
+              backgroundColor: 'rgba(0, 0, 0, 0.31)',
+              borderRadius: '1000px',
+            }
+          : undefined
+      }
+      spacing={spacing}
+      noWrap
+    >
       {includeAvatar && (
         <UserProfileLink user={avatarUser} linkToProfile={linkToProfile}>
           <Indicator
@@ -130,6 +152,27 @@ export function UserAvatar({
             disabled={!indicatorProps}
             withBorder
           >
+            {decoration && decoration.data.url && (
+              <EdgeMedia
+                src={decoration.data.url}
+                type="image"
+                name="user avatar decoration"
+                style={{
+                  position: 'absolute',
+                  top: '50%',
+                  left: '50%',
+                  maxWidth: 'none',
+                  transform: 'translate(-50%,-50%)',
+                  width: decoration.data.offset ? `calc(100% + ${decoration.data.offset})` : '100%',
+                  height: decoration.data.offset
+                    ? `calc(100% + ${decoration.data.offset})`
+                    : '100%',
+                  zIndex: 1,
+                }}
+                width="original"
+                anim={decoration.data.animated}
+              />
+            )}
             {avatarUser.profilePicture &&
             avatarUser.profilePicture.id &&
             !blockedProfilePicture &&
@@ -239,9 +282,11 @@ type Props = {
   userId?: number;
   indicatorProps?: Omit<IndicatorProps, 'children'>;
   badgeSize?: number;
+  withDecorations?: boolean;
+  withOverlay?: boolean;
 };
 
-const UserProfileLink = ({
+export const UserProfileLink = ({
   children,
   user,
   linkToProfile,

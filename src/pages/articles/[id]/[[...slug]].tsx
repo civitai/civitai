@@ -326,7 +326,7 @@ export default function ArticleDetailsPage({
             />
           </Grid.Col>
         </Grid>
-        {article.user && <ArticleDetailComments articleId={article.id} userId={article.user.id} />}
+        <ArticleDetailComments articleId={article.id} userId={article.user.id} />
       </Container>
     </>
   );

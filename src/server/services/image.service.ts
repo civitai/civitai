@@ -79,6 +79,8 @@ import { trackModActivity } from '~/server/services/moderator.service';
 import { nsfwBrowsingLevelsArray } from '~/shared/constants/browsingLevel.constants';
 import { getVotableTags2 } from '~/server/services/tag.service';
 import { Flags } from '~/shared/utils';
+import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
+import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -562,6 +564,7 @@ export const getAllImages = async ({
   let cacheTime = CacheTTL.xs;
   const userId = user?.id;
   const isModerator = user?.isModerator ?? false;
+  const includeCosmetics = include?.includes('cosmetics'); // TODO: This must be done similar to user cosmetics.
 
   // Filter to specific user content
   let targetUserId: number | undefined;
@@ -992,9 +995,10 @@ export const getAllImages = async ({
   }
 
   const userIds = rawImages.map((i) => i.userId);
-  const [userCosmetics, profilePictures] = await Promise.all([
-    include?.includes('cosmetics') ? await getCosmeticsForUsers(userIds) : undefined,
+  const [userCosmetics, profilePictures, cosmetics] = await Promise.all([
+    includeCosmetics ? await getCosmeticsForUsers(userIds) : undefined,
     include?.includes('profilePictures') ? await getProfilePicturesForUsers(userIds) : undefined,
+    includeCosmetics ? await getCosmeticsForEntity({ ids: imageIds, entity: 'Image' }) : undefined,
   ]);
 
   const now = new Date();
@@ -1009,6 +1013,7 @@ export const getAllImages = async ({
       baseModel?: string | null;
       availability?: Availability;
       nsfwLevel: NsfwLevel;
+      cosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
     }
   > = rawImages
     .filter((x) => {
@@ -1062,6 +1067,7 @@ export const getAllImages = async ({
           userReactions?.[i.id]?.map((r) => ({ userId: userId as number, reaction: r })) ?? [],
         tags: tagsVar?.filter((x) => x.imageId === i.id),
         tagIds: tagIdsVar?.[i.id]?.tags,
+        cosmetic: cosmetics?.[i.id] ?? null,
       })
     );
 
@@ -1293,7 +1299,7 @@ type ImagesForModelVersions = {
   height: number;
   hash: string;
   modelVersionId: number;
-  meta?: Prisma.JsonValue;
+  meta: ImageMetaProps | null;
   type: MediaType;
   metadata: Prisma.JsonValue;
   tags?: number[];
@@ -2032,7 +2038,7 @@ export const getEntityCoverImage = async ({
   }
 
   // Returns 1 cover image for:
-  // Models, Images, Bounties, BountyEntries.
+  // Models, Images, Bounties, BountyEntries, Article and Post.
   const images = await dbRead.$queryRaw<GetEntityImageRaw[]>`
     WITH entities AS (
       SELECT * FROM jsonb_to_recordset(${JSON.stringify(entities)}::jsonb) AS v(
@@ -2078,7 +2084,41 @@ export const getEntityCoverImage = async ({
                   LIMIT 1
                 )
         WHEN e."entityType" = 'Image'
-            THEN e."entityId"
+          THEN (
+            SELECT i.id FROM "Image" i
+            WHERE i.id = e."entityId"
+              AND i."ingestion" = 'Scanned'
+              AND i."needsReview" IS NULL
+          )
+        WHEN e."entityType" = 'Article'
+          THEN (
+            SELECT ai."imageId" FROM (
+              SELECT
+                a.id,
+                i.id as "imageId"
+              FROM "Image" i
+              JOIN "Article" a ON a."coverId" = i.id
+              WHERE a."id" = e."entityId"
+                  AND i."ingestion" = 'Scanned'
+                  AND i."needsReview" IS NULL
+            ) ai
+            LIMIT 1
+          )
+        WHEN e."entityType" = 'Post'
+          THEN (
+            SELECT pi."imageId" FROM (
+              SELECT
+                p.id,
+                i.id as "imageId"
+              FROM "Image" i
+              JOIN "Post" p ON p.id = i."postId"
+              WHERE p."id" = e."entityId"
+                  AND i."ingestion" = 'Scanned'
+                  AND i."needsReview" IS NULL
+              ORDER BY i."postId", i.index
+            ) pi
+            LIMIT 1
+          )
         ELSE (
             SELECT
                 i.id

@@ -59,6 +59,7 @@ import { vaultRouter } from './vault.router';
 import { researchRouter } from '~/server/routers/research.router';
 import { redeemableCodeRouter } from '~/server/routers/redeemableCode.router';
 import { toolRouter } from '~/server/routers/tool.router';
+import { cosmeticShopRouter } from '~/server/routers/cosmetic-shop.router';
 
 export const appRouter = router({
   account: accountRouter,
@@ -120,6 +121,7 @@ export const appRouter = router({
   research: researchRouter,
   redeemableCode: redeemableCodeRouter,
   tool: toolRouter,
+  cosmeticShop: cosmeticShopRouter,
 });
 
 // export type definition of API

@@ -1,6 +1,14 @@
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { SDResource, createMetadataProcessor } from '~/utils/metadata/base.metadata';
 import { unescape } from 'lodash-es';
+import { parseAIR } from '~/utils/string-helpers';
+
+type CivitaiResource = {
+  weight: number;
+  air?: string;
+  modelVersionId?: number;
+  type?: string;
+};
 
 // #region [helpers]
 const hashesRegex = /, Hashes:\s*({[^}]+})/;
@@ -119,6 +127,13 @@ export const automaticMetadataProcessor = createMetadataProcessor({
     const civitaiResourcesMatch = detailsLine?.match(civitaiResources)?.[1];
     if (civitaiResourcesMatch && detailsLine) {
       metadata.civitaiResources = JSON.parse(civitaiResourcesMatch);
+      for (const resource of metadata.civitaiResources as CivitaiResource[]) {
+        if (!resource.air) continue;
+        const { version, type } = parseAIR(resource.air);
+        resource.modelVersionId = version;
+        resource.type = type;
+        delete resource.air;
+      }
       detailsLine = detailsLine.replace(civitaiResources, '');
     }
 

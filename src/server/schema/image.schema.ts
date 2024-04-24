@@ -282,7 +282,7 @@ export type GetEntitiesCoverImage = z.infer<typeof getEntitiesCoverImage>;
 export const getEntitiesCoverImage = z.object({
   entities: z.array(
     z.object({
-      entityType: z.union([z.nativeEnum(SearchIndexEntityTypes), z.enum(['ModelVersion'])]),
+      entityType: z.union([z.nativeEnum(SearchIndexEntityTypes), z.enum(['ModelVersion', 'Post'])]),
       entityId: z.number(),
     })
   ),
