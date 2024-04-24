@@ -1,6 +1,8 @@
+import { ModelType } from '@prisma/client';
 import he from 'he';
 import { truncate } from 'lodash-es';
 import slugify from 'slugify';
+import { BaseModel, baseModelSets } from '~/server/common/constants';
 
 import allowedUrls from '~/utils/allowed-third-party-urls.json';
 import { toJson } from '~/utils/json-helpers';
@@ -197,4 +199,42 @@ export function parseAIR(identifier: string) {
     version: Number(version),
     format,
   };
+}
+
+const typeUrnMap: Partial<Record<ModelType, string>> = {
+  [ModelType.AestheticGradient]: 'ag',
+  [ModelType.Checkpoint]: 'checkpoint',
+  [ModelType.Hypernetwork]: 'hypernet',
+  [ModelType.TextualInversion]: 'embedding',
+  [ModelType.MotionModule]: 'motion',
+  [ModelType.Upscaler]: 'upscaler',
+  [ModelType.VAE]: 'vae',
+  [ModelType.LORA]: 'lora',
+  [ModelType.DoRA]: 'dora',
+  [ModelType.LoCon]: 'lycoris',
+  [ModelType.Controlnet]: 'controlnet',
+};
+
+export function stringifyAIR({
+  baseModel,
+  type,
+  modelId,
+  id,
+  source = 'civitai',
+}: {
+  baseModel: BaseModel | string;
+  type: ModelType;
+  modelId: number;
+  id?: number;
+  source?: string;
+}) {
+  const ecosystem = (
+    Object.entries(baseModelSets).find(([, value]) =>
+      value.includes(baseModel as BaseModel)
+    )?.[0] ?? 'sd1'
+  ).toLowerCase();
+  const urnType = typeUrnMap[type];
+  if (!urnType) return null;
+
+  return `urn:air:${ecosystem}:${urnType}:${source}:${modelId}${id ? `@${id}` : ''}`;
 }
