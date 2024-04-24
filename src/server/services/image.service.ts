@@ -561,7 +561,7 @@ export const getAllImages = async ({
   let cacheTime = CacheTTL.xs;
   const userId = user?.id;
   const isModerator = user?.isModerator ?? false;
-  const includeCosmetics = include.includes('cosmetics');
+  const includeCosmetics = false && include.includes('cosmetics'); // TODO: This must be done similar to user cosmetics.
 
   // Filter to specific user content
   let targetUserId: number | undefined;
