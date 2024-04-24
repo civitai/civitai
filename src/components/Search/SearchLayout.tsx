@@ -157,6 +157,7 @@ export function SearchLayout({
         searchClient={searchClient}
         indexName={indexName}
         routing={routing}
+        future={{ preserveSharedStateOnUnmount: true }}
       >
         <Configure hitsPerPage={50} attributesToHighlight={[]} />
         <AppLayout renderSearchComponent={renderSearchComponent}>{children}</AppLayout>
