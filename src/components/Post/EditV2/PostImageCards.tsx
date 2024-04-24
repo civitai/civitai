@@ -43,6 +43,8 @@ import { useImageStore } from '~/store/image.store';
 import { ImageIngestionStatus } from '@prisma/client';
 import { UnblockImage } from '~/components/Image/UnblockImage/UnblockImage';
 import { useCurrentUserRequired } from '~/hooks/useCurrentUser';
+import { BrowsingLevelBadge } from '~/components/ImageGuard/ImageGuard2';
+import { openSetBrowsingLevelModal } from '~/components/Dialog/dialog-registry';
 
 // #region [types]
 type SimpleMetaPropsKey = keyof typeof simpleMetaProps;
@@ -128,7 +130,7 @@ function AddedImage({ image }: { image: PostEditImageDetail }) {
   // #region [delete image]
   const deleteImageMutation = trpc.image.delete.useMutation({
     onSuccess: (_, { id }) =>
-      setImages((state) => state.filter((x) => x.type === 'blocked' || x.data.id !== id)),
+      setImages((state) => state.filter((x) => x.type !== 'added' || x.data.id !== id)),
     onError: (error: any) => showErrorNotification({ error: new Error(error.message) }),
   });
 
@@ -201,6 +203,12 @@ function AddedImage({ image }: { image: PostEditImageDetail }) {
                 className="rounded-lg"
               />
             </div>
+            <BrowsingLevelBadge
+              browsingLevel={nsfwLevel}
+              size="lg"
+              onClick={() => openSetBrowsingLevelModal({ imageId: id, nsfwLevel })}
+              className="cursor-pointer absolute top-2 left-2"
+            />
             <Menu withArrow position="bottom-end">
               <Menu.Target>
                 <ActionIcon className="absolute top-2 right-2">

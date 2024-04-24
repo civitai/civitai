@@ -73,6 +73,8 @@ export function PostImageDropzone({
             return [...images, { type: 'resolving', data: { ...props, index: 999 } }];
           case 'blocked':
             return [...images, { type: 'blocked', data: { ...props, index } }];
+          default:
+            return images;
         }
       });
     },

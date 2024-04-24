@@ -12,7 +12,7 @@ import { hiddenLabel } from '~/components/Post/Edit/EditPostControls';
 import { EditPostImages } from '~/components/Post/Edit/EditPostImages';
 import { useEditPostContext } from '~/components/Post/Edit/EditPostProvider';
 import { EditPostReviews } from '~/components/Post/EditV2/EditPostReviews';
-import { EditPostTags } from '~/components/Post/Edit/EditPostTags';
+import { EditPostTags } from '~/components/Post/EditV2/EditPostTags';
 import { ReorderImages, ReorderImagesButton } from '~/components/Post/Edit/ReorderImages';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { POST_IMAGE_LIMIT } from '~/server/common/constants';
@@ -79,10 +79,10 @@ export function PostUpsertForm({ modelVersionId, modelId }: Props) {
         <Stack spacing={50}>
           <Stack>
             <PublishButton modelId={modelId} modelVersionId={modelVersionId} />
-            <EditPostTags />
+            {/* <EditPostTags /> */}
           </Stack>
           <ReorderImagesButton />
-          <EditPostReviews />
+          {/* <EditPostReviews /> */}
         </Stack>
       </ContainerGrid.Col>
       <ContainerGrid.Col md={8} sm={6} orderSm={1}>

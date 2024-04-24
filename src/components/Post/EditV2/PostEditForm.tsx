@@ -4,7 +4,7 @@ import { Form, InputRTE, InputTextArea, useForm } from '~/libs/form';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';
 import { useDebouncer } from '~/utils/debouncer';
-import { EditPostTags } from '~/components/Post/Edit/EditPostTags';
+import { EditPostTags } from '~/components/Post/EditV2/EditPostTags';
 import { usePostEditParams, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
 
 const titleCharLimit = 255;

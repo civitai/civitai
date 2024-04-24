@@ -12,7 +12,7 @@ import {
 } from '@mantine/core';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { useEditPostContext } from '~/components/Post/Edit/EditPostProvider';
-import { EditPostTags } from '~/components/Post/Edit/EditPostTags';
+import { EditPostTags } from '~/components/Post/EditV2/EditPostTags';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { trpc } from '~/utils/trpc';
 
