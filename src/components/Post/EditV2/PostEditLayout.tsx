@@ -12,14 +12,14 @@ export function PostEditLayout({ children }: { children: React.ReactNode }) {
   const params = postEditQuerySchema.parse(router.query);
   const { postId = 0 } = params;
 
-  const { data, isLoading, isRefetching } = trpc.post.getEdit.useQuery(
+  const { data, isInitialLoading } = trpc.post.getEdit.useQuery(
     { id: postId },
     { enabled: postId > 0, keepPreviousData: false }
   );
 
   const isCreatePage = !postId;
-  const is404 = !data && !isLoading && !isCreatePage;
-  const loading = (isLoading || isRefetching) && !isCreatePage;
+  const is404 = !data && !isInitialLoading && !isCreatePage;
+  const loading = isInitialLoading && !isCreatePage;
 
   return (
     <PostEditProvider post={data} params={params}>

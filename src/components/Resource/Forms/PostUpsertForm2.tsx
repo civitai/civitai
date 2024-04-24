@@ -33,7 +33,7 @@ export function PostUpsertForm2({
     withFiles: true,
   });
 
-  const { data, isLoading, isRefetching } = trpc.post.getEdit.useQuery(
+  const { data, isInitialLoading } = trpc.post.getEdit.useQuery(
     { id: postId },
     { enabled: postId > 0, keepPreviousData: false }
   );
@@ -58,8 +58,8 @@ export function PostUpsertForm2({
 
   // #region [misc]
   const isCreatePage = !postId;
-  const is404 = !data && !isLoading && !isCreatePage;
-  const loading = (isLoading || isRefetching) && !isCreatePage;
+  const is404 = !data && !isInitialLoading && !isCreatePage;
+  const loading = isInitialLoading && !isCreatePage;
   const isUploading = uploading > 0;
   const canPublish = !isUploading && !!modelVersion?.files?.length;
   const confirmPublish = !canPublish;

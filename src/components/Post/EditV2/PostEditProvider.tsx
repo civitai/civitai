@@ -138,13 +138,21 @@ export function PostEditProvider({ post, params = {}, children, ...extendedParam
   const { modelVersionId, modelId, postId } = mergedParams;
 
   useDidUpdate(() => {
-    store.setState({
-      post,
-      images:
+    store.setState((state) => {
+      const isSamePost = state.post && state.post.id === post?.id;
+      const images =
         post?.images?.map((data, index) => ({
           type: 'added',
           data: { ...data, index },
-        })) ?? [],
+        })) ?? [];
+      if (!isSamePost)
+        return {
+          post,
+          images,
+        };
+      else {
+        return { post, images: !state.images.length ? images : state.images };
+      }
     });
   }, [post]);
 
