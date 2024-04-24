@@ -29,6 +29,7 @@ import {
   IconCheck,
   IconFileDownload,
   IconTags,
+  IconTagsOff,
   IconTrash,
   IconX,
 } from '@tabler/icons-react';
@@ -50,6 +51,7 @@ import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { useS3UploadStore } from '~/store/s3-upload.store';
 import {
   defaultTrainingState,
+  getShortNameFromUrl,
   type ImageDataType,
   trainingStore,
   useTrainingImageStore,
@@ -72,7 +74,7 @@ const useStyles = createStyles((theme) => ({
     }`,
     position: 'relative',
     '&:hover .trashIcon': {
-      display: 'initial',
+      display: 'flex',
     },
   },
   trash: {
@@ -113,6 +115,7 @@ export const getCaptionAsList = (capt: string) => {
 
 export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModelData> }) => {
   const {
+    updateImage,
     setImageList,
     setInitialImageList,
     setOwnRights,
@@ -795,27 +798,46 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                     {/* TODO [bw] probably lightbox here or something similar */}
                     <Card.Section mb="xs">
                       <div className={classes.imgOverlay}>
-                        <ActionIcon
-                          color="red"
-                          variant="filled"
-                          size="md"
-                          disabled={autoCaptioning.isRunning}
-                          onClick={() => {
-                            const newLen = imageList.length - 1;
-                            setImageList(
-                              model.id,
-                              imageList.filter((i) => i.url !== imgData.url)
-                            );
-                            if (
-                              page === Math.ceil(imageList.length / maxImgPerPage) &&
-                              newLen % maxImgPerPage === 0
-                            )
-                              setPage(Math.max(page - 1, 1));
-                          }}
-                          className={cx(classes.trash, 'trashIcon')}
-                        >
-                          <IconTrash />
-                        </ActionIcon>
+                        <Group spacing={4} className={cx(classes.trash, 'trashIcon')}>
+                          <Tooltip label="Remove captions">
+                            <ActionIcon
+                              color="violet"
+                              variant="filled"
+                              size="md"
+                              disabled={autoCaptioning.isRunning || !imgData.caption.length}
+                              onClick={() => {
+                                updateImage(model.id, {
+                                  matcher: getShortNameFromUrl(imgData),
+                                  caption: '',
+                                });
+                              }}
+                            >
+                              <IconTagsOff />
+                            </ActionIcon>
+                          </Tooltip>
+                          <Tooltip label="Remove image">
+                            <ActionIcon
+                              color="red"
+                              variant="filled"
+                              size="md"
+                              disabled={autoCaptioning.isRunning}
+                              onClick={() => {
+                                const newLen = imageList.length - 1;
+                                setImageList(
+                                  model.id,
+                                  imageList.filter((i) => i.url !== imgData.url)
+                                );
+                                if (
+                                  page === Math.ceil(imageList.length / maxImgPerPage) &&
+                                  newLen % maxImgPerPage === 0
+                                )
+                                  setPage(Math.max(page - 1, 1));
+                              }}
+                            >
+                              <IconTrash />
+                            </ActionIcon>
+                          </Tooltip>
+                        </Group>
                         <MImage
                           alt={imgData.name}
                           src={imgData.url}

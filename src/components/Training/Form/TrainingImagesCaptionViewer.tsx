@@ -37,14 +37,27 @@ import {
   useTrainingImageStore,
 } from '~/store/training.store';
 
-const useStyles = createStyles(() => ({
-  tagAction: {
-    button: {
-      display: 'none',
-    },
+const useStyles = createStyles((theme) => ({
+  tagOverlay: {
+    position: 'relative',
     '&:hover button': {
-      display: 'initial',
+      display: 'flex',
     },
+  },
+  trash: {
+    display: 'none',
+    position: 'absolute',
+    width: '100%',
+    height: '100%',
+    top: 0,
+    left: 0,
+    border: 0,
+    borderRadius: '4px',
+
+    backgroundColor: theme.fn.rgba(
+      theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2],
+      0.9
+    ),
   },
 }));
 
@@ -108,22 +121,19 @@ export const TrainingImagesCaptions = ({
                 key={index}
                 variant="outline"
                 color={selectedTags.includes(cap) ? 'green' : 'gray'}
-                sx={{ paddingRight: 3, paddingLeft: 8 }}
-                className={classes.tagAction}
-                rightSection={
-                  <ActionIcon
-                    disabled={autoCaptioning.isRunning}
-                    size={12}
-                    radius="xl"
-                    variant="filled"
-                    onClick={() => removeCaption(cap)}
-                  >
-                    <IconX size={10} />
-                  </ActionIcon>
-                }
-                styles={{ rightSection: { marginTop: '1px' } }}
+                px={6}
+                className={classes.tagOverlay}
               >
-                {cap}
+                <Text>{cap}</Text>
+                <ActionIcon
+                  disabled={autoCaptioning.isRunning}
+                  size={14}
+                  variant="transparent"
+                  className={classes.trash}
+                  onClick={() => removeCaption(cap)}
+                >
+                  <IconX size={12} />
+                </ActionIcon>
               </Badge>
             ))}
           </Group>
