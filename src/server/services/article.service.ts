@@ -45,6 +45,7 @@ import { imageSelect, profileImageSelect } from '~/server/selectors/image.select
 import { createImage, deleteImageById } from '~/server/services/image.service';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
+import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 
 type ArticleRaw = {
   id: number;
@@ -335,21 +336,6 @@ export const getArticles = async ({
     `);
     }
 
-    if (includeCosmetics) {
-      WITH.push(Prisma.sql`
-        "articleCosmetic" AS (
-          SELECT
-            c.id,
-            c.data,
-            uc."claimKey",
-            uc."equippedToId"
-          FROM "UserCosmetic" uc
-          JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
-          WHERE uc."equippedToType" = 'Article' AND c.type = 'ContentDecoration'
-        )
-      `);
-    }
-
     const queryWith = WITH.length > 0 ? Prisma.sql`WITH ${Prisma.join(WITH, ', ')}` : Prisma.sql``;
     const queryFrom = Prisma.sql`
       FROM "Article" a
@@ -430,19 +416,6 @@ export const getArticles = async ({
           WHERE uc."userId" = a."userId" AND uc."equippedToId" IS NULL
           GROUP BY uc."userId"
         ) as "userCosmetics",
-        ${
-          includeCosmetics
-            ? Prisma.raw(`
-                (
-                  SELECT jsonb_build_object(
-                    'id', ac.id,
-                    'claimKey', ac."claimKey",
-                    'data', ac.data
-                  ) FROM "articleCosmetic" ac WHERE ac."equippedToId" = a.id
-                ) as "cosmetic",
-              `)
-            : Prisma.empty
-        }
         ${Prisma.raw(cursorProp ? cursorProp : 'null')} as "cursorId"
       ${queryFrom}
       ORDER BY ${Prisma.raw(orderBy)}
@@ -469,6 +442,9 @@ export const getArticles = async ({
       : [];
 
     const articleCategories = await getCategoryTags('article');
+    const cosmetics = includeCosmetics
+      ? await getCosmeticsForEntity({ ids: articles.map((x) => x.id), entity: 'Article' })
+      : {};
 
     const items = articles
       .filter((a) => {
@@ -508,6 +484,7 @@ export const getArticles = async ({
                 tags: coverImage?.tags.flatMap((x) => x.tag.id),
               }
             : undefined,
+          cosmetic: cosmetics[article.id] ?? null,
         };
       });
 

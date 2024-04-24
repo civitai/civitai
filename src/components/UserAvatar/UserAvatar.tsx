@@ -161,7 +161,7 @@ export function UserAvatar({
                   position: 'absolute',
                   top: '50%',
                   left: '50%',
-                  maxWidth: 'fit-content',
+                  maxWidth: 'none',
                   transform: 'translate(-50%,-50%)',
                   width: decoration.data.offset ? `calc(100% + ${decoration.data.offset})` : '100%',
                   height: decoration.data.offset

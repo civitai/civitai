@@ -1,10 +1,17 @@
-import { Prisma } from '@prisma/client';
+import { CosmeticEntity, Prisma } from '@prisma/client';
 import dayjs from 'dayjs';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { EquipCosmeticInput, GetPaginatedCosmeticsInput } from '~/server/schema/cosmetic.schema';
-import { simpleCosmeticSelect } from '~/server/selectors/cosmetic.selector';
+import {
+  ContentDecorationCosmetic,
+  SimpleCosmetic,
+  WithClaimKey,
+  simpleCosmeticSelect,
+} from '~/server/selectors/cosmetic.selector';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
+import { REDIS_KEYS } from '~/server/redis/client';
+import { cachedObject, bustCachedArray } from '~/server/utils/cache-helpers';
 
 export async function getCosmeticDetail({ id }: GetByIdInput) {
   const cosmetic = await dbRead.cosmetic.findUnique({
@@ -101,6 +108,8 @@ export async function equipCosmeticToEntity({
     data: { equippedToId, equippedToType, equippedAt: new Date() },
   });
 
+  await deleteEntityCosmeticCache({ entityId: equippedToId, entityType: equippedToType });
+
   return updated;
 }
 
@@ -109,9 +118,52 @@ export async function unequipCosmetic({
   equippedToId,
   userId,
   claimKey,
+  equippedToType,
 }: EquipCosmeticInput & { userId: number }) {
-  return dbWrite.userCosmetic.updateMany({
+  const updated = await dbWrite.userCosmetic.updateMany({
     where: { cosmeticId, equippedToId, userId, claimKey },
     data: { equippedToId: null, equippedToType: null, equippedAt: null },
   });
+
+  await deleteEntityCosmeticCache({ entityId: equippedToId, entityType: equippedToType });
+
+  return updated;
+}
+
+export async function getCosmeticsForEntity({
+  ids,
+  entity,
+}: {
+  ids: number[];
+  entity: CosmeticEntity;
+}) {
+  if (ids.length === 0) return {};
+
+  return await cachedObject<WithClaimKey<ContentDecorationCosmetic>>({
+    key: `${REDIS_KEYS.COSMETICS}:${entity}`,
+    idKey: 'equippedToId',
+    ids,
+    lookupFn: async (ids) => {
+      const entityCosmetics = await dbRead.$queryRaw<WithClaimKey<ContentDecorationCosmetic>[]>`
+        SELECT c.id, c.data, uc."equippedToId", uc."claimKey"
+        FROM "UserCosmetic" uc
+        JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
+        WHERE uc."equippedToId" IN (${Prisma.join(ids as number[])})
+              AND uc."equippedToType" = '${Prisma.raw(entity)}'::"CosmeticEntity"
+              AND c.type = 'ContentDecoration';
+      `;
+      return Object.fromEntries(entityCosmetics.map((x) => [x.equippedToId, x]));
+    },
+    ttl: 60 * 60 * 24, // 24 hours
+  });
+}
+
+export async function deleteEntityCosmeticCache({
+  entityId,
+  entityType,
+}: {
+  entityId: number;
+  entityType: CosmeticEntity;
+}) {
+  await bustCachedArray(`${REDIS_KEYS.COSMETICS}:${entityType}`, 'equippedToId', entityId);
 }
