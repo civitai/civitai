@@ -112,10 +112,7 @@ export const commentRouter = router({
       input: { entityType: 'commentOld', entityId: input.id, reaction: input.reaction },
     })
   ),
-  toggleHide: protectedProcedure
-    .input(getByIdSchema)
-    .use(isOwnerOrModerator)
-    .mutation(toggleHideCommentHandler),
+  toggleHide: protectedProcedure.input(getByIdSchema).mutation(toggleHideCommentHandler),
   toggleLock: protectedProcedure
     .input(getByIdSchema)
     .use(isOwnerOrModerator)
