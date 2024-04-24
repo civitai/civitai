@@ -1,7 +1,6 @@
 import { createStore, useStore } from 'zustand';
 import { createContext, useContext, useRef, useEffect, SetStateAction } from 'react';
 import { immer } from 'zustand/middleware/immer';
-import { PostEditDetail, PostEditImage } from '~/server/controllers/post.controller';
 import { devtools } from 'zustand/middleware';
 import { isDefined } from '~/utils/type-guards';
 import { trpc } from '~/utils/trpc';
@@ -10,6 +9,7 @@ import { PostImageEditSelect } from '~/server/selectors/post.selector';
 import { getDataFromFile } from '~/utils/metadata';
 import { MediaType } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
+import { PostDetailEditable, PostImageEditable } from '~/server/services/post.service';
 
 //https://github.com/pmndrs/zustand/blob/main/docs/guides/initialize-state-with-props.md
 export type ImageUpload = {
@@ -34,7 +34,7 @@ export type ImageBlocked = {
   tags?: { type: string; name: string; nsfwLevel: NsfwLevel }[];
 };
 type ImageProps =
-  | { discriminator: 'image'; data: PostEditImage }
+  | { discriminator: 'image'; data: PostImageEditable }
   | { discriminator: 'upload'; data: ImageUpload }
   | { discriminator: 'blocked'; data: ImageBlocked };
 type TagProps = { id?: number; name: string };
@@ -61,8 +61,8 @@ interface EditPostState extends EditPostProps {
   setPublishedAt: (publishedAt: Date) => void;
   toggleReorder: (value?: boolean) => void;
   setTags: (dispatch: SetStateAction<TagProps[]>) => void;
-  setImage: (id: number, updateFn: (images: PostEditImage) => PostEditImage) => void;
-  setImages: (updateFn: (images: PostEditImage[]) => PostEditImage[]) => void;
+  setImage: (id: number, updateFn: (images: PostImageEditable) => PostImageEditable) => void;
+  setImages: (updateFn: (images: PostImageEditable[]) => PostImageEditable[]) => void;
   setSelectedImageId: (id?: number) => void;
   upload: (
     { postId, modelVersionId }: { postId: number; modelVersionId?: number },
@@ -73,16 +73,16 @@ interface EditPostState extends EditPostProps {
   removeImage: (id: number) => void;
   /** used to clean up object urls */
   cleanup: () => void;
-  reset: (post?: PostEditDetail) => void;
+  reset: (post?: PostDetailEditable) => void;
   setDeleting: (value: boolean) => void;
 }
 
 type EditPostStore = ReturnType<typeof createEditPostStore>;
 
-const prepareImages = (images: PostEditImage[]) =>
+const prepareImages = (images: PostImageEditable[]) =>
   images.map((image): ImageProps => ({ discriminator: 'image', data: image }));
 
-const processPost = (post?: PostEditDetail) => {
+const processPost = (post?: PostDetailEditable) => {
   return {
     id: post?.id ?? 0,
     title: post?.title ?? undefined,
@@ -90,7 +90,7 @@ const processPost = (post?: PostEditDetail) => {
     nsfwLevel: post?.nsfwLevel,
     publishedAt: post?.publishedAt ?? undefined,
     tags: post?.tags ?? [],
-    images: post?.images ? prepareImages(post.images) : [],
+    images: post?.images ? prepareImages(post.images as any) : [],
     modelVersionId: post?.modelVersionId ?? undefined,
   };
 };
@@ -101,7 +101,7 @@ const createEditPostStore = ({
   post,
   handleUpload,
 }: {
-  post?: PostEditDetail;
+  post?: PostDetailEditable;
   handleUpload: (
     props: HandleUploadProps,
     cb: (created: PostImageEditSelect) => Promise<void>
@@ -147,13 +147,13 @@ const createEditPostStore = ({
                 (x) => x.discriminator === 'image' && x.data.id === id
               );
               if (index > -1)
-                state.images[index].data = updateFn(state.images[index].data as PostEditImage);
+                state.images[index].data = updateFn(state.images[index].data as PostImageEditable);
             }),
           setImages: (updateFn) =>
             set((state) => {
               // only allow calling setImages if uploads are finished
               if (state.images.every((x) => x.discriminator === 'image')) {
-                const images = state.images.map(({ data }) => data as PostEditImage);
+                const images = state.images.map(({ data }) => data as PostImageEditable);
                 state.images = prepareImages(updateFn(images));
               }
             }),
@@ -200,7 +200,7 @@ const createEditPostStore = ({
                       if (index === -1) throw new Error('index out of bounds');
                       state.images[index] = {
                         discriminator: 'image',
-                        data: { ...created, previewUrl: data.url },
+                        data: { ...created, previewUrl: data.url } as any,
                       };
                     });
                   });
@@ -262,7 +262,7 @@ export const EditPostProvider = ({
   post,
 }: {
   children: React.ReactNode;
-  post?: PostEditDetail;
+  post?: PostDetailEditable;
 }) => {
   const { mutateAsync } = trpc.post.addImage.useMutation();
 
@@ -275,9 +275,7 @@ export const EditPostProvider = ({
     await upload(file, async (result) => {
       if (!result.success) return;
       const { id } = result.data;
-      mutateAsync({ ...data, url: id, postId, modelVersionId }).then((data) =>
-        cb(data as PostImageEditSelect)
-      );
+      mutateAsync({ ...data, url: id, postId, modelVersionId }).then((data) => cb(data as any));
     });
   };
 

@@ -29,7 +29,6 @@ import {
 import { trpc } from '~/utils/trpc';
 import { splitUppercase } from '~/utils/string-helpers';
 import { showSuccessNotification } from '~/utils/notifications';
-import { PostEditImage } from '~/server/controllers/post.controller';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { IconInfoCircle } from '@tabler/icons-react';
 import { constants } from '~/server/common/constants';
@@ -37,6 +36,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { auditImageMeta } from '~/utils/media-preprocessors';
 import { useState } from 'react';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { PostImageEditable } from '~/server/services/post.service';
 
 // const matureLabel = 'Mature content may include content that is suggestive or provocative';
 // const tooltipProps: Partial<TooltipProps> = {
@@ -81,7 +81,7 @@ export function EditImage({ imageId, onClose }: { imageId: number; onClose: () =
   const images = useEditPostContext((state) => state.images);
   const setImage = useEditPostContext((state) => state.setImage);
   const image = images.find((x) => x.discriminator === 'image' && x.data.id === imageId)?.data as
-    | PostEditImage
+    | PostImageEditable
     | undefined;
   const [blockedFor, setBlockedFor] = useState<string[]>();
 
@@ -111,7 +111,7 @@ export function EditImage({ imageId, onClose }: { imageId: number; onClose: () =
       mutate(payload, {
         onSuccess: (response) => {
           showSuccessNotification({ message: 'Image details saved successfully' });
-          setImage(response.id, () => response);
+          setImage(payload.id, () => payload);
           onClose();
         },
       });

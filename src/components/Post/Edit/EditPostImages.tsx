@@ -47,7 +47,7 @@ import { useRouter } from 'next/router';
 import { getIsPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { BrowsingLevelBadge } from '~/components/ImageGuard/ImageGuard2';
 import { openSetBrowsingLevelModal } from '~/components/Dialog/dialog-registry';
-import { PostEditImageDetail } from '~/components/Post/EditV2/PostEditProvider';
+import { PostImageEditable } from '~/server/services/post.service';
 
 export function EditPostImages({ max = POST_IMAGE_LIMIT }: { max?: number }) {
   const currentUser = useCurrentUser();
@@ -97,7 +97,7 @@ export function EditPostImages({ max = POST_IMAGE_LIMIT }: { max?: number }) {
   );
 }
 
-function ImageController({ image }: { image: PostEditImageDetail }) {
+function ImageController({ image }: { image: PostImageEditable }) {
   const {
     id,
     url,

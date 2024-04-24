@@ -889,41 +889,6 @@ export const getUserTagsHandler = async ({
   }
 };
 
-export const batchBlockTagsHandler = async ({
-  input,
-  ctx,
-}: {
-  input: BatchBlockTagsSchema;
-  ctx: DeepNonNullable<Context>;
-}) => {
-  try {
-    const { id: userId } = ctx.user;
-    const { tagIds } = input;
-    const currentBlockedTags = await getUserTags({ userId, type: 'Hide' });
-    const blockedTagIds = currentBlockedTags.map(({ tagId }) => tagId);
-    const tagsToRemove = blockedTagIds.filter((id) => !tagIds.includes(id));
-
-    const updatedUser = await updateUserById({
-      id: userId,
-      data: {
-        tagsEngaged: {
-          deleteMany: { userId, tagId: { in: tagsToRemove } },
-          upsert: tagIds.map((tagId) => ({
-            where: { userId_tagId: { userId, tagId } },
-            update: { type: 'Hide' },
-            create: { type: 'Hide', tagId },
-          })),
-        },
-      },
-    });
-    if (!updatedUser) throw throwNotFoundError(`No user with id ${userId}`);
-
-    return updatedUser;
-  } catch (error) {
-    throw throwDbError(error);
-  }
-};
-
 export const toggleMuteHandler = async ({
   input,
   ctx,

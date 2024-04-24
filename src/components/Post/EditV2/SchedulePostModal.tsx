@@ -5,18 +5,17 @@ import { useMemo } from 'react';
 import { z } from 'zod';
 import { Form, InputDatePicker, InputTime, useForm } from '~/libs/form';
 
-const schema = z
-  .object({ date: z.date(), time: z.date() })
-  .transform((data) => {
+const schema = z.object({ date: z.date(), time: z.date() }).refine(
+  (data) => {
     const time = dayjs(data.time);
     const date = dayjs(data.date).set('hour', time.hour()).set('minute', time.minute());
-
-    return { date: date.toDate() };
-  })
-  .refine((data) => data.date > new Date(), {
+    return date.toDate() > new Date();
+  },
+  {
     message: 'Must be in the future',
     path: ['time'],
-  });
+  }
+);
 
 export function SchedulePostModal({
   onSubmit,
@@ -27,13 +26,23 @@ export function SchedulePostModal({
 }) {
   const dialog = useDialogContext();
 
-  const form = useForm({ schema, defaultValues: { date: publishedAt, time: publishedAt } });
+  const form = useForm({
+    schema,
+    defaultValues: publishedAt ? { date: publishedAt, time: publishedAt } : undefined,
+  });
   const { minDate, maxDate } = useMemo(
     () => ({ minDate: new Date(), maxDate: dayjs().add(1, 'month').toDate() }),
     []
   );
 
-  const handleSubmit = async ({ date }: z.infer<typeof schema>) => {
+  const handleSubmit = async (data: z.infer<typeof schema>) => {
+    const { date } = schema
+      .transform((data) => {
+        const time = dayjs(data.time);
+        const date = dayjs(data.date).set('hour', time.hour()).set('minute', time.minute());
+        return { date: date.toDate() };
+      })
+      .parse(data);
     onSubmit(date);
     dialog.onClose();
   };

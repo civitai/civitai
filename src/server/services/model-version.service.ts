@@ -626,11 +626,12 @@ export const modelVersionGeneratedImagesOnTimeframe = async ({
   const date = maxDate(
     dayjs().startOf('day').subtract(timeframe, 'day').toDate(),
     dayjs().startOf('month').subtract(1, 'day').toDate()
-  ).toISOString();
+  )?.toISOString();
 
-  const generationData = await clickhouse
-    .query({
-      query: `
+  const generationData = date
+    ? await clickhouse
+        .query({
+          query: `
           SELECT
               resourceId as modelVersionId,
               createdAt,
@@ -646,9 +647,10 @@ export const modelVersionGeneratedImagesOnTimeframe = async ({
           GROUP BY resourceId, createdAt
           ORDER BY createdAt DESC, generations DESC;
     `,
-      format: 'JSONEachRow',
-    })
-    .then((x) => x.json<{ modelVersionId: number; createdAt: Date; generations: number }[]>());
+          format: 'JSONEachRow',
+        })
+        .then((x) => x.json<{ modelVersionId: number; createdAt: Date; generations: number }[]>())
+    : [];
 
   const versions = modelVersions
     .map((version) => {

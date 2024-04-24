@@ -18,6 +18,7 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { useEditPostContext } from './EditPostProvider';
+import { PostDetailEditable, PostImageEditable } from '~/server/services/post.service';
 
 export function ReorderImages() {
   const images = useEditPostContext((state) => state.images);
@@ -51,7 +52,7 @@ export function ReorderImages() {
         <SortableContext items={items.map((x) => x.id)}>
           <div style={{ display: 'grid', gridTemplateColumns: `repeat(3, 1fr)`, gridGap: 10 }}>
             {items.map((image) => (
-              <SortableImage key={image.id} image={image} sortableId={image.id} />
+              <SortableImage key={image.id} image={image as any} sortableId={image.id} />
             ))}
           </div>
         </SortableContext>
@@ -62,7 +63,7 @@ export function ReorderImages() {
 }
 
 type ItemProps = {
-  image: PostEditImage;
+  image: PostImageEditable;
   sortableId: UniqueIdentifier;
 };
 
