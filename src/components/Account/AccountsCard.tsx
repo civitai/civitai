@@ -74,7 +74,9 @@ export function AccountsCard({ providers }: { providers: AsyncReturnType<typeof 
                               variant="link"
                               style={{ cursor: 'pointer' }}
                               onClick={() =>
-                                signIn(provider.id, { callbackUrl: '/user/account#accounts' })
+                                signIn(provider.id, {
+                                  callbackUrl: '/user/account?connect=true#accounts',
+                                })
                               }
                             >
                               Connect
