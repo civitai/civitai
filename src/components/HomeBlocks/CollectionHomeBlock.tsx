@@ -31,7 +31,10 @@ import { ArticleCard } from '~/components/Cards/ArticleCard';
 import { trpc } from '~/utils/trpc';
 import { shuffle } from '~/utils/array-helpers';
 import ReactMarkdown from 'react-markdown';
-import { useHomeBlockStyles } from '~/components/HomeBlocks/HomeBlock.Styles';
+import {
+  useHomeBlockStyles,
+  useHomeBlockGridStyles,
+} from '~/components/HomeBlocks/HomeBlock.Styles';
 import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 import { CollectionMode } from '@prisma/client';
@@ -39,71 +42,6 @@ import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { useResizeObserver } from '~/hooks/useResizeObserver';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
-
-const useStyles = createStyles<string, { count: number; rows: number }>(
-  (theme, { count, rows }) => {
-    return {
-      grid: {
-        display: 'grid',
-        gridTemplateColumns: `repeat(auto-fill, minmax(320px, 1fr))`,
-        columnGap: theme.spacing.md,
-        gridTemplateRows: `repeat(${rows}, auto)`,
-        gridAutoRows: 0,
-        overflow: 'hidden',
-        marginTop: -theme.spacing.md,
-        paddingBottom: theme.spacing.md,
-
-        '& > *': {
-          marginTop: theme.spacing.md,
-        },
-
-        [containerQuery.smallerThan('md')]: {
-          gridAutoFlow: 'column',
-          gridTemplateColumns: `repeat(${count / 2}, minmax(280px, 1fr) )`,
-          gridTemplateRows: `repeat(${rows}, auto)`,
-          scrollSnapType: 'x mandatory',
-          overflowX: 'auto',
-        },
-
-        [containerQuery.smallerThan('sm')]: {
-          gridAutoFlow: 'column',
-          gridTemplateColumns: `repeat(${count}, 280px)`,
-          gridTemplateRows: 'auto',
-          scrollSnapType: 'x mandatory',
-          overflowX: 'auto',
-          marginRight: -theme.spacing.md,
-          marginLeft: -theme.spacing.md,
-          paddingLeft: theme.spacing.md,
-
-          '& > *': {
-            scrollSnapAlign: 'center',
-          },
-        },
-      },
-
-      meta: {
-        display: 'none',
-        [containerQuery.smallerThan('md')]: {
-          display: 'block',
-        },
-      },
-
-      gridMeta: {
-        gridColumn: '1 / span 2',
-        display: 'flex',
-        flexDirection: 'column',
-
-        '& > *': {
-          flex: 1,
-        },
-
-        [containerQuery.smallerThan('md')]: {
-          display: 'none',
-        },
-      },
-    };
-  }
-);
 
 const icons = {
   model: IconCategory,
@@ -127,7 +65,7 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
     { trpc: { context: { skipBatch: true } } }
   );
   const rows = metadata.collection?.rows ?? 2;
-  const { classes, cx } = useStyles({
+  const { classes, cx } = useHomeBlockGridStyles({
     count: homeBlock?.collection?.items.length ?? 0,
     rows,
   });

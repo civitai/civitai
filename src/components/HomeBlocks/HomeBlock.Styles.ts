@@ -28,3 +28,83 @@ export const useHomeBlockStyles = createStyles((theme, _, getRef) => {
     },
   };
 });
+
+export const useHomeBlockGridStyles = createStyles<string, { count: number; rows: number }>(
+  (theme, { count, rows }, getRef) => {
+    return {
+      grid: {
+        display: 'grid',
+        gridTemplateColumns: `repeat(auto-fill, minmax(320px, 1fr))`,
+        columnGap: theme.spacing.md,
+        gridTemplateRows: `repeat(${rows}, auto)`,
+        gridAutoRows: 0,
+        overflow: 'hidden',
+        marginTop: -theme.spacing.md,
+        paddingBottom: theme.spacing.md,
+
+        '& > *': {
+          marginTop: theme.spacing.md,
+        },
+
+        [containerQuery.smallerThan('md')]: {
+          gridAutoFlow: 'column',
+          gridTemplateColumns: `repeat(${count / 2}, minmax(280px, 1fr) )`,
+          gridTemplateRows: `repeat(${rows}, auto)`,
+          scrollSnapType: 'x mandatory',
+          overflowX: 'auto',
+        },
+
+        [containerQuery.smallerThan('sm')]: {
+          gridAutoFlow: 'column',
+          gridTemplateColumns: `repeat(${count}, 280px)`,
+          gridTemplateRows: 'auto',
+          scrollSnapType: 'x mandatory',
+          overflowX: 'auto',
+          marginRight: -theme.spacing.md,
+          marginLeft: -theme.spacing.md,
+          paddingLeft: theme.spacing.md,
+
+          '& > *': {
+            scrollSnapAlign: 'center',
+          },
+        },
+      },
+
+      gridCarousel: {
+        gridAutoFlow: 'column',
+        gridTemplateColumns: `repeat(${count}, 280px)`,
+        gridTemplateRows: 'auto',
+        scrollSnapType: 'x mandatory',
+        overflowX: 'auto',
+        marginRight: -theme.spacing.md,
+        marginLeft: -theme.spacing.md,
+        paddingLeft: theme.spacing.md,
+
+        '& > *': {
+          scrollSnapAlign: 'center',
+        },
+      },
+
+      meta: {
+        display: 'none',
+        [containerQuery.smallerThan('md')]: {
+          display: 'block',
+        },
+      },
+
+      gridMeta: {
+        gridColumn: '1 / span 2',
+        display: 'flex',
+        flexDirection: 'column',
+
+        '& > *': {
+          flex: 1,
+        },
+
+        [containerQuery.smallerThan('md')]: {
+          display: 'none',
+        },
+      },
+    };
+  }
+);

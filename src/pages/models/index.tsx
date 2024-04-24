@@ -5,6 +5,7 @@ import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { Meta } from '~/components/Meta/Meta';
+import { EarlyAccessHighlight } from '~/components/Model/EarlyAccessHighlight/EarlyAccessHighlight';
 import { ModelsInfinite } from '~/components/Model/Infinite/ModelsInfinite';
 import { useModelQueryParams } from '~/components/Model/model.utils';
 import { env } from '~/env/client.mjs';
@@ -36,6 +37,7 @@ export default function ModelsPage() {
           })}
         />
         <IsClient>
+          <EarlyAccessHighlight />
           <CategoryTags />
           <ModelsInfinite filters={queryFilters} showEof showAds />
         </IsClient>
