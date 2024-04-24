@@ -84,6 +84,7 @@ import {
   ContentDecorationCosmetic,
   WithClaimKey,
 } from '~/server/selectors/cosmetic.selector';
+import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
@@ -585,20 +586,6 @@ export const getModelsRaw = async ({
           : Prisma.sql`1 = 1`
       }
   )`);
-  if (includeCosmetics) {
-    WITH.push(Prisma.sql`
-      "modelCosmetic" AS (
-        SELECT
-          c.id,
-          c.data,
-          uc."claimKey",
-          uc."equippedToId"
-        FROM "UserCosmetic" uc
-        JOIN "Cosmetic" c ON uc."cosmeticId" = c.id
-        WHERE uc."equippedToType" = 'Model' AND c.type = 'ContentDecoration'
-      )
-    `);
-  }
 
   const queryWith = WITH.length > 0 ? Prisma.sql`WITH ${Prisma.join(WITH, ', ')}` : Prisma.sql``;
 
@@ -669,19 +656,6 @@ export const getModelsRaw = async ({
             FROM (SELECT row_to_json(lmv) AS data) as t
             ) as "modelVersions",`
       }
-      ${
-        includeCosmetics
-          ? Prisma.raw(`
-              (
-                SELECT jsonb_build_object(
-                  'id', mc.id,
-                  'claimKey', mc."claimKey",
-                  'data', mc.data
-                ) FROM "modelCosmetic" mc WHERE mc."equippedToId" = m.id
-              ) as "cosmetic",
-            `)
-          : Prisma.empty
-      }
       jsonb_build_object(
         'id', u."id",
         'username', u."username",
@@ -712,6 +686,9 @@ export const getModelsRaw = async ({
   const userIds = models.map((m) => m.user.id);
   const profilePictures = await getProfilePicturesForUsers(userIds);
   const userCosmetics = await getCosmeticsForUsers(userIds);
+  const cosmetics = includeCosmetics
+    ? await getCosmeticsForEntity({ ids: models.map((m) => m.id), entity: 'Model' })
+    : {};
 
   let nextCursor: string | bigint | undefined;
   if (take && models.length > take) {
@@ -738,6 +715,7 @@ export const getModelsRaw = async ({
         profilePicture: profilePictures?.[model.user.id] ?? null,
         cosmetics: userCosmetics[model.user.id] ?? [],
       },
+      cosmetic: cosmetics[model.id] ?? null,
     })),
     nextCursor,
     isPrivate,

@@ -241,3 +241,7 @@ export function stringifyAIR({
 
   return `urn:air:${ecosystem}:${urnType}:${source}:${modelId}${id ? `@${id}` : ''}`;
 }
+
+export function toBase64(str: string) {
+  return Buffer.from(str).toString('base64');
+}
