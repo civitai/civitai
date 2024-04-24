@@ -385,16 +385,19 @@ function AddedImage({ image }: { image: PostEditImageDetail }) {
                   <IconInfoCircle />
                 </ActionIcon>
               </div>
-              {resources.slice(0, !showMoreResources ? 3 : resources.length).map((resource, i) => (
-                <div key={i} className="flex justify-between items-center gap-3">
-                  <Text>
-                    {resource.modelName} - {resource.modelType}
-                  </Text>
-                  <Badge color="gray" size="md" variant="filled">
-                    {resource.modelVersionName}
-                  </Badge>
-                </div>
-              ))}
+              {resources
+                .filter((x) => !!x.modelName)
+                .slice(0, !showMoreResources ? 3 : resources.length)
+                .map((resource, i) => (
+                  <div key={i} className="flex justify-between items-center gap-3">
+                    <Text>
+                      {resource.modelName} - {resource.modelType}
+                    </Text>
+                    <Badge color="gray" size="md" variant="filled">
+                      {resource.modelVersionName}
+                    </Badge>
+                  </div>
+                ))}
               {resources.length > 3 && (
                 <div>
                   <Button
