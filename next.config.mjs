@@ -159,12 +159,17 @@ export default defineNextConfig(withAxiom({
       },
       {
         source: '/canny/bugs',
-        destination: 'https://feedback.civitai.com/?b=bug',
+        destination: 'https://civitai-team.myfreshworks.com/login/auth/civitai?client_id=451979510707337272&redirect_uri=https%3A%2F%2Fcivitai.freshdesk.com%2Ffreshid%2Fcustomer_authorize_callback%3Fhd%3Dsupport.civitai.com',
         permanent: true,
       },
       {
         source: '/bugs',
-        destination: 'https://feedback.civitai.com/?b=bug',
+        destination: 'https://civitai-team.myfreshworks.com/login/auth/civitai?client_id=451979510707337272&redirect_uri=https%3A%2F%2Fcivitai.freshdesk.com%2Ffreshid%2Fcustomer_authorize_callback%3Fhd%3Dsupport.civitai.com',
+        permanent: true,
+      },
+      {
+        source: '/support-portal',
+        destination: 'https://civitai-team.myfreshworks.com/login/auth/civitai?client_id=451979510707337272&redirect_uri=https%3A%2F%2Fcivitai.freshdesk.com%2Ffreshid%2Fcustomer_authorize_callback%3Fhd%3Dsupport.civitai.com',
         permanent: true,
       },
       {
