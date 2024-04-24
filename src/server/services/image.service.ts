@@ -77,6 +77,7 @@ import { trackModActivity } from '~/server/services/moderator.service';
 import { nsfwBrowsingLevelsArray } from '~/shared/constants/browsingLevel.constants';
 import { getVotableTags2 } from '~/server/services/tag.service';
 import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
+import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -515,7 +516,6 @@ type GetAllImagesRaw = {
   metadata: Prisma.JsonValue;
   baseModel?: string;
   availability: Availability;
-  cosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
 };
 export type ImagesInfiniteModel = AsyncReturnType<typeof getAllImages>['items'][0];
 export const getAllImages = async ({
@@ -561,7 +561,7 @@ export const getAllImages = async ({
   let cacheTime = CacheTTL.xs;
   const userId = user?.id;
   const isModerator = user?.isModerator ?? false;
-  const includeCosmetics = include.includes('cosmetics');
+  const includeCosmetics = include?.includes('cosmetics'); // TODO: This must be done similar to user cosmetics.
 
   // Filter to specific user content
   let targetUserId: number | undefined;
@@ -834,21 +834,6 @@ export const getAllImages = async ({
     );
   }
 
-  if (includeCosmetics) {
-    WITH.push(Prisma.sql`
-      "imageCosmetic" AS (
-        SELECT
-          c.id,
-          c.data,
-          uc."claimKey",
-          uc."equippedToId"
-        FROM "UserCosmetic" uc
-        JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
-        WHERE uc."equippedToType" = 'Image' AND c.type = 'ContentDecoration'
-      )
-    `);
-  }
-
   // TODO: Adjust ImageMetric
   const queryFrom = Prisma.sql`
     ${Prisma.raw(from)}
@@ -917,19 +902,6 @@ export const getAllImages = async ({
       ) "baseModel",`
           : ''
       )}
-      ${
-        includeCosmetics
-          ? Prisma.raw(`
-              (
-                SELECT jsonb_build_object(
-                  'id', ic.id,
-                  'claimKey', ic."claimKey",
-                  'data', ic.data
-                ) FROM "imageCosmetic" ic WHERE ic."equippedToId" = i.id
-              ) as "cosmetic",
-            `)
-          : Prisma.empty
-      }
       im."cryCount",
       im."laughCount",
       im."likeCount",
@@ -1020,9 +992,10 @@ export const getAllImages = async ({
   }
 
   const userIds = rawImages.map((i) => i.userId);
-  const [userCosmetics, profilePictures] = await Promise.all([
-    include?.includes('cosmetics') ? await getCosmeticsForUsers(userIds) : undefined,
+  const [userCosmetics, profilePictures, cosmetics] = await Promise.all([
+    includeCosmetics ? await getCosmeticsForUsers(userIds) : undefined,
     include?.includes('profilePictures') ? await getProfilePicturesForUsers(userIds) : undefined,
+    includeCosmetics ? await getCosmeticsForEntity({ ids: imageIds, entity: 'Image' }) : undefined,
   ]);
 
   const now = new Date();
@@ -1091,6 +1064,7 @@ export const getAllImages = async ({
           userReactions?.[i.id]?.map((r) => ({ userId: userId as number, reaction: r })) ?? [],
         tags: tagsVar?.filter((x) => x.imageId === i.id),
         tagIds: tagIdsVar?.[i.id]?.tags,
+        cosmetic: cosmetics?.[i.id] ?? null,
       })
     );
 

@@ -68,6 +68,7 @@ export function CreatorCard({
   tipBuzzEntityType,
   tipBuzzEntityId,
   withActions = true,
+  subText,
   ...cardProps
 }: Props) {
   const { data } = trpc.user.getCreator.useQuery(
@@ -102,7 +103,9 @@ export function CreatorCard({
               size="sm"
               avatarProps={{ size: 32 }}
               user={creator}
-              subText={creator.createdAt ? `Joined ${formatDate(creator.createdAt)}` : undefined}
+              subText={
+                subText ?? creator.createdAt ? `Joined ${formatDate(creator.createdAt)}` : undefined
+              }
               withUsername
               linkToProfile
             />
@@ -171,6 +174,7 @@ export const CreatorCardV2 = ({
   cosmeticOverwrites,
   useEquippedCosmetics = true,
   startDisplayOverwrite,
+  subText,
   ...cardProps
 }: PropsV2) => {
   const { classes, theme } = useStyles();
@@ -327,15 +331,21 @@ export const CreatorCardV2 = ({
                         size="md"
                         badgeSize={0}
                       />
-                      {creator.createdAt && (
-                        <Text
-                          size="xs"
-                          lh={1}
-                          lineClamp={1}
-                          style={{ color: theme.fn.rgba(theme.white, 0.75) }}
-                        >
-                          Joined {formatDate(creator.createdAt)}
-                        </Text>
+                      {!!subText ? (
+                        <>{subText}</>
+                      ) : (
+                        <>
+                          {creator.createdAt && (
+                            <Text
+                              size="xs"
+                              lh={1}
+                              lineClamp={1}
+                              style={{ color: theme.fn.rgba(theme.white, 0.75) }}
+                            >
+                              Joined {formatDate(creator.createdAt)}
+                            </Text>
+                          )}
+                        </>
                       )}
                     </Stack>
                   </Group>
@@ -412,9 +422,10 @@ type Props = {
   tipBuzzEntityId?: number;
   tipBuzzEntityType?: string;
   withActions?: boolean;
+  subText?: React.ReactNode;
 } & Omit<CardProps, 'children'>;
 
-type PropsV2 = {
+type PropsV2 = Props & {
   user: UserWithCosmetics;
   tipBuzzEntityId?: number;
   tipBuzzEntityType?: string;

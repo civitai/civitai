@@ -47,6 +47,7 @@ import {
   ContentDecorationCosmetic,
   WithClaimKey,
 } from '~/server/selectors/cosmetic.selector';
+import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 
 type GetAllPostsRaw = {
   id: number;
@@ -260,21 +261,6 @@ export const getPostsInfinite = async ({
     joins.push(`JOIN "clubPosts" cp ON cp."postId" = p."id"`);
   }
 
-  if (includeCosmetics) {
-    WITH.push(Prisma.sql`
-      "postCosmetic" AS (
-        SELECT
-          c.id,
-          c.data,
-          uc."claimKey",
-          uc."equippedToId"
-        FROM "UserCosmetic" uc
-        JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
-        WHERE uc."equippedToType" = 'Post' AND c.type = 'ContentDecoration'
-      )
-    `);
-  }
-
   const queryWith = WITH.length > 0 ? Prisma.sql`WITH ${Prisma.join(WITH, ', ')}` : Prisma.sql``;
 
   const postsRawQuery = Prisma.sql`
@@ -306,19 +292,6 @@ export const getPostsInfinite = async ({
         FROM "PostMetric" pm
         WHERE pm."postId" = p.id AND pm."timeframe" = ${period}::"MetricTimeframe"
       ) "stats",
-      ${
-        includeCosmetics
-          ? Prisma.raw(`
-              (
-                SELECT jsonb_build_object(
-                  'id', pc.id,
-                  'claimKey', pc."claimKey",
-                  'data', pc.data
-                ) FROM "postCosmetic" pc WHERE pc."equippedToId" = p.id
-              ) as "cosmetic",
-            `)
-          : Prisma.empty
-      }
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} "cursorId"
     FROM "Post" p
     JOIN "User" u ON u.id = p."userId"
@@ -361,9 +334,10 @@ export const getPostsInfinite = async ({
 
   // Get user cosmetics
   const userIds = postsRaw.map((i) => i.userId);
-  const userCosmetics = include?.includes('cosmetics')
-    ? await getCosmeticsForUsers(userIds)
-    : undefined;
+  const userCosmetics = includeCosmetics ? await getCosmeticsForUsers(userIds) : undefined;
+  const cosmetics = includeCosmetics
+    ? await getCosmeticsForEntity({ ids: postsRaw.map((p) => p.id), entity: 'Post' })
+    : {};
 
   const profilePictures = await getProfilePicturesForUsers(userIds);
 
@@ -446,6 +420,7 @@ export const getPostsInfinite = async ({
           },
           stats,
           images: _images,
+          cosmetic: cosmetics[post.id] ?? null,
         };
       })
       .filter((x) => x.imageCount !== 0),
