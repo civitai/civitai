@@ -1,4 +1,4 @@
-import { Card, CardProps, createPolymorphicComponent, useMantineTheme } from '@mantine/core';
+import { Card, CardProps, createPolymorphicComponent } from '@mantine/core';
 import { forwardRef } from 'react';
 import { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 import { DecorationFrame } from '~/components/Decorations/DecorationFrame';
@@ -11,22 +11,16 @@ type MasonryCardProps = CardProps & {
 // TODO - when children not in view, replace child react nodes with static html
 const _MasonryCard = forwardRef<HTMLDivElement, MasonryCardProps>(
   ({ height, children, style, uniform, frameDecoration, ...props }, ref) => {
-    const theme = useMantineTheme();
-
     return (
-      <div style={{ position: 'relative' }}>
+      <div ref={ref} style={{ position: frameDecoration ? 'relative' : undefined }}>
         <Card
-          ref={ref}
-          style={{
-            height,
-            ...style,
-          }}
-          sx={{
+          style={{ height, ...style }}
+          sx={(theme) => ({
             padding: '0 !important',
             color: 'white',
             borderRadius: theme.radius.md,
             cursor: 'pointer',
-          }}
+          })}
           {...props}
         >
           {children}
