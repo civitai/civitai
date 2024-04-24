@@ -159,9 +159,7 @@ export function SearchLayout({
         routing={routing}
       >
         <Configure hitsPerPage={50} attributesToHighlight={[]} />
-        <AppLayout renderSearchComponent={renderSearchComponent} withScrollArea={false}>
-          {children}
-        </AppLayout>
+        <AppLayout renderSearchComponent={renderSearchComponent}>{children}</AppLayout>
       </InstantSearch>
     </SearchLayoutCtx.Provider>
   );
