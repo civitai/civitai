@@ -42,10 +42,11 @@ export const deliverPurchasedCosmetics = createJob(
     const deliverSupporterUpgradeCosmetic = async () =>
       dbWrite.$executeRaw`
         -- Deliver supporter upgrade cosmetic
-        INSERT INTO "UserCosmetic"("userId", "cosmeticId")
+        INSERT INTO "UserCosmetic"("userId", "cosmeticId", "claimKey")
         SELECT
           u.id "userId",
-          c.id as "cosmeticId"
+          c.id as "cosmeticId",
+          'claimed'
         FROM "Purchase" p
         JOIN "Product" pd ON pd.id = p."productId"
         JOIN "User" u ON u."customerId" = p."customerId"
