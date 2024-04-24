@@ -123,69 +123,69 @@ function MyApp(props: CustomAppProps) {
         <MetaPWA />
       </Head>
       <ThemeProvider colorScheme={colorScheme}>
-        <ErrorBoundary>
-          <PlausibleProvider
-            domain="civitai.com"
-            customDomain="https://analytics.civitai.com"
-            selfHosted
-          >
-            <IsClientProvider>
-              <ClientHistoryStore />
-              <RegisterCatchNavigation />
-              <RouterTransition />
-              <UpdateRequiredWatcher />
-              <ChadGPT isAuthed={!!session} />
-              <SessionProvider
-                session={session}
-                refetchOnWindowFocus={false}
-                refetchWhenOffline={false}
-              >
-                <FeatureFlagsProvider flags={flags}>
-                  <CookiesProvider value={cookies}>
-                    <BrowsingModeProvider>
-                      <CivitaiSessionProvider>
-                        <SignalProvider>
-                          <ActivityReportingProvider>
-                            <CivitaiPosthogProvider>
-                              <ReferralsProvider>
-                                <FiltersProvider>
-                                  <AdsProvider>
-                                    <PaypalProvider>
-                                      <HiddenPreferencesProvider>
-                                        <CivitaiLinkProvider>
-                                          <NotificationsProvider zIndex={9999}>
-                                            <BrowserRouterProvider>
-                                              <RecaptchaWidgetProvider>
-                                                <ChatContextProvider>
-                                                  <BaseLayout>
-                                                    <CustomModalsProvider>
-                                                      {getLayout(<Component {...pageProps} />)}
-                                                      <StripeSetupSuccessProvider />
-                                                      <DialogProvider />
-                                                      <RoutedDialogProvider />
-                                                    </CustomModalsProvider>
-                                                  </BaseLayout>
-                                                </ChatContextProvider>
-                                              </RecaptchaWidgetProvider>
-                                            </BrowserRouterProvider>
-                                          </NotificationsProvider>
-                                        </CivitaiLinkProvider>
-                                      </HiddenPreferencesProvider>
-                                    </PaypalProvider>
-                                  </AdsProvider>
-                                </FiltersProvider>
-                              </ReferralsProvider>
-                            </CivitaiPosthogProvider>
-                          </ActivityReportingProvider>
-                        </SignalProvider>
-                      </CivitaiSessionProvider>
-                    </BrowsingModeProvider>
-                  </CookiesProvider>
-                </FeatureFlagsProvider>
-              </SessionProvider>
-            </IsClientProvider>
-          </PlausibleProvider>
-        </ErrorBoundary>
+        {/* <ErrorBoundary> */}
+        <PlausibleProvider
+          domain="civitai.com"
+          customDomain="https://analytics.civitai.com"
+          selfHosted
+        >
+          <IsClientProvider>
+            <ClientHistoryStore />
+            <RegisterCatchNavigation />
+            <RouterTransition />
+            <UpdateRequiredWatcher />
+            <ChadGPT isAuthed={!!session} />
+            <SessionProvider
+              session={session}
+              refetchOnWindowFocus={false}
+              refetchWhenOffline={false}
+            >
+              <FeatureFlagsProvider flags={flags}>
+                <CookiesProvider value={cookies}>
+                  <BrowsingModeProvider>
+                    <CivitaiSessionProvider>
+                      <SignalProvider>
+                        <ActivityReportingProvider>
+                          <CivitaiPosthogProvider>
+                            <ReferralsProvider>
+                              <FiltersProvider>
+                                <AdsProvider>
+                                  <PaypalProvider>
+                                    <HiddenPreferencesProvider>
+                                      <CivitaiLinkProvider>
+                                        <NotificationsProvider zIndex={9999}>
+                                          <BrowserRouterProvider>
+                                            <RecaptchaWidgetProvider>
+                                              <ChatContextProvider>
+                                                <BaseLayout>
+                                                  <CustomModalsProvider>
+                                                    {getLayout(<Component {...pageProps} />)}
+                                                    <StripeSetupSuccessProvider />
+                                                    <DialogProvider />
+                                                    <RoutedDialogProvider />
+                                                  </CustomModalsProvider>
+                                                </BaseLayout>
+                                              </ChatContextProvider>
+                                            </RecaptchaWidgetProvider>
+                                          </BrowserRouterProvider>
+                                        </NotificationsProvider>
+                                      </CivitaiLinkProvider>
+                                    </HiddenPreferencesProvider>
+                                  </PaypalProvider>
+                                </AdsProvider>
+                              </FiltersProvider>
+                            </ReferralsProvider>
+                          </CivitaiPosthogProvider>
+                        </ActivityReportingProvider>
+                      </SignalProvider>
+                    </CivitaiSessionProvider>
+                  </BrowsingModeProvider>
+                </CookiesProvider>
+              </FeatureFlagsProvider>
+            </SessionProvider>
+          </IsClientProvider>
+        </PlausibleProvider>
+        {/* </ErrorBoundary> */}
       </ThemeProvider>
 
       {isDev && <ReactQueryDevtools />}

@@ -626,31 +626,29 @@ export const modelVersionGeneratedImagesOnTimeframe = async ({
   const date = maxDate(
     dayjs().startOf('day').subtract(timeframe, 'day').toDate(),
     dayjs().startOf('month').subtract(1, 'day').toDate()
-  )?.toISOString();
+  ).toISOString();
 
-  const generationData = date
-    ? await clickhouse
-        .query({
-          query: `
-          SELECT
-              resourceId as modelVersionId,
-              createdAt,
-              SUM(1) as generations
-          FROM (
-              SELECT
-                  arrayJoin(resourcesUsed) as resourceId,
-                  createdAt::date as createdAt
-              FROM orchestration.textToImageJobs
-              WHERE createdAt >= parseDateTimeBestEffortOrNull('${date}')
-          )
-          WHERE resourceId IN (${modelVersions.map((x) => x.id).join(',')})
-          GROUP BY resourceId, createdAt
-          ORDER BY createdAt DESC, generations DESC;
-    `,
-          format: 'JSONEachRow',
-        })
-        .then((x) => x.json<{ modelVersionId: number; createdAt: Date; generations: number }[]>())
-    : [];
+  const generationData = await clickhouse
+    .query({
+      query: `
+    SELECT
+        resourceId as modelVersionId,
+        createdAt,
+        SUM(1) as generations
+    FROM (
+        SELECT
+            arrayJoin(resourcesUsed) as resourceId,
+            createdAt::date as createdAt
+        FROM orchestration.textToImageJobs
+        WHERE createdAt >= parseDateTimeBestEffortOrNull('${date}')
+    )
+    WHERE resourceId IN (${modelVersions.map((x) => x.id).join(',')})
+    GROUP BY resourceId, createdAt
+    ORDER BY createdAt DESC, generations DESC;
+`,
+      format: 'JSONEachRow',
+    })
+    .then((x) => x.json<{ modelVersionId: number; createdAt: Date; generations: number }[]>());
 
   const versions = modelVersions
     .map((version) => {

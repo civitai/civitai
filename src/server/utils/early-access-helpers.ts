@@ -10,9 +10,11 @@ export function getEarlyAccessDeadline({
   earlyAccessTimeframe: number;
 }) {
   if (earlyAccessTimeframe === 0) return undefined;
-  const max =
-    (publishedAt ? maxDate(versionCreatedAt, publishedAt) : versionCreatedAt) ?? versionCreatedAt;
-  const deadline = increaseDate(max, earlyAccessTimeframe, 'days');
+  const deadline = increaseDate(
+    publishedAt ? maxDate(versionCreatedAt, publishedAt) : versionCreatedAt,
+    earlyAccessTimeframe,
+    'days'
+  );
 
   return deadline;
 }
