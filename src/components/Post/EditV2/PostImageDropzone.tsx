@@ -16,9 +16,11 @@ import { usePostEditParams, usePostEditStore } from '~/components/Post/EditV2/Po
 const max = POST_IMAGE_LIMIT;
 
 export function PostImageDropzone({
+  showProgress = true,
   onCreatePost,
 }: {
-  onCreatePost?: (post: PostDetailEditable) => void;
+  showProgress?: boolean;
+  onCreatePost?: (post: PostDetailEditable) => void | Promise<void>;
 }) {
   // #region [state]
   const queryUtils = trpc.useUtils();
@@ -36,10 +38,13 @@ export function PostImageDropzone({
   const createPostMutation = trpc.post.create.useMutation();
   const addImageMutation = trpc.post.addImage.useMutation({
     onSuccess: (data) =>
-      setImages((images) => [
-        ...images,
-        { type: 'added', data: { ...data, index: images.length } },
-      ]),
+      setImages((images) => {
+        const resolvingIndex = images.findIndex((x) => x.type === 'resolving');
+        const index = data.index ?? images.length + 1;
+        const spliceIndex = resolvingIndex > -1 ? resolvingIndex : index;
+        images[spliceIndex] = { type: 'added', data: { ...data, index } };
+        return images;
+      }),
   });
   // #endregion
 
@@ -51,22 +56,25 @@ export function PostImageDropzone({
     onComplete: (props, context) => {
       const { postId = context?.postId, modelVersionId } = params;
       if (!postId) throw new Error('missing post id');
-      const index = Math.max(0, ...images.map((x) => x.data.index)) + 1;
-      switch (props.status) {
-        case 'added':
-          const payload = addPostImageSchema.parse({
-            ...props,
-            postId,
-            modelVersionId,
-            index,
-            width: props.metadata.width,
-            height: props.metadata.height,
-            hash: props.metadata.hash,
-          });
-          return addImageMutation.mutate(payload);
-        case 'blocked':
-          return setImages((images) => [...images, { type: 'blocked', data: { ...props, index } }]);
-      }
+      setImages((images) => {
+        const index = Math.max(0, ...images.map((x) => x.data.index)) + 1;
+        switch (props.status) {
+          case 'added':
+            const payload = addPostImageSchema.parse({
+              ...props,
+              postId,
+              modelVersionId,
+              index,
+              width: props.metadata.width,
+              height: props.metadata.height,
+              hash: props.metadata.hash,
+            });
+            addImageMutation.mutate(payload);
+            return [...images, { type: 'resolving', data: { ...props, index: 999 } }];
+          case 'blocked':
+            return [...images, { type: 'blocked', data: { ...props, index } }];
+        }
+      });
     },
   });
   // #endregion
@@ -81,7 +89,7 @@ export function PostImageDropzone({
         {
           onSuccess: async (data) => {
             queryUtils.post.getEdit.setData({ id: data.id }, () => data);
-            onCreatePost?.(data);
+            await onCreatePost?.(data);
             upload(files, { postId: data.id });
           },
           onError(error) {
@@ -119,7 +127,7 @@ export function PostImageDropzone({
           loading={createPostMutation.isLoading}
         />
       </div>
-      {!!files.length && <Progress value={progress} animate size="lg" />}
+      {!!files.length && showProgress && <Progress value={progress} animate size="lg" />}
       {!files.length && (
         <Text size="xs" align="center">
           By uploading images to our site you agree to our{' '}

@@ -1,8 +1,20 @@
-import { ActionIcon, Alert, Badge, Button, Divider, Loader, Menu, Text } from '@mantine/core';
+import {
+  ActionIcon,
+  Alert,
+  Badge,
+  Button,
+  Divider,
+  Loader,
+  LoadingOverlay,
+  Menu,
+  Skeleton,
+  Text,
+} from '@mantine/core';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import React, { useState } from 'react';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import {
+  IconArrowBackUp,
   IconChevronDown,
   IconChevronUp,
   IconDotsVertical,
@@ -29,6 +41,8 @@ import { PostImageTool } from '~/components/Post/EditV2/PostImageTool';
 import { sortAlphabeticallyBy } from '~/utils/array-helpers';
 import { useImageStore } from '~/store/image.store';
 import { ImageIngestionStatus } from '@prisma/client';
+import { UnblockImage } from '~/components/Image/UnblockImage/UnblockImage';
+import { useCurrentUserRequired } from '~/hooks/useCurrentUser';
 
 // #region [types]
 type SimpleMetaPropsKey = keyof typeof simpleMetaProps;
@@ -41,29 +55,30 @@ const simpleMetaProps = {
 // #endregion
 
 export function PostImageCards() {
-  const images = usePostEditStore((state) =>
-    [...state.images].sort((a, b) => (a.data.index ?? 0) - (b.data.index ?? 0))
-  );
+  const images = usePostEditStore((state) => state.images);
   if (!images.length) return null;
   return (
-    <div className="flex flex-col gap-3 ">
-      {images.map((image) => (
-        <PostImageCard key={image.data.url} image={image} />
-      ))}
+    <div className="flex flex-col gap-3" style={{ paddingBottom: 1000 }}>
+      {[...images]
+        .sort((a, b) => (a.data.index ?? 0) - (b.data.index ?? 0))
+        .map((image) => (
+          <PostImageCard key={image.data.url} image={image} />
+        ))}
     </div>
   );
 }
 
 function PostImageCard({ image }: { image: ControlledImage }) {
-  return (
-    <div className="bg-gray-0 dark:bg-dark-8 border border-gray-1 dark:border-dark-6 rounded-lg p-3 flex flex-col gap-3 @container">
-      {image.type === 'added' ? (
-        <AddedImage image={image.data} />
-      ) : (
-        <BlockedImage image={image.data} />
-      )}
-    </div>
-  );
+  switch (image.type) {
+    case 'added':
+      return <AddedImage image={image.data} />;
+    case 'blocked':
+      return <BlockedImage image={image.data} />;
+    case 'resolving':
+      return <ResolvingItem image={image.data} />;
+    default:
+      return <></>;
+  }
 }
 
 // #region [Custom Card]
@@ -86,6 +101,7 @@ function CustomCard({
 
 function AddedImage({ image }: { image: PostEditImageDetail }) {
   // #region [state]
+  const currentUser = useCurrentUserRequired();
   const [showMoreResources, setShowMoreResources] = useState(false);
   const [updateImage, setImages] = usePostEditStore((state) => [
     state.updateImage,
@@ -94,7 +110,6 @@ function AddedImage({ image }: { image: PostEditImageDetail }) {
   const {
     id,
     url,
-    name,
     meta,
     metadata,
     blockedFor,
@@ -108,7 +123,6 @@ function AddedImage({ image }: { image: PostEditImageDetail }) {
   const isPending = ingestion === ImageIngestionStatus.Pending;
   const isBlocked = ingestion === ImageIngestionStatus.Blocked;
   const isScanned = ingestion === ImageIngestionStatus.Scanned;
-  console.log({ isScanned });
   // #endregion
 
   // #region [delete image]
@@ -119,16 +133,18 @@ function AddedImage({ image }: { image: PostEditImageDetail }) {
   });
 
   const handleDelete = () => {
-    dialogStore.trigger({
-      component: ConfirmDialog,
-      props: {
-        title: 'Delete image',
-        message: 'Are you sure you want to delete this image?',
-        labels: { cancel: `Cancel`, confirm: `Yes, I am sure` },
-        confirmProps: { color: 'red', loading: deleteImageMutation.isLoading },
-        onConfirm: async () => await deleteImageMutation.mutateAsync({ id: image.id }),
-      },
-    });
+    if (!isBlocked)
+      dialogStore.trigger({
+        component: ConfirmDialog,
+        props: {
+          title: 'Delete image',
+          message: 'Are you sure you want to delete this image?',
+          labels: { cancel: `Cancel`, confirm: `Yes, I am sure` },
+          confirmProps: { color: 'red', loading: deleteImageMutation.isLoading },
+          onConfirm: async () => await deleteImageMutation.mutateAsync({ id: image.id }),
+        },
+      });
+    else deleteImageMutation.mutate({ id: image.id });
     //  else {
     //   setImages((state) => state.filter((x) => x.data.url !== url));
     // }
@@ -162,7 +178,8 @@ function AddedImage({ image }: { image: PostEditImageDetail }) {
   // #endregion
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="bg-gray-0 dark:bg-dark-8 border border-gray-1 dark:border-dark-6 rounded-lg p-3 flex flex-col gap-3 relative @container">
+      <LoadingOverlay visible={deleteImageMutation.isLoading} />
       <div className="flex flex-row-reverse flex-wrap @sm:flex-nowrap gap-3">
         {/*
         // #region [image]
@@ -170,14 +187,21 @@ function AddedImage({ image }: { image: PostEditImageDetail }) {
         <div className="flex flex-col gap-3 w-full @sm:w-4/12">
           <div className="relative">
             <div
+              className="mx-auto"
               style={{
                 // TODO - db/code cleanup - ideally we only use metadata to get dimensions in future
                 aspectRatio: `${metadata?.width ?? 1}/${metadata?.height ?? 1}`,
+                maxWidth: metadata?.width,
               }}
             >
-              <EdgeMedia src={url} width={450} type={type} className="rounded-lg mx-auto" />
+              <EdgeMedia
+                src={url}
+                width={metadata?.width ?? 450}
+                type={type}
+                className="rounded-lg"
+              />
             </div>
-            <Menu withArrow>
+            <Menu withArrow position="bottom-end">
               <Menu.Target>
                 <ActionIcon className="absolute top-2 right-2">
                   <IconDotsVertical
@@ -187,9 +211,11 @@ function AddedImage({ image }: { image: PostEditImageDetail }) {
                 </ActionIcon>
               </Menu.Target>
               <Menu.Dropdown>
-                <Menu.Item icon={<IconPencil size={16} />} onClick={handleEditMetaClick}>
-                  Edit image
-                </Menu.Item>
+                {!isBlocked && (
+                  <Menu.Item icon={<IconPencil size={16} />} onClick={handleEditMetaClick}>
+                    Edit image
+                  </Menu.Item>
+                )}
                 <Menu.Item
                   color="red"
                   icon={<IconTrash size={16} />}
@@ -213,20 +239,22 @@ function AddedImage({ image }: { image: PostEditImageDetail }) {
                     </div>
                   ))}
               </div>
-              <div>
-                <Button
-                  variant="light"
-                  color="blue"
-                  compact
-                  classNames={{ label: 'flex gap-1' }}
-                  size="md"
-                  onClick={handleEditMetaClick}
-                  className="text-sm"
-                >
-                  <IconPencil size={16} />
-                  <span>EDIT</span>
-                </Button>
-              </div>
+              {!isBlocked && (
+                <div>
+                  <Button
+                    variant="light"
+                    color="blue"
+                    compact
+                    classNames={{ label: 'flex gap-1' }}
+                    size="md"
+                    onClick={handleEditMetaClick}
+                    className="text-sm"
+                  >
+                    <IconPencil size={16} />
+                    <span>EDIT</span>
+                  </Button>
+                </div>
+              )}
             </>
           )}
         </div>
@@ -234,15 +262,66 @@ function AddedImage({ image }: { image: PostEditImageDetail }) {
 
         <div className="flex flex-col gap-3 w-full @sm:w-8/12">
           {/*
-   // #region [prompt]
-   */}
+         // #region [TOS Violation]
+         */}
+          {isBlocked && (
+            <Alert
+              color="red"
+              className="p-3 rounded-lg @container"
+              classNames={{ message: 'flex flex-col items-center justify-center' }}
+            >
+              <Text color="red" className="font-bold">
+                TOS Violation
+              </Text>
+              <Text>This image has been flagged as a TOS violation.</Text>
+              {image.blockedFor && (
+                <Text className="flex flex-wrap items-center gap-1">
+                  <span>Blocked for:</span>
+                  <Text color="red" inline className="font-semibold">
+                    {image.blockedFor}
+                  </Text>
+                </Text>
+              )}
+              <div className="flex justify-center gap-3">
+                {currentUser.isModerator && (
+                  <UnblockImage imageId={id} skipConfirm>
+                    {({ onClick, isLoading }) => (
+                      <Button
+                        onClick={onClick}
+                        loading={isLoading}
+                        color="gray.6"
+                        mt="xs"
+                        leftIcon={<IconArrowBackUp size={20} />}
+                      >
+                        Unblock
+                      </Button>
+                    )}
+                  </UnblockImage>
+                )}
+                <Button
+                  onClick={handleDelete}
+                  loading={deleteImageMutation.isLoading}
+                  color="red.7"
+                  mt="xs"
+                  leftIcon={<IconTrash size={20} />}
+                >
+                  Delete
+                </Button>
+              </div>
+            </Alert>
+          )}
+          {/* #endregion */}
 
-          <CustomCard className="flex flex-col">
-            <div className="flex flex-col gap-3">
-              <div className="flex justify-between items-center">
-                <h3 className="text-xl font-semibold leading-none text-dark-7 dark:text-gray-0">
-                  Prompt
-                </h3>
+          {/*
+          // #region [prompt]
+          */}
+
+          <CustomCard className="flex flex-col gap-3">
+            <div className="flex justify-between items-center">
+              <h3 className="text-xl font-semibold leading-none text-dark-7 dark:text-gray-0">
+                Prompt
+              </h3>
+              {!isBlocked && (
                 <div className="flex gap-1">
                   <Button
                     variant="light"
@@ -269,18 +348,18 @@ function AddedImage({ image }: { image: PostEditImageDetail }) {
                     </Button>
                   )}
                 </div>
-              </div>
-              {meta?.prompt && <Text className="leading-5 line-clamp-3 ">{meta.prompt}</Text>}
-              {meta?.negativePrompt && (
-                <>
-                  <Divider />
-                  <h3 className=" text-lg font-semibold leading-none text-dark-7 dark:text-gray-0 ">
-                    Negative Prompt
-                  </h3>
-                  <Text className="leading-5 line-clamp-3">{meta.negativePrompt}</Text>
-                </>
               )}
             </div>
+            {meta?.prompt && <Text className="leading-5 line-clamp-3 ">{meta.prompt}</Text>}
+            {meta?.negativePrompt && (
+              <>
+                <Divider />
+                <h3 className=" text-lg font-semibold leading-none text-dark-7 dark:text-gray-0 ">
+                  Negative Prompt
+                </h3>
+                <Text className="leading-5 line-clamp-3">{meta.negativePrompt}</Text>
+              </>
+            )}
           </CustomCard>
 
           {/* #endregion */}
@@ -429,7 +508,8 @@ function AddedImage({ image }: { image: PostEditImageDetail }) {
           color="yellow"
           w="100%"
           radius={0}
-          className="flex items-center justify-center gap-1 p-2"
+          className="p-2 rounded-lg"
+          classNames={{ message: 'flex items-center justify-center gap-2' }}
         >
           <Loader size="xs" />
           <Text align="center">Analyzing image</Text>
@@ -441,5 +521,55 @@ function AddedImage({ image }: { image: PostEditImageDetail }) {
 }
 
 function BlockedImage({ image }: { image: PostEditMediaDetail }) {
-  return <></>;
+  const meta = image.type === 'image' ? image.meta : undefined;
+  return (
+    <Alert
+      color="red"
+      className="p-3 rounded-lg @container"
+      classNames={{ message: 'flex flex-row-reverse flex-wrap @sm:flex-nowrap gap-3' }}
+    >
+      <div className="w-full @sm:w-4/12">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={image.url} alt={image.name} className="rounded-lg" />
+      </div>
+      <CustomCard className="flex flex-col gap-3 flex-1 overflow-hidden">
+        <Alert color="red" className="-mx-3 -mt-3 rounded-none">
+          <Text className="text-2xl font-semibold leading-none ">TOS Violation</Text>
+        </Alert>
+        <h3 className="text-xl font-semibold leading-none text-dark-7 dark:text-gray-0">Prompt</h3>
+        {meta?.prompt && <Text className="leading-5 line-clamp-3 ">{meta.prompt}</Text>}
+        <Text className="flex flex-wrap items-center gap-1">
+          <span>Blocked for:</span>
+          <Text color="red" inline className="font-semibold">
+            {image.blockedFor}
+          </Text>
+        </Text>
+        <Button color="red">Remove</Button>
+      </CustomCard>
+    </Alert>
+  );
+}
+
+function ResolvingItem({ image }: { image: PostEditMediaDetail }) {
+  const { metadata } = image;
+  return (
+    <div className="bg-gray-0 dark:bg-dark-8 border border-gray-1 dark:border-dark-6 rounded-lg p-3 flex flex-col gap-3 @container">
+      <div className="flex flex-row-reverse flex-wrap @sm:flex-nowrap gap-3">
+        <div className="w-full @sm:w-4/12">
+          <div
+            className="mx-auto"
+            style={{
+              aspectRatio: `${metadata?.width ?? 1}/${metadata?.height ?? 1}`,
+              maxWidth: metadata?.width,
+            }}
+          >
+            <Skeleton className="h-full w-full" />
+          </div>
+        </div>
+        <div className="flex-1">
+          <Skeleton className="h-full w-full" />
+        </div>
+      </div>
+    </div>
+  );
 }

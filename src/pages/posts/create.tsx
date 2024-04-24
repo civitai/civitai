@@ -189,8 +189,9 @@ export default createPage(
         )}
 
         <PostImageDropzone
-          onCreatePost={(post) => {
-            router.replace({
+          showProgress={false}
+          onCreatePost={async (post) => {
+            await router.replace({
               pathname: `/posts/${post.id}/edit`,
               query: { ...params },
             });

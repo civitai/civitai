@@ -41,14 +41,14 @@ type Props = {
 } & ExtendedParams;
 
 export type PostEditImageDetail = PostDetailEditable['images'][number] & { index: number };
-export type PostEditMediaDetail = Omit<MediaUploadOnCompleteProps, 'status'>;
+export type PostEditMediaDetail = MediaUploadOnCompleteProps;
 export type ControlledImage =
   | {
       type: 'added';
       data: PostEditImageDetail;
     }
   | {
-      type: 'blocked';
+      type: 'blocked' | 'resolving';
       data: PostEditMediaDetail;
     };
 

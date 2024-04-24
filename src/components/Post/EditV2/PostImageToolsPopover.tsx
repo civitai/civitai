@@ -24,7 +24,7 @@ export function ImageToolsPopover({
   trpc.tool.getAll.useQuery();
 
   return (
-    <Popover position="bottom-start">
+    <Popover position="bottom-start" withinPortal>
       <Popover.Target>{children}</Popover.Target>
       <Popover.Dropdown className="p-0 rounded-lg">
         <InnerContent image={image} />
