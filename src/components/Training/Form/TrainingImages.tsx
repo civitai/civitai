@@ -65,7 +65,6 @@ const MAX_FILES_ALLOWED = 1000;
 
 export const blankTagStr = '@@none@@';
 
-//
 const useStyles = createStyles((theme) => ({
   imgOverlay: {
     borderBottom: `1px solid ${
