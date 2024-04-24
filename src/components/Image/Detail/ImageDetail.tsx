@@ -113,7 +113,23 @@ export function ImageDetail() {
           </div>
           <Card className={cx(classes.sidebar)}>
             <Card.Section withBorder>
-              <SmartCreatorCard user={image.user} style={{ border: 0 }} />
+              <SmartCreatorCard
+                user={image.user}
+                style={{ border: 0 }}
+                subText={
+                  <Text size="xs" color="dimmed">
+                    {image.publishedAt ? (
+                      <>
+                        Uploaded <DaysFromNow date={image.publishedAt} />
+                      </>
+                    ) : (
+                      'Not published'
+                    )}
+                  </Text>
+                }
+                tipBuzzEntityId={image.id}
+                tipBuzzEntityType="Image"
+              />
             </Card.Section>
             <Card.Section
               py="xs"
