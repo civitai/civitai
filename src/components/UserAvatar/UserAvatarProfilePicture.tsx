@@ -60,6 +60,10 @@ export function UserAvatarProfilePicture({
               anim={currentUser ? (!currentUser.autoplayGifs ? false : undefined) : undefined}
               wrapperProps={{ style: { width: '100%', height: '100%' } }}
               contain
+              style={{
+                objectFit: 'cover',
+                minHeight: '100%',
+              }}
             />
           )}
         </>

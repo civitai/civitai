@@ -1,6 +1,8 @@
 import { AspectRatio, Card, CardProps, createStyles } from '@mantine/core';
 import Link from 'next/link';
 import React, { forwardRef } from 'react';
+import { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
+import { DecorationFrame } from '~/components/Decorations/DecorationFrame';
 
 type AspectRatio = 'portrait' | 'landscape' | 'square' | 'flat';
 const aspectRatioValues: Record<
@@ -55,16 +57,13 @@ export const FeedCard = forwardRef<HTMLAnchorElement, Props>(
       aspectRatio = 'portrait',
       className,
       useCSSAspectRatio,
-      cardDecoration,
-      inViewOptions,
+      frameDecoration,
       ...props
     },
     ref
   ) => {
     const { stringRatio } = aspectRatioValues[aspectRatio];
     const { classes, cx } = useStyles();
-
-    // const {ref, inView} = useInView(inViewOptions)
 
     const card = (
       <Card<'a'>
@@ -78,12 +77,17 @@ export const FeedCard = forwardRef<HTMLAnchorElement, Props>(
       </Card>
     );
 
-    return href ? (
-      <Link href={href} passHref>
-        {card}
-      </Link>
-    ) : (
-      card
+    return (
+      <div style={{ position: 'relative' }}>
+        {href ? (
+          <Link href={href} passHref>
+            {card}
+          </Link>
+        ) : (
+          card
+        )}
+        {frameDecoration && <DecorationFrame decoration={frameDecoration} />}
+      </div>
     );
   }
 );
@@ -96,6 +100,5 @@ type Props = CardProps & {
   aspectRatio?: AspectRatio;
   onClick?: React.MouseEventHandler<HTMLAnchorElement>;
   useCSSAspectRatio?: boolean;
-  cardDecoration?: any;
-  inViewOptions?: any;
+  frameDecoration?: ContentDecorationCosmetic | null;
 };

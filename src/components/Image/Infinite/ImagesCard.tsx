@@ -69,7 +69,14 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
   return (
     <HolidayFrame {...cardDecoration}>
       <RoutedDialogLink name="imageDetail" state={{ imageId: image.id, images }}>
-        <MasonryCard withBorder shadow="sm" p={0} height={height} ref={ref}>
+        <MasonryCard
+          withBorder
+          shadow="sm"
+          p={0}
+          height={height}
+          ref={ref}
+          frameDecoration={image.cosmetic}
+        >
           <AspectRatio
             className={classes.blurHash}
             ratio={(image?.width ?? 1) / (image?.height ?? 1)}

@@ -44,6 +44,7 @@ import { getFilesByEntity } from './file.service';
 import { imageSelect, profileImageSelect } from '~/server/selectors/image.selector';
 import { createImage, deleteImageById } from '~/server/services/image.service';
 import { ImageMetaProps } from '~/server/schema/image.schema';
+import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 
 type ArticleRaw = {
   id: number;
@@ -92,6 +93,7 @@ type ArticleRaw = {
       source: CosmeticSource;
     };
   }[];
+  cosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
 };
 
 export type ArticleGetAllRecord = Awaited<ReturnType<typeof getArticles>>['items'][number];
@@ -120,11 +122,14 @@ export const getArticles = async ({
   clubId,
   pending,
   browsingLevel,
+  include,
 }: GetInfiniteArticlesSchema & {
   sessionUser?: { id: number; isModerator?: boolean; username?: string };
+  include?: Array<'cosmetics'>;
 }) => {
   const userId = sessionUser?.id;
   const isModerator = sessionUser?.isModerator ?? false;
+  const includeCosmetics = !!include?.includes('cosmetics');
   try {
     const take = limit + 1;
     const isMod = sessionUser?.isModerator ?? false;
@@ -330,6 +335,21 @@ export const getArticles = async ({
     `);
     }
 
+    if (includeCosmetics) {
+      WITH.push(Prisma.sql`
+        "articleCosmetic" AS (
+          SELECT
+            c.id,
+            c.data,
+            uc."claimKey",
+            uc."equippedToId"
+          FROM "UserCosmetic" uc
+          JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
+          WHERE uc."equippedToType" = 'Article' AND c.type = 'ContentDecoration'
+        )
+      `);
+    }
+
     const queryWith = WITH.length > 0 ? Prisma.sql`WITH ${Prisma.join(WITH, ', ')}` : Prisma.sql``;
     const queryFrom = Prisma.sql`
       FROM "Article" a
@@ -407,9 +427,22 @@ export const getArticles = async ({
           FROM "UserCosmetic" uc
           JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
               AND "equippedAt" IS NOT NULL
-          WHERE uc."userId" = a."userId"
+          WHERE uc."userId" = a."userId" AND uc."equippedToId" IS NULL
           GROUP BY uc."userId"
         ) as "userCosmetics",
+        ${
+          includeCosmetics
+            ? Prisma.raw(`
+                (
+                  SELECT jsonb_build_object(
+                    'id', ac.id,
+                    'claimKey', ac."claimKey",
+                    'data', ac.data
+                  ) FROM "articleCosmetic" ac WHERE ac."equippedToId" = a.id
+                ) as "cosmetic",
+              `)
+            : Prisma.empty
+        }
         ${Prisma.raw(cursorProp ? cursorProp : 'null')} as "cursorId"
       ${queryFrom}
       ORDER BY ${Prisma.raw(orderBy)}

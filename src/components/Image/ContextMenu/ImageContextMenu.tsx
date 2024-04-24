@@ -30,7 +30,7 @@ import { openContext } from '~/providers/CustomModalsProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { IconBookmark } from '@tabler/icons-react';
-import { CollectionType, ImageIngestionStatus } from '@prisma/client';
+import { CollectionType, CosmeticEntity, ImageIngestionStatus } from '@prisma/client';
 import { IconBan } from '@tabler/icons-react';
 import { useRescanImage } from '~/components/Image/hooks/useRescanImage';
 import { useReportTosViolation } from '~/components/Image/hooks/useReportTosViolation';
@@ -45,18 +45,20 @@ import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import React, { createContext, useContext } from 'react';
 import { trpc } from '~/utils/trpc';
 import { imageStore, useImageStore } from '~/store/image.store';
+import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
+import { ImageProps } from '~/components/ImageViewer/ImageViewer';
 
-type ImageProps = {
-  id: number;
-  postId?: number | null;
-  userId?: number;
-  user?: { id: number };
-  needsReview?: string | null;
-  ingestion?: ImageIngestionStatus;
-};
+// type ImageProps = Pick<ImagesInfiniteModel, 'id' | 'url' | 'width' | 'height' | 'nsfwLevel'> & {
+//   id: number;
+//   postId?: number | null;
+//   userId?: number;
+//   user?: { id: number };
+//   needsReview?: string | null;
+//   ingestion?: ImageIngestionStatus;
+// };
 
 type ImageContextMenuProps = {
-  image: ImageProps;
+  image: Omit<ImageProps, 'tags'> & { ingestion?: ImageIngestionStatus };
   context?: 'image' | 'post';
   additionalMenuItems?: React.ReactNode;
 };
@@ -140,12 +142,12 @@ function ImageMenuItems(
   const features = useFeatureFlags();
   const { id: imageId, postId, user, userId } = image;
   const _userId = user?.id ?? userId;
+  const isImage = context === 'image';
 
   const handleSaveClick = () => {
     if (context === 'post' && postId)
       openContext('addToCollection', { postId, type: CollectionType.Post });
-    if (context === 'image')
-      openContext('addToCollection', { imageId, type: CollectionType.Image });
+    if (isImage) openContext('addToCollection', { imageId, type: CollectionType.Image });
   };
 
   const handleReportClick = () =>
@@ -168,7 +170,19 @@ function ImageMenuItems(
     <>
       {additionalMenuItemsBefore?.(image)}
       {/* GENERAL */}
-      {isOwner && <AddToShowcaseMenuItem entityType="Image" entityId={imageId} />}
+      {isOwner && (
+        <>
+          <AddToShowcaseMenuItem entityType="Image" entityId={imageId} />
+          {isImage && (
+            <AddArtFrameMenuItem
+              entityType={CosmeticEntity.Image}
+              entityId={imageId}
+              image={image}
+              currentCosmetic={image.cosmetic}
+            />
+          )}
+        </>
+      )}
       <LoginRedirect reason="add-to-collection">
         <Menu.Item icon={<IconBookmark size={14} stroke={1.5} />} onClick={handleSaveClick}>
           Save {context} to collection
@@ -311,14 +325,14 @@ function NeedsReviewBadge({
           }}
         >
           <Menu.Item
-            onClick={(e) => handleModerate('accept')}
+            onClick={() => handleModerate('accept')}
             icon={<IconCheck size={14} stroke={1.5} />}
           >
             Approve
           </Menu.Item>
           {needsReview === 'poi' && (
             <Menu.Item
-              onClick={(e) => handleModerate('mistake')}
+              onClick={() => handleModerate('mistake')}
               icon={<IconUserOff size={14} stroke={1.5} />}
             >
               Not POI
@@ -326,14 +340,14 @@ function NeedsReviewBadge({
           )}
           {needsReview === 'poi' && (
             <Menu.Item
-              onClick={(e) => handleModerate('removeName')}
+              onClick={() => handleModerate('removeName')}
               icon={<IconUserMinus size={14} stroke={1.5} />}
             >
               Remove Name
             </Menu.Item>
           )}
           <Menu.Item
-            onClick={(e) => handleModerate('delete')}
+            onClick={() => handleModerate('delete')}
             icon={<IconTrash size={14} stroke={1.5} />}
           >
             Reject

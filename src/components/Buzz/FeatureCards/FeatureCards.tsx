@@ -200,20 +200,21 @@ const getSpendings = ({
     },
   },
   {
-    key: 'merch',
-    icon: <IconShoppingCart size={32} />,
-    title: 'Shop merch',
-    description: 'Tons of fun stickers to choose from...',
-    btnProps: {
-      disabled: true,
-      children: 'COMING SOON',
-    },
-  },
-  {
     key: 'badges',
     icon: <IconShoppingBag size={32} />,
     title: 'Shop badges and cosmetics',
     description: 'Make your profile stand out!',
+    btnProps: {
+      href: '/cosmetic-shop',
+      children: 'Get some!',
+      rightIcon: <IconArrowRight size={14} />,
+    },
+  },
+  {
+    key: 'merch',
+    icon: <IconShoppingCart size={32} />,
+    title: 'Shop merch',
+    description: 'Tons of fun stickers to choose from...',
     btnProps: {
       disabled: true,
       children: 'COMING SOON',

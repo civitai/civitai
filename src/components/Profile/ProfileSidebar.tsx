@@ -184,9 +184,9 @@ export function ProfileSidebar({ username, className }: { username: string; clas
         <Group align="flex-start" position="apart" w={!isMobile ? '100%' : undefined}>
           <UserAvatar
             avatarSize={sizeOpts.avatar}
-            user={user}
+            user={{ ...user, cosmetics: equippedCosmetics }}
             size={sizeOpts.username}
-            radius="md"
+            radius="xl"
           />
 
           {!isMobile && (

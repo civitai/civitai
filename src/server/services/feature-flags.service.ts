@@ -83,6 +83,7 @@ const featureFlags = createFeatureFlags({
   vault: ['mod'],
   draftMode: ['mod'],
   membershipsV2: ['mod'],
+  cosmeticShop: ['mod'],
 });
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
 

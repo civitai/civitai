@@ -384,7 +384,14 @@ export function AmbientModelCard({ data, height }: Props) {
         className={classes.card}
         styles={{ indicator: { zIndex: 10, transform: 'translate(5px,-5px) !important' } }}
       >
-        <MasonryCard ref={ref} withBorder shadow="sm" height={height} p={0}>
+        <MasonryCard
+          ref={ref}
+          withBorder
+          shadow="sm"
+          height={height}
+          p={0}
+          frameDecoration={data.cosmetic}
+        >
           {inView && (
             <NextLink
               href={href}

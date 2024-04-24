@@ -64,6 +64,7 @@ export function GenericImageCard({
     <FeedCard
       href={disabled ? undefined : url}
       style={disabled ? { cursor: 'initial' } : undefined}
+      frameDecoration={image.cosmetic}
       aspectRatio="portrait"
       useCSSAspectRatio
     >

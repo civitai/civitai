@@ -58,6 +58,8 @@ const nameOverrides: Record<string, string> = {
 
 export function getDisplayName(value: string, options?: { splitNumbers?: boolean }) {
   const { splitNumbers = true } = options ?? {};
+  if (!value) return '';
+
   return nameOverrides[value] ?? splitUppercase(value, { splitNumbers });
 }
 
@@ -134,6 +136,7 @@ export function removeTags(str: string) {
 
 export function postgresSlugify(str?: string) {
   if (!str) return '';
+
   return str
     .replace(' ', '_')
     .replace(/[^a-zA-Z0-9_]/g, '')

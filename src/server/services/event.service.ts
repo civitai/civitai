@@ -82,7 +82,7 @@ export async function activateEventCosmetic({ event, userId }: EventInput & { us
     `;
 
     const { data } = (await dbWrite.userCosmetic.findUnique({
-      where: { userId_cosmeticId: { userId, cosmeticId } },
+      where: { userId_cosmeticId_claimKey: { userId, cosmeticId, claimKey: 'claimed' } },
       select: { data: true },
     })) ?? { data: {} };
 
