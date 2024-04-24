@@ -2,8 +2,7 @@ import React, { createContext, useContext, useEffect, useMemo, useState } from '
 import { MediaUploadOnCompleteProps } from '~/hooks/useMediaUpload';
 import { PostEditQuerySchema } from '~/server/schema/post.schema';
 import { PostDetailEditable } from '~/server/services/post.service';
-import { createStore } from 'zustand';
-import { useStoreWithEqualityFn } from 'zustand/traditional';
+import { createStore, useStore } from 'zustand';
 import { useDidUpdate } from '@mantine/hooks';
 import { immer } from 'zustand/middleware/immer';
 import { devtools } from 'zustand/middleware';
@@ -108,7 +107,7 @@ const StoreContext = createContext<Store | null>(null);
 export function usePostEditStore<T>(selector: (state: State) => T) {
   const store = useContext(StoreContext);
   if (!store) throw new Error('missing PostEditProvider');
-  return useStoreWithEqualityFn(store, selector, shallow);
+  return useStore(store, selector, shallow);
 }
 // #endregion
 
