@@ -10,7 +10,6 @@ import { abbreviateNumber } from '~/utils/number-helpers';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { slugit } from '~/utils/string-helpers';
 import { formatDate } from '~/utils/date-helpers';
-import type { ArticleGetAll } from '~/server/services/article.service';
 import { ArticleContextMenu } from '~/components/Article/ArticleContextMenu';
 import {
   InteractiveTipBuzzButton,
@@ -20,6 +19,7 @@ import { HolidayFrame } from '../Decorations/HolidayFrame';
 import { CosmeticType } from '@prisma/client';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
+import type { ArticleGetInfinite } from '~/types/router';
 
 const IMAGE_CARD_WIDTH = 450;
 
@@ -150,6 +150,6 @@ export function ArticleCard({ data, aspectRatio }: Props) {
 }
 
 type Props = {
-  data: ArticleGetAll[0];
+  data: ArticleGetInfinite[number];
   aspectRatio?: 'flat' | 'landscape' | 'portrait' | 'square';
 };

@@ -50,6 +50,7 @@ export type ResourceReviewGetById = ResourceReviewRouter['get'];
 
 type ArticleRouter = RouterOutput['article'];
 export type ArticleGetById = ArticleRouter['getById'];
+export type ArticleGetInfinite = ArticleRouter['getInfinite']['items'];
 
 type LeaderboardRouter = RouterOutput['leaderboard'];
 export type LeaderboardGetModel = LeaderboardRouter['getLeaderboard'][number];
