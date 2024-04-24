@@ -488,7 +488,14 @@ export const getArticles = async ({
         };
       });
 
-    return { nextCursor, items };
+    return {
+      nextCursor,
+      items: items as Array<
+        Omit<(typeof items)[number], 'cosmetic'> & {
+          cosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
+        }
+      >,
+    };
   } catch (error) {
     throw throwDbError(error);
   }

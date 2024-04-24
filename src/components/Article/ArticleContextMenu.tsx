@@ -8,7 +8,6 @@ import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
-import type { ArticleGetAll } from '~/server/services/article.service';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionMenuItem';
@@ -19,6 +18,7 @@ import { ToggleLockComments } from '../CommentsV2';
 import { IconLock } from '@tabler/icons-react';
 import { ToggleSearchableMenuItem } from '../MenuItems/ToggleSearchableMenuItem';
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
+import type { ArticleGetInfinite } from '~/types/router';
 
 export function ArticleContextMenu({ article, ...props }: Props) {
   const queryUtils = trpc.useUtils();
@@ -122,7 +122,7 @@ export function ArticleContextMenu({ article, ...props }: Props) {
         />
         {currentUser && (isOwner || isModerator) && (
           <>
-            {isOwner && article.coverImage && (
+            {isOwner && article.coverImage && !atDetailsPage && (
               <AddArtFrameMenuItem
                 entityType={CosmeticEntity.Article}
                 entityId={article.id}
@@ -201,5 +201,5 @@ export function ArticleContextMenu({ article, ...props }: Props) {
 }
 
 type Props = Omit<ActionIconProps, 'variant' | 'onClick'> & {
-  article: Omit<ArticleGetAll[number], 'stats'>;
+  article: Omit<ArticleGetInfinite[number], 'stats'>;
 };

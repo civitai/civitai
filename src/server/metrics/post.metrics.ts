@@ -72,6 +72,7 @@ async function getReactionTasks(ctx: MetricProcessorRunContext) {
         ${snippets.reactionTimeframes()}
       FROM "ImageReaction" r
       JOIN "Image" i ON i.id = r."imageId"
+      JOIN "Post" p ON p.id = i."postId" -- Make sure it exists
       CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
       WHERE i."postId" IN (${ids})
       GROUP BY i."postId", tf.timeframe
@@ -106,6 +107,7 @@ async function getCommentTasks(ctx: MetricProcessorRunContext) {
         ${snippets.timeframeSum('c."createdAt"')}
       FROM "Thread" t
       JOIN "CommentV2" c ON t."id" = c."threadId"
+      JOIN "Post" p ON p.id = t."postId" -- Make sure it exists
       CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
       WHERE t."postId" IS NOT NULL AND t."postId" IN (${ids})
       GROUP BY t."postId", tf.timeframe
@@ -138,6 +140,7 @@ async function getCollectionTasks(ctx: MetricProcessorRunContext) {
         tf.timeframe,
         ${snippets.timeframeSum('ci."createdAt"')}
       FROM "CollectionItem" ci
+      JOIN "Post" p ON p.id = ci."postId" -- Make sure it exists
       CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
       WHERE ci."postId" IS NOT NULL AND ci."postId" IN (${ids})
       GROUP BY ci."postId", tf.timeframe
