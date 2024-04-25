@@ -153,14 +153,16 @@ export const updateUserProfile = async ({
   const current = await getUserWithProfile({ id: userId }); // Ensures user exists && has a profile record.
 
   // We can safeuly update creatorCardStatsPreferences out of the transaction as it's not critical
-  await dbWrite.$executeRawUnsafe(`
-      UPDATE "User"
-      SET "publicSettings" = jsonb_set(
-        "publicSettings",
-        '{creatorCardStatsPreferences}',
-        '${JSON.stringify(creatorCardStatsPreferences)}'::jsonb
-      )
-      WHERE "id" = ${userId}`);
+  if (creatorCardStatsPreferences) {
+    await dbWrite.$executeRawUnsafe(`
+        UPDATE "User"
+        SET "publicSettings" = jsonb_set(
+          "publicSettings",
+          '{creatorCardStatsPreferences}',
+          '${JSON.stringify(creatorCardStatsPreferences)}'::jsonb
+        )
+        WHERE "id" = ${userId}`);
+  }
 
   await dbWrite.$transaction(
     async (tx) => {

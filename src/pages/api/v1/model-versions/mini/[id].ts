@@ -59,7 +59,7 @@ export default MixedAuthEndpoint(async function handler(
   if (!primaryFile) return res.status(404).json({ error: 'Missing model file' });
 
   const baseUrl = new URL(isProd ? `https://${req.headers.host}` : 'http://localhost:3000');
-  const air = stringifyAIR(modelVersion);
+  const air = stringifyAIR(modelVersion)?.replace('pony', 'sdxl');
 
   const data = {
     air,
