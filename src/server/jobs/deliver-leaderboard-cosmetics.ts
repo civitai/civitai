@@ -36,7 +36,7 @@ async function deliverSeasonCosmetics() {
       c."leaderboardId" = lr."leaderboardId"
       AND lr.position <= c."leaderboardPosition"
       AND lr.date = current_date
-    ON CONFLICT ("userId", "cosmeticId") DO NOTHING;
+    ON CONFLICT ("userId", "cosmeticId", "claimKey") DO NOTHING;
   `;
 
   // equip next best
@@ -114,7 +114,7 @@ async function deliverLegendCosmetics() {
       now()
     FROM legends l
     JOIN cosmetic c ON c.id IS NOT NULL
-    ON CONFLICT ("userId", "cosmeticId") DO NOTHING;
+    ON CONFLICT ("userId", "cosmeticId", "claimKey") DO NOTHING;
   `;
 
   // revoke
