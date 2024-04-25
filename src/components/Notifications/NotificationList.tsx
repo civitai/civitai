@@ -37,8 +37,8 @@ export function NotificationList({ items, textSize = 'sm', truncate = true, onIt
         const milestoneNotification = notification.type.includes('milestone');
 
         const handleClick = (e: MouseEvent<HTMLAnchorElement>) => {
-          if (!notification.read) onItemClick(notification, false);
           e.preventDefault();
+          onItemClick(notification, false);
           if (!details.url) return;
           if (details.target === '_blank') return window.open(details.url, '_blank');
           const toModal = details.url.includes('?dialog=');
@@ -49,25 +49,18 @@ export function NotificationList({ items, textSize = 'sm', truncate = true, onIt
               router.push(notificationPathname).then(() =>
                 router.push(
                     { pathname: notificationPathname, query: QS.parse(query) as any }, //eslint-disable-line
-                  undefined,
-                  {
-                    shallow: true,
-                  }
                 )
               );
             } else {
-              router.push(details.url, undefined, { shallow: true });
+              router.push(details.url);
             }
           } else {
             router.push(details.url);
           }
         };
 
-        const handleMiddleClick = (e: MouseEvent<HTMLAnchorElement>) => {
-          if (e.button === 1) {
-            if (!notification.read) onItemClick(notification, true);
-            e.preventDefault();
-          }
+        const handleMiddleClick = () => {
+          onItemClick(notification, true);
         };
 
         return (
@@ -76,7 +69,7 @@ export function NotificationList({ items, textSize = 'sm', truncate = true, onIt
             href={details.url ?? ''}
             key={notification.id}
             onClick={handleClick}
-            onMouseDown={handleMiddleClick}
+            onAuxClick={handleMiddleClick}
             radius={0}
             data-unread={!notification.read}
             className={classes.listItem}

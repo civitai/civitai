@@ -104,7 +104,8 @@ export function CreatorCard({
               avatarProps={{ size: 32 }}
               user={creator}
               subText={
-                subText ?? creator.createdAt ? `Joined ${formatDate(creator.createdAt)}` : undefined
+                subText ??
+                (creator.createdAt ? `Joined ${formatDate(creator.createdAt)}` : undefined)
               }
               withUsername
               linkToProfile
