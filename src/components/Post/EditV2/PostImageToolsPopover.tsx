@@ -6,13 +6,16 @@ import {
   Popover,
   ScrollArea,
   Text,
+  UnstyledButton,
   createStyles,
 } from '@mantine/core';
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { PostEditImageDetail, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
 import { trpc } from '~/utils/trpc';
 import { Combobox } from '@headlessui/react';
 import { isDefined } from '~/utils/type-guards';
+import { ToolModel } from '~/server/services/tool.service';
+import { getDisplayName } from '~/utils/string-helpers';
 
 export function ImageToolsPopover({
   children,
@@ -21,28 +24,9 @@ export function ImageToolsPopover({
   children: React.ReactElement;
   image: PostEditImageDetail;
 }) {
-  trpc.tool.getAll.useQuery();
-
-  return (
-    <Popover position="bottom-start" withinPortal>
-      <Popover.Target>{children}</Popover.Target>
-      <Popover.Dropdown className="p-0 rounded-lg">
-        <InnerContent image={image} />
-      </Popover.Dropdown>
-    </Popover>
-  );
-}
-
-const useStyles = createStyles(() => ({
-  viewport: { paddingBottom: 0 },
-  scrollbar: {
-    '&[data-orientation="horizontal"]': { display: 'none' },
-  },
-}));
-
-function InnerContent({ image }: { image: PostEditImageDetail }) {
   const { classes } = useStyles();
   const { data: tools = [] } = trpc.tool.getAll.useQuery();
+  const inputRef = useRef<HTMLInputElement>(null);
   const [updateImage, imageCount, imageIds] = usePostEditStore((state) => [
     state.updateImage,
     state.images.length,
@@ -50,15 +34,26 @@ function InnerContent({ image }: { image: PostEditImageDetail }) {
   ]);
   const [search, setSearch] = useState('');
   const [showSelected, setShowSelected] = useState(false);
-  // NOTE: not sure why, but the combobox doesn't like having an empty array as the initial value
-  const [_value, setValue] = useState<number[]>([-1]);
-  const value = useMemo(() => [..._value.filter((x) => x !== -1)], [_value]);
+  const [value, setValue] = useState<number[]>(() => []);
+  const groups = useMemo(() => {
+    const grouped = tools.reduce<Record<string, ToolModel[]>>((acc, tool) => {
+      if (!acc[tool.type]) acc[tool.type] = [];
+      acc[tool.type].push(tool);
+      return acc;
+    }, {});
+    return Object.entries(grouped);
+  }, [tools]);
 
-  const filtered = tools.filter((x) => {
-    if (image.tools.findIndex((tool) => tool.id === x.id) > -1) return false;
-    if (showSelected) return value.includes(x.id);
-    if (search.length) return x.name.toLowerCase().includes(search);
-    return true;
+  const filtered = groups.map(([key, tools]) => {
+    return [
+      key,
+      tools.filter((x) => {
+        if (image.tools.findIndex((tool) => tool.id === x.id) > -1) return false;
+        if (showSelected) return value.includes(x.id);
+        if (search.length) return x.name.toLowerCase().includes(search);
+        return true;
+      }),
+    ] as [string, ToolModel[]];
   });
 
   const { mutate, isLoading } = trpc.image.addTools.useMutation();
@@ -72,8 +67,7 @@ function InnerContent({ image }: { image: PostEditImageDetail }) {
       { data: payload },
       {
         onSuccess: () => {
-          setValue([-1]);
-          setShowSelected(false);
+          handleSetValue([]);
           if (!image.id) return;
           for (const id of ids) {
             updateImage(id, (image) => {
@@ -97,80 +91,133 @@ function InnerContent({ image }: { image: PostEditImageDetail }) {
     );
   };
 
+  function handleSetValue(value: number[]) {
+    setValue(value);
+    if (!value.length) setShowSelected(false);
+  }
+
+  function handleClose() {
+    setTimeout(() => handleSetValue([]), 300);
+  }
+
+  function handleOpen() {
+    setTimeout(() => {
+      inputRef.current?.focus();
+    }, 300);
+  }
+
   return (
-    <div className="flex flex-col">
-      <Combobox
-        value={_value}
-        onChange={setValue}
-        // @ts-ignore eslint-disable-next-line
-        multiple
-      >
-        <Combobox.Input
-          as={Input}
-          onChange={(e) => setSearch(e.target.value.toLowerCase())}
-          displayValue={() => search}
-          // @ts-ignore eslint-disable-next-line
-          placeholder="search..."
-          className="m-2"
-          radius="xl"
-        />
-        <Divider />
-        <ScrollArea.Autosize maxHeight={250} type="always" offsetScrollbars classNames={classes}>
-          <div className="p-2">
-            <Combobox.Options static>
-              {filtered.map((tool) => (
-                <Combobox.Option
-                  key={tool.id}
-                  value={tool.id}
-                  className={({ active }) =>
-                    `flex justify-between items-center gap-3 py-1 px-2 cursor-pointer rounded ${
-                      active ? 'bg-gray-1 dark:bg-dark-5' : ''
-                    }`
-                  }
+    <Popover position="bottom-start" withinPortal onClose={handleClose} onOpen={handleOpen}>
+      <Popover.Target>{children}</Popover.Target>
+      <Popover.Dropdown className="p-0 rounded-lg">
+        <div className="flex flex-col">
+          <Combobox
+            value={value}
+            onChange={handleSetValue}
+            // @ts-ignore eslint-disable-next-line
+            multiple
+          >
+            <Combobox.Input
+              ref={inputRef}
+              as={Input}
+              onChange={(e) => setSearch(e.target.value.toLowerCase())}
+              displayValue={() => search}
+              // @ts-ignore eslint-disable-next-line
+              placeholder="search..."
+              className="m-2"
+              radius="xl"
+              auto
+            />
+            <Divider />
+            <ScrollArea.Autosize
+              maxHeight={250}
+              type="always"
+              offsetScrollbars
+              classNames={classes}
+            >
+              <div className="p-2">
+                <Combobox.Options static>
+                  {filtered.map(([key, tools]) => (
+                    <React.Fragment key={key}>
+                      {!!tools.length && (
+                        <Divider
+                          label={
+                            <Text
+                              component="li"
+                              color="dimmed"
+                              className="py-1 px-2 font-semibold text-sm"
+                            >
+                              {getDisplayName(key)}
+                            </Text>
+                          }
+                        />
+                      )}
+                      {tools.map((tool) => (
+                        <Combobox.Option
+                          key={tool.id}
+                          value={tool.id}
+                          className={({ active }) =>
+                            `flex justify-between items-center gap-3 py-1 px-2 cursor-pointer rounded ${
+                              active ? 'bg-gray-1 dark:bg-dark-5' : ''
+                            }`
+                          }
+                        >
+                          {({ selected }) => (
+                            <>
+                              <span>{tool.name}</span>
+                              <Checkbox checked={selected} readOnly tabIndex={-1} />
+                            </>
+                          )}
+                        </Combobox.Option>
+                      ))}
+                    </React.Fragment>
+                  ))}
+                </Combobox.Options>
+              </div>
+            </ScrollArea.Autosize>
+          </Combobox>
+          {!!value.length && (
+            <div className="p-2 pt-0 flex flex-col gap-2">
+              <div>
+                <Divider />
+                <div className="flex justify-center">
+                  <UnstyledButton
+                    className="cursor-pointer m-1"
+                    onClick={() => setShowSelected((b) => !b)}
+                  >
+                    <Text variant="link" align="center">
+                      {!showSelected ? `Show ${value.length} selected` : `Show all`}
+                    </Text>
+                  </UnstyledButton>
+                </div>
+                <Divider />
+              </div>
+              <Button compact size="md" disabled={isLoading} onClick={() => handleAddTools()}>
+                Add
+              </Button>
+              {imageCount > 1 && (
+                <Button
+                  className="text-sm"
+                  variant="default"
+                  compact
+                  size="md"
+                  disabled={isLoading}
+                  onClick={() => handleAddTools(true)}
                 >
-                  {({ selected }) => (
-                    <>
-                      <span>{tool.name}</span>
-                      <Checkbox checked={selected} readOnly />
-                    </>
-                  )}
-                </Combobox.Option>
-              ))}
-            </Combobox.Options>
-          </div>
-        </ScrollArea.Autosize>
-      </Combobox>
-      {!!value.length && (
-        <div className="p-2 pt-0 flex flex-col gap-2">
-          <div>
-            <Divider />
-            <Text
-              variant="link"
-              align="center"
-              className="cursor-pointer m-1"
-              onClick={() => setShowSelected((b) => !b)}
-            >
-              {!showSelected ? `Show ${value.length} selected` : `Show all`}
-            </Text>
-            <Divider />
-          </div>
-          <Button compact size="md" disabled={isLoading} onClick={() => handleAddTools()}>
-            Add
-          </Button>
-          {imageCount > 1 && (
-            <Button
-              className="text-sm"
-              variant="default"
-              compact
-              size="md"
-              disabled={isLoading}
-              onClick={() => handleAddTools(true)}
-            >
-              Add to all images ({imageCount})
-            </Button>
+                  Add to all images ({imageCount})
+                </Button>
+              )}
+            </div>
           )}
         </div>
-      )}
-    </div>
+      </Popover.Dropdown>
+    </Popover>
   );
 }
+
+const useStyles = createStyles(() => ({
+  viewport: { paddingBottom: 0 },
+  scrollbar: {
+    '&[data-orientation="horizontal"]': { display: 'none' },
+  },
+}));

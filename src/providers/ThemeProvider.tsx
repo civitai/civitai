@@ -14,7 +14,7 @@ export function ThemeProvider({
   const toggleColorScheme = useCallback(
     (value?: ColorScheme) => {
       const nextColorScheme = value || (colorScheme === 'dark' ? 'light' : 'dark');
-      console.log({ value, nextColorScheme });
+
       setColorScheme(nextColorScheme);
       setCookie('mantine-color-scheme', nextColorScheme, {
         expires: dayjs().add(1, 'year').toDate(),
@@ -27,6 +27,12 @@ export function ThemeProvider({
     if (colorScheme === undefined && typeof window !== 'undefined') {
       const osColor = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
       setColorScheme(osColor);
+    }
+    // elevate colorscheme class to body for tailwind
+    if (typeof window !== 'undefined') {
+      const body = document.querySelector('body');
+      body?.removeAttribute('class');
+      body?.classList.add(colorScheme);
     }
   }, [colorScheme]);
 
