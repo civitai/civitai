@@ -112,7 +112,15 @@ export function ImageDetail() {
             </ReactionSettingsProvider>
           </div>
           <Card className={cx(classes.sidebar)}>
-            <Card.Section withBorder>
+            <Card.Section style={{ position: 'relative' }} withBorder>
+              <CloseButton
+                style={{ position: 'absolute', top: 8, right: 8, zIndex: 10 }}
+                size="lg"
+                radius="lg"
+                variant="filled"
+                onClick={toggleInfo}
+                className={classes.mobileOnly}
+              />
               <SmartCreatorCard
                 user={image.user}
                 style={{ border: 0 }}
