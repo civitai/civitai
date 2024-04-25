@@ -788,6 +788,7 @@ export const createGenerationRequest = async ({
   const schedulerUrl = new URL(`${env.SCHEDULER_ENDPOINT}/requests`);
   if (status.charge) schedulerUrl.searchParams.set('charge', 'true');
   if (params.staging) schedulerUrl.searchParams.set('staging', 'true');
+  if (draft) schedulerUrl.searchParams.set('batch', 'true');
 
   const response = await fetch(schedulerUrl.toString(), {
     method: 'POST',
