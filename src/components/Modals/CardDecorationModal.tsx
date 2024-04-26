@@ -129,7 +129,6 @@ export function CardDecorationModal({ entityType, entityId, image, currentCosmet
   const selectedItem = items.find(
     (item) => item.id === cosmetic?.id && item.claimKey === cosmetic?.claimKey
   );
-  console.log(userCosmetics?.contentDecorations);
 
   return (
     <Modal

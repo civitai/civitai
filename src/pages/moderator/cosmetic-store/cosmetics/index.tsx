@@ -66,13 +66,21 @@ export const CosmeticSample = ({
   switch (cosmetic.type) {
     case CosmeticType.Badge:
     case CosmeticType.ProfileDecoration:
-    case CosmeticType.ContentDecoration:
       const decorationData = cosmetic.data as BadgeCosmetic['data'];
       if (!decorationData.url) return null;
 
       return (
         <Box w={values.badgeSize}>
           <EdgeMedia src={decorationData.url} alt={cosmetic.name} width="original" />
+        </Box>
+      );
+    case CosmeticType.ContentDecoration:
+      const contentDecorationData = cosmetic.data as ContentDecorationCosmetic['data'];
+      if (!contentDecorationData.url) return null;
+
+      return (
+        <Box w={values.badgeSize}>
+          <EdgeMedia src={contentDecorationData.url} alt={cosmetic.name} width="original" />
         </Box>
       );
     case CosmeticType.NamePlate:

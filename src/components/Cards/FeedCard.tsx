@@ -1,4 +1,4 @@
-import { AspectRatio, Card, CardProps, createStyles } from '@mantine/core';
+import { AspectRatio, CSSObject, Card, CardProps, createStyles } from '@mantine/core';
 import Link from 'next/link';
 import React, { forwardRef } from 'react';
 import { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
@@ -36,7 +36,7 @@ const aspectRatioValues: Record<
   },
 };
 
-const useStyles = createStyles((theme) => {
+const useStyles = createStyles<string, { frame?: CSSObject; glow?: CSSObject }>((theme, params) => {
   return {
     root: {
       padding: '0 !important',
@@ -45,6 +45,15 @@ const useStyles = createStyles((theme) => {
       cursor: 'pointer',
       position: 'relative',
       overflow: 'hidden',
+    },
+
+    frame: {
+      ...params.frame,
+      borderRadius: theme.radius.md,
+      zIndex: 1,
+      padding: 5,
+
+      '&:before': { ...params.glow, content: '""', width: '100%', height: '100%', zIndex: -1 },
     },
   };
 });
@@ -63,7 +72,10 @@ export const FeedCard = forwardRef<HTMLAnchorElement, Props>(
     ref
   ) => {
     const { stringRatio } = aspectRatioValues[aspectRatio];
-    const { classes, cx } = useStyles();
+    const { classes, cx } = useStyles({
+      frame: frameDecoration?.data.cssFrame,
+      glow: frameDecoration?.data.glow,
+    });
 
     const card = (
       <Card<'a'>
@@ -78,7 +90,10 @@ export const FeedCard = forwardRef<HTMLAnchorElement, Props>(
     );
 
     return (
-      <div style={{ position: 'relative' }}>
+      <div
+        style={{ position: 'relative' }}
+        className={cx(frameDecoration && frameDecoration.data.cssFrame && classes.frame)}
+      >
         {href ? (
           <Link href={href} passHref>
             {card}
@@ -86,7 +101,7 @@ export const FeedCard = forwardRef<HTMLAnchorElement, Props>(
         ) : (
           card
         )}
-        {frameDecoration && <DecorationFrame decoration={frameDecoration} />}
+        {/* {frameDecoration && <DecorationFrame decoration={frameDecoration} />} */}
       </div>
     );
   }
