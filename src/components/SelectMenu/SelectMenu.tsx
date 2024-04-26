@@ -102,7 +102,8 @@ export function SelectMenuV2<T extends string | number>({
   disabled,
   children,
   buttonProps,
-}: SelectMenu<T>) {
+  icon,
+}: SelectMenu<T> & { icon?: React.ReactNode }) {
   const { classes, theme, cx } = useStyles();
   const [opened, setOpened] = useState(false);
   const mobile = useIsMobile();
@@ -120,7 +121,7 @@ export function SelectMenuV2<T extends string | number>({
       onClick={() => setOpened((o) => !o)}
     >
       <Group spacing={4} noWrap>
-        <IconSortDescending size={16} />
+        {icon ?? <IconSortDescending size={16} />}
         {label}
       </Group>
     </Button>
