@@ -233,19 +233,21 @@ function BrowsingLevelsStacked({
           const isSelected = Flags.hasFlag(browsingLevel, level);
           return (
             <Group
-              key={level}
               position="apart"
+              key={level}
               p="md"
               onClick={() => toggleBrowsingLevel(level)}
               className={cx({ [classes.active]: isSelected })}
               noWrap
             >
-              <Text weight={700} w={50} ta="center">
-                {browsingLevelLabels[level]}
-              </Text>
-              <Text lh={1.2} size="sm" ta="left" sx={{ flex: 1 }}>
-                {browsingLevelDescriptions[level]}
-              </Text>
+              <Group noWrap>
+                <Text weight={700} w={50} ta="center">
+                  {browsingLevelLabels[level]}
+                </Text>
+                <Text lh={1.2} size="sm" ta="left" sx={{ flex: '1 1' }}>
+                  {browsingLevelDescriptions[level]}
+                </Text>
+              </Group>
               <Text color="green" inline style={{ visibility: !isSelected ? 'hidden' : undefined }}>
                 <IconCheck />
               </Text>

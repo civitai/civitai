@@ -4,8 +4,6 @@ import {
   Checkbox,
   Card,
   Group,
-  Button,
-  Text,
   useMantineTheme,
   Badge,
   Title,
@@ -13,7 +11,6 @@ import {
 import { useQueryImages } from '~/components/Image/image.utils';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { NoContent } from '~/components/NoContent/NoContent';
-import { trpc } from '~/utils/trpc';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { useCallback } from 'react';
 import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
@@ -34,8 +31,14 @@ export function CsamImageSelection() {
   const { userId, user } = useCsamContext();
 
   // TODO - get all images for user, don't use this util unless we provide a way to get all images regardless of ingestion status
-  const { images, isLoading, fetchNextPage, hasNextPage, isRefetching } = useQueryImages(
-    { username: user?.username ?? undefined, sort: ImageSort.Newest },
+  const {
+    flatData: images,
+    isLoading,
+    fetchNextPage,
+    hasNextPage,
+    isRefetching,
+  } = useQueryImages(
+    { username: user?.username ?? undefined, sort: ImageSort.Newest, include: [] },
     { applyHiddenPreferences: false, enabled: !!user }
   );
 
@@ -49,7 +52,7 @@ export function CsamImageSelection() {
         <Loader />
       </Center>
     );
-  if (!images.length) return <NoContent p="xl" message="No images found for this user" />;
+  if (!images?.length) return <NoContent p="xl" message="No images found for this user" />;
 
   return (
     <MasonryProvider
