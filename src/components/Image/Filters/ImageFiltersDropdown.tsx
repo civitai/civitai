@@ -86,7 +86,6 @@ export function ImageFiltersDropdown({
     (mergedFilters.types?.length ?? 0) +
     (mergedFilters.withMeta ? 1 : 0) +
     (mergedFilters.hidden ? 1 : 0) +
-    (mergedFilters.followed ? 1 : 0) +
     (mergedFilters.fromPlatform ? 1 : 0) +
     (mergedFilters.notPublished ? 1 : 0) +
     (mergedFilters.period && mergedFilters.period !== MetricTimeframe.AllTime ? 1 : 0);
@@ -195,15 +194,6 @@ export function ImageFiltersDropdown({
                 }
               >
                 Hidden
-              </Chip>
-              <Chip
-                {...chipProps}
-                checked={mergedFilters.followed}
-                onChange={(checked) =>
-                  onChange ? onChange({ followed: checked }) : setFilters({ followed: checked })
-                }
-              >
-                Followed Only
               </Chip>
             </>
           )}

@@ -16,10 +16,11 @@ type FollowFilterMenuProps = {
 type FollowFilterComponentProps = FollowFilterButtonProps | FollowFilterMenuProps;
 
 type FollowFilterProps = StatefulProps | DumbProps;
-type FollowFilterableTypes = 'images' | 'models' | 'posts' | 'articles';
+type FollowFilterableTypes = 'images' | 'models' | 'posts' | 'articles' | 'videos';
 
-export function FollowFilter(props: FollowFilterProps) {
-  if (props.value) return <DumbFollowFilter {...props} />;
+export function FollowedFilter(props: FollowFilterProps) {
+  // Explicit type assertion because ts is dumb -Manuel
+  if (typeof props.value === 'string') return <DumbFollowFilter {...props} />;
   return <StatefulFollowFilter {...props} type={props.type} />;
 }
 

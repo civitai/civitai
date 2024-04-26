@@ -1,6 +1,6 @@
 import { Group, GroupProps } from '@mantine/core';
 import { useFeedFiltersStyles } from '~/components/Filters/FeedFilters/FeedFilters.styles';
-import { FollowFilter } from '~/components/Filters/FollowedFilter';
+import { FollowedFilter } from '~/components/Filters/FollowedFilter';
 import { ImageFiltersDropdown } from '~/components/Image/Filters/ImageFiltersDropdown';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { SortFilter } from '../SortFilter';
@@ -13,11 +13,13 @@ export function ImageFeedFilters({ ...groupProps }: GroupProps) {
 
   return (
     <Group className={classes.filtersWrapper} spacing={8} noWrap {...groupProps}>
-      <FollowFilter
-        type="images"
-        variant="button"
-        buttonProps={{ className: classes.subnavDropdown }}
-      />
+      {currentUser && (
+        <FollowedFilter
+          type="images"
+          variant="button"
+          buttonProps={{ className: classes.subnavDropdown }}
+        />
+      )}
       <SortFilter
         type="images"
         variant="button"
