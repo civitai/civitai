@@ -26,7 +26,6 @@ export function ImageToolsPopover({
 }) {
   const { classes } = useStyles();
   const { data: tools = [] } = trpc.tool.getAll.useQuery();
-  const inputRef = useRef<HTMLInputElement>(null);
   const [updateImage, imageCount, imageIds] = usePostEditStore((state) => [
     state.updateImage,
     state.images.length,
@@ -35,6 +34,7 @@ export function ImageToolsPopover({
   const [search, setSearch] = useState('');
   const [showSelected, setShowSelected] = useState(false);
   const [value, setValue] = useState<number[]>(() => []);
+  // const test = useMemo(() => {})
   const groups = useMemo(() => {
     const grouped = tools.reduce<Record<string, ToolModel[]>>((acc, tool) => {
       if (!acc[tool.type]) acc[tool.type] = [];
@@ -55,6 +55,7 @@ export function ImageToolsPopover({
       }),
     ] as [string, ToolModel[]];
   });
+  const nothingFound = Object.values(filtered).every(([key, tools]) => !tools.length);
 
   const { mutate, isLoading } = trpc.image.addTools.useMutation();
   const handleAddTools = (multiple?: boolean) => {
@@ -100,14 +101,8 @@ export function ImageToolsPopover({
     setTimeout(() => handleSetValue([]), 300);
   }
 
-  function handleOpen() {
-    setTimeout(() => {
-      inputRef.current?.focus();
-    }, 300);
-  }
-
   return (
-    <Popover position="bottom-start" withinPortal onClose={handleClose} onOpen={handleOpen}>
+    <Popover position="bottom-start" withinPortal onClose={handleClose} trapFocus>
       <Popover.Target>{children}</Popover.Target>
       <Popover.Dropdown className="p-0 rounded-lg">
         <div className="flex flex-col">
@@ -118,7 +113,6 @@ export function ImageToolsPopover({
             multiple
           >
             <Combobox.Input
-              ref={inputRef}
               as={Input}
               onChange={(e) => setSearch(e.target.value.toLowerCase())}
               displayValue={() => search}
@@ -135,45 +129,51 @@ export function ImageToolsPopover({
               offsetScrollbars
               classNames={classes}
             >
-              <div className="p-2">
-                <Combobox.Options static>
-                  {filtered.map(([key, tools]) => (
-                    <React.Fragment key={key}>
-                      {!!tools.length && (
-                        <Divider
-                          label={
-                            <Text
-                              component="li"
-                              color="dimmed"
-                              className="py-1 px-2 font-semibold text-sm"
-                            >
-                              {getDisplayName(key)}
-                            </Text>
-                          }
-                        />
-                      )}
-                      {tools.map((tool) => (
-                        <Combobox.Option
-                          key={tool.id}
-                          value={tool.id}
-                          className={({ active }) =>
-                            `flex justify-between items-center gap-3 py-1 px-2 cursor-pointer rounded ${
-                              active ? 'bg-gray-1 dark:bg-dark-5' : ''
-                            }`
-                          }
-                        >
-                          {({ selected }) => (
-                            <>
-                              <span>{tool.name}</span>
-                              <Checkbox checked={selected} readOnly tabIndex={-1} />
-                            </>
-                          )}
-                        </Combobox.Option>
-                      ))}
-                    </React.Fragment>
-                  ))}
-                </Combobox.Options>
-              </div>
+              {nothingFound ? (
+                <Text align="center" className="p-2" color="dimmed">
+                  Nothing found
+                </Text>
+              ) : (
+                <div className="p-2 pr-0">
+                  <Combobox.Options static>
+                    {filtered.map(([key, tools]) => (
+                      <React.Fragment key={key}>
+                        {!!tools.length && (
+                          <Divider
+                            label={
+                              <Text
+                                component="li"
+                                color="dimmed"
+                                className="py-1 px-2 font-semibold text-sm"
+                              >
+                                {getDisplayName(key)}
+                              </Text>
+                            }
+                          />
+                        )}
+                        {tools.map((tool) => (
+                          <Combobox.Option
+                            key={tool.id}
+                            value={tool.id}
+                            className={({ active }) =>
+                              `flex justify-between items-center gap-3 py-1 px-2 cursor-pointer rounded ${
+                                active ? 'bg-gray-1 dark:bg-dark-5' : ''
+                              }`
+                            }
+                          >
+                            {({ selected }) => (
+                              <>
+                                <span>{tool.name}</span>
+                                <Checkbox checked={selected} readOnly tabIndex={-1} />
+                              </>
+                            )}
+                          </Combobox.Option>
+                        ))}
+                      </React.Fragment>
+                    ))}
+                  </Combobox.Options>
+                </div>
+              )}
             </ScrollArea.Autosize>
           </Combobox>
           {!!value.length && (

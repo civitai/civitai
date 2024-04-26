@@ -32,6 +32,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
   ]);
   const canPublish = hasImages && !isReordering;
   const todayRef = useRef(new Date());
+  const canSchedule = post.publishedAt && post.publishedAt.getTime() > new Date().getTime();
   // #endregion
 
   // #region [mutations]
@@ -167,17 +168,19 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
               Share
             </Button>
           </ShareButton>
-          <Tooltip label="Reschedule Publish" withArrow>
-            <Button
-              variant="filled"
-              color="gray"
-              loading={updatePostMutation.isLoading}
-              onClick={handleScheduleClick}
-              disabled={!canPublish}
-            >
-              <IconClock size={20} />
-            </Button>
-          </Tooltip>
+          {canSchedule && (
+            <Tooltip label="Reschedule Publish" withArrow>
+              <Button
+                variant="filled"
+                color="gray"
+                loading={updatePostMutation.isLoading}
+                onClick={handleScheduleClick}
+                disabled={!canPublish}
+              >
+                <IconClock size={20} />
+              </Button>
+            </Tooltip>
+          )}
         </Button.Group>
       )}
 

@@ -82,17 +82,18 @@ export function MediaDropzone({
             <Text size="sm" color="dimmed" mt={7} inline>
               {max ? `Attach up to ${max} files` : 'Attach as many files as you like'}
             </Text>
-            {fileExtensions.length > 0 && (
-              <Text size="sm" color="dimmed" inline>
-                {`Accepted file types: ${fileExtensions.join(', ')}`}
-              </Text>
-            )}
+
             {/* <Text size="sm" color="dimmed" inline>
               {`Images cannot exceed ${formatBytes(maxSize)} `}
             </Text> */}
             {allowsVideo && (
               <Text size="sm" color="dimmed" inline>
                 {`Videos cannot exceed 4k resolution or ${constants.mediaUpload.maxVideoDurationSeconds} seconds in duration`}
+              </Text>
+            )}
+            {fileExtensions.length > 0 && (
+              <Text size="sm" color="blue" inline className="pt-6">
+                {`Accepted file types: ${fileExtensions.join(', ')}`}
               </Text>
             )}
           </div>

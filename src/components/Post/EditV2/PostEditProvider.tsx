@@ -3,13 +3,14 @@ import { MediaUploadOnCompleteProps } from '~/hooks/useMediaUpload';
 import { PostEditQuerySchema } from '~/server/schema/post.schema';
 import { PostDetailEditable } from '~/server/services/post.service';
 import { createStore, useStore } from 'zustand';
-import { useDidUpdate } from '@mantine/hooks';
+import { useDidUpdate, useLocalStorage } from '@mantine/hooks';
 import { immer } from 'zustand/middleware/immer';
 import { devtools } from 'zustand/middleware';
 import { shallow } from 'zustand/shallow';
 import { trpc } from '~/utils/trpc';
 import Router from 'next/router';
 import { FileUploadProvider } from '~/components/FileUpload/FileUploadProvider';
+import { uniqBy } from 'lodash-es';
 
 const replacerFunc = () => {
   const visited = new WeakSet();
@@ -151,7 +152,8 @@ export function PostEditProvider({ post, params = {}, children, ...extendedParam
           images,
         };
       else {
-        return { post, images: !state.images.length ? images : state.images };
+        const images = uniqBy([...state.images, ...post.images], 'url');
+        return { post, images };
       }
     });
   }, [post]);
@@ -180,10 +182,38 @@ export function PostEditProvider({ post, params = {}, children, ...extendedParam
   return (
     <StoreContext.Provider value={store}>
       <ParamsContext.Provider value={mergedParams}>
-        <FileUploadProvider>{children}</FileUploadProvider>
+        <PostPreviewProvider>
+          <FileUploadProvider>{children}</FileUploadProvider>
+        </PostPreviewProvider>
       </ParamsContext.Provider>
     </StoreContext.Provider>
   );
 }
 
 // #endregion
+
+type PostPreviewState = {
+  showPreview: boolean;
+  toggleShowPreview: () => void;
+};
+const PostPreviewContext = createContext<PostPreviewState | null>(null);
+export function usePostPreviewContext() {
+  const context = useContext(PostPreviewContext);
+  if (!context) throw new Error('missing PostPreviewContext');
+  return context;
+}
+
+function PostPreviewProvider({ children }: { children: React.ReactNode }) {
+  const [showPreview, setShowPreview] = useLocalStorage({
+    key: 'post-preview',
+    defaultValue: false,
+  });
+  function toggleShowPreview() {
+    setShowPreview((o) => !o);
+  }
+  return (
+    <PostPreviewContext.Provider value={{ showPreview, toggleShowPreview }}>
+      {children}
+    </PostPreviewContext.Provider>
+  );
+}

@@ -2,13 +2,14 @@ import { PostEditLayout } from '~/components/Post/EditV2/PostEditLayout';
 import { PostEdit } from '~/components/Post/EditV2/PostEdit';
 import { createPage } from '~/components/AppLayout/createPage';
 import { Container } from '@mantine/core';
+import { usePostPreviewContext } from '~/components/Post/EditV2/PostEditProvider';
 
 export default createPage(
   function PostEditPage() {
     return (
-      <Container size="lg">
+      <div className={`container max-w-lg}`}>
         <PostEdit />
-      </Container>
+      </div>
     );
   },
   { InnerLayout: PostEditLayout }
