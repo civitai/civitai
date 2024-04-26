@@ -110,10 +110,8 @@ class OrchestratorCaller extends HttpCaller {
     return this.get<Orchestrator.GetJobResponse>(`/v1/consumer/jobs/${id}`);
   }
 
-  public prepareModel({ payload }: { payload: Orchestrator.Generation.PrepareModelPayload }) {
-    return this.post<Orchestrator.Generation.PrepareModelResponse>('/v1/consumer/jobs', {
-      payload: { $type: 'prepareModel', ...payload },
-    });
+  public bustModelCache({ modelVersionId }: Orchestrator.Generation.BustModelCache) {
+    return this.delete('/v2/models/@civitai/' + modelVersionId);
   }
 
   public taintJobById({ id, payload }: { id: string; payload: Orchestrator.TaintJobByIdPayload }) {

@@ -1417,9 +1417,7 @@ export const publishModelById = async ({
   if (includeVersions && status !== ModelStatus.Scheduled) {
     // Send to orchestrator
     Promise.all(
-      model.modelVersions.map((version) =>
-        prepareModelInOrchestrator({ id: version.id, baseModel: version.baseModel })
-      )
+      model.modelVersions.map((version) => prepareModelInOrchestrator({ id: version.id }))
     );
   }
 
