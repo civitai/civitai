@@ -234,9 +234,9 @@ export function stringifyAIR({
   const ecosystem = (
     Object.entries(baseModelSets).find(([, value]) =>
       value.includes(baseModel as BaseModel)
-    )?.[0] ?? 'sd1'
+    )?.[0] ?? 'multi'
   ).toLowerCase();
-  const urnType = typeUrnMap[type];
+  const urnType = typeUrnMap[type] ?? 'unknown';
   if (!urnType) return null;
 
   return `urn:air:${ecosystem}:${urnType}:${source}:${modelId}${id ? `@${id}` : ''}`;
