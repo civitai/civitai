@@ -23,4 +23,20 @@ export const useFeedFiltersStyles = createStyles((theme) => ({
       },
     },
   },
+
+  chipLabel: {
+    fontSize: 12,
+    fontWeight: 600,
+
+    '&[data-checked]': {
+      '&, &:hover': {
+        color: theme.colorScheme === 'dark' ? theme.white : theme.black,
+        border: `1px solid ${theme.colors[theme.primaryColor][theme.fn.primaryShade()]}`,
+      },
+
+      '&[data-variant="filled"]': {
+        backgroundColor: 'transparent',
+      },
+    },
+  },
 }));

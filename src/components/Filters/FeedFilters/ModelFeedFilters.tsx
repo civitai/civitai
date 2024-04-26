@@ -1,15 +1,20 @@
-import { ActionIcon, Button, Group, GroupProps, Popover } from '@mantine/core';
+import { ActionIcon, Button, Group, GroupProps, Popover, Chip } from '@mantine/core';
 import { IconExclamationMark } from '@tabler/icons-react';
 
 import { SortFilter } from '~/components/Filters';
 import { useFeedFiltersStyles } from '~/components/Filters/FeedFilters/FeedFilters.styles';
 import { ModelFiltersDropdown } from '~/components/Model/Infinite/ModelFiltersDropdown';
 import { useModelQueryParams } from '~/components/Model/model.utils';
+import { useFiltersContext } from '~/providers/FiltersProvider';
 import { PeriodMode } from '~/server/schema/base.schema';
 
 export function ModelFeedFilters({ ...groupProps }: GroupProps) {
   const { classes } = useFeedFiltersStyles();
   const { set, ...queryFilters } = useModelQueryParams();
+  const { setFilters, filters } = useFiltersContext((state) => ({
+    filters: state.models,
+    setFilters: state.setModelFilters,
+  }));
   const { favorites, query } = queryFilters;
   const periodMode = query || favorites ? ('stats' as PeriodMode) : undefined;
   if (periodMode) queryFilters.periodMode = periodMode;
@@ -31,6 +36,17 @@ export function ModelFeedFilters({ ...groupProps }: GroupProps) {
           </Popover.Dropdown>
         </Popover>
       )}
+
+      <Chip
+        checked={filters.followed}
+        classNames={{ label: classes.chipLabel }}
+        onChange={(checked) => setFilters({ followed: checked })}
+        variant="filled"
+        radius="xl"
+        size="sm"
+      >
+        Followed Only
+      </Chip>
       <SortFilter
         type="models"
         variant="button"
