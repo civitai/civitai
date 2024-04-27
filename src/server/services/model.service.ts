@@ -470,8 +470,8 @@ export const getModelsRaw = async ({
     orderBy = `mm."commentCount" DESC, mm."thumbsUpCount" DESC, mm."modelId"`;
   else if (sort === ModelSort.MostCollected)
     orderBy = `mm."collectedCount" DESC, mm."thumbsUpCount" DESC, mm."modelId"`;
-  else if (sort === ModelSort.MostTipped)
-    orderBy = `mm."tippedAmountCount" DESC, mm."thumbsUpCount" DESC, mm."modelId"`;
+  // else if (sort === ModelSort.MostTipped)
+  //   orderBy = `mm."tippedAmountCount" DESC, mm."thumbsUpCount" DESC, mm."modelId"`;
   else if (sort === ModelSort.ImageCount)
     orderBy = `mm."imageCount" DESC, mm."thumbsUpCount" DESC, mm."modelId"`;
   else if (sort === ModelSort.Oldest) orderBy = `m."lastVersionAt" ASC`;
