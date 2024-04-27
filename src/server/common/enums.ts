@@ -208,6 +208,11 @@ export enum OnboardingSteps {
   BrowsingLevels = 4,
   Buzz = 8,
 }
+export const OnboardingComplete =
+  OnboardingSteps.TOS |
+  OnboardingSteps.Profile |
+  OnboardingSteps.BrowsingLevels |
+  OnboardingSteps.Buzz;
 
 export enum PurchasableRewardViewMode {
   Available = 'Available',
