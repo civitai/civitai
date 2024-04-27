@@ -40,7 +40,7 @@ type HomeOption = {
   url: string;
   icon: (props: TablerIconsProps) => JSX.Element;
   highlight?: boolean;
-  desktopHidden?: boolean;
+  grouped?: boolean;
 };
 const homeOptions: Record<string, HomeOption> = {
   home: {
@@ -62,7 +62,7 @@ const homeOptions: Record<string, HomeOption> = {
   posts: {
     url: '/posts',
     icon: (props: TablerIconsProps) => <IconLayoutList {...props} />,
-    desktopHidden: true,
+    grouped: true,
   },
   articles: {
     url: '/articles',
@@ -71,11 +71,11 @@ const homeOptions: Record<string, HomeOption> = {
   bounties: {
     url: '/bounties',
     icon: (props: TablerIconsProps) => <IconMoneybag {...props} />,
+    grouped: true,
   },
   events: {
     url: '/events',
     icon: (props: TablerIconsProps) => <IconCalendar {...props} />,
-    desktopHidden: true,
   },
   // clubs: {
   //   url: '/clubs',
@@ -84,7 +84,7 @@ const homeOptions: Record<string, HomeOption> = {
   builds: {
     url: '/builds',
     icon: (props: TablerIconsProps) => <IconCpu {...props} />,
-    desktopHidden: true,
+    grouped: true,
   },
   shop: {
     url: '/cosmetic-shop',
@@ -242,30 +242,27 @@ const useTabsStyles = createStyles((theme) => ({
     },
   },
 
-  moreOption: {
+  moreButton: {
     padding: '8px 10px 8px 16px',
     fontSize: 16,
     fontWeight: 500,
+    display: 'none',
 
     [`&[data-active="true"]`]: {
       background: theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[4],
       color: theme.colorScheme === 'dark' ? theme.white : theme.colors.gray[8],
     },
-  },
 
-  mobileOnly: {
-    display: 'block',
-
-    [containerQuery.largerThan('lg')]: {
-      display: 'none',
+    ['@container (min-width: 992px) and (max-width: 1440px)']: {
+      display: 'block',
     },
   },
 
-  largeDesktopOnly: {
-    display: 'none',
+  groupedOptions: {
+    display: 'block',
 
-    [containerQuery.largerThan('lg')]: {
-      display: 'block',
+    ['@container (min-width: 992px) and (max-width: 1440px)']: {
+      display: 'none',
     },
   },
 }));
@@ -293,7 +290,7 @@ export function HomeTabs({ sx, ...tabProps }: HomeTabProps) {
         <Link key={key} href={value.url} passHref>
           <Anchor
             variant="text"
-            className={cx(value.desktopHidden && classes.mobileOnly)}
+            className={cx(value.grouped && classes.groupedOptions)}
             onClick={() => set(key as HomeOptions)}
           >
             <Tabs.Tab
@@ -342,7 +339,7 @@ export function HomeTabs({ sx, ...tabProps }: HomeTabProps) {
             color="gray"
             variant="subtle"
             data-active={moreOpened}
-            className={cx(classes.largeDesktopOnly, classes.moreOption)}
+            className={classes.moreButton}
           >
             <Group spacing={4} noWrap>
               More
@@ -352,7 +349,7 @@ export function HomeTabs({ sx, ...tabProps }: HomeTabProps) {
         </Menu.Target>
         <Menu.Dropdown>
           {Object.entries(homeOptions)
-            .filter(([, value]) => value.desktopHidden)
+            .filter(([, value]) => value.grouped)
             .map(([key, value]) => (
               <Link key={key} href={value.url} passHref>
                 <Menu.Item component="a" icon={value.icon({ size: 16 })}>
