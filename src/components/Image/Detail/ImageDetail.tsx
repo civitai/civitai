@@ -112,31 +112,7 @@ export function ImageDetail() {
             </ReactionSettingsProvider>
           </div>
           <Card className={cx(classes.sidebar)}>
-            <Card.Section style={{ position: 'relative' }} withBorder>
-              <SmartCreatorCard
-                user={image.user}
-                style={{ border: 0 }}
-                subText={
-                  <Text size="xs" color="dimmed">
-                    {image.publishedAt ? (
-                      <>
-                        Uploaded <DaysFromNow date={image.publishedAt} />
-                      </>
-                    ) : (
-                      'Not published'
-                    )}
-                  </Text>
-                }
-                tipBuzzEntityId={image.id}
-                tipBuzzEntityType="Image"
-              />
-            </Card.Section>
-            <Card.Section
-              py="xs"
-              sx={{ backgroundColor: theme.colors.dark[7] }}
-              withBorder
-              inheritPadding
-            >
+            <Card.Section py="xs" sx={{ backgroundColor: theme.colors.dark[7] }} inheritPadding>
               <Stack spacing={8}>
                 <Group position="apart" spacing={8}>
                   <Group spacing={8}>
@@ -214,7 +190,7 @@ export function ImageDetail() {
                       </ActionIcon>
                     </ImageDetailContextMenu>
                     {/* Need this two identical buttons that do different actions */}
-                    {/* in desktop and mobile */}
+                    {/* in desktop and mobile just to avoid js media queria detection */}
                     <CloseButton
                       className={classes.desktopOnly}
                       radius="xl"
@@ -230,6 +206,25 @@ export function ImageDetail() {
                   </Group>
                 </Group>
               </Stack>
+            </Card.Section>
+            <Card.Section style={{ position: 'relative' }} withBorder>
+              <SmartCreatorCard
+                user={image.user}
+                style={{ border: 0 }}
+                subText={
+                  <Text size="xs" color="dimmed">
+                    {image.publishedAt ? (
+                      <>
+                        Uploaded <DaysFromNow date={image.publishedAt} />
+                      </>
+                    ) : (
+                      'Not published'
+                    )}
+                  </Text>
+                }
+                tipBuzzEntityId={image.id}
+                tipBuzzEntityType="Image"
+              />
             </Card.Section>
             <Card.Section
               component={ScrollArea}
