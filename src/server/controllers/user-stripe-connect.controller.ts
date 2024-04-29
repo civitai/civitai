@@ -6,7 +6,10 @@ import { getUserStripeConnectAccount } from '../services/user-stripe-connect.ser
 export const getHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
   const userId = ctx.user.id;
   try {
-    return getUserStripeConnectAccount({ userId });
+    const stripeConnect = await getUserStripeConnectAccount({ userId });
+    if (!stripeConnect) return null;
+
+    return stripeConnect;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
