@@ -1267,6 +1267,14 @@ ModelUpsertInput & {
   meta?: Prisma.ModelCreateInput['meta'];
   isModerator?: boolean;
 }) => {
+  // don't allow updating of locked properties
+  if (!isModerator) {
+    const lockedProperties = data.lockedProperties ?? [];
+    for (const prop of lockedProperties) {
+      const key = prop as keyof typeof data;
+      if (data[key] !== undefined) delete data[key];
+    }
+  }
   if (!id || templateId) {
     const result = await dbWrite.model.create({
       select: { id: true, nsfwLevel: true },
