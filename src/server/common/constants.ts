@@ -522,6 +522,7 @@ export const generationConfig = {
     // additionalResourceTypes: [{ type: ModelType.LORA, baseModel: 'SD1' }],
     additionalResourceTypes: [
       { type: ModelType.LORA, baseModelSet: 'SD1' },
+      { type: ModelType.DoRA, baseModelSet: 'SD1' },
       { type: ModelType.LoCon, baseModelSet: 'SD1' },
       { type: ModelType.TextualInversion, baseModelSet: 'SD1' },
       { type: ModelType.VAE, baseModelSet: 'SD1' },
@@ -553,6 +554,7 @@ export const generationConfig = {
   SDXL: {
     additionalResourceTypes: [
       { type: ModelType.LORA, baseModelSet: 'SDXL' },
+      { type: ModelType.DoRA, baseModelSet: 'SDXL' },
       { type: ModelType.LoCon, baseModelSet: 'SDXL' },
       { type: ModelType.TextualInversion, baseModelSet: 'SDXL', baseModels: ['SD 1.5'] },
       { type: ModelType.VAE, baseModelSet: 'SDXL' },
@@ -586,6 +588,11 @@ export const generationConfig = {
     additionalResourceTypes: [
       {
         type: ModelType.LORA,
+        baseModelSet: 'Pony',
+        baseModels: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
+      },
+      {
+        type: ModelType.DoRA,
         baseModelSet: 'Pony',
         baseModels: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
       },

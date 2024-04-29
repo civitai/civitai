@@ -79,6 +79,7 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
 
   const lockedPropertiesRef = useRef<string[]>(model?.lockedProperties ?? []);
   const canEditNsfw = !currentUser?.isModerator ? !model?.lockedProperties?.includes('nsfw') : true;
+  const canEditPoi = !currentUser?.isModerator ? !model?.lockedProperties?.includes('poi') : true;
 
   const defaultCategory = result.success ? result.data.category : undefined;
   const defaultValues: z.infer<typeof schema> = {
@@ -154,6 +155,7 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
       upsertModelMutation.mutate({
         ...rest,
         nsfw: canEditNsfw ? rest?.nsfw : undefined,
+        poi: canEditPoi ? rest?.poi : undefined,
         tagsOnModels: tags,
         templateId,
         bountyId,
@@ -169,6 +171,13 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
       else lockedPropertiesRef.current = lockedPropertiesRef.current.filter((x) => x !== 'nsfw');
     }
   }, [currentUser?.isModerator, nsfw]);
+
+  useEffect(() => {
+    if (currentUser?.isModerator) {
+      if (poi) lockedPropertiesRef.current = [...new Set([...lockedPropertiesRef.current, 'poi'])];
+      else lockedPropertiesRef.current = lockedPropertiesRef.current.filter((x) => x !== 'poi');
+    }
+  }, [currentUser?.isModerator, poi]);
 
   useEffect(() => {
     if (model)
@@ -357,6 +366,7 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                   name="poi"
                   label="Depicts an actual person"
                   description="For Example: Tom Cruise or Tom Cruise as Maverick"
+                  disabled={!canEditPoi}
                 />
                 <InputCheckbox
                   name="nsfw"

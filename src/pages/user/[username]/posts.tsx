@@ -73,7 +73,7 @@ export default function UserPostsPage() {
                   }}
                 />
               )}
-              <Group spacing={8} noWrap>
+              <Group spacing={8} ml="auto" noWrap>
                 <SortFilter
                   type="posts"
                   variant="button"

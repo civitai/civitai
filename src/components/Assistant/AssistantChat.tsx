@@ -37,7 +37,7 @@ export function AssistantChat({
       ) : (
         env.NEXT_PUBLIC_GPTT_UUID && (
           <iframe
-            src={`https://app.gpt-trainer.com/gpt-trainer-widget/${env.NEXT_PUBLIC_GPTT_UUID}?token=${token}`}
+            src={`https://app.gpt-trainer.com/widget/${env.NEXT_PUBLIC_GPTT_UUID}?token=${token}`}
             width={typeof width === 'number' ? width + 1 : width}
             height={height}
             style={{ margin: -1, background: 'transparent' }}

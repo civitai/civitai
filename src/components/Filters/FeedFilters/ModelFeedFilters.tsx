@@ -6,9 +6,12 @@ import { useFeedFiltersStyles } from '~/components/Filters/FeedFilters/FeedFilte
 import { ModelFiltersDropdown } from '~/components/Model/Infinite/ModelFiltersDropdown';
 import { useModelQueryParams } from '~/components/Model/model.utils';
 import { PeriodMode } from '~/server/schema/base.schema';
+import { FollowedFilter } from '~/components/Filters/FollowedFilter';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export function ModelFeedFilters({ ...groupProps }: GroupProps) {
   const { classes } = useFeedFiltersStyles();
+  const currentUser = useCurrentUser();
   const { set, ...queryFilters } = useModelQueryParams();
   const { favorites, query } = queryFilters;
   const periodMode = query || favorites ? ('stats' as PeriodMode) : undefined;
@@ -30,6 +33,13 @@ export function ModelFeedFilters({ ...groupProps }: GroupProps) {
             </Button>
           </Popover.Dropdown>
         </Popover>
+      )}
+      {currentUser && (
+        <FollowedFilter
+          type="models"
+          variant="button"
+          buttonProps={{ className: classes.subnavDropdown }}
+        />
       )}
       <SortFilter
         type="models"

@@ -257,7 +257,6 @@ export const bulkDeleteGeneratedImagesSchema = z.object({
 export type PrepareModelInput = z.infer<typeof prepareModelSchema>;
 export const prepareModelSchema = z.object({
   id: z.number(),
-  baseModel: z.string(),
 });
 
 export enum GENERATION_QUALITY {

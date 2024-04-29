@@ -112,7 +112,102 @@ export function ImageDetail() {
             </ReactionSettingsProvider>
           </div>
           <Card className={cx(classes.sidebar)}>
-            <Card.Section withBorder>
+            <Card.Section py="xs" sx={{ backgroundColor: theme.colors.dark[7] }} inheritPadding>
+              <Stack spacing={8}>
+                <Group position="apart" spacing={8}>
+                  <Group spacing={8}>
+                    {image.postId &&
+                      (!query.postId ? (
+                        <RoutedDialogLink
+                          name="postDetail"
+                          state={{ postId: image.postId }}
+                          passHref
+                        >
+                          <Button
+                            component="a"
+                            size="md"
+                            radius="xl"
+                            color="gray"
+                            variant="filled"
+                            compact
+                          >
+                            <Group spacing={4}>
+                              <IconEye size={14} />
+                              <Text size="xs">View post</Text>
+                            </Group>
+                          </Button>
+                        </RoutedDialogLink>
+                      ) : (
+                        <Button
+                          component="a"
+                          size="md"
+                          radius="xl"
+                          color="gray"
+                          variant="filled"
+                          compact
+                          onClick={close}
+                        >
+                          <Group spacing={4}>
+                            <IconEye size={14} />
+                            <Text size="xs">View post</Text>
+                          </Group>
+                        </Button>
+                      ))}
+                    <ActionIcon
+                      size={30}
+                      radius="xl"
+                      color="gray"
+                      variant="filled"
+                      onClick={() =>
+                        openContext('addToCollection', {
+                          imageId: image.id,
+                          type: CollectionType.Image,
+                        })
+                      }
+                    >
+                      <IconBookmark size={14} />
+                    </ActionIcon>
+                  </Group>
+                  <Group spacing={8}>
+                    <LoginRedirect reason={'report-content'}>
+                      <ActionIcon
+                        size={30}
+                        variant="filled"
+                        radius="xl"
+                        onClick={() => {
+                          openContext('report', {
+                            entityType: ReportEntity.Image,
+                            entityId: image.id,
+                          });
+                        }}
+                      >
+                        <IconFlag size={14} stroke={2} />
+                      </ActionIcon>
+                    </LoginRedirect>
+                    <ImageDetailContextMenu>
+                      <ActionIcon size={30} variant="filled" radius="xl">
+                        <IconDotsVertical size={14} />
+                      </ActionIcon>
+                    </ImageDetailContextMenu>
+                    {/* Need this two identical buttons that do different actions */}
+                    {/* in desktop and mobile just to avoid js media queria detection */}
+                    <CloseButton
+                      className={classes.desktopOnly}
+                      radius="xl"
+                      variant="filled"
+                      onClick={close}
+                    />
+                    <CloseButton
+                      className={classes.mobileOnly}
+                      radius="xl"
+                      variant="filled"
+                      onClick={toggleInfo}
+                    />
+                  </Group>
+                </Group>
+              </Stack>
+            </Card.Section>
+            <Card.Section style={{ position: 'relative' }} withBorder>
               <SmartCreatorCard
                 user={image.user}
                 style={{ border: 0 }}
@@ -130,96 +225,6 @@ export function ImageDetail() {
                 tipBuzzEntityId={image.id}
                 tipBuzzEntityType="Image"
               />
-            </Card.Section>
-            <Card.Section
-              py="xs"
-              sx={{ backgroundColor: theme.colors.dark[7] }}
-              withBorder
-              inheritPadding
-            >
-              <Stack spacing={8}>
-                <Group position="apart" spacing={8}>
-                  <Group spacing={8}>
-                    {image.postId &&
-                      (!query.postId ? (
-                        <RoutedDialogLink
-                          name="postDetail"
-                          state={{ postId: image.postId }}
-                          passHref
-                        >
-                          <Button
-                            component="a"
-                            size="md"
-                            radius="xl"
-                            color="gray"
-                            variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                            compact
-                          >
-                            <Group spacing={4}>
-                              <IconEye size={14} />
-                              <Text size="xs">View post</Text>
-                            </Group>
-                          </Button>
-                        </RoutedDialogLink>
-                      ) : (
-                        <Button
-                          component="a"
-                          size="md"
-                          radius="xl"
-                          color="gray"
-                          variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                          compact
-                          onClick={close}
-                        >
-                          <Group spacing={4}>
-                            <IconEye size={14} />
-                            <Text size="xs">View post</Text>
-                          </Group>
-                        </Button>
-                      ))}
-                    <ActionIcon
-                      size={30}
-                      radius="xl"
-                      color="gray"
-                      variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                      onClick={() =>
-                        openContext('addToCollection', {
-                          imageId: image.id,
-                          type: CollectionType.Image,
-                        })
-                      }
-                    >
-                      <IconBookmark size={14} />
-                    </ActionIcon>
-                  </Group>
-                  <Group spacing={8}>
-                    <LoginRedirect reason={'report-content'}>
-                      <ActionIcon
-                        size={30}
-                        variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                        radius="xl"
-                        onClick={() => {
-                          openContext('report', {
-                            entityType: ReportEntity.Image,
-                            entityId: image.id,
-                          });
-                        }}
-                      >
-                        <IconFlag size={14} stroke={2} />
-                      </ActionIcon>
-                    </LoginRedirect>
-                    <ImageDetailContextMenu>
-                      <ActionIcon
-                        size={30}
-                        variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                        radius="xl"
-                      >
-                        <IconDotsVertical size={14} />
-                      </ActionIcon>
-                    </ImageDetailContextMenu>
-                  </Group>
-                </Group>
-              </Stack>
             </Card.Section>
             <Card.Section
               component={ScrollArea}

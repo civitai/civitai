@@ -747,10 +747,12 @@ export const getAllImages = async ({
     } else if (sort === ImageSort.MostCollected) {
       orderBy = `im."collectedCount" DESC, im."reactionCount" DESC, im."imageId"`;
       if (!isGallery) AND.push(Prisma.sql`im."collectedCount" > 0`);
-    } else if (sort === ImageSort.MostTipped) {
-      orderBy = `im."tippedAmountCount" DESC, im."reactionCount" DESC, im."imageId"`;
-      if (!isGallery) AND.push(Prisma.sql`im."tippedAmountCount" > 0`);
-    } else if (sort === ImageSort.Random) orderBy = 'ct."randomId" DESC';
+    }
+    // else if (sort === ImageSort.MostTipped) {
+    //   orderBy = `im."tippedAmountCount" DESC, im."reactionCount" DESC, im."imageId"`;
+    //   if (!isGallery) AND.push(Prisma.sql`im."tippedAmountCount" > 0`);
+    // }
+    else if (sort === ImageSort.Random) orderBy = 'ct."randomId" DESC';
     else if (sort === ImageSort.Oldest) orderBy = `i."createdAt" ASC`;
     else {
       if (from.indexOf(`irr`) !== -1) {
