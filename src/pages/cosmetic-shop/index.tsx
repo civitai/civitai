@@ -59,6 +59,8 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { CosmeticShopSectionMeta } from '~/server/schema/cosmetic-shop.schema';
 import { openUserProfileEditModal } from '~/components/Modals/UserProfileEditModal';
 
+const IMAGE_SECTION_WIDTH = 1288;
+
 const useStyles = createStyles((theme) => ({
   section: {
     overflow: 'hidden',
@@ -107,12 +109,8 @@ const useStyles = createStyles((theme) => ({
   sectionTitle: {
     color: theme.colorScheme === 'dark' ? theme.white : theme.black,
     width: '100%',
-    backdropFilter: 'blur(10px)',
-    background:
-      theme.colorScheme === 'dark'
-        ? theme.fn.rgba(theme.colors.dark[9], 0.3)
-        : theme.fn.rgba(theme.colors.gray[0], 0.3),
     padding: theme.spacing.lg,
+    textShadow: '0 0 10px rgba(0,0,0,0.5)',
     [theme.fn.smallerThan('sm')]: {
       fontSize: 18,
     },
@@ -234,7 +232,7 @@ export default function CosmeticShopMain() {
               Any cosmetic purchases directly contributes to Civitai ❤️
             </Text>
           </Stack>
-          {isLoading && !cosmeticShopSections ? (
+          {isLoading ? (
             <Center p="xl">
               <Loader />
             </Center>
@@ -253,7 +251,7 @@ export default function CosmeticShopMain() {
                     {image && (
                       <EdgeMedia
                         src={image.url}
-                        width={450}
+                        width={IMAGE_SECTION_WIDTH}
                         style={{
                           objectFit: 'cover',
                           objectPosition: 'center',

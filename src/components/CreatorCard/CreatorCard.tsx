@@ -58,7 +58,7 @@ const useStyles = createStyles((theme) => ({
   },
   avatar: {
     position: 'absolute',
-    top: -5,
+    bottom: 4,
     overflow: 'visible',
   },
 }));
