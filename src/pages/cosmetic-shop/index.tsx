@@ -58,6 +58,7 @@ import { CosmeticShopItemPreviewModal } from '~/components/CosmeticShop/Cosmetic
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { CosmeticShopSectionMeta } from '~/server/schema/cosmetic-shop.schema';
 import { openUserProfileEditModal } from '~/components/Modals/UserProfileEditModal';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 
 const IMAGE_SECTION_WIDTH = 1288;
 
@@ -74,6 +75,7 @@ const useStyles = createStyles((theme) => ({
   sectionHeaderContainer: {
     overflow: 'hidden',
     position: 'relative',
+    height: 250,
 
     [theme.fn.smallerThan('sm')]: {
       marginLeft: -theme.spacing.md,
@@ -82,7 +84,6 @@ const useStyles = createStyles((theme) => ({
   },
 
   sectionHeaderContainerWithBackground: {
-    height: 250,
     background: 'transparent',
     borderRadius: theme.radius.md,
   },
@@ -110,10 +111,10 @@ const useStyles = createStyles((theme) => ({
     color: theme.colorScheme === 'dark' ? theme.white : theme.black,
     width: '100%',
     padding: theme.spacing.lg,
-    textShadow: '0 0 10px rgba(0,0,0,0.5)',
-    [theme.fn.smallerThan('sm')]: {
-      fontSize: 18,
-    },
+    textShadow: '2px 2px 2px rgba(0,0,0,0.5)',
+    // [theme.fn.smallerThan('sm')]: {
+    //   fontSize: 18,
+    // },
   },
 
   hideMobile: {
@@ -240,6 +241,9 @@ export default function CosmeticShopMain() {
             cosmeticShopSections.map((section) => {
               const { image, items } = section;
               const meta = section.meta as CosmeticShopSectionMeta;
+              const backgroundImageUrl = image
+                ? getEdgeUrl(image.url, { width: IMAGE_SECTION_WIDTH, optimized: true })
+                : undefined;
 
               return (
                 <Stack key={section.id} className={classes.section}>
@@ -248,28 +252,25 @@ export default function CosmeticShopMain() {
                       [classes.sectionHeaderContainerWithBackground]: !!image,
                     })}
                   >
-                    {image && (
-                      <EdgeMedia
-                        src={image.url}
-                        width={IMAGE_SECTION_WIDTH}
-                        style={{
-                          objectFit: 'cover',
-                          objectPosition: 'center',
-                          width: '100%',
-                          height: '100%',
-                          maxWidth: '100%',
-                        }}
-                      />
-                    )}
-                    {!meta?.hideTitle && (
-                      <Box className={cx({ [classes.sectionHeaderContentWrap]: !!image })}>
+                    <Box
+                      className={cx({ [classes.sectionHeaderContentWrap]: !!image })}
+                      style={
+                        backgroundImageUrl
+                          ? {
+                              backgroundImage: `url(${backgroundImageUrl})`,
+                              backgroundPosition: 'left center',
+                            }
+                          : undefined
+                      }
+                    >
+                      {!meta?.hideTitle && (
                         <Stack mih="100%" justify="center" style={{ flexGrow: 1 }}>
                           <Title order={2} className={classes.sectionTitle} align="center">
                             {section.title}
                           </Title>
                         </Stack>
-                      </Box>
-                    )}
+                      )}
+                    </Box>
                   </Box>
 
                   <Stack>
