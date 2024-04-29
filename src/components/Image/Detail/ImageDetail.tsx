@@ -113,14 +113,6 @@ export function ImageDetail() {
           </div>
           <Card className={cx(classes.sidebar)}>
             <Card.Section style={{ position: 'relative' }} withBorder>
-              <CloseButton
-                style={{ position: 'absolute', top: 8, right: 8, zIndex: 10 }}
-                size="lg"
-                radius="lg"
-                variant="filled"
-                onClick={toggleInfo}
-                className={classes.mobileOnly}
-              />
               <SmartCreatorCard
                 user={image.user}
                 style={{ border: 0 }}
@@ -160,7 +152,7 @@ export function ImageDetail() {
                             size="md"
                             radius="xl"
                             color="gray"
-                            variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                            variant="filled"
                             compact
                           >
                             <Group spacing={4}>
@@ -175,7 +167,7 @@ export function ImageDetail() {
                           size="md"
                           radius="xl"
                           color="gray"
-                          variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                          variant="filled"
                           compact
                           onClick={close}
                         >
@@ -189,7 +181,7 @@ export function ImageDetail() {
                       size={30}
                       radius="xl"
                       color="gray"
-                      variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                      variant="filled"
                       onClick={() =>
                         openContext('addToCollection', {
                           imageId: image.id,
@@ -204,7 +196,7 @@ export function ImageDetail() {
                     <LoginRedirect reason={'report-content'}>
                       <ActionIcon
                         size={30}
-                        variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                        variant="filled"
                         radius="xl"
                         onClick={() => {
                           openContext('report', {
@@ -217,14 +209,24 @@ export function ImageDetail() {
                       </ActionIcon>
                     </LoginRedirect>
                     <ImageDetailContextMenu>
-                      <ActionIcon
-                        size={30}
-                        variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                        radius="xl"
-                      >
+                      <ActionIcon size={30} variant="filled" radius="xl">
                         <IconDotsVertical size={14} />
                       </ActionIcon>
                     </ImageDetailContextMenu>
+                    {/* Need this two identical buttons that do different actions */}
+                    {/* in desktop and mobile */}
+                    <CloseButton
+                      className={classes.desktopOnly}
+                      radius="xl"
+                      variant="filled"
+                      onClick={close}
+                    />
+                    <CloseButton
+                      className={classes.mobileOnly}
+                      radius="xl"
+                      variant="filled"
+                      onClick={toggleInfo}
+                    />
                   </Group>
                 </Group>
               </Stack>
