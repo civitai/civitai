@@ -306,6 +306,7 @@ export class Tracker {
   public reaction(values: {
     type: ReactionType;
     entityId: number;
+    ownerId: number;
     reaction: ReviewReactions;
     nsfw: NsfwLevelDeprecated;
   }) {

@@ -6,7 +6,6 @@ import { throwBadRequestError } from '../utils/errorHandling';
 import { getServerStripe } from '../utils/get-server-stripe';
 import { StripeConnectStatus, UserStripeConnect } from '@prisma/client';
 import { createNotification } from './notification.service';
-import { number } from 'zod';
 
 // Since these are stripe connect related, makes sense to log for issues for visibility.
 const log = (data: MixedObject) => {
@@ -14,9 +13,7 @@ const log = (data: MixedObject) => {
 };
 
 export async function getUserStripeConnectAccount({ userId }: { userId: number }) {
-  return dbRead.userStripeConnect.findUniqueOrThrow({
-    where: { userId },
-  });
+  return dbRead.userStripeConnect.findUnique({ where: { userId } });
 }
 
 export async function createUserStripeConnectAccount({ userId }: { userId: number }) {
@@ -66,6 +63,8 @@ export async function getStripeConnectOnboardingLink({ userId }: { userId: numbe
   if (!env.NEXT_PUBLIC_BASE_URL) throw throwBadRequestError('NEXT_PUBLIC_BASE_URL not set');
 
   const userStripeConnect = await getUserStripeConnectAccount({ userId });
+  if (!userStripeConnect) throw throwBadRequestError('User stripe connect account not found');
+
   const stripe = await getServerStripe();
   const accountLink = await stripe.accountLinks.create({
     account: userStripeConnect.connectedAccountId,
@@ -159,6 +158,7 @@ export const payToStripeConnectAccount = async ({
 }) => {
   const stripe = await getServerStripe();
   const toUserStripeConnect = await getUserStripeConnectAccount({ userId: toUserId });
+  if (!toUserStripeConnect) throw throwBadRequestError('User stripe connect account not found');
 
   try {
     const transfer = await stripe.transfers.create({

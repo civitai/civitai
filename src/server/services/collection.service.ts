@@ -1202,6 +1202,35 @@ export const updateCollectionItemsStatus = async ({
   return collection;
 };
 
+export function getCollectionItemCount({
+  collectionIds: ids,
+  status,
+}: {
+  collectionIds: number[];
+  status?: CollectionItemStatus;
+}) {
+  const where = [Prisma.sql`"collectionId" IN (${Prisma.join(ids)})`];
+  if (status) where.push(Prisma.sql`"status" = ${status}::"CollectionItemStatus"`);
+
+  return dbRead.$queryRaw<{ id: number; count: number }[]>`
+    SELECT "collectionId" as "id", COUNT(*) as "count"
+    FROM "CollectionItem"
+    WHERE ${Prisma.sql`${Prisma.join(where, ' AND ')}`}
+    GROUP BY "collectionId"
+  `;
+}
+
+export function getContributorCount({ collectionIds: ids }: { collectionIds: number[] }) {
+  const where = [Prisma.sql`"collectionId" IN (${Prisma.join(ids)})`];
+
+  return dbRead.$queryRaw<{ id: number; count: number }[]>`
+    SELECT "collectionId" as "id", COUNT(*) as "count"
+    FROM "CollectionContributor"
+    WHERE ${Prisma.sql`${Prisma.join(where, ' AND ')}`}
+    GROUP BY "collectionId"
+  `;
+}
+
 const validateContestCollectionEntry = async ({
   collectionId,
   userId,

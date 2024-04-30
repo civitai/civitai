@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { constants } from '~/server/common/constants';
 
 export enum TransactionType {
   Tip = 0,
@@ -128,9 +129,19 @@ export const completeStripeBuzzPurchaseTransactionInput = z.object({
 
 export type UserBuzzTransactionInputSchema = z.infer<typeof userBuzzTransactionInputSchema>;
 
-export const userBuzzTransactionInputSchema = buzzTransactionSchema.omit({
-  type: true,
-});
+export const userBuzzTransactionInputSchema = buzzTransactionSchema
+  .omit({
+    type: true,
+  })
+  .superRefine((data) => {
+    if (
+      data.entityType &&
+      ['Image', 'Model', 'Article'].includes(data.entityType) &&
+      data.amount > constants.buzz.maxEntityTip
+    )
+      return false;
+    return true;
+  });
 
 export const getBuzzAccountSchema = z.object({
   accountId: z.number(),

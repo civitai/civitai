@@ -78,7 +78,7 @@ export const FeedCard = forwardRef<HTMLAnchorElement, Props>(
     );
 
     return (
-      <div style={{ position: 'relative' }}>
+      <div style={{ position: frameDecoration ? 'relative' : undefined }}>
         {href ? (
           <Link href={href} passHref>
             {card}
