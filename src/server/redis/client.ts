@@ -87,7 +87,7 @@ export const REDIS_KEYS = {
   RESEARCH: {
     RATINGS_COUNT: 'research:ratings-count',
     RATINGS_PROGRESS: 'research:ratings-progress',
-    RATINGS_TRACKS: 'research:ratings-tracks',
+    RATINGS_TRACKS: 'research:ratings-tracks-2',
     RATINGS_SANITY_IDS: 'research:ratings-sanity-ids',
   },
   COUNTERS: {
