@@ -1,41 +1,56 @@
 import client from 'prom-client';
 
+function registerCounter({ name, help }: { name: string; help: string }) {
+  // Do this to deal with HMR in nextjs
+  try {
+    return new client.Counter({ name, help });
+  } catch (e) {
+    return client.register.getSingleMetric(name);
+  }
+}
+
 // Account counters
-export const newUserCounter = new client.Counter({ name: 'new_user', help: 'New user created' });
-export const loginCounter = new client.Counter({ name: 'login', help: 'User logged in' });
+export const newUserCounter = registerCounter({
+  name: 'new_user',
+  help: 'New user created',
+});
+export const loginCounter = registerCounter({
+  name: 'login',
+  help: 'User logged in',
+});
 
 // Onboarding counters
-export const onboardingCompletedCounter = new client.Counter({
+export const onboardingCompletedCounter = registerCounter({
   name: 'onboarding_completed',
   help: 'User completed onboarding',
 });
-export const onboardingErrorCounter = new client.Counter({
+export const onboardingErrorCounter = registerCounter({
   name: 'onboarding_error',
   help: 'User onboarding error',
 });
 
 // Content counters
-export const leakingContentCounter = new client.Counter({
+export const leakingContentCounter = registerCounter({
   name: 'leaking_content',
   help: 'Inappropriate content that was reported in safe feeds',
 });
 
 // Vault counters
-export const vaultItemProcessedCounter = new client.Counter({
+export const vaultItemProcessedCounter = registerCounter({
   name: 'vault_item_processed',
   help: 'Vault item processed',
 });
-export const vaultItemFailedCounter = new client.Counter({
+export const vaultItemFailedCounter = registerCounter({
   name: 'vault_item_failed',
   help: 'Vault item failed',
 });
 
 // Reward counters
-export const rewardGivenCounter = new client.Counter({
+export const rewardGivenCounter = registerCounter({
   name: 'reward_given',
   help: 'Reward given',
 });
-export const rewardFailedCounter = new client.Counter({
+export const rewardFailedCounter = registerCounter({
   name: 'reward_failed',
   help: 'Reward failed',
 });
