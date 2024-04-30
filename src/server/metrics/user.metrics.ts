@@ -18,6 +18,7 @@ export const userMetrics = createMetricProcessor({
       getFollowingTasks(ctx),
       getModelTasks(ctx),
       getReviewTasks(ctx),
+      getReactionTasks(ctx),
     ]);
     log('userMetrics update', taskBatches.flat().length, 'tasks');
     for (const tasks of taskBatches) await limitConcurrency(tasks, 5);
@@ -181,6 +182,93 @@ async function getReviewTasks(ctx: MetricProcessorRunContext) {
         SET "reviewCount" = EXCLUDED."reviewCount", "updatedAt" = NOW()
     `;
     log('getReviewTasks', i + 1, 'of', tasks.length, 'done');
+  });
+
+  return tasks;
+}
+
+type TimeframeRow = {
+  userId: number;
+  day: number;
+  week: number;
+  month: number;
+  year: number;
+  all_time: number;
+};
+const reactionTypes = `('Image_Create', 'Comment_Create', 'CommentV2_Create', 'Review_Create', 'Question_Create', 'Answer_Create', 'BountyEntry_Create', 'Article_Create')`;
+async function getReactionTasks(ctx: MetricProcessorRunContext) {
+  const data = await ctx.ch.$query<TimeframeRow>`
+    WITH targets AS (
+      SELECT
+        ownerId
+      FROM reactions
+      WHERE time > parseDateTimeBestEffort('${ctx.lastUpdate}')
+    )
+    SELECT
+      ownerId as userId,
+      SUM(CASE
+        WHEN createdDate < current_date() THEN 0
+        WHEN type IN ${reactionTypes} THEN 1
+        ELSE -1
+      END) as day,
+      SUM(CASE
+        WHEN createdDate < subtractDays(current_date(),7) THEN 0
+        WHEN type IN ${reactionTypes} THEN 1
+        ELSE -1
+      END) as week,
+      SUM(CASE
+        WHEN createdDate < subtractMonths(current_date(), 1) THEN 0
+        WHEN type IN ${reactionTypes} THEN 1
+        ELSE -1
+      END) as month,
+      SUM(CASE
+        WHEN createdDate < subtractYears(current_date(), 1) THEN 0
+        WHEN type IN ${reactionTypes} THEN 1
+        ELSE -1
+      END) as year,
+      SUM(CASE
+        WHEN type IN ${reactionTypes} THEN 1
+        ELSE -1
+      END) as all_time
+    FROM reactions
+    WHERE (time < parseDateTimeBestEffort('2024-04-27') OR userId != ownerId)
+      AND ownerId IN (SELECT ownerId FROM targets)
+    GROUP BY 1;
+  `;
+
+  const tasks = chunk(data, 1000).map((rows, i) => async () => {
+    ctx.jobContext.checkIfCanceled();
+    log('getReactionTasks', i + 1, 'of', tasks.length);
+    const json = JSON.stringify(rows);
+    await executeRefresh(ctx)`
+      INSERT INTO "UserMetric" ("userId", timeframe, "reactionCount")
+      SELECT
+          um."userId", um.timeframe, um."reactionCount"
+      FROM
+      (
+        SELECT
+          CAST(data::json->>'userId' AS INT) AS "userId",
+          tf.timeframe,
+          CAST(
+            CASE
+              WHEN tf.timeframe = 'Day' THEN data::json->>'day'
+              WHEN tf.timeframe = 'Week' THEN data::json->>'week'
+              WHEN tf.timeframe = 'Month' THEN data::json->>'month'
+              WHEN tf.timeframe = 'Year' THEN data::json->>'year'
+              WHEN tf.timeframe = 'AllTime' THEN data::json->>'all_time'
+            END
+          AS int) as "reactionCount"
+        FROM json_array_elements('${json}'::json) data
+        CROSS JOIN (
+            SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
+        ) tf
+      ) um
+      WHERE um."reactionCount" IS NOT NULL
+        AND um."userId" IN (SELECT id FROM "User")
+      ON CONFLICT ("userId", timeframe) DO UPDATE
+        SET "reactionCount" = EXCLUDED."reactionCount", "updatedAt" = now();
+    `;
+    log('getReactionTasks', i + 1, 'of', tasks.length, 'done');
   });
 
   return tasks;

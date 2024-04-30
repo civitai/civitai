@@ -341,6 +341,7 @@ model UserMetric {
   timeframe         MetricTimeframe
   followingCount    Int             @default(0)
   followerCount     Int             @default(0)
+  reactionCount     Int             @default(0)
   hiddenCount       Int             @default(0)
   uploadCount       Int             @default(0)
   reviewCount       Int             @default(0)
