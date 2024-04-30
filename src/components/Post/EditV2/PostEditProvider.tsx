@@ -194,7 +194,7 @@ export function PostEditProvider({ post, params = {}, children, ...extendedParam
 
 type PostPreviewState = {
   showPreview: boolean;
-  toggleShowPreview: () => void;
+  toggleShowPreview: (value?: boolean) => void;
 };
 const PostPreviewContext = createContext<PostPreviewState | null>(null);
 export function usePostPreviewContext() {
@@ -208,8 +208,8 @@ function PostPreviewProvider({ children }: { children: React.ReactNode }) {
     key: 'post-preview',
     defaultValue: false,
   });
-  function toggleShowPreview() {
-    setShowPreview((o) => !o);
+  function toggleShowPreview(value?: boolean) {
+    setShowPreview((o) => (value !== undefined ? !value : !o));
   }
   return (
     <PostPreviewContext.Provider value={{ showPreview, toggleShowPreview }}>

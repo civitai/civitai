@@ -21,8 +21,6 @@ import {
   IconEye,
   IconEyeOff,
   IconInfoCircle,
-  IconMaximize,
-  IconMinimize,
   IconPencil,
   IconPlus,
   IconTrash,
@@ -508,10 +506,9 @@ function EditDetail() {
 }
 
 function PostImage() {
-  const { showPreview, toggleShowPreview } = usePostPreviewContext();
+  const { showPreview } = usePostPreviewContext();
   const { image, isBlocked, onDelete, isDeleting, onEditMetaClick } = useAddedImageContext();
   const { metadata, url, type, id, nsfwLevel } = image;
-  const ShowPreviewIcon = showPreview ? IconMinimize : IconMaximize;
   return (
     <div className={`relative`}>
       <div
@@ -541,12 +538,6 @@ function PostImage() {
         />
       )}
       <div className="absolute top-2 right-2 z-20 flex gap-1">
-        <ActionIcon onClick={toggleShowPreview}>
-          <ShowPreviewIcon
-            color="#fff"
-            filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-          />
-        </ActionIcon>
         <Menu withArrow position="bottom-end">
           <Menu.Target>
             <ActionIcon>
