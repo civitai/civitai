@@ -104,7 +104,8 @@ export function CreatorCard({
               avatarProps={{ size: 32 }}
               user={creator}
               subText={
-                subText ?? creator.createdAt ? `Joined ${formatDate(creator.createdAt)}` : undefined
+                subText ??
+                (creator.createdAt ? `Joined ${formatDate(creator.createdAt)}` : undefined)
               }
               withUsername
               linkToProfile
@@ -307,9 +308,9 @@ export const CreatorCardV2 = ({
           </Group>
           <Box className={classes.profileDetailsContainer}>
             <Stack spacing="xs" className={classes.profileDetails} py={8} h="100%">
-              <Group align="center" position="apart">
+              <Group align="center" position="apart" noWrap>
                 <UserProfileLink user={creator} linkToProfile>
-                  <Group>
+                  <Group noWrap>
                     <Box className={classes.avatar}>
                       <UserAvatar
                         size="lg"

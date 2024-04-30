@@ -17,6 +17,8 @@ import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { reduceToBasicFileMetadata } from '~/server/services/model-file.service';
 import { Session } from 'next-auth';
+import { stringifyAIR } from '~/utils/string-helpers';
+import { safeDecodeURIComponent } from '~/utils/string-helpers';
 
 const hashesAsObject = (hashes: { type: ModelHashType; hash: string }[]) =>
   hashes.reduce((acc, { type, hash }) => ({ ...acc, [type]: hash }), {});
@@ -67,6 +69,12 @@ export async function prepareModelVersionResponse(
 
   return {
     ...version,
+    air: stringifyAIR({
+      baseModel: version.baseModel,
+      type: model.type,
+      modelId: version.modelId,
+      id: version.id,
+    }),
     stats: {
       downloadCount: metrics[0]?.downloadCount ?? 0,
       ratingCount: metrics[0]?.ratingCount ?? 0,
@@ -79,7 +87,7 @@ export async function prepareModelVersionResponse(
           ...file,
           metadata: reduceToBasicFileMetadata(metadata),
           hashes: hashesAsObject(hashes),
-          name: decodeURIComponent(getDownloadFilename({ model, modelVersion: version, file })),
+          name: safeDecodeURIComponent(getDownloadFilename({ model, modelVersion: version, file })),
           primary: primaryFile.id === file.id,
           downloadUrl: `${baseUrl.origin}${createModelFileDownloadUrl({
             versionId: version.id,

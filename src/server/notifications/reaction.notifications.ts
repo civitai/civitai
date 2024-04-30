@@ -1,3 +1,4 @@
+import { milestoneNotificationFix } from '~/server/common/constants';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
 import { humanizeList } from '~/utils/humanizer';
 
@@ -44,6 +45,7 @@ export const reactionNotifications = createNotificationProcessor({
         JOIN "Comment" c on c.id = a.affected_id
         JOIN "Model" m ON m.id = c."modelId"
         JOIN milestones ms ON ms.value <= a.reaction_count
+        WHERE c."createdAt" > '${milestoneNotificationFix}'
       )
       INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
@@ -120,6 +122,7 @@ export const reactionNotifications = createNotificationProcessor({
           GROUP BY ir."imageId"
         ) ir ON ir."imageId" = i.id
         JOIN milestones ms ON ms.value <= a.reaction_count
+        WHERE i."createdAt" > '${milestoneNotificationFix}'
       )
       INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
@@ -168,6 +171,7 @@ export const reactionNotifications = createNotificationProcessor({
         FROM affected_value af
         JOIN "Article" a on a.id = af.affected_id
         JOIN milestones ms ON ms.value <= af.reaction_count
+            AND a."createdAt" > '${milestoneNotificationFix}'
       )
       INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT

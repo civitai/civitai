@@ -40,7 +40,7 @@ const schema = z.object({
   image: z.string().nullable(),
   nameplateId: z.number().nullish(),
   badgeId: z.number().nullish(),
-  leaderboardShowcase: z.string().nullable(),
+  leaderboardShowcase: z.string().nullish(),
   profilePicture: profilePictureSchema.nullish(),
 });
 
@@ -370,6 +370,7 @@ export function ProfileCard() {
 function ProfilePreview({ user, badge, nameplate, profileImage }: ProfilePreviewProps) {
   const userWithCosmetics: UserWithCosmetics = {
     ...user,
+    image: profileImage ?? user.image,
     cosmetics: [],
     deletedAt: null,
     profilePicture: {

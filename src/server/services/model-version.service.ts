@@ -390,7 +390,7 @@ export const publishModelVersionById = async ({
 
   if (!republishing && !meta?.unpublishedBy)
     await updateModelLastVersionAt({ id: version.modelId });
-  await prepareModelInOrchestrator({ id: version.id, baseModel: version.baseModel });
+  await prepareModelInOrchestrator({ id: version.id });
   await preventReplicationLag('model', version.modelId);
   await preventReplicationLag('modelVersion', id);
 

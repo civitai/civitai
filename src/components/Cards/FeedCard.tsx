@@ -106,7 +106,7 @@ export const FeedCard = forwardRef<HTMLAnchorElement, Props>(
 
     return (
       <div
-        style={{ position: 'relative' }}
+        style={{ position: frameDecoration ? 'relative' : undefined }}
         className={
           frameDecoration
             ? cx(

@@ -165,6 +165,9 @@ export namespace Orchestrator {
       priority: number;
       providers: string[];
     };
+    export type BustModelCache = {
+      modelVersionId: number;
+    };
     export type PrepareModelResponse = Orchestrator.JobResponse<PrepareModelJob>;
   }
 

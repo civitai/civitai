@@ -14,6 +14,7 @@ import {
   IconArrowRight,
   IconBarbell,
   IconBarcode,
+  IconBrush,
   IconCoin,
   IconCoins,
   IconHighlight,
@@ -30,6 +31,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { RedeemCodeModal } from '~/components/RedeemableCode/RedeemCodeModal';
+import { generationPanel } from '~/store/generation.store';
 
 const useStyles = createStyles((theme) => ({
   featureCard: {
@@ -119,7 +121,7 @@ export const EarningBuzz = ({ asList, withCTA }: Props) => {
       ) : (
         <ContainerGrid gutter={20}>
           {earnings.map((item) => (
-            <ContainerGrid.Col key={item.key} xs={12} md={3}>
+            <ContainerGrid.Col key={item.key} xs={12} sm={4} md={3}>
               <FeatureCard {...item} withCTA={withCTA ?? item.withCTA} />
             </ContainerGrid.Col>
           ))}
@@ -147,21 +149,21 @@ const getSpendings = ({
       rightIcon: <IconArrowRight size={14} />,
     },
   },
-  // {
-  //   key: 'generate',
-  //   icon: <IconBrush size={32} />,
-  //   title: 'Generate Images',
-  //   description: 'Use any of our models to create',
-  //   btnProps: {
-  //     component: 'button',
-  //     onClick: (e: MouseEvent<HTMLElement>) => {
-  //       e.preventDefault();
-  //       open();
-  //     },
-  //     children: 'Generate now',
-  //     rightIcon: <IconArrowRight size={14} />,
-  //   },
-  // },
+  {
+    key: 'generate',
+    icon: <IconBrush size={32} />,
+    title: 'Generate Images',
+    description: 'Create using thousands of community resources.',
+    btnProps: {
+      component: 'button',
+      onClick: (e: MouseEvent<HTMLElement>) => {
+        e.preventDefault();
+        generationPanel.open();
+      },
+      children: 'Generate now',
+      rightIcon: <IconArrowRight size={14} />,
+    },
+  },
   {
     key: 'tip',
     icon: <IconCoins size={32} />,
@@ -242,7 +244,7 @@ export const SpendingBuzz = ({ asList, withCTA }: Props) => {
       ) : (
         <ContainerGrid gutter={20}>
           {spendings.map((item) => (
-            <ContainerGrid.Col key={item.key} xs={12} md={3}>
+            <ContainerGrid.Col key={item.key} xs={12} sm={4} md={3}>
               <FeatureCard {...item} withCTA={withCTA ?? item.withCTA} />
             </ContainerGrid.Col>
           ))}

@@ -788,6 +788,7 @@ export const createGenerationRequest = async ({
   const schedulerUrl = new URL(`${env.SCHEDULER_ENDPOINT}/requests`);
   if (status.charge) schedulerUrl.searchParams.set('charge', 'true');
   if (params.staging) schedulerUrl.searchParams.set('staging', 'true');
+  // if (draft) schedulerUrl.searchParams.set('batch', 'true'); // Disable batching for now
 
   const response = await fetch(schedulerUrl.toString(), {
     method: 'POST',
@@ -1042,21 +1043,8 @@ export const deleteAllGenerationRequests = async ({ userId }: { userId: number }
   if (!deleteResponse.ok) throw throwNotFoundError();
 };
 
-export async function prepareModelInOrchestrator({ id, baseModel }: PrepareModelInput) {
-  const orchestratorBaseModel = baseModel.includes('SDXL') ? 'SDXL' : 'SD_1_5';
-  const response = await orchestratorCaller.prepareModel({
-    payload: {
-      baseModel: orchestratorBaseModel,
-      model: `@civitai/${id}`,
-      priority: 1,
-      providers: ['OctoML', 'OctoMLNext'],
-    },
-  });
-
-  if (response.status === 429) throw throwRateLimitError();
-  if (!response.ok) throw new Error('An unknown error occurred. Please try again later');
-
-  return response.data;
+export async function prepareModelInOrchestrator({ id }: PrepareModelInput) {
+  await orchestratorCaller.bustModelCache({ modelVersionId: id });
 }
 
 export async function getUnstableResources() {

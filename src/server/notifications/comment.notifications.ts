@@ -425,7 +425,7 @@ export const commentNotifications = createNotificationProcessor({
         let message = `${details.username} commented on your image`;
         if (details.modelName) message += ` posted to the ${details.modelName} model`;
 
-        const url = `/images/${details.imageId}?postId=${details.postId}&highlight=${details.commentId}`;
+        const url = `/images/${details.imageId}?highlight=${details.commentId}`;
         return { message, url };
       }
 

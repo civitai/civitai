@@ -33,7 +33,7 @@ async function getTrackerEvent(input: ToggleReactionInput, result: 'removed' | '
         return {
           type: `Image_${action}`,
           nsfw: getNsfwLevelDeprecatedReverseMapping(image.nsfwLevel),
-          userId: image.userId,
+          ownerId: image.userId,
           ...shared,
         };
       }
@@ -53,7 +53,7 @@ async function getTrackerEvent(input: ToggleReactionInput, result: 'removed' | '
         return {
           type: `Post_${action}`,
           nsfw: getNsfwLevelDeprecatedReverseMapping(post.nsfwLevel),
-          userId: post.userId,
+          ownerId: post.userId,
           ...shared,
         };
       }
@@ -73,7 +73,7 @@ async function getTrackerEvent(input: ToggleReactionInput, result: 'removed' | '
         return {
           type: `Article_${action}`,
           nsfw: getNsfwLevelDeprecatedReverseMapping(article.nsfwLevel),
-          userId: article.userId,
+          ownerId: article.userId,
           ...shared,
         };
       }
@@ -87,7 +87,7 @@ async function getTrackerEvent(input: ToggleReactionInput, result: 'removed' | '
         return {
           type: `Comment_${action}`,
           nsfw: NsfwLevelDeprecated.None,
-          userId: commentOld.userId,
+          ownerId: commentOld.userId,
           ...shared,
         };
       }
@@ -101,7 +101,7 @@ async function getTrackerEvent(input: ToggleReactionInput, result: 'removed' | '
         return {
           type: `CommentV2_${action}`,
           nsfw: NsfwLevelDeprecated.None,
-          userId: commentV2.userId,
+          ownerId: commentV2.userId,
           ...shared,
         };
       }
@@ -115,7 +115,7 @@ async function getTrackerEvent(input: ToggleReactionInput, result: 'removed' | '
         return {
           type: `Question_${action}`,
           nsfw: NsfwLevelDeprecated.None,
-          userId: question?.userId,
+          ownerId: question?.userId,
           ...shared,
         };
       }
@@ -129,7 +129,7 @@ async function getTrackerEvent(input: ToggleReactionInput, result: 'removed' | '
         return {
           type: `Answer_${action}`,
           nsfw: NsfwLevelDeprecated.None,
-          userId: answer.userId,
+          ownerId: answer.userId,
           ...shared,
         };
       }
@@ -143,7 +143,7 @@ async function getTrackerEvent(input: ToggleReactionInput, result: 'removed' | '
         return {
           type: `BountyEntry_${action}`,
           nsfw: NsfwLevelDeprecated.None,
-          userId: bountyEntry?.userId,
+          ownerId: bountyEntry?.userId,
           ...shared,
         };
       }
@@ -178,7 +178,7 @@ export const toggleReactionHandler = async ({
               type: input.entityType,
               reactorId: ctx.user.id,
               entityId: input.entityId,
-              ownerId: trackerEvent?.userId,
+              ownerId: trackerEvent?.ownerId,
             },
             ctx.ip
           )
@@ -189,7 +189,7 @@ export const toggleReactionHandler = async ({
               type: input.entityType,
               reactorId: ctx.user.id,
               entityId: input.entityId,
-              ownerId: trackerEvent?.userId,
+              ownerId: trackerEvent?.ownerId,
             },
             ctx.ip
           )

@@ -37,14 +37,7 @@ export default function ReportCsamUserPage() {
   const { data: user } = trpc.user.getById.useQuery({ id: userId });
   const stepper = useStepper({
     onComplete: handleStepperComplete,
-    steps: [
-      {
-        render: CsamImageSelection,
-      },
-      {
-        render: CsamDetailsForm,
-      },
-    ],
+    steps: [{ render: CsamImageSelection }, { render: CsamDetailsForm }],
   });
 
   if (!csamReports) return <NotFound />;
