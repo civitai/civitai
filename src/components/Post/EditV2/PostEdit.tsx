@@ -15,7 +15,7 @@ export function PostEdit() {
     <div className="@container">
       <div className="flex flex-col gap-3 @sm:flex-row @sm:justify-center">
         <div
-          className="flex flex-col gap-3 flex-1"
+          className="flex flex-col gap-3 flex-1 min-w-0"
           style={showPreview ? { maxWidth: 700 } : undefined}
         >
           <PostEditForm />
