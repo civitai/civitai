@@ -1,3 +1,4 @@
+import { milestoneNotificationFix } from '~/server/common/constants';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
 import { getDisplayName, slugit } from '~/utils/string-helpers';
 
@@ -51,6 +52,7 @@ export const modelNotifications = createNotificationProcessor({
           FROM model_value mval
           JOIN "Model" m on m.id = mval.model_id
           JOIN milestones ms ON ms.value <= mval.download_count
+          WHERE m."createdAt" > '${milestoneNotificationFix}'
         )
         INSERT INTO "Notification"("id", "userId", "type", "details", "category")
         SELECT
@@ -103,6 +105,7 @@ export const modelNotifications = createNotificationProcessor({
         FROM model_value mval
         JOIN "Model" m on m.id = mval.model_id
         JOIN milestones ms ON ms.value <= mval.thumbs_up_count
+        WHERE m."createdAt" > '${milestoneNotificationFix}'
       )
       INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT

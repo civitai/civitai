@@ -34,6 +34,8 @@ import {
   CollectionItemExpanded,
   updateCollectionCoverImage,
   getCollectionCoverImages,
+  getCollectionItemCount,
+  getContributorCount,
 } from '~/server/services/collection.service';
 import { TRPCError } from '@trpc/server';
 import { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
@@ -68,12 +70,6 @@ export const getAllCollectionsInfiniteHandler = async ({
         nsfwLevel: true,
         image: { select: imageSelect },
         mode: true,
-        _count: {
-          select: {
-            items: { where: { status: CollectionItemStatus.ACCEPTED } },
-            contributors: true,
-          },
-        },
       },
       user: ctx.user,
     });
@@ -91,12 +87,32 @@ export const getAllCollectionsInfiniteHandler = async ({
       imagesPerCollection: 10, // Some fallbacks
     });
 
+    // Get Item Counts
+    const collectionIds = items.map((item) => item.id);
+    const collectionItemCounts = Object.fromEntries(
+      (
+        await getCollectionItemCount({
+          collectionIds,
+          status: CollectionItemStatus.ACCEPTED,
+        })
+      ).map((c) => [c.id, Number(c.count)])
+    );
+
+    // Get Contributor Counts
+    const contributorCounts = Object.fromEntries(
+      (await getContributorCount({ collectionIds })).map((c) => [c.id, Number(c.count)])
+    );
+
     return {
       nextCursor,
       items: items.map((item) => {
         const collectionImageItems = collectionImages.filter((ci) => ci.id === item.id);
         return {
           ...item,
+          _count: {
+            items: collectionItemCounts[item.id] ?? 0,
+            contributors: contributorCounts[item.id] ?? 0,
+          },
           image: item.image
             ? {
                 ...item.image,

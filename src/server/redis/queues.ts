@@ -24,7 +24,9 @@ export async function addToQueue(key: string, ids: number | number[] | Set<numbe
   await redis.sAdd(targetBucket, content);
 }
 
-export async function checkoutQueue(key: string) {
+export async function checkoutQueue(key: string, isMerge = false) {
+  if (!isMerge) await waitForMerge(key);
+
   // Get the current buckets
   const currentBuckets = await getBucketNames(key);
 
@@ -53,4 +55,30 @@ export async function checkoutQueue(key: string) {
       if (currentBuckets.length > 0) await redis.del(currentBuckets);
     },
   };
+}
+
+async function waitForMerge(key: string) {
+  let isMerging = await redis.exists(`${REDIS_KEYS.QUEUES.BUCKETS}:${key}:merging`);
+  while (isMerging) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    isMerging = await redis.exists(`${REDIS_KEYS.QUEUES.BUCKETS}:${key}:merging`);
+  }
+}
+
+export async function mergeQueue(key: string) {
+  // Set the merging lock
+  await redis.set(`${REDIS_KEYS.QUEUES.BUCKETS}:${key}:merging`, '1', {
+    EX: 60,
+  });
+
+  // Get the current queue
+  const queue = await checkoutQueue(key, true);
+  if (queue.content.length > 0) {
+    // If we have content, move it to the newest bucket
+    await addToQueue(key, queue.content);
+  }
+  await queue.commit();
+
+  // Remove the merging lock
+  await redis.del(`${REDIS_KEYS.QUEUES.BUCKETS}:${key}:merging`);
 }
