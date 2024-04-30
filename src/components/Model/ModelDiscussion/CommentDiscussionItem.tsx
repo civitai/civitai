@@ -80,6 +80,7 @@ export function CommentDiscussionItem({ data: comment }: Props) {
           user={comment.user}
           subText={<DaysFromNow date={comment.createdAt} />}
           subTextForce
+          avatarSize="md"
           badge={
             comment.user.id === model?.user.id ? (
               <Badge size="xs" color="violet">
