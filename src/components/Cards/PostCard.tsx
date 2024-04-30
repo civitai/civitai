@@ -71,6 +71,17 @@ export function PostCard({ data }: Props) {
                   }
                   type={image.type}
                   width={IMAGE_CARD_WIDTH}
+                  style={
+                    data.cosmetic
+                      ? {
+                          width: '100%',
+                          height: '100%',
+                          objectFit: 'cover',
+                          padding: 4,
+                          borderRadius: 12,
+                        }
+                      : undefined
+                  }
                   placeholder="empty"
                   className={classes.image}
                 />

@@ -77,7 +77,18 @@ export function PostsCard({
                       type={image.type}
                       width={450}
                       placeholder="empty"
-                      style={{ width: '100%', position: 'relative' }}
+                      style={
+                        cosmetic
+                          ? {
+                              position: 'relative',
+                              padding: 5,
+                              borderRadius: 12,
+                              width: '100%',
+                              height: '100%',
+                              objectFit: 'cover',
+                            }
+                          : undefined
+                      }
                     />
                   )}
                 </RoutedDialogLink>

@@ -77,19 +77,20 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
           ref={ref}
           frameDecoration={image.cosmetic}
         >
-          <AspectRatio
-            className={classes.blurHash}
-            ratio={(image?.width ?? 1) / (image?.height ?? 1)}
-          >
-            <MediaHash {...image} />
-          </AspectRatio>
-
-          <div className={classes.content} style={{ opacity: inView ? 1 : 0 }}>
-            {inView && (
+          <ImageGuard2 image={image}>
+            {(safe) => (
               <>
-                {onSite && <OnsiteIndicator />}
-                <ImageGuard2 image={image}>
-                  {(safe) => (
+                {!safe && (
+                  <AspectRatio
+                    className={classes.blurHash}
+                    ratio={(image?.width ?? 1) / (image?.height ?? 1)}
+                  >
+                    <MediaHash {...image} />
+                  </AspectRatio>
+                )}
+
+                <div className={classes.content} style={{ opacity: inView ? 1 : 0 }}>
+                  {inView && (
                     <>
                       <Group
                         position="apart"
@@ -153,7 +154,17 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                           type={image.type}
                           width={450}
                           placeholder="empty"
-                          style={{ width: '100%' }}
+                          style={
+                            data.cosmetic
+                              ? {
+                                  padding: 5,
+                                  borderRadius: 12,
+                                  width: '100%',
+                                  height: '100%',
+                                  objectFit: 'cover',
+                                }
+                              : undefined
+                          }
                           fadeIn
                         />
                       )}
@@ -239,12 +250,13 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                           </Alert>
                         )}
                       </div>
+                      {onSite && <OnsiteIndicator />}
                     </>
                   )}
-                </ImageGuard2>
+                </div>
               </>
             )}
-          </div>
+          </ImageGuard2>
         </MasonryCard>
       </RoutedDialogLink>
     </HolidayFrame>

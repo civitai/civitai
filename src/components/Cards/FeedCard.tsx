@@ -1,4 +1,4 @@
-import { AspectRatio, CSSObject, Card, CardProps, createStyles } from '@mantine/core';
+import { AspectRatio, Card, CardProps, createStyles } from '@mantine/core';
 import Link from 'next/link';
 import React, { forwardRef } from 'react';
 import { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
@@ -36,7 +36,10 @@ const aspectRatioValues: Record<
   },
 };
 
-const useStyles = createStyles<string, { frame?: CSSObject; glow?: CSSObject }>((theme, params) => {
+const useStyles = createStyles<string, { frame?: string }>((theme, params, getRef) => {
+  const framePadding = 5;
+  const frameRef = getRef('frame');
+
   return {
     root: {
       padding: '0 !important',
@@ -45,15 +48,30 @@ const useStyles = createStyles<string, { frame?: CSSObject; glow?: CSSObject }>(
       cursor: 'pointer',
       position: 'relative',
       overflow: 'hidden',
+      backgroundColor: params.frame ? 'transparent' : undefined,
+      margin: params.frame ? -framePadding : undefined,
     },
 
     frame: {
-      ...params.frame,
+      backgroundImage: params.frame,
       borderRadius: theme.radius.md,
       zIndex: 1,
-      padding: 5,
+      padding: framePadding,
+      ref: frameRef,
+    },
 
-      '&:before': { ...params.glow, content: '""', width: '100%', height: '100%', zIndex: -1 },
+    glow: {
+      '&:before': {
+        backgroundImage: params.frame,
+        content: '""',
+        width: '100%',
+        height: '100%',
+        zIndex: -1,
+        filter: 'blur(10px)',
+        position: 'absolute',
+        top: 0,
+        left: 0,
+      },
     },
   };
 });
@@ -72,10 +90,7 @@ export const FeedCard = forwardRef<HTMLAnchorElement, Props>(
     ref
   ) => {
     const { stringRatio } = aspectRatioValues[aspectRatio];
-    const { classes, cx } = useStyles({
-      frame: frameDecoration?.data.cssFrame,
-      glow: frameDecoration?.data.glow,
-    });
+    const { classes, cx } = useStyles({ frame: frameDecoration?.data.cssFrame });
 
     const card = (
       <Card<'a'>
@@ -92,7 +107,14 @@ export const FeedCard = forwardRef<HTMLAnchorElement, Props>(
     return (
       <div
         style={{ position: 'relative' }}
-        className={cx(frameDecoration && frameDecoration.data.cssFrame && classes.frame)}
+        className={
+          frameDecoration
+            ? cx(
+                frameDecoration.data.cssFrame && classes.frame,
+                frameDecoration.data.glow && classes.glow
+              )
+            : undefined
+        }
       >
         {href ? (
           <Link href={href} passHref>

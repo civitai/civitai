@@ -1,10 +1,4 @@
-import {
-  Card,
-  CardProps,
-  createPolymorphicComponent,
-  CSSObject,
-  createStyles,
-} from '@mantine/core';
+import { Card, CardProps, createPolymorphicComponent, createStyles } from '@mantine/core';
 import { forwardRef } from 'react';
 import { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 import { DecorationFrame } from '~/components/Decorations/DecorationFrame';
@@ -15,7 +9,9 @@ type MasonryCardProps = CardProps & {
   frameDecoration?: ContentDecorationCosmetic | null;
 };
 
-const useStyles = createStyles<string, { frame?: CSSObject; glow?: CSSObject }>((theme, params) => {
+const useStyles = createStyles<string, { frame?: string }>((theme, params) => {
+  const framePadding = 5;
+
   return {
     root: {
       padding: '0 !important',
@@ -24,43 +20,52 @@ const useStyles = createStyles<string, { frame?: CSSObject; glow?: CSSObject }>(
       cursor: 'pointer',
       position: 'relative',
       overflow: 'hidden',
+      backgroundColor: params.frame ? 'transparent' : undefined,
+      margin: params.frame ? -framePadding : undefined,
     },
 
     frame: {
-      ...params.frame,
+      backgroundImage: params.frame,
       borderRadius: theme.radius.md,
       zIndex: 1,
-      padding: 5,
+      padding: framePadding,
+    },
 
-      '&:before': { ...params.glow, content: '""', width: '100%', height: '100%', zIndex: -1 },
+    glow: {
+      '&:before': {
+        backgroundImage: params.frame,
+        content: '""',
+        width: '100%',
+        height: '100%',
+        zIndex: -1,
+        filter: 'blur(10px)',
+        position: 'absolute',
+        top: 0,
+        left: 0,
+      },
     },
   };
 });
 
 // TODO - when children not in view, replace child react nodes with static html
 const _MasonryCard = forwardRef<HTMLDivElement, MasonryCardProps>(
-  ({ height, children, style, uniform, frameDecoration, ...props }, ref) => {
-    const { classes, cx } = useStyles({
-      frame: frameDecoration?.data.cssFrame,
-      glow: frameDecoration?.data.glow,
-    });
+  ({ height, children, style, uniform, frameDecoration, className, ...props }, ref) => {
+    const { classes, cx } = useStyles({ frame: frameDecoration?.data.cssFrame });
 
     return (
       <div
         ref={ref}
-        className={cx(frameDecoration && frameDecoration.data.cssFrame && classes.frame)}
+        className={
+          frameDecoration
+            ? cx(
+                frameDecoration.data.cssFrame && classes.frame,
+                frameDecoration.data.glow && classes.glow
+              )
+            : undefined
+        }
         style={{ position: frameDecoration ? 'relative' : undefined }}
       >
-        <Card
-          style={{ height, ...style }}
-          sx={(theme) => ({
-            padding: '0 !important',
-            color: 'white',
-            borderRadius: theme.radius.md,
-            cursor: 'pointer',
-          })}
-          {...props}
-        >
+        <Card style={{ height, ...style }} className={cx(classes.root, className)} {...props}>
           {children}
         </Card>
         {/* {frameDecoration && <DecorationFrame decoration={frameDecoration} />} */}

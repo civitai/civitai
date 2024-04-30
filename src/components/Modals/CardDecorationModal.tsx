@@ -122,7 +122,7 @@ export function CardDecorationModal({ entityType, entityId, image, currentCosmet
   const items =
     userCosmetics?.contentDecorations.filter(
       ({ data, forId, forType }) =>
-        data.url &&
+        (data.url || data.cssFrame) &&
         // Ensure we only show cosmetics available for this item.
         (!forId || (forId && forType && forId === entityId && forType === entityType))
     ) ?? [];
@@ -259,7 +259,12 @@ export const PreviewCard = ({
 
   return (
     <MasonryCard height={cardHeight} frameDecoration={decoration}>
-      <EdgeMedia src={image.url} className={classes.image} width={imageWidth} />
+      <EdgeMedia
+        src={image.url}
+        className={classes.image}
+        width={imageWidth}
+        style={decoration ? { padding: 5, borderRadius: 12 } : undefined}
+      />
     </MasonryCard>
   );
 };

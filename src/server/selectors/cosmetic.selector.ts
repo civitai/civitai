@@ -44,12 +44,11 @@ export type NamePlateCosmetic = Omit<SimpleCosmetic, 'data'> & {
 export type ContentDecorationCosmetic = Omit<SimpleCosmetic, 'data'> & {
   entityImage?: ImageProps;
   data: {
-    frames: Array<{ url: string; position: string }>;
     url?: string;
     offset?: string;
     crop?: string;
-    cssFrame?: CSSObject;
-    glow?: CSSObject;
+    cssFrame?: string;
+    glow?: boolean;
   };
 };
 export type ProfileBackgroundCosmetic = BadgeCosmetic & {
