@@ -20,7 +20,7 @@ import {
   getUnavailableResources,
   getUnstableResources,
   sendGenerationFeedback,
-  textToImage,
+  // textToImage,
   textToImageTestRun,
   toggleUnavailableResource,
 } from '~/server/services/generation/generation.service';
@@ -105,16 +105,16 @@ export const generationRouter = router({
     .mutation(({ input, ctx }) =>
       sendGenerationFeedback({ ...input, userId: ctx.user.id, ip: ctx.ip })
     ),
-  textToImage: protectedProcedure
-    .input(createGenerationRequestSchema)
-    .mutation(({ input, ctx }) => {
-      return textToImage({
-        input: {
-          ...input,
-          userId: ctx.user.id,
-        },
-      });
-    }),
+  // textToImage: protectedProcedure
+  //   .input(createGenerationRequestSchema)
+  //   .mutation(({ input, ctx }) => {
+  //     return textToImage({
+  //       input: {
+  //         ...input,
+  //         userId: ctx.user.id,
+  //       },
+  //     });
+  //   }),
   estimateTextToImage: publicProcedure
     .input(generationRequestTestRunSchema)
     .use(edgeCacheIt({ ttl: CacheTTL.hour }))

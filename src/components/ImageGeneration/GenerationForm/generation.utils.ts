@@ -11,11 +11,9 @@ import {
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { isDefined } from '~/utils/type-guards';
-import { calculateGenerationBill } from '~/server/common/generation';
 import { RunType } from '~/store/generation.store';
 import { uniqBy } from 'lodash';
 import {
-  CreateGenerationRequestInput,
   GenerateFormModel,
   GenerationRequestTestRunSchema,
   generationStatusSchema,
@@ -27,9 +25,6 @@ import { Generation } from '~/server/services/generation/generation.types';
 import { findClosest } from '~/utils/number-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { showErrorNotification } from '~/utils/notifications';
-import { ModelType } from '@prisma/client';
-import { useDebouncedValue } from '@mantine/hooks';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export const useGenerationFormStore = create<Partial<GenerateFormModel>>()(

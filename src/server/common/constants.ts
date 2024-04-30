@@ -630,11 +630,10 @@ export const generationConfig = {
   },
 };
 
-export type GenerationBaseModel = keyof typeof generationConfig;
+// export type GenerationBaseModel = keyof typeof generationConfig;
 
-export const getGenerationConfig = (baseModel?: string) => {
-  const key = baseModel as keyof typeof generationConfig | undefined;
-  return key && generationConfig[key] ? generationConfig[key] : generationConfig['SD1'];
+export const getGenerationConfig = (baseModel = 'SD1') => {
+  return generationConfig[baseModel as keyof typeof generationConfig];
 };
 
 export const MODELS_SEARCH_INDEX = 'models_v8';

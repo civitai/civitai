@@ -21,7 +21,6 @@ import {
   throwInsufficientFundsError,
   throwNotFoundError,
   throwRateLimitError,
-  withRetries,
 } from '~/server/utils/errorHandling';
 import { Availability, ModelType, Prisma } from '@prisma/client';
 import {
@@ -38,16 +37,12 @@ import {
   baseModelSets,
   BaseModelSetType,
   CacheTTL,
-  constants,
   draftMode,
   getGenerationConfig,
   Sampler,
 } from '~/server/common/constants';
 import { imageGenerationSchema } from '~/server/schema/image.schema';
 import { uniqBy } from 'lodash-es';
-import { TransactionType } from '~/server/schema/buzz.schema';
-import { createBuzzTransaction, refundTransaction } from '~/server/services/buzz.service';
-import { calculateGenerationBill } from '~/server/common/generation';
 import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import orchestratorCaller from '~/server/http/orchestrator/orchestrator.caller';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
@@ -64,7 +59,6 @@ import { clickhouse } from '~/server/clickhouse/client';
 import dayjs from 'dayjs';
 import { SearchIndexUpdateQueueAction, GenerationRequestStatus } from '~/server/common/enums';
 import { UserTier } from '~/server/schema/user.schema';
-import { Orchestrator } from '~/server/http/orchestrator/orchestrator.types';
 import { generatorFeedbackReward } from '~/server/rewards';
 
 export function parseModelVersionId(assetId: string) {
