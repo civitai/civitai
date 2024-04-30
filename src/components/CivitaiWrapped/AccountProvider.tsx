@@ -127,7 +127,7 @@ export const AccountProvider = ({ children }: { children: ReactNode }) => {
         const userId = userData?.user?.id;
         const previousUserId = previousUserData?.user?.id;
 
-        if (userId !== previousUserId && router.isReady) {
+        if (userId !== previousUserId && previousUserData !== undefined && router.isReady) {
           router.reload();
         }
       }
