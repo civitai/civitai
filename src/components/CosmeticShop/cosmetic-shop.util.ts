@@ -154,7 +154,6 @@ export const useMutateCosmeticShop = () => {
 
           return aPlacement - bPlacement;
         });
-        console.log(data, updated, sortedSectionIds);
 
         return updated;
       });
@@ -165,8 +164,37 @@ export const useMutateCosmeticShop = () => {
   });
 
   const purchaseShopItemMutation = trpc.cosmeticShop.purchaseShopItem.useMutation({
-    async onSuccess() {
+    async onSuccess(_, { shopItemId }) {
       await queryUtils.userProfile.get.invalidate();
+
+      await queryUtils.cosmeticShop.getShop.setData(undefined, (data) => {
+        if (!data) return [];
+
+        const sections = data.map((section) => {
+          const updatedItems = section.items.map((item) => {
+            if (item.shopItem.id === shopItemId) {
+              return {
+                ...item,
+                shopItem: {
+                  ...item.shopItem,
+                  availableQuantity: item.shopItem.availableQuantity
+                    ? item.shopItem.availableQuantity - 1
+                    : null,
+                },
+              };
+            }
+
+            return item;
+          });
+
+          return {
+            ...section,
+            items: updatedItems,
+          };
+        });
+
+        return sections;
+      });
     },
     onError(error) {
       onError(error, 'Failed to purchase cosmetic');

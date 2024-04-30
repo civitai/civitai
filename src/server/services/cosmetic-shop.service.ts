@@ -76,10 +76,6 @@ export const upsertCosmeticShopItem = async ({
       })
     : undefined;
 
-  if (existingItem?.id && availableQuantity && existingItem._count.purchases > availableQuantity) {
-    throw new Error('Cannot reduce available quantity below the number of purchases');
-  }
-
   if (availableTo && availableFrom && availableTo < availableFrom) {
     throw new Error('Available to date cannot be before available from date');
   }
@@ -397,7 +393,7 @@ export const purchaseCosmeticShopItem = async ({
     throw new Error('Cosmetic not found');
   }
 
-  if (shopItem.availableQuantity && shopItem.availableQuantity <= shopItem._count.purchases) {
+  if (shopItem.availableQuantity !== null && shopItem.availableQuantity <= 0) {
     throw new Error('Cosmetic is out of stock');
   }
 
@@ -450,6 +446,16 @@ export const purchaseCosmeticShopItem = async ({
           userId,
           cosmeticId: shopItem.cosmeticId,
           claimKey: transaction.transactionId,
+        },
+      });
+
+      // Update the cosmetic with the new amount:
+      await dbWrite.cosmeticShopItem.update({
+        where: { id: shopItemId },
+        data: {
+          availableQuantity: {
+            decrement: 1,
+          },
         },
       });
 

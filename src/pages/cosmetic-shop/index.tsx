@@ -159,6 +159,8 @@ export const getServerSideProps = createServerSideProps({
 export const CosmeticShopItem = ({ item }: { item: CosmeticShopItemGetById }) => {
   const cosmetic = item.cosmetic;
   const { classes } = useStyles();
+  const isAvailable =
+    (item.availableQuantity ?? null) === null || (item.availableQuantity ?? 0) > 0;
   return (
     <Paper className={classes.card}>
       <Stack h="100%">
@@ -176,25 +178,42 @@ export const CosmeticShopItem = ({ item }: { item: CosmeticShopItemGetById }) =>
             />
             <Title order={3}>{item.title}</Title>
           </Stack>
-          {item.description && (
+          {!!item.description && (
             <ContentClamp maxHeight={200}>
               <RenderHtml html={item.description} />
             </ContentClamp>
           )}
         </Stack>
-        <Button
-          color="gray"
-          radius="xl"
-          onClick={() => {
-            dialogStore.trigger({
-              component: CosmeticShopItemPreviewModal,
-              props: { shopItem: item },
-            });
-          }}
-          mt="auto"
-        >
-          Preview
-        </Button>
+        <Stack mt="auto" spacing={4}>
+          {(item.availableQuantity ?? null) !== null && (
+            <>
+              {(item.availableQuantity ?? 0) > 0 ? (
+                <Group mx="auto">
+                  <Text size="xs" align="center" color="yellow.7">
+                    {item.availableQuantity} remaining
+                  </Text>
+                </Group>
+              ) : (
+                <Text size="xs" align="center" color="red">
+                  Out of stock
+                </Text>
+              )}
+            </>
+          )}
+          <Button
+            color="gray"
+            radius="xl"
+            onClick={() => {
+              dialogStore.trigger({
+                component: CosmeticShopItemPreviewModal,
+                props: { shopItem: item },
+              });
+            }}
+            disabled={!isAvailable}
+          >
+            Preview
+          </Button>
+        </Stack>
       </Stack>
     </Paper>
   );
