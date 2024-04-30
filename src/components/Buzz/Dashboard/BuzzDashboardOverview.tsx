@@ -49,6 +49,8 @@ const options = {
   },
 };
 
+const INCLUDE_DESCRIPTION = [TransactionType.Reward, TransactionType.Purchase];
+
 export const BuzzDashboardOverview = ({
   accountId,
   accountType = 'User',
@@ -192,17 +194,22 @@ export const BuzzDashboardOverview = ({
 
                     return (
                       <Stack key={date.toISOString()} spacing={4}>
-                        <Group position="apart">
+                        <Group position="apart" noWrap align="flex-start">
                           <Stack spacing={0}>
-                            <Text size="sm" weight="500">
-                              {getDisplayName(TransactionType[transaction.type])}
+                            <Text size="sm" weight="500" lh={1.2}>
+                              {INCLUDE_DESCRIPTION.includes(transaction.type) &&
+                              transaction.description ? (
+                                <>{transaction.description}</>
+                              ) : (
+                                <>{getDisplayName(TransactionType[transaction.type])}</>
+                              )}
                             </Text>
-                            <Text size="xs">
+                            <Text size="xs" color="dimmed">
                               <DaysFromNow date={date} />
                             </Text>
                           </Stack>
                           <Text color={isDebit ? 'red' : 'green'}>
-                            <Group spacing={2}>
+                            <Group spacing={2} noWrap>
                               <IconBolt size={16} fill="currentColor" />
                               <Text size="lg" sx={{ fontVariantNumeric: 'tabular-nums' }} span>
                                 {amount.toLocaleString()}
