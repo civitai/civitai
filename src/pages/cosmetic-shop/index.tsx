@@ -175,7 +175,7 @@ export const CosmeticShopItem = ({ item }: { item: CosmeticShopItemGetById }) =>
   return (
     <Paper className={classes.card}>
       {availableTo && (
-        <Badge variant="solid" color="yellow.8" className={classes.availability}>
+        <Badge variant="filled" color="yellow.8" className={classes.availability}>
           Available until {availableTo}
         </Badge>
       )}
@@ -204,15 +204,13 @@ export const CosmeticShopItem = ({ item }: { item: CosmeticShopItemGetById }) =>
           {(item.availableQuantity ?? null) !== null && (
             <>
               {(item.availableQuantity ?? 0) > 0 ? (
-                <Group mx="auto">
-                  <Text size="xs" align="center" color="yellow.7">
-                    {item.availableQuantity} remaining
-                  </Text>
-                </Group>
+                <Badge mx="auto" size="sm" color="yellow.7" radius="xl">
+                  {item.availableQuantity} remaining
+                </Badge>
               ) : (
-                <Text size="xs" align="center" color="red">
+                <Badge mx="auto" size="sm" color="red" radius="xl">
                   Out of stock
-                </Text>
+                </Badge>
               )}
             </>
           )}
