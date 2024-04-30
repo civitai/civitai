@@ -325,17 +325,10 @@ export const getShopSectionsWithItems = async () => {
             archivedAt: null,
             OR: [
               {
-                availableFrom: {
-                  gt: new Date(),
-                },
-                availableTo: {
-                  lt: new Date(),
-                },
+                availableFrom: { lte: new Date() },
+                availableTo: { gte: new Date() },
               },
-              {
-                availableFrom: null,
-                availableTo: null,
-              },
+              { availableFrom: null, availableTo: null },
             ],
           },
         },
