@@ -27,6 +27,7 @@ import { BrowsingModeProvider } from '~/components/BrowsingLevel/BrowsingLevelPr
 import ChadGPT from '~/components/ChadGPT/ChadGPT';
 import { ChatContextProvider } from '~/components/Chat/ChatProvider';
 import { CivitaiLinkProvider } from '~/components/CivitaiLink/CivitaiLinkProvider';
+import { AccountProvider } from '~/components/CivitaiWrapped/AccountProvider';
 import { CivitaiSessionProvider } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 import { DialogProvider } from '~/components/Dialog/DialogProvider';
 import { RoutedDialogProvider } from '~/components/Dialog/RoutedDialogProvider';
@@ -246,42 +247,44 @@ function MyApp(props: CustomAppProps) {
                 <FeatureFlagsProvider flags={flags}>
                   <CookiesProvider value={cookies}>
                     <BrowsingModeProvider>
-                      <CivitaiSessionProvider>
-                        <SignalProvider>
-                          <ActivityReportingProvider>
-                            <CivitaiPosthogProvider>
-                              <ReferralsProvider>
-                                <FiltersProvider>
-                                  <AdsProvider>
-                                    <PaypalProvider>
-                                      <HiddenPreferencesProvider>
-                                        <CivitaiLinkProvider>
-                                          <NotificationsProvider zIndex={9999}>
-                                            <BrowserRouterProvider>
-                                              <RecaptchaWidgetProvider>
-                                                <ChatContextProvider>
-                                                  <BaseLayout>
-                                                    <CustomModalsProvider>
-                                                      {getLayout(<Component {...pageProps} />)}
-                                                      <StripeSetupSuccessProvider />
-                                                      <DialogProvider />
-                                                      <RoutedDialogProvider />
-                                                    </CustomModalsProvider>
-                                                  </BaseLayout>
-                                                </ChatContextProvider>
-                                              </RecaptchaWidgetProvider>
-                                            </BrowserRouterProvider>
-                                          </NotificationsProvider>
-                                        </CivitaiLinkProvider>
-                                      </HiddenPreferencesProvider>
-                                    </PaypalProvider>
-                                  </AdsProvider>
-                                </FiltersProvider>
-                              </ReferralsProvider>
-                            </CivitaiPosthogProvider>
-                          </ActivityReportingProvider>
-                        </SignalProvider>
-                      </CivitaiSessionProvider>
+                      <AccountProvider>
+                        <CivitaiSessionProvider>
+                          <SignalProvider>
+                            <ActivityReportingProvider>
+                              <CivitaiPosthogProvider>
+                                <ReferralsProvider>
+                                  <FiltersProvider>
+                                    <AdsProvider>
+                                      <PaypalProvider>
+                                        <HiddenPreferencesProvider>
+                                          <CivitaiLinkProvider>
+                                            <NotificationsProvider zIndex={9999}>
+                                              <BrowserRouterProvider>
+                                                <RecaptchaWidgetProvider>
+                                                  <ChatContextProvider>
+                                                    <BaseLayout>
+                                                      <CustomModalsProvider>
+                                                        {getLayout(<Component {...pageProps} />)}
+                                                        <StripeSetupSuccessProvider />
+                                                        <DialogProvider />
+                                                        <RoutedDialogProvider />
+                                                      </CustomModalsProvider>
+                                                    </BaseLayout>
+                                                  </ChatContextProvider>
+                                                </RecaptchaWidgetProvider>
+                                              </BrowserRouterProvider>
+                                            </NotificationsProvider>
+                                          </CivitaiLinkProvider>
+                                        </HiddenPreferencesProvider>
+                                      </PaypalProvider>
+                                    </AdsProvider>
+                                  </FiltersProvider>
+                                </ReferralsProvider>
+                              </CivitaiPosthogProvider>
+                            </ActivityReportingProvider>
+                          </SignalProvider>
+                        </CivitaiSessionProvider>
+                      </AccountProvider>
                     </BrowsingModeProvider>
                   </CookiesProvider>
                 </FeatureFlagsProvider>

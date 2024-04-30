@@ -11,16 +11,14 @@ import {
   Tooltip,
   useMantineTheme,
 } from '@mantine/core';
-import { useLocalStorage } from '@mantine/hooks';
-import { IconChevronLeft, IconCircleCheck, IconLogout } from '@tabler/icons-react';
-import { signIn } from 'next-auth/react';
+import { IconChevronLeft, IconCircleCheck, IconLogout, IconLogout2 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React, { Dispatch, SetStateAction, useState } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import {
-  CivitaiAccount,
-  CivitaiAccounts,
-} from '~/components/CivitaiWrapped/CivitaiSessionProvider';
+  type CivitaiAccount,
+  useAccountContext,
+} from '~/components/CivitaiWrapped/AccountProvider';
 import { Username } from '~/components/User/Username';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getLoginLink } from '~/utils/login-helpers';
@@ -39,9 +37,12 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
-const ActionButtons = ({ logout, close }: { logout: () => Promise<void>; close: () => void }) => {
+const ActionButtons = ({ close }: { close: () => void }) => {
   const router = useRouter();
+  const { logout, logoutAll } = useAccountContext();
   const [waiting, setWaiting] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
+  const [loggingOutAll, setLoggingOutAll] = useState(false);
 
   const handleAdd = () => {
     setWaiting(true);
@@ -58,19 +59,37 @@ const ActionButtons = ({ logout, close }: { logout: () => Promise<void>; close: 
       });
   };
 
+  const handleLogout = () => {
+    setLoggingOut(true);
+    logout().then();
+  };
+  const handleLogoutAll = () => {
+    setLoggingOutAll(true);
+    logoutAll().then();
+  };
+
   return (
     <Stack spacing="xs" mb={4} px={4}>
       <Button variant="light" loading={waiting} onClick={handleAdd}>
         {waiting ? 'Redirecting...' : 'Add Account'}
       </Button>
-      {/* TODO when logging out this way, log back into another existing account */}
-      {/* TODO also add "log out all" option */}
       <Button
         variant="default"
         leftIcon={<IconLogout stroke={1.5} size={18} />}
-        onClick={() => logout()}
+        loading={loggingOut}
+        disabled={loggingOutAll}
+        onClick={handleLogout}
       >
-        Logout
+        {loggingOut ? 'Logging out...' : 'Logout'}
+      </Button>
+      <Button
+        variant="default"
+        leftIcon={<IconLogout2 stroke={1.5} size={18} />}
+        loading={loggingOutAll}
+        disabled={loggingOut}
+        onClick={handleLogoutAll}
+      >
+        {loggingOutAll ? 'Logging out...' : 'Logout All'}
       </Button>
     </Stack>
   );
@@ -117,25 +136,14 @@ const UserRow = ({ data }: { data: CivitaiAccount }) => {
 export const AccountSwitcher = ({
   inMenu = true,
   setUserSwitching,
-  logout,
   close,
 }: {
   inMenu?: boolean;
   setUserSwitching: Dispatch<SetStateAction<boolean>>;
-  logout: () => Promise<void>;
   close: () => void;
 }) => {
   const { classes } = useStyles();
-  const router = useRouter();
-  const [accounts] = useLocalStorage<CivitaiAccounts>({
-    key: `civitai-accounts`,
-    defaultValue: {},
-    getInitialValueInEffect: false,
-  });
-
-  const swapAccount = async ({ token }: CivitaiAccount) => {
-    await signIn('account-switch', { callbackUrl: router.asPath, ...token });
-  };
+  const { accounts, swapAccount } = useAccountContext();
 
   if (inMenu) {
     return (
@@ -159,7 +167,7 @@ export const AccountSwitcher = ({
           </Menu.Item>
         ))}
         <Divider mb={8} />
-        <ActionButtons logout={logout} close={close} />
+        <ActionButtons close={close} />
       </>
     );
   }
@@ -185,7 +193,7 @@ export const AccountSwitcher = ({
       ))}
       <Divider />
       <Box p="md">
-        <ActionButtons logout={logout} close={close} />
+        <ActionButtons close={close} />
       </Box>
     </>
   );

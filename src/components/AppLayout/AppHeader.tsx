@@ -55,7 +55,6 @@ import {
   IconVideoPlus,
   IconWriting,
 } from '@tabler/icons-react';
-import { signOut } from 'next-auth/react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import {
@@ -73,6 +72,7 @@ import { AccountSwitcher } from '~/components/AppLayout/AccountSwitcher';
 import { BrowsingModeIcon, BrowsingModeMenu } from '~/components/BrowsingMode/BrowsingMode';
 import { ChatButton } from '~/components/Chat/ChatButton';
 import { CivitaiLinkPopover } from '~/components/CivitaiLink/CivitaiLinkPopover';
+import { useAccountContext } from '~/components/CivitaiWrapped/AccountProvider';
 import { useSystemCollections } from '~/components/Collections/collection.utils';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -83,20 +83,19 @@ import { ModerationNav } from '~/components/Moderation/ModerationNav';
 import { NotificationBell } from '~/components/Notifications/NotificationBell';
 import { UploadTracker } from '~/components/Resource/UploadTracker';
 import { SupportButton } from '~/components/SupportButton/SupportButton';
+import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
-import { deleteCookies } from '~/utils/cookies-helpers';
 import { LoginRedirectReason } from '~/utils/login-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+import { trpc } from '~/utils/trpc';
 import { AutocompleteSearch } from '../AutocompleteSearch/AutocompleteSearch';
 import { openBuyBuzzModal } from '../Modals/BuyBuzzModal';
 import { GenerateButton } from '../RunStrategy/GenerateButton';
 import { UserBuzz } from '../User/UserBuzz';
-import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
-import { trpc } from '~/utils/trpc';
 
 const HEADER_HEIGHT = 70;
 
@@ -253,6 +252,7 @@ export function AppHeader({
   const router = useRouter();
   const features = useFeatureFlags();
   const isMobile = useIsMobile();
+  const { logout } = useAccountContext();
   const [burgerOpened, setBurgerOpened] = useState(false);
   const [userMenuOpened, setUserMenuOpened] = useState(false);
   const [userSwitching, setUserSwitching] = useState(false);
@@ -374,7 +374,7 @@ export function AppHeader({
         rel: 'nofollow',
       },
     ],
-    [features.bounties, features.imageTraining, isMuted, theme]
+    [features.bounties, features.imageTraining, features.clubs, isMuted, theme]
   );
   const links = useMemo<MenuLink[]>(
     () => [
@@ -562,13 +562,17 @@ export function AppHeader({
     ],
     [
       currentUser,
+      currentUser?.username,
       features.imageTrainingResults,
       features.bounties,
       features.buzz,
       features.questions,
+      features.clubs,
+      features.vault,
       bookmarkedModelsCollection,
       bookmarkedArticlesCollection,
       router.asPath,
+      theme,
     ]
   );
 
@@ -788,12 +792,6 @@ export function AppHeader({
     </Menu>
   );
 
-  const handleSignOut = async () => {
-    // Removes referral cookies on sign out
-    deleteCookies(['ref_code', 'ref_source']);
-    await signOut();
-  };
-
   return (
     <Header height={HEADER_HEIGHT} fixed={fixed} zIndex={200}>
       <Box className={cx(classes.mobileSearchWrapper, { [classes.dNone]: !showSearch })}>
@@ -892,11 +890,7 @@ export function AppHeader({
                   offsetScrollbars
                 >
                   {userSwitching ? (
-                    <AccountSwitcher
-                      setUserSwitching={setUserSwitching}
-                      logout={handleSignOut}
-                      close={handleCloseMenu}
-                    />
+                    <AccountSwitcher setUserSwitching={setUserSwitching} close={handleCloseMenu} />
                   ) : (
                     <>
                       {!!currentUser && (
@@ -940,7 +934,7 @@ export function AppHeader({
                           </Menu.Item>
                           <Menu.Item
                             icon={<IconLogout color={theme.colors.red[9]} stroke={1.5} />}
-                            onClick={() => handleSignOut()}
+                            onClick={() => logout()}
                           >
                             Logout
                           </Menu.Item>
@@ -985,7 +979,6 @@ export function AppHeader({
                         <AccountSwitcher
                           inMenu={false}
                           setUserSwitching={setUserSwitching}
-                          logout={handleSignOut}
                           close={handleCloseMenu}
                         />
                       </ScrollArea.Autosize>
@@ -1055,7 +1048,7 @@ export function AppHeader({
                                   <IconSettings stroke={1.5} />
                                 </ActionIcon>
                               </Link>
-                              <ActionIcon variant="default" onClick={() => signOut()} size="lg">
+                              <ActionIcon variant="default" onClick={() => logout()} size="lg">
                                 <IconLogout
                                   stroke={1.5}
                                   color={theme.colors.red[theme.fn.primaryShade()]}
