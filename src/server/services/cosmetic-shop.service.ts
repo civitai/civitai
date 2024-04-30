@@ -294,7 +294,7 @@ export const reorderCosmeticShopSections = async ({
   return true;
 };
 
-export const getShopSectionsWithItems = async () => {
+export const getShopSectionsWithItems = async ({ isModerator }: { isModerator?: boolean } = {}) => {
   const sections = await dbRead.cosmeticShopSection.findMany({
     select: {
       id: true,
@@ -319,23 +319,24 @@ export const getShopSectionsWithItems = async () => {
         where: {
           shopItem: {
             archivedAt: null,
-            OR: [
-              {
-                availableFrom: {
-                  gt: new Date(),
-                },
-                availableTo: {
-                  lt: new Date(),
-                },
-              },
-              {
-                availableFrom: null,
-                availableTo: null,
-              },
-            ],
+            OR: isModerator
+              ? undefined
+              : [
+                  {
+                    availableFrom: {
+                      gt: new Date(),
+                    },
+                    availableTo: {
+                      lt: new Date(),
+                    },
+                  },
+                  {
+                    availableFrom: null,
+                    availableTo: null,
+                  },
+                ],
           },
         },
-        take: 8,
         orderBy: { index: 'asc' },
       },
     },
@@ -350,16 +351,21 @@ export const getShopSectionsWithItems = async () => {
     },
   });
 
-  return sections.map((section) => ({
-    ...section,
-    image: !!section.image
-      ? {
-          ...section.image,
-          meta: section.image.meta as ImageMetaProps,
-          metadata: section.image.metadata as MixedObject,
-        }
-      : section.image,
-  }));
+  return (
+    sections
+      // Ensures we don't return empty sections
+      .filter((s) => s.items.length > 0)
+      .map((section) => ({
+        ...section,
+        image: !!section.image
+          ? {
+              ...section.image,
+              meta: section.image.meta as ImageMetaProps,
+              metadata: section.image.metadata as MixedObject,
+            }
+          : section.image,
+      }))
+  );
 };
 
 export const purchaseCosmeticShopItem = async ({

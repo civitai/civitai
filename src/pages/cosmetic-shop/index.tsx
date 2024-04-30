@@ -59,6 +59,7 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { CosmeticShopSectionMeta } from '~/server/schema/cosmetic-shop.schema';
 import { openUserProfileEditModal } from '~/components/Modals/UserProfileEditModal';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { formatDate } from '~/utils/date-helpers';
 
 const IMAGE_SECTION_WIDTH = 1288;
 
@@ -133,6 +134,7 @@ const useStyles = createStyles((theme) => ({
     borderRadius: theme.radius.md,
     padding: theme.spacing.md,
     overflow: 'hidden',
+    position: 'relative',
   },
   cardHeader: {
     background: theme.colorScheme === 'dark' ? theme.colors.dark[9] : theme.colors.gray[2],
@@ -143,6 +145,11 @@ const useStyles = createStyles((theme) => ({
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  availability: {
+    position: 'absolute',
+    top: '-2px',
+    right: '-5px',
   },
 }));
 
@@ -161,8 +168,17 @@ export const CosmeticShopItem = ({ item }: { item: CosmeticShopItemGetById }) =>
   const { classes } = useStyles();
   const isAvailable =
     (item.availableQuantity ?? null) === null || (item.availableQuantity ?? 0) > 0;
+
+  const availableFrom = item.availableFrom ? formatDate(item.availableFrom) : null;
+  const availableTo = item.availableTo ? formatDate(item.availableTo) : null;
+
   return (
     <Paper className={classes.card}>
+      {availableTo && (
+        <Badge variant="solid" color="yellow.8" className={classes.availability}>
+          Available until {availableTo}
+        </Badge>
+      )}
       <Stack h="100%">
         <Stack spacing="md">
           <Box className={classes.cardHeader}>
