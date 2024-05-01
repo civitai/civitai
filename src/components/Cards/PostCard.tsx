@@ -72,7 +72,7 @@ export function PostCard({ data }: Props) {
                   type={image.type}
                   width={IMAGE_CARD_WIDTH}
                   placeholder="empty"
-                  className={classes.image}
+                  className={cx(classes.image, data.cosmetic && classes.frameAdjustment)}
                 />
               )}
             </>

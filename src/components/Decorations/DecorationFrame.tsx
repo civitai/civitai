@@ -40,11 +40,21 @@ const useStyles = createStyles<string, { offset?: string; crop?: string }>((_, p
 
 export function DecorationFrame({ decoration }: Props) {
   const { classes, cx } = useStyles({ crop: decoration.data.crop, offset: decoration.data.offset });
-  if (!decoration.data.url) return null;
+  if (!decoration.data.frames || !decoration.data.frames.length) return null;
 
   return (
     <>
-      <EdgeMedia
+      {decoration.data.frames.map((frame, index) => (
+        <EdgeMedia
+          key={index}
+          src={frame.url}
+          type="image"
+          name="card decoration"
+          className={cx(classes.frame, classes[frame.position])}
+          width="original"
+        />
+      ))}
+      {/* <EdgeMedia
         src={decoration.data.url}
         type="image"
         name="card decoration"
@@ -75,7 +85,7 @@ export function DecorationFrame({ decoration }: Props) {
         className={cx(classes.frame, classes.bottomLeft)}
         width={decoration.data.animated ? 'original' : DEFAULT_EDGE_IMAGE_WIDTH}
         anim={decoration.data.animated}
-      />
+      /> */}
     </>
   );
 }
