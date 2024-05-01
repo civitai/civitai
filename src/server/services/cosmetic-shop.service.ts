@@ -35,7 +35,7 @@ export const getPaginatedCosmeticShopItems = async (input: GetPaginatedCosmeticS
   const where: Prisma.CosmeticShopItemFindManyArgs['where'] = {};
   const cosmeticWhere: Prisma.CosmeticFindManyArgs['where'] = {};
 
-  if (input.name) cosmeticWhere.name = { contains: input.name };
+  if (input.name) cosmeticWhere.name = { contains: input.name, mode: 'insensitive' };
   if (input.types && input.types.length) cosmeticWhere.type = { in: input.types };
 
   if (Object.keys(cosmeticWhere).length > 0) where.cosmetic = cosmeticWhere;
@@ -110,7 +110,7 @@ export const getShopSections = async (input: GetAllCosmeticShopSections) => {
   const where: Prisma.CosmeticShopSectionFindManyArgs['where'] = {};
 
   if (input.title) {
-    where.title = { contains: input.title };
+    where.title = { contains: input.title, mode: 'insensitive' };
   }
 
   if (input.withItems) {
