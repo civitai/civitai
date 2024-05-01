@@ -60,7 +60,7 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { CosmeticShopSectionMeta } from '~/server/schema/cosmetic-shop.schema';
 import { openUserProfileEditModal } from '~/components/Modals/UserProfileEditModal';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { formatDate } from '~/utils/date-helpers';
+import { formatDate, formatDateMin } from '~/utils/date-helpers';
 
 const IMAGE_SECTION_WIDTH = 1288;
 
@@ -150,12 +150,24 @@ const useStyles = createStyles((theme, _params, getRef) => {
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
+      position: 'relative',
     },
 
     availability: {
       position: 'absolute',
-      top: '-2px',
-      right: '-5px',
+      left: theme.spacing.md,
+      right: theme.spacing.md,
+      top: theme.spacing.md,
+      display: 'flex',
+      alignItems: 'stretch',
+      zIndex: 2,
+      '.mantine-Badge-inner': {
+        display: 'block',
+        width: '100%',
+      },
+      '.mantine-Text-root': {
+        margin: '0 auto',
+      },
     },
   };
 });
@@ -177,13 +189,24 @@ export const CosmeticShopItem = ({ item }: { item: CosmeticShopItemGetById }) =>
     (item.availableQuantity ?? null) === null || (item.availableQuantity ?? 0) > 0;
 
   const availableFrom = item.availableFrom ? formatDate(item.availableFrom) : null;
+  const remaining = item.availableQuantity;
   const availableTo = item.availableTo ? formatDate(item.availableTo) : null;
 
   return (
     <Paper className={classes.card}>
-      {availableTo && (
-        <Badge variant="filled" color="yellow.8" className={classes.availability}>
-          Available until {availableTo}
+      {(remaining !== null || availableTo) && (
+        <Badge color="grape" className={classes.availability} px={6}>
+          <Group position="apart" noWrap spacing={4}>
+            {remaining === 0 ? (
+              <Text>Out of Stock</Text>
+            ) : (
+              <>
+                {remaining && <Text>{remaining} remaining</Text>}
+                {availableTo && remaining && <Divider orientation="vertical" color="grape.3" />}
+                {availableTo && <Text>Available until {availableTo}</Text>}
+              </>
+            )}
+          </Group>
         </Badge>
       )}
       <Stack h="100%">
@@ -208,19 +231,6 @@ export const CosmeticShopItem = ({ item }: { item: CosmeticShopItemGetById }) =>
           )}
         </Stack>
         <Stack mt="auto" spacing={4}>
-          {(item.availableQuantity ?? null) !== null && (
-            <>
-              {(item.availableQuantity ?? 0) > 0 ? (
-                <Badge mx="auto" size="sm" color="yellow.7" radius="xl">
-                  {item.availableQuantity} remaining
-                </Badge>
-              ) : (
-                <Badge mx="auto" size="sm" color="red" radius="xl">
-                  Out of stock
-                </Badge>
-              )}
-            </>
-          )}
           <Button
             color="gray"
             radius="xl"
