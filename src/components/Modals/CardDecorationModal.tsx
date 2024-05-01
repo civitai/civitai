@@ -152,7 +152,7 @@ export function CardDecorationModal({ entityType, entityId, image, currentCosmet
                 <InputCosmeticSelect
                   name="cosmetic"
                   data={items}
-                  shopUrl="/shop/cosmetic-shop"
+                  shopUrl="/shop"
                   gridProps={{
                     breakpoints: [{ cols: 3, minWidth: 'xs' }],
                   }}
@@ -264,6 +264,7 @@ export const PreviewCard = ({
         src={image.url}
         className={cx(classes.image, decoration && classes.frameAdjustment)}
         width={imageWidth}
+        anim={true}
       />
     </MasonryCard>
   );

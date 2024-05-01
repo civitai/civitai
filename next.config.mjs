@@ -226,6 +226,16 @@ export default defineNextConfig(withAxiom({
         source: '/ad-feedback',
         destination: 'https://forms.clickup.com/8459928/f/825mr-9711/WIMNO6V738T4ZBTPXP',
         permanent: true,
+      },
+      {
+        source: '/cosmetic-shop',
+        destination: '/shop',
+        permanent: true,
+      },
+      {
+        source: '/shop/cosmetic-shop',
+        destination: '/shop',
+        permanent: true,
       }
     ];
   },
