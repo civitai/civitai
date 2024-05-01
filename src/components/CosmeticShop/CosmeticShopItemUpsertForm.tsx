@@ -107,6 +107,7 @@ const CosmeticSearch = ({
       searchable
       withAsterisk
       value={cosmetic?.id.toString() ?? ''}
+      clearable
     />
   );
 };
