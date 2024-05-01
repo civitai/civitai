@@ -116,7 +116,7 @@ a {
   text-decoration: underline;
 }
 
-.theme-light .markdown-content blockquote {
+.light .markdown-content blockquote {
   background: #eee;
   border-top: 4px solid #ddd;
 }
@@ -307,7 +307,7 @@ ol {
     background-color: #dee2e6;
   }
 
-  .theme-dark .card {
+  .dark .card {
     background-color: #25262b;
   }
 

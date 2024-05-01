@@ -177,6 +177,7 @@ export const routing: InstantSearchProps['routing'] = {
   router: createInstantSearchRouterNext({
     singletonRouter,
     routerOptions: {
+      cleanUrlOnDispose: false,
       createURL({ routeState, location }) {
         const pattern = /\/search\/([^\/]+)/;
         const match = location.pathname.match(pattern);

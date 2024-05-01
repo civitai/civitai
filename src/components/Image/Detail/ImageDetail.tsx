@@ -290,7 +290,7 @@ export function ImageDetail() {
                   <Box px="md">
                     <ImageResources imageId={image.id} />
                   </Box>
-                  {image.meta && (
+                  {image.meta && !image.hideMeta && (
                     <>
                       <Divider label="Generation Data" labelPosition="center" mb={-15} />
                       <Box px="md">
