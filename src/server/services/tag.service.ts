@@ -24,6 +24,7 @@ import {
 import { clearImageTagIdsCache } from '~/server/services/image.service';
 import { removeEmpty } from '~/utils/object-helpers';
 import { SessionUser } from 'next-auth';
+import { Flags } from '~/shared/utils';
 
 export const getTagWithModelCount = ({ name }: { name: string }) => {
   return dbRead.$queryRaw<[{ id: number; name: string; count: number }]>`
@@ -302,11 +303,19 @@ export const getVotableTags = async ({
   return results;
 };
 
-async function getVotableImageTags({ ids, user }: GetVotableTagsSchema2 & { user: SessionUser }) {
+export async function getVotableImageTags({
+  ids,
+  user,
+  nsfwLevel,
+}: {
+  ids: number[];
+  user: SessionUser;
+  nsfwLevel?: number;
+}) {
   const imageTags = await dbRead.imageTag.findMany({
     where: {
       imageId: { in: ids },
-      tagNsfwLevel: { in: [NsfwLevel.PG13, NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX] },
+      tagNsfwLevel: nsfwLevel ? { in: Flags.instanceToArray(nsfwLevel) } : undefined,
     },
     select: { ...imageTagCompositeSelect, imageId: true },
     orderBy: { score: 'desc' },
@@ -347,10 +356,11 @@ export async function getVotableTags2({
   ids,
   user,
   type,
+  nsfwLevel,
 }: GetVotableTagsSchema2 & { user: SessionUser }) {
   const voteCutoff = new Date(Date.now() + constants.tagVoting.voteDuration);
   const tagsFn = type === 'image' ? getVotableImageTags : getVotableImageTags;
-  const tags = await tagsFn({ ids, type, user });
+  const tags = await tagsFn({ ids, user, nsfwLevel });
   return tags.filter(
     (tag) =>
       tag.concrete ||

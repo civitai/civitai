@@ -105,6 +105,7 @@ export const getUserCreator = async ({
           favoriteCountAllTime: true,
           thumbsUpCountAllTime: true,
           followerCountAllTime: true,
+          reactionCountAllTime: true,
         },
       },
       rank: {

@@ -1,5 +1,11 @@
 import { Badge, BadgeProps, Box, Group, MantineSize, Text, useMantineTheme } from '@mantine/core';
-import { IconUpload, IconUsers, IconDownload, IconChecks } from '@tabler/icons-react';
+import {
+  IconUpload,
+  IconUsers,
+  IconDownload,
+  IconChecks,
+  IconMoodSmile,
+} from '@tabler/icons-react';
 
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { abbreviateNumber } from '~/utils/number-helpers';
@@ -189,11 +195,8 @@ export function UserStatBadgesV2({
   uploads,
   downloads,
   answers,
-  username,
-  colorOverrides,
+  reactions,
 }: Props) {
-  const theme = useMantineTheme();
-
   return (
     <Group spacing="xs" noWrap>
       {uploads != null ? (
@@ -201,6 +204,13 @@ export function UserStatBadgesV2({
           icon={<IconUpload size={18} color="white" />}
           label="Uploads"
           value={abbreviateNumber(uploads)}
+        />
+      ) : null}
+      {reactions != null ? (
+        <BadgedIcon
+          icon={<IconMoodSmile size={18} color="white" />}
+          label="Reactions"
+          value={abbreviateNumber(reactions)}
         />
       ) : null}
       {followers != null ? (
@@ -242,6 +252,7 @@ type Props = {
   favorites?: number | null;
   downloads?: number | null;
   answers?: number | null;
+  reactions?: number | null;
   username?: string | null;
   size?: MantineSize;
   colorOverrides?: { textColor?: string; backgroundColor?: string };

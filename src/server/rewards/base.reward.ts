@@ -4,6 +4,7 @@ import { chunk } from 'lodash-es';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import { rewardFailedCounter, rewardGivenCounter } from '~/server/prom/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { createBuzzTransactionMany, getMultipliersForUser } from '~/server/services/buzz.service';
@@ -192,17 +193,20 @@ export function createBuzzEvent<T>({
       await addBuzzEvent(event);
     } catch (error) {
       log(event, { message: 'Failed to record buzz event', error });
+      rewardFailedCounter.inc();
       throw new Error(`Failed to record buzz event: ${error}`);
     }
 
     if (event.status === 'awarded') {
       try {
         await sendAward([event]);
+        rewardGivenCounter.inc();
       } catch (error) {
         log(event, {
           message: 'Failed to send award for buzz event',
           error,
         });
+        rewardFailedCounter.inc();
         throw new Error(
           `Failed to send award for buzz event: ${error}.\n\nTransaction: ${JSON.stringify(event)}`
         );

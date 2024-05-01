@@ -451,8 +451,8 @@ export const addSimpleImagePostHandler = async ({
         addPostImage({
           ...image,
           postId: post.id,
-          userId,
           index,
+          user: ctx.user,
         })
       )
     );
