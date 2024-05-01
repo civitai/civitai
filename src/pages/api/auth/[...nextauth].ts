@@ -19,6 +19,7 @@ import { Tracker } from '~/server/clickhouse/client';
 import { CacheTTL } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { verificationEmail } from '~/server/email/templates';
+import { loginCounter, newUserCounter } from '~/server/prom/client';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { encryptedDataSchema } from '~/server/schema/civToken.schema';
 import {
@@ -251,6 +252,7 @@ export default async function auth(req: NextApiRequest, res: NextApiResponse) {
     const loginRedirectReason = req.cookies['ref_login_redirect_reason'] as string;
 
     if (context.isNewUser) {
+      newUserCounter.inc();
       const tracker = new Tracker(req, res);
       await tracker.userActivity({
         type: 'Registration',
@@ -269,6 +271,8 @@ export default async function auth(req: NextApiRequest, res: NextApiResponse) {
           loginRedirectReason,
         });
       }
+    } else {
+      loginCounter.inc();
     }
   };
 

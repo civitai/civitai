@@ -206,7 +206,7 @@ export function ProfileCard() {
             </Grid.Col>
             <Grid.Col span={12}>
               <Stack spacing={8}>
-                <InputProfileImageUpload name="profilePicture" label="Profile Image" />
+                <InputProfileImageUpload name="profilePicture" label="Avatar" />
                 <ProfilePictureAlert ingestion={user?.profilePicture?.ingestion} />
               </Stack>
             </Grid.Col>
