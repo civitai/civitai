@@ -7,7 +7,7 @@ import { useRouter } from 'next/router';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { CollectionType } from '@prisma/client';
 import { formatDate } from '~/utils/date-helpers';
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import { IconClock, IconTrash } from '@tabler/icons-react';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { ReorderImagesButton } from '~/components/Post/EditV2/PostReorderImages';
@@ -22,9 +22,9 @@ import { removeEmpty } from '~/utils/object-helpers';
 export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
   // #region [state]
   const router = useRouter();
-  const currentUser = useCurrentUserRequired();
   const params = usePostEditParams();
   const { returnUrl, afterPublish } = params;
+  const [deleted, setDeleted] = useState(false);
   const [updatePost, isReordering, hasImages, showReorder] = usePostEditStore((state) => [
     state.updatePost,
     state.isReordering,
@@ -87,7 +87,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
   };
 
   useCatchNavigation({
-    unsavedChanges: !post.publishedAt,
+    unsavedChanges: !post.publishedAt && !deleted,
     message: `You haven't published this post, all images will stay hidden. Do you wish to continue?`,
   });
   // #endregion
@@ -191,7 +191,10 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
       <DeletePostButton postId={post.id}>
         {({ onClick, isLoading }) => (
           <Button
-            onClick={() => onClick()}
+            onClick={() => {
+              setDeleted(true);
+              onClick();
+            }}
             color="red"
             loading={isLoading}
             variant="outline"
