@@ -40,9 +40,10 @@ export function PostImageDropzone({
     onSuccess: (data) =>
       setImages((images) => {
         const resolvingIndex = images.findIndex((x) => x.type === 'resolving');
-        const index = data.index ?? images.length + 1;
-        const spliceIndex = resolvingIndex > -1 ? resolvingIndex : index;
-        images[spliceIndex] = { type: 'added', data: { ...data, index } };
+        if (resolvingIndex > -1) images.splice(resolvingIndex, 1);
+        const index = images.findIndex((x) => x.type === 'added' && x.data.id === data.id);
+        if (index > -1) images[index] = { type: 'added', data: { ...data, index: data.index! } };
+        else images.push({ type: 'added', data: { ...data, index: data.index! } });
         return images;
       }),
   });

@@ -461,6 +461,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
           filter={() => true}
           clearable={query.length > 0}
           maxDropdownHeight={isMobile ? 450 : undefined}
+          withinPortal
           {...autocompleteProps}
         />
         <ActionIcon
