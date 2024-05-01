@@ -168,6 +168,14 @@ export const useCardStyles = createStyles<string, { aspectRatio: number }>(
           paddingBottom: '36px !important',
         },
       },
+
+      frameAdjustment: {
+        padding: 5,
+        borderRadius: 12,
+        height: '100%',
+        width: '100%',
+        objectFit: 'cover',
+      },
     };
   }
 );

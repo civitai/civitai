@@ -94,9 +94,11 @@ function UnroutedImageCard({ data }: Props) {
                     }
                     type={data.type}
                     width={imageWidth}
-                    className={sharedClasses.image}
+                    className={cx(
+                      sharedClasses.image,
+                      data.cosmetic && sharedClasses.frameAdjustment
+                    )}
                     wrapperProps={{ style: { height: '100%', width: '100%' } }}
-                    style={data.cosmetic ? { padding: 5, borderRadius: 12 } : undefined}
                     loading="lazy"
                     contain
                   />

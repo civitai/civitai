@@ -76,20 +76,9 @@ export function ArticleCard({ data, aspectRatio }: Props) {
                     <MediaHash {...coverImage} />
                   ) : (
                     <EdgeMedia
-                      className={classes.image}
+                      className={cx(classes.image, data.cosmetic && classes.frameAdjustment)}
                       src={coverImage.url}
                       width={IMAGE_CARD_WIDTH * 2.5}
-                      style={
-                        data.cosmetic
-                          ? {
-                              padding: 5,
-                              borderRadius: 12,
-                              height: '100%',
-                              width: '100%',
-                              objectFit: 'cover',
-                            }
-                          : undefined
-                      }
                       loading="lazy"
                     />
                   )}

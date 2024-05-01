@@ -373,10 +373,9 @@ export function ModelCard({ data, forceInView }: Props) {
                                 : IMAGE_CARD_WIDTH
                             }
                             placeholder="empty"
-                            className={classes.image}
+                            className={cx(classes.image, data.cosmetic && classes.frameAdjustment)}
                             // loading="lazy"
                             wrapperProps={{ style: { height: '100%', width: '100%' } }}
-                            style={data.cosmetic ? { padding: 5, borderRadius: 12 } : undefined}
                             contain
                           />
                         )}

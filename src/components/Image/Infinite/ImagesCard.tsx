@@ -36,10 +36,12 @@ import { useImageStore } from '~/store/image.store';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { getIsPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { useCardStyles } from '~/components/Cards/Cards.styles';
 
 export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height: number }) {
   const { ref, inView } = useInView({ rootMargin: '200% 0px' });
   const { classes, cx } = useStyles();
+  const { classes: sharedClasses } = useCardStyles({ aspectRatio: 1 });
   const { images } = useImagesContext();
   const features = useFeatureFlags();
 
@@ -142,7 +144,10 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                       {safe && (
                         <EdgeMedia
                           src={image.url}
-                          className={cx({ [classes.blocked]: isBlocked })}
+                          className={cx({
+                            [classes.blocked]: isBlocked,
+                            [sharedClasses.frameAdjustment]: !!data.cosmetic,
+                          })}
                           name={image.name ?? image.id.toString()}
                           alt={
                             image.meta
@@ -154,17 +159,6 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                           type={image.type}
                           width={450}
                           placeholder="empty"
-                          style={
-                            data.cosmetic
-                              ? {
-                                  padding: 5,
-                                  borderRadius: 12,
-                                  width: '100%',
-                                  height: '100%',
-                                  objectFit: 'cover',
-                                }
-                              : undefined
-                          }
                           fadeIn
                         />
                       )}

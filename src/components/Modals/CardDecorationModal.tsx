@@ -250,7 +250,7 @@ export const PreviewCard = ({
       ? DEFAULT_EDGE_IMAGE_WIDTH * originalAspectRatio
       : DEFAULT_EDGE_IMAGE_WIDTH;
 
-  const { classes } = useCardStyles({ aspectRatio: originalAspectRatio });
+  const { classes, cx } = useCardStyles({ aspectRatio: originalAspectRatio });
 
   if (!image) return null;
 
@@ -261,9 +261,8 @@ export const PreviewCard = ({
     <MasonryCard height={cardHeight} frameDecoration={decoration}>
       <EdgeMedia
         src={image.url}
-        className={classes.image}
+        className={cx(classes.image, decoration && classes.frameAdjustment)}
         width={imageWidth}
-        style={decoration ? { padding: 5, borderRadius: 12 } : undefined}
       />
     </MasonryCard>
   );
