@@ -484,6 +484,7 @@ function EditDetail() {
               entityType="image"
               tags={!!image.tags.length ? image.tags : undefined}
               collapsible
+              canAdd
             />
           </>
         )}
