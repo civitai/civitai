@@ -22,7 +22,6 @@ import React, { useEffect, useRef, useState } from 'react';
 import { z } from 'zod';
 
 import { BackButton } from '~/components/BackButton/BackButton';
-import { hiddenLabel } from '~/components/Post/Edit/EditPostControls';
 import { useFormStorage } from '~/hooks/useFormStorage';
 import {
   Form,
@@ -403,7 +402,10 @@ function ActionButtons({
       ) : (
         <Text size="xs" color="dimmed">
           Your article is currently{' '}
-          <Tooltip label={hiddenLabel} {...tooltipProps}>
+          <Tooltip
+            label="Click the publish button to make your article public to share with the Civitai community for comments and reactions."
+            {...tooltipProps}
+          >
             <Text span underline>
               hidden
             </Text>

@@ -9,6 +9,7 @@ import { FloatingActionButton2 } from '~/components/FloatingActionButton/Floatin
 import { ScrollAreaMain } from '~/components/ScrollArea/ScrollAreaMain';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { NewsletterDialog } from '../NewsletterDialog/NewsletterDialog';
 
 type AppLayoutProps = {
   innerLayout?: ({ children }: { children: React.ReactNode }) => React.ReactNode;
@@ -18,13 +19,10 @@ type AppLayoutProps = {
 export function AppLayout({
   children,
   renderSearchComponent,
-  innerLayout,
-  withScrollArea = true,
 }: {
   children: React.ReactNode;
   renderSearchComponent?: (opts: RenderSearchComponentProps) => React.ReactElement;
-} & AppLayoutProps) {
-  const InnerLayout: any = innerLayout;
+}) {
   const { classes } = useStyles();
   const user = useCurrentUser();
   const { logout } = useAccountContext();
@@ -50,19 +48,11 @@ export function AppLayout({
       </Center>
     );
 
-  const content = InnerLayout ? (
-    <InnerLayout>{children}</InnerLayout>
-  ) : withScrollArea ? (
-    <ScrollAreaMain>{children}</ScrollAreaMain>
-  ) : (
-    children
-  );
-
   return (
     <>
       <AppHeader fixed={false} renderSearchComponent={renderSearchComponent} />
-      <main className={classes.main}>
-        {content}
+      <main className="flex flex-col flex-1 w-full h-full relative overflow-hidden">
+        {children}
         {/* {flags.assistant && (
               <div className={classes.assistant}>
                 <AssistantButton />
@@ -85,13 +75,6 @@ const useStyles = createStyles((theme) => ({
     display: 'flex',
     flex: 1,
     overflow: 'hidden',
-  },
-  main: {
-    flex: 1,
-    display: 'flex',
-    flexDirection: 'column',
-    overflow: 'hidden',
-    position: 'relative',
   },
   assistant: {
     position: 'absolute',

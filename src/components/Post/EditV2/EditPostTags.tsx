@@ -3,7 +3,6 @@ import {
   Alert,
   createStyles,
   Group,
-  Input,
   TextInput,
   Text,
   Popover,
@@ -13,10 +12,11 @@ import {
   Loader,
   useMantineTheme,
 } from '@mantine/core';
-import { useDebouncedValue, getHotkeyHandler, useClickOutside } from '@mantine/hooks';
+import { useDebouncedValue, getHotkeyHandler, useClickOutside, usePrevious } from '@mantine/hooks';
 import { IconPlus, IconStar, IconX } from '@tabler/icons-react';
-import { useEffect, useState, useMemo } from 'react';
-import { useEditPostContext } from '~/components/Post/Edit/EditPostProvider';
+import { useEffect, useState, useMemo, createContext, useContext } from 'react';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { PostDetailEditable } from '~/server/services/post.service';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -25,33 +25,54 @@ type TagProps = {
   name: string;
 };
 
-export function EditPostTags() {
-  const tags = useEditPostContext((state) => state.tags);
-  const publishedAt = useEditPostContext((state) => state.publishedAt);
+type EditPostTagsProps = {
+  postId: number;
+  tags: TagProps[];
+  setTags: (cb: (post: TagProps[]) => TagProps[]) => void;
+};
+const EditPostTagsContext = createContext<EditPostTagsProps | null>(null);
+const useEditPostTagsContext = () => {
+  const context = useContext(EditPostTagsContext);
+  if (!context) throw new Error('missing EditPostTagsProvider');
+  return context;
+};
+
+export function EditPostTags({ post }: { post: PostDetailEditable }) {
+  const [tags, setTags] = useState<TagProps[]>(post.tags);
+  const handleSetTags = (cb: (tags: TagProps[]) => TagProps[]) => setTags(cb);
   return (
-    <Group spacing="xs">
-      {tags.map((tag, index) => (
-        <PostTag key={index} tag={tag} canRemove={publishedAt ? tags.length > 1 : true} />
-      ))}
-      {tags.length < 5 && <TagPicker />}
-    </Group>
+    <EditPostTagsContext.Provider value={{ postId: post.id, tags, setTags: handleSetTags }}>
+      <Group spacing="xs">
+        {tags.map((tag, index) => (
+          <PostTag
+            key={index}
+            tag={tag}
+            canRemove={post.publishedAt ? post.tags.length > 1 : true}
+          />
+        ))}
+        {tags.length < 5 && <TagPicker />}
+      </Group>
+    </EditPostTagsContext.Provider>
   );
 }
 
 function PostTag({ tag, canRemove }: { tag: TagProps; canRemove?: boolean }) {
-  const postId = useEditPostContext((state) => state.id);
-  const setTags = useEditPostContext((state) => state.setTags);
+  const { postId, tags, setTags } = useEditPostTagsContext();
   const theme = useMantineTheme();
 
+  const previousTags = usePrevious(tags);
   const { mutate, isLoading } = trpc.post.removeTag.useMutation({
     onMutate({ tagId }) {
       setTags((tags) => tags.filter((x) => x.id !== tagId));
+    },
+    onError(error, tag) {
+      if (previousTags) setTags(() => previousTags);
     },
   });
 
   const handleRemoveTag = (tag: TagProps) => {
     if (tag.id) {
-      mutate({ id: postId, tagId: tag.id }, { onError: () => setTags((tags) => [...tags, tag]) });
+      mutate({ id: postId, tagId: tag.id });
     } else {
       setTags((tags) => tags.filter((x) => x.name.toLowerCase() !== tag.name.toLowerCase()));
     }
@@ -85,9 +106,7 @@ function PostTag({ tag, canRemove }: { tag: TagProps; canRemove?: boolean }) {
 }
 
 function TagPicker() {
-  const postId = useEditPostContext((state) => state.id);
-  const tags = useEditPostContext((state) => state.tags);
-  const setTags = useEditPostContext((state) => state.setTags);
+  const { postId, tags, setTags } = useEditPostTagsContext();
 
   const { classes, cx, theme } = useDropdownContentStyles();
   const [active, setActive] = useState<number>();
@@ -107,34 +126,39 @@ function TagPicker() {
     [control, dropdown]
   );
 
+  const browsingLevel = useBrowsingLevelDebounced();
   const { data, isFetching } = trpc.post.getTags.useQuery(
-    { query: debounced },
+    { query: debounced, nsfwLevel: browsingLevel },
     { keepPreviousData: true }
   );
+
+  // const test = trpc.tag.getAll.useQuery(
+  //   {
+  //     query: debounced,
+  //     entityType: [TagTarget.Post],
+  //     nsfwLevel: browsingLevel,
+  //     sort: TagSort.MostPosts,
+  //     include: ['nsfwLevel'],
+  //   },
+  //   { keepPreviousData: true }
+  // );
   const { mutate } = trpc.post.addTag.useMutation({
     onSuccess: async (response) => {
-      setTags((tags) => {
-        return [...tags.filter((x) => !!x.id && x.id !== response.id), response];
+      setTags((tags) => [...tags.filter((x) => !!x.id && x.id !== response.id), response]);
+    },
+    onError(error, tag) {
+      setTags((tags) => tags.filter((x) => x.name !== tag.name));
+      showErrorNotification({
+        title: 'Failed to add tag',
+        error: new Error(error.message),
+        reason: 'Unable to add tag, please try again.',
       });
     },
   });
 
   const handleAddTag = (tag: TagProps) => {
-    const prevTags = tags;
+    mutate({ id: postId, tagId: tag.id, name: tag.name });
     setTags((tags) => [...tags, tag]);
-    mutate(
-      { id: postId, tagId: tag.id, name: tag.name },
-      {
-        onError(error) {
-          showErrorNotification({
-            title: 'Failed to add tag',
-            error: new Error(error.message),
-            reason: 'Unable to add tag, please try again.',
-          });
-          setTags(prevTags);
-        },
-      }
-    );
   };
 
   useEffect(() => {

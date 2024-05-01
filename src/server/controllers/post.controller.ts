@@ -62,19 +62,6 @@ export const createPostHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
-    if (input.modelVersionId) {
-      // Confirmt he user has access to this modelVersion:
-      const [access] = await hasEntityAccess({
-        entityType: 'ModelVersion',
-        entityIds: [input.modelVersionId],
-        userId: ctx.user.id,
-        isModerator: ctx.user.isModerator,
-      });
-
-      if (!access?.hasAccess) {
-        throw throwAuthorizationError('You do not have access to this model version.');
-      }
-    }
     const post = await createPost({ userId: ctx.user.id, ...input });
     const isPublished = !!post.publishedAt;
     const isScheduled = isPublished && dayjs(post.publishedAt).isAfter(dayjs().add(10, 'minutes')); // Publishing more than 10 minutes in the future
@@ -92,7 +79,7 @@ export const createPostHandler = async ({
       await firstDailyPostReward.apply(
         {
           postId: post.id,
-          posterId: post.userId,
+          posterId: post.user.id,
         },
         ctx.ip
       );
@@ -104,7 +91,7 @@ export const createPostHandler = async ({
         tags,
       });
       await eventEngine.processEngagement({
-        userId: post.userId,
+        userId: post.user.id,
         type: 'published',
         entityType: 'post',
         entityId: post.id,
@@ -137,8 +124,7 @@ export const updatePostHandler = async ({
 
     const updatedPost = await updatePost({
       ...input,
-      userId: ctx.user.id,
-      isModerator: ctx.user.isModerator,
+      user: ctx.user,
     });
 
     const wasPublished = !post?.publishedAt && updatedPost.publishedAt;
@@ -201,7 +187,6 @@ export const updatePostHandler = async ({
   }
 };
 
-export type PostDetail = AsyncReturnType<typeof getPostHandler>;
 export const getPostHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
   try {
     const post = await getPostDetail({ ...input, user: ctx.user });
@@ -214,20 +199,20 @@ export const getPostHandler = async ({ input, ctx }: { input: GetByIdInput; ctx:
   }
 };
 
-export type PostEditDetail = AsyncReturnType<typeof getPostEditHandler>;
-export type PostEditImage = PostEditDetail['images'][0] & { previewUrl?: string };
-export const getPostEditHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
-  try {
-    const post = await getPostEditDetail(input);
-    if (!post) throw throwNotFoundError();
-    const isOwnerOrModerator = post.userId === ctx.user?.id || ctx.user?.isModerator;
-    if (!isOwnerOrModerator) throw throwAuthorizationError();
-    return post;
-  } catch (error) {
-    if (error instanceof TRPCError) throw error;
-    else throw throwDbError(error);
-  }
-};
+// export type PostEditDetail = AsyncReturnType<typeof getPostEditHandler>;
+// export type PostEditImage = PostEditDetail['images'][0] & { previewUrl?: string };
+// export const getPostEditHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
+//   try {
+//     const post = await getPostEditDetail(input);
+//     if (!post) throw throwNotFoundError();
+//     const isOwnerOrModerator = post.userId === ctx.user?.id || ctx.user?.isModerator;
+//     if (!isOwnerOrModerator) throw throwAuthorizationError();
+//     return post;
+//   } catch (error) {
+//     if (error instanceof TRPCError) throw error;
+//     else throw throwDbError(error);
+//   }
+// };
 
 export const deletePostHandler = async ({
   input,
@@ -253,7 +238,7 @@ export const addPostImageHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
-    return await addPostImage({ ...input, userId: ctx.user.id });
+    return await addPostImage({ ...input, user: ctx.user });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

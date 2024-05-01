@@ -366,7 +366,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
                             variant="filled"
                             style={{ position: 'absolute', bottom: '10px', right: '5px' }}
                           >
-                            Profile Picture
+                            Avatar
                           </Badge>
                         ) : null}
                       </>

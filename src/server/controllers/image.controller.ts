@@ -195,14 +195,14 @@ export const setTosViolationHandler = async ({
   }
 };
 
-export const updateImageHandler = async ({ input }: { input: UpdateImageInput }) => {
-  try {
-    return await updateImage({ ...input });
-  } catch (error) {
-    if (error instanceof TRPCError) throw error;
-    else throw throwDbError(error);
-  }
-};
+// export const updateImageHandler = async ({ input }: { input: UpdateImageInput }) => {
+//   try {
+//     return await updateImage({ ...input });
+//   } catch (error) {
+//     if (error instanceof TRPCError) throw error;
+//     else throw throwDbError(error);
+//   }
+// };
 
 export const getImageDetailHandler = async ({ input }: { input: GetByIdInput }) => {
   try {

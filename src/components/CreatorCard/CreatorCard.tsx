@@ -194,6 +194,7 @@ export const CreatorCardV2 = ({
       downloadCountAllTime: 0,
       thumbsUpCountAllTime: 0,
       followerCountAllTime: 0,
+      reactionCountAllTime: 0,
     },
     publicSettings: {
       creatorCardStatsPreferences: [],
@@ -294,6 +295,9 @@ export const CreatorCardV2 = ({
                     favorites={displayStats.includes('likes') ? stats.thumbsUpCountAllTime : null}
                     downloads={
                       displayStats.includes('downloads') ? stats.downloadCountAllTime : null
+                    }
+                    reactions={
+                      displayStats.includes('reactions') ? stats.reactionCountAllTime : null
                     }
                     colorOverrides={backgroundImage?.data}
                   />

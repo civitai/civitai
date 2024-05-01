@@ -56,6 +56,10 @@ import { RegisterCatchNavigation } from '~/store/catch-navigation.store';
 import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 import { trpc } from '~/utils/trpc';
 import '~/styles/globals.css';
+import ErrorBoundary from '~/components/ErrorBoundary/ErrorBoundary';
+import { InnerLayoutOptions } from '~/components/AppLayout/createPage';
+import { ScrollAreaMain } from '~/components/ScrollArea/ScrollAreaMain';
+import { ThemeProvider } from '~/providers/ThemeProvider';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -69,7 +73,7 @@ linkifyInit();
 
 type CustomNextPage = NextPage & {
   getLayout?: (page: ReactElement) => ReactNode;
-  options?: Record<string, unknown>;
+  options?: InnerLayoutOptions;
 };
 
 type CustomAppProps = {
@@ -84,38 +88,34 @@ type CustomAppProps = {
 function MyApp(props: CustomAppProps) {
   const {
     Component,
-    pageProps: { session, colorScheme: initialColorScheme, cookies, flags, ...pageProps },
+    pageProps: { session, colorScheme, cookies, flags, ...pageProps },
   } = props;
-  const [colorScheme, setColorScheme] = useState<ColorScheme | undefined>(initialColorScheme);
-  const toggleColorScheme = useCallback(
-    (value?: ColorScheme) => {
-      const nextColorScheme = value || (colorScheme === 'dark' ? 'light' : 'dark');
-      setColorScheme(nextColorScheme);
-      setCookie('mantine-color-scheme', nextColorScheme, {
-        expires: dayjs().add(1, 'year').toDate(),
-      });
-    },
-    [colorScheme]
-  );
 
   if (typeof window !== 'undefined' && !window.authChecked) {
     window.authChecked = true;
     window.isAuthed = !!session;
   }
 
-  useEffect(() => {
-    if (colorScheme === undefined && typeof window !== 'undefined') {
-      const osColor = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
-      setColorScheme(osColor);
-    }
-  }, [colorScheme]);
-
-  const getLayout = useMemo(
-    () =>
-      Component.getLayout ??
-      ((page: React.ReactElement) => <AppLayout {...Component.options}>{page}</AppLayout>),
-    [Component.getLayout, Component.options]
-  );
+  const getLayout =
+    Component.getLayout ??
+    ((page: ReactElement) => {
+      const InnerLayout = Component.options?.InnerLayout ?? Component.options?.innerLayout;
+      const withScrollArea = Component.options?.withScrollArea ?? true;
+      return (
+        <AppLayout>
+          {/* <InnerLayout>
+            {withScrollArea ? <ScrollAreaMain>{page}</ScrollAreaMain> : page}
+          </InnerLayout> */}
+          {InnerLayout ? (
+            <InnerLayout>{page}</InnerLayout>
+          ) : withScrollArea ? (
+            <ScrollAreaMain>{page}</ScrollAreaMain>
+          ) : (
+            page
+          )}
+        </AppLayout>
+      );
+    });
 
   return (
     <>
@@ -123,176 +123,74 @@ function MyApp(props: CustomAppProps) {
         <title>Civitai | Share your models</title>
         <MetaPWA />
       </Head>
-
-      <ColorSchemeProvider
-        colorScheme={colorScheme ?? 'dark'}
-        toggleColorScheme={toggleColorScheme}
-      >
-        <MantineProvider
-          theme={{
-            colorScheme,
-            components: {
-              Modal: {
-                styles: {
-                  modal: { maxWidth: '100%' },
-                  inner: { paddingLeft: 0, paddingRight: 0 },
-                },
-                // defaultProps: {
-                //   target:
-                //     typeof window !== 'undefined' ? document.getElementById('root') : undefined,
-                // },
-              },
-              Drawer: {
-                styles: {
-                  drawer: {
-                    containerName: 'drawer',
-                    containerType: 'inline-size',
-                    display: 'flex',
-                    flexDirection: 'column',
-                  },
-                  body: { flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' },
-                  header: { margin: 0 },
-                },
-                // defaultProps: {
-                //   target:
-                //     typeof window !== 'undefined' ? document.getElementById('root') : undefined,
-                // },
-              },
-              Tooltip: {
-                defaultProps: { withArrow: true },
-              },
-              Popover: { styles: { dropdown: { maxWidth: '100vw' } } },
-              Rating: { styles: { symbolBody: { cursor: 'pointer' } } },
-              Switch: {
-                styles: {
-                  body: { verticalAlign: 'top' },
-                  track: { cursor: 'pointer' },
-                  label: { cursor: 'pointer' },
-                },
-              },
-              Radio: {
-                styles: {
-                  radio: { cursor: 'pointer' },
-                  label: { cursor: 'pointer' },
-                },
-              },
-              Badge: {
-                styles: { leftSection: { lineHeight: 1 } },
-                defaultProps: { radius: 'sm' },
-              },
-              Checkbox: {
-                styles: {
-                  input: { cursor: 'pointer' },
-                  label: { cursor: 'pointer' },
-                },
-              },
-              Menu: {
-                styles: {
-                  itemLabel: { display: 'flex' },
-                },
-              },
-            },
-            colors: {
-              accent: [
-                '#F4F0EA',
-                '#E8DBCA',
-                '#E2C8A9',
-                '#E3B785',
-                '#EBA95C',
-                '#FC9C2D',
-                '#E48C27',
-                '#C37E2D',
-                '#A27036',
-                '#88643B',
-              ],
-              success: [
-                '#9EC3B8',
-                '#84BCAC',
-                '#69BAA2',
-                '#4CBD9C',
-                '#32BE95',
-                '#1EBD8E',
-                '#299C7A',
-                '#2F826A',
-                '#326D5C',
-                '#325D51',
-              ],
-            },
-            white: '#fefefe',
-            black: '#222',
-            other: {
-              fadeIn: `opacity 200ms ease-in`,
-            },
-            respectReducedMotion: true,
-          }}
-          withGlobalStyles
-          withNormalizeCSS
+      <ThemeProvider colorScheme={colorScheme}>
+        {/* <ErrorBoundary> */}
+        <PlausibleProvider
+          domain="civitai.com"
+          customDomain="https://analytics.civitai.com"
+          selfHosted
         >
-          <PlausibleProvider
-            domain="civitai.com"
-            customDomain="https://analytics.civitai.com"
-            selfHosted
-          >
-            <IsClientProvider>
-              <ClientHistoryStore />
-              <RegisterCatchNavigation />
-              <RouterTransition />
-              <UpdateRequiredWatcher />
-              <ChadGPT isAuthed={!!session} />
-              <SessionProvider
-                session={session}
-                refetchOnWindowFocus={false}
-                refetchWhenOffline={false}
-              >
-                <FeatureFlagsProvider flags={flags}>
-                  <CookiesProvider value={cookies}>
-                    <BrowsingModeProvider>
-                      <AccountProvider>
-                        <CivitaiSessionProvider>
-                          <SignalProvider>
-                            <ActivityReportingProvider>
-                              <CivitaiPosthogProvider>
-                                <ReferralsProvider>
-                                  <FiltersProvider>
-                                    <AdsProvider>
-                                      <PaypalProvider>
-                                        <HiddenPreferencesProvider>
-                                          <CivitaiLinkProvider>
-                                            <NotificationsProvider zIndex={9999}>
-                                              <BrowserRouterProvider>
-                                                <RecaptchaWidgetProvider>
-                                                  <ChatContextProvider>
-                                                    <BaseLayout>
-                                                      <CustomModalsProvider>
-                                                        {getLayout(<Component {...pageProps} />)}
-                                                        <StripeSetupSuccessProvider />
-                                                        <DialogProvider />
-                                                        <RoutedDialogProvider />
-                                                      </CustomModalsProvider>
-                                                    </BaseLayout>
-                                                  </ChatContextProvider>
-                                                </RecaptchaWidgetProvider>
-                                              </BrowserRouterProvider>
-                                            </NotificationsProvider>
-                                          </CivitaiLinkProvider>
-                                        </HiddenPreferencesProvider>
-                                      </PaypalProvider>
-                                    </AdsProvider>
-                                  </FiltersProvider>
-                                </ReferralsProvider>
-                              </CivitaiPosthogProvider>
-                            </ActivityReportingProvider>
-                          </SignalProvider>
-                        </CivitaiSessionProvider>
+          <IsClientProvider>
+            <ClientHistoryStore />
+            <RegisterCatchNavigation />
+            <RouterTransition />
+            <UpdateRequiredWatcher />
+            <ChadGPT isAuthed={!!session} />
+            <SessionProvider
+              session={session}
+              refetchOnWindowFocus={false}
+              refetchWhenOffline={false}
+            >
+              <FeatureFlagsProvider flags={flags}>
+                <CookiesProvider value={cookies}>
+                  <BrowsingModeProvider>
+                    <AccountProvider>
+                    <CivitaiSessionProvider>
+                      <SignalProvider>
+                        <ActivityReportingProvider>
+                          <CivitaiPosthogProvider>
+                            <ReferralsProvider>
+                              <FiltersProvider>
+                                <AdsProvider>
+                                  <PaypalProvider>
+                                    <HiddenPreferencesProvider>
+                                      <CivitaiLinkProvider>
+                                        <NotificationsProvider zIndex={9999}>
+                                          <BrowserRouterProvider>
+                                            <RecaptchaWidgetProvider>
+                                              <ChatContextProvider>
+                                                <BaseLayout>
+                                                  <CustomModalsProvider>
+                                                    {getLayout(<Component {...pageProps} />)}
+                                                    <StripeSetupSuccessProvider />
+                                                    <DialogProvider />
+                                                    <RoutedDialogProvider />
+                                                  </CustomModalsProvider>
+                                                </BaseLayout>
+                                              </ChatContextProvider>
+                                            </RecaptchaWidgetProvider>
+                                          </BrowserRouterProvider>
+                                        </NotificationsProvider>
+                                      </CivitaiLinkProvider>
+                                    </HiddenPreferencesProvider>
+                                  </PaypalProvider>
+                                </AdsProvider>
+                              </FiltersProvider>
+                            </ReferralsProvider>
+                          </CivitaiPosthogProvider>
+                        </ActivityReportingProvider>
+                      </SignalProvider>
+                    </CivitaiSessionProvider>
                       </AccountProvider>
-                    </BrowsingModeProvider>
-                  </CookiesProvider>
-                </FeatureFlagsProvider>
-              </SessionProvider>
-            </IsClientProvider>
-          </PlausibleProvider>
-        </MantineProvider>
-      </ColorSchemeProvider>
+                  </BrowsingModeProvider>
+                </CookiesProvider>
+              </FeatureFlagsProvider>
+            </SessionProvider>
+          </IsClientProvider>
+        </PlausibleProvider>
+        {/* </ErrorBoundary> */}
+      </ThemeProvider>
+
       {isDev && <ReactQueryDevtools />}
     </>
   );

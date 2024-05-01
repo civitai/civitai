@@ -453,7 +453,7 @@ const { openModal, Modal } = createContextModal({
             <Stack spacing="md">
               {featureFlags.cosmeticShop && (
                 <>
-                  <InputProfileImageUpload name="profilePicture" label="Edit profile image" />
+                  <InputProfileImageUpload name="profilePicture" label="Edit avatar" />
                   <Divider label="Showcase Stats" />
                   <InputChipGroup spacing={8} name="creatorCardStatsPreferences" multiple>
                     {Object.values(creatorCardStats).map((type, index) => (

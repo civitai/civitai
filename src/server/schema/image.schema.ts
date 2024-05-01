@@ -33,6 +33,16 @@ export const comfyMetaSchema = z
   })
   .partial();
 
+export const baseImageMetaSchema = z.object({
+  prompt: z.string().optional(),
+  negativePrompt: z.string().optional(),
+  cfgScale: z.coerce.number().optional(),
+  steps: z.coerce.number().optional(),
+  sampler: z.string().optional(),
+  seed: z.coerce.number().optional(),
+  clipSkip: z.coerce.number().optional(),
+});
+
 export const imageGenerationSchema = z.object({
   prompt: undefinedString,
   negativePrompt: undefinedString,
@@ -86,14 +96,15 @@ export const isNotImageResource = (
 
 export type CreateImageSchema = z.infer<typeof createImageSchema>;
 export const createImageSchema = z.object({
+  entityId: z.number().optional(),
+  entityType: imageEntitiesSchema.optional(),
   id: z.number().optional(),
   name: z.string().nullish(),
   url: z.string().url().or(z.string().uuid()),
   hash: z.string().nullish(),
   height: z.number().nullish(),
   width: z.number().nullish(),
-  entityId: z.number().optional(),
-  entityType: imageEntitiesSchema.optional(),
+  postId: z.number().nullish(),
   modelVersionId: z.number().optional(),
   index: z.number().optional(),
   mimeType: z.string().optional(),
@@ -317,3 +328,17 @@ export type ReportCsamImagesInput = z.infer<typeof reportCsamImagesSchema>;
 export const reportCsamImagesSchema = z.object({
   imageIds: z.array(z.number()).min(1),
 });
+
+// #region [image tools]
+const baseImageToolSchema = z.object({
+  imageId: z.number(),
+  toolId: z.number(),
+});
+export type AddOrRemoveImageToolsOutput = z.output<typeof addOrRemoveImageToolsSchema>;
+export const addOrRemoveImageToolsSchema = z.object({ data: baseImageToolSchema.array() });
+
+export type UpdateImageToolsOutput = z.output<typeof updateImageToolsSchema>;
+export const updateImageToolsSchema = z.object({
+  data: baseImageToolSchema.extend({ notes: z.string().nullish() }).array(),
+});
+// #endregion
