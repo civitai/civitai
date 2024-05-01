@@ -79,7 +79,7 @@ export function PostUpsertForm2({
       <Title order={3}>{isCreatePage ? 'Create your post' : 'Edit post'}</Title>
       <PostEditProvider
         post={data}
-        params={{ modelVersionId }}
+        params={{ modelVersionId, src: 'trainer' }}
         confirmPublish={confirmPublish}
         confirmMessage={confirmMessage}
         confirmTitle={confirmTitle}
