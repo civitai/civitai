@@ -104,10 +104,15 @@ import { getUserNotificationCount } from '~/server/services/notification.service
 import { createRecaptchaAssesment } from '../recaptcha/client';
 import { FeatureAccess, toggleableFeatures } from '../services/feature-flags.service';
 import { isDefined } from '~/utils/type-guards';
-import { OnboardingSteps, SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import {
+  OnboardingComplete,
+  OnboardingSteps,
+  SearchIndexUpdateQueueAction,
+} from '~/server/common/enums';
 import { Flags } from '~/shared/utils';
 import { getResourceReviewsByUserId } from '~/server/services/resourceReview.service';
 import { usersSearchIndex } from '~/server/search-index';
+import { onboardingCompletedCounter, onboardingErrorCounter } from '~/server/prom/client';
 
 export const getAllUsersHandler = async ({
   input,
@@ -244,6 +249,7 @@ export const completeOnboardingHandler = async ({
   try {
     const { id } = ctx.user;
     const onboarding = Flags.addFlag(ctx.user.onboarding, input.step);
+    const changed = onboarding !== ctx.user.onboarding;
 
     switch (input.step) {
       case OnboardingSteps.TOS:
@@ -297,7 +303,10 @@ export const completeOnboardingHandler = async ({
         ).catch(handleLogError);
         break;
     }
+    const isComplete = onboarding === OnboardingComplete;
+    if (isComplete && changed) onboardingCompletedCounter.inc();
   } catch (e) {
+    onboardingErrorCounter.inc();
     if (e instanceof TRPCError) throw e;
     throw throwDbError(e);
   }
