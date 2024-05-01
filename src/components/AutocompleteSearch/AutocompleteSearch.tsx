@@ -204,6 +204,7 @@ export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ..
     <InstantSearch
       searchClient={searchClient}
       indexName={searchIndexMap[targetIndex as keyof typeof searchIndexMap]}
+      future={{ preserveSharedStateOnUnmount: true }}
     >
       {indexSupportsNsfwLevel && <BrowsingLevelFilter attributeName="nsfwLevel" />}
       <AutocompleteSearchContent
