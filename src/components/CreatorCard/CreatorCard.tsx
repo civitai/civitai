@@ -242,6 +242,7 @@ export const CreatorCardV2 = ({
             width="original"
             type={backgroundImage.data.type ?? 'image'}
             transcode={isVideo}
+            anim={true}
             wrapperProps={{
               style: {
                 position: 'absolute',

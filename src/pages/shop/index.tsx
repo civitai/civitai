@@ -57,7 +57,6 @@ import { CosmeticSample } from '~/pages/moderator/cosmetic-store/cosmetics';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { CosmeticShopItemPreviewModal } from '~/components/CosmeticShop/CosmeticShopItemPreviewModal';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { CosmeticShopSectionMeta } from '~/server/schema/cosmetic-shop.schema';
 import { openUserProfileEditModal } from '~/components/Modals/UserProfileEditModal';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';

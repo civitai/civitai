@@ -123,6 +123,7 @@ export const CosmeticSample = ({
             alt={cosmetic.name}
             type={backgroundData.type}
             width="original"
+            anim={true}
             style={{
               objectFit: 'cover',
               // objectPosition: 'right bottom',
