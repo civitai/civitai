@@ -20,6 +20,7 @@ import {
   Box,
   Grid,
   TypographyStylesProvider,
+  UnstyledButton,
 } from '@mantine/core';
 import {
   IconAlertCircle,
@@ -188,9 +189,18 @@ export const CosmeticShopItem = ({ item }: { item: CosmeticShopItemGetById }) =>
       )}
       <Stack h="100%">
         <Stack spacing="md">
-          <Box className={classes.cardHeader}>
-            <CosmeticSample cosmetic={cosmetic} size="lg" />
-          </Box>
+          <UnstyledButton
+            onClick={() => {
+              dialogStore.trigger({
+                component: CosmeticShopItemPreviewModal,
+                props: { shopItem: item },
+              });
+            }}
+          >
+            <Box className={classes.cardHeader}>
+              <CosmeticSample cosmetic={cosmetic} size="lg" />
+            </Box>
+          </UnstyledButton>
           <Stack spacing={4} align="flex-start">
             <CurrencyBadge
               currency={Currency.BUZZ}
