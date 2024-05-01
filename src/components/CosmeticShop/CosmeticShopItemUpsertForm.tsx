@@ -148,12 +148,12 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
   };
 
   useEffect(() => {
-    if (cosmetic && (!title || !description)) {
+    if (!shopItem && cosmetic && (!title || !description)) {
       // Resource changed, change our data. Fallback to current data if resource data is not available
       form.setValue('title', cosmetic.name || title);
       form.setValue('description', `<p>${cosmetic.description || description || ''}</p>`);
     }
-  }, [cosmetic]);
+  }, [cosmetic, shopItem]);
 
   return (
     <Form form={form} onSubmit={handleSubmit}>
