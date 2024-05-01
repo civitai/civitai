@@ -167,7 +167,7 @@ export const useMutateCosmeticShop = () => {
     async onSuccess(_, { shopItemId }) {
       await queryUtils.userProfile.get.invalidate();
 
-      await queryUtils.cosmeticShop.getShop.setData(undefined, (data) => {
+     queryUtils.cosmeticShop.getShop.setData(undefined, (data) => {
         if (!data) return [];
 
         const sections = data.map((section) => {
