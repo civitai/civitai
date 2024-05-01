@@ -526,6 +526,7 @@ export const getUserPreviewImagesForCosmetics = async ({
       period: MetricTimeframe.AllTime,
       periodMode: 'stats',
       sort: ImageSort.Newest,
+      types: [MediaType.image],
     });
 
     return [...images, ...collectionImages.items].slice(0, limit);
