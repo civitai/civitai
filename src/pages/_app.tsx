@@ -1,8 +1,8 @@
 // src/pages/_app.tsx
-import { ColorScheme, ColorSchemeProvider, MantineProvider } from '@mantine/core';
+import { ColorScheme } from '@mantine/core';
 import { NotificationsProvider } from '@mantine/notifications';
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
-import { getCookie, getCookies, setCookie } from 'cookies-next';
+import { getCookie, getCookies } from 'cookies-next';
 import dayjs from 'dayjs';
 import duration from 'dayjs/plugin/duration';
 import isBetween from 'dayjs/plugin/isBetween';
@@ -17,11 +17,11 @@ import PlausibleProvider from 'next-plausible';
 import type { AppContext, AppProps } from 'next/app';
 import App from 'next/app';
 import Head from 'next/head';
-import React, { ReactElement, ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
-
+import React, { ReactElement, ReactNode } from 'react';
 import { AdsProvider } from '~/components/Ads/AdsProvider';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { BaseLayout } from '~/components/AppLayout/BaseLayout';
+import { InnerLayoutOptions } from '~/components/AppLayout/createPage';
 import { BrowserRouterProvider } from '~/components/BrowserRouter/BrowserRouterProvider';
 import { BrowsingModeProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import ChadGPT from '~/components/ChadGPT/ChadGPT';
@@ -36,6 +36,7 @@ import { MetaPWA } from '~/components/Meta/MetaPWA';
 import { RecaptchaWidgetProvider } from '~/components/Recaptcha/RecaptchaWidget';
 import { ReferralsProvider } from '~/components/Referrals/ReferralsProvider';
 import { RouterTransition } from '~/components/RouterTransition/RouterTransition';
+import { ScrollAreaMain } from '~/components/ScrollArea/ScrollAreaMain';
 import { SignalProvider } from '~/components/Signals/SignalsProvider';
 import { UpdateRequiredWatcher } from '~/components/UpdateRequiredWatcher/UpdateRequiredWatcher';
 import { isDev } from '~/env/other';
@@ -49,6 +50,7 @@ import { FiltersProvider } from '~/providers/FiltersProvider';
 import { IsClientProvider } from '~/providers/IsClientProvider';
 import { PaypalProvider } from '~/providers/PaypalProvider';
 import { StripeSetupSuccessProvider } from '~/providers/StripeProvider';
+import { ThemeProvider } from '~/providers/ThemeProvider';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { parseCookies, ParsedCookies } from '~/shared/utils';
@@ -56,10 +58,6 @@ import { RegisterCatchNavigation } from '~/store/catch-navigation.store';
 import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 import { trpc } from '~/utils/trpc';
 import '~/styles/globals.css';
-import ErrorBoundary from '~/components/ErrorBoundary/ErrorBoundary';
-import { InnerLayoutOptions } from '~/components/AppLayout/createPage';
-import { ScrollAreaMain } from '~/components/ScrollArea/ScrollAreaMain';
-import { ThemeProvider } from '~/providers/ThemeProvider';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -145,43 +143,43 @@ function MyApp(props: CustomAppProps) {
                 <CookiesProvider value={cookies}>
                   <BrowsingModeProvider>
                     <AccountProvider>
-                    <CivitaiSessionProvider>
-                      <SignalProvider>
-                        <ActivityReportingProvider>
-                          <CivitaiPosthogProvider>
-                            <ReferralsProvider>
-                              <FiltersProvider>
-                                <AdsProvider>
-                                  <PaypalProvider>
-                                    <HiddenPreferencesProvider>
-                                      <CivitaiLinkProvider>
-                                        <NotificationsProvider zIndex={9999}>
-                                          <BrowserRouterProvider>
-                                            <RecaptchaWidgetProvider>
-                                              <ChatContextProvider>
-                                                <BaseLayout>
-                                                  <CustomModalsProvider>
-                                                    {getLayout(<Component {...pageProps} />)}
-                                                    <StripeSetupSuccessProvider />
-                                                    <DialogProvider />
-                                                    <RoutedDialogProvider />
-                                                  </CustomModalsProvider>
-                                                </BaseLayout>
-                                              </ChatContextProvider>
-                                            </RecaptchaWidgetProvider>
-                                          </BrowserRouterProvider>
-                                        </NotificationsProvider>
-                                      </CivitaiLinkProvider>
-                                    </HiddenPreferencesProvider>
-                                  </PaypalProvider>
-                                </AdsProvider>
-                              </FiltersProvider>
-                            </ReferralsProvider>
-                          </CivitaiPosthogProvider>
-                        </ActivityReportingProvider>
-                      </SignalProvider>
-                    </CivitaiSessionProvider>
-                      </AccountProvider>
+                      <CivitaiSessionProvider>
+                        <SignalProvider>
+                          <ActivityReportingProvider>
+                            <CivitaiPosthogProvider>
+                              <ReferralsProvider>
+                                <FiltersProvider>
+                                  <AdsProvider>
+                                    <PaypalProvider>
+                                      <HiddenPreferencesProvider>
+                                        <CivitaiLinkProvider>
+                                          <NotificationsProvider zIndex={9999}>
+                                            <BrowserRouterProvider>
+                                              <RecaptchaWidgetProvider>
+                                                <ChatContextProvider>
+                                                  <BaseLayout>
+                                                    <CustomModalsProvider>
+                                                      {getLayout(<Component {...pageProps} />)}
+                                                      <StripeSetupSuccessProvider />
+                                                      <DialogProvider />
+                                                      <RoutedDialogProvider />
+                                                    </CustomModalsProvider>
+                                                  </BaseLayout>
+                                                </ChatContextProvider>
+                                              </RecaptchaWidgetProvider>
+                                            </BrowserRouterProvider>
+                                          </NotificationsProvider>
+                                        </CivitaiLinkProvider>
+                                      </HiddenPreferencesProvider>
+                                    </PaypalProvider>
+                                  </AdsProvider>
+                                </FiltersProvider>
+                              </ReferralsProvider>
+                            </CivitaiPosthogProvider>
+                          </ActivityReportingProvider>
+                        </SignalProvider>
+                      </CivitaiSessionProvider>
+                    </AccountProvider>
                   </BrowsingModeProvider>
                 </CookiesProvider>
               </FeatureFlagsProvider>
