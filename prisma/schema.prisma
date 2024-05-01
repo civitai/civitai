@@ -1213,6 +1213,7 @@ model Image {
   clubPostCoverImage  ClubPost[]
   article             Article?
   purchasableRewards  PurchasableReward[]
+  tools               ImageTool[]
   CosmeticShopSection CosmeticShopSection[]
 
   @@index([featuredAt])
@@ -2975,6 +2976,38 @@ model RedeemableCode {
   expiresAt     DateTime?
   redeemedAt    DateTime?
   transactionId String?
+}
+
+enum ToolType {
+  Image
+  Video
+  MotionCapture
+  Upscalers
+  Audio
+  Compute
+  GameEngines
+}
+
+model Tool {
+  id         Int         @id @default(autoincrement())
+  name       String
+  icon       String?
+  createdAt  DateTime    @default(now())
+  enabled    Boolean     @default(true)
+  type       ToolType
+  imageTools ImageTool[]
+}
+
+model ImageTool {
+  imageId   Int
+  image     Image    @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  toolId    Int
+  tool      Tool     @relation(fields: [toolId], references: [id], onDelete: Cascade)
+  notes     String?
+  createdAt DateTime @default(now())
+
+  @@id([imageId, toolId])
+  @@index([toolId])
 }
 
 /// @view

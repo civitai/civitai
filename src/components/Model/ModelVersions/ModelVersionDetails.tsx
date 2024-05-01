@@ -126,6 +126,8 @@ export function ModelVersionDetails({
     key: 'model-version-details-accordions',
     defaultValue: ['version-details'],
   });
+  const isOwner = model.user?.id === user?.id;
+  const isOwnerOrMod = isOwner || user?.isModerator;
 
   const primaryFile = getPrimaryFile(version.files, {
     metadata: user?.filePreferences,
@@ -135,7 +137,7 @@ export function ModelVersionDetails({
   const filesCount = version.files?.length;
   const hasFiles = filesCount > 0;
   const filesVisible = version.files?.filter(
-    (f) => f.visibility === ModelFileVisibility.Public || model.user.id === user?.id
+    (f) => f.visibility === ModelFileVisibility.Public || isOwnerOrMod
   );
   const filesVisibleCount = filesVisible.length;
   const hasVisibleFiles = filesVisibleCount > 0;
@@ -265,7 +267,9 @@ export function ModelVersionDetails({
         />
       ),
     },
-    { label: 'Uploaded', value: formatDate(version.createdAt) },
+    version.status === 'Published'
+      ? { label: 'Published', value: formatDate(version.publishedAt) }
+      : { label: 'Uploaded', value: formatDate(version.createdAt) },
     {
       label: 'Base Model',
       value:
@@ -402,7 +406,7 @@ export function ModelVersionDetails({
   );
   const primaryFileDetails = primaryFile && getFileDetails(primaryFile);
 
-  const downloadMenuItems = version.files?.map((file) =>
+  const downloadMenuItems = filesVisible.map((file) =>
     !archived && hasAccess ? (
       <Menu.Item
         key={file.id}
@@ -477,8 +481,6 @@ export function ModelVersionDetails({
 
   const cleanDescription = version.description ? removeTags(version.description) : '';
 
-  const isOwner = model.user?.id === user?.id;
-  const isOwnerOrMod = isOwner || user?.isModerator;
   const hasPosts = !!version.posts?.length;
   const showPublishButton =
     isOwnerOrMod &&

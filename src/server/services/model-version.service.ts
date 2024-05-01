@@ -631,21 +631,21 @@ export const modelVersionGeneratedImagesOnTimeframe = async ({
   const generationData = await clickhouse
     .query({
       query: `
-          SELECT
-              resourceId as modelVersionId,
-              createdAt,
-              SUM(1) as generations
-          FROM (
-              SELECT
-                  arrayJoin(resourcesUsed) as resourceId,
-                  createdAt::date as createdAt
-              FROM orchestration.textToImageJobs
-              WHERE createdAt >= parseDateTimeBestEffortOrNull('${date}')
-          )
-          WHERE resourceId IN (${modelVersions.map((x) => x.id).join(',')})
-          GROUP BY resourceId, createdAt
-          ORDER BY createdAt DESC, generations DESC;
-    `,
+    SELECT
+        resourceId as modelVersionId,
+        createdAt,
+        SUM(1) as generations
+    FROM (
+        SELECT
+            arrayJoin(resourcesUsed) as resourceId,
+            createdAt::date as createdAt
+        FROM orchestration.textToImageJobs
+        WHERE createdAt >= parseDateTimeBestEffortOrNull('${date}')
+    )
+    WHERE resourceId IN (${modelVersions.map((x) => x.id).join(',')})
+    GROUP BY resourceId, createdAt
+    ORDER BY createdAt DESC, generations DESC;
+`,
       format: 'JSONEachRow',
     })
     .then((x) => x.json<{ modelVersionId: number; createdAt: Date; generations: number }[]>());

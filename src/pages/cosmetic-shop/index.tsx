@@ -117,7 +117,7 @@ const useStyles = createStyles((theme, _params, getRef) => {
     },
 
     sectionTitle: {
-      color: theme.colorScheme === 'dark' ? theme.white : theme.black,
+      color: theme.white,
       width: '100%',
       padding: theme.spacing.lg,
       paddingLeft: 8,
@@ -131,6 +131,7 @@ const useStyles = createStyles((theme, _params, getRef) => {
         maxWidth: 500,
       },
     },
+
     card: {
       height: '100%',
       background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[1],
@@ -139,6 +140,7 @@ const useStyles = createStyles((theme, _params, getRef) => {
       overflow: 'hidden',
       position: 'relative',
     },
+
     cardHeader: {
       background: theme.colorScheme === 'dark' ? theme.colors.dark[9] : theme.colors.gray[2],
       margin: -theme.spacing.md,
@@ -149,6 +151,7 @@ const useStyles = createStyles((theme, _params, getRef) => {
       alignItems: 'center',
       justifyContent: 'center',
     },
+
     availability: {
       position: 'absolute',
       top: '-2px',

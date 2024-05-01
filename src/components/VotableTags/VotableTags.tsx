@@ -38,7 +38,6 @@ export function VotableTags({
     { id, type },
     { enabled: !initialTags, initialData: initialTags }
   );
-  canAdd = canAdd && !initialTags;
   const canAddModerated = (canAdd || _canAddModerated) && !!currentUser?.isModerator;
 
   const handleVote = useVoteForTags({ entityType: type, entityId: id });
