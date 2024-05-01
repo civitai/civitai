@@ -1,11 +1,11 @@
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
 export const imageNotifications = createNotificationProcessor({
   'profile-picture-blocked': {
-    displayName: 'Profile picture blocked',
+    displayName: 'Avatar blocked',
     category: 'System',
     toggleable: false,
     prepareMessage: () => ({
-      message: 'Your profile picture has been blocked.',
+      message: 'Your avatar has been blocked.',
       url: '/user/account',
     }),
     prepareQuery: async ({ lastSent, category }) => `
