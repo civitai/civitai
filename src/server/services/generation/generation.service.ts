@@ -406,43 +406,26 @@ const baseModelToOrchestration: Record<BaseModelSetType, string | undefined> = {
   ODOR: undefined,
 };
 
-async function checkResourcesAccess(
-  resources: CreateGenerationRequestInput['resources'],
-  userId: number
-) {
-  const data = await getResourceData(resources.map((x) => x.id));
-  const hasPrivateResources = data.some((x) => x.availability === Availability.Private);
+// async function checkResourcesAccess(
+//   resources: CreateGenerationRequestInput['resources'],
+//   userId: number
+// ) {
+//   const data = await getResourceData(resources.map((x) => x.id));
+//   const hasPrivateResources = data.some((x) => x.availability === Availability.Private);
 
-  if (hasPrivateResources) {
-    // Check for permission:
-    const entityAccess = await hasEntityAccess({
-      entityIds: data.map((d) => d.id),
-      entityType: 'ModelVersion',
-      userId,
-    });
+//   if (hasPrivateResources) {
+//     // Check for permission:
+//     const entityAccess = await hasEntityAccess({
+//       entityIds: data.map((d) => d.id),
+//       entityType: 'ModelVersion',
+//       userId,
+//     });
 
-    return entityAccess.every((a) => a.hasAccess);
-  }
+//     return entityAccess.every((a) => a.hasAccess);
+//   }
 
-  return true;
-}
-
-// TODO.imageGenerationBuzzCharge - Remove all limiters. Generation will not be limited as it's now using buzz.
-const generationLimiter = createLimiter({
-  counterKey: REDIS_KEYS.GENERATION.COUNT,
-  limitKey: REDIS_KEYS.GENERATION.LIMITS,
-  fetchCount: async (userKey) => {
-    if (!clickhouse) return 0;
-
-    const data = await clickhouse.$query<{ cost: number }>`
-      SELECT SUM(jobCost) as cost
-      FROM orchestration.textToImageJobs
-      WHERE userId = ${userKey} AND createdAt > subtractHours(now(), 24);
-    `;
-    const cost = data?.[0]?.cost ?? 0;
-    return cost;
-  },
-});
+//   return true;
+// }
 
 const getDraftStateFromInputForOrchestrator = ({
   baseModel,
@@ -603,15 +586,6 @@ export const createGenerationRequest = async ({
   if (!status.available && !isModerator)
     throw throwBadRequestError('Generation is currently disabled');
 
-  // Handle rate limiting
-  if (await generationLimiter.hasExceededLimit(userId.toString(), userTier ?? 'free')) {
-    const limitHitTime = await generationLimiter.getLimitHitTime(userId.toString());
-    let message = 'You have exceeded the daily generation limit.';
-    if (!limitHitTime) message += ' Please try again later.';
-    else message += ` Please try again ${dayjs(limitHitTime).add(60, 'minutes').fromNow()}.`;
-    throw throwRateLimitError(message);
-  }
-
   // Handle the request limits
   const limits = status.limits[userTier ?? 'free'];
   if (params.quantity > limits.quantity) params.quantity = limits.quantity;
@@ -661,9 +635,9 @@ export const createGenerationRequest = async ({
   if (!allResourcesAvailable)
     throw throwBadRequestError('Some of your resources are not available for generation');
 
-  const access = await checkResourcesAccess(resources, userId).catch(() => false);
-  if (!access)
-    throw throwAuthorizationError('You do not have access to some of the selected resources');
+  // const access = await checkResourcesAccess(resources, userId).catch(() => false);
+  // if (!access)
+  //   throw throwAuthorizationError('You do not have access to some of the selected resources');
 
   const checkpoint = resources.find((x) => x.modelType === ModelType.Checkpoint);
   if (!checkpoint)
@@ -808,11 +782,7 @@ export const createGenerationRequest = async ({
     throw throwBadRequestError(message);
   }
 
-  // TODO.imageGenerationBuzzCharge - Remove all cost calculation / generation limit from the front-end. This is done by the orchestrator.
-  generationLimiter.increment(userId.toString(), params.quantity);
-
   const data: Generation.Api.RequestProps = await response.json();
-  // TODO.imageGenerationBuzzCharge - Remove all cost calculation / generation limit from the front-end. This is done by the orchestrator.
   const [formatted] = await formatGenerationRequests([data]);
   return formatted;
 };

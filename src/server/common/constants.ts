@@ -632,9 +632,11 @@ export const generationConfig = {
 
 // export type GenerationBaseModel = keyof typeof generationConfig;
 
-export const getGenerationConfig = (baseModel = 'SD1') => {
+export function getGenerationConfig(baseModel = 'SD1') {
+  if (!(baseModel in generationConfig))
+    throw new Error(`unsupported baseModel: ${baseModel} in generationConfig`);
   return generationConfig[baseModel as keyof typeof generationConfig];
-};
+}
 
 export const MODELS_SEARCH_INDEX = 'models_v8';
 export const IMAGES_SEARCH_INDEX = 'images_v5';

@@ -36,7 +36,7 @@ async function moderatePrompt(prompt: string) {
   }
 
   const { results } = await res.json();
-  let flagged = results[0].flagged;
+  let flagged: boolean = results[0].flagged;
   let categories = Object.entries(results[0].categories)
     .filter(([, v]) => v as boolean)
     .map(([k]) => k);
