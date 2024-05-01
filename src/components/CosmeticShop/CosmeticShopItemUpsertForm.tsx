@@ -147,7 +147,7 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
     if (cosmetic && (!title || !description)) {
       // Resource changed, change our data. Fallback to current data if resource data is not available
       form.setValue('title', cosmetic.name || title);
-      form.setValue('description', `<p>${cosmetic.description || description}</p>`);
+      form.setValue('description', `<p>${cosmetic.description || description || ''}</p>`);
     }
   }, [cosmetic]);
 
