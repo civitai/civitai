@@ -1,11 +1,11 @@
-import client from 'prom-client';
+import client, { Counter } from 'prom-client';
 
 function registerCounter({ name, help }: { name: string; help: string }) {
   // Do this to deal with HMR in nextjs
   try {
     return new client.Counter({ name, help });
   } catch (e) {
-    return client.register.getSingleMetric(name);
+    return client.register.getSingleMetric(name) as Counter<string>;
   }
 }
 
