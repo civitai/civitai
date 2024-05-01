@@ -131,6 +131,9 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
     try {
       await upsertShopItem({
         ...data,
+        availableQuantity: data.availableQuantity ?? null, // Ensures we clear it out
+        availableFrom: data.availableFrom ?? null, // Ensures we clear it out
+        availableTo: data.availableTo ?? null, // Ensures we clear it out
       });
 
       if (!data.id) {
