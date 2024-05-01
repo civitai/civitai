@@ -78,6 +78,7 @@ import { nsfwBrowsingLevelsArray } from '~/shared/constants/browsingLevel.consta
 import { getVotableTags2 } from '~/server/services/tag.service';
 import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
+import { leakingContentCounter } from '~/server/prom/client';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -2721,6 +2722,12 @@ export async function updateImageNsfwLevel({
       create: { nsfwLevel, imageId: id, userId: user.id },
       update: { nsfwLevel },
     });
+
+    // Track potential content leaking
+    const current = await dbWrite.image.findFirst({ where: { id }, select: { nsfwLevel: true } });
+    if (current?.nsfwLevel === NsfwLevel.PG && nsfwLevel >= NsfwLevel.R) {
+      leakingContentCounter.inc();
+    }
   }
 }
 

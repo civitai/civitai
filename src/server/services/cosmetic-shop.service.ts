@@ -285,7 +285,7 @@ export const reorderCosmeticShopSections = async ({
   sortedSectionIds,
 }: UpdateCosmeticShopSectionsOrderInput) => {
   await dbWrite.$queryRaw`
-    UPDATE "CosmeticShopSection" AS "css" 
+    UPDATE "CosmeticShopSection" AS "css"
     SET "placement" = "idx"
     FROM (SELECT "id", "idx" FROM UNNEST(${sortedSectionIds}) WITH ORDINALITY AS t("id", "idx")) AS "t"
     WHERE "css"."id" = "t"."id"
@@ -323,12 +323,8 @@ export const getShopSectionsWithItems = async ({ isModerator }: { isModerator?: 
               ? undefined
               : [
                   {
-                    availableFrom: {
-                      gt: new Date(),
-                    },
-                    availableTo: {
-                      lt: new Date(),
-                    },
+                    availableFrom: { lte: new Date() },
+                    availableTo: { gte: new Date() },
                   },
                   {
                     availableFrom: null,
