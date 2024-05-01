@@ -17,6 +17,7 @@ import { useCatchNavigation } from '~/hooks/useCatchNavigation';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { SchedulePostModal } from '~/components/Post/EditV2/SchedulePostModal';
 import { ConfirmDialog } from '~/components/Dialog/Common/ConfirmDialog';
+import { removeEmpty } from '~/utils/object-helpers';
 
 export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
   // #region [state]
@@ -53,10 +54,11 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
           updatePost((data) => {
             data.publishedAt = publishedAt ?? null;
           });
-          if (publishedAt) await afterPublish?.({ postId: id, publishedAt });
+          if (publishedAt && afterPublish) await afterPublish({ postId: id, publishedAt });
           else {
-            if (returnUrl) router.push(returnUrl);
-            else router.push(`/user/${currentUser.username}/posts`);
+            router.push({ pathname: `/posts/${post.id}`, query: removeEmpty({ returnUrl }) });
+            // if (returnUrl) router.push(returnUrl);
+            // else router.push(`/user/${currentUser.username}/posts`);
           }
         },
       }

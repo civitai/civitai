@@ -152,15 +152,25 @@ export function PostEditProvider({ post, params = {}, children, ...extendedParam
           images,
         };
       else {
-        const images = uniqBy([...state.images, ...post.images], 'url');
+        const images = uniqBy(
+          [
+            ...state.images,
+            ...post.images?.map((data, index) => ({
+              type: 'added',
+              data: { ...data, index },
+            })),
+          ],
+          'url'
+        );
         return { post, images };
       }
     });
   }, [post]);
 
   useEffect(() => {
-    if (postId) {
-      const handleBrowsingAway = async () => {
+    const handleBrowsingAway = async () => {
+      if (postId) {
+        console.log('browse away');
         await queryUtils.post.get.invalidate({ id: postId });
         await queryUtils.post.getEdit.invalidate({ id: postId });
         await queryUtils.post.getInfinite.invalidate();
@@ -170,13 +180,13 @@ export function PostEditProvider({ post, params = {}, children, ...extendedParam
           await queryUtils.image.getImagesAsPostsInfinite.invalidate();
         }
         if (modelId) await queryUtils.model.getById.invalidate({ id: modelId });
-      };
+      }
+    };
 
-      Router.events.on('routeChangeComplete', handleBrowsingAway);
-      return () => {
-        Router.events.off('routeChangeComplete', handleBrowsingAway);
-      };
-    }
+    Router.events.on('routeChangeComplete', handleBrowsingAway);
+    return () => {
+      Router.events.off('routeChangeComplete', handleBrowsingAway);
+    };
   }, [modelVersionId, modelId, postId]); // eslint-disable-line
 
   return (
