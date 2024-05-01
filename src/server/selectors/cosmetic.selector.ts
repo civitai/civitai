@@ -49,6 +49,10 @@ export type ContentDecorationCosmetic = Omit<SimpleCosmetic, 'data'> & {
     crop?: string;
     cssFrame?: string;
     glow?: boolean;
+    frames?: Array<{
+      url: string;
+      position: 'topLeft' | 'topRight' | 'bottomRight' | 'bottomLeft';
+    }>;
   };
 };
 export type ProfileBackgroundCosmetic = BadgeCosmetic & {
