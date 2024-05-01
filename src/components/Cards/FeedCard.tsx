@@ -36,9 +36,8 @@ const aspectRatioValues: Record<
   },
 };
 
-const useStyles = createStyles<string, { frame?: string }>((theme, params, getRef) => {
+const useStyles = createStyles<string, { frame?: string }>((theme, params) => {
   const framePadding = 5;
-  const frameRef = getRef('frame');
 
   return {
     root: {
@@ -57,7 +56,6 @@ const useStyles = createStyles<string, { frame?: string }>((theme, params, getRe
       borderRadius: theme.radius.md,
       zIndex: 1,
       padding: framePadding,
-      ref: frameRef,
     },
 
     glow: {
