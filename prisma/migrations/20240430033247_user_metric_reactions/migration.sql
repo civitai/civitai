@@ -1,7 +1,6 @@
 -- AlterTable
 ALTER TABLE "UserMetric" ADD COLUMN     "reactionCount" INTEGER NOT NULL DEFAULT 0;
 
-DROP VIEW IF EXISTS "UserStat";
 CREATE OR REPLACE VIEW "UserStat" AS
 WITH user_model_metrics_timeframe AS (
          SELECT m."userId",
