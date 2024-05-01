@@ -69,7 +69,6 @@ export function UserAvatarSimple({
                 zIndex: 2,
               }}
               width="original"
-              anim={decoration.data.animated}
             />
           )}
         </div>

@@ -11,6 +11,7 @@ import { trpc } from '~/utils/trpc';
 import Router from 'next/router';
 import { FileUploadProvider } from '~/components/FileUpload/FileUploadProvider';
 import { uniqBy } from 'lodash-es';
+import { isDefined } from '~/utils/type-guards';
 
 const replacerFunc = () => {
   const visited = new WeakSet();
@@ -141,29 +142,19 @@ export function PostEditProvider({ post, params = {}, children, ...extendedParam
   useDidUpdate(() => {
     store.setState((state) => {
       const isSamePost = state.post && state.post.id === post?.id;
-      const images =
-        post?.images?.map((data, index) => ({
+      const addedImages = state.images
+        .map((x) => (x.type === 'added' ? x.data : undefined))
+        .filter(isDefined);
+      const postImages = post?.images ?? [];
+      const images = isSamePost ? uniqBy([addedImages, ...postImages], 'id') : postImages;
+
+      return {
+        post,
+        images: images.map((data, index) => ({
           type: 'added',
           data: { ...data, index },
-        })) ?? [];
-      if (!isSamePost)
-        return {
-          post,
-          images,
-        };
-      else {
-        const images = uniqBy(
-          [
-            ...state.images,
-            ...post.images?.map((data, index) => ({
-              type: 'added',
-              data: { ...data, index },
-            })),
-          ],
-          'url'
-        );
-        return { post, images };
-      }
+        })),
+      };
     });
   }, [post]);
 
