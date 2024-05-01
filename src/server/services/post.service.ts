@@ -12,7 +12,12 @@ import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { ImageMetaProps, getInfiniteImagesSchema } from '~/server/schema/image.schema';
-import { editPostImageSelect } from '~/server/selectors/post.selector';
+import {
+  PostImageEditProps,
+  PostImageEditSelect,
+  editPostImageSelect,
+  postSelect,
+} from '~/server/selectors/post.selector';
 import { simpleTagSelect } from '~/server/selectors/tag.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
@@ -22,9 +27,17 @@ import {
   getImagesForPosts,
   ingestImage,
 } from '~/server/services/image.service';
-import { getTagCountForImages, getTypeCategories } from '~/server/services/tag.service';
+import {
+  getTagCountForImages,
+  getTypeCategories,
+  getVotableImageTags,
+} from '~/server/services/tag.service';
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
-import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
+import {
+  throwAuthorizationError,
+  throwDbError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
 import { isDefined } from '~/utils/type-guards';
 import {
   AddPostImageInput,
@@ -37,11 +50,11 @@ import {
   ReorderPostImagesInput,
   UpdatePostImageInput,
 } from './../schema/post.schema';
-import { editPostSelect } from './../selectors/post.selector';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { bustCacheTag, queryCache } from '~/server/utils/cache-helpers';
 import { env } from 'process';
 import { CacheTTL } from '../common/constants';
+import { PreprocessFileReturnType } from '~/utils/media-preprocessors';
 import {
   BadgeCosmetic,
   ContentDecorationCosmetic,
@@ -427,31 +440,16 @@ export const getPostsInfinite = async ({
   };
 };
 
+export type PostDetail = AsyncReturnType<typeof getPostDetail>;
 export const getPostDetail = async ({ id, user }: GetByIdInput & { user?: SessionUser }) => {
   const post = await dbRead.post.findFirst({
     where: {
       id,
       OR: user?.isModerator
         ? undefined
-        : [
-            { publishedAt: { lt: new Date() } },
-            { userId: user?.id },
-            { modelVersionId: null },
-            { modelVersion: { status: 'Published' } },
-          ],
-      // modelVersion: user?.isModerator ? undefined : { status: 'Published' },
+        : [{ userId: user?.id }, { publishedAt: { lt: new Date() }, nsfwLevel: { not: 0 } }],
     },
-    select: {
-      id: true,
-      nsfwLevel: true,
-      title: true,
-      detail: true,
-      modelVersionId: true,
-      user: { select: userWithCosmeticsSelect },
-      publishedAt: true,
-      availability: true,
-      tags: { select: { tag: { select: simpleTagSelect } } },
-    },
+    select: postSelect,
   });
 
   if (!post) throw throwNotFoundError();
@@ -463,73 +461,65 @@ export const getPostDetail = async ({ id, user }: GetByIdInput & { user?: Sessio
   };
 };
 
-export const getPostEditDetail = async ({ id }: GetByIdInput) => {
-  const postRaw = await dbWrite.post.findUnique({
-    where: { id },
-    select: editPostSelect,
+export type PostDetailEditable = AsyncReturnType<typeof getPostEditDetail>;
+export const getPostEditDetail = async ({ id, user }: GetByIdInput & { user: SessionUser }) => {
+  const post = await getPostDetail({ id, user });
+  if (post.user.id !== user.id && !user.isModerator) throw throwAuthorizationError();
+  const images = await getPostEditImages({ id, user });
+
+  return { ...post, images };
+};
+
+async function combinePostEditImageData(images: PostImageEditSelect[], user: SessionUser) {
+  const imageIds = images.map((x) => x.id);
+  const _images = images as PostImageEditProps[];
+  const tags = await getVotableImageTags({ ids: imageIds, user });
+  return _images
+    .map((image) => ({
+      ...image,
+      metadata: image.metadata as PreprocessFileReturnType['metadata'],
+      tags: tags.filter((x) => x.imageId === image.id),
+      tools: image.tools.map(({ notes, tool }) => ({ ...tool, notes })),
+    }))
+    .sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
+}
+
+export type PostImageEditable = AsyncReturnType<typeof getPostEditImages>[number];
+export const getPostEditImages = async ({ id, user }: GetByIdInput & { user: SessionUser }) => {
+  const images = await dbRead.image.findMany({
+    where: { postId: id },
+    select: editPostImageSelect,
   });
-  if (!postRaw) throw throwNotFoundError();
-
-  const { images: rawImages, ...post } = postRaw;
-  const imageIds = rawImages.map((x) => x.id);
-  const imageTagCounts = await getTagCountForImages(imageIds);
-  const images = rawImages.map((x) => ({
-    ...x,
-    meta: x.meta as ImageMetaProps | null,
-    _count: { tags: imageTagCounts[x.id] },
-  }));
-
-  const castedPost = {
-    ...post,
-    images,
-  };
-
-  return {
-    ...castedPost,
-    tags: castedPost.tags.flatMap((x) => x.tag),
-  };
+  return combinePostEditImageData(images, user);
 };
 
 export const createPost = async ({
   userId,
   tag,
   ...data
-}: PostCreateInput & { userId: number }) => {
-  const rawResult = await dbWrite.post.create({
+}: PostCreateInput & { userId: number }): Promise<PostDetailEditable> => {
+  const post = await dbWrite.post.create({
     data: { ...data, userId, tags: tag ? { create: { tagId: tag } } : undefined },
-    select: editPostSelect,
+    select: postSelect,
   });
-  const imageIds = rawResult.images.map((x) => x.id);
-  const imageTagCounts = await getTagCountForImages(imageIds);
-  const images = rawResult.images.map((x) => ({
-    ...x,
-    meta: x.meta as ImageMetaProps,
-    _count: { tags: imageTagCounts[x.id] },
-  }));
-
-  const result = {
-    ...rawResult,
-    images,
-  };
-
   return {
-    ...result,
-    tags: result.tags.flatMap((x) => x.tag),
+    ...post,
+    tags: post.tags.flatMap((x) => x.tag),
+    images: [] as PostImageEditable[],
   };
 };
 
 export const updatePost = async ({
   id,
-  userId,
-  isModerator,
+  user,
   ...data
-}: PostUpdateInput & { userId?: number; isModerator?: boolean }) => {
+}: PostUpdateInput & { user: SessionUser }) => {
   const post = await dbWrite.post.update({
-    where: { id },
+    where: { id, userId: !user.isModerator ? user.id : undefined },
     data: {
       ...data,
-      title: data.title !== undefined ? (data.title.length > 0 ? data.title : null) : undefined,
-      detail: data.detail !== undefined ? (data.detail.length > 0 ? data.detail : null) : undefined,
+      title: !!data.title ? (data.title.length > 0 ? data.title : null) : undefined,
+      detail: !!data.detail ? (data.detail.length > 0 ? data.detail : null) : undefined,
     },
   });
 
@@ -542,10 +532,6 @@ export const deletePost = async ({ id }: GetByIdInput) => {
     for (const image of images) await deleteImageById({ id: image.id, updatePost: false });
   }
 
-  await dbWrite.clubPost.deleteMany({
-    where: { entityId: id, entityType: 'Post' },
-  });
-
   await bustCachesForPost(id);
   await dbWrite.post.delete({ where: { id } });
 };
@@ -555,6 +541,7 @@ export const getPostTags = async ({
   query,
   limit,
   excludedTagIds,
+  nsfwLevel,
 }: GetPostTagsInput & { excludedTagIds?: number[] }) => {
   const showTrending = query === undefined || query.length < 2;
   const tags = await dbRead.$queryRaw<PostQueryResult>`
@@ -579,6 +566,7 @@ export const getPostTags = async ({
     LEFT JOIN "TagRank" r ON r."tagId" = t.id
     WHERE
       ${showTrending ? Prisma.sql`t."isCategory" = true` : Prisma.sql`t.name ILIKE ${query + '%'}`}
+      ${nsfwLevel ? Prisma.sql`AND (t."nsfwLevel" & ${nsfwLevel}) != 0` : ``}
     ORDER BY ${Prisma.raw(
       showTrending ? `r."postCountWeekRank" ASC` : `r."postCountAllTimeRank" ASC`
     )}
@@ -637,18 +625,24 @@ export const removePostTag = ({ tagId, id: postId }: RemovePostTagInput) => {
 export const addPostImage = async ({
   modelVersionId,
   meta,
+  user,
   ...props
-}: AddPostImageInput & { userId: number }) => {
+}: AddPostImageInput & { user: SessionUser }) => {
   const partialResult = await dbWrite.image.create({
     data: {
       ...props,
-      meta: (meta as Prisma.JsonObject) ?? Prisma.JsonNull,
+      userId: user.id,
+      meta: meta !== null ? (meta as Prisma.JsonObject) : Prisma.JsonNull,
       generationProcess: meta ? getImageGenerationProcess(meta as Prisma.JsonObject) : null,
     },
     select: { id: true },
   });
 
-  await dbWrite.$executeRaw`SELECT insert_image_resource(${partialResult.id}::int)`;
+  try {
+    await dbWrite.$executeRaw`SELECT insert_image_resource(${partialResult.id}::int)`;
+  } catch (e) {
+    console.error(e);
+  }
   await ingestImage({
     image: {
       id: partialResult.id,
@@ -659,15 +653,16 @@ export const addPostImage = async ({
     },
   });
 
-  const image = await dbWrite.image.findUnique({
+  const result = await dbWrite.image.findUnique({
     where: { id: partialResult.id },
     select: editPostImageSelect,
   });
-  if (!image) throw throwDbError(`Image not found`);
+  if (!result) throw throwDbError(`Image not found`);
+  const [image] = await combinePostEditImageData([result], user);
 
   const modelVersionIds = image.resourceHelper.map((r) => r.modelVersionId).filter(isDefined);
   // Cache Busting
-  await bustCacheTag(`images-user:${props.userId}`);
+  await bustCacheTag(`images-user:${user.id}`);
   if (!!modelVersionIds.length) {
     for (const modelVersionId of modelVersionIds) {
       await bustCacheTag(`images-modelVersion:${modelVersionId}`);
@@ -704,30 +699,14 @@ export async function bustCachesForPost(postId: number) {
 }
 
 export const updatePostImage = async (image: UpdatePostImageInput) => {
-  // const updateResources = image.resources.filter(isImageResource);
-  // const createResources = image.resources.filter(isNotImageResource);
-
-  const rawResult = await dbWrite.image.update({
+  await dbWrite.image.update({
     where: { id: image.id },
     data: {
       ...image,
-      meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
-      // resources: {
-      //   deleteMany: {
-      //     NOT: updateResources.map((r) => ({ id: r.id })),
-      //   },
-      //   createMany: { data: createResources.map((r) => ({ modelVersionId: r.id, name: r.name })) },
-      // },
+      meta: image.meta !== null ? (image.meta as Prisma.JsonObject) : Prisma.JsonNull,
     },
-    select: editPostImageSelect,
+    select: { id: true },
   });
-  const imageTags = await getTagCountForImages([image.id]);
-
-  return {
-    ...rawResult,
-    meta: rawResult.meta as ImageMetaProps | null,
-    _count: { tags: imageTags[image.id] },
-  };
 };
 
 export const reorderPostImages = async ({ id: postId, imageIds }: ReorderPostImagesInput) => {

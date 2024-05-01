@@ -37,6 +37,8 @@ import {
   UpdateImageInput,
   ImageRatingReviewOutput,
   ReportCsamImagesInput,
+  AddOrRemoveImageToolsOutput,
+  UpdateImageToolsOutput,
 } from '~/server/schema/image.schema';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { articlesSearchIndex, imagesSearchIndex } from '~/server/search-index';
@@ -76,6 +78,7 @@ import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { nsfwBrowsingLevelsArray } from '~/shared/constants/browsingLevel.constants';
 import { getVotableTags2 } from '~/server/services/tag.service';
+import { Flags } from '~/shared/utils';
 import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { leakingContentCounter } from '~/server/prom/client';
@@ -124,7 +127,7 @@ export const deleteImageById = async ({
     }
 
     await imagesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
-    await dbWrite.$executeRaw`DELETE FROM "Image" WHERE id = ${id}`;
+    // await dbWrite.$executeRaw`DELETE FROM "Image" WHERE id = ${id}`;
     if (updatePost && image.postId) {
       await updatePostNsfwLevel(image.postId);
       await bustCachesForPost(image.postId);
@@ -2803,10 +2806,85 @@ export async function getImageRatingRequests({
   }
 
   const imageIds = results.map((x) => x.id);
-  const tags = await getVotableTags2({ ids: imageIds, user, type: 'image' });
+  const tags = await getVotableTags2({
+    ids: imageIds,
+    user,
+    type: 'image',
+    nsfwLevel: Flags.arrayToInstance([NsfwLevel.PG13, NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX]),
+  });
 
   return {
     nextCursor,
     items: results.map((item) => ({ ...item, tags: tags.filter((x) => x.imageId === item.id) })),
   };
 }
+
+// #region [image tools]
+async function authorizeImageToolsUse({
+  imageIds,
+  user,
+}: {
+  imageIds: number[];
+  user: SessionUser;
+}) {
+  if (!user.isModerator) {
+    const images = await dbRead.image.findMany({
+      where: { id: { in: imageIds }, userId: user.id },
+      select: { id: true },
+    });
+    const validatedIds = images.map((x) => x.id);
+    if (!imageIds.every((id) => validatedIds.includes(id))) throw throwAuthorizationError();
+  }
+}
+
+export async function addImageTools({
+  data,
+  user,
+}: {
+  data: AddOrRemoveImageToolsOutput['data'];
+  user: SessionUser;
+}) {
+  await authorizeImageToolsUse({ imageIds: data.map((x) => x.imageId), user });
+  await dbWrite.imageTool.createMany({ data, skipDuplicates: true });
+}
+
+export async function removeImageTools({
+  data,
+  user,
+}: {
+  data: AddOrRemoveImageToolsOutput['data'];
+  user: SessionUser;
+}) {
+  await authorizeImageToolsUse({ imageIds: data.map((x) => x.imageId), user });
+  const toolsByImage = data.reduce<Record<number, number[]>>((acc, { imageId, toolId }) => {
+    if (!acc[imageId]) acc[imageId] = [];
+    acc[imageId].push(toolId);
+    return acc;
+  }, {});
+
+  await dbWrite.$transaction(
+    Object.entries(toolsByImage).map(([imageId, toolIds]) =>
+      dbWrite.imageTool.deleteMany({ where: { imageId: Number(imageId), toolId: { in: toolIds } } })
+    )
+  );
+}
+
+export async function updateImageTools({
+  data,
+  user,
+}: {
+  data: UpdateImageToolsOutput['data'];
+  user: SessionUser;
+}) {
+  await authorizeImageToolsUse({ imageIds: data.map((x) => x.imageId), user });
+  await dbWrite.$transaction(
+    data.map(({ imageId, toolId, notes }) =>
+      dbWrite.imageTool.update({
+        where: { imageId_toolId: { imageId, toolId } },
+        data: { notes },
+        select: { imageId: true },
+      })
+    )
+  );
+}
+// #endregion
