@@ -87,7 +87,7 @@ const homeOptions: Record<string, HomeOption> = {
     grouped: true,
   },
   shop: {
-    url: '/cosmetic-shop',
+    url: '/shop',
     icon: (props: TablerIconsProps) => <IconShoppingBag {...props} />,
     highlight: true,
   },
