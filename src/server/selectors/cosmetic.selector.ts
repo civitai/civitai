@@ -42,7 +42,7 @@ export type NamePlateCosmetic = Omit<SimpleCosmetic, 'data'> & {
   };
 };
 export type ContentDecorationCosmetic = Omit<SimpleCosmetic, 'data'> & {
-  entityImage?: ImageProps;
+  entityImage?: ImageProps & { entityId: number; entityType: string };
   data: {
     url?: string;
     offset?: string;

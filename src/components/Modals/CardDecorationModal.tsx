@@ -174,7 +174,8 @@ export function CardDecorationModal({ entityType, entityId, image, currentCosmet
             <Stack align="center" spacing="xl">
               {selectedItem &&
                 selectedItem.entityImage &&
-                image.url !== selectedItem.entityImage.url && (
+                selectedItem.entityImage.entityId !== entityId &&
+                selectedItem.entityImage.entityType !== entityType && (
                   <Group noWrap>
                     <Image
                       src={getEdgeUrl(selectedItem.entityImage.url, {
