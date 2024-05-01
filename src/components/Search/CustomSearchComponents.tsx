@@ -256,7 +256,9 @@ export const BrowsingLevelFilter = ({
   const browsingLevelArray = Flags.instanceToArray(browsingLevel);
   const { refine } = useConfigure({
     ...props,
-    filters: browsingLevelArray.map((value) => `${attributeName}=${value}`).join(' OR '),
+    filters: attributeName
+      ? browsingLevelArray.map((value) => `${attributeName}=${value}`).join(' OR ')
+      : undefined,
   });
 
   return null;

@@ -21,6 +21,7 @@ import React, {
   useMemo,
   useRef,
   useState,
+  Fragment,
 } from 'react';
 import {
   Configure,
@@ -204,9 +205,11 @@ export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ..
     <InstantSearch
       searchClient={searchClient}
       indexName={searchIndexMap[targetIndex as keyof typeof searchIndexMap]}
-      future={{ preserveSharedStateOnUnmount: true }}
+      future={{ preserveSharedStateOnUnmount: false }}
     >
-      {indexSupportsNsfwLevel && <BrowsingLevelFilter attributeName="nsfwLevel" />}
+      {indexSupportsNsfwLevel && (
+        <BrowsingLevelFilter attributeName={indexSupportsNsfwLevel ? 'nsfwLevel' : ''} />
+      )}
       <AutocompleteSearchContent
         {...props}
         indexName={targetIndex}
@@ -247,6 +250,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   const { status } = useInstantSearch({
     catchError: true,
   });
+
   const { query, refine: setQuery } = useSearchBox(searchBoxProps);
   const { hits, results } = useHitsTransformed<TKey>();
   const indexName = results?.index
@@ -269,6 +273,9 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   });
 
   const items = useMemo(() => {
+    if (status === 'stalled') {
+      return []; // Wait it out
+    }
     const items = filtered.map((hit) => ({ key: String(hit.id), hit, value: '' }));
     if (!!results?.nbHits && results.nbHits > DEFAULT_DROPDOWN_ITEM_LIMIT)
       items.push({ key: 'view-more', value: query, hit: null as any });
