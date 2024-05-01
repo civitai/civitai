@@ -3287,6 +3287,11 @@ model UserStat {
   thumbsDownCountMonth     Int
   thumbsDownCountYear      Int
   thumbsDownCountAllTime   Int
+  reactionCountDay         Int
+  reactionCountWeek        Int
+  reactionCountMonth       Int
+  reactionCountYear        Int
+  reactionCountAllTime     Int
 }
 
 /// @view

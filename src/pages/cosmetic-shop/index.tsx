@@ -60,6 +60,7 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { CosmeticShopSectionMeta } from '~/server/schema/cosmetic-shop.schema';
 import { openUserProfileEditModal } from '~/components/Modals/UserProfileEditModal';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { formatDate } from '~/utils/date-helpers';
 
 const IMAGE_SECTION_WIDTH = 1288;
 
@@ -137,18 +138,31 @@ const useStyles = createStyles((theme, _params, getRef) => {
       padding: theme.spacing.md,
       overflow: 'hidden',
     },
-    cardHeader: {
-      background: theme.colorScheme === 'dark' ? theme.colors.dark[9] : theme.colors.gray[2],
-      margin: -theme.spacing.md,
-      padding: theme.spacing.md,
-      marginBottom: theme.spacing.md,
-      height: 250,
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-  };
-});
+  },
+  card: {
+    height: '100%',
+    background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[1],
+    borderRadius: theme.radius.md,
+    padding: theme.spacing.md,
+    overflow: 'hidden',
+    position: 'relative',
+  },
+  cardHeader: {
+    background: theme.colorScheme === 'dark' ? theme.colors.dark[9] : theme.colors.gray[2],
+    margin: -theme.spacing.md,
+    padding: theme.spacing.md,
+    marginBottom: theme.spacing.md,
+    height: 250,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  availability: {
+    position: 'absolute',
+    top: '-2px',
+    right: '-5px',
+  },
+})); 
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -163,8 +177,19 @@ export const getServerSideProps = createServerSideProps({
 export const CosmeticShopItem = ({ item }: { item: CosmeticShopItemGetById }) => {
   const cosmetic = item.cosmetic;
   const { classes } = useStyles();
+  const isAvailable =
+    (item.availableQuantity ?? null) === null || (item.availableQuantity ?? 0) > 0;
+
+  const availableFrom = item.availableFrom ? formatDate(item.availableFrom) : null;
+  const availableTo = item.availableTo ? formatDate(item.availableTo) : null;
+
   return (
     <Paper className={classes.card}>
+      {availableTo && (
+        <Badge variant="filled" color="yellow.8" className={classes.availability}>
+          Available until {availableTo}
+        </Badge>
+      )}
       <Stack h="100%">
         <Stack spacing="md">
           <Box className={classes.cardHeader}>
@@ -180,25 +205,40 @@ export const CosmeticShopItem = ({ item }: { item: CosmeticShopItemGetById }) =>
             />
             <Title order={3}>{item.title}</Title>
           </Stack>
-          {item.description && (
+          {!!item.description && (
             <ContentClamp maxHeight={200}>
               <RenderHtml html={item.description} />
             </ContentClamp>
           )}
         </Stack>
-        <Button
-          color="gray"
-          radius="xl"
-          onClick={() => {
-            dialogStore.trigger({
-              component: CosmeticShopItemPreviewModal,
-              props: { shopItem: item },
-            });
-          }}
-          mt="auto"
-        >
-          Preview
-        </Button>
+        <Stack mt="auto" spacing={4}>
+          {(item.availableQuantity ?? null) !== null && (
+            <>
+              {(item.availableQuantity ?? 0) > 0 ? (
+                <Badge mx="auto" size="sm" color="yellow.7" radius="xl">
+                  {item.availableQuantity} remaining
+                </Badge>
+              ) : (
+                <Badge mx="auto" size="sm" color="red" radius="xl">
+                  Out of stock
+                </Badge>
+              )}
+            </>
+          )}
+          <Button
+            color="gray"
+            radius="xl"
+            onClick={() => {
+              dialogStore.trigger({
+                component: CosmeticShopItemPreviewModal,
+                props: { shopItem: item },
+              });
+            }}
+            disabled={!isAvailable}
+          >
+            Preview
+          </Button>
+        </Stack>
       </Stack>
     </Paper>
   );

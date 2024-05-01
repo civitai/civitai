@@ -71,8 +71,10 @@ export const cosmeticShopRouter = router({
     }),
   // #endregion
   // #region [Public facing routes]
-  getShop: publicProcedure.query(() => {
-    return getShopSectionsWithItems();
+  getShop: publicProcedure.query(({ ctx }) => {
+    return getShopSectionsWithItems({
+      isModerator: ctx?.user?.isModerator,
+    });
   }),
   purchaseShopItem: protectedProcedure
     .input(purchaseCosmeticShopItemInput)

@@ -155,7 +155,7 @@ export default function CosmeticStoreProducts() {
                   <th>Price</th>
                   <th>Available From</th>
                   <th>Available To</th>
-                  <th>Total Quantity</th>
+                  <th>Remaining Quantity</th>
                   <th>Archived At</th>
                   <th>&nbsp;</th>
                 </tr>
@@ -191,7 +191,9 @@ export default function CosmeticStoreProducts() {
                       <td>{shopItem.availableFrom ? formatDate(shopItem.availableFrom) : '-'}</td>
                       <td>{shopItem.availableTo ? formatDate(shopItem.availableTo) : '-'}</td>
                       <td>
-                        {!!shopItem.availableQuantity ? shopItem.availableQuantity : '-'}
+                        {(shopItem.availableQuantity ?? null) !== null
+                          ? shopItem.availableQuantity
+                          : '-'}
                       </td>{' '}
                       <td>{shopItem.archivedAt ? formatDate(shopItem.archivedAt) : '-'}</td>
                       <td>

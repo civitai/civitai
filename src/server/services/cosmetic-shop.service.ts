@@ -35,7 +35,7 @@ export const getPaginatedCosmeticShopItems = async (input: GetPaginatedCosmeticS
   const where: Prisma.CosmeticShopItemFindManyArgs['where'] = {};
   const cosmeticWhere: Prisma.CosmeticFindManyArgs['where'] = {};
 
-  if (input.name) cosmeticWhere.name = { contains: input.name };
+  if (input.name) cosmeticWhere.name = { contains: input.name, mode: 'insensitive' };
   if (input.types && input.types.length) cosmeticWhere.type = { in: input.types };
 
   if (Object.keys(cosmeticWhere).length > 0) where.cosmetic = cosmeticWhere;
@@ -76,10 +76,6 @@ export const upsertCosmeticShopItem = async ({
       })
     : undefined;
 
-  if (existingItem?.id && availableQuantity && existingItem._count.purchases > availableQuantity) {
-    throw new Error('Cannot reduce available quantity below the number of purchases');
-  }
-
   if (availableTo && availableFrom && availableTo < availableFrom) {
     throw new Error('Available to date cannot be before available from date');
   }
@@ -114,7 +110,7 @@ export const getShopSections = async (input: GetAllCosmeticShopSections) => {
   const where: Prisma.CosmeticShopSectionFindManyArgs['where'] = {};
 
   if (input.title) {
-    where.title = { contains: input.title };
+    where.title = { contains: input.title, mode: 'insensitive' };
   }
 
   if (input.withItems) {
@@ -298,7 +294,7 @@ export const reorderCosmeticShopSections = async ({
   return true;
 };
 
-export const getShopSectionsWithItems = async () => {
+export const getShopSectionsWithItems = async ({ isModerator }: { isModerator?: boolean } = {}) => {
   const sections = await dbRead.cosmeticShopSection.findMany({
     select: {
       id: true,
@@ -323,13 +319,18 @@ export const getShopSectionsWithItems = async () => {
         where: {
           shopItem: {
             archivedAt: null,
-            OR: [
-              {
-                availableFrom: { lte: new Date() },
-                availableTo: { gte: new Date() },
-              },
-              { availableFrom: null, availableTo: null },
-            ],
+            OR: isModerator
+              ? undefined
+              : [
+                  {
+                    availableFrom: { lte: new Date() },
+                    availableTo: { gte: new Date() },
+                  },
+                  {
+                    availableFrom: null,
+                    availableTo: null,
+                  },
+                ],
           },
         },
         orderBy: { index: 'asc' },
@@ -346,16 +347,21 @@ export const getShopSectionsWithItems = async () => {
     },
   });
 
-  return sections.map((section) => ({
-    ...section,
-    image: !!section.image
-      ? {
-          ...section.image,
-          meta: section.image.meta as ImageMetaProps,
-          metadata: section.image.metadata as MixedObject,
-        }
-      : section.image,
-  }));
+  return (
+    sections
+      // Ensures we don't return empty sections
+      .filter((s) => s.items.length > 0)
+      .map((section) => ({
+        ...section,
+        image: !!section.image
+          ? {
+              ...section.image,
+              meta: section.image.meta as ImageMetaProps,
+              metadata: section.image.metadata as MixedObject,
+            }
+          : section.image,
+      }))
+  );
 };
 
 export const purchaseCosmeticShopItem = async ({
@@ -389,7 +395,7 @@ export const purchaseCosmeticShopItem = async ({
     throw new Error('Cosmetic not found');
   }
 
-  if (shopItem.availableQuantity && shopItem.availableQuantity <= shopItem._count.purchases) {
+  if (shopItem.availableQuantity !== null && shopItem.availableQuantity <= 0) {
     throw new Error('Cosmetic is out of stock');
   }
 
@@ -442,6 +448,16 @@ export const purchaseCosmeticShopItem = async ({
           userId,
           cosmeticId: shopItem.cosmeticId,
           claimKey: transaction.transactionId,
+        },
+      });
+
+      // Update the cosmetic with the new amount:
+      await dbWrite.cosmeticShopItem.update({
+        where: { id: shopItemId },
+        data: {
+          availableQuantity: {
+            decrement: 1,
+          },
         },
       });
 
