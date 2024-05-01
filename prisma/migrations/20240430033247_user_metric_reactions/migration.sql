@@ -1,70 +1,46 @@
 -- AlterTable
 ALTER TABLE "UserMetric" ADD COLUMN     "reactionCount" INTEGER NOT NULL DEFAULT 0;
 
+DROP VIEW IF EXISTS "UserStat";
+CREATE OR REPLACE VIEW "UserStat" AS
 WITH user_model_metrics_timeframe AS (
          SELECT m."userId",
             mm.timeframe,
             sum(mm."downloadCount") AS "downloadCount",
             sum(mm."favoriteCount") AS "favoriteCount",
             sum(mm."ratingCount") AS "ratingCount",
-            iif(sum(mm."ratingCount") IS NULL OR sum(mm."ratingCount") <= 0, 0::double precision, sum(mm.rating * mm."rat
-ingCount"::double precision) / sum(mm."ratingCount")::double precision) AS rating,
+            iif(sum(mm."ratingCount") IS NULL OR sum(mm."ratingCount") <= 0, 0::double precision, sum(mm.rating * mm."ratingCount"::double precision) / sum(mm."ratingCount")::double precision) AS rating,
             sum(mm."thumbsUpCount") AS "thumbsUpCount"
            FROM "ModelMetric" mm
              JOIN "Model" m ON m.id = mm."modelId"
           GROUP BY m."userId", mm.timeframe
         ), user_model_metrics AS (
          SELECT user_model_metrics_timeframe."userId",
-            max(iif(user_model_metrics_timeframe.timeframe = 'Day'::"MetricTimeframe", user_model_metrics_timeframe."down
-loadCount", NULL::bigint)) AS "downloadCountDay",
-            max(iif(user_model_metrics_timeframe.timeframe = 'Week'::"MetricTimeframe", user_model_metrics_timeframe."dow
-nloadCount", NULL::bigint)) AS "downloadCountWeek",
-            max(iif(user_model_metrics_timeframe.timeframe = 'Month'::"MetricTimeframe", user_model_metrics_timeframe."do
-wnloadCount", NULL::bigint)) AS "downloadCountMonth",
-            max(iif(user_model_metrics_timeframe.timeframe = 'Year'::"MetricTimeframe", user_model_metrics_timeframe."dow
-nloadCount", NULL::bigint)) AS "downloadCountYear",
-            max(iif(user_model_metrics_timeframe.timeframe = 'AllTime'::"MetricTimeframe", user_model_metrics_timeframe."
-downloadCount", NULL::bigint)) AS "downloadCountAllTime",
-            max(iif(user_model_metrics_timeframe.timeframe = 'Day'::"MetricTimeframe", user_model_metrics_timeframe."favo
-riteCount", NULL::bigint)) AS "favoriteCountDay",
-            max(iif(user_model_metrics_timeframe.timeframe = 'Week'::"MetricTimeframe", user_model_metrics_timeframe."fav
-oriteCount", NULL::bigint)) AS "favoriteCountWeek",
-            max(iif(user_model_metrics_timeframe.timeframe = 'Month'::"MetricTimeframe", user_model_metrics_timeframe."fa
-voriteCount", NULL::bigint)) AS "favoriteCountMonth",
-            max(iif(user_model_metrics_timeframe.timeframe = 'Year'::"MetricTimeframe", user_model_metrics_timeframe."fav
-oriteCount", NULL::bigint)) AS "favoriteCountYear",
-            max(iif(user_model_metrics_timeframe.timeframe = 'AllTime'::"MetricTimeframe", user_model_metrics_timeframe."
-favoriteCount", NULL::bigint)) AS "favoriteCountAllTime",
-            max(iif(user_model_metrics_timeframe.timeframe = 'Day'::"MetricTimeframe", user_model_metrics_timeframe."rati
-ngCount", NULL::bigint)) AS "ratingCountDay",
-            max(iif(user_model_metrics_timeframe.timeframe = 'Week'::"MetricTimeframe", user_model_metrics_timeframe."rat
-ingCount", NULL::bigint)) AS "ratingCountWeek",
-            max(iif(user_model_metrics_timeframe.timeframe = 'Month'::"MetricTimeframe", user_model_metrics_timeframe."ra
-tingCount", NULL::bigint)) AS "ratingCountMonth",
-            max(iif(user_model_metrics_timeframe.timeframe = 'Year'::"MetricTimeframe", user_model_metrics_timeframe."rat
-ingCount", NULL::bigint)) AS "ratingCountYear",
-            max(iif(user_model_metrics_timeframe.timeframe = 'AllTime'::"MetricTimeframe", user_model_metrics_timeframe."
-ratingCount", NULL::bigint)) AS "ratingCountAllTime",
-            max(iif(user_model_metrics_timeframe.timeframe = 'Day'::"MetricTimeframe", user_model_metrics_timeframe.ratin
-g, NULL::double precision)) AS "ratingDay",
-            max(iif(user_model_metrics_timeframe.timeframe = 'Week'::"MetricTimeframe", user_model_metrics_timeframe.rati
-ng, NULL::double precision)) AS "ratingWeek",
-            max(iif(user_model_metrics_timeframe.timeframe = 'Month'::"MetricTimeframe", user_model_metrics_timeframe.rat
-ing, NULL::double precision)) AS "ratingMonth",
-            max(iif(user_model_metrics_timeframe.timeframe = 'Year'::"MetricTimeframe", user_model_metrics_timeframe.rati
-ng, NULL::double precision)) AS "ratingYear",
-            max(iif(user_model_metrics_timeframe.timeframe = 'AllTime'::"MetricTimeframe", user_model_metrics_timeframe.r
-ating, NULL::double precision)) AS "ratingAllTime",
-            max(iif(user_model_metrics_timeframe.timeframe = 'Day'::"MetricTimeframe", user_model_metrics_timeframe."thum
-bsUpCount", NULL::bigint)) AS "thumbsUpCountDay",
-            max(iif(user_model_metrics_timeframe.timeframe = 'Week'::"MetricTimeframe", user_model_metrics_timeframe."thu
-mbsUpCount", NULL::bigint)) AS "thumbsUpCountWeek",
-            max(iif(user_model_metrics_timeframe.timeframe = 'Month'::"MetricTimeframe", user_model_metrics_timeframe."th
-umbsUpCount", NULL::bigint)) AS "thumbsUpCountMonth",
-            max(iif(user_model_metrics_timeframe.timeframe = 'Year'::"MetricTimeframe", user_model_metrics_timeframe."thu
-mbsUpCount", NULL::bigint)) AS "thumbsUpCountYear",
-            max(iif(user_model_metrics_timeframe.timeframe = 'AllTime'::"MetricTimeframe", user_model_metrics_timeframe."
-thumbsUpCount", NULL::bigint)) AS "thumbsUpCountAllTime"
+            max(iif(user_model_metrics_timeframe.timeframe = 'Day'::"MetricTimeframe", user_model_metrics_timeframe."downloadCount", NULL::bigint)) AS "downloadCountDay",
+            max(iif(user_model_metrics_timeframe.timeframe = 'Week'::"MetricTimeframe", user_model_metrics_timeframe."downloadCount", NULL::bigint)) AS "downloadCountWeek",
+            max(iif(user_model_metrics_timeframe.timeframe = 'Month'::"MetricTimeframe", user_model_metrics_timeframe."downloadCount", NULL::bigint)) AS "downloadCountMonth",
+            max(iif(user_model_metrics_timeframe.timeframe = 'Year'::"MetricTimeframe", user_model_metrics_timeframe."downloadCount", NULL::bigint)) AS "downloadCountYear",
+            max(iif(user_model_metrics_timeframe.timeframe = 'AllTime'::"MetricTimeframe", user_model_metrics_timeframe."downloadCount", NULL::bigint)) AS "downloadCountAllTime",
+            max(iif(user_model_metrics_timeframe.timeframe = 'Day'::"MetricTimeframe", user_model_metrics_timeframe."favoriteCount", NULL::bigint)) AS "favoriteCountDay",
+            max(iif(user_model_metrics_timeframe.timeframe = 'Week'::"MetricTimeframe", user_model_metrics_timeframe."favoriteCount", NULL::bigint)) AS "favoriteCountWeek",
+            max(iif(user_model_metrics_timeframe.timeframe = 'Month'::"MetricTimeframe", user_model_metrics_timeframe."favoriteCount", NULL::bigint)) AS "favoriteCountMonth",
+            max(iif(user_model_metrics_timeframe.timeframe = 'Year'::"MetricTimeframe", user_model_metrics_timeframe."favoriteCount", NULL::bigint)) AS "favoriteCountYear",
+            max(iif(user_model_metrics_timeframe.timeframe = 'AllTime'::"MetricTimeframe", user_model_metrics_timeframe."favoriteCount", NULL::bigint)) AS "favoriteCountAllTime",
+            max(iif(user_model_metrics_timeframe.timeframe = 'Day'::"MetricTimeframe", user_model_metrics_timeframe."ratingCount", NULL::bigint)) AS "ratingCountDay",
+            max(iif(user_model_metrics_timeframe.timeframe = 'Week'::"MetricTimeframe", user_model_metrics_timeframe."ratingCount", NULL::bigint)) AS "ratingCountWeek",
+            max(iif(user_model_metrics_timeframe.timeframe = 'Month'::"MetricTimeframe", user_model_metrics_timeframe."ratingCount", NULL::bigint)) AS "ratingCountMonth",
+            max(iif(user_model_metrics_timeframe.timeframe = 'Year'::"MetricTimeframe", user_model_metrics_timeframe."ratingCount", NULL::bigint)) AS "ratingCountYear",
+            max(iif(user_model_metrics_timeframe.timeframe = 'AllTime'::"MetricTimeframe", user_model_metrics_timeframe."ratingCount", NULL::bigint)) AS "ratingCountAllTime",
+            max(iif(user_model_metrics_timeframe.timeframe = 'Day'::"MetricTimeframe", user_model_metrics_timeframe.rating, NULL::double precision)) AS "ratingDay",
+            max(iif(user_model_metrics_timeframe.timeframe = 'Week'::"MetricTimeframe", user_model_metrics_timeframe.rating, NULL::double precision)) AS "ratingWeek",
+            max(iif(user_model_metrics_timeframe.timeframe = 'Month'::"MetricTimeframe", user_model_metrics_timeframe.rating, NULL::double precision)) AS "ratingMonth",
+            max(iif(user_model_metrics_timeframe.timeframe = 'Year'::"MetricTimeframe", user_model_metrics_timeframe.rating, NULL::double precision)) AS "ratingYear",
+            max(iif(user_model_metrics_timeframe.timeframe = 'AllTime'::"MetricTimeframe", user_model_metrics_timeframe.rating, NULL::double precision)) AS "ratingAllTime",
+            max(iif(user_model_metrics_timeframe.timeframe = 'Day'::"MetricTimeframe", user_model_metrics_timeframe."thumbsUpCount", NULL::bigint)) AS "thumbsUpCountDay",
+            max(iif(user_model_metrics_timeframe.timeframe = 'Week'::"MetricTimeframe", user_model_metrics_timeframe."thumbsUpCount", NULL::bigint)) AS "thumbsUpCountWeek",
+            max(iif(user_model_metrics_timeframe.timeframe = 'Month'::"MetricTimeframe", user_model_metrics_timeframe."thumbsUpCount", NULL::bigint)) AS "thumbsUpCountMonth",
+            max(iif(user_model_metrics_timeframe.timeframe = 'Year'::"MetricTimeframe", user_model_metrics_timeframe."thumbsUpCount", NULL::bigint)) AS "thumbsUpCountYear",
+            max(iif(user_model_metrics_timeframe.timeframe = 'AllTime'::"MetricTimeframe", user_model_metrics_timeframe."thumbsUpCount", NULL::bigint)) AS "thumbsUpCountAllTime"
            FROM user_model_metrics_timeframe
           GROUP BY user_model_metrics_timeframe."userId"
         ), user_counts_timeframe AS (
@@ -82,86 +58,46 @@ thumbsUpCount", NULL::bigint)) AS "thumbsUpCountAllTime"
           GROUP BY um."userId", um.timeframe
         ), user_counts AS (
          SELECT user_counts_timeframe."userId",
-            max(iif(user_counts_timeframe.timeframe = 'Day'::"MetricTimeframe", user_counts_timeframe."followerCount", NU
-LL::bigint)) AS "followerCountDay",
-            max(iif(user_counts_timeframe.timeframe = 'Day'::"MetricTimeframe", user_counts_timeframe."followingCount", N
-ULL::bigint)) AS "followingCountDay",
-            max(iif(user_counts_timeframe.timeframe = 'Day'::"MetricTimeframe", user_counts_timeframe."hiddenCount", NULL
-::bigint)) AS "hiddenCountDay",
-            max(iif(user_counts_timeframe.timeframe = 'Week'::"MetricTimeframe", user_counts_timeframe."followerCount", N
-ULL::bigint)) AS "followerCountWeek",
-            max(iif(user_counts_timeframe.timeframe = 'Week'::"MetricTimeframe", user_counts_timeframe."followingCount",
-NULL::bigint)) AS "followingCountWeek",
-            max(iif(user_counts_timeframe.timeframe = 'Week'::"MetricTimeframe", user_counts_timeframe."hiddenCount", NUL
-L::bigint)) AS "hiddenCountWeek",
-            max(iif(user_counts_timeframe.timeframe = 'Month'::"MetricTimeframe", user_counts_timeframe."followerCount",
-NULL::bigint)) AS "followerCountMonth",
-            max(iif(user_counts_timeframe.timeframe = 'Month'::"MetricTimeframe", user_counts_timeframe."followingCount",
- NULL::bigint)) AS "followingCountMonth",
-            max(iif(user_counts_timeframe.timeframe = 'Month'::"MetricTimeframe", user_counts_timeframe."hiddenCount", NU
-LL::bigint)) AS "hiddenCountMonth",
-            max(iif(user_counts_timeframe.timeframe = 'Year'::"MetricTimeframe", user_counts_timeframe."followerCount", N
-ULL::bigint)) AS "followerCountYear",
-            max(iif(user_counts_timeframe.timeframe = 'Year'::"MetricTimeframe", user_counts_timeframe."followingCount",
-NULL::bigint)) AS "followingCountYear",
-            max(iif(user_counts_timeframe.timeframe = 'Year'::"MetricTimeframe", user_counts_timeframe."hiddenCount", NUL
-L::bigint)) AS "hiddenCountYear",
-            max(iif(user_counts_timeframe.timeframe = 'AllTime'::"MetricTimeframe", user_counts_timeframe."followerCount"
-, NULL::bigint)) AS "followerCountAllTime",
-            max(iif(user_counts_timeframe.timeframe = 'AllTime'::"MetricTimeframe", user_counts_timeframe."followingCount
-", NULL::bigint)) AS "followingCountAllTime",
-            max(iif(user_counts_timeframe.timeframe = 'AllTime'::"MetricTimeframe", user_counts_timeframe."hiddenCount",
-NULL::bigint)) AS "hiddenCountAllTime",
-            max(iif(user_counts_timeframe.timeframe = 'Day'::"MetricTimeframe", user_counts_timeframe."uploadCount", NULL
-::bigint)) AS "uploadCountDay",
-            max(iif(user_counts_timeframe.timeframe = 'Week'::"MetricTimeframe", user_counts_timeframe."uploadCount", NUL
-L::bigint)) AS "uploadCountWeek",
-            max(iif(user_counts_timeframe.timeframe = 'Month'::"MetricTimeframe", user_counts_timeframe."uploadCount", NU
-LL::bigint)) AS "uploadCountMonth",
-            max(iif(user_counts_timeframe.timeframe = 'Year'::"MetricTimeframe", user_counts_timeframe."uploadCount", NUL
-L::bigint)) AS "uploadCountYear",
-            max(iif(user_counts_timeframe.timeframe = 'AllTime'::"MetricTimeframe", user_counts_timeframe."uploadCount",
-NULL::bigint)) AS "uploadCountAllTime",
-            max(iif(user_counts_timeframe.timeframe = 'Day'::"MetricTimeframe", user_counts_timeframe."reviewCount", NULL
-::bigint)) AS "reviewCountDay",
-            max(iif(user_counts_timeframe.timeframe = 'Week'::"MetricTimeframe", user_counts_timeframe."reviewCount", NUL
-L::bigint)) AS "reviewCountWeek",
-            max(iif(user_counts_timeframe.timeframe = 'Month'::"MetricTimeframe", user_counts_timeframe."reviewCount", NU
-LL::bigint)) AS "reviewCountMonth",
-            max(iif(user_counts_timeframe.timeframe = 'Year'::"MetricTimeframe", user_counts_timeframe."reviewCount", NUL
-L::bigint)) AS "reviewCountYear",
-            max(iif(user_counts_timeframe.timeframe = 'AllTime'::"MetricTimeframe", user_counts_timeframe."reviewCount",
-NULL::bigint)) AS "reviewCountAllTime",
-            max(iif(user_counts_timeframe.timeframe = 'Day'::"MetricTimeframe", user_counts_timeframe."answerCount", NULL
-::bigint)) AS "answerCountDay",
-            max(iif(user_counts_timeframe.timeframe = 'Week'::"MetricTimeframe", user_counts_timeframe."answerCount", NUL
-L::bigint)) AS "answerCountWeek",
-            max(iif(user_counts_timeframe.timeframe = 'Month'::"MetricTimeframe", user_counts_timeframe."answerCount", NU
-LL::bigint)) AS "answerCountMonth",
-            max(iif(user_counts_timeframe.timeframe = 'Year'::"MetricTimeframe", user_counts_timeframe."answerCount", NUL
-L::bigint)) AS "answerCountYear",
-            max(iif(user_counts_timeframe.timeframe = 'AllTime'::"MetricTimeframe", user_counts_timeframe."answerCount",
-NULL::bigint)) AS "answerCountAllTime",
-            max(iif(user_counts_timeframe.timeframe = 'Day'::"MetricTimeframe", user_counts_timeframe."answerAcceptCount"
-, NULL::bigint)) AS "answerAcceptCountDay",
-            max(iif(user_counts_timeframe.timeframe = 'Week'::"MetricTimeframe", user_counts_timeframe."answerAcceptCount
-", NULL::bigint)) AS "answerAcceptCountWeek",
-            max(iif(user_counts_timeframe.timeframe = 'Month'::"MetricTimeframe", user_counts_timeframe."answerAcceptCoun
-t", NULL::bigint)) AS "answerAcceptCountMonth",
-            max(iif(user_counts_timeframe.timeframe = 'Year'::"MetricTimeframe", user_counts_timeframe."answerAcceptCount
-", NULL::bigint)) AS "answerAcceptCountYear",
-            max(iif(user_counts_timeframe.timeframe = 'AllTime'::"MetricTimeframe", user_counts_timeframe."answerAcceptCo
-unt", NULL::bigint)) AS "answerAcceptCountAllTime", 
-            max(iif(user_counts_timeframe.timeframe = 'Day'::"MetricTimeframe", user_counts_timeframe."reactionCount", NULL
-::bigint)) AS "reactionCountDay",
-            max(iif(user_counts_timeframe.timeframe = 'Week'::"MetricTimeframe", user_counts_timeframe."reactionCount", NUL
-L::bigint)) AS "reactionCountWeek",
-            max(iif(user_counts_timeframe.timeframe = 'Month'::"MetricTimeframe", user_counts_timeframe."reactionCount", NU
-LL::bigint)) AS "reactionCountMonth",
-            max(iif(user_counts_timeframe.timeframe = 'Year'::"MetricTimeframe", user_counts_timeframe."reactionCount", NUL
-L::bigint)) AS "reactionCountYear",
-            max(iif(user_counts_timeframe.timeframe = 'AllTime'::"MetricTimeframe", user_counts_timeframe."reactionCount",
-NULL::bigint)) AS "reactionCountAllTime"
+            max(iif(user_counts_timeframe.timeframe = 'Day'::"MetricTimeframe", user_counts_timeframe."followerCount", NULL::bigint)) AS "followerCountDay",
+            max(iif(user_counts_timeframe.timeframe = 'Day'::"MetricTimeframe", user_counts_timeframe."followingCount", NULL::bigint)) AS "followingCountDay",
+            max(iif(user_counts_timeframe.timeframe = 'Day'::"MetricTimeframe", user_counts_timeframe."hiddenCount", NULL::bigint)) AS "hiddenCountDay",
+            max(iif(user_counts_timeframe.timeframe = 'Week'::"MetricTimeframe", user_counts_timeframe."followerCount", NULL::bigint)) AS "followerCountWeek",
+            max(iif(user_counts_timeframe.timeframe = 'Week'::"MetricTimeframe", user_counts_timeframe."followingCount",NULL::bigint)) AS "followingCountWeek",
+            max(iif(user_counts_timeframe.timeframe = 'Week'::"MetricTimeframe", user_counts_timeframe."hiddenCount", NULL::bigint)) AS "hiddenCountWeek",
+            max(iif(user_counts_timeframe.timeframe = 'Month'::"MetricTimeframe", user_counts_timeframe."followerCount",NULL::bigint)) AS "followerCountMonth",
+            max(iif(user_counts_timeframe.timeframe = 'Month'::"MetricTimeframe", user_counts_timeframe."followingCount", NULL::bigint)) AS "followingCountMonth",
+            max(iif(user_counts_timeframe.timeframe = 'Month'::"MetricTimeframe", user_counts_timeframe."hiddenCount", NULL::bigint)) AS "hiddenCountMonth",
+            max(iif(user_counts_timeframe.timeframe = 'Year'::"MetricTimeframe", user_counts_timeframe."followerCount", NULL::bigint)) AS "followerCountYear",
+            max(iif(user_counts_timeframe.timeframe = 'Year'::"MetricTimeframe", user_counts_timeframe."followingCount",NULL::bigint)) AS "followingCountYear",
+            max(iif(user_counts_timeframe.timeframe = 'Year'::"MetricTimeframe", user_counts_timeframe."hiddenCount", NULL::bigint)) AS "hiddenCountYear",
+            max(iif(user_counts_timeframe.timeframe = 'AllTime'::"MetricTimeframe", user_counts_timeframe."followerCount", NULL::bigint)) AS "followerCountAllTime",
+            max(iif(user_counts_timeframe.timeframe = 'AllTime'::"MetricTimeframe", user_counts_timeframe."followingCount", NULL::bigint)) AS "followingCountAllTime",
+            max(iif(user_counts_timeframe.timeframe = 'AllTime'::"MetricTimeframe", user_counts_timeframe."hiddenCount",NULL::bigint)) AS "hiddenCountAllTime",
+            max(iif(user_counts_timeframe.timeframe = 'Day'::"MetricTimeframe", user_counts_timeframe."uploadCount", NULL::bigint)) AS "uploadCountDay",
+            max(iif(user_counts_timeframe.timeframe = 'Week'::"MetricTimeframe", user_counts_timeframe."uploadCount", NULL::bigint)) AS "uploadCountWeek",
+            max(iif(user_counts_timeframe.timeframe = 'Month'::"MetricTimeframe", user_counts_timeframe."uploadCount", NULL::bigint)) AS "uploadCountMonth",
+            max(iif(user_counts_timeframe.timeframe = 'Year'::"MetricTimeframe", user_counts_timeframe."uploadCount", NULL::bigint)) AS "uploadCountYear",
+            max(iif(user_counts_timeframe.timeframe = 'AllTime'::"MetricTimeframe", user_counts_timeframe."uploadCount",NULL::bigint)) AS "uploadCountAllTime",
+            max(iif(user_counts_timeframe.timeframe = 'Day'::"MetricTimeframe", user_counts_timeframe."reviewCount", NULL::bigint)) AS "reviewCountDay",
+            max(iif(user_counts_timeframe.timeframe = 'Week'::"MetricTimeframe", user_counts_timeframe."reviewCount", NULL::bigint)) AS "reviewCountWeek",
+            max(iif(user_counts_timeframe.timeframe = 'Month'::"MetricTimeframe", user_counts_timeframe."reviewCount", NULL::bigint)) AS "reviewCountMonth",
+            max(iif(user_counts_timeframe.timeframe = 'Year'::"MetricTimeframe", user_counts_timeframe."reviewCount", NULL::bigint)) AS "reviewCountYear",
+            max(iif(user_counts_timeframe.timeframe = 'AllTime'::"MetricTimeframe", user_counts_timeframe."reviewCount",NULL::bigint)) AS "reviewCountAllTime",
+            max(iif(user_counts_timeframe.timeframe = 'Day'::"MetricTimeframe", user_counts_timeframe."answerCount", NULL::bigint)) AS "answerCountDay",
+            max(iif(user_counts_timeframe.timeframe = 'Week'::"MetricTimeframe", user_counts_timeframe."answerCount", NULL::bigint)) AS "answerCountWeek",
+            max(iif(user_counts_timeframe.timeframe = 'Month'::"MetricTimeframe", user_counts_timeframe."answerCount", NULL::bigint)) AS "answerCountMonth",
+            max(iif(user_counts_timeframe.timeframe = 'Year'::"MetricTimeframe", user_counts_timeframe."answerCount", NULL::bigint)) AS "answerCountYear",
+            max(iif(user_counts_timeframe.timeframe = 'AllTime'::"MetricTimeframe", user_counts_timeframe."answerCount",NULL::bigint)) AS "answerCountAllTime",
+            max(iif(user_counts_timeframe.timeframe = 'Day'::"MetricTimeframe", user_counts_timeframe."answerAcceptCount", NULL::bigint)) AS "answerAcceptCountDay",
+            max(iif(user_counts_timeframe.timeframe = 'Week'::"MetricTimeframe", user_counts_timeframe."answerAcceptCount", NULL::bigint)) AS "answerAcceptCountWeek",
+            max(iif(user_counts_timeframe.timeframe = 'Month'::"MetricTimeframe", user_counts_timeframe."answerAcceptCount", NULL::bigint)) AS "answerAcceptCountMonth",
+            max(iif(user_counts_timeframe.timeframe = 'Year'::"MetricTimeframe", user_counts_timeframe."answerAcceptCount", NULL::bigint)) AS "answerAcceptCountYear",
+            max(iif(user_counts_timeframe.timeframe = 'AllTime'::"MetricTimeframe", user_counts_timeframe."answerAcceptCount", NULL::bigint)) AS "answerAcceptCountAllTime", 
+            max(iif(user_counts_timeframe.timeframe = 'Day'::"MetricTimeframe", user_counts_timeframe."reactionCount", NULL::bigint)) AS "reactionCountDay",
+            max(iif(user_counts_timeframe.timeframe = 'Week'::"MetricTimeframe", user_counts_timeframe."reactionCount", NULL::bigint)) AS "reactionCountWeek",
+            max(iif(user_counts_timeframe.timeframe = 'Month'::"MetricTimeframe", user_counts_timeframe."reactionCount", NULL::bigint)) AS "reactionCountMonth",
+            max(iif(user_counts_timeframe.timeframe = 'Year'::"MetricTimeframe", user_counts_timeframe."reactionCount", NULL::bigint)) AS "reactionCountYear",
+            max(iif(user_counts_timeframe.timeframe = 'AllTime'::"MetricTimeframe", user_counts_timeframe."reactionCount",NULL::bigint)) AS "reactionCountAllTime"
            FROM user_counts_timeframe
           GROUP BY user_counts_timeframe."userId"
         ), full_user_stats AS (
@@ -201,11 +137,6 @@ NULL::bigint)) AS "reactionCountAllTime"
             u."answerAcceptCountMonth",
             u."answerAcceptCountYear",
             u."answerAcceptCountAllTime",
-            u."reactionCountDay",
-            u."reactionCountWeek",
-            u."reactionCountMonth",
-            u."reactionCountYear",
-            u."reactionCountAllTime",
             COALESCE(m."downloadCountDay", 0::bigint) AS "downloadCountDay",
             COALESCE(m."downloadCountWeek", 0::bigint) AS "downloadCountWeek",
             COALESCE(m."downloadCountMonth", 0::bigint) AS "downloadCountMonth",
@@ -230,7 +161,12 @@ NULL::bigint)) AS "reactionCountAllTime"
             COALESCE(m."thumbsUpCountWeek", 0::bigint) AS "thumbsUpCountWeek",
             COALESCE(m."thumbsUpCountMonth", 0::bigint) AS "thumbsUpCountMonth",
             COALESCE(m."thumbsUpCountYear", 0::bigint) AS "thumbsUpCountYear",
-            COALESCE(m."thumbsUpCountAllTime", 0::bigint) AS "thumbsUpCountAllTime"
+            COALESCE(m."thumbsUpCountAllTime", 0::bigint) AS "thumbsUpCountAllTime",
+            u."reactionCountDay",
+            u."reactionCountWeek",
+            u."reactionCountMonth",
+            u."reactionCountYear",
+            u."reactionCountAllTime"
            FROM user_counts u
              LEFT JOIN user_model_metrics m ON m."userId" = u."userId"
         )
