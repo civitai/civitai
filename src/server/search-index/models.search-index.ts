@@ -209,6 +209,7 @@ const onFetchItemsToIndex = async ({
             select: modelHashSelect,
             where: {
               fileType: { in: ['Model', 'Pruned Model'] as ModelFileType[] },
+              hashType: { notIn: ['AutoV1'] },
             },
           },
           metrics: {
