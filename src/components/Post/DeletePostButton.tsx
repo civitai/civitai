@@ -1,8 +1,10 @@
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
-import { openConfirmModal } from '@mantine/modals';
 import { Text } from '@mantine/core';
 import { useRouter } from 'next/router';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import { ConfirmDialog } from '~/components/Dialog/Common/ConfirmDialog';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export function DeletePostButton({
   children,
@@ -13,12 +15,14 @@ export function DeletePostButton({
     onClick,
     isLoading,
   }: {
-    onClick: (cb?: (confirm: boolean) => void) => void;
+    onClick: () => void;
     isLoading: boolean;
   }) => React.ReactElement;
 }) {
   const router = useRouter();
-  const queryUtils = trpc.useContext();
+  const returnUrl = (router.query.returnUrl as string) ?? '/';
+  const queryUtils = trpc.useUtils();
+  const currentUser = useCurrentUser();
   const { mutate, isLoading } = trpc.post.delete.useMutation({
     async onSuccess(_, { id }) {
       // router.push('/posts');
@@ -26,7 +30,11 @@ export function DeletePostButton({
         title: 'Post deleted',
         message: 'Successfully deleted post',
       });
-      await router.replace('/');
+      if (returnUrl) router.replace(returnUrl);
+      else if (currentUser?.username) router.replace(`/user/${currentUser.username}/posts`);
+      else router.replace('/posts');
+
+      await router.replace(returnUrl);
       await queryUtils.post.get.invalidate({ id });
       await queryUtils.post.getInfinite.invalidate();
     },
@@ -35,22 +43,22 @@ export function DeletePostButton({
     },
   });
 
-  const onClick = (cb?: (confirm: boolean) => void) => {
-    openConfirmModal({
-      centered: true,
-      title: 'Delete post',
-      children: (
-        <Text>
-          Are you sure you want to delete this post? The images in this post{' '}
-          <strong>will also be deleted</strong>.
-        </Text>
-      ),
-      labels: { cancel: `Cancel`, confirm: `Delete Post` },
-      confirmProps: { color: 'red' },
-      onCancel: () => cb?.(false),
-      onConfirm: () => {
-        cb?.(true);
-        mutate({ id: postId });
+  const onClick = () => {
+    dialogStore.trigger({
+      component: ConfirmDialog,
+      props: {
+        title: 'Delete Post',
+        message: (
+          <Text>
+            Are you sure you want to delete this post? The images in this post{' '}
+            <strong>will also be deleted</strong>.
+          </Text>
+        ),
+        labels: { cancel: `Cancel`, confirm: `Delete Post` },
+        confirmProps: { color: 'red' },
+        onConfirm: () => {
+          mutate({ id: postId });
+        },
       },
     });
   };

@@ -1,26 +1,15 @@
-import {
-  Button,
-  Container,
-  Group,
-  LoadingOverlay,
-  Popover,
-  Stack,
-  Stepper,
-  Title,
-} from '@mantine/core';
+import { Button, Group, LoadingOverlay, Popover, Stack, Stepper, Title } from '@mantine/core';
 import { ModelUploadType, TrainingStatus } from '@prisma/client';
 import { NextRouter, useRouter } from 'next/router';
-import { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { z } from 'zod';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { FeatureIntroductionHelpButton } from '~/components/FeatureIntroduction/FeatureIntroduction';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
-import { PostEditWrapper } from '~/components/Post/Edit/PostEditLayout';
 import { Files, UploadStepActions } from '~/components/Resource/Files';
 import { FilesProvider } from '~/components/Resource/FilesProvider';
 import { ModelUpsertForm } from '~/components/Resource/Forms/ModelUpsertForm';
 import { ModelVersionUpsertForm } from '~/components/Resource/Forms/ModelVersionUpsertForm';
-import { PostUpsertForm } from '~/components/Resource/Forms/PostUpsertForm';
 import TrainingSelectFile from '~/components/Resource/Forms/TrainingSelectFile';
 import { useIsChangingLocation } from '~/components/RouterTransition/RouterTransition';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -30,6 +19,7 @@ import { QS } from '~/utils/qs';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
 import { TemplateSelect } from './TemplateSelect';
+import { PostUpsertForm2 } from '~/components/Resource/Forms/PostUpsertForm2';
 
 export type ModelWithTags = Omit<ModelById, 'tagsOnModels'> & {
   tagsOnModels: Array<{ isCategory: boolean; id: number; name: string }>;
@@ -94,10 +84,11 @@ const CreateSteps = ({
       }
       allowNextStepsSelect={false}
       size="sm"
+      classNames={{ steps: 'container max-w-sm' }}
     >
       {/* Step 1: Model Info */}
       <Stepper.Step label={editing ? 'Edit model' : 'Create your model'}>
-        <Stack pos="relative">
+        <div className="container max-w-sm flex flex-col gap-3 relative">
           <LoadingOverlay visible={isInitialLoading || isBountyFieldsInitialLoading} />
           <Title order={3}>{editing ? 'Edit model' : 'Create your model'}</Title>
           <ModelUpsertForm
@@ -115,12 +106,12 @@ const CreateSteps = ({
               </Group>
             )}
           </ModelUpsertForm>
-        </Stack>
+        </div>
       </Stepper.Step>
 
       {/* Step 2: Version Info */}
       <Stepper.Step label={hasVersions ? 'Edit version' : 'Add version'}>
-        <Stack>
+        <div className="container max-w-sm flex flex-col gap-3">
           <Title order={3}>{hasVersions ? 'Edit version' : 'Add version'}</Title>
           <ModelVersionUpsertForm
             model={model ?? templateFields ?? bountyFields}
@@ -138,7 +129,7 @@ const CreateSteps = ({
               </Group>
             )}
           </ModelVersionUpsertForm>
-        </Stack>
+        </div>
       </Stepper.Step>
 
       {/* Step 3: Upload Files */}
@@ -147,22 +138,17 @@ const CreateSteps = ({
         loading={uploading > 0}
         color={error + aborted > 0 ? 'red' : undefined}
       >
-        <Stack>
+        <div className="container max-w-sm flex flex-col gap-3">
           <Title order={3}>Upload files</Title>
           <Files />
           <UploadStepActions onBackClick={goBack} onNextClick={goNext} />
-        </Stack>
+        </div>
       </Stepper.Step>
 
       <Stepper.Step label={postId ? 'Edit post' : 'Create a post'}>
-        <Stack>
-          <Title order={3}>{postId ? 'Edit post' : 'Create your post'}</Title>
-          {model && modelVersion && (
-            <PostEditWrapper postId={postId}>
-              <PostUpsertForm modelVersionId={modelVersion.id} modelId={model.id} />
-            </PostEditWrapper>
-          )}
-        </Stack>
+        {model && modelVersion && (
+          <PostUpsertForm2 postId={postId} modelVersionId={modelVersion.id} modelId={model.id} />
+        )}
       </Stepper.Step>
     </Stepper>
   );
@@ -197,6 +183,7 @@ const TrainSteps = ({
       }
       allowNextStepsSelect={false}
       size="sm"
+      classNames={{ steps: 'container max-w-sm' }}
     >
       {/* Step 1: Select File */}
       <Stepper.Step
@@ -208,7 +195,7 @@ const TrainSteps = ({
         }
         color={modelVersion.trainingStatus === TrainingStatus.Failed ? 'red' : undefined}
       >
-        <Stack>
+        <div className="container max-w-sm flex flex-col gap-3">
           <Title order={3}>Select Model File</Title>
           <Title mb="sm" order={5}>
             Choose a model file from the results of your training run.
@@ -216,12 +203,12 @@ const TrainSteps = ({
             Sample images are provided for reference.
           </Title>
           <TrainingSelectFile model={model} onNextClick={goNext} />
-        </Stack>
+        </div>
       </Stepper.Step>
 
       {/* Step 2: Model Info */}
       <Stepper.Step label="Edit model">
-        <Stack>
+        <div className="container max-w-sm flex flex-col gap-3">
           <Title order={3}>Edit model</Title>
           <ModelUpsertForm model={model} onSubmit={goNext}>
             {({ loading }) => (
@@ -235,12 +222,12 @@ const TrainSteps = ({
               </Group>
             )}
           </ModelUpsertForm>
-        </Stack>
+        </div>
       </Stepper.Step>
 
       {/* Step 3: Version Info */}
       <Stepper.Step label="Edit version">
-        <Stack>
+        <div className="container max-w-sm flex flex-col gap-3">
           <Title order={3}>Edit version</Title>
           <ModelVersionUpsertForm model={model} version={modelVersion} onSubmit={goNext}>
             {({ loading }) => (
@@ -254,17 +241,12 @@ const TrainSteps = ({
               </Group>
             )}
           </ModelVersionUpsertForm>
-        </Stack>
+        </div>
       </Stepper.Step>
       <Stepper.Step label={postId ? 'Edit post' : 'Create a post'}>
-        <Stack>
-          <Title order={3}>{postId ? 'Edit post' : 'Create your post'}</Title>
-          {model && modelVersion && (
-            <PostEditWrapper postId={postId}>
-              <PostUpsertForm modelVersionId={modelVersion.id} modelId={model.id} />
-            </PostEditWrapper>
-          )}
-        </Stack>
+        {model && modelVersion && (
+          <PostUpsertForm2 postId={postId} modelVersionId={modelVersion.id} modelId={model.id} />
+        )}
       </Stepper.Step>
     </Stepper>
   );
@@ -371,7 +353,7 @@ export function ModelWizard() {
 
   return (
     <FilesProvider model={modelFlatTags} version={modelVersion}>
-      <Container size="sm">
+      <div className="container max-w-sm flex flex-col gap-3">
         {modelLoading ? (
           <PageLoader text="Loading model..." />
         ) : modelError ? (
@@ -405,33 +387,36 @@ export function ModelWizard() {
                 </Popover>
               )}
             </Group>
-
-            {showTraining ? (
-              <TrainSteps
-                model={modelFlatTags!}
-                modelVersion={modelVersion!}
-                goBack={goBack}
-                goNext={goNext}
-                modelId={id}
-                step={step}
-                router={router}
-                postId={postId}
-              />
-            ) : (
-              <CreateSteps
-                model={modelFlatTags}
-                modelVersion={modelVersion}
-                goBack={goBack}
-                goNext={goNext}
-                modelId={id}
-                step={step}
-                router={router}
-                postId={postId}
-              />
-            )}
           </Stack>
         )}
-      </Container>
+      </div>
+      {!modelLoading && !modelError && (
+        <>
+          {showTraining ? (
+            <TrainSteps
+              model={modelFlatTags!}
+              modelVersion={modelVersion!}
+              goBack={goBack}
+              goNext={goNext}
+              modelId={id}
+              step={step}
+              router={router}
+              postId={postId}
+            />
+          ) : (
+            <CreateSteps
+              model={modelFlatTags}
+              modelVersion={modelVersion}
+              goBack={goBack}
+              goNext={goNext}
+              modelId={id}
+              step={step}
+              router={router}
+              postId={postId}
+            />
+          )}
+        </>
+      )}
     </FilesProvider>
   );
 }

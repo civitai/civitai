@@ -26,6 +26,7 @@ body {
 
 /* Don't zoom text input on iOS */
 @media only screen and (hover: none) and (pointer: coarse) {
+
   input:focus,
   select:focus,
   textarea:focus {
@@ -91,7 +92,7 @@ a {
   margin-bottom: 0.25em;
 }
 
-.markdown-content h2 + p {
+.markdown-content h2+p {
   margin-top: 0;
 }
 
@@ -115,7 +116,7 @@ a {
   text-decoration: underline;
 }
 
-.theme-light .markdown-content blockquote {
+.light .markdown-content blockquote {
   background: #eee;
   border-top: 4px solid #ddd;
 }
@@ -241,7 +242,7 @@ iframe {
   padding-bottom: 36px !important;
 }
 
-.frame-decor .footer-abs > * {
+.frame-decor .footer-abs>* {
   bottom: 36px !important;
 }
 
@@ -269,6 +270,20 @@ iframe {
   }
 }
 
+@keyframes button-highlight {
+  0% {
+    background-position: -300% 50%;
+  }
+
+  30% {
+    background-position: 300% 50%;
+  }
+
+  100% {
+    background-position: 300% 50%;
+  }
+}
+
 /* Google Recapcha Hiding */
 .grecaptcha-badge {
   visibility: hidden;
@@ -291,13 +306,15 @@ ol {
     @apply rounded-md overflow-hidden relative;
     background-color: #dee2e6;
   }
-  .theme-dark .card {
+
+  .dark .card {
     background-color: #25262b;
   }
 
   .vertical-gradient-dark {
     position: relative;
   }
+
   .vertical-gradient-dark:before {
     content: '';
     position: absolute;

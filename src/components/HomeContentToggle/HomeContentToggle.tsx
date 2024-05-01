@@ -89,6 +89,7 @@ const homeOptions: Record<string, HomeOption> = {
   shop: {
     url: '/cosmetic-shop',
     icon: (props: TablerIconsProps) => <IconShoppingBag {...props} />,
+    highlight: true,
   },
 };
 type HomeOptions = keyof typeof homeOptions;
@@ -170,11 +171,6 @@ export function HomeContentToggle({ size, sx, ...props }: Props) {
             <Text size="sm" transform="capitalize" inline>
               {key}
             </Text>
-            {value.highlight && (
-              <Badge color="yellow" variant="filled" size="sm" radius="xl">
-                New
-              </Badge>
-            )}
           </Group>
         </Anchor>
       </Link>
@@ -241,6 +237,25 @@ const useTabsStyles = createStyles((theme) => ({
       maxWidth: '100%',
     },
   },
+  tabHighlight: {
+    backgroundColor: theme.fn.rgba(
+      theme.colors.yellow[3],
+      theme.colorScheme === 'dark' ? 0.1 : 0.3
+    ),
+    backgroundImage: `linear-gradient(90deg, ${theme.fn.rgba(
+      theme.colors.yellow[4],
+      0
+    )}, ${theme.fn.rgba(
+      theme.colors.yellow[4],
+      theme.colorScheme === 'dark' ? 0.1 : 0.2
+    )}, ${theme.fn.rgba(theme.colors.yellow[4], 0)})`,
+    backgroundSize: '50px',
+    backgroundPosition: '-300% 50%',
+    backgroundRepeat: 'no-repeat',
+    color: theme.colorScheme === 'dark' ? theme.colors.yellow[3] : theme.colors.yellow[8],
+    animation: 'button-highlight 5s linear infinite',
+    willChange: 'background-position',
+  },
 
   moreButton: {
     padding: '8px 10px 8px 16px',
@@ -296,17 +311,12 @@ export function HomeTabs({ sx, ...tabProps }: HomeTabProps) {
             <Tabs.Tab
               value={key}
               icon={value.icon({ size: 16 })}
-              pr={value.highlight ? 10 : undefined}
+              className={value.highlight ? classes.tabHighlight : undefined}
             >
               <Group spacing={4} noWrap>
                 <Text className={classes.tabLabel} inline>
                   {getDisplayName(key)}
                 </Text>
-                {value.highlight && (
-                  <Badge color="yellow" variant="filled" size="sm" radius="xl">
-                    New
-                  </Badge>
-                )}
               </Group>
             </Tabs.Tab>
           </Anchor>
@@ -352,14 +362,13 @@ export function HomeTabs({ sx, ...tabProps }: HomeTabProps) {
             .filter(([, value]) => value.grouped)
             .map(([key, value]) => (
               <Link key={key} href={value.url} passHref>
-                <Menu.Item component="a" icon={value.icon({ size: 16 })}>
+                <Menu.Item
+                  component="a"
+                  icon={value.icon({ size: 16 })}
+                  className={value.highlight ? classes.tabHighlight : undefined}
+                >
                   <Group spacing={8} noWrap>
                     <Text tt="capitalize">{getDisplayName(key)}</Text>
-                    {value.highlight && (
-                      <Badge color="yellow" variant="filled" size="sm" radius="xl">
-                        New
-                      </Badge>
-                    )}
                   </Group>
                 </Menu.Item>
               </Link>

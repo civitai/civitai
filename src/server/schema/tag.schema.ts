@@ -62,6 +62,7 @@ export type GetVotableTagsSchema2 = z.infer<typeof getVotableTagsSchema2>;
 export const getVotableTagsSchema2 = z.object({
   type: tagVotableEntitySchema,
   ids: z.number().array(),
+  nsfwLevel: z.number().optional(),
 });
 
 const tagIdsOrNamesSchema = z.union([

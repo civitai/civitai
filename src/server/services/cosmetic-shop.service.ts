@@ -35,7 +35,7 @@ export const getPaginatedCosmeticShopItems = async (input: GetPaginatedCosmeticS
   const where: Prisma.CosmeticShopItemFindManyArgs['where'] = {};
   const cosmeticWhere: Prisma.CosmeticFindManyArgs['where'] = {};
 
-  if (input.name) cosmeticWhere.name = { contains: input.name };
+  if (input.name) cosmeticWhere.name = { contains: input.name, mode: 'insensitive' };
   if (input.types && input.types.length) cosmeticWhere.type = { in: input.types };
 
   if (Object.keys(cosmeticWhere).length > 0) where.cosmetic = cosmeticWhere;
@@ -110,7 +110,7 @@ export const getShopSections = async (input: GetAllCosmeticShopSections) => {
   const where: Prisma.CosmeticShopSectionFindManyArgs['where'] = {};
 
   if (input.title) {
-    where.title = { contains: input.title };
+    where.title = { contains: input.title, mode: 'insensitive' };
   }
 
   if (input.withItems) {
@@ -285,7 +285,7 @@ export const reorderCosmeticShopSections = async ({
   sortedSectionIds,
 }: UpdateCosmeticShopSectionsOrderInput) => {
   await dbWrite.$queryRaw`
-    UPDATE "CosmeticShopSection" AS "css" 
+    UPDATE "CosmeticShopSection" AS "css"
     SET "placement" = "idx"
     FROM (SELECT "id", "idx" FROM UNNEST(${sortedSectionIds}) WITH ORDINALITY AS t("id", "idx")) AS "t"
     WHERE "css"."id" = "t"."id"
@@ -323,12 +323,8 @@ export const getShopSectionsWithItems = async ({ isModerator }: { isModerator?: 
               ? undefined
               : [
                   {
-                    availableFrom: {
-                      gt: new Date(),
-                    },
-                    availableTo: {
-                      lt: new Date(),
-                    },
+                    availableFrom: { lte: new Date() },
+                    availableTo: { gte: new Date() },
                   },
                   {
                     availableFrom: null,

@@ -19,6 +19,7 @@ import {
   HoverCard,
   Box,
   Grid,
+  TypographyStylesProvider,
 } from '@mantine/core';
 import {
   IconAlertCircle,
@@ -63,95 +64,101 @@ import { formatDate } from '~/utils/date-helpers';
 
 const IMAGE_SECTION_WIDTH = 1288;
 
-const useStyles = createStyles((theme) => ({
-  section: {
-    overflow: 'hidden',
-    position: 'relative',
+const useStyles = createStyles((theme, _params, getRef) => {
+  const sectionRef = getRef('section');
 
-    [theme.fn.smallerThan('sm')]: {
+  return {
+    section: {
+      ref: sectionRef,
+      overflow: 'hidden',
+      position: 'relative',
+
+      [`& + .${sectionRef}`]: {
+        marginTop: theme.spacing.xl * 3,
+      },
+    },
+
+    sectionHeaderContainer: {
+      overflow: 'hidden',
+      position: 'relative',
+      height: 250,
+    },
+
+    sectionHeaderContainerWithBackground: {
+      background: 'transparent',
+      borderRadius: theme.radius.md,
+    },
+
+    sectionDescription: {
+      padding: `0 ${theme.spacing.sm}px ${theme.spacing.sm}px`,
+      p: {
+        fontSize: 18,
+        lineHeight: 1.3,
+      },
+    },
+
+    backgroundImage: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      width: '100%',
+      height: '100%',
+      opacity: 0.4,
+      zIndex: -1,
+    },
+
+    sectionHeaderContentWrap: {
+      position: 'absolute',
+      zIndex: 1,
+      width: '100%',
+      height: '100%',
+      top: 0,
+      left: 0,
+    },
+
+    sectionTitle: {
+      color: theme.colorScheme === 'dark' ? theme.white : theme.black,
+      width: '100%',
+      padding: theme.spacing.lg,
+      paddingLeft: 8,
+      paddingRight: 8,
+      textShadow: `3px 0px 7px rgba(0,0,0,0.8), -3px 0px 7px rgba(0,0,0,0.8), 0px 4px 7px rgba(0,0,0,0.8)`,
+      maxWidth: 400,
+      fontSize: 48,
+      lineHeight: 1.1,
+      ['@container (min-width: 500px)']: {
+        fontSize: 64,
+        maxWidth: 500,
+      },
+    },
+
+    card: {
+      height: '100%',
+      background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[1],
+      borderRadius: theme.radius.md,
       padding: theme.spacing.md,
+      overflow: 'hidden',
+      position: 'relative',
     },
-  },
 
-  sectionHeaderContainer: {
-    overflow: 'hidden',
-    position: 'relative',
-    height: 250,
-
-    [theme.fn.smallerThan('sm')]: {
-      marginLeft: -theme.spacing.md,
-      marginRight: -theme.spacing.md,
+    cardHeader: {
+      background: theme.colorScheme === 'dark' ? theme.colors.dark[9] : theme.colors.gray[2],
+      margin: -theme.spacing.md,
+      padding: theme.spacing.md,
+      marginBottom: theme.spacing.md,
+      height: 250,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
     },
-  },
 
-  sectionHeaderContainerWithBackground: {
-    background: 'transparent',
-    borderRadius: theme.radius.md,
-  },
-
-  backgroundImage: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    width: '100%',
-    height: '100%',
-    opacity: 0.4,
-    zIndex: -1,
-  },
-
-  sectionHeaderContentWrap: {
-    position: 'absolute',
-    zIndex: 1,
-    width: '100%',
-    height: '100%',
-    top: 0,
-    left: 0,
-  },
-
-  sectionTitle: {
-    color: theme.colorScheme === 'dark' ? theme.white : theme.black,
-    width: '100%',
-    padding: theme.spacing.lg,
-    textShadow: '2px 2px 2px rgba(0,0,0,0.5)',
-    // [theme.fn.smallerThan('sm')]: {
-    //   fontSize: 18,
-    // },
-  },
-
-  hideMobile: {
-    [theme.fn.smallerThan('sm')]: {
-      display: 'none',
+    availability: {
+      position: 'absolute',
+      top: '-2px',
+      right: '-5px',
     },
-  },
-  hideDesktop: {
-    [theme.fn.largerThan('sm')]: {
-      display: 'none',
-    },
-  },
-  card: {
-    height: '100%',
-    background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[1],
-    borderRadius: theme.radius.md,
-    padding: theme.spacing.md,
-    overflow: 'hidden',
-    position: 'relative',
-  },
-  cardHeader: {
-    background: theme.colorScheme === 'dark' ? theme.colors.dark[9] : theme.colors.gray[2],
-    margin: -theme.spacing.md,
-    padding: theme.spacing.md,
-    marginBottom: theme.spacing.md,
-    height: 250,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  availability: {
-    position: 'absolute',
-    top: '-2px',
-    right: '-5px',
-  },
-}));
+  };
+});
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -297,7 +304,7 @@ export default function CosmeticShopMain() {
                       }
                     >
                       {!meta?.hideTitle && (
-                        <Stack mih="100%" justify="center" style={{ flexGrow: 1 }}>
+                        <Stack mih="100%" justify="center" align="center" style={{ flexGrow: 1 }}>
                           <Title order={2} className={classes.sectionTitle} align="center">
                             {section.title}
                           </Title>
@@ -308,8 +315,10 @@ export default function CosmeticShopMain() {
 
                   <Stack>
                     {section.description && (
-                      <ContentClamp maxHeight={200}>
-                        <RenderHtml html={section.description} />
+                      <ContentClamp maxHeight={200} className={classes.sectionDescription}>
+                        <TypographyStylesProvider>
+                          <RenderHtml html={section.description} />
+                        </TypographyStylesProvider>
                       </ContentClamp>
                     )}
                   </Stack>
@@ -318,7 +327,7 @@ export default function CosmeticShopMain() {
                     {items.map((item) => {
                       const { shopItem } = item;
                       return (
-                        <Grid.Col span={6} md={3} key={shopItem.id}>
+                        <Grid.Col span={12} sm={6} md={3} key={shopItem.id}>
                           <CosmeticShopItem item={shopItem} />
                         </Grid.Col>
                       );
