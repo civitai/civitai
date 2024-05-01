@@ -23,7 +23,7 @@ export const useCardStyles = createStyles<string, { aspectRatio: number }>(
         ref: imageRef,
         height: '100%',
         objectFit: 'cover',
-        objectPosition: aspectRatio < 1 ? 'top-center' : 'center',
+        objectPosition: aspectRatio < 1 ? 'top center' : 'center',
         transition: 'transform 400ms ease',
         minWidth: '100%',
       },
@@ -167,6 +167,14 @@ export const useCardStyles = createStyles<string, { aspectRatio: number }>(
         [`&:has(~ .frame-decor) .${bottomRef}`]: {
           paddingBottom: '36px !important',
         },
+      },
+
+      frameAdjustment: {
+        padding: 5,
+        borderRadius: 12,
+        height: '100%',
+        width: '100%',
+        objectFit: 'cover',
       },
     };
   }

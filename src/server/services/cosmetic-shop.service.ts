@@ -326,10 +326,7 @@ export const getShopSectionsWithItems = async ({ isModerator }: { isModerator?: 
                     availableFrom: { lte: new Date() },
                     availableTo: { gte: new Date() },
                   },
-                  {
-                    availableFrom: null,
-                    availableTo: null,
-                  },
+                  { availableFrom: null, availableTo: null },
                 ],
           },
         },

@@ -122,14 +122,13 @@ export function CardDecorationModal({ entityType, entityId, image, currentCosmet
   const items =
     userCosmetics?.contentDecorations.filter(
       ({ data, forId, forType }) =>
-        data.url &&
+        (data.url || data.cssFrame) &&
         // Ensure we only show cosmetics available for this item.
         (!forId || (forId && forType && forId === entityId && forType === entityType))
     ) ?? [];
   const selectedItem = items.find(
     (item) => item.id === cosmetic?.id && item.claimKey === cosmetic?.claimKey
   );
-  console.log(userCosmetics?.contentDecorations);
 
   return (
     <Modal
@@ -175,7 +174,8 @@ export function CardDecorationModal({ entityType, entityId, image, currentCosmet
             <Stack align="center" spacing="xl">
               {selectedItem &&
                 selectedItem.entityImage &&
-                image.url !== selectedItem.entityImage.url && (
+                selectedItem.entityImage.entityId !== entityId &&
+                selectedItem.entityImage.entityType !== entityType && (
                   <Group noWrap>
                     <Image
                       src={getEdgeUrl(selectedItem.entityImage.url, {
@@ -251,7 +251,7 @@ export const PreviewCard = ({
       ? DEFAULT_EDGE_IMAGE_WIDTH * originalAspectRatio
       : DEFAULT_EDGE_IMAGE_WIDTH;
 
-  const { classes } = useCardStyles({ aspectRatio: originalAspectRatio });
+  const { classes, cx } = useCardStyles({ aspectRatio: originalAspectRatio });
 
   if (!image) return null;
 
@@ -260,7 +260,11 @@ export const PreviewCard = ({
 
   return (
     <MasonryCard height={cardHeight} frameDecoration={decoration}>
-      <EdgeMedia src={image.url} className={classes.image} width={imageWidth} />
+      <EdgeMedia
+        src={image.url}
+        className={cx(classes.image, decoration && classes.frameAdjustment)}
+        width={imageWidth}
+      />
     </MasonryCard>
   );
 };

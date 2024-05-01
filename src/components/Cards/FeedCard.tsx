@@ -36,7 +36,9 @@ const aspectRatioValues: Record<
   },
 };
 
-const useStyles = createStyles((theme) => {
+const useStyles = createStyles<string, { frame?: string }>((theme, params) => {
+  const framePadding = 5;
+
   return {
     root: {
       padding: '0 !important',
@@ -45,6 +47,29 @@ const useStyles = createStyles((theme) => {
       cursor: 'pointer',
       position: 'relative',
       overflow: 'hidden',
+      backgroundColor: params.frame ? 'transparent' : undefined,
+      margin: params.frame ? -framePadding : undefined,
+    },
+
+    frame: {
+      backgroundImage: params.frame,
+      borderRadius: theme.radius.md,
+      zIndex: 1,
+      padding: framePadding,
+    },
+
+    glow: {
+      '&:before': {
+        backgroundImage: params.frame,
+        content: '""',
+        width: '100%',
+        height: '100%',
+        zIndex: -1,
+        filter: 'blur(10px)',
+        position: 'absolute',
+        top: 0,
+        left: 0,
+      },
     },
   };
 });
@@ -63,7 +88,7 @@ export const FeedCard = forwardRef<HTMLAnchorElement, Props>(
     ref
   ) => {
     const { stringRatio } = aspectRatioValues[aspectRatio];
-    const { classes, cx } = useStyles();
+    const { classes, cx } = useStyles({ frame: frameDecoration?.data.cssFrame });
 
     const card = (
       <Card<'a'>
@@ -78,7 +103,17 @@ export const FeedCard = forwardRef<HTMLAnchorElement, Props>(
     );
 
     return (
-      <div style={{ position: frameDecoration ? 'relative' : undefined }}>
+      <div
+        style={{ position: frameDecoration ? 'relative' : undefined }}
+        className={
+          frameDecoration
+            ? cx(
+                frameDecoration.data.cssFrame && classes.frame,
+                frameDecoration.data.glow && classes.glow
+              )
+            : undefined
+        }
+      >
         {href ? (
           <Link href={href} passHref>
             {card}
@@ -86,7 +121,7 @@ export const FeedCard = forwardRef<HTMLAnchorElement, Props>(
         ) : (
           card
         )}
-        {frameDecoration && <DecorationFrame decoration={frameDecoration} />}
+        {/* {frameDecoration && <DecorationFrame decoration={frameDecoration} />} */}
       </div>
     );
   }

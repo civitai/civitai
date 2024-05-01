@@ -5,7 +5,6 @@ import { GetByIdInput } from '~/server/schema/base.schema';
 import { EquipCosmeticInput, GetPaginatedCosmeticsInput } from '~/server/schema/cosmetic.schema';
 import {
   ContentDecorationCosmetic,
-  SimpleCosmetic,
   WithClaimKey,
   simpleCosmeticSelect,
 } from '~/server/selectors/cosmetic.selector';
@@ -81,6 +80,7 @@ export async function equipCosmeticToEntity({
     select: {
       obtainedAt: true,
       equippedToId: true,
+      equippedToType: true,
       forId: true,
       forType: true,
       cosmetic: { select: { type: true } },
@@ -97,9 +97,9 @@ export async function equipCosmeticToEntity({
     throw new Error('You cannot equip this cosmetic to this entity');
   }
 
-  // Unquip whaetver version of this cosmetic is equipped on that card
+  // Unequip any cosmetic equipped on that entity
   await dbWrite.userCosmetic.updateMany({
-    where: { userId, cosmeticId, equippedToId, equippedToType },
+    where: { userId, equippedToId, equippedToType },
     data: { equippedToId: null, equippedToType: null, equippedAt: null },
   });
 
@@ -109,6 +109,13 @@ export async function equipCosmeticToEntity({
   });
 
   await deleteEntityCosmeticCache({ entityId: equippedToId, entityType: equippedToType });
+  // Clear cache for previous entity if it was equipped
+  if (userCosmetic.equippedToId && userCosmetic.equippedToType) {
+    await deleteEntityCosmeticCache({
+      entityId: userCosmetic.equippedToId,
+      entityType: userCosmetic.equippedToType,
+    });
+  }
 
   return updated;
 }

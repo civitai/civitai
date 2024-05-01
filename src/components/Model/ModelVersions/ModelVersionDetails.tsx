@@ -267,7 +267,9 @@ export function ModelVersionDetails({
         />
       ),
     },
-    { label: 'Uploaded', value: formatDate(version.createdAt) },
+    version.status === 'Published'
+      ? { label: 'Published', value: formatDate(version.publishedAt) }
+      : { label: 'Uploaded', value: formatDate(version.createdAt) },
     {
       label: 'Base Model',
       value:
