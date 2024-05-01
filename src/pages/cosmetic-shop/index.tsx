@@ -117,7 +117,7 @@ const useStyles = createStyles((theme, _params, getRef) => {
     },
 
     sectionTitle: {
-      color: theme.colorScheme === 'dark' ? theme.white : theme.black,
+      color: theme.white,
       width: '100%',
       padding: theme.spacing.lg,
       paddingLeft: 8,
