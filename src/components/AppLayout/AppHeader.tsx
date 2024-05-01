@@ -572,7 +572,7 @@ export function AppHeader({
       bookmarkedModelsCollection,
       bookmarkedArticlesCollection,
       router.asPath,
-      theme,
+      // theme,
     ]
   );
 

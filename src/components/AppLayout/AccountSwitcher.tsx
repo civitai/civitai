@@ -22,6 +22,7 @@ import {
 import { Username } from '~/components/User/Username';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getLoginLink } from '~/utils/login-helpers';
+import { showErrorNotification } from '~/utils/notifications';
 import { getInitials } from '~/utils/string-helpers';
 
 const useStyles = createStyles((theme) => ({
@@ -61,11 +62,23 @@ const ActionButtons = ({ close }: { close: () => void }) => {
 
   const handleLogout = () => {
     setLoggingOut(true);
-    logout().then();
+    logout().catch((e) => {
+      setLoggingOut(false);
+      showErrorNotification({
+        title: 'Error logging out',
+        error: new Error(e.message),
+      });
+    });
   };
   const handleLogoutAll = () => {
     setLoggingOutAll(true);
-    logoutAll().then();
+    logoutAll().catch((e) => {
+      setLoggingOutAll(false);
+      showErrorNotification({
+        title: 'Error logging out',
+        error: new Error(e.message),
+      });
+    });
   };
 
   return (
