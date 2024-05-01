@@ -55,11 +55,17 @@ export const useQueryUserCosmetics = () => {
 
 export const useEquipProfileDecoration = () => {
   const queryUtils = trpc.useUtils();
+  const currentUser = useCurrentUser();
 
   const equipMutation = trpc.user.equipCosmetic.useMutation({
     async onSuccess() {
       await queryUtils.user.getCosmetics.invalidate();
       await queryUtils.userProfile.get.invalidate();
+      if (currentUser?.id) {
+        await queryUtils.user.getCreator.invalidate({
+          id: currentUser.id,
+        });
+      }
     },
     onError(error: TRPCClientErrorBase<DefaultErrorShape>) {
       try {

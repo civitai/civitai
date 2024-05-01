@@ -61,6 +61,8 @@ import { CosmeticShopSectionMeta } from '~/server/schema/cosmetic-shop.schema';
 import { openUserProfileEditModal } from '~/components/Modals/UserProfileEditModal';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { formatDate, formatDateMin } from '~/utils/date-helpers';
+import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 const IMAGE_SECTION_WIDTH = 1288;
 
@@ -187,6 +189,7 @@ export const CosmeticShopItem = ({ item }: { item: CosmeticShopItemGetById }) =>
   const { classes } = useStyles();
   const isAvailable =
     (item.availableQuantity ?? null) === null || (item.availableQuantity ?? 0) > 0;
+  const currentUser = useCurrentUser();
 
   const availableFrom = item.availableFrom ? formatDate(item.availableFrom) : null;
   const remaining = item.availableQuantity;
@@ -213,6 +216,10 @@ export const CosmeticShopItem = ({ item }: { item: CosmeticShopItemGetById }) =>
         <Stack spacing="md">
           <UnstyledButton
             onClick={() => {
+              if (!currentUser) {
+                return;
+              }
+
               dialogStore.trigger({
                 component: CosmeticShopItemPreviewModal,
                 props: { shopItem: item },
@@ -240,19 +247,21 @@ export const CosmeticShopItem = ({ item }: { item: CosmeticShopItemGetById }) =>
           )}
         </Stack>
         <Stack mt="auto" spacing={4}>
-          <Button
-            color="gray"
-            radius="xl"
-            onClick={() => {
-              dialogStore.trigger({
-                component: CosmeticShopItemPreviewModal,
-                props: { shopItem: item },
-              });
-            }}
-            disabled={!isAvailable}
-          >
-            Preview
-          </Button>
+          <LoginRedirect reason="shop">
+            <Button
+              color="gray"
+              radius="xl"
+              onClick={() => {
+                dialogStore.trigger({
+                  component: CosmeticShopItemPreviewModal,
+                  props: { shopItem: item },
+                });
+              }}
+              disabled={!isAvailable}
+            >
+              Preview
+            </Button>
+          </LoginRedirect>
         </Stack>
       </Stack>
     </Paper>
