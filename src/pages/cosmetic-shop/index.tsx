@@ -131,38 +131,34 @@ const useStyles = createStyles((theme, _params, getRef) => {
         maxWidth: 500,
       },
     },
+
     card: {
       height: '100%',
       background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[1],
       borderRadius: theme.radius.md,
       padding: theme.spacing.md,
       overflow: 'hidden',
+      position: 'relative',
     },
-  },
-  card: {
-    height: '100%',
-    background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[1],
-    borderRadius: theme.radius.md,
-    padding: theme.spacing.md,
-    overflow: 'hidden',
-    position: 'relative',
-  },
-  cardHeader: {
-    background: theme.colorScheme === 'dark' ? theme.colors.dark[9] : theme.colors.gray[2],
-    margin: -theme.spacing.md,
-    padding: theme.spacing.md,
-    marginBottom: theme.spacing.md,
-    height: 250,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  availability: {
-    position: 'absolute',
-    top: '-2px',
-    right: '-5px',
-  },
-})); 
+
+    cardHeader: {
+      background: theme.colorScheme === 'dark' ? theme.colors.dark[9] : theme.colors.gray[2],
+      margin: -theme.spacing.md,
+      padding: theme.spacing.md,
+      marginBottom: theme.spacing.md,
+      height: 250,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+
+    availability: {
+      position: 'absolute',
+      top: '-2px',
+      right: '-5px',
+    },
+  };
+});
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
