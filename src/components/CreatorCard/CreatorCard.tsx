@@ -209,7 +209,9 @@ export const CreatorCardV2 = ({
   const cosmetics = uniqBy(
     [
       ...(cosmeticOverwrites ?? []).map((c) => ({ cosmetic: c, data: {} })),
-      ...(useEquippedCosmetics ? creator?.cosmetics?.filter(({ cosmetic }) => !!cosmetic) : []),
+      ...(useEquippedCosmetics
+        ? (creator?.cosmetics ?? []).filter(({ cosmetic }) => !!cosmetic)
+        : []),
     ],
     'cosmetic.type'
   );
@@ -424,7 +426,7 @@ export const CreatorCardV2 = ({
 };
 
 type Props = {
-  user: UserWithCosmetics;
+  user: { id: number } & Partial<UserWithCosmetics>;
   tipBuzzEntityId?: number;
   tipBuzzEntityType?: string;
   withActions?: boolean;
@@ -432,7 +434,7 @@ type Props = {
 } & Omit<CardProps, 'children'>;
 
 type PropsV2 = Props & {
-  user: UserWithCosmetics;
+  user: { id: number } & Partial<UserWithCosmetics>;
   tipBuzzEntityId?: number;
   tipBuzzEntityType?: string;
   withActions?: boolean;

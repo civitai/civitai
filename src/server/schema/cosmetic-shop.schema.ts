@@ -15,6 +15,12 @@ export const getPaginatedCosmeticShopItemInput = paginationSchema.merge(
   })
 );
 
+export type CosmeticShopItemMeta = z.infer<typeof cosmeticShopItemMeta>;
+export const cosmeticShopItemMeta = z.object({
+  paidToUserIds: z.array(z.number()).optional(),
+  notifyUserIds: z.array(z.number()).optional(),
+});
+
 export type UpsertCosmeticShopItemInput = z.infer<typeof upsertCosmeticShopItemInput>;
 export const upsertCosmeticShopItemInput = z.object({
   id: z.number().optional(),
@@ -26,6 +32,8 @@ export const upsertCosmeticShopItemInput = z.object({
   availableTo: z.date().nullish(),
   availableQuantity: z.number().nullish(),
   archived: z.boolean().optional(),
+  meta: cosmeticShopItemMeta.optional(),
+  addToSectionIds: z.array(z.number()).optional(),
 });
 
 export type GetAllCosmeticShopSections = z.infer<typeof getAllCosmeticShopSections>;

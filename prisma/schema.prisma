@@ -2014,22 +2014,23 @@ model CosmeticShopSection {
 }
 
 model CosmeticShopItem {
-  id                Int                         @id @default(autoincrement())
+  id                Int       @id @default(autoincrement())
   cosmeticId        Int
-  cosmetic          Cosmetic                    @relation(fields: [cosmeticId], references: [id], onDelete: Cascade)
+  cosmetic          Cosmetic  @relation(fields: [cosmeticId], references: [id], onDelete: Cascade)
   unitAmount        Int
   addedById         Int?
-  addedBy           User?                       @relation(fields: [addedById], references: [id], onDelete: SetNull)
-  createdAt         DateTime                    @default(now())
+  addedBy           User?     @relation(fields: [addedById], references: [id], onDelete: SetNull)
+  createdAt         DateTime  @default(now())
   availableFrom     DateTime?
   availableTo       DateTime?
   availableQuantity Int?
-  meta              Json                        @default("{}")
+  meta              Json      @default("{}")
   title             String
   description       String?
   archivedAt        DateTime?
-  purchases         UserCosmeticShopPurchases[]
-  sections          CosmeticShopSectionItem[]
+
+  purchases UserCosmeticShopPurchases[]
+  sections  CosmeticShopSectionItem[]
 }
 
 model CosmeticShopSectionItem {

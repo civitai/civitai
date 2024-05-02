@@ -1,9 +1,11 @@
 import { CollectionType, CosmeticType, MediaType, MetricTimeframe, Prisma } from '@prisma/client';
 import { ImageSort, ImageType } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import {
+  CosmeticShopItemMeta,
   GetAllCosmeticShopSections,
   GetPaginatedCosmeticShopItemInput,
   GetPreviewImagesInput,
@@ -17,6 +19,7 @@ import { cosmeticShopItemSelect } from '~/server/selectors/cosmetic-shop.selecto
 import { imageSelect } from '~/server/selectors/image.selector';
 import { createBuzzTransaction } from '~/server/services/buzz.service';
 import { createEntityImages, getAllImages } from '~/server/services/image.service';
+import { withRetries } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 
 export const getShopItemById = async ({ id }: GetByIdInput) => {
@@ -62,6 +65,7 @@ export const upsertCosmeticShopItem = async ({
   archived,
   ...cosmeticShopItem
 }: UpsertCosmeticShopItemInput & { userId: number }) => {
+  console.log(cosmeticShopItem);
   const existingItem = id
     ? await dbRead.cosmeticShopItem.findUnique({
         where: { id },
@@ -375,6 +379,7 @@ export const purchaseCosmeticShopItem = async ({
       availableQuantity: true,
       unitAmount: true,
       title: true,
+      meta: true,
       cosmetic: {
         select: {
           type: true,
@@ -416,7 +421,9 @@ export const purchaseCosmeticShopItem = async ({
     }
   }
 
-  // Confirm user has enough buzz:
+  const meta = (shopItem.meta ?? {}) as CosmeticShopItemMeta;
+
+  // Confirms user has enough buzz:
   const transaction = await createBuzzTransaction({
     fromAccountId: userId, // bank
     toAccountId: 0,
@@ -426,7 +433,7 @@ export const purchaseCosmeticShopItem = async ({
   });
 
   try {
-    return await dbWrite.$transaction(async (tx) => {
+    const data = await dbWrite.$transaction(async (tx) => {
       // Create purchase:
       await tx.userCosmeticShopPurchases.create({
         data: {
@@ -460,6 +467,49 @@ export const purchaseCosmeticShopItem = async ({
 
       return userCosmetic;
     });
+
+    try {
+      await withRetries(async () => {
+        // We do this last mainly because we don't want to fail the purchase if this fails.
+        // We can divide the funds later if needed.
+        const paidToUsers: number[] = meta?.paidToUserIds ?? [];
+        if (paidToUsers.length > 0) {
+          // distribute the buzz to these users:
+          const amountPerUser = Math.floor(shopItem.unitAmount / paidToUsers.length);
+
+          await Promise.all(
+            paidToUsers.map((paidToUserId) =>
+              createBuzzTransaction({
+                fromAccountId: 0,
+                toAccountId: paidToUserId,
+                amount: amountPerUser,
+                type: TransactionType.Sell,
+                description: `A user has purchased your cosmetic - ${shopItem.title}`,
+                externalTransactionId: transaction.transactionId,
+                details: {
+                  purchasedBy: userId,
+                  originalAmount: shopItem.unitAmount,
+                },
+              })
+            )
+          );
+        }
+      }, 3);
+    } catch (e) {
+      // We will NOT stop the user interaction for this.
+      logToAxiom({
+        level: 'error',
+        message: 'Failed to distribute funds',
+        data: {
+          shopItemId,
+          userId,
+          transaction,
+          error: e,
+        },
+      });
+    }
+
+    return data;
   } catch (error) {
     await createBuzzTransaction({
       fromAccountId: 0,

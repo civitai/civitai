@@ -47,11 +47,17 @@ const useStyles = createStyles<string, { count: number; rows: number }>(
         display: 'grid',
         gridTemplateColumns: `repeat(auto-fill, minmax(320px, 1fr))`,
         columnGap: theme.spacing.md,
-        gridTemplateRows: `repeat(${rows}, auto)`,
+        gridTemplateRows: `repeat(${rows}, auto) 0px 0px 0px`,
         gridAutoRows: 0,
-        overflow: 'hidden',
+        // overflow: 'hidden',
         marginTop: -theme.spacing.md,
         paddingBottom: theme.spacing.md,
+        minHeight: 0,
+        minWidth: 0,
+
+        '& > *::nth-child(2)': {
+          background: 'blue',
+        },
 
         '& > *': {
           marginTop: theme.spacing.md,
