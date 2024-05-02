@@ -42,7 +42,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 import { CosmeticSample } from '~/pages/moderator/cosmetic-store/cosmetics';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
-import { IconCalendar, IconQuestionMark } from '@tabler/icons-react';
+import { IconCalendar, IconQuestionMark, IconX } from '@tabler/icons-react';
 import { IconCalendarDue } from '@tabler/icons-react';
 import { isDefined } from '~/utils/type-guards';
 import { QuickSearchDropdown } from '~/components/Search/QuickSearchDropdown';
@@ -279,7 +279,26 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
 
               <Group mx="auto" position="apart">
                 {paidToUserIds?.map((userId) => (
-                  <Box key={userId} w={455}>
+                  <Box style={{ position: 'relative' }} key={userId} w={455}>
+                    <ActionIcon
+                      pos="absolute"
+                      top={-5}
+                      right={-5}
+                      variant="filled"
+                      radius="xl"
+                      color="red"
+                      style={{
+                        zIndex: 10,
+                      }}
+                      onClick={() => {
+                        form.setValue(
+                          'meta.paidToUserIds',
+                          paidToUserIds.filter((id) => id !== userId)
+                        );
+                      }}
+                    >
+                      <IconX size={16} />
+                    </ActionIcon>
                     <SmartCreatorCard user={{ id: userId }} />
                   </Box>
                 ))}
