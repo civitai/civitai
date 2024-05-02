@@ -13,6 +13,7 @@ import { isDefined } from '~/utils/type-guards';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { SearchIndexUpdate } from '~/server/search-index/SearchIndexUpdate';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 
 const READ_BATCH_SIZE = 1000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 1000;
@@ -132,6 +133,11 @@ const onFetchItemsToIndex = async ({
     },
   });
 
+  const cosmetics = await getCosmeticsForEntity({
+    ids: articles.map((x) => x.userId),
+    entity: 'Article',
+  });
+
   console.log(
     `onFetchItemsToIndex :: fetching complete for ${indexName} range:`,
     offset,
@@ -167,6 +173,7 @@ const onFetchItemsToIndex = async ({
           meta: coverImage.meta as ImageMetaProps,
           tags: coverImage.tags.map((x) => x.tag),
         },
+        cosmetic: cosmetics[articleRecord.userId] ?? null,
       };
     })
     .filter(isDefined);
