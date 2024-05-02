@@ -29,6 +29,7 @@ const useStyles = createStyles<string, { frame?: string }>((theme, params) => {
       borderRadius: theme.radius.md,
       zIndex: 1,
       padding: framePadding,
+      position: 'relative',
     },
 
     glow: {
@@ -63,7 +64,6 @@ const _MasonryCard = forwardRef<HTMLDivElement, MasonryCardProps>(
               )
             : undefined
         }
-        style={{ position: frameDecoration ? 'relative' : undefined }}
       >
         <Card style={{ height, ...style }} className={cx(classes.root, className)} {...props}>
           {children}

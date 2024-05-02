@@ -8,7 +8,7 @@ type ObserverCallback = {
 let resizeObserver: ResizeObserver | undefined;
 const callbackMap = new WeakMap<Element, ObserverCallback[]>();
 
-export const useResizeObserver = <T extends HTMLElement = any>(
+export const useResizeObserver = <T extends HTMLElement = HTMLElement>(
   callback: ResizeFunc,
   options?: { observeChildren?: boolean }
 ) => {

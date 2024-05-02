@@ -52,6 +52,7 @@ const useStyles = createStyles<string, { frame?: string }>((theme, params) => {
     },
 
     frame: {
+      position: 'relative',
       backgroundImage: params.frame,
       borderRadius: theme.radius.md,
       zIndex: 1,
@@ -104,7 +105,6 @@ export const FeedCard = forwardRef<HTMLAnchorElement, Props>(
 
     return (
       <div
-        style={{ position: frameDecoration ? 'relative' : undefined }}
         className={
           frameDecoration
             ? cx(
