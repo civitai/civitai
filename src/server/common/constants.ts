@@ -519,7 +519,7 @@ export const generation = {
   },
   maxValues: {
     seed: 4294967295,
-    clipSkip: 10,
+    clipSkip: 3,
   },
 } as const;
 
