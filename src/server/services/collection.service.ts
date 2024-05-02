@@ -826,6 +826,7 @@ export const getCollectionItemsByCollectionId = async ({
           browsingLevel: input.browsingLevel,
           sessionUser: user,
           ids: articleIds,
+          include: ['cosmetics'],
         })
       : { items: [] };
 
