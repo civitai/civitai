@@ -9,6 +9,7 @@ import {
   GetAllCosmeticShopSections,
   GetPaginatedCosmeticShopItemInput,
   GetPreviewImagesInput,
+  GetShopInput,
   PurchaseCosmeticShopItemInput,
   UpdateCosmeticShopSectionsOrderInput,
   UpsertCosmeticShopItemInput,
@@ -298,7 +299,10 @@ export const reorderCosmeticShopSections = async ({
   return true;
 };
 
-export const getShopSectionsWithItems = async ({ isModerator }: { isModerator?: boolean } = {}) => {
+export const getShopSectionsWithItems = async ({
+  isModerator,
+  cosmeticTypes,
+}: { isModerator?: boolean } & GetShopInput = {}) => {
   const sections = await dbRead.cosmeticShopSection.findMany({
     select: {
       id: true,
@@ -322,6 +326,7 @@ export const getShopSectionsWithItems = async ({ isModerator }: { isModerator?: 
         },
         where: {
           shopItem: {
+            cosmetic: (cosmeticTypes?.length ?? 0) > 0 ? { type: { in: cosmeticTypes } } : {},
             archivedAt: null,
             OR: isModerator
               ? undefined

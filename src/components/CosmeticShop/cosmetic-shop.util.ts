@@ -1,8 +1,12 @@
+import { CosmeticType } from '@prisma/client';
+import { z } from 'zod';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useZodRouteParams } from '~/hooks/useZodRouteParams';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   GetAllCosmeticShopSections,
   GetPaginatedCosmeticShopItemInput,
+  GetShopInput,
   PurchaseCosmeticShopItemInput,
   UpdateCosmeticShopSectionsOrderInput,
   UpsertCosmeticShopItemInput,
@@ -10,6 +14,7 @@ import {
 } from '~/server/schema/cosmetic-shop.schema';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { numericStringArray, stringArray } from '~/utils/zod-helpers';
 
 export const useQueryCosmeticShopItemsPaged = (
   filters?: Partial<GetPaginatedCosmeticShopItemInput>,
@@ -173,7 +178,7 @@ export const useMutateCosmeticShop = () => {
         });
       }
 
-      queryUtils.cosmeticShop.getShop.setData(undefined, (data) => {
+      queryUtils.cosmeticShop.getShop.setData({}, (data) => {
         if (!data) return [];
 
         const sections = data.map((section) => {
@@ -242,8 +247,19 @@ export const useMutateCosmeticShop = () => {
   };
 };
 
-export const useQueryShop = () => {
-  const { data = [], ...rest } = trpc.cosmeticShop.getShop.useQuery();
+export const useQueryShop = (
+  filters?: Partial<GetShopInput>,
+  options?: { keepPreviousData?: boolean; enabled?: boolean }
+) => {
+  const { data = [], ...rest } = trpc.cosmeticShop.getShop.useQuery(
+    {
+      ...filters,
+    },
+    {
+      ...options,
+      enabled: options?.enabled ?? true,
+    }
+  );
 
   if (data) {
     return { cosmeticShopSections: data, ...rest };
@@ -251,3 +267,11 @@ export const useQueryShop = () => {
 
   return { cosmeticShopSections: [], ...rest };
 };
+
+const cosmeticShopQueryParams = z
+  .object({
+    cosmeticTypes: stringArray(),
+  })
+  .partial();
+export const useCosmeticShopQueryParams = () => useZodRouteParams(cosmeticShopQueryParams);
+export type CosmeticShopQueryParams = z.output<typeof cosmeticShopQueryParams>;

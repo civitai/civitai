@@ -18,7 +18,6 @@ export const getPaginatedCosmeticShopItemInput = paginationSchema.merge(
 export type CosmeticShopItemMeta = z.infer<typeof cosmeticShopItemMeta>;
 export const cosmeticShopItemMeta = z.object({
   paidToUserIds: z.array(z.number()).optional(),
-  notifyUserIds: z.array(z.number()).optional(),
 });
 
 export type UpsertCosmeticShopItemInput = z.infer<typeof upsertCosmeticShopItemInput>;
@@ -76,4 +75,9 @@ export type GetPreviewImagesInput = z.infer<typeof getPreviewImagesInput>;
 export const getPreviewImagesInput = z.object({
   browsingLevel: z.number(),
   limit: z.number().optional(),
+});
+
+export type GetShopInput = z.infer<typeof getShopInput>;
+export const getShopInput = z.object({
+  cosmeticTypes: z.array(z.nativeEnum(CosmeticType)).optional(),
 });
