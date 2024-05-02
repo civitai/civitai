@@ -88,10 +88,7 @@ export function ArticleCard({ data, aspectRatio }: Props) {
             </ImageGuard2>
           )}
 
-          <Stack
-            className={cx('footer', classes.contentOverlay, classes.bottom, classes.fullOverlay)}
-            spacing="sm"
-          >
+          <Stack className={cx('footer', classes.contentOverlay, classes.bottom)} spacing="sm">
             {user?.id !== -1 && (
               <UnstyledButton
                 sx={{ color: 'white' }}
@@ -107,12 +104,12 @@ export function ArticleCard({ data, aspectRatio }: Props) {
             )}
             <Stack spacing={0}>
               {publishedAt && (
-                <Text size="xs" weight={500} color="white" inline>
+                <Text className={classes.dropShadow} size="xs" weight={500} color="white" inline>
                   {formatDate(publishedAt)}
                 </Text>
               )}
               {title && (
-                <Text size="xl" weight={700} lineClamp={2} lh={1.2}>
+                <Text className={classes.dropShadow} size="xl" weight={700} lineClamp={2} lh={1.2}>
                   {title}
                 </Text>
               )}

@@ -30,7 +30,7 @@ import { aDayAgo } from '~/utils/date-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { getDisplayName, slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import { CollectionType, CosmeticEntity, CosmeticType, ModelModifier } from '@prisma/client';
+import { CollectionType, CosmeticEntity, ModelModifier } from '@prisma/client';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { CivitaiLinkManageButton } from '~/components/CivitaiLink/CivitaiLinkManageButton';
 import { generationPanel } from '~/store/generation.store';
@@ -380,16 +380,17 @@ export function ModelCard({ data, forceInView }: Props) {
                   )}
 
                   <Stack
-                    className={cx(
-                      'footer',
-                      classes.contentOverlay,
-                      classes.bottom,
-                      classes.gradientOverlay
-                    )}
+                    className={cx('footer', classes.contentOverlay, classes.bottom)}
                     spacing={5}
                   >
                     {data.user.id !== -1 && <UserAvatarSimple {...data.user} />}
-                    <Text size="xl" weight={700} lineClamp={3} lh={1.2}>
+                    <Text
+                      className={classes.dropShadow}
+                      size="xl"
+                      weight={700}
+                      lineClamp={3}
+                      lh={1.2}
+                    >
                       {data.name}
                     </Text>
                     {data.rank && (

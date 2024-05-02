@@ -110,12 +110,7 @@ function UnroutedImageCard({ data }: Props) {
           </ImageGuard2>
 
           <Stack
-            className={cx(
-              'footer',
-              sharedClasses.contentOverlay,
-              sharedClasses.bottom,
-              sharedClasses.gradientOverlay
-            )}
+            className={cx('footer', sharedClasses.contentOverlay, sharedClasses.bottom)}
             spacing="sm"
           >
             {data.user.id !== -1 && (

@@ -79,10 +79,7 @@ export function PostCard({ data }: Props) {
           )}
         </ImageGuard2>
 
-        <Stack
-          className={cx(classes.contentOverlay, classes.bottom, classes.gradientOverlay)}
-          spacing="sm"
-        >
+        <Stack className={cx(classes.contentOverlay, classes.bottom)} spacing="sm">
           <Group position="apart" align="end" noWrap>
             <Stack spacing="sm">
               {data.user?.id !== -1 && (
@@ -97,13 +94,13 @@ export function PostCard({ data }: Props) {
                 >
                   <UserAvatar
                     user={data.user}
-                    avatarProps={{ radius: 'md', size: 32 }}
+                    avatarProps={{ radius: 'xl', size: 32 }}
                     withUsername
                   />
                 </UnstyledButton>
               )}
               {data.title && (
-                <Text size="xl" weight={700} lineClamp={2} lh={1.2}>
+                <Text className={classes.dropShadow} size="xl" weight={700} lineClamp={2} lh={1.2}>
                   {data.title}
                 </Text>
               )}

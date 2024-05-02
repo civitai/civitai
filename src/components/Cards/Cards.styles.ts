@@ -176,6 +176,10 @@ export const useCardStyles = createStyles<string, { aspectRatio: number }>(
         width: '100%',
         objectFit: 'cover',
       },
+
+      dropShadow: {
+        filter: 'drop-shadow(1px 1px 1px rgba(0, 0, 0, 0.8))',
+      },
     };
   }
 );

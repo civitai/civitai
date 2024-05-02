@@ -334,16 +334,9 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
           </ImageGuard2>
         )}
 
-        <Stack
-          className={cx(
-            sharedClasses.contentOverlay,
-            sharedClasses.bottom,
-            sharedClasses.gradientOverlay
-          )}
-          spacing="sm"
-        >
+        <Stack className={cx(sharedClasses.contentOverlay, sharedClasses.bottom)} spacing="sm">
           {reviewData.title && (
-            <Text size="xl" weight={700} lineClamp={2} inline>
+            <Text className={sharedClasses.dropShadow} size="xl" weight={700} lineClamp={2} inline>
               {reviewData.title}
             </Text>
           )}
