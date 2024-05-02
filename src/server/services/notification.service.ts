@@ -14,6 +14,7 @@ import {
 } from '~/server/schema/notification.schema';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 import { v4 as uuid } from 'uuid';
+import { redis, REDIS_KEYS } from '~/server/redis/client';
 
 type NotificationsRaw = {
   id: string;
@@ -158,9 +159,14 @@ export const createNotification = async (data: Prisma.NotificationCreateArgs['da
   // If the user has this notification type disabled, don't create a notification.
   if (!!userNotificationSettings?.disabledAt) return;
 
+  const notificationTable =
+    (await redis.hGet(REDIS_KEYS.SYSTEM.FEATURES, 'notificationTable')) ?? 'Notification';
+
   if (!data.id) data.id = uuid();
   const [change] = await dbWrite.$queryRaw<NotificationAddedRow[]>`
-    INSERT INTO "Notification" ("id", "userId", "type", "details", "category")
+    INSERT INTO ${Prisma.raw(
+      `"${notificationTable}"`
+    )} ("id", "userId", "type", "details", "category")
     VALUES (
       ${data.id},
       ${data.userId},
