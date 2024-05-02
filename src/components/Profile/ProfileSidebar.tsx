@@ -93,6 +93,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
   const isCurrentUser = currentUser?.id === user?.id;
   const muted = !!user?.muted;
   const [showAllBadges, setShowAllBadges] = useState<boolean>(false);
+  const [enlargedBadge, setEnlargedBadge] = useState<number | null>(null);
   const sizeOpts = mapSize[isMobile ? 'mobile' : 'desktop'];
 
   const badges = useMemo(
@@ -274,21 +275,44 @@ export function ProfileSidebar({ username, className }: { username: string; clas
             {(showAllBadges ? badges : badges.slice(0, sizeOpts.badgeCount)).map((award) => {
               const data = (award.data ?? {}) as { url?: string; animated?: boolean };
               const url = (data.url ?? '') as string;
+              const isEnlarged = enlargedBadge === award.id;
 
               if (!url) {
                 return null;
               }
 
+              const style = {
+                transition: 'transform 0.1s',
+                cursor: 'pointer',
+                width: sizeOpts.badges,
+                transform: isEnlarged ? 'scale(2)' : undefined,
+                zIndex: isEnlarged ? 100 : undefined,
+                filter: isEnlarged ? 'drop-shadow(0px 0px 3px #000000)' : undefined,
+              };
+
               return (
-                <Popover key={award.id} withArrow width={200} position="top">
+                <Popover
+                  key={award.id}
+                  withArrow
+                  width={200}
+                  position="top"
+                  offset={35}
+                  onChange={(opened) => {
+                    if (opened) {
+                      setEnlargedBadge(award.id);
+                    } else {
+                      setEnlargedBadge((curr) => (curr === award.id ? null : curr));
+                    }
+                  }}
+                >
                   <Popover.Target>
                     {data.animated ? (
-                      <Box style={{ cursor: 'pointer', width: sizeOpts.badges }}>
+                      <Box style={style}>
                         <EdgeMedia src={url} alt={award.name} width="original" />
                       </Box>
                     ) : (
-                      <Box style={{ cursor: 'pointer' }}>
-                        <EdgeMedia src={url} alt={award.name} width={sizeOpts.badges} />
+                      <Box style={style}>
+                        <EdgeMedia src={url} alt={award.name} width="original" />
                       </Box>
                     )}
                   </Popover.Target>
