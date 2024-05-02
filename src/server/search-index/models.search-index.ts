@@ -238,6 +238,11 @@ const onFetchItemsToIndex = async ({
         },
       });
 
+      const cosmetics = await getCosmeticsForEntity({
+        ids: models.map((m) => m.id),
+        entity: 'Model',
+      });
+
       console.log(
         `onFetchItemsToIndex :: fetching complete for ${indexName} range:`,
         offset,
@@ -298,10 +303,6 @@ const onFetchItemsToIndex = async ({
       });
 
       const unavailableGenResources = await getUnavailableResources();
-      const cosmetics = await getCosmeticsForEntity({
-        ids: models.map((m) => m.id),
-        entity: 'Model',
-      });
 
       const indexReadyRecords = models
         .map((modelRecord) => {
