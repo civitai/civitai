@@ -270,9 +270,9 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
   const ref = useResizeObserver<HTMLDivElement>((entry) => {
     const children = [...entry.target.childNodes] as HTMLElement[];
     for (const child of children) {
-      const elementStyle = child.computedStyleMap();
-      const paddingTop = parseFloat(elementStyle.get('padding-top')?.toString() ?? '0');
-      const paddingBottom = parseFloat(elementStyle.get('padding-bottom')?.toString() ?? '0');
+      const elementStyle = getComputedStyle(child);
+      const paddingTop = parseFloat(elementStyle.paddingTop ?? '0');
+      const paddingBottom = parseFloat(elementStyle.paddingBottom ?? '0');
 
       const height = child.clientHeight - paddingTop - paddingBottom;
       if (height === 0) child.style.visibility = 'hidden';
