@@ -17,6 +17,7 @@ import { imageNotifications } from '~/server/notifications/image.notifications';
 import { clubNotifications } from '~/server/notifications/club.notifications';
 import { creatorsProgramNotifications } from '~/server/notifications/creators-program.notifications';
 import { followNotifications } from '~/server/notifications/follow.notifications';
+import { cosmeticShopNotifications } from '~/server/notifications/cosmetic-shop';
 
 const notificationProcessors = {
   ...mentionNotifications,
@@ -37,6 +38,7 @@ const notificationProcessors = {
   ...clubNotifications,
   ...creatorsProgramNotifications,
   ...followNotifications,
+  ...cosmeticShopNotifications,
 };
 
 // Sort notifications by priority and group them by priority

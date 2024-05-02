@@ -39,6 +39,7 @@ const transactionTypes = [
   TransactionType[TransactionType.Training],
   TransactionType[TransactionType.Purchase],
   TransactionType[TransactionType.Bounty],
+  TransactionType[TransactionType.Sell],
 ];
 
 const defaultFilters = {
