@@ -46,8 +46,9 @@ export default function GeneratePage() {
             <IconLock />
           </ThemeIcon>
           <Text align="center">
-            You have been muted, your account will be reviewed by a Community Manager within 48
-            hours. You will be notified if your account is unmuted. You do not need to contact us.
+            Your account has been restricted due to potential Terms of Service violations, and has
+            been flagged for review. A Community Manager will investigate, and you will receive a
+            determination notification within 48 hours. You do not need to contact us.
           </Text>
         </Stack>
       </Center>
