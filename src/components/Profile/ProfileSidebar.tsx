@@ -124,7 +124,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
       radius="xl"
       fullWidth
     >
-      Edit profile
+      Customize profile
     </Button>
   );
   const followUserBtn = !isCurrentUser && (

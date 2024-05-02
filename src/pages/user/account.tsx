@@ -38,16 +38,16 @@ export default function Account({ providers }: Props) {
             </Text>
           </Stack>
           <ProfileCard />
-          <StripeConnectCard />
-          <PaymentMethodsCard />
-          {/* {buzz && <UserReferralCodesCard />} */}
           <SocialProfileCard />
           <SettingsCard />
           <ContentControlsCard />
           <ModerationCard />
-          {currentUser?.subscriptionId && <SubscriptionCard />}
-          <NotificationsCard />
           <AccountsCard providers={providers} />
+          <StripeConnectCard />
+          {currentUser?.subscriptionId && <SubscriptionCard />}
+          <PaymentMethodsCard />
+          {/* {buzz && <UserReferralCodesCard />} */}
+          <NotificationsCard />
           {apiKeys && <ApiKeysCard />}
           <DeleteCard />
           <Divider label="Extras" />

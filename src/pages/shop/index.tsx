@@ -294,7 +294,7 @@ export default function CosmeticShopMain() {
                 radius="xl"
                 compact
               >
-                Edit profile
+                Customize profile
               </Button>
             </Group>
             <Text size="sm" color="dimmed" mb="sm">

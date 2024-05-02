@@ -404,7 +404,7 @@ const { openModal, Modal } = createContextModal({
         <Stack>
           <Group position="apart">
             <Text size={24} weight={590}>
-              Edit Profile
+              Customize Profile
             </Text>
 
             <Group>
