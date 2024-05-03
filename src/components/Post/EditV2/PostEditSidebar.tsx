@@ -133,7 +133,11 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
       {!post.publishedAt ? (
         <Tooltip
           disabled={canPublish}
-          label="At least one image is required in order to publish this post to the community"
+          label={
+            isReordering
+              ? 'Finish rearranging your images before you publish'
+              : 'At least one image is required in order to publish this post to the community'
+          }
           multiline
           width={260}
           withArrow
