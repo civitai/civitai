@@ -66,7 +66,6 @@ export const upsertCosmeticShopItem = async ({
   archived,
   ...cosmeticShopItem
 }: UpsertCosmeticShopItemInput & { userId: number }) => {
-  console.log(cosmeticShopItem);
   const existingItem = id
     ? await dbRead.cosmeticShopItem.findUnique({
         where: { id },
