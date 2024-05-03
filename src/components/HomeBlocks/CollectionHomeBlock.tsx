@@ -46,15 +46,16 @@ const useStyles = createStyles<string, { count: number; rows: number }>(
       grid: {
         display: 'grid',
         gridTemplateColumns: `repeat(auto-fill, minmax(320px, 1fr))`,
-        columnGap: theme.spacing.md,
+        // gap: theme.spacing.md,
         gridTemplateRows: `repeat(${rows}, auto)`,
         gridAutoRows: 0,
         overflow: 'hidden',
-        marginTop: -theme.spacing.md,
-        paddingBottom: theme.spacing.md,
+        margin: -theme.spacing.md / 2,
+        // marginTop: -theme.spacing.md,
+        // paddingBottom: theme.spacing.md,
 
         '& > *': {
-          marginTop: theme.spacing.md,
+          margin: theme.spacing.md / 2,
         },
 
         [containerQuery.smallerThan('md')]: {
@@ -267,18 +268,18 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
     </Stack>
   );
 
-  const ref = useResizeObserver<HTMLDivElement>((entry) => {
-    const children = [...entry.target.childNodes] as HTMLElement[];
-    for (const child of children) {
-      const elementStyle = getComputedStyle(child);
-      const paddingTop = parseFloat(elementStyle.paddingTop ?? '0');
-      const paddingBottom = parseFloat(elementStyle.paddingBottom ?? '0');
+  // const ref = useResizeObserver<HTMLDivElement>((entry) => {
+  //   const children = [...entry.target.childNodes] as HTMLElement[];
+  //   for (const child of children) {
+  //     const elementStyle = getComputedStyle(child);
+  //     const paddingTop = parseFloat(elementStyle.paddingTop ?? '0');
+  //     const paddingBottom = parseFloat(elementStyle.paddingBottom ?? '0');
 
-      const height = child.clientHeight - paddingTop - paddingBottom;
-      if (height === 0) child.style.visibility = 'hidden';
-      else child.style.removeProperty('visibility');
-    }
-  });
+  //     const height = child.clientHeight - paddingTop - paddingBottom;
+  //     if (height === 0) child.style.visibility = 'hidden';
+  //     else child.style.removeProperty('visibility');
+  //   }
+  // });
 
   const useGrid =
     metadata.description &&
@@ -299,7 +300,7 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
           ))}
         </div>
       ) : (
-        <div className={classes.grid} ref={ref}>
+        <div className={classes.grid}>
           <ImagesProvider
             hideReactionCount={collection?.mode === CollectionMode.Contest}
             images={
