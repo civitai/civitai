@@ -131,7 +131,9 @@ export const altOrchestratorCaller =
     ? new OrchestratorCaller(env.ALT_ORCHESTRATION_ENDPOINT, env.ALT_ORCHESTRATION_TOKEN)
     : orchestratorCaller;
 
-export function getOrchestratorCaller(forTime?: Date) {
+export function getOrchestratorCaller(forTime?: Date, force?: boolean) {
+  if (force === true) return altOrchestratorCaller;
+
   if (forTime && env.ALT_ORCHESTRATION_TIMEFRAME) {
     const { start, end } = env.ALT_ORCHESTRATION_TIMEFRAME;
     if ((!start || forTime > start) && (!end || forTime < end)) {

@@ -37,7 +37,7 @@ export function PostImageCards() {
           </Tabs.Tab>
         </Tabs.List>
       </Tabs>
-      <div className="flex flex-col gap-3" style={{ paddingBottom: 1000 }}>
+      <div className="flex flex-col gap-3">
         {[...images]
           .sort((a, b) => (a.data.index ?? 0) - (b.data.index ?? 0))
           .map((image) => (

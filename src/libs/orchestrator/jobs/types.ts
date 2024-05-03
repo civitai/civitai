@@ -7,6 +7,7 @@ export enum JobStatus {
   Rejected = 'Rejected',
   LateRejected = 'LateRejected',
   Deleted = 'Deleted',
+  Canceled = 'Canceled',
   Expired = 'Expired',
   ClaimExpired = 'ClaimExpired',
 }

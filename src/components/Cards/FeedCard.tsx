@@ -38,7 +38,6 @@ const aspectRatioValues: Record<
 
 const useStyles = createStyles<string, { frame?: string }>((theme, params) => {
   const framePadding = 5;
-
   return {
     root: {
       padding: '0 !important',
@@ -66,7 +65,7 @@ const useStyles = createStyles<string, { frame?: string }>((theme, params) => {
         width: '100%',
         height: '100%',
         zIndex: -1,
-        filter: 'blur(10px)',
+        filter: 'blur(5px)',
         position: 'absolute',
         top: 0,
         left: 0,

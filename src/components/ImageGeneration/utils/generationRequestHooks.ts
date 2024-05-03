@@ -1,14 +1,9 @@
 import { InfiniteData } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';
-import { GetGenerationRequestsReturn } from '~/server/services/generation/generation.service';
-import { showErrorNotification } from '~/utils/notifications';
-import { queryClient, trpc } from '~/utils/trpc';
 import { useEffect, useMemo } from 'react';
-import { GetGenerationRequestsInput } from '~/server/schema/generation.schema';
-import { createDebouncer, useDebouncer } from '~/utils/debouncer';
+import { z } from 'zod';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
-import { SignalMessages, GenerationRequestStatus } from '~/server/common/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
   JobStatus,
@@ -16,9 +11,13 @@ import {
   TextToImageEvent,
   textToImageEventSchema,
 } from '~/libs/orchestrator/jobs';
-import { z } from 'zod';
-import { isDefined } from '~/utils/type-guards';
+import { GenerationRequestStatus, SignalMessages } from '~/server/common/enums';
+import { GetGenerationRequestsInput } from '~/server/schema/generation.schema';
+import { GetGenerationRequestsReturn } from '~/server/services/generation/generation.service';
 import { Generation } from '~/server/services/generation/generation.types';
+import { createDebouncer } from '~/utils/debouncer';
+import { showErrorNotification } from '~/utils/notifications';
+import { queryClient, trpc } from '~/utils/trpc';
 
 export const useGetGenerationRequests = (
   input?: GetGenerationRequestsInput,
@@ -152,6 +151,7 @@ const signalEventsDictionary: Record<string, TextToImageEvent> = {};
 const jobStatusMap: Partial<Record<JobStatus, Generation.ImageStatus>> = {
   [JobStatus.Claimed]: 'Started',
   [JobStatus.Deleted]: 'Cancelled',
+  [JobStatus.Canceled]: 'Cancelled',
   [JobStatus.Failed]: 'Error',
   [JobStatus.Rejected]: 'Error',
   [JobStatus.Succeeded]: 'Success',
