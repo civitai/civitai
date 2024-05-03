@@ -31,12 +31,18 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { BlockedReason, ImageSort, NsfwLevel } from '~/server/common/enums';
+import {
+  BlockedReason,
+  ImageSort,
+  NsfwLevel,
+  SearchIndexUpdateQueueAction,
+} from '~/server/common/enums';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { hasEntityAccess } from '../services/common.service';
 import { getGallerySettingsByModelId } from '~/server/services/model.service';
 import { Flags } from '~/shared/utils';
 import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
+import { imagesSearchIndex } from '~/server/search-index';
 
 export const moderateImageHandler = async ({
   input,
@@ -179,6 +185,8 @@ export const setTosViolationHandler = async ({
         updatedAt: new Date(),
       },
     });
+
+    await imagesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
 
     await ctx.track.image({
       type: 'DeleteTOS',

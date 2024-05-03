@@ -511,6 +511,7 @@ export async function softDeleteUser({ id }: { id: number }) {
   await cancelSubscription({ userId: id });
   await dbWrite.user.update({ where: { id }, data: { bannedAt: new Date() } });
   await invalidateSession(id);
+  await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
 }
 
 export const updateAccountScope = async ({
