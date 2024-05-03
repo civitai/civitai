@@ -46,7 +46,15 @@ import {
 } from '~/components/Training/Form/TrainingCommon';
 import { useTrainingServiceStatus } from '~/components/Training/training.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { Form, InputCheckbox, InputNumber, InputSelect, InputText, useForm } from '~/libs/form';
+import {
+  Form,
+  InputCheckbox,
+  InputNumber,
+  InputSelect,
+  InputSwitch,
+  InputText,
+  useForm,
+} from '~/libs/form';
 import { BaseModel, baseModelSets } from '~/server/common/constants';
 import { generationResourceSchema } from '~/server/schema/generation.schema';
 import {
@@ -512,6 +520,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     samplePrompt1: z.string(),
     samplePrompt2: z.string(),
     samplePrompt3: z.string(),
+    staging: z.boolean().optional(),
   });
 
   // @ts-ignore ignoring because the reducer will use default functions in the next step in place of actual values
@@ -519,6 +528,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     samplePrompt1: thisTrainingDetails?.samplePrompts?.[0] ?? '',
     samplePrompt2: thisTrainingDetails?.samplePrompts?.[1] ?? '',
     samplePrompt3: thisTrainingDetails?.samplePrompts?.[2] ?? '',
+    staging: false,
     ...(thisTrainingDetails?.params
       ? thisTrainingDetails.params
       : trainingSettings.reduce((a, v) => ({ ...a, [v.name]: v.default }), {})),
@@ -762,6 +772,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
       samplePrompt1,
       samplePrompt2,
       samplePrompt3,
+      staging,
       customModelSelect, //unsent
       optimizerArgs, //unsent
       ...paramData
@@ -798,6 +809,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         baseModelType: formBaseModelType,
         samplePrompts: [samplePrompt1, samplePrompt2, samplePrompt3],
         params: paramData,
+        staging,
       },
     };
 
@@ -1327,6 +1339,11 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           </>
         )}
       </Stack>
+      {currentUser?.isModerator && (
+        <Group position="right" my="xs">
+          <InputSwitch name="staging" label="Test Mode" labelPosition="left" />
+        </Group>
+      )}
       <Group mt="xl" position="right">
         <Button variant="default" onClick={() => goBack(model.id, thisStep)}>
           Back
