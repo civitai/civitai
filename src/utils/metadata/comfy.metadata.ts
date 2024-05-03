@@ -77,7 +77,6 @@ export const comfyMetadataProcessor = createMetadataProcessor({
         }
       }
     }
-    console.log('positive', initialSamplerNode.positive);
 
     const metadata: ImageMetaProps = {
       prompt: getPromptText(initialSamplerNode.positive, 'positive'),
@@ -100,12 +99,6 @@ export const comfyMetadataProcessor = createMetadataProcessor({
       // Converting to string to reduce bytes size
       comfy: `{"prompt": ${exif.prompt}, "workflow": ${exif.workflow}}`,
     };
-
-    // Handle control net apply
-    if (initialSamplerNode.positive.class_type === 'ControlNetApply') {
-      const conditioningNode = initialSamplerNode.positive.inputs.conditioning as ComfyNode;
-      metadata.prompt = conditioningNode.inputs.text as string;
-    }
 
     // Map to automatic1111 terms for compatibility
     a1111Compatability(metadata);
@@ -138,6 +131,12 @@ function a1111Compatability(metadata: ImageMetaProps) {
 }
 
 function getPromptText(node: ComfyNode, target: 'positive' | 'negative' = 'positive'): string {
+  if (node.class_type === 'ControlNetApply')
+    return getPromptText(node.inputs.conditioning as ComfyNode, target);
+
+  // Handle wildcard nodes
+  if (node.inputs?.populated_text) node.inputs.text = node.inputs.populated_text;
+
   if (node.inputs?.text) {
     if (typeof node.inputs.text === 'string') return node.inputs.text;
     if (typeof (node.inputs.text as ComfyNode).class_type !== 'undefined')
