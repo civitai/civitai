@@ -298,7 +298,7 @@ export function AppHeader({
         rel: 'nofollow',
       },
       {
-        href: '/posts/create?video',
+        href: '/posts/create?video=true',
         visible: !isMuted,
         redirectReason: 'post-images',
         label: (
