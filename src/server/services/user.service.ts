@@ -989,9 +989,20 @@ export const toggleBookmarked = async ({
   userId: number;
   setTo?: boolean;
 }) => {
-  const collection = await dbRead.collection.findFirstOrThrow({
+  let collection = await dbRead.collection.findFirst({
     where: { userId, type, mode: CollectionMode.Bookmark },
   });
+  if (!collection) {
+    collection = await dbWrite.collection.create({
+      data: {
+        userId,
+        type,
+        mode: CollectionMode.Bookmark,
+        name: `Bookmarked ${type}`,
+        description: `Your bookmarked ${type.toLowerCase()} will appear in this collection.`,
+      },
+    });
+  }
 
   const entityProp = collectionEntityProps[type];
   const collectionItem = await dbRead.collectionItem.findFirst({
