@@ -231,6 +231,7 @@ export const CosmeticShopItem = ({ item }: { item: CosmeticShopItemGetById }) =>
                 props: { shopItem: item },
               });
             }}
+            disabled={!isAvailable}
           >
             <Box className={classes.cardHeader}>
               <CosmeticSample cosmetic={cosmetic} size="lg" />
