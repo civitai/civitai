@@ -16,9 +16,10 @@ import {
 } from '~/server/services/orchestrator/common';
 import { throwBadRequestError, throwInsufficientFundsError } from '~/server/utils/errorHandling';
 import { includesMinor, includesNsfw, includesPoi } from '~/utils/metadata/audit';
-import { stringifyAIR } from '~/utils/string-helpers';
+import { parseAIR, stringifyAIR } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import {
+  Air,
   ApiError,
   CancelablePromise,
   createCivitaiClient,
@@ -245,8 +246,6 @@ export async function textToImage({
     },
   };
 
-  console.log(requestBody);
-
   const client = createCivitaiClient({
     env: isDev ? 'dev' : 'prod',
     auth: 'ff2ddeabd724b029112668447a9388f7',
@@ -273,4 +272,22 @@ export async function textToImage({
     }) as CancelablePromise<TextToImageResponse>;
 }
 
-// async function formatTextToImageResponse(data: TextToImageResponse) {}
+export async function formatTextToImageResponses(data: TextToImageResponse[]) {
+  const airs = Object.keys(
+    data.reduce<Record<string, boolean>>((acc, response) => {
+      for (const job of response.jobs ?? []) {
+        const details = job.details;
+        if (details) {
+          acc[details.model ?? ''] = true; // TODO - remove null coleasce
+          for (const key in details.additionalNetworks ?? {}) acc[key] = true;
+        }
+      }
+      return acc;
+    }, {})
+  ).map((air) => parseAIR(air));
+
+  const { resources, safeNegatives, minorNegatives, minorPositives } =
+    await getResourceDataWithInjects(airs.map((x) => x.version));
+
+  console.log({ resources, safeNegatives, minorNegatives, minorPositives });
+}

@@ -6,7 +6,10 @@ import ncmecCaller from '~/server/http/ncmec/ncmec.caller';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { getTopContributors } from '~/server/services/buzz.service';
 import { deleteImagesForModelVersionCache } from '~/server/services/image.service';
-import { textToImage } from '~/server/services/orchestrator/textToImage';
+import {
+  formatTextToImageResponses,
+  textToImage,
+} from '~/server/services/orchestrator/textToImage';
 import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
 import { bustCachedArray } from '~/server/utils/cache-helpers';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
@@ -30,8 +33,8 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
   // await deleteImagesForModelVersionCache(11745);
   const session = await getServerAuthSession({ req, res });
   const user = session?.user;
-  if (user)
-    await textToImage({
+  if (user) {
+    const response = await textToImage({
       params: {
         prompt:
           'vvi(artstyle), 2girl, solo, keqing (opulent splendor) (genshin impact), keqing (genshin impact), official alternate costume, dress, cone hair bun,jewelry, parted lips, looking at viewer, portrait,earrings, red orange hair, hair between eyes, upper body,very long hair, low twintails, bangs,  smile, street background,floating hair,hair ornament,night light, latent, ruins, bridge, river, hair flower, facing viewer, arms behind back, close-up, <lora:yoneyamaMaiStyle:0.7>,<lora:keqingGenshinImpact:0.9>,cloudy,gradient  cloud  color,splash art',
@@ -64,6 +67,8 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
       user,
       whatIf: true,
     });
+    const formatted = await formatTextToImageResponses([response]);
+  }
 
   return res.status(200).json({
     ok: true,
