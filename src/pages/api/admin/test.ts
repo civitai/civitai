@@ -41,7 +41,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
         seed: -1,
         steps: 20,
         clipSkip: 2,
-        quantity: 10,
+        quantity: 1,
         nsfw: true,
         aspectRatio: 2,
         draft: true,

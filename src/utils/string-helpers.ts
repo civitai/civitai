@@ -3,7 +3,7 @@ import he from 'he';
 import { truncate } from 'lodash-es';
 import slugify from 'slugify';
 import { BaseModel, baseModelSets } from '~/server/common/constants';
-import { Air } from '~/server/services/orchestrator/temp';
+import { Air } from '@civitai/client';
 
 import allowedUrls from '~/utils/allowed-third-party-urls.json';
 import { toJson } from '~/utils/json-helpers';

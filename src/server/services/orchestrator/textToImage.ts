@@ -1,7 +1,12 @@
 import { ModelType } from '@prisma/client';
 import { SessionUser } from 'next-auth';
 import { z } from 'zod';
-import { baseModelSetTypes, draftMode, getGenerationConfig } from '~/server/common/constants';
+import {
+  Sampler,
+  baseModelSetTypes,
+  draftMode,
+  getGenerationConfig,
+} from '~/server/common/constants';
 import { extModeration } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
 import { getGenerationStatus, getResourceData } from '~/server/services/orchestrator/common';
@@ -9,6 +14,23 @@ import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { includesMinor, includesNsfw, includesPoi } from '~/utils/metadata/audit';
 import { stringifyAIR } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
+import {
+  CancelablePromise,
+  createCivitaiClient,
+  type ImageJobNetworkParams,
+  type Provider,
+  type Scheduler,
+  type TextToImageJobTemplate,
+} from '@civitai/client';
+import { env } from '~/env/server.mjs';
+import { isDev } from '~/env/other';
+import {
+  safeNegatives,
+  minorNegatives,
+  minorPositives,
+  samplersToSchedulers,
+} from '~/shared/constants/generation.constants';
+import { TextToImageResponse } from '~/server/services/orchestrator/types';
 
 // #region [schemas]
 const textToImageParamsSchema = z.object({
@@ -41,19 +63,11 @@ const textToImageSchema = z.object({
 });
 // #endregion
 
-// #region [constants]
-// when removing a string from the `safeNegatives` array, add it to the `allSafeNegatives` array
-const safeNegatives = [{ id: 106916, triggerWord: 'civit_nsfw' }];
-const minorNegatives = [{ id: 250712, triggerWord: 'safe_neg' }];
-const minorPositives = [{ id: 250708, triggerWord: 'safe_pos' }];
-const allInjectedNegatives = [...safeNegatives, ...minorNegatives];
-const allInjectedPositives = [...minorPositives];
-// #endregion
-
 export async function textToImage({
   user,
+  whatIf,
   ...input
-}: z.input<typeof textToImageSchema> & { user: SessionUser }) {
+}: z.input<typeof textToImageSchema> & { user: SessionUser; whatIf?: boolean }) {
   const parsedInput = textToImageSchema.parse(input);
   const { params } = parsedInput;
 
@@ -145,7 +159,7 @@ export async function textToImage({
   const availableResourceTypes = config.additionalResourceTypes.map((x) => x.type);
   const additionalNetworks = resources
     .filter((x) => availableResourceTypes.includes(x.model.type))
-    .reduce<{ [key: string]: object }>((acc, resource) => {
+    .reduce<{ [key: string]: ImageJobNetworkParams }>((acc, resource) => {
       acc[resource.air] = {
         type: resource.model.type,
         strength: resource.strength,
@@ -201,5 +215,43 @@ export async function textToImage({
   // this for Pony resources -Manuel
   if (isSDXL) params.clipSkip = 2;
 
-  console.log(additionalNetworks);
+  // adjust quantity/batchSize for draft mode
+  let quantity = params.quantity;
+  let batchSize = 1;
+  if (params.draft) {
+    quantity = 4;
+    batchSize = params.quantity / 4;
+  }
+
+  const requestBody: TextToImageJobTemplate = {
+    $type: 'textToImage',
+    model: checkpoint.air,
+    quantity,
+    batchSize,
+    additionalNetworks,
+    providers: params.draft ? (env.DRAFT_MODE_PROVIDERS as Provider[] | undefined) : undefined,
+    properties: { userId: user.id },
+    params: {
+      prompt: params.prompt,
+      negativePrompt: params.negativePrompt,
+      scheduler: samplersToSchedulers[params.sampler as Sampler] as Scheduler,
+      steps: params.steps,
+      cfgScale: params.cfgScale,
+      seed: params.seed,
+      clipSkip: params.clipSkip,
+      width,
+      height,
+    },
+  };
+
+  const client = createCivitaiClient({
+    env: isDev ? 'dev' : 'prod',
+    auth: 'ff2ddeabd724b029112668447a9388f7',
+  });
+
+  return client.requests.submitRequest({
+    include: 'Details',
+    whatif: whatIf,
+    requestBody,
+  }) as CancelablePromise<TextToImageResponse>;
 }
