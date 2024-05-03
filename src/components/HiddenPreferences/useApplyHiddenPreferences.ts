@@ -152,20 +152,10 @@ function filterPreferences<
         .filter((model) => {
           const userId = model.user.id;
           const isOwner = userId === currentUser?.id;
-          // !IMPORTANT - We should only be filtering off model.version.nsfwLevel, but meilisearch doesn't have nsfwLevel on model.version
-          const modelVersionNsfwLevel = model.version?.nsfwLevel;
-          if (modelVersionNsfwLevel) {
-            if ((isOwner || isModerator) && modelVersionNsfwLevel === 0) return true;
-            if (!Flags.intersects(modelVersionNsfwLevel, browsingLevel)) {
-              hidden.browsingLevel++;
-              return false;
-            }
-          } else {
-            if ((isOwner || isModerator) && model.nsfwLevel === 0) return true;
-            if (!Flags.intersects(model.nsfwLevel, browsingLevel)) {
-              hidden.browsingLevel++;
-              return false;
-            }
+          if ((isOwner || isModerator) && model.nsfwLevel === 0) return true;
+          if (!Flags.intersects(model.nsfwLevel, browsingLevel)) {
+            hidden.browsingLevel++;
+            return false;
           }
           if (userId && hiddenUsers.get(userId)) {
             hidden.users++;
@@ -484,10 +474,6 @@ type BaseModel = {
   tags?: number[];
   nsfwLevel: number;
   nsfw?: boolean;
-  version?: {
-    id: number;
-    nsfwLevel?: number;
-  };
 };
 
 type BaseArticle = {
