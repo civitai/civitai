@@ -1,6 +1,6 @@
-import { Card, Group, Title, Button, Stack } from '@mantine/core';
-import { signOut } from 'next-auth/react';
+import { Button, Card, Group, Stack, Title } from '@mantine/core';
 import { z } from 'zod';
+import { useAccountContext } from '~/components/CivitaiWrapped/AccountProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Form, InputText, useForm } from '~/libs/form';
 import { showSuccessNotification } from '~/utils/notifications';
@@ -8,12 +8,12 @@ import { trpc } from '~/utils/trpc';
 
 export function RemoveAccountCard() {
   const user = useCurrentUser();
-  const utils = trpc.useContext();
+  const { logout } = useAccountContext();
 
   const { mutate, isLoading, error } = trpc.user.delete.useMutation({
     async onSuccess(user) {
       showSuccessNotification({ message: 'Your account has been removed' });
-      signOut();
+      logout();
     },
   });
 

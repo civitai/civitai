@@ -1,15 +1,16 @@
-import { ButtonProps, Stack, Button, Text } from '@mantine/core';
-import { signOut } from 'next-auth/react';
+import { Button, ButtonProps, Stack, Text } from '@mantine/core';
+import { useAccountContext } from '~/components/CivitaiWrapped/AccountProvider';
 
 export function OnboardingAbortButton({
   children,
   showWarning,
   ...props
 }: ButtonProps & { showWarning?: boolean }) {
-  const handleCancelOnboarding = () => signOut();
+  const { logout } = useAccountContext();
+
   return (
     <Stack spacing={0}>
-      <Button {...props} variant="default" onClick={handleCancelOnboarding}>
+      <Button {...props} variant="default" onClick={() => logout()}>
         {children}
       </Button>
       {showWarning && (

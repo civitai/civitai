@@ -81,7 +81,7 @@ export const useChatNewMessageSignal = () => {
         play();
       }
     },
-    [queryUtils, play, currentUser, features.chat]
+    [queryUtils, play, currentUser, currentUser?.id, features.chat]
   );
 
   useSignalConnection(SignalMessages.ChatNewMessage, onUpdate);
