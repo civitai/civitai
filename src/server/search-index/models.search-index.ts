@@ -22,6 +22,7 @@ import { NsfwLevel } from '../common/enums';
 import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import { SearchIndexUpdate } from '~/server/search-index/SearchIndexUpdate';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 
 const RATING_BAYESIAN_M = 3.5;
 const RATING_BAYESIAN_C = 10;
@@ -209,6 +210,7 @@ const onFetchItemsToIndex = async ({
             select: modelHashSelect,
             where: {
               fileType: { in: ['Model', 'Pruned Model'] as ModelFileType[] },
+              hashType: { notIn: ['AutoV1'] },
             },
           },
           metrics: {
@@ -234,6 +236,11 @@ const onFetchItemsToIndex = async ({
           },
           OR: (whereOr?.length ?? 0) > 0 ? whereOr : undefined,
         },
+      });
+
+      const cosmetics = await getCosmeticsForEntity({
+        ids: models.map((m) => m.id),
+        entity: 'Model',
       });
 
       console.log(
@@ -370,6 +377,7 @@ const onFetchItemsToIndex = async ({
               tippedAmountCount: metrics.tippedAmountCount ?? 0,
             },
             canGenerate,
+            cosmetic: cosmetics[model.id] ?? null,
           };
         })
         // Removes null models that have no versionIDs

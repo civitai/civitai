@@ -216,11 +216,11 @@ function EditDetail() {
 
   return (
     <div className="@container relative">
-      <div className={`p-3 flex flex-col gap-3  ${!showPreview ? '@sm:p-9 @sm:gap-5' : ''}`}>
+      <div className={`p-3 flex flex-col gap-3  ${!showPreview ? '@sm:p-6 @sm:gap-4' : ''}`}>
         <LoadingOverlay visible={isDeleting} />
         <div
           className={`flex flex-row-reverse flex-wrap gap-3 ${
-            !showPreview ? '@sm:flex-nowrap @sm:gap-9' : ''
+            !showPreview ? '@sm:flex-nowrap @sm:gap-6' : ''
           }`}
         >
           {/*
@@ -246,7 +246,7 @@ function EditDetail() {
                         color="blue"
                         compact
                         classNames={{ label: 'flex gap-1' }}
-                        size="md"
+                        size="sm"
                         onClick={onEditMetaClick}
                         className="text-sm"
                       >
@@ -261,7 +261,7 @@ function EditDetail() {
           )}
           {/* #endregion */}
 
-          <div className={`flex flex-col gap-3 w-full flex-1 ${!showPreview ? '@sm:gap-5' : ''}`}>
+          <div className={`flex flex-col gap-3 w-full flex-1 ${!showPreview ? '@sm:gap-4' : ''}`}>
             {/*
           // #region [TOS Violation]
           */}
@@ -274,7 +274,7 @@ function EditDetail() {
 
             <CustomCard className="flex flex-col gap-3">
               <div className="flex justify-between items-center">
-                <h3 className="text-xl font-semibold leading-none text-dark-7 dark:text-gray-0">
+                <h3 className=" text-lg font-semibold leading-none text-dark-7 dark:text-gray-0">
                   Prompt
                 </h3>
                 {!isBlocked && (
@@ -283,7 +283,7 @@ function EditDetail() {
                       variant="light"
                       color="blue"
                       compact
-                      size="md"
+                      size="sm"
                       onClick={onEditMetaClick}
                       className="text-sm"
                     >
@@ -294,7 +294,7 @@ function EditDetail() {
                         variant={hideMeta ? 'filled' : 'light'}
                         color="blue"
                         compact
-                        size="md"
+                        size="sm"
                         classNames={{ label: 'flex gap-1 text-sm' }}
                         onClick={toggleHidePrompt}
                         loading={isUpdating}
@@ -369,7 +369,7 @@ function EditDetail() {
                       variant="light"
                       color="blue"
                       compact
-                      size="md"
+                      size="sm"
                       classNames={{ label: 'flex gap-1' }}
                       onClick={() => setShowMoreResources((o) => !o)}
                     >
@@ -449,7 +449,7 @@ function EditDetail() {
                     variant="light"
                     color="blue"
                     compact
-                    size="md"
+                    size="sm"
                     classNames={{ label: 'flex gap-1' }}
                     onClick={() => undefined}
                     className="text-sm"
@@ -484,6 +484,7 @@ function EditDetail() {
               entityType="image"
               tags={!!image.tags.length ? image.tags : undefined}
               collapsible
+              canAdd
             />
           </>
         )}

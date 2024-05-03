@@ -1,6 +1,7 @@
 -- AlterTable
 ALTER TABLE "UserMetric" ADD COLUMN     "reactionCount" INTEGER NOT NULL DEFAULT 0;
 
+CREATE OR REPLACE VIEW "UserStat" AS
 WITH user_model_metrics_timeframe AS (
          SELECT m."userId",
             mm.timeframe,
@@ -63,8 +64,7 @@ WITH user_model_metrics_timeframe AS (
             max(iif(user_counts_timeframe.timeframe = 'Week'::"MetricTimeframe", user_counts_timeframe."followingCount",NULL::bigint)) AS "followingCountWeek",
             max(iif(user_counts_timeframe.timeframe = 'Week'::"MetricTimeframe", user_counts_timeframe."hiddenCount", NULL::bigint)) AS "hiddenCountWeek",
             max(iif(user_counts_timeframe.timeframe = 'Month'::"MetricTimeframe", user_counts_timeframe."followerCount",NULL::bigint)) AS "followerCountMonth",
-            max(iif(user_counts_timeframe.timeframe = 'Month'::"MetricTimeframe", user_counts_timeframe."followingCount",
- NULL::bigint)) AS "followingCountMonth",
+            max(iif(user_counts_timeframe.timeframe = 'Month'::"MetricTimeframe", user_counts_timeframe."followingCount", NULL::bigint)) AS "followingCountMonth",
             max(iif(user_counts_timeframe.timeframe = 'Month'::"MetricTimeframe", user_counts_timeframe."hiddenCount", NULL::bigint)) AS "hiddenCountMonth",
             max(iif(user_counts_timeframe.timeframe = 'Year'::"MetricTimeframe", user_counts_timeframe."followerCount", NULL::bigint)) AS "followerCountYear",
             max(iif(user_counts_timeframe.timeframe = 'Year'::"MetricTimeframe", user_counts_timeframe."followingCount",NULL::bigint)) AS "followingCountYear",
@@ -91,7 +91,7 @@ WITH user_model_metrics_timeframe AS (
             max(iif(user_counts_timeframe.timeframe = 'Week'::"MetricTimeframe", user_counts_timeframe."answerAcceptCount", NULL::bigint)) AS "answerAcceptCountWeek",
             max(iif(user_counts_timeframe.timeframe = 'Month'::"MetricTimeframe", user_counts_timeframe."answerAcceptCount", NULL::bigint)) AS "answerAcceptCountMonth",
             max(iif(user_counts_timeframe.timeframe = 'Year'::"MetricTimeframe", user_counts_timeframe."answerAcceptCount", NULL::bigint)) AS "answerAcceptCountYear",
-            max(iif(user_counts_timeframe.timeframe = 'AllTime'::"MetricTimeframe", user_counts_timeframe."answerAcceptCount", NULL::bigint)) AS "answerAcceptCountAllTime",
+            max(iif(user_counts_timeframe.timeframe = 'AllTime'::"MetricTimeframe", user_counts_timeframe."answerAcceptCount", NULL::bigint)) AS "answerAcceptCountAllTime", 
             max(iif(user_counts_timeframe.timeframe = 'Day'::"MetricTimeframe", user_counts_timeframe."reactionCount", NULL::bigint)) AS "reactionCountDay",
             max(iif(user_counts_timeframe.timeframe = 'Week'::"MetricTimeframe", user_counts_timeframe."reactionCount", NULL::bigint)) AS "reactionCountWeek",
             max(iif(user_counts_timeframe.timeframe = 'Month'::"MetricTimeframe", user_counts_timeframe."reactionCount", NULL::bigint)) AS "reactionCountMonth",
@@ -136,11 +136,6 @@ WITH user_model_metrics_timeframe AS (
             u."answerAcceptCountMonth",
             u."answerAcceptCountYear",
             u."answerAcceptCountAllTime",
-            u."reactionCountDay",
-            u."reactionCountWeek",
-            u."reactionCountMonth",
-            u."reactionCountYear",
-            u."reactionCountAllTime",
             COALESCE(m."downloadCountDay", 0::bigint) AS "downloadCountDay",
             COALESCE(m."downloadCountWeek", 0::bigint) AS "downloadCountWeek",
             COALESCE(m."downloadCountMonth", 0::bigint) AS "downloadCountMonth",
@@ -165,7 +160,12 @@ WITH user_model_metrics_timeframe AS (
             COALESCE(m."thumbsUpCountWeek", 0::bigint) AS "thumbsUpCountWeek",
             COALESCE(m."thumbsUpCountMonth", 0::bigint) AS "thumbsUpCountMonth",
             COALESCE(m."thumbsUpCountYear", 0::bigint) AS "thumbsUpCountYear",
-            COALESCE(m."thumbsUpCountAllTime", 0::bigint) AS "thumbsUpCountAllTime"
+            COALESCE(m."thumbsUpCountAllTime", 0::bigint) AS "thumbsUpCountAllTime",
+            u."reactionCountDay",
+            u."reactionCountWeek",
+            u."reactionCountMonth",
+            u."reactionCountYear",
+            u."reactionCountAllTime"
            FROM user_counts u
              LEFT JOIN user_model_metrics m ON m."userId" = u."userId"
         )

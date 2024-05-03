@@ -40,6 +40,7 @@ import {
 const useStyles = createStyles((theme) => ({
   tagOverlay: {
     position: 'relative',
+    height: 'auto',
     '&:hover button': {
       display: 'flex',
     },

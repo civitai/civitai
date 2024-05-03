@@ -10,7 +10,7 @@ import {
   Text,
   createStyles,
 } from '@mantine/core';
-import { getHotkeyHandler, useClickOutside, useDebouncedValue, useHotkeys } from '@mantine/hooks';
+import { getHotkeyHandler, useDebouncedValue, useHotkeys } from '@mantine/hooks';
 import { IconChevronDown, IconSearch } from '@tabler/icons-react';
 import type { Hit } from 'instantsearch.js';
 import { useRouter } from 'next/router';
@@ -21,6 +21,7 @@ import React, {
   useMemo,
   useRef,
   useState,
+  Fragment,
 } from 'react';
 import {
   Configure,
@@ -204,9 +205,11 @@ export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ..
     <InstantSearch
       searchClient={searchClient}
       indexName={searchIndexMap[targetIndex as keyof typeof searchIndexMap]}
-      future={{ preserveSharedStateOnUnmount: true }}
+      future={{ preserveSharedStateOnUnmount: false }}
     >
-      {indexSupportsNsfwLevel && <BrowsingLevelFilter attributeName="nsfwLevel" />}
+      {indexSupportsNsfwLevel && (
+        <BrowsingLevelFilter attributeName={indexSupportsNsfwLevel ? 'nsfwLevel' : ''} />
+      )}
       <AutocompleteSearchContent
         {...props}
         indexName={targetIndex}
@@ -242,11 +245,11 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   const isMobile = useIsMobile();
   const features = useFeatureFlags();
   const inputRef = useRef<HTMLInputElement>(null);
-  const wrapperRef = useClickOutside(() => onClear?.());
 
   const { status } = useInstantSearch({
     catchError: true,
   });
+
   const { query, refine: setQuery } = useSearchBox(searchBoxProps);
   const { hits, results } = useHitsTransformed<TKey>();
   const indexName = results?.index
@@ -269,11 +272,14 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   });
 
   const items = useMemo(() => {
+    if (status === 'stalled') {
+      return []; // Wait it out
+    }
     const items = filtered.map((hit) => ({ key: String(hit.id), hit, value: '' }));
     if (!!results?.nbHits && results.nbHits > DEFAULT_DROPDOWN_ITEM_LIMIT)
       items.push({ key: 'view-more', value: query, hit: null as any });
     return items;
-  }, [filtered, results?.nbHits, query]);
+  }, [status, filtered, results?.nbHits, query]);
 
   const focusInput = () => inputRef.current?.focus();
   const blurInput = () => inputRef.current?.blur();
@@ -371,7 +377,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   return (
     <>
       <Configure hitsPerPage={DEFAULT_DROPDOWN_ITEM_LIMIT} filters={filters} />
-      <Group ref={wrapperRef} className={classes.wrapper} spacing={0} noWrap>
+      <Group className={classes.wrapper} spacing={0} noWrap>
         <Select
           classNames={{
             root: classes.targetSelectorRoot,
@@ -418,6 +424,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
           data={items}
           onChange={setSearch}
           onClear={handleClear}
+          onBlur={handleClear}
           onKeyDown={getHotkeyHandler([
             ['Escape', blurInput],
             ['Enter', handleSubmit],
@@ -460,7 +467,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
           // prevent default filtering behavior
           filter={() => true}
           clearable={query.length > 0}
-          maxDropdownHeight={isMobile ? 450 : undefined}
+          maxDropdownHeight={isMobile ? 'calc(90vh - var(--mantine-header-height))' : undefined}
           {...autocompleteProps}
         />
         <ActionIcon

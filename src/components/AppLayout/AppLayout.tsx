@@ -1,12 +1,12 @@
-import { Button, Center, Stack, Text, ThemeIcon, Title, createStyles } from '@mantine/core';
+import { Button, Center, createStyles, Stack, Text, ThemeIcon, Title } from '@mantine/core';
 import { IconBan } from '@tabler/icons-react';
-import { signOut } from 'next-auth/react';
 import React from 'react';
-
 import { AppFooter } from '~/components/AppLayout/AppFooter';
 import { AppHeader, RenderSearchComponentProps } from '~/components/AppLayout/AppHeader';
 import { AssistantButton } from '~/components/Assistant/AssistantButton';
+import { useAccountContext } from '~/components/CivitaiWrapped/AccountProvider';
 import { FloatingActionButton2 } from '~/components/FloatingActionButton/FloatingActionButton';
+import { ScrollAreaMain } from '~/components/ScrollArea/ScrollAreaMain';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NewsletterDialog } from '../NewsletterDialog/NewsletterDialog';
@@ -25,6 +25,7 @@ export function AppLayout({
 }) {
   const { classes } = useStyles();
   const user = useCurrentUser();
+  const { logout } = useAccountContext();
   // TODO - move the bannedAt check to _app.tsx
   const isBanned = !!user?.bannedAt;
   const flags = useFeatureFlags();
@@ -42,7 +43,7 @@ export function AppLayout({
           <Text size="lg" align="center">
             This account has been banned and cannot access the site
           </Text>
-          <Button onClick={() => signOut()}>Sign out</Button>
+          <Button onClick={() => logout()}>Sign out</Button>
         </Stack>
       </Center>
     );

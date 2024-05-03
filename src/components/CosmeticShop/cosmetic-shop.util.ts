@@ -89,6 +89,7 @@ export const useQueryCosmeticShopSection = ({ id }: { id: number }) => {
 
 export const useMutateCosmeticShop = () => {
   const queryUtils = trpc.useContext();
+  const currentUser = useCurrentUser();
 
   const onError = (error: any, message = 'There was an error while performing your request') => {
     try {
@@ -166,8 +167,13 @@ export const useMutateCosmeticShop = () => {
   const purchaseShopItemMutation = trpc.cosmeticShop.purchaseShopItem.useMutation({
     async onSuccess(_, { shopItemId }) {
       await queryUtils.userProfile.get.invalidate();
+      if (currentUser?.id) {
+        await queryUtils.user.getCreator.invalidate({
+          id: currentUser.id,
+        });
+      }
 
-     queryUtils.cosmeticShop.getShop.setData(undefined, (data) => {
+      queryUtils.cosmeticShop.getShop.setData(undefined, (data) => {
         if (!data) return [];
 
         const sections = data.map((section) => {

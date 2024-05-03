@@ -273,7 +273,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
         limit: Math.ceil(limit * 3), // Overscan so that I can merge by postId
         user: ctx.user,
         headers: { src: 'getImagesAsPostsInfiniteHandler' },
-        include: [...input.include, 'tagIds'],
+        include: [...input.include, 'tagIds', 'profilePictures'],
       });
 
       // Merge images by postId

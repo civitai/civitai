@@ -1,5 +1,5 @@
-import { CollectionType, CosmeticType, MetricTimeframe, Prisma } from '@prisma/client';
-import { ImageSort } from '~/server/common/enums';
+import { CollectionType, CosmeticType, MediaType, MetricTimeframe, Prisma } from '@prisma/client';
+import { ImageSort, ImageType } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { TransactionType } from '~/server/schema/buzz.schema';
@@ -326,10 +326,7 @@ export const getShopSectionsWithItems = async ({ isModerator }: { isModerator?: 
                     availableFrom: { lte: new Date() },
                     availableTo: { gte: new Date() },
                   },
-                  {
-                    availableFrom: null,
-                    availableTo: null,
-                  },
+                  { availableFrom: null, availableTo: null },
                 ],
           },
         },
@@ -499,6 +496,7 @@ export const getUserPreviewImagesForCosmetics = async ({
     include: [],
     period: MetricTimeframe.AllTime,
     periodMode: 'stats',
+    types: [MediaType.image],
   });
 
   const images = userImages.items.slice(0, limit);
@@ -528,6 +526,7 @@ export const getUserPreviewImagesForCosmetics = async ({
       period: MetricTimeframe.AllTime,
       periodMode: 'stats',
       sort: ImageSort.Newest,
+      types: [MediaType.image],
     });
 
     return [...images, ...collectionImages.items].slice(0, limit);

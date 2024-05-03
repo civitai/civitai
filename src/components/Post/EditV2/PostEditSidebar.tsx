@@ -7,7 +7,7 @@ import { useRouter } from 'next/router';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { CollectionType } from '@prisma/client';
 import { formatDate } from '~/utils/date-helpers';
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import { IconClock, IconTrash } from '@tabler/icons-react';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { ReorderImagesButton } from '~/components/Post/EditV2/PostReorderImages';
@@ -17,13 +17,14 @@ import { useCatchNavigation } from '~/hooks/useCatchNavigation';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { SchedulePostModal } from '~/components/Post/EditV2/SchedulePostModal';
 import { ConfirmDialog } from '~/components/Dialog/Common/ConfirmDialog';
+import { removeEmpty } from '~/utils/object-helpers';
 
 export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
   // #region [state]
   const router = useRouter();
-  const currentUser = useCurrentUserRequired();
   const params = usePostEditParams();
   const { returnUrl, afterPublish } = params;
+  const [deleted, setDeleted] = useState(false);
   const [updatePost, isReordering, hasImages, showReorder] = usePostEditStore((state) => [
     state.updatePost,
     state.isReordering,
@@ -53,10 +54,11 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
           updatePost((data) => {
             data.publishedAt = publishedAt ?? null;
           });
-          if (publishedAt) await afterPublish?.({ postId: id, publishedAt });
+          if (publishedAt && afterPublish) await afterPublish({ postId: id, publishedAt });
           else {
-            if (returnUrl) router.push(returnUrl);
-            else router.push(`/user/${currentUser.username}/posts`);
+            router.push({ pathname: `/posts/${post.id}`, query: removeEmpty({ returnUrl }) });
+            // if (returnUrl) router.push(returnUrl);
+            // else router.push(`/user/${currentUser.username}/posts`);
           }
         },
       }
@@ -85,7 +87,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
   };
 
   useCatchNavigation({
-    unsavedChanges: !post.publishedAt,
+    unsavedChanges: !post.publishedAt && !deleted,
     message: `You haven't published this post, all images will stay hidden. Do you wish to continue?`,
   });
   // #endregion
@@ -131,7 +133,11 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
       {!post.publishedAt ? (
         <Tooltip
           disabled={canPublish}
-          label="At least one image is required in order to publish this post to the community"
+          label={
+            isReordering
+              ? 'Finish rearranging your images before you publish'
+              : 'At least one image is required in order to publish this post to the community'
+          }
           multiline
           width={260}
           withArrow
@@ -189,7 +195,10 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
       <DeletePostButton postId={post.id}>
         {({ onClick, isLoading }) => (
           <Button
-            onClick={() => onClick()}
+            onClick={() => {
+              setDeleted(true);
+              onClick();
+            }}
             color="red"
             loading={isLoading}
             variant="outline"

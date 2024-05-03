@@ -94,7 +94,10 @@ function UnroutedImageCard({ data }: Props) {
                     }
                     type={data.type}
                     width={imageWidth}
-                    className={sharedClasses.image}
+                    className={cx(
+                      sharedClasses.image,
+                      data.cosmetic && sharedClasses.frameAdjustment
+                    )}
                     wrapperProps={{ style: { height: '100%', width: '100%' } }}
                     loading="lazy"
                     contain
@@ -107,12 +110,7 @@ function UnroutedImageCard({ data }: Props) {
           </ImageGuard2>
 
           <Stack
-            className={cx(
-              'footer',
-              sharedClasses.contentOverlay,
-              sharedClasses.bottom,
-              sharedClasses.gradientOverlay
-            )}
+            className={cx('footer', sharedClasses.contentOverlay, sharedClasses.bottom)}
             spacing="sm"
           >
             {data.user.id !== -1 && (

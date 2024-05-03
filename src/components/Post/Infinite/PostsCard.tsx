@@ -15,6 +15,7 @@ import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMen
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
 import { CosmeticEntity } from '@prisma/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useCardStyles } from '~/components/Cards/Cards.styles';
 
 export function PostsCard({
   data: { images, id, stats, imageCount, cosmetic, user },
@@ -26,6 +27,7 @@ export function PostsCard({
   const currentUser = useCurrentUser();
   const { ref, inView } = useInView({ rootMargin: '600px' });
   const { classes } = useStyles();
+  const { classes: sharedClasses } = useCardStyles({ aspectRatio: 1 });
 
   const image = images[0];
   const isOwner = currentUser?.id === user.id;
@@ -67,6 +69,7 @@ export function PostsCard({
                     <EdgeMedia
                       src={image.url}
                       name={image.name ?? image.id.toString()}
+                      className={cosmetic ? sharedClasses.frameAdjustment : undefined}
                       alt={
                         image.meta
                           ? truncate(image.meta.prompt, {
@@ -77,7 +80,6 @@ export function PostsCard({
                       type={image.type}
                       width={450}
                       placeholder="empty"
-                      style={{ width: '100%', position: 'relative' }}
                     />
                   )}
                 </RoutedDialogLink>

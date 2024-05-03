@@ -15,6 +15,7 @@ export namespace Orchestrator {
     | 'Rejected'
     | 'LateRejected'
     | 'Deleted'
+    | 'Canceled'
     | 'Expired'
     | 'ClaimExpired';
 

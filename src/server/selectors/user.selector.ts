@@ -22,7 +22,7 @@ export const userWithCosmeticsSelect = Prisma.validator<Prisma.UserSelect>()({
   // TODO.leaderboard: uncomment when migration is done
   // leaderboardShowcase: true,
   cosmetics: {
-    where: { equippedAt: { not: null } },
+    where: { equippedAt: { not: null }, equippedToId: null },
     select: {
       data: true,
       cosmetic: {

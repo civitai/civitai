@@ -14,6 +14,7 @@ export function PostImageCards() {
   const images = usePostEditStore((state) => state.images);
   const { showPreview, toggleShowPreview } = usePostPreviewContext();
   const tab = showPreview ? 'preview' : 'edit';
+
   if (!images.length) return null;
 
   return (
@@ -36,11 +37,14 @@ export function PostImageCards() {
           </Tabs.Tab>
         </Tabs.List>
       </Tabs>
-      <div className="flex flex-col gap-3" style={{ paddingBottom: 1000 }}>
+      <div className="flex flex-col gap-3">
         {[...images]
           .sort((a, b) => (a.data.index ?? 0) - (b.data.index ?? 0))
           .map((image) => (
-            <PostImageCard key={image.data.url} image={image} />
+            <PostImageCard
+              key={image.type === 'added' ? image.data.id : image.data.url}
+              image={image}
+            />
           ))}
       </div>
     </>

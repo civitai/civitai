@@ -207,7 +207,7 @@ const getSpendings = ({
     title: 'Shop badges and cosmetics',
     description: 'Make your profile stand out!',
     btnProps: {
-      href: '/cosmetic-shop',
+      href: '/shop',
       children: 'Get some!',
       rightIcon: <IconArrowRight size={14} />,
     },

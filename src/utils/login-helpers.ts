@@ -34,6 +34,7 @@ export const loginRedirectReasons = {
   'favorite-model': 'You need to be logged in to favorite a model',
   rater: 'You need to be logged in to play the rating game',
   'switch-accounts': 'Log into the account you wish to add',
+  shop: 'You need to be logged in to preview and purchase cosmetics',
 };
 
 export type LoginRedirectReason = keyof typeof loginRedirectReasons;

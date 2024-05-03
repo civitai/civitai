@@ -99,9 +99,6 @@ export function AccountsCard({ providers }: { providers: AsyncReturnType<typeof 
             </tbody>
           </Table>
         </div>
-        <Button variant="subtle" compact onClick={() => currentUser?.refresh()}>
-          Refresh my session
-        </Button>
       </Stack>
     </Card>
   );

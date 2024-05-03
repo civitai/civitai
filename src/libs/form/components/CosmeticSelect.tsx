@@ -129,9 +129,9 @@ export function CosmeticSelect<TData extends CosmeticItem>({
 type CosmeticItem = WithClaimKey<
   Pick<
     SimpleCosmetic,
-    'id' | 'data' | 'type' | 'name' | 'equippedToId' | 'equippedToType' | 'inUse' | 'obtainedAt'
+    'id' | 'type' | 'name' | 'equippedToId' | 'equippedToType' | 'inUse' | 'obtainedAt'
   >
->;
+> & { data: MixedObject };
 type Props<TData extends CosmeticItem> = Omit<InputWrapperProps, 'onChange' | 'children'> & {
   data: TData[];
   shopUrl?: string;

@@ -46,15 +46,16 @@ const useStyles = createStyles<string, { count: number; rows: number }>(
       grid: {
         display: 'grid',
         gridTemplateColumns: `repeat(auto-fill, minmax(320px, 1fr))`,
-        columnGap: theme.spacing.md,
+        // gap: theme.spacing.md,
         gridTemplateRows: `repeat(${rows}, auto)`,
         gridAutoRows: 0,
         overflow: 'hidden',
-        marginTop: -theme.spacing.md,
-        paddingBottom: theme.spacing.md,
+        margin: -theme.spacing.md / 2,
+        // marginTop: -theme.spacing.md,
+        // paddingBottom: theme.spacing.md,
 
         '& > *': {
-          marginTop: theme.spacing.md,
+          margin: theme.spacing.md / 2,
         },
 
         [containerQuery.smallerThan('md')]: {
@@ -267,14 +268,18 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
     </Stack>
   );
 
-  const ref = useResizeObserver((entry) => {
-    const children = [...entry.target.childNodes] as HTMLElement[];
-    for (const child of children) {
-      const { height } = child.getBoundingClientRect();
-      if (height === 0) child.style.visibility = 'hidden';
-      else child.style.removeProperty('visibility');
-    }
-  });
+  // const ref = useResizeObserver<HTMLDivElement>((entry) => {
+  //   const children = [...entry.target.childNodes] as HTMLElement[];
+  //   for (const child of children) {
+  //     const elementStyle = getComputedStyle(child);
+  //     const paddingTop = parseFloat(elementStyle.paddingTop ?? '0');
+  //     const paddingBottom = parseFloat(elementStyle.paddingBottom ?? '0');
+
+  //     const height = child.clientHeight - paddingTop - paddingBottom;
+  //     if (height === 0) child.style.visibility = 'hidden';
+  //     else child.style.removeProperty('visibility');
+  //   }
+  // });
 
   const useGrid =
     metadata.description &&
@@ -286,40 +291,44 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
       <Box mb="md" className={cx({ [classes.meta]: useGrid })}>
         {MetaDataTop}
       </Box>
-      <div className={classes.grid} ref={ref}>
-        <ImagesProvider
-          hideReactionCount={collection?.mode === CollectionMode.Contest}
-          images={
-            // items
-            //   .map((x) => {
-            //     if (x.type === 'image') return x.data;
-            //     return null;
-            //   })
-            //   .filter(isDefined) as any
-            type === 'image' ? (items as any) : undefined
-          }
-        >
-          <ReactionSettingsProvider
-            settings={{ hideReactionCount: collection?.mode === CollectionMode.Contest }}
+      {isLoading || loadingPreferences ? (
+        <div className={classes.grid}>
+          {Array.from({ length: ITEMS_PER_ROW * rows }).map((_, index) => (
+            <AspectRatio ratio={7 / 9} key={index}>
+              <Skeleton width="100%" />
+            </AspectRatio>
+          ))}
+        </div>
+      ) : (
+        <div className={classes.grid}>
+          <ImagesProvider
+            hideReactionCount={collection?.mode === CollectionMode.Contest}
+            images={
+              // items
+              //   .map((x) => {
+              //     if (x.type === 'image') return x.data;
+              //     return null;
+              //   })
+              //   .filter(isDefined) as any
+              type === 'image' ? (items as any) : undefined
+            }
           >
-            {useGrid && <div className={classes.gridMeta}>{MetaDataGrid}</div>}
-            {isLoading || loadingPreferences
-              ? Array.from({ length: ITEMS_PER_ROW * rows }).map((_, index) => (
-                  <AspectRatio ratio={7 / 9} key={index}>
-                    <Skeleton width="100%" />
-                  </AspectRatio>
-                ))
-              : items.map((item) => (
-                  <Fragment key={item.id}>
-                    {type === 'model' && <ModelCard data={item as any} forceInView />}
-                    {type === 'image' && <ImageCard data={item as any} />}
-                    {type === 'post' && <PostCard data={item as any} />}
-                    {type === 'article' && <ArticleCard data={item as any} />}
-                  </Fragment>
-                ))}
-          </ReactionSettingsProvider>
-        </ImagesProvider>
-      </div>
+            <ReactionSettingsProvider
+              settings={{ hideReactionCount: collection?.mode === CollectionMode.Contest }}
+            >
+              {useGrid && <div className={classes.gridMeta}>{MetaDataGrid}</div>}
+              {items.map((item) => (
+                <Fragment key={item.id}>
+                  {type === 'model' && <ModelCard data={item as any} forceInView />}
+                  {type === 'image' && <ImageCard data={item as any} />}
+                  {type === 'post' && <PostCard data={item as any} />}
+                  {type === 'article' && <ArticleCard data={item as any} />}
+                </Fragment>
+              ))}
+            </ReactionSettingsProvider>
+          </ImagesProvider>
+        </div>
+      )}
     </>
   );
 };

@@ -61,7 +61,7 @@ const schema = z.object({
   jobHasCompleted: z.boolean(),
 });
 
-// Initialized, Claimed, Rejected, LateRejected, ClaimExpired, Updated, Failed, Succeeded, Expired, Deleted
+// Initialized, Claimed, Rejected, LateRejected, ClaimExpired, Updated, Failed, Succeeded, Expired, Deleted, Canceled
 const mapTrainingStatus = {
   Updated: TrainingStatus.Processing,
   Succeeded: TrainingStatus.InReview,
@@ -69,6 +69,7 @@ const mapTrainingStatus = {
   Rejected: TrainingStatus.Processing,
   LateRejected: TrainingStatus.Processing,
   Deleted: TrainingStatus.Failed,
+  Canceled: TrainingStatus.Failed,
   Expired: TrainingStatus.Failed,
 } as const;
 
@@ -97,7 +98,7 @@ export default WebhookEndpoint(async (req, res) => {
 
   const data = bodyResults.data;
 
-  if (['Deleted', 'Expired', 'Failed'].includes(data.type)) {
+  if (['Deleted', 'Canceled', 'Expired', 'Failed'].includes(data.type)) {
     logWebhook({
       type: 'info',
       message: `Attempting to refund user`,
@@ -127,6 +128,7 @@ export default WebhookEndpoint(async (req, res) => {
     case 'Rejected':
     case 'LateRejected':
     case 'Deleted':
+    case 'Canceled':
     case 'Expired':
       const status = mapTrainingStatus[data.type];
 

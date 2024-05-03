@@ -27,6 +27,7 @@ import { CosmeticPreview, CosmeticSample } from '~/pages/moderator/cosmetic-stor
 import { CosmeticShopItemGetById } from '~/types/router';
 import { showSuccessNotification } from '~/utils/notifications';
 import { getDisplayName } from '~/utils/string-helpers';
+import { IconAlertTriangleFilled } from '@tabler/icons-react';
 
 type Props = { shopItem: CosmeticShopItemGetById };
 
@@ -195,10 +196,16 @@ export const CosmeticShopItemPreviewModal = ({ shopItem }: Props) => {
               </>
             )}
             {cosmetic.type === CosmeticType.ContentDecoration && (
-              <Text size="xs" color="dimmed">
-                Decorations can be applied to a single piece of content. additional copies are
-                needed for each additional piece of content.
-              </Text>
+              <Group spacing="xs" noWrap>
+                <Text color="yellow">
+                  <IconAlertTriangleFilled />
+                </Text>
+
+                <Text size="xs" color="yellow" lh={1.3}>
+                  This cosmetic is an <u>equippable</u>. It can only be applied to <u>one</u> piece
+                  of content at a time.
+                </Text>
+              </Group>
             )}
           </Stack>
         </Grid.Col>

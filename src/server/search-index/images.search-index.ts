@@ -34,6 +34,7 @@ import { NsfwLevel } from '~/server/common/enums';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { SearchIndexUpdate } from '~/server/search-index/SearchIndexUpdate';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 
 const READ_BATCH_SIZE = 10000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 10000;
@@ -327,6 +328,11 @@ const onFetchItemsToIndex = async ({
         select: profileImageSelect,
       });
 
+      const imageCosmetics = await getCosmeticsForEntity({
+        ids: images.map((i) => i.id),
+        entity: 'Image',
+      });
+
       console.log(
         `onFetchItemsToIndex :: fetching complete for ${indexName} range:`,
         offset,
@@ -394,6 +400,7 @@ const onFetchItemsToIndex = async ({
           tagNames: tags.map((t) => t.name),
           tagIds: tags.map((t) => t.id),
           reactions: [],
+          cosmetic: imageCosmetics[imageRecord.id] ?? null,
         };
       });
 

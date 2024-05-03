@@ -80,7 +80,7 @@ export function ImageDetailCarousel({ className }: GalleryCarouselProps) {
   ));
 
   const hasMultipleImages = images.length > 1;
-  const canCreate = flags.imageGeneration && !!image.meta?.prompt;
+  const canCreate = flags.imageGeneration && !!image.meta?.prompt && !image.hideMeta;
 
   return (
     <div ref={setRef} className={cx(classes.root, className)}>

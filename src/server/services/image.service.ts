@@ -1437,7 +1437,8 @@ export const getImagesForModelVersion = async ({
             SELECT
               ir."imageId" id,
               ir."modelVersionId",
-              row_number() OVER (PARTITION BY ir."modelVersionId" ORDER BY im."reactionCount" DESC) row_num
+              -- Community posts on the carousel follow the Oldest first rule. We are matching that here.
+              row_number() OVER (PARTITION BY ir."modelVersionId" ORDER BY p."createdAt" ASC) row_num
             FROM "ImageResource" ir
             JOIN "Image" i ON i.id = ir."imageId"
             JOIN "Post" p ON p.id = i."postId"
