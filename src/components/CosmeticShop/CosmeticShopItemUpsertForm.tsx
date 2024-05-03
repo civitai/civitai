@@ -42,9 +42,11 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 import { CosmeticSample } from '~/pages/moderator/cosmetic-store/cosmetics';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
-import { IconCalendar, IconQuestionMark } from '@tabler/icons-react';
+import { IconCalendar, IconQuestionMark, IconX } from '@tabler/icons-react';
 import { IconCalendarDue } from '@tabler/icons-react';
 import { isDefined } from '~/utils/type-guards';
+import { QuickSearchDropdown } from '~/components/Search/QuickSearchDropdown';
+import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
 
 const formSchema = upsertCosmeticShopItemInput;
 
@@ -118,12 +120,21 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
     schema: formSchema,
     defaultValues: {
       ...shopItem,
+      meta: {
+        paidToUserIds: [],
+        ...((shopItem?.meta as MixedObject) ?? {}),
+      },
       archived: shopItem?.archivedAt !== null,
     },
     shouldUnregister: false,
   });
 
-  const [title, description, cosmeticId] = form.watch(['title', 'description', 'cosmeticId']);
+  const [title, description, cosmeticId, paidToUserIds] = form.watch([
+    'title',
+    'description',
+    'cosmeticId',
+    'meta.paidToUserIds',
+  ]);
   const { cosmetic, isLoading: isLoadingCosmetic } = useQueryCosmetic({ id: cosmeticId });
 
   const { upsertShopItem, upsertingShopItem } = useMutateCosmeticShop();
@@ -249,6 +260,51 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
               clearable
             />
           </Group>
+
+          <Divider />
+          <Input.Wrapper
+            label="Funds Distribution"
+            description="Add users to distribute funds to when this item is purchased. The cost of this item will be split evenly among the selected users. Leave empty to keep all funds as Civitai."
+            descriptionProps={{ mb: 5 }}
+          >
+            <Stack>
+              <QuickSearchDropdown
+                startingIndex="users"
+                supportedIndexes={['users']}
+                onItemSelected={(item) => {
+                  form.setValue('meta.paidToUserIds', [...(paidToUserIds || []), item.entityId]);
+                }}
+                dropdownItemLimit={25}
+              />
+
+              <Group mx="auto" position="apart">
+                {paidToUserIds?.map((userId) => (
+                  <Box style={{ position: 'relative' }} key={userId} w={455}>
+                    <ActionIcon
+                      pos="absolute"
+                      top={-5}
+                      right={-5}
+                      variant="filled"
+                      radius="xl"
+                      color="red"
+                      style={{
+                        zIndex: 10,
+                      }}
+                      onClick={() => {
+                        form.setValue(
+                          'meta.paidToUserIds',
+                          paidToUserIds.filter((id) => id !== userId)
+                        );
+                      }}
+                    >
+                      <IconX size={16} />
+                    </ActionIcon>
+                    <SmartCreatorCard user={{ id: userId }} />
+                  </Box>
+                ))}
+              </Group>
+            </Stack>
+          </Input.Wrapper>
         </Stack>
         <Stack>
           <Group position="right">
