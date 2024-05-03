@@ -13,7 +13,7 @@ export function PostEdit() {
 
   return (
     <div className="@container">
-      <div className="flex flex-col gap-3 @sm:flex-row @sm:justify-center">
+      <div className="flex flex-col gap-3 @sm:flex-row @sm:justify-center @sm:gap-6">
         <div
           className="flex flex-col gap-3 flex-1 min-w-0"
           style={showPreview ? { maxWidth: 700 } : undefined}
