@@ -1,5 +1,6 @@
 import {
   Anchor,
+  Card,
   Center,
   Container,
   Group,
@@ -8,28 +9,26 @@ import {
   Stack,
   Text,
   Title,
-  Card,
 } from '@mantine/core';
 import { IconLock } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useRef } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { createPage } from '~/components/AppLayout/createPage';
 import { BackButton } from '~/components/BackButton/BackButton';
 import { FeatureIntroductionHelpButton } from '~/components/FeatureIntroduction/FeatureIntroduction';
 import { PostEditLayout } from '~/components/Post/EditV2/PostEditLayout';
+import { PostImageDropzone } from '~/components/Post/EditV2/PostImageDropzone';
 import {
-  ReviewEditCommandsRef,
   EditUserResourceReviewV2,
+  ReviewEditCommandsRef,
   UserResourceReviewComposite,
 } from '~/components/ResourceReview/EditUserResourceReview';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { trpc } from '~/utils/trpc';
 import { ResourceReviewThumbActions } from '~/components/ResourceReview/ResourceReviewThumbActions';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { postEditQuerySchema } from '~/server/schema/post.schema';
-
-import { PostImageDropzone } from '~/components/Post/EditV2/PostImageDropzone';
-import { createPage } from '~/components/AppLayout/createPage';
+import { trpc } from '~/utils/trpc';
 
 export default createPage(
   function PostCreate() {
