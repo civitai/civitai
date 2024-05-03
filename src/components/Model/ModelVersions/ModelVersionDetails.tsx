@@ -15,6 +15,7 @@ import {
   Text,
   ThemeIcon,
   Tooltip,
+  createStyles,
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { CollectionType, ModelFileVisibility, ModelModifier, ModelStatus } from '@prisma/client';
@@ -107,6 +108,16 @@ import { ResourceReviewThumbActions } from '~/components/ResourceReview/Resource
 import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { openContext } from '~/providers/CustomModalsProvider';
 
+const useStyles = createStyles(() => ({
+  ctaContainer: {
+    [containerQuery.smallerThan('sm')]: {
+      width: '100%',
+      flexWrap: 'wrap',
+    },
+    ['> *']: { flexGrow: 1 },
+  },
+}));
+
 export function ModelVersionDetails({
   model,
   version,
@@ -115,6 +126,7 @@ export function ModelVersionDetails({
   onFavoriteClick,
   hasAccess = true,
 }: Props) {
+  const { classes } = useStyles();
   const { connected: civitaiLinked } = useCivitaiLink();
   const router = useRouter();
   const queryUtils = trpc.useUtils();
@@ -573,7 +585,7 @@ export function ModelVersionDetails({
             </Stack>
           ) : (
             <Stack spacing={4}>
-              <Group spacing="xs" style={{ alignItems: 'flex-start', flexWrap: 'nowrap' }}>
+              <Group spacing="xs" className={classes.ctaContainer}>
                 {canGenerate && (
                   <GenerateButton modelVersionId={version.id} data-activity="create:model" />
                 )}
@@ -662,10 +674,7 @@ export function ModelVersionDetails({
                     <Text align="center">
                       {primaryFile ? (
                         <>
-                          Download{' '}
-                          <Text className="inline sm:max-md:hidden" span>{`(${formatKBytes(
-                            primaryFile?.sizeKB
-                          )})`}</Text>
+                          Download <Text span>{`(${formatKBytes(primaryFile?.sizeKB)})`}</Text>
                         </>
                       ) : (
                         'No file'
@@ -673,55 +682,54 @@ export function ModelVersionDetails({
                     </Text>
                   </DownloadButton>
                 )}
-                {!displayCivitaiLink && <RunButton variant="light" modelVersionId={version.id} />}
-                <Tooltip label="Share" position="top" withArrow>
-                  <div>
-                    <ShareButton
-                      url={router.asPath}
-                      title={model.name}
-                      collect={{ modelId: model.id, type: CollectionType.Model }}
-                    >
-                      <Button
-                        sx={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
-                        color="gray"
-                      >
-                        <IconShare3 />
-                      </Button>
-                    </ShareButton>
-                  </div>
-                </Tooltip>
-
-                {onFavoriteClick && (
-                  <Tooltip label={isFavorite ? 'Unlike' : 'Like'} position="top" withArrow>
+                <Group spacing="xs" grow noWrap>
+                  {!displayCivitaiLink && <RunButton variant="light" modelVersionId={version.id} />}
+                  <Tooltip label="Share" position="top" withArrow>
                     <div>
-                      <LoginRedirect reason="favorite-model">
-                        <Button
-                          onClick={() =>
-                            onFavoriteClick({ versionId: version.id, setTo: !isFavorite })
-                          }
-                          color={isFavorite ? 'green' : 'gray'}
-                          sx={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
-                        >
-                          <ThumbsUpIcon color="#fff" filled={isFavorite} />
+                      <ShareButton
+                        url={router.asPath}
+                        title={model.name}
+                        collect={{ modelId: model.id, type: CollectionType.Model }}
+                      >
+                        <Button sx={{ paddingLeft: 8, paddingRight: 8 }} color="gray" fullWidth>
+                          <IconShare3 />
                         </Button>
-                      </LoginRedirect>
+                      </ShareButton>
                     </div>
                   </Tooltip>
-                )}
-                <ToggleVaultButton modelVersionId={version.id}>
-                  {({ isLoading, isInVault, toggleVaultItem }) => (
-                    <Tooltip
-                      label={isInVault ? 'Remove from Vault' : 'Add To Vault'}
-                      position="top"
-                      withArrow
-                    >
+
+                  {onFavoriteClick && (
+                    <Tooltip label={isFavorite ? 'Unlike' : 'Like'} position="top" withArrow>
                       <div>
+                        <LoginRedirect reason="favorite-model">
+                          <Button
+                            onClick={() =>
+                              onFavoriteClick({ versionId: version.id, setTo: !isFavorite })
+                            }
+                            color={isFavorite ? 'green' : 'gray'}
+                            fullWidth
+                            sx={{ cursor: 'pointer', paddingLeft: 8, paddingRight: 8 }}
+                          >
+                            <ThumbsUpIcon color="#fff" filled={isFavorite} />
+                          </Button>
+                        </LoginRedirect>
+                      </div>
+                    </Tooltip>
+                  )}
+                  <ToggleVaultButton modelVersionId={version.id}>
+                    {({ isLoading, isInVault, toggleVaultItem }) => (
+                      <Tooltip
+                        label={isInVault ? 'Remove from Vault' : 'Add To Vault'}
+                        position="top"
+                        withArrow
+                      >
                         <Button
-                          sx={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
+                          sx={{ cursor: 'pointer', paddingLeft: 8, paddingRight: 8 }}
                           color={isInVault ? 'green' : 'gray'}
                           onClick={toggleVaultItem}
                           disabled={isLoading}
                           variant={isInVault ? 'light' : undefined}
+                          fullWidth
                         >
                           {isLoading ? (
                             <Loader size="xs" />
@@ -731,10 +739,10 @@ export function ModelVersionDetails({
                             <IconCloudLock />
                           )}
                         </Button>
-                      </div>
-                    </Tooltip>
-                  )}
-                </ToggleVaultButton>
+                      </Tooltip>
+                    )}
+                  </ToggleVaultButton>
+                </Group>
               </Group>
               {primaryFileDetails}
             </Stack>
