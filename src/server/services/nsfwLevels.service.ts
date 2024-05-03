@@ -351,13 +351,12 @@ export async function updateModelNsfwLevels(modelIds: number[]) {
   if (!modelIds.length) return;
   const models = await dbWrite.$queryRaw<{ id: number }[]>(Prisma.sql`
     WITH level AS (
-      SELECT DISTINCT ON ("modelId")
+      SELECT
         mv."modelId" as "id",
         bit_or(mv."nsfwLevel") "nsfwLevel"
       FROM "ModelVersion" mv
-      JOIN "Model" m on m.id = mv."modelId"
       WHERE m.id IN (${Prisma.join(modelIds)})
-      GROUP BY mv.id
+      GROUP BY mv."modelId"
     )
     UPDATE "Model" m
     SET "nsfwLevel" = (
