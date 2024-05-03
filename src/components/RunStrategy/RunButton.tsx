@@ -10,10 +10,11 @@ export function RunButton({ modelVersionId, ...props }: { modelVersionId: number
         color="green"
         {...props}
         sx={{
-          paddingLeft: 0,
-          paddingRight: 0,
-          width: 36,
+          paddingLeft: 8,
+          paddingRight: 8,
+          // width: 36,
         }}
+        fullWidth
       >
         <IconPlayerPlay />
       </Button>

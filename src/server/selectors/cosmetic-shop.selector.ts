@@ -16,4 +16,5 @@ export const cosmeticShopItemSelect = Prisma.validator<Prisma.CosmeticShopItemSe
     select: simpleCosmeticSelect,
   },
   cosmeticId: true,
+  meta: true,
 });

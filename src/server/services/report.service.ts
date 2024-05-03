@@ -1,10 +1,15 @@
 import { ImageEngagementType, Prisma, Report, ReportReason, ReportStatus } from '@prisma/client';
-import { NsfwLevel } from '~/server/common/enums';
+import { NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 
 import { dbRead, dbWrite } from '~/server/db/client';
 import { reportAcceptedReward } from '~/server/rewards';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { CreateReportInput, GetReportsInput, ReportEntity } from '~/server/schema/report.schema';
+import {
+  articlesSearchIndex,
+  collectionsSearchIndex,
+  imagesSearchIndex,
+} from '~/server/search-index';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { addTagVotes } from '~/server/services/tag.service';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
@@ -155,9 +160,15 @@ export const createReport = async ({
             vote: 1,
           });
         case ReportEntity.Collection:
-          return await tx.collection.update({ where: { id }, data: { nsfw: true } });
+          await tx.collection.update({ where: { id }, data: { nsfw: true } });
+          return collectionsSearchIndex.queueUpdate([
+            { id, action: SearchIndexUpdateQueueAction.Update },
+          ]);
         case ReportEntity.Article:
-          return await tx.article.update({ where: { id }, data: { nsfw: true } });
+          await tx.article.update({ where: { id }, data: { nsfw: true } });
+          return articlesSearchIndex.queueUpdate([
+            { id, action: SearchIndexUpdateQueueAction.Update },
+          ]);
         case ReportEntity.Post:
           return await tx.post.update({ where: { id }, data: { nsfw: true } });
       }
@@ -188,6 +199,7 @@ export const createReport = async ({
         where: { id },
         data: { ingestion: 'Blocked', nsfwLevel: NsfwLevel.Blocked, blockedFor: 'CSAM' },
       });
+      await imagesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
     }
   });
 };

@@ -630,11 +630,15 @@ export default function ModelDetailsV2({
                     href="https://education.civitai.com/civitais-100-beginners-guide-to-generative-ai-art/#heading-77"
                     tooltip="What is this?"
                   />
-                  <ToggleModelNotification modelId={model.id} userId={model.user.id} />
+                  <ToggleModelNotification
+                    className={classes.headerButton}
+                    modelId={model.id}
+                    userId={model.user.id}
+                  />
                   <Menu position="bottom-end" transition="pop-top-right" withinPortal>
                     <Menu.Target>
-                      <ActionIcon variant="light" size="xl">
-                        <IconDotsVertical size={20} />
+                      <ActionIcon className={classes.headerButton} variant="light">
+                        <IconDotsVertical />
                       </ActionIcon>
                     </Menu.Target>
                     <Menu.Dropdown>
@@ -1137,6 +1141,26 @@ const useStyles = createStyles((theme) => ({
       [containerQuery.smallerThan('sm')]: {
         minWidth: 16,
         minHeight: 16,
+      },
+    },
+  },
+
+  headerButton: {
+    width: 32,
+    height: 32,
+
+    ['> svg']: {
+      width: 16,
+      height: 16,
+    },
+
+    [containerQuery.largerThan('md')]: {
+      width: 44,
+      height: 44,
+
+      ['> svg']: {
+        width: 20,
+        height: 20,
       },
     },
   },

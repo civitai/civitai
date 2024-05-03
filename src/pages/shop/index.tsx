@@ -41,7 +41,10 @@ import { trpc } from '~/utils/trpc';
 import { env } from '~/env/client.mjs';
 import dayjs from 'dayjs';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { useQueryShop } from '~/components/CosmeticShop/cosmetic-shop.util';
+import {
+  useCosmeticShopQueryParams,
+  useQueryShop,
+} from '~/components/CosmeticShop/cosmetic-shop.util';
 import { ImageCSSAspectRatioWrap } from '~/components/Profile/ImageCSSAspectRatioWrap';
 import { constants } from '~/server/common/constants';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
@@ -57,12 +60,15 @@ import { CosmeticSample } from '~/pages/moderator/cosmetic-store/cosmetics';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { CosmeticShopItemPreviewModal } from '~/components/CosmeticShop/CosmeticShopItemPreviewModal';
-import { CosmeticShopSectionMeta } from '~/server/schema/cosmetic-shop.schema';
+import { CosmeticShopSectionMeta, GetShopInput } from '~/server/schema/cosmetic-shop.schema';
 import { openUserProfileEditModal } from '~/components/Modals/UserProfileEditModal';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { formatDate, formatDateMin } from '~/utils/date-helpers';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { ShopFiltersDropdown } from '~/components/CosmeticShop/ShopFiltersDropdown';
+import { useDebouncedValue } from '@mantine/hooks';
+import { useEffect } from 'react';
 
 const IMAGE_SECTION_WIDTH = 1288;
 
@@ -180,7 +186,7 @@ export const getServerSideProps = createServerSideProps({
   resolver: async ({ ssg, features }) => {
     if (!features?.cosmeticShop) return { notFound: true };
 
-    await ssg?.cosmeticShop.getShop.prefetch();
+    await ssg?.cosmeticShop.getShop.prefetch({});
   },
 });
 
@@ -225,6 +231,7 @@ export const CosmeticShopItem = ({ item }: { item: CosmeticShopItemGetById }) =>
                 props: { shopItem: item },
               });
             }}
+            disabled={!isAvailable}
           >
             <Box className={classes.cardHeader}>
               <CosmeticSample cosmetic={cosmetic} size="lg" />
@@ -270,8 +277,17 @@ export const CosmeticShopItem = ({ item }: { item: CosmeticShopItemGetById }) =>
 
 export default function CosmeticShopMain() {
   const { classes, cx } = useStyles();
-  const { cosmeticShopSections, isLoading } = useQueryShop();
+  const { query } = useCosmeticShopQueryParams();
+  const [filters, setFilters] = useState<GetShopInput>({
+    ...(query ?? {}),
+  });
+  const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
+  const { cosmeticShopSections, isLoading } = useQueryShop(debouncedFilters);
   const isMobile = useIsMobile();
+
+  useEffect(() => {
+    setFilters(query);
+  }, [query]);
 
   return (
     <>
@@ -300,6 +316,9 @@ export default function CosmeticShopMain() {
             <Text size="sm" color="dimmed" mb="sm">
               Any cosmetic purchases directly contributes to Civitai ❤️
             </Text>
+          </Stack>
+          <Stack ml="auto">
+            <ShopFiltersDropdown filters={filters} setFilters={setFilters} />
           </Stack>
           {isLoading ? (
             <Center p="xl">

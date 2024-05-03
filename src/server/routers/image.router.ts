@@ -130,7 +130,7 @@ export const imageRouter = router({
     .input(imageReviewQueueInputSchema)
     .query(getModeratorReviewQueueHandler),
   getModeratorPOITags: moderatorProcedure.query(() => getModeratorPOITags()),
-  getNotFoundImages: publicProcedure
+  get404Images: publicProcedure
     .use(edgeCacheIt({ ttl: CacheTTL.month }))
     .use(cacheIt({ ttl: CacheTTL.week }))
     .query(() => get404Images()),

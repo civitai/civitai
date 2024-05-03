@@ -3,6 +3,7 @@ import {
   getAllCosmeticShopSections,
   getPaginatedCosmeticShopItemInput,
   getPreviewImagesInput,
+  getShopInput,
   purchaseCosmeticShopItemInput,
   updateCosmeticShopSectionsOrderInput,
   upsertCosmeticShopItemInput,
@@ -71,8 +72,9 @@ export const cosmeticShopRouter = router({
     }),
   // #endregion
   // #region [Public facing routes]
-  getShop: publicProcedure.query(({ ctx }) => {
+  getShop: publicProcedure.input(getShopInput).query(({ input, ctx }) => {
     return getShopSectionsWithItems({
+      ...input,
       isModerator: ctx?.user?.isModerator,
     });
   }),

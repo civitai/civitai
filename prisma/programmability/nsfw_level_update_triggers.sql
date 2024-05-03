@@ -21,6 +21,10 @@ BEGIN
       PERFORM create_job_queue_record(OLD."postId", 'Post', 'UpdateNsfwLevel');
     END IF;
 
+    IF (OLD."postId" IS NOT NULL) THEN
+      PERFORM create_job_queue_record(OLD."postId", 'Post', 'CleanIfEmpty');
+    END IF;
+
     -- Create a job to clean up the FKs of the image
     PERFORM create_job_queue_record(OLD.id, 'Image', 'CleanUp');
 

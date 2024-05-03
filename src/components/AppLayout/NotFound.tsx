@@ -8,7 +8,7 @@ import { trpc } from '~/utils/trpc';
 
 export function NotFound() {
   const isClient = useIsClient();
-  const { data: images } = trpc.image.getNotFoundImages.useQuery(undefined, {
+  const { data: images } = trpc.image.get404Images.useQuery(undefined, {
     enabled: isClient,
     trpc: { context: { skipBatch: true } },
   });

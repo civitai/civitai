@@ -471,7 +471,7 @@ const { openModal, Modal } = createContextModal({
                   <InputCosmeticSelect
                     name="profileDecoration"
                     label="Avatar decoration"
-                    shopUrl="/shop"
+                    shopUrl={`/shop?cosmeticTypes=${CosmeticType.ProfileDecoration}`}
                     data={decorations}
                     nothingFound={
                       <Text size="xs">You don&rsquo;t have any avatar decorations yet</Text>
@@ -481,7 +481,7 @@ const { openModal, Modal } = createContextModal({
                   <InputCosmeticSelect
                     name="profileBackground"
                     label="Creator Card Backgrounds"
-                    shopUrl="/shop"
+                    shopUrl={`/shop?cosmeticTypes=${CosmeticType.ProfileBackground}`}
                     nothingFound={
                       <Text size="xs">You don&rsquo;t have any profile backgrounds yet</Text>
                     }
@@ -494,7 +494,7 @@ const { openModal, Modal } = createContextModal({
               <InputCosmeticSelect
                 name="badge"
                 label="Featured Badge"
-                shopUrl={featureFlags.cosmeticShop ? '/shop' : undefined}
+                shopUrl={`/shop?cosmeticTypes=${CosmeticType.Badge}`}
                 nothingFound={<Text size="xs">You don&rsquo;t have any badges yet</Text>}
                 data={badges}
                 onShopClick={handleClose}

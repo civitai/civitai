@@ -251,6 +251,7 @@ export const getFileForModelVersion = async ({
       modelVersionId,
       nsfw: modelVersion.model.nsfw,
       inEarlyAccess,
+      metadata: file.metadata as FileMetadata,
     };
   } catch (error) {
     return { status: 'error' };
@@ -320,6 +321,7 @@ type ModelVersionFileResult =
       modelVersionId: number;
       nsfw: boolean;
       inEarlyAccess: boolean;
+      metadata: FileMetadata;
     };
 
 type FileResult = {

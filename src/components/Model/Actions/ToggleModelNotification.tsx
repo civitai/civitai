@@ -1,4 +1,4 @@
-import { ActionIcon, Tooltip } from '@mantine/core';
+import { ActionIcon, ActionIconProps, Tooltip } from '@mantine/core';
 import { ModelEngagementType } from '@prisma/client';
 import { IconBellCheck, IconBellPlus } from '@tabler/icons-react';
 
@@ -7,7 +7,11 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
-export function ToggleModelNotification({ modelId, userId }: { modelId: number; userId: number }) {
+export function ToggleModelNotification({
+  modelId,
+  userId,
+  ...actionIconProps
+}: ActionIconProps & { modelId: number; userId: number }) {
   const currentUser = useCurrentUser();
   const queryUtils = trpc.useUtils();
 
@@ -47,8 +51,8 @@ export function ToggleModelNotification({ modelId, userId }: { modelId: number; 
       <div>
         <LoginRedirect reason="notify-model">
           <ActionIcon
-            size="xl"
             variant="light"
+            {...actionIconProps}
             color={isOn ? 'success' : undefined}
             onClick={() =>
               toggleNotifyModelMutation.mutate({
