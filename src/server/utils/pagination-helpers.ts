@@ -103,10 +103,12 @@ function parseCursor(fields: SortField[], cursor: string | number | Date | bigin
   if (typeof cursor === 'number' || typeof cursor === 'bigint' || cursor instanceof Date)
     return { [fields[0].field]: cursor };
 
-  const values = cursor.split(':').map(Number);
-  const result: Record<string, number> = {};
+  const values = cursor.split('|');
+  const result: Record<string, number | Date> = {};
   for (let i = 0; i < fields.length; i++) {
-    result[fields[i].field] = values[i];
+    const value = values[i];
+    if (value.includes('-')) result[fields[i].field] = new Date(value);
+    else result[fields[i].field] = parseInt(value, 10);
   }
   return result;
 }
@@ -137,7 +139,7 @@ export function getCursor(sortString: string, cursor: string | number | bigint |
 
   const sortProps = sortFields.map((x) => x.field);
   const prop =
-    sortFields.length === 1 ? sortFields[0].field : `CONCAT(${sortProps.join(`, ':', `)})`;
+    sortFields.length === 1 ? sortFields[0].field : `CONCAT(${sortProps.join(`, '|', `)})`;
   return {
     where,
     prop,
