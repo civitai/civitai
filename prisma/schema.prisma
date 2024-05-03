@@ -2900,6 +2900,7 @@ enum JobQueueType {
   UpdateMetrics
   UpdateNsfwLevel
   UpdateSearchIndex
+  CleanIfEmpty
 }
 
 model JobQueue {
