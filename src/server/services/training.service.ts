@@ -308,7 +308,12 @@ export const createTrainingRequest = async ({
     },
   };
 
-  const response = await getOrchestratorCaller(new Date()).imageResourceTraining({
+  const orchCaller = getOrchestratorCaller(
+    new Date(),
+    modelVersion.trainingDetails.staging === true
+  );
+
+  const response = await orchCaller.imageResourceTraining({
     payload: generationRequest,
   });
   if (!response.ok && transactionId) {
@@ -360,8 +365,7 @@ export const createTrainingRequest = async ({
 
 export const createTrainingRequestDryRun = async ({
   baseModel,
-}: // cost,
-CreateTrainingRequestDryRunInput) => {
+}: CreateTrainingRequestDryRunInput) => {
   if (!baseModel) return null;
 
   const generationRequest: Orchestrator.Training.ImageResourceTrainingJobDryRunPayload = {
@@ -380,7 +384,10 @@ CreateTrainingRequestDryRunInput) => {
     return null;
   }
 
-  return response.data?.jobs?.[0]?.serviceProviders?.['RunPods']?.queuePosition?.estimatedStartDate;
+  return (
+    response.data?.jobs?.[0]?.serviceProviders?.['RunPods']?.queuePosition?.estimatedStartDate ??
+    null
+  );
 };
 
 export type TagDataResponse = {

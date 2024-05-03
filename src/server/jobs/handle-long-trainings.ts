@@ -21,7 +21,7 @@ const logJob = (data: MixedObject) => {
 type JobStatus =
   | { status: 'Failed' }
   | {
-      status: 'Succeeded' | 'Deleted' | 'Expired' | 'Processing' | 'Rejected';
+      status: 'Succeeded' | 'Deleted' | 'Canceled' | 'Expired' | 'Processing' | 'Rejected';
       date: Date;
     };
 const failedState: JobStatus = { status: 'Failed' };
@@ -85,7 +85,12 @@ async function handleJob({
     (job as JobStatus).status = 'Failed';
   }
 
-  if (job.status === 'Failed' || job.status === 'Deleted' || job.status === 'Expired') {
+  if (
+    job.status === 'Failed' ||
+    job.status === 'Deleted' ||
+    job.status === 'Canceled' ||
+    job.status === 'Expired'
+  ) {
     log(`Job status is ${job.status} - failing.`);
     await updateStatus('Failed');
     return await refund();

@@ -11,6 +11,8 @@ import {
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { cachedObject, bustCachedArray } from '~/server/utils/cache-helpers';
+import { articlesSearchIndex, imagesSearchIndex, modelsSearchIndex } from '~/server/search-index';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 
 export async function getCosmeticDetail({ id }: GetByIdInput) {
   const cosmetic = await dbRead.cosmetic.findUnique({
@@ -109,6 +111,19 @@ export async function equipCosmeticToEntity({
   });
 
   await deleteEntityCosmeticCache({ entityId: equippedToId, entityType: equippedToType });
+  if (equippedToType === 'Model')
+    await modelsSearchIndex.queueUpdate([
+      { id: equippedToId, action: SearchIndexUpdateQueueAction.Update },
+    ]);
+  if (equippedToType === 'Image')
+    await imagesSearchIndex.queueUpdate([
+      { id: equippedToId, action: SearchIndexUpdateQueueAction.Update },
+    ]);
+  if (equippedToType === 'Article')
+    await articlesSearchIndex.queueUpdate([
+      { id: equippedToId, action: SearchIndexUpdateQueueAction.Update },
+    ]);
+
   // Clear cache for previous entity if it was equipped
   if (userCosmetic.equippedToId && userCosmetic.equippedToType) {
     await deleteEntityCosmeticCache({
@@ -133,6 +148,18 @@ export async function unequipCosmetic({
   });
 
   await deleteEntityCosmeticCache({ entityId: equippedToId, entityType: equippedToType });
+  if (equippedToType === 'Model')
+    await modelsSearchIndex.queueUpdate([
+      { id: equippedToId, action: SearchIndexUpdateQueueAction.Update },
+    ]);
+  if (equippedToType === 'Image')
+    await imagesSearchIndex.queueUpdate([
+      { id: equippedToId, action: SearchIndexUpdateQueueAction.Update },
+    ]);
+  if (equippedToType === 'Article')
+    await articlesSearchIndex.queueUpdate([
+      { id: equippedToId, action: SearchIndexUpdateQueueAction.Update },
+    ]);
 
   return updated;
 }
