@@ -202,7 +202,7 @@ export const getFileForModelVersion = async ({
     earlyAccessTimeframe: modelVersion.earlyAccessTimeFrame,
   });
   const inEarlyAccess = deadline !== undefined && new Date() < deadline;
-  if (!noAuth && !user?.tier && !isMod && inEarlyAccess) {
+  if (!noAuth && !user?.tier && !isMod && !isOwner && inEarlyAccess) {
     return { status: 'early-access', details: { deadline } };
   }
 
