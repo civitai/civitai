@@ -42,7 +42,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
         steps: 20,
         clipSkip: 2,
         quantity: 1,
-        nsfw: true,
+        nsfw: false,
         aspectRatio: 2,
         draft: true,
         baseModel: 'SDXL',
@@ -62,6 +62,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
         },
       ],
       user,
+      whatIf: true,
     });
 
   return res.status(200).json({

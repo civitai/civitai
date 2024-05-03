@@ -9,12 +9,17 @@ import {
 } from '~/server/common/constants';
 import { extModeration } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
-import { getGenerationStatus, getResourceData } from '~/server/services/orchestrator/common';
-import { throwBadRequestError } from '~/server/utils/errorHandling';
+import {
+  ResourceData,
+  getGenerationStatus,
+  getResourceDataWithInjects,
+} from '~/server/services/orchestrator/common';
+import { throwBadRequestError, throwInsufficientFundsError } from '~/server/utils/errorHandling';
 import { includesMinor, includesNsfw, includesPoi } from '~/utils/metadata/audit';
 import { stringifyAIR } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import {
+  ApiError,
   CancelablePromise,
   createCivitaiClient,
   type ImageJobNetworkParams,
@@ -24,12 +29,7 @@ import {
 } from '@civitai/client';
 import { env } from '~/env/server.mjs';
 import { isDev } from '~/env/other';
-import {
-  safeNegatives,
-  minorNegatives,
-  minorPositives,
-  samplersToSchedulers,
-} from '~/shared/constants/generation.constants';
+import { samplersToSchedulers } from '~/shared/constants/generation.constants';
 import { TextToImageResponse } from '~/server/services/orchestrator/types';
 
 // #region [schemas]
@@ -102,20 +102,31 @@ export async function textToImage({
     });
   }
 
-  const resourceData = await getResourceData(parsedInput.resources.map((x) => x.id));
-  const resources = resourceData
-    .map((resource) => {
-      const air = stringifyAIR({
-        baseModel: resource.baseModel,
-        type: resource.model.type,
-        source: 'civitai',
-        modelId: resource.model.id,
-        id: resource.id,
-      });
-      if (!air) return null;
-      return { ...resource, ...parsedInput.resources.find((x) => x.id === resource.id), air };
-    })
-    .filter(isDefined);
+  const {
+    resources: resourceData,
+    safeNegatives,
+    minorNegatives,
+    minorPositives,
+  } = await getResourceDataWithInjects(parsedInput.resources.map((x) => x.id));
+
+  type AirResourceData = ReturnType<typeof airify>[number];
+  function airify(resources: ResourceData[]) {
+    return resources
+      .map((resource) => {
+        const air = stringifyAIR({
+          baseModel: resource.baseModel,
+          type: resource.model.type,
+          source: 'civitai',
+          modelId: resource.model.id,
+          id: resource.id,
+        });
+        if (!air) return null;
+        return { ...resource, ...parsedInput.resources.find((x) => x.id === resource.id), air };
+      })
+      .filter(isDefined);
+  }
+
+  const resources = airify(resourceData);
 
   // #region [error handling]
   // handle missing checkpoint
@@ -157,16 +168,18 @@ export async function textToImage({
   const config = getGenerationConfig(params.baseModel);
   const { height, width } = config.aspectRatios[params.aspectRatio];
   const availableResourceTypes = config.additionalResourceTypes.map((x) => x.type);
-  const additionalNetworks = resources
-    .filter((x) => availableResourceTypes.includes(x.model.type))
-    .reduce<{ [key: string]: ImageJobNetworkParams }>((acc, resource) => {
-      acc[resource.air] = {
-        type: resource.model.type,
-        strength: resource.strength,
-        triggerWord: resource.triggerWord,
-      };
-      return acc;
-    }, {});
+  const additionalNetworks: { [key: string]: ImageJobNetworkParams } = {};
+  function addAdditionalNetwork(resource: AirResourceData) {
+    additionalNetworks[resource.air] = {
+      type: resource.model.type,
+      strength: resource.strength,
+      triggerWord: resource.triggerWord,
+    };
+  }
+
+  for (const resource of resources.filter((x) => availableResourceTypes.includes(x.model.type))) {
+    addAdditionalNetwork(resource);
+  }
 
   // Set nsfw to true if the prompt contains nsfw words
   const isPromptNsfw = includesNsfw(params.prompt);
@@ -178,34 +191,22 @@ export async function textToImage({
 
   const negativePrompts = [params.negativePrompt ?? ''];
   if (!params.nsfw && status.sfwEmbed) {
-    for (const { id, triggerWord } of safeNegatives) {
-      // TODO - air
-      additionalNetworks[`@civitai/${id}`] = {
-        triggerWord,
-        type: ModelType.TextualInversion,
-      };
-      negativePrompts.unshift(triggerWord);
+    for (const resource of airify(safeNegatives)) {
+      addAdditionalNetwork(resource);
+      if (resource.triggerWord) negativePrompts.unshift(resource.triggerWord);
     }
   }
 
   // Inject fallback minor safety nets
   const positivePrompts = [params.prompt];
   if (isPromptNsfw && status.minorFallback) {
-    for (const { id, triggerWord } of minorPositives) {
-      // TODO - air
-      additionalNetworks[`@civitai/${id}`] = {
-        triggerWord,
-        type: ModelType.TextualInversion,
-      };
-      positivePrompts.unshift(triggerWord);
+    for (const resource of airify(minorPositives)) {
+      addAdditionalNetwork(resource);
+      if (resource.triggerWord) positivePrompts.unshift(resource.triggerWord);
     }
-    for (const { id, triggerWord } of minorNegatives) {
-      // TODO - air
-      additionalNetworks[`@civitai/${id}`] = {
-        triggerWord,
-        type: ModelType.TextualInversion,
-      };
-      negativePrompts.unshift(triggerWord);
+    for (const resource of airify(minorNegatives)) {
+      addAdditionalNetwork(resource);
+      if (resource.triggerWord) negativePrompts.unshift(resource.triggerWord);
     }
   }
 
@@ -232,8 +233,8 @@ export async function textToImage({
     providers: params.draft ? (env.DRAFT_MODE_PROVIDERS as Provider[] | undefined) : undefined,
     properties: { userId: user.id },
     params: {
-      prompt: params.prompt,
-      negativePrompt: params.negativePrompt,
+      prompt: positivePrompts.join(', '),
+      negativePrompt: negativePrompts.join(', '),
       scheduler: samplersToSchedulers[params.sampler as Sampler] as Scheduler,
       steps: params.steps,
       cfgScale: params.cfgScale,
@@ -244,14 +245,32 @@ export async function textToImage({
     },
   };
 
+  console.log(requestBody);
+
   const client = createCivitaiClient({
     env: isDev ? 'dev' : 'prod',
     auth: 'ff2ddeabd724b029112668447a9388f7',
   });
 
-  return client.requests.submitRequest({
-    include: 'Details',
-    whatif: whatIf,
-    requestBody,
-  }) as CancelablePromise<TextToImageResponse>;
+  return client.requests
+    .submitRequest({
+      include: 'Details',
+      whatif: whatIf,
+      requestBody,
+    })
+    .catch((error) => {
+      // handle response errors
+      if (error instanceof ApiError) {
+        console.log('-------ERROR-------');
+        console.dir({ error }, { depth: null });
+        switch (error.status) {
+          case 400:
+            throw throwBadRequestError(); // TODO - better error handling
+          case 403:
+            throw throwInsufficientFundsError();
+        }
+      }
+    }) as CancelablePromise<TextToImageResponse>;
 }
+
+// async function formatTextToImageResponse(data: TextToImageResponse) {}

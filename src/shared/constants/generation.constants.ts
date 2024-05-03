@@ -15,6 +15,7 @@ export const minorNegatives = [{ id: 250712, triggerWord: 'safe_neg' }];
 export const minorPositives = [{ id: 250708, triggerWord: 'safe_pos' }];
 export const allInjectedNegatives = [...safeNegatives, ...minorNegatives];
 export const allInjectedPositives = [...minorPositives];
+export const allInjectedIds = [...allInjectedNegatives, ...allInjectedPositives].map((x) => x.id);
 
 export const samplersToSchedulers: Record<Sampler, string> = {
   'Euler a': 'EulerA',
