@@ -134,7 +134,7 @@ const onFetchItemsToIndex = async ({
   });
 
   const cosmetics = await getCosmeticsForEntity({
-    ids: articles.map((x) => x.userId),
+    ids: articles.map((x) => x.id),
     entity: 'Article',
   });
 
@@ -173,7 +173,7 @@ const onFetchItemsToIndex = async ({
           meta: coverImage.meta as ImageMetaProps,
           tags: coverImage.tags.map((x) => x.tag),
         },
-        cosmetic: cosmetics[articleRecord.userId] ?? null,
+        cosmetic: cosmetics[articleRecord.id] ?? null,
       };
     })
     .filter(isDefined);
