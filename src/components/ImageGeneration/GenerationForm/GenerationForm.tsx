@@ -121,10 +121,18 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
 
   const { limits, ...status } = useGenerationStatus();
 
+  function getSteps(steps: number, limit: number) {
+    return steps > limit ? limit : steps;
+  }
+
   useEffect(() => {
+    const storedState = useGenerationFormStore.getState();
+    const steps = getSteps(storedState.steps ?? defaultValues.steps, limits.steps);
+    if (steps !== storedState.steps) useGenerationFormStore.setState({ steps });
     form.reset({
       ...defaultValues,
-      ...useGenerationFormStore.getState(),
+      ...storedState,
+      steps,
     });
     const subscription = form.watch((value) => {
       useGenerationFormStore.setState({ ...(value as GenerateFormModel) }, true);
@@ -175,7 +183,9 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
     // form.reset(formData);
     for (const key in formData) {
       const _key = key as keyof typeof formData;
-      form.setValue(_key as any, formData[_key]);
+      if (key === 'steps')
+        form.setValue(_key as any, getSteps((formData[_key] as number) ?? 0, limits.steps));
+      else form.setValue(_key as any, formData[_key]);
     }
   }, [createData]); // eslint-disable-line
 
