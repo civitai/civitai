@@ -198,7 +198,7 @@ export function UserStatBadgesV2({
   reactions,
 }: Props) {
   return (
-    <Group spacing="xs" noWrap>
+    <Group spacing={4} noWrap>
       {uploads != null ? (
         <BadgedIcon
           icon={<IconUpload size={18} color="white" />}
