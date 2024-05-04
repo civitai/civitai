@@ -54,9 +54,9 @@ export const getCommentsInfiniteHandler = async ({
       COUNT(c.id) as count
     FROM "Comment" c
     WHERE c."parentId" IN (${Prisma.join(commentIds)})
-    GROUP BY c."modelId"
+    GROUP BY c."parentId"
   `;
-  const countsMap = Object.fromEntries(counts.map((c) => [c.id, c.count]));
+  const countsMap = Object.fromEntries(counts.map((c) => [c.id, Number(c.count)]));
 
   let nextCursor: number | undefined;
   if (comments.length > input.limit) {
