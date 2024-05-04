@@ -8,6 +8,8 @@ type CivitaiResource = {
   air?: string;
   modelVersionId?: number;
   type?: string;
+  versionName?: string;
+  modelName?: string;
 };
 
 // #region [helpers]
@@ -128,6 +130,8 @@ export const automaticMetadataProcessor = createMetadataProcessor({
     if (civitaiResourcesMatch && detailsLine) {
       metadata.civitaiResources = JSON.parse(civitaiResourcesMatch);
       for (const resource of metadata.civitaiResources as CivitaiResource[]) {
+        delete resource.modelName;
+        delete resource.versionName;
         if (!resource.air) continue;
         const { version, type } = parseAIR(resource.air);
         resource.modelVersionId = version;
