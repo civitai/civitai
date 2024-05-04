@@ -154,8 +154,8 @@ export function ImageMeta({
           <Code
             block
             sx={{
-              whiteSpace: 'normal',
               wordBreak: 'break-word',
+              whiteSpace: 'pre-wrap',
               maxHeight: 150,
               overflowY: 'auto',
             }}
@@ -169,7 +169,7 @@ export function ImageMeta({
           <Text size="sm" mr="xs" weight={500}>
             {label}
           </Text>
-          <Code sx={{ flex: '1', textAlign: 'right', overflow: 'hidden', whiteSpace: 'nowrap' }}>
+          <Code sx={{ flex: '1', textAlign: 'right', overflow: 'hidden', whiteSpace: 'pre-wrap' }}>
             {value}
           </Code>
         </Group>
@@ -185,7 +185,7 @@ export function ImageMeta({
                 flex: '1',
                 textAlign: 'right',
                 overflow: 'hidden',
-                whiteSpace: 'nowrap',
+                whiteSpace: 'pre-wrap',
                 maxWidth: 300,
               }}
             >
