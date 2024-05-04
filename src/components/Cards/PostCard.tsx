@@ -30,7 +30,7 @@ export function PostCard({ data }: Props) {
 
   return (
     <FeedCard href={`/posts/${data.id}`} aspectRatio="square" frameDecoration={data.cosmetic}>
-      <div className={classes.root}>
+      <div className={cx(data.cosmetic && classes.frameAdjustment, classes.root)}>
         <ImageGuard2 image={image} connectType="post" connectId={data.id}>
           {(safe) => (
             <>
@@ -72,7 +72,7 @@ export function PostCard({ data }: Props) {
                   type={image.type}
                   width={IMAGE_CARD_WIDTH}
                   placeholder="empty"
-                  className={cx(classes.image, data.cosmetic && classes.frameAdjustment)}
+                  className={classes.image}
                 />
               )}
             </>

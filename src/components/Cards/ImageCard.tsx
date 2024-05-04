@@ -45,7 +45,7 @@ function UnroutedImageCard({ data }: Props) {
   return (
     <HolidayFrame {...cardDecoration}>
       <FeedCard className={sharedClasses.link} frameDecoration={data.cosmetic}>
-        <div className={sharedClasses.root}>
+        <div className={cx(data.cosmetic && sharedClasses.frameAdjustment, sharedClasses.root)}>
           <ImageGuard2 image={data}>
             {(safe) => (
               <>
@@ -94,10 +94,7 @@ function UnroutedImageCard({ data }: Props) {
                     }
                     type={data.type}
                     width={imageWidth}
-                    className={cx(
-                      sharedClasses.image,
-                      data.cosmetic && sharedClasses.frameAdjustment
-                    )}
+                    className={sharedClasses.image}
                     wrapperProps={{ style: { height: '100%', width: '100%' } }}
                     loading="lazy"
                     contain

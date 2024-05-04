@@ -33,7 +33,15 @@ export function PostsCard({
   const isOwner = currentUser?.id === user.id;
 
   return (
-    <MasonryCard withBorder shadow="sm" p={0} height={height} ref={ref} frameDecoration={cosmetic}>
+    <MasonryCard
+      withBorder
+      shadow="sm"
+      p={0}
+      height={height}
+      ref={ref}
+      frameDecoration={cosmetic}
+      className={cosmetic ? sharedClasses.frameAdjustment : undefined}
+    >
       {inView && (
         <>
           <ImageGuard2 image={image} connectType="post" connectId={id}>
@@ -69,7 +77,6 @@ export function PostsCard({
                     <EdgeMedia
                       src={image.url}
                       name={image.name ?? image.id.toString()}
-                      className={cosmetic ? sharedClasses.frameAdjustment : undefined}
                       alt={
                         image.meta
                           ? truncate(image.meta.prompt, {

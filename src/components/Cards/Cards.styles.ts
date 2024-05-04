@@ -1,4 +1,5 @@
 import { createStyles } from '@mantine/core';
+import { constants } from '~/server/common/constants';
 
 export const useCardStyles = createStyles<string, { aspectRatio: number }>(
   (theme, params, getRef) => {
@@ -7,6 +8,8 @@ export const useCardStyles = createStyles<string, { aspectRatio: number }>(
     const topRef = getRef('top');
     const bottomRef = getRef('bottom');
     const { aspectRatio } = params;
+    // const framePadding = constants.cosmetics.frame.padding;
+    const framePadding = 6;
 
     return {
       root: {
@@ -16,6 +19,34 @@ export const useCardStyles = createStyles<string, { aspectRatio: number }>(
           [`& .${imageRef}`]: {
             transform: 'scale(1.05)',
           },
+          '&:after': {
+            transform: 'scale(1.05)',
+            opacity: 0,
+          },
+        },
+      },
+
+      frameAdjustment: {
+        '&:after': {
+          content: '""',
+          position: 'absolute',
+          pointerEvents: 'none',
+          top: framePadding,
+          left: framePadding,
+          right: framePadding,
+          bottom: framePadding,
+          borderRadius: theme.radius.md - 2,
+          boxShadow: 'inset 0 1px 2px 1px rgba(255,255,255, 0.3), 0 1px 2px rgba(0, 0, 0, 0.4)',
+          zIndex: 1000,
+          transition: 'transform 400ms ease, opacity 400ms ease',
+        },
+        [`& .${imageRef}`]: {
+          padding: framePadding,
+          borderRadius: 8 + framePadding,
+          height: '100%',
+          width: '100%',
+          objectFit: 'cover',
+          zIndex: 2,
         },
       },
 
@@ -167,14 +198,6 @@ export const useCardStyles = createStyles<string, { aspectRatio: number }>(
         [`&:has(~ .frame-decor) .${bottomRef}`]: {
           paddingBottom: '36px !important',
         },
-      },
-
-      frameAdjustment: {
-        padding: 5,
-        borderRadius: 12,
-        height: '100%',
-        width: '100%',
-        objectFit: 'cover',
       },
 
       dropShadow: {

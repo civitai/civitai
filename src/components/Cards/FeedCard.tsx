@@ -3,6 +3,7 @@ import Link from 'next/link';
 import React, { forwardRef } from 'react';
 import { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 import { DecorationFrame } from '~/components/Decorations/DecorationFrame';
+import { constants } from '~/server/common/constants';
 
 type AspectRatio = 'portrait' | 'landscape' | 'square' | 'flat';
 const aspectRatioValues: Record<
@@ -37,7 +38,7 @@ const aspectRatioValues: Record<
 };
 
 const useStyles = createStyles<string, { frame?: string }>((theme, params) => {
-  const framePadding = 5;
+  const framePadding = 6;
   return {
     root: {
       padding: '0 !important',
@@ -48,18 +49,25 @@ const useStyles = createStyles<string, { frame?: string }>((theme, params) => {
       overflow: 'hidden',
       backgroundColor: params.frame ? 'transparent' : undefined,
       margin: params.frame ? -framePadding : undefined,
+      // img: {
+      //   display: 'none',
+      // },
     },
 
     frame: {
       position: 'relative',
-      backgroundImage: params.frame,
+      backgroundImage: `url("https://www.transparenttextures.com/patterns/brilliant.png"), ${params.frame}`,
+      backgroundSize: '3px 3px, cover',
       borderRadius: theme.radius.md,
-      zIndex: 1,
+      zIndex: 2,
       padding: framePadding,
+      boxShadow: 'inset 0 0 1px 1px rgba(255,255,255, 0.3), 0 1px 2px rgba(0, 0, 0, 0.8)',
     },
 
     glow: {
+      position: 'relative',
       '&:before': {
+        borderRadius: theme.radius.md,
         backgroundImage: params.frame,
         content: '""',
         width: '100%',
@@ -90,7 +98,7 @@ export const FeedCard = forwardRef<HTMLAnchorElement, Props>(
     const { stringRatio } = aspectRatioValues[aspectRatio];
     const { classes, cx } = useStyles({ frame: frameDecoration?.data.cssFrame });
 
-    const card = (
+    let card = (
       <Card<'a'>
         className={cx(classes.root, className)}
         {...props}
@@ -102,27 +110,17 @@ export const FeedCard = forwardRef<HTMLAnchorElement, Props>(
       </Card>
     );
 
-    return (
-      <div
-        className={
-          frameDecoration
-            ? cx(
-                frameDecoration.data.cssFrame && classes.frame,
-                frameDecoration.data.glow && classes.glow
-              )
-            : undefined
-        }
-      >
-        {href ? (
-          <Link href={href} passHref>
-            {card}
-          </Link>
-        ) : (
-          card
-        )}
-        {/* {frameDecoration && <DecorationFrame decoration={frameDecoration} />} */}
-      </div>
-    );
+    if (href) card = <Link href={href}>{card}</Link>;
+
+    if (frameDecoration) {
+      card = (
+        <div className={classes.glow}>
+          <div className={cx('frame-decoration', classes.frame)}>{card}</div>
+        </div>
+      );
+    }
+
+    return card;
   }
 );
 

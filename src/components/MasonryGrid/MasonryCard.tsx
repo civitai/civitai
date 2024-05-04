@@ -10,7 +10,7 @@ type MasonryCardProps = CardProps & {
 };
 
 const useStyles = createStyles<string, { frame?: string }>((theme, params) => {
-  const framePadding = 5;
+  const framePadding = 6;
 
   return {
     root: {
@@ -25,21 +25,25 @@ const useStyles = createStyles<string, { frame?: string }>((theme, params) => {
     },
 
     frame: {
-      backgroundImage: params.frame,
-      borderRadius: theme.radius.md,
-      zIndex: 1,
-      padding: framePadding,
       position: 'relative',
+      backgroundImage: `url("https://www.transparenttextures.com/patterns/brilliant.png"), ${params.frame}`,
+      backgroundSize: '3px 3px, cover',
+      borderRadius: theme.radius.md,
+      zIndex: 2,
+      padding: framePadding,
+      boxShadow: 'inset 0 0 1px 1px rgba(255,255,255, 0.3), 0 1px 2px rgba(0, 0, 0, 0.8)',
     },
 
     glow: {
+      position: 'relative',
       '&:before': {
+        borderRadius: theme.radius.md,
         backgroundImage: params.frame,
         content: '""',
         width: '100%',
         height: '100%',
         zIndex: -1,
-        filter: 'blur(10px)',
+        filter: 'blur(5px)',
         position: 'absolute',
         top: 0,
         left: 0,
@@ -54,20 +58,12 @@ const _MasonryCard = forwardRef<HTMLDivElement, MasonryCardProps>(
     const { classes, cx } = useStyles({ frame: frameDecoration?.data.cssFrame });
 
     return (
-      <div
-        ref={ref}
-        className={
-          frameDecoration
-            ? cx(
-                frameDecoration.data.cssFrame && classes.frame,
-                frameDecoration.data.glow && classes.glow
-              )
-            : undefined
-        }
-      >
-        <Card style={{ height, ...style }} className={cx(classes.root, className)} {...props}>
-          {children}
-        </Card>
+      <div ref={ref} className={frameDecoration ? classes.glow : undefined}>
+        <div className={frameDecoration ? classes.frame : undefined}>
+          <Card style={{ height, ...style }} className={cx(classes.root, className)} {...props}>
+            {children}
+          </Card>
+        </div>
         {/* {frameDecoration && <DecorationFrame decoration={frameDecoration} />} */}
       </div>
     );
