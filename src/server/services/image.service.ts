@@ -85,6 +85,7 @@ import { Flags } from '~/shared/utils';
 import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { leakingContentCounter } from '~/server/prom/client';
+import { postMetrics } from '~/server/metrics';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -134,6 +135,7 @@ export const deleteImageById = async ({
     if (updatePost && image.postId) {
       await updatePostNsfwLevel(image.postId);
       await bustCachesForPost(image.postId);
+      postMetrics.queueUpdate(image.postId);
     }
     return image;
   } catch {
