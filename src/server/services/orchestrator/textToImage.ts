@@ -17,25 +17,21 @@ import {
   getGenerationStatus,
   getResourceDataWithInjects,
 } from '~/server/services/orchestrator/common';
-import { throwBadRequestError, throwInsufficientFundsError } from '~/server/utils/errorHandling';
+import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { includesMinor, includesNsfw, includesPoi } from '~/utils/metadata/audit';
 import { parseAIR, stringifyAIR } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import {
-  Air,
-  ApiError,
-  CancelablePromise,
-  createCivitaiClient,
   type ImageJobNetworkParams,
   type Provider,
   type Scheduler,
   type TextToImageJobTemplate,
 } from '@civitai/client';
 import { env } from '~/env/server.mjs';
-import { isDev } from '~/env/other';
 import { samplersToSchedulers } from '~/shared/constants/generation.constants';
 import { TextToImageResponse } from '~/server/services/orchestrator/types';
 import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
+import { createRequest, getRequests } from '~/server/services/orchestrator/requests';
 
 // #region [schemas]
 const textToImageParamsSchema = z.object({
@@ -59,7 +55,8 @@ const textToImageResourceSchema = z.object({
   triggerWord: z.string().optional(),
 });
 
-const textToImageSchema = z.object({
+export const textToImageSchema = z.object({
+  whatIf: z.boolean().optional(),
   params: textToImageParamsSchema,
   resources: textToImageResourceSchema
     .array()
@@ -229,8 +226,8 @@ export async function textToImage({
   let quantity = params.quantity;
   let batchSize = 1;
   if (params.draft) {
-    quantity = 4;
-    batchSize = params.quantity / 4;
+    quantity = Math.ceil(params.quantity / 4);
+    batchSize = Math.ceil(params.quantity / 4) * 4;
   }
 
   const requestBody: TextToImageJobTemplate = {
@@ -254,32 +251,37 @@ export async function textToImage({
     },
   };
 
-  const client = createCivitaiClient({
-    env: isDev ? 'dev' : 'prod',
-    auth: 'ff2ddeabd724b029112668447a9388f7',
-  });
-
-  return client.requests
-    .submitRequest({
+  const request = (await createRequest({
+    data: {
       include: 'Details',
       whatif: whatIf,
       requestBody,
-    })
-    .catch((error) => {
-      // handle response errors
-      if (error instanceof ApiError) {
-        console.log('-------ERROR-------');
-        console.dir({ error }, { depth: null });
-        switch (error.status) {
-          case 400:
-            throw throwBadRequestError(); // TODO - better error handling
-          case 403:
-            throw throwInsufficientFundsError();
-        }
-      }
-    }) as CancelablePromise<TextToImageResponse>;
+    },
+    user,
+  })) as TextToImageResponse;
+
+  console.dir(request, { depth: null });
+
+  return await formatTextToImageResponses([request], resourceDataWithInjects);
 }
 
+export async function getTextToImageRequests(
+  props: Omit<Parameters<typeof getRequests>[0], 'jobType'>
+) {
+  const { nextCursor, items } = await getRequests({
+    ...props,
+    jobType: ['textToImage'],
+  });
+  console.dir(items, { depth: null });
+
+  return {
+    items: items ? formatTextToImageResponses(items as TextToImageResponse[]) : [],
+    nextCursor,
+  };
+  // civitai-5_20240506213236617
+}
+
+// #region [helper methods]
 export async function formatTextToImageResponses(
   requests: TextToImageResponse[],
   resources?: AsyncReturnType<typeof getResourceDataWithInjects>
@@ -325,6 +327,36 @@ export async function formatTextToImageResponses(
       };
     });
 
+    const images = request.jobs?.flatMap((job) =>
+      job.result.map((result, i) => {
+        const seed = job.details?.params?.seed;
+        return {
+          requestId: request.id,
+          jobId: job.jobId,
+          blobKey: result.blobKey,
+          available: result.available,
+          status: job.status,
+          seed: seed ? seed + i : undefined,
+          duration: job.details?.claimDuration, // TODO - change this to `jobDuration`
+        };
+      })
+    );
+
+    /*
+    {
+        id: number;
+        hash: string;
+        url: string;
+        available: boolean;
+        requestId: number;
+        seed?: number | undefined;
+        status?: Generation.ImageStatus | undefined;
+        type?: JobStatus | undefined;
+        removedForSafety: boolean;
+        duration?: number | null | undefined;
+    }[]
+    */
+
     let negativePrompt = details.params?.negativePrompt ?? '';
     for (const { triggerWord } of [...safeNegatives, ...minorNegatives]) {
       negativePrompt = negativePrompt.replace(`${triggerWord}, `, '');
@@ -346,6 +378,7 @@ export async function formatTextToImageResponses(
         negativePrompt,
       },
       resources,
+      images,
     };
   });
 }
@@ -364,3 +397,4 @@ function getAirs(requests: TextToImageResponse[]) {
     }, {})
   ).map((air) => parseAIR(air));
 }
+// #endregion

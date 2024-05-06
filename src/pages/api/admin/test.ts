@@ -8,6 +8,7 @@ import { getTopContributors } from '~/server/services/buzz.service';
 import { deleteImagesForModelVersionCache } from '~/server/services/image.service';
 import {
   formatTextToImageResponses,
+  getTextToImageRequests,
   textToImage,
 } from '~/server/services/orchestrator/textToImage';
 import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
@@ -34,6 +35,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
   const session = await getServerAuthSession({ req, res });
   const user = session?.user;
   if (user) {
+    // const response = await getTextToImageRequests({ user });
     const response = await textToImage({
       params: {
         prompt:
@@ -65,10 +67,9 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
         },
       ],
       user,
-      whatIf: true,
+      // whatIf: true,
     });
-    console.dir(response, { depth: null });
-    const formatted = await formatTextToImageResponses([response]);
+    // console.dir(response, { depth: null });
   }
 
   return res.status(200).json({

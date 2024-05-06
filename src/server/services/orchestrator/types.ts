@@ -8,7 +8,7 @@ import {
 type RequestType = 'textToImage' | 'imageResourceTraining';
 
 type RequestInfoMap = {
-  textToImage: { details?: TextToImageJob; result: { blobKey: string; available?: boolean } };
+  textToImage: { details?: TextToImageJob; result: { blobKey: string; available?: boolean }[] };
   imageResourceTraining: { details?: ImageResourceTrainingJob; result: unknown };
 };
 

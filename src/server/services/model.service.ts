@@ -679,6 +679,11 @@ export const getModelsRaw = async ({
     LIMIT ${(take ?? 100) + 1}
   `;
 
+  // TODO - break into multiple queries
+  // model query
+  // model version query
+  // additional subqueries?
+
   const models = await dbRead.$queryRaw<(ModelRaw & { cursorId: string | bigint | null })[]>(
     modelQuery
   );
