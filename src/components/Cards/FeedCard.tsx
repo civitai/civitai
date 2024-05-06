@@ -56,6 +56,7 @@ const useStyles = createStyles<string, { frame?: string }>((theme, params) => {
 
     frame: {
       position: 'relative',
+      // TODO.manuel replace this with our own image
       backgroundImage: `url("https://www.transparenttextures.com/patterns/brilliant.png"), ${params.frame}`,
       backgroundSize: '3px 3px, cover',
       borderRadius: theme.radius.md,
