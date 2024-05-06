@@ -57,7 +57,7 @@ function PostImageCard({ image }: { image: ControlledImage }) {
     case 'added':
       return <AddedImage image={image.data} />;
     case 'blocked':
-      return <ErrorImage image={image.data} />;
+      return <BlockedImage image={image.data} />;
     case 'resolving':
       return <PendingImage image={image.data} />;
     case 'error':
