@@ -14,6 +14,7 @@ export const comfyMetadataProcessor = createMetadataProcessor({
   canParse: (exif) => exif.prompt || exif.workflow,
   parse: (exif) => {
     const prompt = JSON.parse(cleanBadJson(exif.prompt as string)) as Record<string, ComfyNode>;
+    console.log(prompt);
     const samplerNodes: SamplerNode[] = [];
     const models: string[] = [];
     const upscalers: string[] = [];
@@ -35,6 +36,7 @@ export const comfyMetadataProcessor = createMetadataProcessor({
       }
 
       if (node.class_type == 'KSampler') samplerNodes.push(node.inputs as SamplerNode);
+      if (node.class_type == 'KSampler (Efficient)') samplerNodes.push(node.inputs as SamplerNode);
 
       if (node.class_type == 'LoraLoader') {
         // Ignore lora nodes with strength 0
