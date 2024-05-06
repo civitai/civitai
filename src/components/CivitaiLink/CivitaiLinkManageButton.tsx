@@ -1,6 +1,6 @@
 import { Box, DefaultMantineColor, Loader, RingProgress } from '@mantine/core';
 import { useHover } from '@mantine/hooks';
-import { IconCheck, IconPlus, IconScreenShare, IconTrash, IconX } from '@tabler/icons-react';
+import { IconCheck, IconScreenShare, IconTrash, IconX } from '@tabler/icons-react';
 import {
   CivitaiLinkResourceManager,
   CivitaiLinkResourceManagerProps,
@@ -38,7 +38,7 @@ const buttonStates: Record<string, ButtonStateFn> = {
   }),
 };
 
-type ButtonStateFn = (props: { hovered: boolean; progress?: number; iconSize?: number }) => {
+type ButtonStateFn = (props: { hovered?: boolean; progress?: number; iconSize?: number }) => {
   icon: JSX.Element;
   color: DefaultMantineColor;
   label: string;
@@ -81,7 +81,7 @@ export const CivitaiLinkManageButton = ({
 
         return (
           <CivitaiTooltip label={buttonState.label} {...tooltipProps}>
-            <Box>{children({ ref, onClick, ...buttonState })}</Box>
+            <Box w="100%">{children({ ref, onClick, ...buttonState })}</Box>
           </CivitaiTooltip>
         );
       }}

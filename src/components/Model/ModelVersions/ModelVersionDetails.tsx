@@ -110,11 +110,13 @@ import { openContext } from '~/providers/CustomModalsProvider';
 
 const useStyles = createStyles(() => ({
   ctaContainer: {
-    [containerQuery.smallerThan('sm')]: {
-      width: '100%',
-      flexWrap: 'wrap',
-    },
+    width: '100%',
+    flexWrap: 'wrap',
     ['> *']: { flexGrow: 1 },
+
+    [containerQuery.largerThan('sm')]: {
+      ['> *']: { flexGrow: 0 },
+    },
   },
 }));
 
@@ -586,12 +588,16 @@ export function ModelVersionDetails({
           ) : (
             <Stack spacing={4}>
               <Group spacing="xs" className={classes.ctaContainer}>
-                {canGenerate && (
-                  <GenerateButton modelVersionId={version.id} data-activity="create:model" />
-                )}
+                <Group spacing="xs" sx={{ flex: 1, ['> *']: { flexGrow: 1 } }} noWrap>
+                  {canGenerate && (
+                    <GenerateButton
+                      modelVersionId={version.id}
+                      data-activity="create:model"
+                      sx={{ flex: '2 !important', paddingLeft: 8, paddingRight: 12 }}
+                    />
+                  )}
 
-                {displayCivitaiLink && (
-                  <Stack sx={canGenerate ? undefined : { flex: 1 }} spacing={4}>
+                  {displayCivitaiLink && (
                     <CivitaiLinkManageButton
                       modelId={model.id}
                       modelVersionId={version.id}
@@ -608,6 +614,8 @@ export function ModelVersionDetails({
                             onClick={onClick}
                             leftIcon={icon}
                             disabled={!primaryFile}
+                            sx={{ flex: '2 !important', paddingLeft: 8, paddingRight: 12 }}
+                            fullWidth
                           >
                             {label}
                           </Button>
@@ -619,12 +627,8 @@ export function ModelVersionDetails({
                               onClick={onClick}
                               disabled={!primaryFile}
                               variant="light"
-                              sx={{
-                                cursor: 'pointer',
-                                paddingLeft: 0,
-                                paddingRight: 0,
-                                width: '36px',
-                              }}
+                              sx={{ flex: 1, paddingLeft: 8, paddingRight: 8 }}
+                              fullWidth
                             >
                               {icon}
                             </Button>
@@ -632,57 +636,59 @@ export function ModelVersionDetails({
                         )
                       }
                     </CivitaiLinkManageButton>
-                  </Stack>
-                )}
+                  )}
 
-                {displayCivitaiLink || canGenerate ? (
-                  filesCount === 1 ? (
+                  {displayCivitaiLink || canGenerate ? (
+                    filesCount === 1 ? (
+                      <DownloadButton
+                        canDownload={version.canDownload}
+                        component="a"
+                        href={createModelFileDownloadUrl({
+                          versionId: version.id,
+                          primary: true,
+                        })}
+                        tooltip="Download"
+                        disabled={!primaryFile || archived}
+                        sx={{ flex: 1, paddingLeft: 8, paddingRight: 8 }}
+                        iconOnly
+                      />
+                    ) : (
+                      <Menu position="bottom-end">
+                        <Menu.Target>
+                          <DownloadButton
+                            canDownload={version.canDownload}
+                            disabled={!primaryFile || archived}
+                            sx={{ flex: 1, paddingLeft: 8, paddingRight: 8 }}
+                            iconOnly
+                          />
+                        </Menu.Target>
+                        <Menu.Dropdown>{downloadMenuItems}</Menu.Dropdown>
+                      </Menu>
+                    )
+                  ) : (
                     <DownloadButton
-                      canDownload={version.canDownload}
                       component="a"
                       href={createModelFileDownloadUrl({
                         versionId: version.id,
                         primary: true,
                       })}
-                      tooltip="Download"
+                      canDownload={version.canDownload}
                       disabled={!primaryFile || archived}
-                      iconOnly
-                    />
-                  ) : (
-                    <Menu position="bottom-end">
-                      <Menu.Target>
-                        <DownloadButton
-                          canDownload={version.canDownload}
-                          disabled={!primaryFile || archived}
-                          iconOnly
-                        />
-                      </Menu.Target>
-                      <Menu.Dropdown>{downloadMenuItems}</Menu.Dropdown>
-                    </Menu>
-                  )
-                ) : (
-                  <DownloadButton
-                    component="a"
-                    href={createModelFileDownloadUrl({
-                      versionId: version.id,
-                      primary: true,
-                    })}
-                    canDownload={version.canDownload}
-                    disabled={!primaryFile || archived}
-                    sx={{ flex: 1 }}
-                  >
-                    <Text align="center">
-                      {primaryFile ? (
-                        <>
-                          Download <Text span>{`(${formatKBytes(primaryFile?.sizeKB)})`}</Text>
-                        </>
-                      ) : (
-                        'No file'
-                      )}
-                    </Text>
-                  </DownloadButton>
-                )}
-                <Group spacing="xs" grow noWrap>
+                      sx={{ flex: '2 !important', paddingLeft: 8, paddingRight: 12 }}
+                    >
+                      <Text align="center">
+                        {primaryFile ? (
+                          <>
+                            Download <Text span>{`(${formatKBytes(primaryFile?.sizeKB)})`}</Text>
+                          </>
+                        ) : (
+                          'No file'
+                        )}
+                      </Text>
+                    </DownloadButton>
+                  )}
+                </Group>
+                <Group spacing="xs" sx={{ flex: 1, ['> *']: { flexGrow: 1 } }} noWrap>
                   {!displayCivitaiLink && <RunButton variant="light" modelVersionId={version.id} />}
                   <Tooltip label="Share" position="top" withArrow>
                     <div>
@@ -692,7 +698,7 @@ export function ModelVersionDetails({
                         collect={{ modelId: model.id, type: CollectionType.Model }}
                       >
                         <Button sx={{ paddingLeft: 8, paddingRight: 8 }} color="gray" fullWidth>
-                          <IconShare3 />
+                          <IconShare3 size={24} />
                         </Button>
                       </ShareButton>
                     </div>
@@ -707,10 +713,10 @@ export function ModelVersionDetails({
                               onFavoriteClick({ versionId: version.id, setTo: !isFavorite })
                             }
                             color={isFavorite ? 'green' : 'gray'}
+                            sx={{ paddingLeft: 8, paddingRight: 8 }}
                             fullWidth
-                            sx={{ cursor: 'pointer', paddingLeft: 8, paddingRight: 8 }}
                           >
-                            <ThumbsUpIcon color="#fff" filled={isFavorite} />
+                            <ThumbsUpIcon color="#fff" filled={isFavorite} size={24} />
                           </Button>
                         </LoginRedirect>
                       </div>
@@ -724,19 +730,18 @@ export function ModelVersionDetails({
                         withArrow
                       >
                         <Button
-                          sx={{ cursor: 'pointer', paddingLeft: 8, paddingRight: 8 }}
+                          sx={{ paddingLeft: 8, paddingRight: 8 }}
                           color={isInVault ? 'green' : 'gray'}
                           onClick={toggleVaultItem}
                           disabled={isLoading}
                           variant={isInVault ? 'light' : undefined}
-                          fullWidth
                         >
                           {isLoading ? (
                             <Loader size="xs" />
                           ) : isInVault ? (
-                            <IconCloudCheck />
+                            <IconCloudCheck size={24} />
                           ) : (
-                            <IconCloudLock />
+                            <IconCloudLock size={24} />
                           )}
                         </Button>
                       </Tooltip>

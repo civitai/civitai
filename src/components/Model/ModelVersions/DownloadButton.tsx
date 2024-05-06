@@ -28,7 +28,7 @@ const _DownloadButton = forwardRef<HTMLButtonElement, Props>(
     );
     const button = iconOnly ? (
       <Tooltip label={tooltip ?? 'Download options'} withArrow>
-        <Button pos="relative" ref={ref} {...buttonProps} px={0} w={36} variant="light">
+        <Button pos="relative" ref={ref} {...buttonProps} variant="light">
           <IconDownload size={24} />
           {downloadRequiresPurchase && <>{purchaseIcon}</>}
         </Button>
