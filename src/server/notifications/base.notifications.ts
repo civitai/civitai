@@ -9,6 +9,7 @@ export type NotificationProcessor = {
   prepareMessage: (notification: Omit<BareNotification, 'id'>) => NotificationMessage | undefined;
   getDetails?: (notifications: BareNotification[]) => BareNotification[];
   category: NotificationCategory;
+  defaultDisabled?: boolean;
 };
 
 export type BareNotification = {

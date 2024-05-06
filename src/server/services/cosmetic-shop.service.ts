@@ -237,6 +237,12 @@ export const upsertCosmeticShopSection = async ({
     await dbWrite.cosmeticShopSectionItem.deleteMany({
       where: {
         shopSectionId: id,
+        shopItemId: items.length
+          ? {
+              notIn: items.map((itemId) => itemId),
+            }
+          : // Undefined deletes 'em all
+            undefined,
       },
     });
 
@@ -248,9 +254,16 @@ export const upsertCosmeticShopSection = async ({
         index,
       }));
 
-      await dbWrite.cosmeticShopSectionItem.createMany({
-        data,
-      });
+      await dbWrite.$executeRaw`
+        INSERT INTO "CosmeticShopSectionItem" ("shopSectionId", "shopItemId", "index", "")
+        VALUES ${Prisma.join(
+          data.map(
+            ({ shopSectionId, shopItemId, index }) =>
+              Prisma.sql`(${shopSectionId}, ${shopItemId}, ${index})`
+          )
+        )}
+        ON CONFLICT ("shopSectionId", "shopItemId") DO UPDATE SET "index" = EXCLUDED."index"
+      `;
     }
   }
 
