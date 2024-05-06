@@ -2,8 +2,11 @@ import { ModelType } from '@prisma/client';
 import { SessionUser } from 'next-auth';
 import { z } from 'zod';
 import {
+  BaseModel,
+  BaseModelSetType,
   Sampler,
   baseModelSetTypes,
+  baseModelSets,
   draftMode,
   getGenerationConfig,
 } from '~/server/common/constants';
@@ -32,6 +35,7 @@ import { env } from '~/env/server.mjs';
 import { isDev } from '~/env/other';
 import { samplersToSchedulers } from '~/shared/constants/generation.constants';
 import { TextToImageResponse } from '~/server/services/orchestrator/types';
+import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 
 // #region [schemas]
 const textToImageParamsSchema = z.object({
@@ -103,12 +107,16 @@ export async function textToImage({
     });
   }
 
+  const resourceDataWithInjects = await getResourceDataWithInjects(
+    parsedInput.resources.map((x) => x.id)
+  );
+
   const {
     resources: resourceData,
     safeNegatives,
     minorNegatives,
     minorPositives,
-  } = await getResourceDataWithInjects(parsedInput.resources.map((x) => x.id));
+  } = resourceDataWithInjects;
 
   type AirResourceData = ReturnType<typeof airify>[number];
   function airify(resources: ResourceData[]) {
@@ -272,9 +280,79 @@ export async function textToImage({
     }) as CancelablePromise<TextToImageResponse>;
 }
 
-export async function formatTextToImageResponses(data: TextToImageResponse[]) {
-  const airs = Object.keys(
-    data.reduce<Record<string, boolean>>((acc, response) => {
+export async function formatTextToImageResponses(
+  requests: TextToImageResponse[],
+  resources?: AsyncReturnType<typeof getResourceDataWithInjects>
+) {
+  const {
+    resources: resourcesData,
+    safeNegatives,
+    minorNegatives,
+    minorPositives,
+  } = resources ?? (await getResourceDataWithInjects(getAirs(requests).map((x) => x.version)));
+
+  const baseModelSetsEntries = Object.entries(baseModelSets);
+
+  return requests.map((request) => {
+    const jobs = request.jobs;
+    if (!jobs) throw new Error(`no jobs in request: ${request.id}`);
+    const details = jobs[0].details;
+    if (!details) throw new Error('details not included in request response');
+
+    const airs = getAirs([request]);
+    const versionIds = airs.map((x) => x.version);
+    const requestResources = resourcesData.filter((x) => versionIds.includes(x.id));
+    const checkpoint = requestResources.find((x) => x.model.type === 'Checkpoint');
+    const baseModel = checkpoint
+      ? (baseModelSetsEntries.find(([, v]) =>
+          v.includes(checkpoint.baseModel as BaseModel)
+        )?.[0] as BaseModelSetType)
+      : undefined;
+
+    const resources = requestResources.map((resource) => {
+      const settings = resource.settings as RecommendedSettingsSchema;
+      return {
+        id: resource.id,
+        name: resource.name,
+        trainedWords: resource.trainedWords,
+        modelId: resource.model.id,
+        modelName: resource.model.name,
+        modelType: resource.model.type,
+        baseModel: resource.baseModel,
+        strength: settings?.strength ?? 1,
+        minStrength: settings?.minStrength ?? -1,
+        maxStrength: settings?.maxStrength ?? 2,
+      };
+    });
+
+    let negativePrompt = details.params?.negativePrompt ?? '';
+    for (const { triggerWord } of [...safeNegatives, ...minorNegatives]) {
+      negativePrompt = negativePrompt.replace(`${triggerWord}, `, '');
+    }
+
+    let prompt = details.params?.prompt ?? '';
+    for (const { triggerWord } of [...minorPositives]) {
+      prompt = prompt.replace(`${triggerWord}, `, '');
+    }
+
+    return {
+      id: request.id,
+      status: request.status,
+      createdAt: request.dateTime,
+      params: {
+        ...details.params,
+        baseModel,
+        prompt,
+        negativePrompt,
+      },
+      resources,
+    };
+  });
+}
+
+function getAirs(requests: TextToImageResponse[]) {
+  return Object.keys(
+    requests.reduce<Record<string, boolean>>((acc, response) => {
       for (const job of response.jobs ?? []) {
         const details = job.details;
         if (details) {
@@ -285,9 +363,4 @@ export async function formatTextToImageResponses(data: TextToImageResponse[]) {
       return acc;
     }, {})
   ).map((air) => parseAIR(air));
-
-  const { resources, safeNegatives, minorNegatives, minorPositives } =
-    await getResourceDataWithInjects(airs.map((x) => x.version));
-
-  console.log({ resources, safeNegatives, minorNegatives, minorPositives });
 }

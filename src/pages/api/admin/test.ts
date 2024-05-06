@@ -67,6 +67,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
       user,
       whatIf: true,
     });
+    console.dir(response, { depth: null });
     const formatted = await formatTextToImageResponses([response]);
   }
 
