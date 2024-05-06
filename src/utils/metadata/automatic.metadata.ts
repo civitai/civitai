@@ -16,7 +16,7 @@ type CivitaiResource = {
 const hashesRegex = /, Hashes:\s*({[^}]+})/;
 const civitaiResources = /, Civitai resources:\s*(\[[^\]]+\])/;
 const badExtensionKeys = ['Resources: ', 'Hashed prompt: ', 'Hashed Negative prompt: '];
-const stripKeys = ['Template: ', 'Negative Template: '] as const;
+const templateKeys = ['Template: ', 'Negative Template: '] as const;
 const automaticExtraNetsRegex = /<(lora|hypernet):([a-zA-Z0-9_\.\-]+):([0-9.]+)>/g;
 const automaticNameHash = /([a-zA-Z0-9_\.]+)\(([a-zA-Z0-9]+)\)/;
 const automaticSDKeyMap = new Map<string, string>([
@@ -104,10 +104,22 @@ export const automaticMetadataProcessor = createMetadataProcessor({
     const generationDetails = exif.generationDetails as string;
 
     if (!generationDetails) return metadata;
-    const metaLines = generationDetails.split('\n').filter((line) => {
-      // filter out empty lines and any lines that start with a key we want to strip
-      return line.trim() !== '' && !stripKeys.some((key) => line.startsWith(key));
-    });
+    const metaLines = generationDetails.split('\n').filter((line) => line.trim() !== '');
+
+    // Remove templates
+    for (const key of templateKeys) {
+      const templateLineIndex = metaLines.findIndex((line) => line.startsWith(key));
+      if (!templateLineIndex) continue;
+      metaLines.splice(templateLineIndex, 1);
+
+      // Remove all lines until we hit a new key `[\w\s]+: `
+      while (
+        templateLineIndex < metaLines.length &&
+        !/[\w\s]+: /.test(metaLines[templateLineIndex])
+      ) {
+        metaLines.splice(templateLineIndex, 1);
+      }
+    }
 
     let detailsLine = metaLines.find((line) => line.startsWith('Steps: '));
     // Strip it from the meta lines
