@@ -83,7 +83,10 @@ export const comfyMetadataProcessor = createMetadataProcessor({
       negativePrompt: getPromptText(initialSamplerNode.negative, 'negative'),
       cfgScale: initialSamplerNode.cfg,
       steps: initialSamplerNode.steps,
-      seed: getNumberValue(initialSamplerNode.seed, ['Value', 'seed']),
+      seed: getNumberValue(initialSamplerNode.seed ?? initialSamplerNode.noise_seed, [
+        'Value',
+        'seed',
+      ]),
       sampler: initialSamplerNode.sampler_name,
       scheduler: initialSamplerNode.scheduler,
       denoise: initialSamplerNode.denoise,
@@ -125,7 +128,7 @@ function a1111Compatability(metadata: ImageMetaProps) {
 
   // Model
   const models = metadata.models as string[];
-  if (models.length > 0) {
+  if (models && models.length > 0) {
     metadata.Model = models[0].replace(/\.[^/.]+$/, '');
   }
 }
@@ -168,6 +171,7 @@ type ComfyNode = {
 
 type SamplerNode = {
   seed: number;
+  noise_seed?: number;
   steps: number;
   cfg: number;
   sampler_name: string;
