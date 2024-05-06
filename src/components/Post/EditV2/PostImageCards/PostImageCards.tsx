@@ -8,6 +8,7 @@ import {
 } from '~/components/Post/EditV2/PostEditProvider';
 import { AddedImage } from '~/components/Post/EditV2/PostImageCards/AddedImage';
 import { BlockedImage } from '~/components/Post/EditV2/PostImageCards/BlockedImage';
+import { ErrorImage } from '~/components/Post/EditV2/PostImageCards/ErrorImage';
 import { PendingImage } from '~/components/Post/EditV2/PostImageCards/PendingImage';
 
 export function PostImageCards() {
@@ -56,9 +57,11 @@ function PostImageCard({ image }: { image: ControlledImage }) {
     case 'added':
       return <AddedImage image={image.data} />;
     case 'blocked':
-      return <BlockedImage image={image.data} />;
+      return <ErrorImage image={image.data} />;
     case 'resolving':
       return <PendingImage image={image.data} />;
+    case 'error':
+      return <ErrorImage image={image.data} />;
     default:
       return <></>;
   }

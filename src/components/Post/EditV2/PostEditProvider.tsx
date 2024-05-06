@@ -49,7 +49,7 @@ export type ControlledImage =
       data: PostEditImageDetail;
     }
   | {
-      type: 'blocked' | 'resolving';
+      type: 'blocked' | 'resolving' | 'error';
       data: PostEditMediaDetail;
     };
 

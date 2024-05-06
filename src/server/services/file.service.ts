@@ -223,6 +223,7 @@ export const getFileForModelVersion = async ({
         id: true,
         url: true,
         name: true,
+        overrideName: true,
         type: true,
         metadata: true,
         hashes: { select: { hash: true }, where: { type: 'SHA256' } },
@@ -265,8 +266,10 @@ export function getDownloadFilename({
 }: {
   model: { name: string; type: ModelType };
   modelVersion: { name: string; trainedWords?: string[] };
-  file: { name: string; type: ModelFileType | string };
+  file: { name: string; overrideName?: string; type: ModelFileType | string };
 }) {
+  if (file.overrideName) return file.overrideName;
+
   let fileName = file.name;
   const modelName = filenamize(model.name);
   let versionName = filenamize(replaceInsensitive(modelVersion.name, modelName, ''));
@@ -328,6 +331,7 @@ type FileResult = {
   type: string;
   id: number;
   name: string;
+  overrideName?: string;
   metadata: Prisma.JsonValue;
   hashes: {
     hash: string;

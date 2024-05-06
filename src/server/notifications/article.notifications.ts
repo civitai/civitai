@@ -39,7 +39,7 @@ export const articleNotifications = createNotificationProcessor({
           FROM "ArticleMetric" am
           WHERE
             am."articleId" = ANY (SELECT json_array_elements('${affectedJson}'::json)::text::integer)
-            AND "viewCount" > ${articleViewMilestones[0]}
+            AND "viewCount" >= ${articleViewMilestones[0]}
             AND timeframe = 'AllTime'
         ), milestone AS (
           SELECT
@@ -95,7 +95,7 @@ export const articleNotifications = createNotificationProcessor({
         JOIN affected af ON af.article_id = am."articleId"
         WHERE
           timeframe = 'AllTime'
-          AND "favoriteCount" > ${articleLikeMilestones[0]}
+          AND "favoriteCount" >= ${articleLikeMilestones[0]}
       ), milestone AS (
         SELECT
           a."userId" "ownerId",

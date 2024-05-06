@@ -85,6 +85,7 @@ import { Flags } from '~/shared/utils';
 import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { leakingContentCounter } from '~/server/prom/client';
+import { postMetrics } from '~/server/metrics';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -134,6 +135,7 @@ export const deleteImageById = async ({
     if (updatePost && image.postId) {
       await updatePostNsfwLevel(image.postId);
       await bustCachesForPost(image.postId);
+      postMetrics.queueUpdate(image.postId);
     }
     return image;
   } catch {
@@ -1107,6 +1109,36 @@ export async function getTagIdsForImages(imageIds: number[]) {
     ttl: CacheTTL.day,
     lookupFn: tagLookup,
   });
+}
+
+export async function getTagNamesForImages(imageIds: number[]) {
+  const imageTagsArr = await dbRead.$queryRaw<{ imageId: number; tag: string }[]>`
+    SELECT "imageId", t.name as tag
+    FROM "TagsOnImage" toi
+    JOIN "Tag" t ON t.id = toi."tagId"
+    WHERE "imageId" IN (${Prisma.join(imageIds)})
+  `;
+  const imageTags = imageTagsArr.reduce((acc, { imageId, tag }) => {
+    if (!acc[imageId]) acc[imageId] = [];
+    acc[imageId].push(tag);
+    return acc;
+  }, {} as Record<number, string[]>);
+  return imageTags;
+}
+
+export async function getResourceIdsForImages(imageIds: number[]) {
+  const imageResourcesArr = await dbRead.$queryRaw<{ imageId: number; modelVersionId: number }[]>`
+    SELECT "imageId", "modelVersionId"
+    FROM "ImageResource"
+    WHERE "imageId" IN (${Prisma.join(imageIds)})
+      AND "modelVersionId" IS NOT NULL
+  `;
+  const imageResources = imageResourcesArr.reduce((acc, { imageId, modelVersionId }) => {
+    if (!acc[imageId]) acc[imageId] = [];
+    acc[imageId].push(modelVersionId);
+    return acc;
+  }, {} as Record<number, number[]>);
+  return imageResources;
 }
 
 export async function clearImageTagIdsCache(imageId: number | number[]) {

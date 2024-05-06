@@ -73,7 +73,7 @@ export const getUserCreator = async ({
   id?: number;
   leaderboardId?: string;
 }) => {
-  return dbRead.user.findFirst({
+  const user = await dbRead.user.findFirst({
     where: {
       ...where,
       deletedAt: null,
@@ -128,15 +128,23 @@ export const getUserCreator = async ({
       profilePicture: {
         select: profileImageSelect,
       },
-      _count: {
-        select: {
-          models: {
-            where: { status: 'Published' },
-          },
-        },
-      },
     },
   });
+  if (!user) return null;
+
+  const modelCount = dbRead.model.count({
+    where: {
+      userId: user?.id,
+      status: 'Published',
+    },
+  });
+
+  return {
+    ...user,
+    _count: {
+      models: Number(modelCount),
+    },
+  };
 };
 
 type GetUsersRow = {

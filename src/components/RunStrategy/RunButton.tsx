@@ -12,11 +12,9 @@ export function RunButton({ modelVersionId, ...props }: { modelVersionId: number
         sx={{
           paddingLeft: 8,
           paddingRight: 8,
-          // width: 36,
         }}
-        fullWidth
       >
-        <IconPlayerPlay />
+        <IconPlayerPlay size={24} />
       </Button>
     </Tooltip>
   );

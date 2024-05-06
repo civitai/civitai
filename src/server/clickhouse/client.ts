@@ -344,6 +344,7 @@ export class Tracker {
     tags: string[];
     ownerId: number;
     tosReason?: string;
+    resources?: number[];
   }) {
     return this.track('images', values);
   }

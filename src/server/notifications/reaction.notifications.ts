@@ -30,7 +30,7 @@ export const reactionNotifications = createNotificationProcessor({
         FROM "CommentReaction" r
         JOIN affected a ON a.affected_id = r."commentId"
         GROUP BY a.affected_id
-        HAVING COUNT(*) > 5
+        HAVING COUNT(*) >= ${commentReactionMilestones[0]}
       ), reaction_milestone AS (
         SELECT
           c."userId" "ownerId",
@@ -101,7 +101,7 @@ export const reactionNotifications = createNotificationProcessor({
         FROM "ImageReaction" r
         JOIN affected a ON a.affected_id = r."imageId"
         GROUP BY a.affected_id
-        HAVING COUNT(*) > 5
+        HAVING COUNT(*) >= ${imageReactionMilestones[0]}
       ), reaction_milestone AS (
         SELECT
           i."userId" "ownerId",
@@ -159,7 +159,7 @@ export const reactionNotifications = createNotificationProcessor({
         FROM "ArticleReaction" r
         JOIN affected a ON a.affected_id = r."articleId"
         GROUP BY a.affected_id
-        HAVING COUNT(*) > ${articleReactionMilestones[0]}
+        HAVING COUNT(*) >= ${articleReactionMilestones[0]}
       ), reaction_milestone AS (
         SELECT
           a."userId" "ownerId",
