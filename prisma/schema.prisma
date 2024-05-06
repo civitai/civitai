@@ -714,6 +714,7 @@ enum ModelFileVisibility {
 model ModelFile {
   id                Int                 @id @default(autoincrement())
   name              String
+  overrideName      String?
   url               String
   sizeKB            Float
   createdAt         DateTime            @default(now())

@@ -12,6 +12,8 @@ import {
   getImageDetail,
   getImageModerationReviewQueue,
   getImageResources,
+  getResourceIdsForImages,
+  getTagNamesForImages,
   moderateImages,
 } from './../services/image.service';
 import { ReportReason, ReportStatus } from '@prisma/client';
@@ -59,12 +61,19 @@ export const moderateImageHandler = async ({
       activity: 'review',
     });
     if (affected) {
+      const ids = affected.map((x) => x.id);
+      const imageTags = await getTagNamesForImages(ids);
+      const imageResources = await getResourceIdsForImages(ids);
       for (const { id, userId, nsfwLevel } of affected) {
+        const tags = imageTags[id] ?? [];
+        tags.push(input.reviewType ?? 'other');
+        const resources = imageResources[id] ?? [];
         await ctx.track.image({
           type: 'DeleteTOS',
           imageId: id,
           nsfw: getNsfwLevelDeprecatedReverseMapping(nsfwLevel),
-          tags: [input.reviewType ?? 'other'],
+          tags,
+          resources,
           tosReason: input.reviewType ?? 'other',
           ownerId: userId,
         });
@@ -130,15 +139,6 @@ export const setTosViolationHandler = async ({
       where: { id },
       select: {
         nsfwLevel: true,
-        tags: {
-          select: {
-            tag: {
-              select: {
-                name: true,
-              },
-            },
-          },
-        },
         userId: true,
         postId: true,
         post: {
@@ -188,11 +188,14 @@ export const setTosViolationHandler = async ({
 
     await imagesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
 
+    const imageTags = await getTagNamesForImages([id]);
+    const imageResources = await getResourceIdsForImages([id]);
     await ctx.track.image({
       type: 'DeleteTOS',
       imageId: id,
       nsfw: getNsfwLevelDeprecatedReverseMapping(image.nsfwLevel),
-      tags: image.tags.map((x) => x.tag.name),
+      tags: imageTags[id] ?? [],
+      resources: imageResources[id] ?? [],
       tosReason: 'manual',
       ownerId: image.userId,
     });

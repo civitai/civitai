@@ -1111,6 +1111,36 @@ export async function getTagIdsForImages(imageIds: number[]) {
   });
 }
 
+export async function getTagNamesForImages(imageIds: number[]) {
+  const imageTagsArr = await dbRead.$queryRaw<{ imageId: number; tag: string }[]>`
+    SELECT "imageId", t.name as tag
+    FROM "TagsOnImage" toi
+    JOIN "Tag" t ON t.id = toi."tagId"
+    WHERE "imageId" IN (${Prisma.join(imageIds)})
+  `;
+  const imageTags = imageTagsArr.reduce((acc, { imageId, tag }) => {
+    if (!acc[imageId]) acc[imageId] = [];
+    acc[imageId].push(tag);
+    return acc;
+  }, {} as Record<number, string[]>);
+  return imageTags;
+}
+
+export async function getResourceIdsForImages(imageIds: number[]) {
+  const imageResourcesArr = await dbRead.$queryRaw<{ imageId: number; modelVersionId: number }[]>`
+    SELECT "imageId", "modelVersionId"
+    FROM "ImageResource"
+    WHERE "imageId" IN (${Prisma.join(imageIds)})
+      AND "modelVersionId" IS NOT NULL
+  `;
+  const imageResources = imageResourcesArr.reduce((acc, { imageId, modelVersionId }) => {
+    if (!acc[imageId]) acc[imageId] = [];
+    acc[imageId].push(modelVersionId);
+    return acc;
+  }, {} as Record<number, number[]>);
+  return imageResources;
+}
+
 export async function clearImageTagIdsCache(imageId: number | number[]) {
   const imageIds = Array.isArray(imageId) ? imageId : [imageId];
   if (!imageIds.length) return;

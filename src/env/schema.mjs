@@ -148,6 +148,7 @@ export const serverSchema = z.object({
   FRESHDESK_JWT_URL: z.string().optional(),
   FRESHDESK_DOMAIN: z.string().optional(),
   FRESHDESK_TOKEN: z.string().optional(),
+  UPLOAD_PROHIBITED_EXTENSIONS: commaDelimitedStringArray().optional(),
 });
 
 /**
