@@ -251,7 +251,7 @@ export const PreviewCard = ({
       ? DEFAULT_EDGE_IMAGE_WIDTH * originalAspectRatio
       : DEFAULT_EDGE_IMAGE_WIDTH;
 
-  const { classes, cx } = useCardStyles({ aspectRatio: originalAspectRatio });
+  const { classes } = useCardStyles({ aspectRatio: originalAspectRatio });
 
   if (!image) return null;
 

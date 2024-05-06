@@ -1,9 +1,8 @@
-import { AspectRatio, Card, CardProps, createStyles } from '@mantine/core';
+import { AspectRatio, Card, CardProps } from '@mantine/core';
 import Link from 'next/link';
 import React, { forwardRef } from 'react';
 import { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
-import { DecorationFrame } from '~/components/Decorations/DecorationFrame';
-import { constants } from '~/server/common/constants';
+import { useFrameStyles } from '~/components/Cards/Cards.styles';
 
 type AspectRatio = 'portrait' | 'landscape' | 'square' | 'flat';
 const aspectRatioValues: Record<
@@ -37,52 +36,6 @@ const aspectRatioValues: Record<
   },
 };
 
-const useStyles = createStyles<string, { frame?: string }>((theme, params) => {
-  const framePadding = 6;
-  return {
-    root: {
-      padding: '0 !important',
-      color: 'white',
-      borderRadius: theme.radius.md,
-      cursor: 'pointer',
-      position: 'relative',
-      overflow: 'hidden',
-      backgroundColor: params.frame ? 'transparent' : undefined,
-      margin: params.frame ? -framePadding : undefined,
-      // img: {
-      //   display: 'none',
-      // },
-    },
-
-    frame: {
-      position: 'relative',
-      // TODO.manuel replace this with our own image
-      backgroundImage: `url("https://www.transparenttextures.com/patterns/brilliant.png"), ${params.frame}`,
-      backgroundSize: '3px 3px, cover',
-      borderRadius: theme.radius.md,
-      zIndex: 2,
-      padding: framePadding,
-      boxShadow: 'inset 0 0 1px 1px rgba(255,255,255, 0.3), 0 1px 2px rgba(0, 0, 0, 0.8)',
-    },
-
-    glow: {
-      position: 'relative',
-      '&:before': {
-        borderRadius: theme.radius.md,
-        backgroundImage: params.frame,
-        content: '""',
-        width: '100%',
-        height: '100%',
-        zIndex: -1,
-        filter: 'blur(5px)',
-        position: 'absolute',
-        top: 0,
-        left: 0,
-      },
-    },
-  };
-});
-
 export const FeedCard = forwardRef<HTMLAnchorElement, Props>(
   (
     {
@@ -97,7 +50,10 @@ export const FeedCard = forwardRef<HTMLAnchorElement, Props>(
     ref
   ) => {
     const { stringRatio } = aspectRatioValues[aspectRatio];
-    const { classes, cx } = useStyles({ frame: frameDecoration?.data.cssFrame });
+    const { classes, cx } = useFrameStyles({
+      frame: frameDecoration?.data.cssFrame,
+      texture: frameDecoration?.data.texture,
+    });
 
     let card = (
       <Card<'a'>

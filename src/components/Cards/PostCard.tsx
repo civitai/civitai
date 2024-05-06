@@ -30,7 +30,7 @@ export function PostCard({ data }: Props) {
 
   return (
     <FeedCard href={`/posts/${data.id}`} aspectRatio="square" frameDecoration={data.cosmetic}>
-      <div className={cx(data.cosmetic && classes.frameAdjustment, classes.root)}>
+      <div className={classes.root}>
         <ImageGuard2 image={image} connectType="post" connectId={data.id}>
           {(safe) => (
             <>
@@ -61,19 +61,24 @@ export function PostCard({ data }: Props) {
               {!safe ? (
                 <MediaHash {...image} />
               ) : (
-                <EdgeMedia
-                  src={image.url}
-                  name={image.name ?? image.id.toString()}
-                  alt={
-                    image.meta
-                      ? truncate(image.meta.prompt, { length: constants.altTruncateLength })
-                      : image.name ?? undefined
-                  }
-                  type={image.type}
-                  width={IMAGE_CARD_WIDTH}
-                  placeholder="empty"
-                  className={classes.image}
-                />
+                <div
+                  className={data.cosmetic ? classes.frameAdjustment : undefined}
+                  style={{ height: '100%' }}
+                >
+                  <EdgeMedia
+                    src={image.url}
+                    name={image.name ?? image.id.toString()}
+                    alt={
+                      image.meta
+                        ? truncate(image.meta.prompt, { length: constants.altTruncateLength })
+                        : image.name ?? undefined
+                    }
+                    type={image.type}
+                    width={IMAGE_CARD_WIDTH}
+                    placeholder="empty"
+                    className={classes.image}
+                  />
+                </div>
               )}
             </>
           )}

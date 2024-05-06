@@ -45,7 +45,7 @@ function UnroutedImageCard({ data }: Props) {
   return (
     <HolidayFrame {...cardDecoration}>
       <FeedCard className={sharedClasses.link} frameDecoration={data.cosmetic}>
-        <div className={cx(data.cosmetic && sharedClasses.frameAdjustment, sharedClasses.root)}>
+        <div className={sharedClasses.root}>
           <ImageGuard2 image={data}>
             {(safe) => (
               <>
@@ -84,21 +84,26 @@ function UnroutedImageCard({ data }: Props) {
                   )}
                 </Group>
                 {safe ? (
-                  <EdgeMedia
-                    src={data.url}
-                    name={data.name ?? data.id.toString()}
-                    alt={
-                      data.meta
-                        ? truncate(data.meta.prompt, { length: constants.altTruncateLength })
-                        : data.name ?? undefined
-                    }
-                    type={data.type}
-                    width={imageWidth}
-                    className={sharedClasses.image}
-                    wrapperProps={{ style: { height: '100%', width: '100%' } }}
-                    loading="lazy"
-                    contain
-                  />
+                  <div
+                    className={data.cosmetic ? sharedClasses.frameAdjustment : undefined}
+                    style={{ height: '100%' }}
+                  >
+                    <EdgeMedia
+                      src={data.url}
+                      name={data.name ?? data.id.toString()}
+                      alt={
+                        data.meta
+                          ? truncate(data.meta.prompt, { length: constants.altTruncateLength })
+                          : data.name ?? undefined
+                      }
+                      type={data.type}
+                      width={imageWidth}
+                      className={sharedClasses.image}
+                      wrapperProps={{ style: { height: '100%', width: '100%' } }}
+                      loading="lazy"
+                      contain
+                    />
+                  </div>
                 ) : (
                   <MediaHash {...data} />
                 )}

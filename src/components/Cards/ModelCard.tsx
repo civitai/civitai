@@ -207,7 +207,7 @@ export function ModelCard({ data, forceInView }: Props) {
       href={href}
       frameDecoration={data.cosmetic}
     >
-      <div className={cx(data.cosmetic && classes.frameAdjustment, classes.root)} ref={ref}>
+      <div className={classes.root} ref={ref}>
         <div className={classes.content} style={{ opacity: inView ? 1 : undefined }}>
           {inView && (
             <>
@@ -344,28 +344,33 @@ export function ModelCard({ data, forceInView }: Props) {
                         </Stack>
                       </Group>
                       {safe ? (
-                        <EdgeMedia
-                          src={image.url}
-                          name={image.name ?? image.id.toString()}
-                          alt={
-                            image.meta
-                              ? truncate((image.meta as ImageMetaProps).prompt, {
-                                  length: 125,
-                                })
-                              : undefined
-                          }
-                          type={image.type}
-                          width={
-                            originalAspectRatio > 1
-                              ? IMAGE_CARD_WIDTH * originalAspectRatio
-                              : IMAGE_CARD_WIDTH
-                          }
-                          placeholder="empty"
-                          className={classes.image}
-                          // loading="lazy"
-                          wrapperProps={{ style: { height: '100%', width: '100%' } }}
-                          contain
-                        />
+                        <div
+                          className={data.cosmetic ? classes.frameAdjustment : undefined}
+                          style={{ height: '100%' }}
+                        >
+                          <EdgeMedia
+                            src={image.url}
+                            name={image.name ?? image.id.toString()}
+                            alt={
+                              image.meta
+                                ? truncate((image.meta as ImageMetaProps).prompt, {
+                                    length: 125,
+                                  })
+                                : undefined
+                            }
+                            type={image.type}
+                            width={
+                              originalAspectRatio > 1
+                                ? IMAGE_CARD_WIDTH * originalAspectRatio
+                                : IMAGE_CARD_WIDTH
+                            }
+                            placeholder="empty"
+                            className={classes.image}
+                            // loading="lazy"
+                            wrapperProps={{ style: { height: '100%', width: '100%' } }}
+                            contain
+                          />
+                        </div>
                       ) : (
                         <div className={classes.blurHash}>
                           <MediaHash {...image} />

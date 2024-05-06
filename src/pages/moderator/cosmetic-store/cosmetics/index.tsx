@@ -193,7 +193,7 @@ export const CosmeticPreview = ({
       }
 
       return (
-        <Stack spacing={0}>
+        <Stack spacing="xl">
           <Text weight="bold" align="center">
             Preview
           </Text>
@@ -207,7 +207,7 @@ export const CosmeticPreview = ({
 
       return (
         <Stack>
-          <Stack spacing={0}>
+          <Stack spacing="xl">
             <Text weight="bold" align="center">
               Preview
             </Text>
@@ -215,7 +215,7 @@ export const CosmeticPreview = ({
               You can apply this cosmetic to any image, model, article or post you own.
             </Text>
           </Stack>
-          <Box style={{ transform: 'scale(0.75)' }}>
+          <Box mx="auto">
             <PreviewCard
               decoration={cosmetic as ContentDecorationCosmetic}
               image={images[activeImageIndex]}

@@ -33,15 +33,7 @@ export function PostsCard({
   const isOwner = currentUser?.id === user.id;
 
   return (
-    <MasonryCard
-      withBorder
-      shadow="sm"
-      p={0}
-      height={height}
-      ref={ref}
-      frameDecoration={cosmetic}
-      className={cosmetic ? sharedClasses.frameAdjustment : undefined}
-    >
+    <MasonryCard withBorder shadow="sm" p={0} height={height} ref={ref} frameDecoration={cosmetic}>
       {inView && (
         <>
           <ImageGuard2 image={image} connectType="post" connectId={id}>
@@ -68,7 +60,11 @@ export function PostsCard({
                   />
                 )}
 
-                <RoutedDialogLink name="postDetail" state={{ postId: id }}>
+                <RoutedDialogLink
+                  name="postDetail"
+                  state={{ postId: id }}
+                  className={cosmetic && safe ? sharedClasses.frameAdjustment : undefined}
+                >
                   {!safe ? (
                     <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>
                       <MediaHash {...image} />
@@ -76,6 +72,7 @@ export function PostsCard({
                   ) : (
                     <EdgeMedia
                       src={image.url}
+                      className={sharedClasses.image}
                       name={image.name ?? image.id.toString()}
                       alt={
                         image.meta
