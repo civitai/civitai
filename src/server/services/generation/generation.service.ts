@@ -1182,10 +1182,10 @@ export const textToImageTestRun = async ({
     sampler = draftData.sampler;
   }
 
+  const isSd1 = baseModel === 'SD1';
   const response = await orchestratorCaller.textToImage({
     payload: {
-      // Civitai SDXL - Irrelevant, not used for cost calculation.
-      model: '@civitai/128078',
+      model: isSd1 ? `@civitai/128713` : '@civitai/128078',
       baseModel: baseModelToOrchestration[baseModel as BaseModelSetType],
       properties: {},
       quantity: quantity,
