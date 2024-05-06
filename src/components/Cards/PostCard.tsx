@@ -61,19 +61,24 @@ export function PostCard({ data }: Props) {
               {!safe ? (
                 <MediaHash {...image} />
               ) : (
-                <EdgeMedia
-                  src={image.url}
-                  name={image.name ?? image.id.toString()}
-                  alt={
-                    image.meta
-                      ? truncate(image.meta.prompt, { length: constants.altTruncateLength })
-                      : image.name ?? undefined
-                  }
-                  type={image.type}
-                  width={IMAGE_CARD_WIDTH}
-                  placeholder="empty"
-                  className={cx(classes.image, data.cosmetic && classes.frameAdjustment)}
-                />
+                <div
+                  className={data.cosmetic ? classes.frameAdjustment : undefined}
+                  style={{ height: '100%' }}
+                >
+                  <EdgeMedia
+                    src={image.url}
+                    name={image.name ?? image.id.toString()}
+                    alt={
+                      image.meta
+                        ? truncate(image.meta.prompt, { length: constants.altTruncateLength })
+                        : image.name ?? undefined
+                    }
+                    type={image.type}
+                    width={IMAGE_CARD_WIDTH}
+                    placeholder="empty"
+                    className={classes.image}
+                  />
+                </div>
               )}
             </>
           )}

@@ -157,9 +157,12 @@ export const CosmeticShopItemPreviewModal = ({ shopItem }: Props) => {
       <Grid m={0}>
         <Grid.Col span={12} md={5} className={classes.sample}>
           <Stack spacing="lg" px="md" h="100%">
-            <Text className={classes.text} size="sm">
-              {getDisplayName(cosmetic.type)}
-            </Text>
+            <Group position="apart" noWrap>
+              <Text className={classes.text} size="sm">
+                {getDisplayName(cosmetic.type)}
+              </Text>
+              <CloseButton className="show-mobile" onClick={dialog.onClose} />
+            </Group>
             <Center my="auto" h={250}>
               <CosmeticSample cosmetic={cosmetic} size="lg" />
             </Center>
@@ -210,7 +213,7 @@ export const CosmeticShopItemPreviewModal = ({ shopItem }: Props) => {
           </Stack>
         </Grid.Col>
         <Grid.Col span={12} md={7} className={classes.preview}>
-          <Stack spacing={0} h={0} align="flex-end">
+          <Stack spacing={0} h={0} align="flex-end" className="hide-mobile">
             <CloseButton onClick={dialog.onClose} />
           </Stack>
           <Stack px="md" h="100%" justify="center">

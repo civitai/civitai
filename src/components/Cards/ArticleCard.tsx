@@ -20,7 +20,6 @@ import { HolidayFrame } from '../Decorations/HolidayFrame';
 import { CosmeticType } from '@prisma/client';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
-import type { ArticleGetInfinite } from '~/types/router';
 
 const IMAGE_CARD_WIDTH = 450;
 
@@ -56,7 +55,12 @@ export function ArticleCard({ data, aspectRatio }: Props) {
           {coverImage && (
             <ImageGuard2 image={coverImage}>
               {(safe) => (
-                <div className="relative flex-1 h-full">
+                <div
+                  className={cx(
+                    'relative flex-1 h-full',
+                    data.cosmetic && safe && classes.frameAdjustment
+                  )}
+                >
                   <Group
                     spacing={4}
                     position="apart"
@@ -77,7 +81,7 @@ export function ArticleCard({ data, aspectRatio }: Props) {
                     <MediaHash {...coverImage} />
                   ) : (
                     <EdgeMedia
-                      className={cx(classes.image, data.cosmetic && classes.frameAdjustment)}
+                      className={cx(classes.image)}
                       src={coverImage.url}
                       width={IMAGE_CARD_WIDTH * 2.5}
                       loading="lazy"
