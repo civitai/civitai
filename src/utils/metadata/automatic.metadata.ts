@@ -109,7 +109,7 @@ export const automaticMetadataProcessor = createMetadataProcessor({
     // Remove templates
     for (const key of templateKeys) {
       const templateLineIndex = metaLines.findIndex((line) => line.startsWith(key));
-      if (!templateLineIndex) continue;
+      if (templateLineIndex === -1) continue;
       metaLines.splice(templateLineIndex, 1);
 
       // Remove all lines until we hit a new key `[\w\s]+: `
