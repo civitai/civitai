@@ -60,13 +60,19 @@ export const FeedCard = forwardRef<HTMLAnchorElement, Props>(
         className={cx(classes.root, className)}
         {...props}
         component={href ? 'a' : undefined}
-        href={href}
         ref={ref}
         style={{ aspectRatio: stringRatio }}
       >
         {children}
       </Card>
     );
+
+    if (href)
+      card = (
+        <Link href={href} passHref>
+          {card}
+        </Link>
+      );
 
     if (frameDecoration) {
       card = (
