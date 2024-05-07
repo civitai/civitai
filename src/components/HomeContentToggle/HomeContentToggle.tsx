@@ -81,11 +81,11 @@ const homeOptions: Record<string, HomeOption> = {
   //   url: '/clubs',
   //   icon: (props: TablerIconsProps) => <IconClubs {...props} />,
   // },
-  builds: {
-    url: '/builds',
-    icon: (props: TablerIconsProps) => <IconCpu {...props} />,
-    grouped: true,
-  },
+  // builds: {
+  //   url: '/builds',
+  //   icon: (props: TablerIconsProps) => <IconCpu {...props} />,
+  //   grouped: true,
+  // },
   shop: {
     url: '/shop',
     icon: (props: TablerIconsProps) => <IconShoppingBag {...props} />,
