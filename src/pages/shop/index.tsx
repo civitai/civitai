@@ -44,6 +44,7 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import {
   useCosmeticShopQueryParams,
   useQueryShop,
+  useShopLastViewed,
 } from '~/components/CosmeticShop/cosmetic-shop.util';
 import { ImageCSSAspectRatioWrap } from '~/components/Profile/ImageCSSAspectRatioWrap';
 import { constants } from '~/server/common/constants';
@@ -69,6 +70,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ShopFiltersDropdown } from '~/components/CosmeticShop/ShopFiltersDropdown';
 import { useDebouncedValue } from '@mantine/hooks';
 import { useEffect } from 'react';
+import { Countdown } from '~/components/Countdown/Countdown';
 
 const IMAGE_SECTION_WIDTH = 1288;
 
@@ -145,8 +147,8 @@ const useStyles = createStyles((theme, _params, getRef) => {
       background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[1],
       borderRadius: theme.radius.md,
       padding: theme.spacing.md,
-      overflow: 'hidden',
       position: 'relative',
+      margin: '3px',
     },
 
     cardHeader: {
@@ -154,11 +156,15 @@ const useStyles = createStyles((theme, _params, getRef) => {
       margin: -theme.spacing.md,
       padding: theme.spacing.md,
       marginBottom: theme.spacing.md,
+      borderRadius: theme.radius.md,
+      borderBottomRightRadius: 0,
+      borderBottomLeftRadius: 0,
       height: 250,
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
       position: 'relative',
+      overflow: 'hidden',
     },
 
     availability: {
@@ -177,6 +183,44 @@ const useStyles = createStyles((theme, _params, getRef) => {
         margin: '0 auto',
       },
     },
+    countdown: {
+      position: 'absolute',
+      left: theme.spacing.md,
+      right: theme.spacing.md,
+      bottom: theme.spacing.md,
+      display: 'flex',
+      alignItems: 'stretch',
+      zIndex: 2,
+      '.mantine-Badge-inner': {
+        display: 'block',
+        width: '100%',
+      },
+      '.mantine-Text-root': {
+        margin: '0 auto',
+      },
+    },
+
+    new: {
+      '&::before': {
+        content: '""',
+        position: 'absolute',
+        top: 0,
+        right: 0,
+        bottom: 0,
+        left: 0,
+        zIndex: -1,
+        margin: '-3px' /* !importanté */,
+        borderRadius: 'inherit' /* !importanté */,
+        background: theme.fn.linearGradient(45, theme.colors.yellow[4], theme.colors.yellow[1]),
+      },
+    },
+
+    newBadge: {
+      position: 'absolute',
+      top: '-10px',
+      right: '-10px',
+      zIndex: 1,
+    },
   };
 });
 
@@ -190,19 +234,39 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
-export const CosmeticShopItem = ({ item }: { item: CosmeticShopItemGetById }) => {
+export const CosmeticShopItem = ({
+  item,
+  sectionItemCreatedAt,
+}: {
+  item: CosmeticShopItemGetById;
+  sectionItemCreatedAt?: Date;
+}) => {
   const cosmetic = item.cosmetic;
-  const { classes } = useStyles();
+  const { classes, cx } = useStyles();
   const isAvailable =
     (item.availableQuantity ?? null) === null || (item.availableQuantity ?? 0) > 0;
   const currentUser = useCurrentUser();
+  const { lastViewed } = useShopLastViewed();
 
   const availableFrom = item.availableFrom ? formatDate(item.availableFrom) : null;
   const remaining = item.availableQuantity;
   const availableTo = item.availableTo ? formatDate(item.availableTo) : null;
+  const isUpcoming = item.availableFrom && dayjs(item.availableFrom).isAfter(dayjs());
+
+  const isNew =
+    lastViewed && sectionItemCreatedAt && dayjs(sectionItemCreatedAt).isAfter(dayjs(lastViewed));
 
   return (
-    <Paper className={classes.card}>
+    <Paper
+      className={cx(classes.card, {
+        [classes.new]: isNew,
+      })}
+    >
+      {isNew && (
+        <Badge color="yellow.7" className={classes.newBadge} variant="filled">
+          New!
+        </Badge>
+      )}
       {(remaining !== null || availableTo) && (
         <Badge color="grape" className={classes.availability} px={6}>
           <Group position="apart" noWrap spacing={4}>
@@ -218,6 +282,7 @@ export const CosmeticShopItem = ({ item }: { item: CosmeticShopItemGetById }) =>
           </Group>
         </Badge>
       )}
+
       <Stack h="100%">
         <Stack spacing="md">
           <UnstyledButton
@@ -235,6 +300,12 @@ export const CosmeticShopItem = ({ item }: { item: CosmeticShopItemGetById }) =>
           >
             <Box className={classes.cardHeader}>
               <CosmeticSample cosmetic={cosmetic} size="lg" />
+              {isUpcoming && (
+                <Badge color="grape" className={classes.countdown} px={6} align="center">
+                  Available in{' '}
+                  <Countdown endTime={item.availableFrom} refreshIntervalMs={1000} format="short" />
+                </Badge>
+              )}
             </Box>
           </UnstyledButton>
           <Stack spacing={4} align="flex-start">
@@ -276,6 +347,7 @@ export const CosmeticShopItem = ({ item }: { item: CosmeticShopItemGetById }) =>
 };
 
 export default function CosmeticShopMain() {
+  const currentUser = useCurrentUser();
   const { classes, cx } = useStyles();
   const { query } = useCosmeticShopQueryParams();
   const [filters, setFilters] = useState<GetShopInput>({
@@ -283,11 +355,19 @@ export default function CosmeticShopMain() {
   });
   const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
   const { cosmeticShopSections, isLoading } = useQueryShop(debouncedFilters);
-  const isMobile = useIsMobile();
+
+  const { lastViewed, updateLastViewed, isFetched } = useShopLastViewed();
 
   useEffect(() => {
     setFilters(query);
   }, [query]);
+
+  useEffect(() => {
+    if (isFetched) {
+      // Update last viewed
+      updateLastViewed();
+    }
+  }, [isFetched]);
 
   return (
     <>
@@ -296,11 +376,12 @@ export default function CosmeticShopMain() {
         description="Civitai Cosmetic Shop is a place where you can find the best cosmetic products to really express youself."
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/builds`, rel: 'canonical' }]}
       />
-      <Container size="xl">
+      <Container size="xl" p="sm">
         <Stack spacing="xl">
           <Stack spacing={0}>
             <Group noWrap position="apart">
               <Title>Civitai Cosmetic Shop</Title>
+
               <Button
                 leftIcon={<IconPencilMinus size={16} />}
                 onClick={() => {
@@ -333,7 +414,7 @@ export default function CosmeticShopMain() {
                 : undefined;
 
               return (
-                <Stack key={section.id} className={classes.section}>
+                <Stack key={section.id} className={classes.section} m="sm">
                   <Box
                     className={cx(classes.sectionHeaderContainer, {
                       [classes.sectionHeaderContainerWithBackground]: !!image,
@@ -370,12 +451,12 @@ export default function CosmeticShopMain() {
                     )}
                   </Stack>
 
-                  <Grid>
+                  <Grid mb={0} mt={0}>
                     {items.map((item) => {
                       const { shopItem } = item;
                       return (
                         <Grid.Col span={12} sm={6} md={3} key={shopItem.id}>
-                          <CosmeticShopItem item={shopItem} />
+                          <CosmeticShopItem item={shopItem} sectionItemCreatedAt={item.createdAt} />
                         </Grid.Col>
                       );
                     })}

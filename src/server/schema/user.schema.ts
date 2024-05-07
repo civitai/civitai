@@ -196,6 +196,7 @@ export const userSettingsSchema = z.object({
   dismissedAlerts: z.array(z.string()).optional(),
   chat: userSettingsChat.optional(),
   airEmail: z.string().email().optional(),
+  cosmeticStoreLastViewed: z.date().nullish(),
 });
 
 const [featureKey, ...otherKeys] = featureFlagKeys;
@@ -209,6 +210,7 @@ export const toggleFeatureInputSchema = z.object({
 export type SetUserSettingsInput = z.infer<typeof setUserSettingsInput>;
 export const setUserSettingsInput = z.object({
   creatorsProgramCodeOfConductAccepted: z.boolean().optional(),
+  cosmeticStoreLastViewed: z.date().optional(),
 });
 
 export const dismissAlertSchema = z.object({ alertId: z.string() });

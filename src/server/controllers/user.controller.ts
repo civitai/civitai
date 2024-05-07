@@ -32,6 +32,7 @@ import {
   ToggleUserBountyEngagementsInput,
   UserByReferralCodeSchema,
   UserOnboardingSchema,
+  UserSettingsSchema,
   UserUpdateInput,
 } from '~/server/schema/user.schema';
 import {
@@ -1249,7 +1250,7 @@ export const getUserSettingsHandler = async ({ ctx }: { ctx: DeepNonNullable<Con
     const settings = await getUserSettings(id);
 
     // Limits it to the input type
-    return settings as SetUserSettingsInput;
+    return settings as UserSettingsSchema;
   } catch (error) {
     throw throwDbError(error);
   }

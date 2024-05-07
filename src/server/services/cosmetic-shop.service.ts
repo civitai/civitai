@@ -255,7 +255,7 @@ export const upsertCosmeticShopSection = async ({
       }));
 
       await dbWrite.$executeRaw`
-        INSERT INTO "CosmeticShopSectionItem" ("shopSectionId", "shopItemId", "index", "")
+        INSERT INTO "CosmeticShopSectionItem" ("shopSectionId", "shopItemId", "index")
         VALUES ${Prisma.join(
           data.map(
             ({ shopSectionId, shopItemId, index }) =>
@@ -332,6 +332,7 @@ export const getShopSectionsWithItems = async ({
       },
       items: {
         select: {
+          createdAt: true,
           shopItem: {
             select: cosmeticShopItemSelect,
           },
@@ -344,10 +345,9 @@ export const getShopSectionsWithItems = async ({
               ? undefined
               : [
                   {
-                    availableFrom: { lte: new Date() },
                     availableTo: { gte: new Date() },
                   },
-                  { availableFrom: null, availableTo: null },
+                  { availableTo: null },
                 ],
           },
         },

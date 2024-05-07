@@ -9,26 +9,31 @@ export const cosmeticShopNotifications = createNotificationProcessor({
       message: `New items have been added to the shop! Check 'em out now!`,
       url: `/shop`,
     }),
-    prepareQuery: ({ lastSent, category }) => `
-      WITH new_items AS (
-        SELECT ssi."shopItemId" "id" FROM "CosmeticShopSectionItem" ssi
-        JOIN "CosmeticShopItem" si ON si.id = ssi."shopItemId"
-        WHERE ssi."createdAt" > '${lastSent}'::timestamp - INTERVAL '60 minutes'
-          AND ssi."createdAt" <= NOW() - INTERVAL '60 minutes'
-          AND (si."availableFrom" >= NOW() OR si."availableFrom" IS NULL)
+    prepareQuery: ({ lastSent, category }) =>
+      `WITH created_notifications AS (
+        INSERT INTO "Notification"("id", "userId", "type", "details", "category")
+        SELECT
+          CONCAT(uns."userId",':','cosmetic-shop-item-added-to-section') "id",
+          uns."userId" "userId",
+          'cosmetic-shop-item-added-to-section' "type",
+          '{}'::jsonb "details",
+          '${category}'::"NotificationCategory" "category"
+        FROM "UserNotificationSettings" uns
+        WHERE uns."type" = 'cosmetic-shop-item-added-to-section'
+          AND EXISTS (
+            SELECT 1 FROM "CosmeticShopSectionItem" ssi
+            JOIN "CosmeticShopItem" si ON si.id = ssi."shopItemId"
+            WHERE ssi."createdAt" > '${lastSent}'::timestamp AND (si."availableFrom" >= NOW() OR si."availableFrom" IS NULL)
+          )
+        ON CONFLICT("id") DO UPDATE SET "createdAt" = NOW()
+        RETURNING "id", "category", "userId"
+      ),
+      deleted AS (
+        DELETE FROM "NotificationViewed" 
+          WHERE "id" IN (SELECT "id" FROM created_notifications)
+        RETURNING "id"
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
-      SELECT
-        -- Technically, max id would always point out to the latest added product. It's not a perfect approach but should work well enough.
-        CONCAT(uns."userId",':','cosmetic-shop-item-added-to-section', ':', (SELECT MAX(id) FROM new_items)) "id",
-        uns."userId" "userId",
-        'cosmetic-shop-item-added-to-section' "type",
-        '{}' "details",
-        '${category}'::"NotificationCategory" "category"
-      FROM "UserNotificationSettings" uns
-      WHERE uns."type" = 'cosmetic-shop-item-added-to-section' 
-      AND EXISTS (SELECT 1 FROM new_items)
-      ON CONFLICT("id") DO NOTHING;
+      SELECT "category", "userId" FROM created_notifications; 
     `,
   },
   'cosmetic-shop-item-sold': {

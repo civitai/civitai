@@ -28,6 +28,7 @@ import { CosmeticShopItemGetById } from '~/types/router';
 import { showSuccessNotification } from '~/utils/notifications';
 import { getDisplayName } from '~/utils/string-helpers';
 import { IconAlertTriangleFilled } from '@tabler/icons-react';
+import dayjs from 'dayjs';
 
 type Props = { shopItem: CosmeticShopItemGetById };
 
@@ -111,6 +112,9 @@ export const CosmeticShopItemPreviewModal = ({ shopItem }: Props) => {
     .flat()
     .some(({ id }) => id === cosmetic.id);
   const canPurchase = cosmetic.type === CosmeticType.ContentDecoration || !hasCosmetic;
+  const isAvailable =
+    (shopItem.availableQuantity === null || shopItem.availableQuantity > 0) &&
+    (shopItem.availableFrom === null || dayjs(shopItem.availableFrom).isBefore(dayjs()));
 
   const handlePurchaseShopItem = async () => {
     try {
@@ -175,7 +179,7 @@ export const CosmeticShopItemPreviewModal = ({ shopItem }: Props) => {
               <>
                 {canPurchase ? (
                   <BuzzTransactionButton
-                    disabled={purchasingShopItem}
+                    disabled={purchasingShopItem || !isAvailable}
                     loading={purchasingShopItem}
                     buzzAmount={shopItem.unitAmount}
                     radius="xl"
