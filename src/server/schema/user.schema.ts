@@ -196,6 +196,7 @@ export const userSettingsSchema = z.object({
   dismissedAlerts: z.array(z.string()).optional(),
   chat: userSettingsChat.optional(),
   airEmail: z.string().email().optional(),
+  creatorsProgramCodeOfConductAccepted: z.boolean().optional(),
   cosmeticStoreLastViewed: z.date().nullish(),
 });
 

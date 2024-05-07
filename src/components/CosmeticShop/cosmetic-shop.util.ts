@@ -270,16 +270,13 @@ export const useQueryShop = (
 
 export const useShopLastViewed = () => {
   const currentUser = useCurrentUser();
-  const {
-    data = [],
-    isLoading,
-    isFetched,
-    ...rest
-  } = trpc.user.getSettings.useQuery(undefined, {
+  const { data, isLoading, isFetched, ...rest } = trpc.user.getSettings.useQuery(undefined, {
     enabled: !!currentUser,
   });
 
-  const { cosmeticStoreLastViewed: lastViewed } = data ?? {};
+  const { cosmeticStoreLastViewed: lastViewed } = data ?? {
+    cosmeticStoreLastViewed: null,
+  };
 
   const updateUserSettings = trpc.user.setSettings.useMutation({
     onError(_error, _payload, context) {

@@ -190,6 +190,7 @@ const useStyles = createStyles((theme, _params, getRef) => {
       bottom: theme.spacing.md,
       display: 'flex',
       alignItems: 'stretch',
+      textAlign: 'center',
       zIndex: 2,
       '.mantine-Badge-inner': {
         display: 'block',
@@ -300,8 +301,8 @@ export const CosmeticShopItem = ({
           >
             <Box className={classes.cardHeader}>
               <CosmeticSample cosmetic={cosmetic} size="lg" />
-              {isUpcoming && (
-                <Badge color="grape" className={classes.countdown} px={6} align="center">
+              {isUpcoming && item.availableFrom && (
+                <Badge color="grape" className={classes.countdown} px={6}>
                   Available in{' '}
                   <Countdown endTime={item.availableFrom} refreshIntervalMs={1000} format="short" />
                 </Badge>
