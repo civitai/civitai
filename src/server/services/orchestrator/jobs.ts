@@ -28,7 +28,7 @@ export async function deleteJob({ id, user }: { id: string; user: SessionUser })
     auth: 'ff2ddeabd724b029112668447a9388f7', // TODO - use user api token
   });
 
-  await client.jobs.deleteJob({ jobId: id }); // TODO - check if `requestId` can be removed from method params
+  // await client.jobs.deleteJob({ jobId: id }); // TODO - check if `requestId` can be removed from method params
 }
 
 export async function cancelJob({ id, user }: { id: string; user: SessionUser }) {

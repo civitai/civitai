@@ -8,6 +8,7 @@ import {
   baseModelSetTypes,
   baseModelSets,
   draftMode,
+  generation,
   getGenerationConfig,
 } from '~/server/common/constants';
 import { extModeration } from '~/server/integrations/moderation';
@@ -34,7 +35,7 @@ import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema'
 import { createRequest, getRequests } from '~/server/services/orchestrator/requests';
 
 // #region [schemas]
-const textToImageParamsSchema = z.object({
+export const textToImageParamsSchema = z.object({
   prompt: z.string(),
   negativePrompt: z.string().optional(),
   cfgScale: z.number(),
@@ -45,23 +46,44 @@ const textToImageParamsSchema = z.object({
   quantity: z.number(),
   nsfw: z.boolean().optional(),
   draft: z.boolean().optional(),
-  aspectRatio: z.coerce.number(),
+  aspectRatio: z.number(),
   baseModel: z.enum(baseModelSetTypes),
 });
 
-const textToImageResourceSchema = z.object({
+export const textToImageParamsValidationSchema = textToImageParamsSchema.extend({
+  prompt: z
+    .string()
+    .nonempty('Prompt cannot be empty')
+    .max(1500, 'Prompt cannot be longer than 1500 characters'),
+  negativePrompt: z.string().max(1000, 'Prompt cannot be longer than 1000 characters').optional(),
+  cfgScale: z.coerce.number().min(1).max(30),
+  sampler: z
+    .string()
+    .refine((val) => generation.samplers.includes(val as (typeof generation.samplers)[number]), {
+      message: 'invalid sampler',
+    }),
+  seed: z.coerce.number().min(-1).max(generation.maxValues.seed).default(-1),
+  clipSkip: z.coerce.number().default(1),
+  steps: z.coerce.number().min(1).max(100),
+  quantity: z.coerce.number().min(1).max(20),
+  aspectRatio: z.coerce.number(),
+});
+
+export const textToImageResourceSchema = z.object({
   id: z.number(),
   strength: z.number().default(1),
   triggerWord: z.string().optional(),
 });
 
+export const textToImageResourcesValidatedSchema = textToImageResourceSchema
+  .array()
+  .min(1, 'You must select at least one resource')
+  .max(10);
+
 export const textToImageSchema = z.object({
   whatIf: z.boolean().optional(),
-  params: textToImageParamsSchema,
-  resources: textToImageResourceSchema
-    .array()
-    .min(1, 'You must select at least one resource')
-    .max(10, 'Too many resources provided'),
+  params: textToImageParamsValidationSchema,
+  resources: textToImageResourcesValidatedSchema,
 });
 // #endregion
 
@@ -324,38 +346,25 @@ export async function formatTextToImageResponses(
         strength: settings?.strength ?? 1,
         minStrength: settings?.minStrength ?? -1,
         maxStrength: settings?.maxStrength ?? 2,
+        covered: resource.generationCoverage?.covered,
       };
     });
 
-    const images = request.jobs?.flatMap((job) =>
-      job.result.map((result, i) => {
-        const seed = job.details?.params?.seed;
-        return {
-          requestId: request.id,
-          jobId: job.jobId,
-          blobKey: result.blobKey,
-          available: result.available,
-          status: job.status,
-          seed: seed ? seed + i : undefined,
-          duration: job.details?.claimDuration, // TODO - change this to `jobDuration`
-        };
-      })
-    );
-
-    /*
-    {
-        id: number;
-        hash: string;
-        url: string;
-        available: boolean;
-        requestId: number;
-        seed?: number | undefined;
-        status?: Generation.ImageStatus | undefined;
-        type?: JobStatus | undefined;
-        removedForSafety: boolean;
-        duration?: number | null | undefined;
-    }[]
-    */
+    const images =
+      request.jobs?.flatMap((job) =>
+        job.result.map((result, i) => {
+          const seed = job.details?.params?.seed;
+          return {
+            requestId: request.id,
+            jobId: job.jobId,
+            blobKey: result.blobKey,
+            available: result.available,
+            status: job.status,
+            seed: seed ? seed + i : undefined,
+            duration: job.details?.claimDuration, // TODO - change this to `jobDuration`
+          };
+        })
+      ) ?? [];
 
     let negativePrompt = details.params?.negativePrompt ?? '';
     for (const { triggerWord } of [...safeNegatives, ...minorNegatives]) {
@@ -379,6 +388,7 @@ export async function formatTextToImageResponses(
       },
       resources,
       images,
+      cost: request.transactionAmount,
     };
   });
 }

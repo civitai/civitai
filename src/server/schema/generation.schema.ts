@@ -5,6 +5,11 @@ import { userTierSchema } from '~/server/schema/user.schema';
 import { auditPrompt } from '~/utils/metadata/audit';
 import { imageSchema } from './image.schema';
 import { GenerationRequestStatus } from '~/server/common/enums';
+import {
+  textToImageParamsSchema,
+  textToImageParamsValidationSchema,
+  textToImageResourceSchema,
+} from '~/server/services/orchestrator/textToImage';
 // export type GetGenerationResourceInput = z.infer<typeof getGenerationResourceSchema>;
 // export const getGenerationResourceSchema = z.object({
 //   type: z.nativeEnum(ModelType),
@@ -270,3 +275,30 @@ export const sendFeedbackSchema = z.object({
   reason: z.nativeEnum(GENERATION_QUALITY),
   message: z.string().optional(),
 });
+
+export const textToImageStorageSchema = textToImageParamsSchema.extend({
+  resources: textToImageResourceSchema.array(),
+});
+
+export const textToImageFormSchema = textToImageParamsValidationSchema.superRefine(
+  ({ prompt }, ctx) => {
+    const { blockedFor, success } = auditPrompt(prompt);
+    if (!success) {
+      let message = `Blocked for: ${blockedFor.join(', ')}`;
+      const count = blockedRequest.increment();
+      const status = blockedRequest.status();
+      if (status === 'warned') {
+        message += `. If you continue to attempt blocked prompts, your account will be sent for review.`;
+      } else if (status === 'notified') {
+        message += `. Your account has been sent for review. If you continue to attempt blocked prompts, your generation permissions will be revoked.`;
+      }
+
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message,
+        params: { count },
+        path: ['prompt'],
+      });
+    }
+  }
+);
