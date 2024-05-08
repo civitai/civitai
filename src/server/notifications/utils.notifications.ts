@@ -20,8 +20,6 @@ import { followNotifications } from '~/server/notifications/follow.notifications
 import { cosmeticShopNotifications } from '~/server/notifications/cosmetic-shop';
 
 const notificationProcessors = {
-  /**
-   * 
   ...mentionNotifications,
   ...modelNotifications,
   ...reviewNotifications,
@@ -40,7 +38,6 @@ const notificationProcessors = {
   ...clubNotifications,
   ...creatorsProgramNotifications,
   ...followNotifications,
-   */
   ...cosmeticShopNotifications,
 };
 

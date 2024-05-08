@@ -23,7 +23,8 @@ export const cosmeticShopNotifications = createNotificationProcessor({
           AND EXISTS (
             SELECT 1 FROM "CosmeticShopSectionItem" ssi
             JOIN "CosmeticShopItem" si ON si.id = ssi."shopItemId"
-            WHERE ssi."createdAt" > '${lastSent}'::timestamp AND (si."availableFrom" >= NOW() OR si."availableFrom" IS NULL)
+            WHERE (ssi."createdAt" > '${lastSent}'::timestamp OR si."availableFrom" >= '${lastSent}'::timestamp)
+              AND (si."availableFrom" >= NOW() OR si."availableFrom" IS NULL)
           )
         ON CONFLICT("id") DO UPDATE SET "createdAt" = NOW()
         RETURNING "id", "category", "userId"
