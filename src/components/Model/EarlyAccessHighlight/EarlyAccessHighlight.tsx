@@ -10,6 +10,7 @@ import {
   UnstyledButton,
   Group,
   Text,
+  Button,
 } from '@mantine/core';
 import { useHomeBlockGridStyles } from '~/components/HomeBlocks/HomeBlock.Styles';
 import { ShowcaseGrid } from '~/components/Profile/Sections/ShowcaseGrid';
@@ -74,8 +75,8 @@ export const EarlyAccessHighlight = () => {
           <ModelCard key={model.id} data={model} />
         ))}
         {hasNextPage && (
-          <Anchor
-            component={UnstyledButton}
+          <Button
+            variant="outline"
             style={{
               background: theme.fn.rgba(theme.colors.blue[8], 0.2),
               borderRadius: theme.radius.md,
@@ -87,7 +88,7 @@ export const EarlyAccessHighlight = () => {
                 <Text>View All</Text> <IconArrowRight />
               </Group>
             </AspectRatio>
-          </Anchor>
+          </Button>
         )}
       </ShowcaseGrid>
       <Badge mt="-md" />
