@@ -38,7 +38,7 @@ export const cosmeticShopNotifications = createNotificationProcessor({
     `,
   },
   'cosmetic-shop-item-sold': {
-    displayName: "Shop: Your Item Sold (Creator's club exclusive)",
+    displayName: "Shop: Your Item got bought (Creator's club exclusive)",
     category: 'System',
     prepareMessage: ({ details }) => ({
       message: `You got paid ${details.buzzAmount} Buzz for selling 1 "${details.shopItemTitle}" item`,
