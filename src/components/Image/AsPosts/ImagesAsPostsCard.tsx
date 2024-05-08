@@ -134,6 +134,9 @@ export function ImagesAsPostsCard({
     };
   }, [embla]);
 
+  const imageIdsString = data.images.map((x) => x.id).join('_');
+  const carouselKey = useMemo(() => `${imageIdsString}_${cardWidth}`, [imageIdsString, cardWidth]);
+
   const moderationOptions = (image: (typeof data.images)[number]) => {
     if (!showModerationOptions) return null;
     const imageAlreadyHidden = gallerySettings
@@ -203,12 +206,6 @@ export function ImagesAsPostsCard({
     ? gallerySettings.pinnedPosts[currentModelVersionId]?.includes(data.postId)
     : false;
   const isOP = data.user.id === model?.user.id;
-
-  const imageIdsString = data.images.map((x) => x.id).join('_');
-  const carouselKey = useMemo(
-    () => `${imageIdsString}_${cardWidth}_${pinned}`,
-    [imageIdsString, cardWidth, pinned]
-  );
   const carouselHeight = height - 58 - 8 - (pinned ? 0 : 0);
 
   return (
@@ -671,16 +668,16 @@ const useStyles = createStyles((theme) => ({
 
   pinned: {
     position: 'relative',
-    padding: 3,
     borderRadius: 8,
 
     '&:before': {
       content: '""',
       position: 'absolute',
       top: 0,
+      right: 0,
+      bottom: 0,
       left: 0,
-      width: '100%',
-      height: '100%',
+      margin: -3,
       borderRadius: 'inherit',
       background: theme.colors.orange[theme.fn.primaryShade()],
     },
