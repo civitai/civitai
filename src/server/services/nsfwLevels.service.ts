@@ -184,10 +184,13 @@ export async function getNsfwLevelRelatedEntities(source: {
 const batchSize = 1000;
 function batcher(ids: number[], fn: (ids: number[]) => Promise<void>) {
   return chunk(ids, batchSize).map((chunk) => async () => {
-    console.log('processing chunk', chunk.length, fn.name);
-    if (chunk.length > 0) {
-      // console.log('processing chunk', chunk.length, fn.name);
-      await fn(chunk);
+    try {
+      if (chunk.length > 0) {
+        // console.log('processing chunk', chunk.length, fn.name);
+        await fn(chunk);
+      }
+    } catch (e) {
+      console.log('processing chunk', chunk.length, fn.name);
     }
   });
 }
