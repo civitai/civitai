@@ -39,6 +39,8 @@ import {
   ReportCsamImagesInput,
   AddOrRemoveImageToolsOutput,
   UpdateImageToolsOutput,
+  AddOrRemoveImageTechniquesOutput,
+  UpdateImageTechniqueOutput,
 } from '~/server/schema/image.schema';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { articlesSearchIndex, imagesSearchIndex } from '~/server/search-index';
@@ -2856,7 +2858,7 @@ export async function getImageRatingRequests({
 }
 
 // #region [image tools]
-async function authorizeImageToolsUse({
+async function authorizeImagesAction({
   imageIds,
   user,
 }: {
@@ -2880,7 +2882,7 @@ export async function addImageTools({
   data: AddOrRemoveImageToolsOutput['data'];
   user: SessionUser;
 }) {
-  await authorizeImageToolsUse({ imageIds: data.map((x) => x.imageId), user });
+  await authorizeImagesAction({ imageIds: data.map((x) => x.imageId), user });
   await dbWrite.imageTool.createMany({ data, skipDuplicates: true });
 }
 
@@ -2891,7 +2893,7 @@ export async function removeImageTools({
   data: AddOrRemoveImageToolsOutput['data'];
   user: SessionUser;
 }) {
-  await authorizeImageToolsUse({ imageIds: data.map((x) => x.imageId), user });
+  await authorizeImagesAction({ imageIds: data.map((x) => x.imageId), user });
   const toolsByImage = data.reduce<Record<number, number[]>>((acc, { imageId, toolId }) => {
     if (!acc[imageId]) acc[imageId] = [];
     acc[imageId].push(toolId);
@@ -2912,11 +2914,69 @@ export async function updateImageTools({
   data: UpdateImageToolsOutput['data'];
   user: SessionUser;
 }) {
-  await authorizeImageToolsUse({ imageIds: data.map((x) => x.imageId), user });
+  await authorizeImagesAction({ imageIds: data.map((x) => x.imageId), user });
   await dbWrite.$transaction(
     data.map(({ imageId, toolId, notes }) =>
       dbWrite.imageTool.update({
         where: { imageId_toolId: { imageId, toolId } },
+        data: { notes },
+        select: { imageId: true },
+      })
+    )
+  );
+}
+// #endregion
+
+// #region [image techniques]
+export async function addImageTechniques({
+  data,
+  user,
+}: {
+  data: AddOrRemoveImageTechniquesOutput['data'];
+  user: SessionUser;
+}) {
+  await authorizeImagesAction({ imageIds: data.map((x) => x.imageId), user });
+  await dbWrite.imageTechnique.createMany({ data, skipDuplicates: true });
+}
+
+export async function removeImageTechniques({
+  data,
+  user,
+}: {
+  data: AddOrRemoveImageTechniquesOutput['data'];
+  user: SessionUser;
+}) {
+  await authorizeImagesAction({ imageIds: data.map((x) => x.imageId), user });
+  const techniquesByImage = data.reduce<Record<number, number[]>>(
+    (acc, { imageId, techniqueId }) => {
+      if (!acc[imageId]) acc[imageId] = [];
+      acc[imageId].push(techniqueId);
+      return acc;
+    },
+    {}
+  );
+
+  await dbWrite.$transaction(
+    Object.entries(techniquesByImage).map(([imageId, techniqueIds]) =>
+      dbWrite.imageTechnique.deleteMany({
+        where: { imageId: Number(imageId), techniqueId: { in: techniqueIds } },
+      })
+    )
+  );
+}
+
+export async function updateImageTechniques({
+  data,
+  user,
+}: {
+  data: UpdateImageTechniqueOutput['data'];
+  user: SessionUser;
+}) {
+  await authorizeImagesAction({ imageIds: data.map((x) => x.imageId), user });
+  await dbWrite.$transaction(
+    data.map(({ imageId, techniqueId, notes }) =>
+      dbWrite.imageTechnique.update({
+        where: { imageId_techniqueId: { imageId, techniqueId } },
         data: { notes },
         select: { imageId: true },
       })

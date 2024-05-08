@@ -480,6 +480,7 @@ async function combinePostEditImageData(images: PostImageEditSelect[], user: Ses
       metadata: image.metadata as PreprocessFileReturnType['metadata'],
       tags: tags.filter((x) => x.imageId === image.id),
       tools: image.tools.map(({ notes, tool }) => ({ ...tool, notes })),
+      techniques: image.techniques.map(({ notes, technique }) => ({ ...technique, notes })),
     }))
     .sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
 }

@@ -35,8 +35,8 @@ import {
   usePostEditStore,
   usePostPreviewContext,
 } from '~/components/Post/EditV2/PostEditProvider';
-import { ImageToolsPopover } from '~/components/Post/EditV2/PostImageToolsPopover';
-import { PostImageTool } from '~/components/Post/EditV2/PostImageTool';
+import { ImageToolsPopover } from '~/components/Post/EditV2/Tools/PostImageToolsPopover';
+import { PostImageTool } from '~/components/Post/EditV2/Tools/PostImageTool';
 import { sortAlphabeticallyBy } from '~/utils/array-helpers';
 import { useImageStore } from '~/store/image.store';
 import { ImageIngestionStatus } from '@prisma/client';
@@ -48,6 +48,8 @@ import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { CustomCard } from './CustomCard';
 import { create } from 'zustand';
 import { createSelectStore } from '~/store/select.store';
+import { ImageTechniquesPopover } from '~/components/Post/EditV2/Techniques/PostImageTechniquesPopover';
+import { PostImageTechnique } from '~/components/Post/EditV2/Techniques/PostImageTechnique';
 
 // #region [types]
 type SimpleMetaPropsKey = keyof typeof simpleMetaProps;
@@ -408,8 +410,8 @@ function EditDetail() {
                       position="right"
                       iconProps={{ size: 20 }}
                     >
-                      Traditional or generative AI programs, platformms or websites used to create
-                      this image.
+                      Models, LoRAs, embeddings or other Stable Diffusion specific resources used to
+                      create this image.
                     </InfoPopover>
                   </div>
                   <Text>
@@ -440,9 +442,16 @@ function EditDetail() {
                   <h3 className=" text-lg font-semibold leading-none text-dark-7 dark:text-gray-0 ">
                     Tools
                   </h3>
-                  <ActionIcon variant="transparent" size="sm">
-                    <IconInfoCircle />
-                  </ActionIcon>
+                  <InfoPopover
+                    type="hover"
+                    variant="transparent"
+                    size="sm"
+                    position="right"
+                    iconProps={{ size: 20 }}
+                  >
+                    Traditional or generative AI programs, platforms or websites used to create this
+                    image.
+                  </InfoPopover>
                 </div>
                 <ImageToolsPopover image={image}>
                   <Button
@@ -467,6 +476,50 @@ function EditDetail() {
                       <PostImageTool image={image} tool={tool} />
                     </li>
                   ))}
+                </ul>
+              )}
+            </CustomCard>
+            {/* #endregion */}
+
+            {/*
+          // #region [techniques]
+          */}
+
+            <CustomCard className="flex flex-col gap-2">
+              <div className="flex justify-between items-center">
+                <div className="flex items-center gap-2">
+                  <h3 className=" text-lg font-semibold leading-none text-dark-7 dark:text-gray-0 ">
+                    Techniques
+                  </h3>
+                  {/* <ActionIcon variant="transparent" size="sm">
+                    <IconInfoCircle />
+                  </ActionIcon> */}
+                </div>
+                <ImageTechniquesPopover image={image}>
+                  <Button
+                    variant="light"
+                    color="blue"
+                    compact
+                    size="sm"
+                    classNames={{ label: 'flex gap-1' }}
+                    onClick={() => undefined}
+                    className="text-sm"
+                  >
+                    <IconPlus size={16} />
+                    <span>TOOL</span>
+                  </Button>
+                </ImageTechniquesPopover>
+              </div>
+              {!!image.techniques.length && (
+                <ul className="flex flex-col">
+                  {sortAlphabeticallyBy([...image.techniques], (x) => x.name).map(
+                    (technique, index) => (
+                      <li key={technique.id} className="list-none">
+                        {index !== 0 && <Divider />}
+                        <PostImageTechnique image={image} technique={technique} />
+                      </li>
+                    )
+                  )}
                 </ul>
               )}
             </CustomCard>

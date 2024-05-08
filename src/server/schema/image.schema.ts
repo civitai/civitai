@@ -342,3 +342,19 @@ export const updateImageToolsSchema = z.object({
   data: baseImageToolSchema.extend({ notes: z.string().nullish() }).array(),
 });
 // #endregion
+
+// #region [image tools]
+const baseImageTechniqueSchema = z.object({
+  imageId: z.number(),
+  techniqueId: z.number(),
+});
+export type AddOrRemoveImageTechniquesOutput = z.output<typeof addOrRemoveImageTechniquesSchema>;
+export const addOrRemoveImageTechniquesSchema = z.object({
+  data: baseImageTechniqueSchema.array(),
+});
+
+export type UpdateImageTechniqueOutput = z.output<typeof updateImageTechniqueSchema>;
+export const updateImageTechniqueSchema = z.object({
+  data: baseImageTechniqueSchema.extend({ notes: z.string().nullish() }).array(),
+});
+// #endregion

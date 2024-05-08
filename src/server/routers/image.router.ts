@@ -20,6 +20,8 @@ import {
   reportCsamImagesSchema,
   addOrRemoveImageToolsSchema,
   updateImageToolsSchema,
+  updateImageTechniqueSchema,
+  addOrRemoveImageTechniquesSchema,
 } from './../schema/image.schema';
 import {
   deleteImageHandler,
@@ -51,6 +53,9 @@ import {
   addImageTools,
   removeImageTools,
   updateImageTools,
+  updateImageTechniques,
+  removeImageTechniques,
+  addImageTechniques,
 } from '~/server/services/image.service';
 import { CacheTTL } from '~/server/common/constants';
 import { z } from 'zod';
@@ -143,6 +148,8 @@ export const imageRouter = router({
   getImageRatingRequests: moderatorProcedure
     .input(imageRatingReviewInput)
     .query(({ input, ctx }) => getImageRatingRequests({ ...input, user: ctx.user })),
+
+  // #region [tools]
   addTools: protectedProcedure
     .input(addOrRemoveImageToolsSchema)
     .mutation(({ input, ctx }) => addImageTools({ ...input, user: ctx.user })),
@@ -152,4 +159,17 @@ export const imageRouter = router({
   updateTools: protectedProcedure
     .input(updateImageToolsSchema)
     .mutation(({ input, ctx }) => updateImageTools({ ...input, user: ctx.user })),
+  // #endregion
+
+  // #region [techniques]
+  addTechniques: protectedProcedure
+    .input(addOrRemoveImageTechniquesSchema)
+    .mutation(({ input, ctx }) => addImageTechniques({ ...input, user: ctx.user })),
+  removeTechniques: protectedProcedure
+    .input(addOrRemoveImageTechniquesSchema)
+    .mutation(({ input, ctx }) => removeImageTechniques({ ...input, user: ctx.user })),
+  updateTechniques: protectedProcedure
+    .input(updateImageTechniqueSchema)
+    .mutation(({ input, ctx }) => updateImageTechniques({ ...input, user: ctx.user })),
+  // #endregion
 });

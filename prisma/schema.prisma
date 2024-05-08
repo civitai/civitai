@@ -1215,6 +1215,7 @@ model Image {
   article             Article?
   purchasableRewards  PurchasableReward[]
   tools               ImageTool[]
+  techniques          ImageTechnique[]
   CosmeticShopSection CosmeticShopSection[]
 
   @@index([featuredAt])
@@ -3011,6 +3012,32 @@ model ImageTool {
 
   @@id([imageId, toolId])
   @@index([toolId])
+}
+
+enum TechniqueType {
+  Image
+  Video
+}
+
+model Technique {
+  id              Int              @id @default(autoincrement())
+  name            String
+  createdAt       DateTime         @default(now())
+  enabled         Boolean          @default(true)
+  type            TechniqueType
+  imageTechniques ImageTechnique[]
+}
+
+model ImageTechnique {
+  imageId     Int
+  image       Image     @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  techniqueId Int
+  technique   Technique @relation(fields: [techniqueId], references: [id], onDelete: Cascade)
+  notes       String?
+  createdAt   DateTime  @default(now())
+
+  @@id([imageId, techniqueId])
+  @@index([techniqueId])
 }
 
 /// @view
