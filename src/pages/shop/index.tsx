@@ -64,7 +64,7 @@ import { CosmeticShopItemPreviewModal } from '~/components/CosmeticShop/Cosmetic
 import { CosmeticShopSectionMeta, GetShopInput } from '~/server/schema/cosmetic-shop.schema';
 import { openUserProfileEditModal } from '~/components/Modals/UserProfileEditModal';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { formatDate, formatDateMin } from '~/utils/date-helpers';
+import { formatDate, formatDateMin, isFutureDate } from '~/utils/date-helpers';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ShopFiltersDropdown } from '~/components/CosmeticShop/ShopFiltersDropdown';
@@ -249,10 +249,9 @@ export const CosmeticShopItem = ({
   const currentUser = useCurrentUser();
   const { lastViewed } = useShopLastViewed();
 
-  const availableFrom = item.availableFrom ? formatDate(item.availableFrom) : null;
   const remaining = item.availableQuantity;
   const availableTo = item.availableTo ? formatDate(item.availableTo) : null;
-  const isUpcoming = item.availableFrom && dayjs(item.availableFrom).isAfter(dayjs());
+  const isUpcoming = item.availableFrom && isFutureDate(item.availableFrom);
 
   const isNew =
     lastViewed && sectionItemCreatedAt && dayjs(sectionItemCreatedAt).isAfter(dayjs(lastViewed));

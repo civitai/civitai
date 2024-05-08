@@ -289,7 +289,7 @@ export const useShopLastViewed = () => {
       return;
     }
 
-    await updateUserSettings.mutate({
+    updateUserSettings.mutate({
       cosmeticStoreLastViewed: new Date(),
     });
   };
