@@ -21,9 +21,13 @@ import {
   Grid,
   TypographyStylesProvider,
   UnstyledButton,
+  ActionIcon,
+  Tooltip,
 } from '@mantine/core';
 import {
   IconAlertCircle,
+  IconBell,
+  IconBellOff,
   IconBrandSpeedtest,
   IconCircleCheck,
   IconPencilMinus,
@@ -71,6 +75,7 @@ import { ShopFiltersDropdown } from '~/components/CosmeticShop/ShopFiltersDropdo
 import { useDebouncedValue } from '@mantine/hooks';
 import { useEffect } from 'react';
 import { Countdown } from '~/components/Countdown/Countdown';
+import { NotificationToggle } from '~/components/Notifications/NotificationToggle';
 
 const IMAGE_SECTION_WIDTH = 1288;
 
@@ -382,17 +387,35 @@ export default function CosmeticShopMain() {
             <Group noWrap position="apart">
               <Title>Civitai Cosmetic Shop</Title>
 
-              <Button
-                leftIcon={<IconPencilMinus size={16} />}
-                onClick={() => {
-                  openUserProfileEditModal({});
-                }}
-                sx={{ fontSize: 14, fontWeight: 600, lineHeight: 1.5 }}
-                radius="xl"
-                compact
-              >
-                Customize profile
-              </Button>
+              <Group>
+                <Button
+                  leftIcon={<IconPencilMinus size={16} />}
+                  onClick={() => {
+                    openUserProfileEditModal({});
+                  }}
+                  sx={{ fontSize: 14, fontWeight: 600, lineHeight: 1.5 }}
+                  radius="xl"
+                  compact
+                >
+                  Customize profile
+                </Button>
+                <NotificationToggle type="cosmetic-shop-item-added-to-section">
+                  {({ onToggle, isEnabled, isLoading }) => (
+                    <ActionIcon onClick={onToggle} loading={isLoading}>
+                      <Tooltip
+                        w={200}
+                        multiline
+                        withArrow
+                        label={`${
+                          isEnabled ? 'Do not notify me' : 'Notify me'
+                        } about new items in the shop.`}
+                      >
+                        {isEnabled ? <IconBellOff /> : <IconBell />}
+                      </Tooltip>
+                    </ActionIcon>
+                  )}
+                </NotificationToggle>
+              </Group>
             </Group>
             <Text size="sm" color="dimmed" mb="sm">
               Any cosmetic purchases directly contributes to Civitai ❤️
