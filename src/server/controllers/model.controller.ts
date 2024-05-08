@@ -1491,6 +1491,7 @@ export const updateGallerySettingsHandler = async ({
           users: gallerySettings.hiddenUsers.map(({ id }) => id),
           tags: gallerySettings.hiddenTags.map(({ id }) => id),
           level: gallerySettings.level,
+          pinnedPosts: gallerySettings.pinnedPosts,
         }
       : null;
     const updatedModel = await updateModelById({
