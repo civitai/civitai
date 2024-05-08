@@ -34,12 +34,13 @@ export namespace Generation {
     negativePrompt?: string;
     width: number;
     height: number;
-    sampler: string;
+    sampler?: string;
     steps: number;
     cfgScale: number;
     seed?: number;
     clipSkip: number;
     baseModel?: string;
+    scheduler?: string;
   };
 
   export type Asset = {

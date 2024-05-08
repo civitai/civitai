@@ -323,6 +323,9 @@ const formatGenerationRequests = async (requests: Generation.Api.RequestProps[])
         baseModel,
         negativePrompt,
         seed: params.seed === -1 ? undefined : params.seed,
+        sampler: Object.entries(samplersToSchedulers).find(
+          ([sampler, scheduler]) => scheduler === params.scheduler
+        )?.[0],
       },
       resources: assets
         .map((assetId): Generation.Resource | undefined => {
