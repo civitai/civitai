@@ -281,7 +281,7 @@ export function ModelVersionDetails({
         />
       ),
     },
-    version.status === 'Published'
+    version.status === 'Published' && version.publishedAt
       ? { label: 'Published', value: formatDate(version.publishedAt) }
       : { label: 'Uploaded', value: formatDate(version.createdAt) },
     {
