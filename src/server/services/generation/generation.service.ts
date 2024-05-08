@@ -709,9 +709,9 @@ export const createGenerationRequest = async ({
   const isPromptNsfw = includesNsfw(params.prompt);
   nsfw ??= isPromptNsfw !== false;
 
-  // Disable nsfw if the prompt contains poi/minor words
-  const hasPoi = includesPoi(params.prompt) || resourceData.some((x) => x.model.poi);
-  if (hasPoi || includesMinor(params.prompt)) nsfw = false;
+  // Disable nsfw if the prompt contains minor words
+  // POI is handled via SPMs within the worker
+  if (includesMinor(params.prompt)) nsfw = false;
 
   const negativePrompts = [negativePrompt ?? ''];
   if (!nsfw && status.sfwEmbed) {
