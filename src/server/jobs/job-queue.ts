@@ -1,6 +1,6 @@
 import { dbRead, dbWrite } from '~/server/db/client';
 import { createJob } from './job';
-import { EntityType, JobQueueType } from '@prisma/client';
+import { EntityType, JobQueueType, Prisma } from '@prisma/client';
 import {
   getNsfwLevelRelatedEntities,
   updateNsfwLevels,
@@ -9,6 +9,7 @@ import { uniq, chunk } from 'lodash-es';
 import { imagesSearchIndex } from '~/server/search-index';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import dayjs from 'dayjs';
 
 const jobQueueMap = {
   [EntityType.Image]: 'imageIds',
@@ -117,4 +118,37 @@ const handleJobQueueCleanup = createJob('job-queue-cleanup', '*/1 * * * *', asyn
   });
 });
 
-export const jobQueueJobs = [updateNsfwLevelJob, handleJobQueueCleanup];
+const handleJobQueueCleanIfEmpty = createJob(
+  'job-queue-clean-if-empty',
+  '0 */1 * * *',
+  async () => {
+    const cutoff = dayjs().subtract(1, 'day').toDate();
+    const jobQueue = await dbRead.jobQueue.findMany({
+      where: { type: JobQueueType.CleanIfEmpty, createdAt: { lt: cutoff } },
+    });
+
+    const jobQueueIds = reduceJobQueueToIds(jobQueue);
+
+    //handle cleanup
+    const cleanupPosts = () =>
+      chunk(jobQueueIds.postIds, batchSize).map((ids) => async () => {
+        if (!ids.length) return;
+        // Delete posts that have no images
+        await dbWrite.$executeRaw`
+          DELETE FROM "Post" p
+          WHERE id IN (${Prisma.join(ids)}) AND NOT EXISTS (
+            SELECT 1 FROM "Image" WHERE "postId" = p.id
+          )
+        `;
+      });
+
+    const tasks = [cleanupPosts()].flat();
+    await limitConcurrency(tasks, 5);
+
+    await dbWrite.jobQueue.deleteMany({
+      where: { type: JobQueueType.CleanIfEmpty, createdAt: { lt: cutoff } },
+    });
+  }
+);
+
+export const jobQueueJobs = [updateNsfwLevelJob, handleJobQueueCleanup, handleJobQueueCleanIfEmpty];

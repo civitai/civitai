@@ -15,33 +15,39 @@ import { IconArrowsMaximize, IconArrowsSort, IconCheck } from '@tabler/icons-rea
 import { isEqual } from 'lodash-es';
 import { CSSProperties } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { PostEditImage } from '~/server/controllers/post.controller';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
-import { useEditPostContext } from './EditPostProvider';
+import { ControlledImage, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
 
-export function ReorderImages() {
-  const images = useEditPostContext((state) => state.images);
-  const setImages = useEditPostContext((state) => state.setImages);
+export function PostReorderImages() {
+  const [images, setImages] = usePostEditStore((state) => [
+    [...state.images]
+      .map((x) => (x.type === 'added' ? x.data : undefined))
+      .filter(isDefined)
+      .sort((a, b) => (a.index ?? 0) - (b.index ?? 0)),
+    state.setImages,
+  ]);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
 
-  const items = images
-    .map((x) => {
-      if (x.discriminator === 'image') return x.data;
-    })
-    .filter(isDefined);
+  const items = images.filter((x) => x.id);
 
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event;
     if (!over) return;
     if (active.id !== over.id) {
       setImages((images) => {
-        const ids = images.map((x): UniqueIdentifier => x.id);
+        const ids = images.map((x): UniqueIdentifier => x.data.url);
         const oldIndex = ids.indexOf(active.id);
         const newIndex = ids.indexOf(over.id);
         const sorted = arrayMove(images, oldIndex, newIndex);
-        return sorted;
+        return sorted.map(
+          (image, index) =>
+            ({
+              type: image.type,
+              data: { ...image.data, index: index + 1 },
+            } as ControlledImage)
+        );
       });
     }
   }
@@ -49,10 +55,10 @@ export function ReorderImages() {
   return (
     <>
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-        <SortableContext items={items.map((x) => x.id)}>
+        <SortableContext items={items.map((x) => x.url)}>
           <div style={{ display: 'grid', gridTemplateColumns: `repeat(3, 1fr)`, gridGap: 10 }}>
             {items.map((image) => (
-              <SortableImage key={image.id} image={image} sortableId={image.id} />
+              <SortableImage key={image.id} image={image} sortableId={image.url} />
             ))}
           </div>
         </SortableContext>
@@ -63,7 +69,7 @@ export function ReorderImages() {
 }
 
 type ItemProps = {
-  image: PostEditImage;
+  image: Extract<ControlledImage, { type: 'added' }>['data'];
   sortableId: UniqueIdentifier;
 };
 
@@ -92,12 +98,7 @@ function SortableImage({ image, sortableId }: ItemProps) {
       {...listeners}
       {...attributes}
     >
-      <EdgeMedia
-        src={image.previewUrl ?? image.url}
-        type={image.type}
-        width={450}
-        className={classes.image}
-      />
+      <EdgeMedia src={image.url} type={image.type} width={450} className={classes.image} />
       <Center className={classes.draggable}>
         <Paper className={classes.draggableIcon} p="xl" radius={100}>
           <IconArrowsMaximize
@@ -166,10 +167,12 @@ const useStyles = createStyles((theme) => ({
 
 export function ReorderImagesButton() {
   const queryUtils = trpc.useUtils();
-  const id = useEditPostContext((state) => state.id);
-  const images = useEditPostContext((state) => state.images);
-  const isReordering = useEditPostContext((state) => state.reorder);
-  const toggleReorder = useEditPostContext((state) => state.toggleReorder);
+  const [post, images, isReordering, toggleReordering] = usePostEditStore((state) => [
+    state.post,
+    state.images,
+    state.isReordering,
+    state.toggleReordering,
+  ]);
 
   const { mutate, isLoading } = trpc.post.reorderImages.useMutation({
     async onSuccess() {
@@ -178,23 +181,17 @@ export function ReorderImagesButton() {
     },
   });
   const previous = usePrevious(images);
-  const canReorder = !images.filter((x) => x.discriminator === 'upload').length;
+  const canReorder = !!images.every((x) => x.type === 'added');
 
   const onClick = () => {
-    toggleReorder();
-    if (isReordering && !!previous && !isEqual(previous, images)) {
+    toggleReordering();
+    if (isReordering && !!previous && !isEqual(previous, images) && post) {
       mutate({
-        id,
-        imageIds: images
-          .map((x) => {
-            if (x.discriminator === 'image') return x.data.id;
-          })
-          .filter(isDefined),
+        id: post.id,
+        imageIds: images.map((x) => (x.type === 'added' ? x.data.id : undefined)).filter(isDefined),
       });
     }
   };
-
-  if (images.length <= 1) return null;
 
   return (
     <Button

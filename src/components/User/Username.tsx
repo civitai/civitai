@@ -38,7 +38,13 @@ export function Username({
         size={size}
         weight={500}
         lineClamp={1}
-        sx={{ verticalAlign: 'middle' }}
+        sx={(theme) => ({
+          verticalAlign: 'middle',
+          filter:
+            theme.colorScheme === 'dark'
+              ? 'drop-shadow(1px 1px 1px rgba(0, 0, 0, 0.8))'
+              : 'drop-shadow(1px 1px 1px rgba(0, 0, 0, 0.2))',
+        })}
         inherit={inherit}
         {...additionalTextProps}
       >
@@ -60,7 +66,8 @@ export const BadgeDisplay = ({
 }) => {
   if (!badge?.data.url || badgeSize === 0) return null;
 
-  const filter = 'drop-shadow(3px 3px 1px rgba(0, 0, 0, 0.8))';
+  const shadowDistance = Math.max(1, Math.round((badgeSize ?? 24) / 24));
+  const filter = `drop-shadow(${shadowDistance}px ${shadowDistance}px 1px rgba(0, 0, 0, 0.8))`;
 
   return (
     <Tooltip color="dark" label={badge.name} withArrow withinPortal>

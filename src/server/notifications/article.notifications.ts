@@ -1,3 +1,4 @@
+import { milestoneNotificationFix } from '~/server/common/constants';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
 
 const articleViewMilestones = [100, 500, 1000, 10000, 50000, 100000, 500000, 1000000] as const;
@@ -38,7 +39,7 @@ export const articleNotifications = createNotificationProcessor({
           FROM "ArticleMetric" am
           WHERE
             am."articleId" = ANY (SELECT json_array_elements('${affectedJson}'::json)::text::integer)
-            AND "viewCount" > ${articleViewMilestones[0]}
+            AND "viewCount" >= ${articleViewMilestones[0]}
             AND timeframe = 'AllTime'
         ), milestone AS (
           SELECT
@@ -51,6 +52,7 @@ export const articleNotifications = createNotificationProcessor({
           FROM val
           JOIN "Article" a on a.id = val.article_id
           JOIN milestones ms ON ms.value <= val.view_count
+          WHERE a."createdAt" > '${milestoneNotificationFix}'
         )
         INSERT INTO "Notification"("id", "userId", "type", "details", "category")
         SELECT
@@ -93,7 +95,7 @@ export const articleNotifications = createNotificationProcessor({
         JOIN affected af ON af.article_id = am."articleId"
         WHERE
           timeframe = 'AllTime'
-          AND "favoriteCount" > ${articleLikeMilestones[0]}
+          AND "favoriteCount" >= ${articleLikeMilestones[0]}
       ), milestone AS (
         SELECT
           a."userId" "ownerId",
@@ -105,6 +107,7 @@ export const articleNotifications = createNotificationProcessor({
         FROM val
         JOIN "Article" a on a.id = val.article_id
         JOIN milestones ms ON ms.value <= val.favorite_count
+        WHERE a."createdAt" > '${milestoneNotificationFix}'
       )
       INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT

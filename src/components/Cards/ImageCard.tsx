@@ -84,21 +84,26 @@ function UnroutedImageCard({ data }: Props) {
                   )}
                 </Group>
                 {safe ? (
-                  <EdgeMedia
-                    src={data.url}
-                    name={data.name ?? data.id.toString()}
-                    alt={
-                      data.meta
-                        ? truncate(data.meta.prompt, { length: constants.altTruncateLength })
-                        : data.name ?? undefined
-                    }
-                    type={data.type}
-                    width={imageWidth}
-                    className={sharedClasses.image}
-                    wrapperProps={{ style: { height: '100%', width: '100%' } }}
-                    loading="lazy"
-                    contain
-                  />
+                  <div
+                    className={data.cosmetic ? sharedClasses.frameAdjustment : undefined}
+                    style={{ height: '100%' }}
+                  >
+                    <EdgeMedia
+                      src={data.url}
+                      name={data.name ?? data.id.toString()}
+                      alt={
+                        data.meta
+                          ? truncate(data.meta.prompt, { length: constants.altTruncateLength })
+                          : data.name ?? undefined
+                      }
+                      type={data.type}
+                      width={imageWidth}
+                      className={sharedClasses.image}
+                      wrapperProps={{ style: { height: '100%', width: '100%' } }}
+                      loading="lazy"
+                      contain
+                    />
+                  </div>
                 ) : (
                   <MediaHash {...data} />
                 )}
@@ -107,12 +112,7 @@ function UnroutedImageCard({ data }: Props) {
           </ImageGuard2>
 
           <Stack
-            className={cx(
-              'footer',
-              sharedClasses.contentOverlay,
-              sharedClasses.bottom,
-              sharedClasses.gradientOverlay
-            )}
+            className={cx('footer', sharedClasses.contentOverlay, sharedClasses.bottom)}
             spacing="sm"
           >
             {data.user.id !== -1 && (

@@ -45,7 +45,7 @@ export const LeaderHomeBlockCreatorItem = ({
               <Group spacing="xs" noWrap>
                 <UserAvatar
                   avatarProps={{
-                    radius: 'md',
+                    radius: 'xl',
                   }}
                   user={user}
                   textSize="lg"

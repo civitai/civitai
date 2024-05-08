@@ -89,6 +89,7 @@ export const trainingDetailsObj = z.object({
   // triggerWord: z.string().optional(),
   params: trainingDetailsParams.optional(),
   samplePrompts: z.array(z.string()).optional(),
+  staging: z.boolean().optional(),
 });
 
 export const modelVersionUpsertSchema = z.object({

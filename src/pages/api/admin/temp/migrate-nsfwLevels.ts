@@ -43,10 +43,10 @@ export default WebhookEndpoint(async (req, res) => {
     //   type: 'users',
     //   fn: migrateUsers,
     // },
-    {
-      type: 'images',
-      fn: migrateImages,
-    },
+    // {
+    //   type: 'images',
+    //   fn: migrateImages,
+    // },
     // {
     //   type: 'posts',
     //   fn: migratePosts,
@@ -67,10 +67,10 @@ export default WebhookEndpoint(async (req, res) => {
     //   type: 'modelVersions',
     //   fn: migrateModelVersions,
     // },
-    // {
-    //   type: 'models',
-    //   fn: migrateModels,
-    // },
+    {
+      type: 'models',
+      fn: migrateModels,
+    },
     // {
     //   type: 'collections',
     //   fn: migrateCollections,
@@ -430,13 +430,12 @@ async function migrateModels(req: NextApiRequest, res: NextApiResponse) {
     processor: async ({ start, end, cancelFns }) => {
       const { cancel, result } = await pgDbWrite.cancellableQuery(Prisma.sql`
         WITH level AS (
-          SELECT DISTINCT ON ("modelId")
+          SELECT
             mv."modelId" as "id",
             bit_or(mv."nsfwLevel") "nsfwLevel"
           FROM "ModelVersion" mv
-          JOIN "Model" m on m.id = mv."modelId"
-          WHERE m.id BETWEEN ${start} AND ${end}
-          GROUP BY mv.id
+          WHERE mv."modelId" BETWEEN ${start} AND ${end}
+          GROUP BY mv."modelId"
         )
         UPDATE "Model" m
         SET "nsfwLevel" = (

@@ -122,14 +122,13 @@ export function CardDecorationModal({ entityType, entityId, image, currentCosmet
   const items =
     userCosmetics?.contentDecorations.filter(
       ({ data, forId, forType }) =>
-        data.url &&
+        (data.url || data.cssFrame) &&
         // Ensure we only show cosmetics available for this item.
         (!forId || (forId && forType && forId === entityId && forType === entityType))
     ) ?? [];
   const selectedItem = items.find(
     (item) => item.id === cosmetic?.id && item.claimKey === cosmetic?.claimKey
   );
-  console.log(userCosmetics?.contentDecorations);
 
   return (
     <Modal
@@ -153,7 +152,7 @@ export function CardDecorationModal({ entityType, entityId, image, currentCosmet
                 <InputCosmeticSelect
                   name="cosmetic"
                   data={items}
-                  shopUrl="/shop/cosmetic-shop"
+                  shopUrl="/shop"
                   gridProps={{
                     breakpoints: [{ cols: 3, minWidth: 'xs' }],
                   }}
@@ -175,7 +174,8 @@ export function CardDecorationModal({ entityType, entityId, image, currentCosmet
             <Stack align="center" spacing="xl">
               {selectedItem &&
                 selectedItem.entityImage &&
-                image.url !== selectedItem.entityImage.url && (
+                selectedItem.entityImage.entityId !== entityId &&
+                selectedItem.entityImage.entityType !== entityType && (
                   <Group noWrap>
                     <Image
                       src={getEdgeUrl(selectedItem.entityImage.url, {
@@ -259,8 +259,12 @@ export const PreviewCard = ({
   const cardHeight = heightRatio * constants.cardSizes.image;
 
   return (
-    <MasonryCard height={cardHeight} frameDecoration={decoration}>
-      <EdgeMedia src={image.url} className={classes.image} width={imageWidth} />
+    <MasonryCard
+      height={cardHeight}
+      frameDecoration={decoration}
+      className={decoration && classes.frameAdjustment}
+    >
+      <EdgeMedia src={image.url} className={classes.image} width={imageWidth} anim={true} />
     </MasonryCard>
   );
 };

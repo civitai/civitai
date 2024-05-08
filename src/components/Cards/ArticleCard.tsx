@@ -10,6 +10,7 @@ import { abbreviateNumber } from '~/utils/number-helpers';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { slugit } from '~/utils/string-helpers';
 import { formatDate } from '~/utils/date-helpers';
+import type { ArticleGetAllRecord } from '~/server/services/article.service';
 import { ArticleContextMenu } from '~/components/Article/ArticleContextMenu';
 import {
   InteractiveTipBuzzButton,
@@ -19,7 +20,6 @@ import { HolidayFrame } from '../Decorations/HolidayFrame';
 import { CosmeticType } from '@prisma/client';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
-import type { ArticleGetInfinite } from '~/types/router';
 
 const IMAGE_CARD_WIDTH = 450;
 
@@ -55,7 +55,12 @@ export function ArticleCard({ data, aspectRatio }: Props) {
           {coverImage && (
             <ImageGuard2 image={coverImage}>
               {(safe) => (
-                <div className="relative flex-1 h-full">
+                <div
+                  className={cx(
+                    'relative flex-1 h-full',
+                    data.cosmetic && safe && classes.frameAdjustment
+                  )}
+                >
                   <Group
                     spacing={4}
                     position="apart"
@@ -76,7 +81,7 @@ export function ArticleCard({ data, aspectRatio }: Props) {
                     <MediaHash {...coverImage} />
                   ) : (
                     <EdgeMedia
-                      className={classes.image}
+                      className={cx(classes.image)}
                       src={coverImage.url}
                       width={IMAGE_CARD_WIDTH * 2.5}
                       loading="lazy"
@@ -87,10 +92,7 @@ export function ArticleCard({ data, aspectRatio }: Props) {
             </ImageGuard2>
           )}
 
-          <Stack
-            className={cx('footer', classes.contentOverlay, classes.bottom, classes.fullOverlay)}
-            spacing="sm"
-          >
+          <Stack className={cx('footer', classes.contentOverlay, classes.bottom)} spacing="sm">
             {user?.id !== -1 && (
               <UnstyledButton
                 sx={{ color: 'white' }}
@@ -106,12 +108,12 @@ export function ArticleCard({ data, aspectRatio }: Props) {
             )}
             <Stack spacing={0}>
               {publishedAt && (
-                <Text size="xs" weight={500} color="white" inline>
+                <Text className={classes.dropShadow} size="xs" weight={500} color="white" inline>
                   {formatDate(publishedAt)}
                 </Text>
               )}
               {title && (
-                <Text size="xl" weight={700} lineClamp={2} lh={1.2}>
+                <Text className={classes.dropShadow} size="xl" weight={700} lineClamp={2} lh={1.2}>
                   {title}
                 </Text>
               )}
@@ -150,6 +152,6 @@ export function ArticleCard({ data, aspectRatio }: Props) {
 }
 
 type Props = {
-  data: ArticleGetInfinite[number];
+  data: ArticleGetAllRecord;
   aspectRatio?: 'flat' | 'landscape' | 'portrait' | 'square';
 };

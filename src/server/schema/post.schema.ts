@@ -4,6 +4,7 @@ import { constants } from '~/server/common/constants';
 import { PostSort } from '~/server/common/enums';
 import { baseQuerySchema, periodModeSchema } from '~/server/schema/base.schema';
 import { imageMetaSchema } from '~/server/schema/image.schema';
+import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 
@@ -43,9 +44,9 @@ export const postsQuerySchema = baseQuerySchema.merge(
 
 export type PostCreateInput = z.infer<typeof postCreateSchema>;
 export const postCreateSchema = z.object({
-  modelVersionId: z.number().optional(),
-  title: z.string().trim().optional(),
-  tag: z.number().optional(),
+  modelVersionId: z.number().nullish(),
+  title: z.string().trim().nullish(),
+  tag: z.number().nullish(),
   publishedAt: z.date().optional(),
   collectionId: z.number().optional(),
 });
@@ -53,8 +54,8 @@ export const postCreateSchema = z.object({
 export type PostUpdateInput = z.infer<typeof postUpdateSchema>;
 export const postUpdateSchema = z.object({
   id: z.number(),
-  title: z.string().optional(),
-  detail: z.string().optional(),
+  title: z.string().nullish(),
+  detail: z.string().nullish(),
   publishedAt: z.date().optional(),
   collectionId: z.number().nullish(),
 });
@@ -81,7 +82,7 @@ export const addPostImageSchema = z.object({
   height: z.number().nullish(),
   width: z.number().nullish(),
   postId: z.number(),
-  modelVersionId: z.number().optional(),
+  modelVersionId: z.number().nullish(),
   index: z.number(),
   mimeType: z.string().optional(),
   meta: z.preprocess((value) => {
@@ -96,11 +97,16 @@ export const addPostImageSchema = z.object({
 export type UpdatePostImageInput = z.infer<typeof updatePostImageSchema>;
 export const updatePostImageSchema = z.object({
   id: z.number(),
-  meta: z.preprocess((value) => {
-    if (typeof value !== 'object') return null;
-    if (value && !Object.values(value).filter(isDefined).length) return null;
-    return value;
-  }, imageMetaSchema.nullish()),
+  // meta: z.preprocess((value) => {
+  //   if (typeof value !== 'object') return null;
+  //   if (value && !Object.values(value).filter(isDefined).length) return null;
+  //   return value;
+  // }, imageMetaSchema.nullish()),
+  meta: imageMetaSchema.nullish().transform((val) => {
+    if (!val) return val;
+    if (!Object.values(val).filter(isDefined).length) return null;
+    return val;
+  }),
   hideMeta: z.boolean().optional(),
   // resources: z.array(imageResourceUpsertSchema),
 });
@@ -115,4 +121,18 @@ export type GetPostTagsInput = z.infer<typeof getPostTagsSchema>;
 export const getPostTagsSchema = z.object({
   query: z.string().optional(),
   limit: z.number().default(10),
+  nsfwLevel: z.number().default(sfwBrowsingLevelsFlag),
+});
+
+export type PostEditQuerySchema = z.input<typeof postEditQuerySchema>;
+export const postEditQuerySchema = z.object({
+  postId: z.coerce.number().optional(),
+  modelId: z.coerce.number().optional(),
+  modelVersionId: z.coerce.number().nullish(),
+  tag: z.coerce.number().optional(),
+  video: z.coerce.boolean().optional(),
+  returnUrl: z.string().optional(),
+  clubId: z.coerce.number().optional(),
+  reviewing: z.string().optional(),
+  src: z.coerce.string().optional(),
 });

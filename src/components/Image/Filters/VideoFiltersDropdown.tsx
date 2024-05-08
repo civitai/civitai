@@ -72,7 +72,6 @@ export function VideoFiltersDropdown({ query, onChange, isFeed, ...buttonProps }
   const filterLength =
     (mergedFilters.withMeta ? 1 : 0) +
     (mergedFilters.hidden ? 1 : 0) +
-    (mergedFilters.followed ? 1 : 0) +
     (mergedFilters.period && mergedFilters.period !== MetricTimeframe.AllTime ? 1 : 0);
 
   const clearFilters = useCallback(() => {
@@ -142,7 +141,7 @@ export function VideoFiltersDropdown({ query, onChange, isFeed, ...buttonProps }
       </Stack>
       <Stack spacing="md">
         <Divider label="Modifiers" labelProps={{ weight: 'bold', size: 'sm' }} />
-        <Group>
+        <Group spacing={8}>
           <Chip
             {...chipProps}
             checked={mergedFilters.withMeta}
@@ -162,15 +161,6 @@ export function VideoFiltersDropdown({ query, onChange, isFeed, ...buttonProps }
                 }
               >
                 Hidden
-              </Chip>
-              <Chip
-                {...chipProps}
-                checked={mergedFilters.followed}
-                onChange={(checked) =>
-                  onChange ? onChange({ followed: checked }) : setFilters({ followed: checked })
-                }
-              >
-                Followed Only
               </Chip>
             </>
           )}

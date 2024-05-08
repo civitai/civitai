@@ -15,6 +15,7 @@ export namespace Orchestrator {
     | 'Rejected'
     | 'LateRejected'
     | 'Deleted'
+    | 'Canceled'
     | 'Expired'
     | 'ClaimExpired';
 
@@ -164,6 +165,9 @@ export namespace Orchestrator {
       model: string;
       priority: number;
       providers: string[];
+    };
+    export type BustModelCache = {
+      modelVersionId: number;
     };
     export type PrepareModelResponse = Orchestrator.JobResponse<PrepareModelJob>;
   }

@@ -1,3 +1,4 @@
+import { milestoneNotificationFix } from '~/server/common/constants';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
 import { humanizeList } from '~/utils/humanizer';
 
@@ -29,7 +30,7 @@ export const reactionNotifications = createNotificationProcessor({
         FROM "CommentReaction" r
         JOIN affected a ON a.affected_id = r."commentId"
         GROUP BY a.affected_id
-        HAVING COUNT(*) > 5
+        HAVING COUNT(*) >= ${commentReactionMilestones[0]}
       ), reaction_milestone AS (
         SELECT
           c."userId" "ownerId",
@@ -44,6 +45,7 @@ export const reactionNotifications = createNotificationProcessor({
         JOIN "Comment" c on c.id = a.affected_id
         JOIN "Model" m ON m.id = c."modelId"
         JOIN milestones ms ON ms.value <= a.reaction_count
+        WHERE c."createdAt" > '${milestoneNotificationFix}'
       )
       INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
@@ -99,7 +101,7 @@ export const reactionNotifications = createNotificationProcessor({
         FROM "ImageReaction" r
         JOIN affected a ON a.affected_id = r."imageId"
         GROUP BY a.affected_id
-        HAVING COUNT(*) > 5
+        HAVING COUNT(*) >= ${imageReactionMilestones[0]}
       ), reaction_milestone AS (
         SELECT
           i."userId" "ownerId",
@@ -120,6 +122,7 @@ export const reactionNotifications = createNotificationProcessor({
           GROUP BY ir."imageId"
         ) ir ON ir."imageId" = i.id
         JOIN milestones ms ON ms.value <= a.reaction_count
+        WHERE i."createdAt" > '${milestoneNotificationFix}'
       )
       INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
@@ -156,7 +159,7 @@ export const reactionNotifications = createNotificationProcessor({
         FROM "ArticleReaction" r
         JOIN affected a ON a.affected_id = r."articleId"
         GROUP BY a.affected_id
-        HAVING COUNT(*) > ${articleReactionMilestones[0]}
+        HAVING COUNT(*) >= ${articleReactionMilestones[0]}
       ), reaction_milestone AS (
         SELECT
           a."userId" "ownerId",
@@ -168,6 +171,7 @@ export const reactionNotifications = createNotificationProcessor({
         FROM affected_value af
         JOIN "Article" a on a.id = af.affected_id
         JOIN milestones ms ON ms.value <= af.reaction_count
+            AND a."createdAt" > '${milestoneNotificationFix}'
       )
       INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT

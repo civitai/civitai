@@ -1,16 +1,15 @@
-import { Button, Center, Stack, Text, ThemeIcon, Title, createStyles } from '@mantine/core';
+import { Button, Center, createStyles, Stack, Text, ThemeIcon, Title } from '@mantine/core';
 import { IconBan } from '@tabler/icons-react';
-import { signOut } from 'next-auth/react';
 import React from 'react';
-
 import { AppFooter } from '~/components/AppLayout/AppFooter';
 import { AppHeader, RenderSearchComponentProps } from '~/components/AppLayout/AppHeader';
 import { AssistantButton } from '~/components/Assistant/AssistantButton';
+import { useAccountContext } from '~/components/CivitaiWrapped/AccountProvider';
 import { FloatingActionButton2 } from '~/components/FloatingActionButton/FloatingActionButton';
+import { ScrollAreaMain } from '~/components/ScrollArea/ScrollAreaMain';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NewsletterDialog } from '../NewsletterDialog/NewsletterDialog';
-import { ScrollAreaMain } from '~/components/ScrollArea/ScrollAreaMain';
 
 type AppLayoutProps = {
   innerLayout?: ({ children }: { children: React.ReactNode }) => React.ReactNode;
@@ -20,15 +19,13 @@ type AppLayoutProps = {
 export function AppLayout({
   children,
   renderSearchComponent,
-  innerLayout,
-  withScrollArea = true,
 }: {
   children: React.ReactNode;
   renderSearchComponent?: (opts: RenderSearchComponentProps) => React.ReactElement;
-} & AppLayoutProps) {
-  const InnerLayout: any = innerLayout;
+}) {
   const { classes } = useStyles();
   const user = useCurrentUser();
+  const { logout } = useAccountContext();
   // TODO - move the bannedAt check to _app.tsx
   const isBanned = !!user?.bannedAt;
   const flags = useFeatureFlags();
@@ -46,24 +43,16 @@ export function AppLayout({
           <Text size="lg" align="center">
             This account has been banned and cannot access the site
           </Text>
-          <Button onClick={() => signOut()}>Sign out</Button>
+          <Button onClick={() => logout()}>Sign out</Button>
         </Stack>
       </Center>
     );
 
-  const content = InnerLayout ? (
-    <InnerLayout>{children}</InnerLayout>
-  ) : withScrollArea ? (
-    <ScrollAreaMain>{children}</ScrollAreaMain>
-  ) : (
-    children
-  );
-
   return (
     <>
       <AppHeader fixed={false} renderSearchComponent={renderSearchComponent} />
-      <main className={classes.main}>
-        {content}
+      <main className="flex flex-col flex-1 w-full h-full relative overflow-hidden">
+        {children}
         {/* {flags.assistant && (
               <div className={classes.assistant}>
                 <AssistantButton />
@@ -86,13 +75,6 @@ const useStyles = createStyles((theme) => ({
     display: 'flex',
     flex: 1,
     overflow: 'hidden',
-  },
-  main: {
-    flex: 1,
-    display: 'flex',
-    flexDirection: 'column',
-    overflow: 'hidden',
-    position: 'relative',
   },
   assistant: {
     position: 'absolute',

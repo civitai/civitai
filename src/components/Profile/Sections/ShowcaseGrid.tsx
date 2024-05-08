@@ -17,7 +17,7 @@ export function ShowcaseGrid({
   ...props
 }: Props & { children: React.ReactNode; className?: string }) {
   const { classes, cx } = useStyles(props);
-  const ref = useResizeObserver((entry) => {
+  const ref = useResizeObserver<HTMLDivElement>((entry) => {
     const children = [...entry.target.childNodes] as HTMLElement[];
     for (const child of children) {
       const { height } = child.getBoundingClientRect();

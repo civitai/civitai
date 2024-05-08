@@ -10,10 +10,13 @@ import {
   ThemeIcon,
   createStyles,
   Badge,
+  Menu,
+  Button,
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import {
   IconCalendar,
+  IconCaretDown,
   IconCategory,
   IconClubs,
   IconCpu,
@@ -28,6 +31,7 @@ import {
 } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
+import { useState } from 'react';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
@@ -36,6 +40,7 @@ type HomeOption = {
   url: string;
   icon: (props: TablerIconsProps) => JSX.Element;
   highlight?: boolean;
+  grouped?: boolean;
 };
 const homeOptions: Record<string, HomeOption> = {
   home: {
@@ -57,6 +62,7 @@ const homeOptions: Record<string, HomeOption> = {
   posts: {
     url: '/posts',
     icon: (props: TablerIconsProps) => <IconLayoutList {...props} />,
+    grouped: true,
   },
   articles: {
     url: '/articles',
@@ -65,6 +71,7 @@ const homeOptions: Record<string, HomeOption> = {
   bounties: {
     url: '/bounties',
     icon: (props: TablerIconsProps) => <IconMoneybag {...props} />,
+    grouped: true,
   },
   events: {
     url: '/events',
@@ -74,13 +81,15 @@ const homeOptions: Record<string, HomeOption> = {
   //   url: '/clubs',
   //   icon: (props: TablerIconsProps) => <IconClubs {...props} />,
   // },
-  builds: {
-    url: '/builds',
-    icon: (props: TablerIconsProps) => <IconCpu {...props} />,
-  },
+  // builds: {
+  //   url: '/builds',
+  //   icon: (props: TablerIconsProps) => <IconCpu {...props} />,
+  //   grouped: true,
+  // },
   shop: {
-    url: '/cosmetic-shop',
+    url: '/shop',
     icon: (props: TablerIconsProps) => <IconShoppingBag {...props} />,
+    highlight: true,
   },
 };
 type HomeOptions = keyof typeof homeOptions;
@@ -162,11 +171,6 @@ export function HomeContentToggle({ size, sx, ...props }: Props) {
             <Text size="sm" transform="capitalize" inline>
               {key}
             </Text>
-            {value.highlight && (
-              <Badge color="yellow" variant="filled" size="sm" radius="xl">
-                New
-              </Badge>
-            )}
           </Group>
         </Anchor>
       </Link>
@@ -233,6 +237,49 @@ const useTabsStyles = createStyles((theme) => ({
       maxWidth: '100%',
     },
   },
+  tabHighlight: {
+    backgroundColor: theme.fn.rgba(
+      theme.colors.yellow[3],
+      theme.colorScheme === 'dark' ? 0.1 : 0.3
+    ),
+    backgroundImage: `linear-gradient(90deg, ${theme.fn.rgba(
+      theme.colors.yellow[4],
+      0
+    )}, ${theme.fn.rgba(
+      theme.colors.yellow[4],
+      theme.colorScheme === 'dark' ? 0.1 : 0.2
+    )}, ${theme.fn.rgba(theme.colors.yellow[4], 0)})`,
+    backgroundSize: '50px',
+    backgroundPosition: '-300% 50%',
+    backgroundRepeat: 'no-repeat',
+    color: theme.colorScheme === 'dark' ? theme.colors.yellow[3] : theme.colors.yellow[8],
+    animation: 'button-highlight 5s linear infinite',
+    willChange: 'background-position',
+  },
+
+  moreButton: {
+    padding: '8px 10px 8px 16px',
+    fontSize: 16,
+    fontWeight: 500,
+    display: 'none',
+
+    [`&[data-active="true"]`]: {
+      background: theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[4],
+      color: theme.colorScheme === 'dark' ? theme.white : theme.colors.gray[8],
+    },
+
+    ['@container (min-width: 992px) and (max-width: 1440px)']: {
+      display: 'block',
+    },
+  },
+
+  groupedOptions: {
+    display: 'block',
+
+    ['@container (min-width: 992px) and (max-width: 1440px)']: {
+      display: 'none',
+    },
+  },
 }));
 
 export function HomeTabs({ sx, ...tabProps }: HomeTabProps) {
@@ -240,7 +287,9 @@ export function HomeTabs({ sx, ...tabProps }: HomeTabProps) {
   const { set } = useHomeSelection();
   const features = useFeatureFlags();
   const activePath = router.pathname.split('/')[1] || 'home';
-  const { classes } = useTabsStyles();
+  const { classes, cx } = useTabsStyles();
+
+  const [moreOpened, setMoreOpened] = useState(false);
 
   const tabs = Object.entries(homeOptions)
     .filter(
@@ -251,45 +300,82 @@ export function HomeTabs({ sx, ...tabProps }: HomeTabProps) {
           key === 'shop' && !features.cosmeticShop,
         ].some((b) => b)
     )
-    .map(([key, value]) => (
-      <Link key={key} href={value.url} passHref>
-        <Anchor variant="text" onClick={() => set(key as HomeOptions)}>
-          <Tabs.Tab
-            value={key}
-            icon={value.icon({ size: 16 })}
-            pr={value.highlight ? 10 : undefined}
+    .map(([key, value]) => {
+      return (
+        <Link key={key} href={value.url} passHref>
+          <Anchor
+            variant="text"
+            className={cx(value.grouped && classes.groupedOptions)}
+            onClick={() => set(key as HomeOptions)}
           >
-            <Group spacing={4} noWrap>
-              <Text className={classes.tabLabel} inline>
-                {getDisplayName(key)}
-              </Text>
-              {value.highlight && (
-                <Badge color="yellow" variant="filled" size="sm" radius="xl">
-                  New
-                </Badge>
-              )}
-            </Group>
-          </Tabs.Tab>
-        </Anchor>
-      </Link>
-    ));
+            <Tabs.Tab
+              value={key}
+              icon={value.icon({ size: 16 })}
+              className={value.highlight ? classes.tabHighlight : undefined}
+            >
+              <Group spacing={4} noWrap>
+                <Text className={classes.tabLabel} inline>
+                  {getDisplayName(key)}
+                </Text>
+              </Group>
+            </Tabs.Tab>
+          </Anchor>
+        </Link>
+      );
+    });
 
   // TODO.homeTabs: make these be a select dropdown on mobile
   return (
-    <Tabs
-      variant="pills"
-      radius="xl"
-      defaultValue="home"
-      color="gray"
-      {...tabProps}
-      sx={(theme) => ({
-        ...(typeof sx === 'function' ? sx(theme) : sx),
-      })}
-      value={activePath}
-      classNames={classes}
-    >
-      <Tabs.List>{tabs}</Tabs.List>
-    </Tabs>
+    <Group spacing={8} className={classes.root} noWrap>
+      <Tabs
+        variant="pills"
+        radius="xl"
+        defaultValue="home"
+        color="gray"
+        {...tabProps}
+        sx={(theme) => ({
+          ...(typeof sx === 'function' ? sx(theme) : sx),
+        })}
+        value={activePath}
+        classNames={classes}
+      >
+        <Tabs.List>{tabs}</Tabs.List>
+      </Tabs>
+      <Menu position="bottom-end" onChange={setMoreOpened}>
+        <Menu.Target>
+          <Button
+            radius="xl"
+            size="sm"
+            color="gray"
+            variant="subtle"
+            data-active={moreOpened}
+            className={classes.moreButton}
+          >
+            <Group spacing={4} noWrap>
+              More
+              <IconCaretDown size={16} fill="currentColor" />
+            </Group>
+          </Button>
+        </Menu.Target>
+        <Menu.Dropdown>
+          {Object.entries(homeOptions)
+            .filter(([, value]) => value.grouped)
+            .map(([key, value]) => (
+              <Link key={key} href={value.url} passHref>
+                <Menu.Item
+                  component="a"
+                  icon={value.icon({ size: 16 })}
+                  className={value.highlight ? classes.tabHighlight : undefined}
+                >
+                  <Group spacing={8} noWrap>
+                    <Text tt="capitalize">{getDisplayName(key)}</Text>
+                  </Group>
+                </Menu.Item>
+              </Link>
+            ))}
+        </Menu.Dropdown>
+      </Menu>
+    </Group>
   );
 }
 

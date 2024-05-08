@@ -17,12 +17,14 @@ import {
   Badge,
   MantineSize,
   UnstyledButton,
+  Paper,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
 import { BuzzWithdrawalRequestStatus, CosmeticType } from '@prisma/client';
 import { IconCloudOff, IconEdit, IconPlus } from '@tabler/icons-react';
 import { useState } from 'react';
+import { FeedCard } from '~/components/Cards/FeedCard';
 import { CosmeticsFiltersDropdown } from '~/components/Cosmetics/CosmeticsFiltersDropdown';
 import { useQueryCosmeticsPaged } from '~/components/Cosmetics/cosmetics.util';
 import { CreatorCardV2 } from '~/components/CreatorCard/CreatorCard';
@@ -66,13 +68,34 @@ export const CosmeticSample = ({
   switch (cosmetic.type) {
     case CosmeticType.Badge:
     case CosmeticType.ProfileDecoration:
-    case CosmeticType.ContentDecoration:
       const decorationData = cosmetic.data as BadgeCosmetic['data'];
       if (!decorationData.url) return null;
 
       return (
         <Box w={values.badgeSize}>
           <EdgeMedia src={decorationData.url} alt={cosmetic.name} width="original" />
+        </Box>
+      );
+    case CosmeticType.ContentDecoration:
+      const contentDecorationData = cosmetic.data as ContentDecorationCosmetic['data'];
+      if (!contentDecorationData.url && !contentDecorationData.cssFrame) return null;
+
+      return (
+        <Box w={values.badgeSize}>
+          <FeedCard
+            aspectRatio="square"
+            frameDecoration={cosmetic as ContentDecorationCosmetic}
+            sx={{ margin: '0 !important' }}
+          >
+            <Box
+              w="100%"
+              h="100%"
+              sx={(theme) => ({
+                backgroundColor:
+                  theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[1],
+              })}
+            />
+          </FeedCard>
         </Box>
       );
     case CosmeticType.NamePlate:
@@ -100,6 +123,7 @@ export const CosmeticSample = ({
             alt={cosmetic.name}
             type={backgroundData.type}
             width="original"
+            anim={true}
             style={{
               objectFit: 'cover',
               // objectPosition: 'right bottom',
@@ -169,7 +193,7 @@ export const CosmeticPreview = ({
       }
 
       return (
-        <Stack spacing={0}>
+        <Stack spacing="xl">
           <Text weight="bold" align="center">
             Preview
           </Text>
@@ -183,7 +207,7 @@ export const CosmeticPreview = ({
 
       return (
         <Stack>
-          <Stack spacing={0}>
+          <Stack spacing="xl">
             <Text weight="bold" align="center">
               Preview
             </Text>
@@ -191,7 +215,7 @@ export const CosmeticPreview = ({
               You can apply this cosmetic to any image, model, article or post you own.
             </Text>
           </Stack>
-          <Box style={{ transform: 'scale(0.75)' }}>
+          <Box mx="auto">
             <PreviewCard
               decoration={cosmetic as ContentDecorationCosmetic}
               image={images[activeImageIndex]}

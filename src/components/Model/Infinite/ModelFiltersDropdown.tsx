@@ -15,10 +15,10 @@ import {
 } from '@mantine/core';
 import { CheckpointType, ModelStatus, ModelType, MetricTimeframe } from '@prisma/client';
 import { IconChevronDown, IconFilter } from '@tabler/icons-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { PeriodFilter } from '~/components/Filters';
 import { IsClient } from '~/components/IsClient/IsClient';
-import { ModelQueryParams, useModelQueryParams } from '~/components/Model/model.utils';
+import { useModelQueryParams } from '~/components/Model/model.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ModelFilterSchema, useFiltersContext } from '~/providers/FiltersProvider';
@@ -99,7 +99,6 @@ export function DumbModelFiltersDropdown({
     (mergedFilters.earlyAccess ? 1 : 0) +
     (mergedFilters.supportsGeneration ? 1 : 0) +
     (mergedFilters.fromPlatform ? 1 : 0) +
-    (mergedFilters.followed ? 1 : 0) +
     (mergedFilters.archived ? 1 : 0) +
     (mergedFilters.hidden ? 1 : 0) +
     (mergedFilters.fileFormats?.length ?? 0) +
@@ -300,13 +299,6 @@ export function DumbModelFiltersDropdown({
           {currentUser && isFeed && (
             <>
               <Chip
-                checked={mergedFilters.followed}
-                onChange={(checked) => setFilters({ followed: checked })}
-                {...chipProps}
-              >
-                Followed Only
-              </Chip>
-              <Chip
                 checked={mergedFilters.hidden}
                 onChange={(checked) => setFilters({ hidden: checked })}
                 {...chipProps}
@@ -374,7 +366,12 @@ export function DumbModelFiltersDropdown({
       >
         <Popover.Target>{target}</Popover.Target>
         <Popover.Dropdown maw={576} w="100%">
-          <ScrollArea.Autosize maxHeight={450}>{dropdown}</ScrollArea.Autosize>
+          <ScrollArea.Autosize
+            maxHeight={'calc(90vh - var(--mantine-header-height) - 56px)'}
+            type="hover"
+          >
+            {dropdown}
+          </ScrollArea.Autosize>
         </Popover.Dropdown>
       </Popover>
     </IsClient>

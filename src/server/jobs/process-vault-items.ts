@@ -13,6 +13,7 @@ import { withRetries } from '~/server/utils/errorHandling';
 import { VaultItemMetadataSchema } from '../schema/vault.schema';
 import { isDefined } from '~/utils/type-guards';
 import { logToAxiom } from '~/server/logging/client';
+import { vaultItemFailedCounter, vaultItemProcessedCounter } from '~/server/prom/client';
 
 const MAX_FAILURES = 3;
 
@@ -142,6 +143,7 @@ export const processVaultItems = createJob('process-vault-items', '*/10 * * * *'
           status: VaultItemStatus.Stored,
         },
       });
+      vaultItemProcessedCounter.inc();
     } catch (e) {
       const error = e as Error;
       await logErrors({
@@ -149,6 +151,7 @@ export const processVaultItems = createJob('process-vault-items', '*/10 * * * *'
         error: error.message,
         vaultItem,
       });
+      vaultItemFailedCounter.inc();
 
       const meta = (vaultItem.meta ?? { failures: 0 }) as VaultItemMetadataSchema;
 

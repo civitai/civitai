@@ -1,8 +1,6 @@
 import {
   Button,
   ButtonProps,
-  Chip,
-  ChipProps,
   Divider,
   Drawer,
   Group,
@@ -13,10 +11,8 @@ import {
 } from '@mantine/core';
 import { MetricTimeframe } from '@prisma/client';
 import { IconChevronDown, IconFilter } from '@tabler/icons-react';
-import { useRouter } from 'next/router';
 import { useCallback, useState } from 'react';
 import { PeriodFilter } from '~/components/Filters';
-import { useCurrentUser, useIsSameUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { PostsQueryInput } from '~/server/schema/post.schema';
@@ -57,9 +53,6 @@ const useStyles = createStyles((theme) => ({
 export function PostFiltersDropdown({ query, onChange, ...buttonProps }: Props) {
   const { classes, theme, cx } = useStyles();
   const mobile = useIsMobile();
-  const currentUser = useCurrentUser();
-  const router = useRouter();
-  const isSameUser = useIsSameUser(router.query.username);
 
   const [opened, setOpened] = useState(false);
 
@@ -71,8 +64,7 @@ export function PostFiltersDropdown({ query, onChange, ...buttonProps }: Props) 
   const mergedFilters = query || filters;
 
   const filterLength =
-    (mergedFilters.followed ? 1 : 0) +
-    (mergedFilters.period && mergedFilters.period !== MetricTimeframe.AllTime ? 1 : 0);
+    mergedFilters.period && mergedFilters.period !== MetricTimeframe.AllTime ? 1 : 0;
 
   const clearFilters = useCallback(() => {
     const reset = {
@@ -83,14 +75,6 @@ export function PostFiltersDropdown({ query, onChange, ...buttonProps }: Props) 
     if (onChange) onChange(reset);
     else setFilters(reset);
   }, [onChange, setFilters]);
-
-  const chipProps: Partial<ChipProps> = {
-    size: 'sm',
-    radius: 'xl',
-    variant: 'filled',
-    classNames: classes,
-    tt: 'capitalize',
-  };
 
   const target = (
     <Indicator
@@ -134,22 +118,6 @@ export function PostFiltersDropdown({ query, onChange, ...buttonProps }: Props) 
           />
         ) : (
           <PeriodFilter type="posts" variant="chips" />
-        )}
-        {currentUser && !isSameUser && (
-          <>
-            <Divider label="Modifiers" labelProps={{ weight: 'bold', size: 'sm' }} />
-            <Group>
-              <Chip
-                {...chipProps}
-                checked={mergedFilters.followed}
-                onChange={(checked) =>
-                  onChange ? onChange({ followed: checked }) : setFilters({ followed: checked })
-                }
-              >
-                Followed Only
-              </Chip>
-            </Group>
-          </>
         )}
       </Stack>
       {filterLength > 0 && (

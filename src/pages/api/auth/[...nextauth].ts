@@ -13,12 +13,13 @@ import { v4 as uuid } from 'uuid';
 import { isDev } from '~/env/other';
 
 import { env } from '~/env/server.mjs';
-import { civitaiTokenCookieName, useSecureCookies } from '~/libs/auth';
+import { callbackCookieName, civitaiTokenCookieName, useSecureCookies } from '~/libs/auth';
 import { civTokenDecrypt } from '~/pages/api/auth/civ-token';
 import { Tracker } from '~/server/clickhouse/client';
 import { CacheTTL } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { verificationEmail } from '~/server/email/templates';
+import { loginCounter, newUserCounter } from '~/server/prom/client';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { encryptedDataSchema } from '~/server/schema/civToken.schema';
 import {
@@ -232,11 +233,11 @@ export const authOptions = createAuthOptions();
 
 export default async function auth(req: NextApiRequest, res: NextApiResponse) {
   const customAuthOptions = createAuthOptions();
-
   // Yes, this is intended. Without this, you can't log in to a user
   // while already logged in as another
   if (req.url?.startsWith('/api/auth/callback/')) {
-    delete req.cookies[civitaiTokenCookieName];
+    const callbackUrl = req.cookies[callbackCookieName];
+    if (!callbackUrl?.includes('connect=true')) delete req.cookies[civitaiTokenCookieName];
   }
 
   customAuthOptions.events ??= {};
@@ -251,6 +252,7 @@ export default async function auth(req: NextApiRequest, res: NextApiResponse) {
     const loginRedirectReason = req.cookies['ref_login_redirect_reason'] as string;
 
     if (context.isNewUser) {
+      newUserCounter.inc();
       const tracker = new Tracker(req, res);
       await tracker.userActivity({
         type: 'Registration',
@@ -269,6 +271,8 @@ export default async function auth(req: NextApiRequest, res: NextApiResponse) {
           loginRedirectReason,
         });
       }
+    } else {
+      loginCounter.inc();
     }
   };
 

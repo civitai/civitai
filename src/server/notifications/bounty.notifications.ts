@@ -1,3 +1,4 @@
+import { milestoneNotificationFix } from '~/server/common/constants';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
 
 const reactionMilestones = [5, 10, 20, 50, 100] as const;
@@ -180,6 +181,7 @@ export const bountyNotifications = createNotificationProcessor({
         JOIN "BountyEntry" be ON be.id = a."bountyEntryId"
         JOIN "Bounty" b ON b.id = be."bountyId"
         JOIN milestones ms ON ms.value <= a.reaction_count
+        WHERE b."createdAt" > '${milestoneNotificationFix}'
       )
       INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT

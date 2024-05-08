@@ -1,3 +1,4 @@
+import { milestoneNotificationFix } from '~/server/common/constants';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
 import { getDisplayName, slugit } from '~/utils/string-helpers';
 
@@ -38,7 +39,7 @@ export const modelNotifications = createNotificationProcessor({
           FROM "ModelMetric"
           WHERE
             "modelId" = ANY (SELECT json_array_elements('${affectedJson}'::json)::text::integer)
-            AND "downloadCount" > ${modelDownloadMilestones[0]}
+            AND "downloadCount" >= ${modelDownloadMilestones[0]}
             AND timeframe = 'AllTime'
         ), model_milestone AS (
           SELECT
@@ -51,6 +52,7 @@ export const modelNotifications = createNotificationProcessor({
           FROM model_value mval
           JOIN "Model" m on m.id = mval.model_id
           JOIN milestones ms ON ms.value <= mval.download_count
+          WHERE m."createdAt" > '${milestoneNotificationFix}'
         )
         INSERT INTO "Notification"("id", "userId", "type", "details", "category")
         SELECT
@@ -90,7 +92,7 @@ export const modelNotifications = createNotificationProcessor({
         WHERE
           mm."updatedAt" > '${lastSent}'
           AND mm."timeframe" = 'AllTime'
-          AND "thumbsUpCount" > ${modelLikeMilestones[0]}
+          AND "thumbsUpCount" >= ${modelLikeMilestones[0]}
           AND m."userId" > 0
       ), model_milestone AS (
         SELECT
@@ -103,6 +105,7 @@ export const modelNotifications = createNotificationProcessor({
         FROM model_value mval
         JOIN "Model" m on m.id = mval.model_id
         JOIN milestones ms ON ms.value <= mval.thumbs_up_count
+        WHERE m."createdAt" > '${milestoneNotificationFix}'
       )
       INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT

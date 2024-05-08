@@ -1,12 +1,15 @@
-import { CollectionType, CosmeticType, MetricTimeframe, Prisma } from '@prisma/client';
-import { ImageSort } from '~/server/common/enums';
+import { CollectionType, CosmeticType, MediaType, MetricTimeframe, Prisma } from '@prisma/client';
+import { ImageSort, ImageType } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import {
+  CosmeticShopItemMeta,
   GetAllCosmeticShopSections,
   GetPaginatedCosmeticShopItemInput,
   GetPreviewImagesInput,
+  GetShopInput,
   PurchaseCosmeticShopItemInput,
   UpdateCosmeticShopSectionsOrderInput,
   UpsertCosmeticShopItemInput,
@@ -17,6 +20,7 @@ import { cosmeticShopItemSelect } from '~/server/selectors/cosmetic-shop.selecto
 import { imageSelect } from '~/server/selectors/image.selector';
 import { createBuzzTransaction } from '~/server/services/buzz.service';
 import { createEntityImages, getAllImages } from '~/server/services/image.service';
+import { withRetries } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 
 export const getShopItemById = async ({ id }: GetByIdInput) => {
@@ -35,7 +39,7 @@ export const getPaginatedCosmeticShopItems = async (input: GetPaginatedCosmeticS
   const where: Prisma.CosmeticShopItemFindManyArgs['where'] = {};
   const cosmeticWhere: Prisma.CosmeticFindManyArgs['where'] = {};
 
-  if (input.name) cosmeticWhere.name = { contains: input.name };
+  if (input.name) cosmeticWhere.name = { contains: input.name, mode: 'insensitive' };
   if (input.types && input.types.length) cosmeticWhere.type = { in: input.types };
 
   if (Object.keys(cosmeticWhere).length > 0) where.cosmetic = cosmeticWhere;
@@ -76,10 +80,6 @@ export const upsertCosmeticShopItem = async ({
       })
     : undefined;
 
-  if (existingItem?.id && availableQuantity && existingItem._count.purchases > availableQuantity) {
-    throw new Error('Cannot reduce available quantity below the number of purchases');
-  }
-
   if (availableTo && availableFrom && availableTo < availableFrom) {
     throw new Error('Available to date cannot be before available from date');
   }
@@ -114,7 +114,7 @@ export const getShopSections = async (input: GetAllCosmeticShopSections) => {
   const where: Prisma.CosmeticShopSectionFindManyArgs['where'] = {};
 
   if (input.title) {
-    where.title = { contains: input.title };
+    where.title = { contains: input.title, mode: 'insensitive' };
   }
 
   if (input.withItems) {
@@ -289,7 +289,7 @@ export const reorderCosmeticShopSections = async ({
   sortedSectionIds,
 }: UpdateCosmeticShopSectionsOrderInput) => {
   await dbWrite.$queryRaw`
-    UPDATE "CosmeticShopSection" AS "css" 
+    UPDATE "CosmeticShopSection" AS "css"
     SET "placement" = "idx"
     FROM (SELECT "id", "idx" FROM UNNEST(${sortedSectionIds}) WITH ORDINALITY AS t("id", "idx")) AS "t"
     WHERE "css"."id" = "t"."id"
@@ -298,7 +298,10 @@ export const reorderCosmeticShopSections = async ({
   return true;
 };
 
-export const getShopSectionsWithItems = async () => {
+export const getShopSectionsWithItems = async ({
+  isModerator,
+  cosmeticTypes,
+}: { isModerator?: boolean } & GetShopInput = {}) => {
   const sections = await dbRead.cosmeticShopSection.findMany({
     select: {
       id: true,
@@ -322,24 +325,19 @@ export const getShopSectionsWithItems = async () => {
         },
         where: {
           shopItem: {
+            cosmetic: (cosmeticTypes?.length ?? 0) > 0 ? { type: { in: cosmeticTypes } } : {},
             archivedAt: null,
-            OR: [
-              {
-                availableFrom: {
-                  gt: new Date(),
-                },
-                availableTo: {
-                  lt: new Date(),
-                },
-              },
-              {
-                availableFrom: null,
-                availableTo: null,
-              },
-            ],
+            OR: isModerator
+              ? undefined
+              : [
+                  {
+                    availableFrom: { lte: new Date() },
+                    availableTo: { gte: new Date() },
+                  },
+                  { availableFrom: null, availableTo: null },
+                ],
           },
         },
-        take: 8,
         orderBy: { index: 'asc' },
       },
     },
@@ -354,16 +352,21 @@ export const getShopSectionsWithItems = async () => {
     },
   });
 
-  return sections.map((section) => ({
-    ...section,
-    image: !!section.image
-      ? {
-          ...section.image,
-          meta: section.image.meta as ImageMetaProps,
-          metadata: section.image.metadata as MixedObject,
-        }
-      : section.image,
-  }));
+  return (
+    sections
+      // Ensures we don't return empty sections
+      .filter((s) => s.items.length > 0)
+      .map((section) => ({
+        ...section,
+        image: !!section.image
+          ? {
+              ...section.image,
+              meta: section.image.meta as ImageMetaProps,
+              metadata: section.image.metadata as MixedObject,
+            }
+          : section.image,
+      }))
+  );
 };
 
 export const purchaseCosmeticShopItem = async ({
@@ -380,6 +383,7 @@ export const purchaseCosmeticShopItem = async ({
       availableQuantity: true,
       unitAmount: true,
       title: true,
+      meta: true,
       cosmetic: {
         select: {
           type: true,
@@ -397,7 +401,7 @@ export const purchaseCosmeticShopItem = async ({
     throw new Error('Cosmetic not found');
   }
 
-  if (shopItem.availableQuantity && shopItem.availableQuantity <= shopItem._count.purchases) {
+  if (shopItem.availableQuantity !== null && shopItem.availableQuantity <= 0) {
     throw new Error('Cosmetic is out of stock');
   }
 
@@ -421,7 +425,9 @@ export const purchaseCosmeticShopItem = async ({
     }
   }
 
-  // Confirm user has enough buzz:
+  const meta = (shopItem.meta ?? {}) as CosmeticShopItemMeta;
+
+  // Confirms user has enough buzz:
   const transaction = await createBuzzTransaction({
     fromAccountId: userId, // bank
     toAccountId: 0,
@@ -431,7 +437,7 @@ export const purchaseCosmeticShopItem = async ({
   });
 
   try {
-    return await dbWrite.$transaction(async (tx) => {
+    const data = await dbWrite.$transaction(async (tx) => {
       // Create purchase:
       await tx.userCosmeticShopPurchases.create({
         data: {
@@ -453,8 +459,61 @@ export const purchaseCosmeticShopItem = async ({
         },
       });
 
+      // Update the cosmetic with the new amount:
+      await dbWrite.cosmeticShopItem.update({
+        where: { id: shopItemId },
+        data: {
+          availableQuantity: {
+            decrement: 1,
+          },
+        },
+      });
+
       return userCosmetic;
     });
+
+    try {
+      await withRetries(async () => {
+        // We do this last mainly because we don't want to fail the purchase if this fails.
+        // We can divide the funds later if needed.
+        const paidToUsers: number[] = meta?.paidToUserIds ?? [];
+        if (paidToUsers.length > 0) {
+          // distribute the buzz to these users:
+          const amountPerUser = Math.floor(shopItem.unitAmount / paidToUsers.length);
+
+          await Promise.all(
+            paidToUsers.map((paidToUserId) =>
+              createBuzzTransaction({
+                fromAccountId: 0,
+                toAccountId: paidToUserId,
+                amount: amountPerUser,
+                type: TransactionType.Sell,
+                description: `A user has purchased your cosmetic - ${shopItem.title}`,
+                externalTransactionId: transaction.transactionId,
+                details: {
+                  purchasedBy: userId,
+                  originalAmount: shopItem.unitAmount,
+                },
+              })
+            )
+          );
+        }
+      }, 3);
+    } catch (e) {
+      // We will NOT stop the user interaction for this.
+      logToAxiom({
+        level: 'error',
+        message: 'Failed to distribute funds',
+        data: {
+          shopItemId,
+          userId,
+          transaction,
+          error: e,
+        },
+      });
+    }
+
+    return data;
   } catch (error) {
     await createBuzzTransaction({
       fromAccountId: 0,
@@ -491,6 +550,7 @@ export const getUserPreviewImagesForCosmetics = async ({
     include: [],
     period: MetricTimeframe.AllTime,
     periodMode: 'stats',
+    types: [MediaType.image],
   });
 
   const images = userImages.items.slice(0, limit);
@@ -520,6 +580,7 @@ export const getUserPreviewImagesForCosmetics = async ({
       period: MetricTimeframe.AllTime,
       periodMode: 'stats',
       sort: ImageSort.Newest,
+      types: [MediaType.image],
     });
 
     return [...images, ...collectionImages.items].slice(0, limit);

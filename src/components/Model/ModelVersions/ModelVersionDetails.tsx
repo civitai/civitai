@@ -15,6 +15,7 @@ import {
   Text,
   ThemeIcon,
   Tooltip,
+  createStyles,
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { CollectionType, ModelFileVisibility, ModelModifier, ModelStatus } from '@prisma/client';
@@ -107,6 +108,18 @@ import { ResourceReviewThumbActions } from '~/components/ResourceReview/Resource
 import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { openContext } from '~/providers/CustomModalsProvider';
 
+const useStyles = createStyles(() => ({
+  ctaContainer: {
+    width: '100%',
+    flexWrap: 'wrap',
+    ['> *']: { flexGrow: 1 },
+
+    [containerQuery.largerThan('sm')]: {
+      ['> *']: { flexGrow: 0 },
+    },
+  },
+}));
+
 export function ModelVersionDetails({
   model,
   version,
@@ -115,6 +128,7 @@ export function ModelVersionDetails({
   onFavoriteClick,
   hasAccess = true,
 }: Props) {
+  const { classes } = useStyles();
   const { connected: civitaiLinked } = useCivitaiLink();
   const router = useRouter();
   const queryUtils = trpc.useUtils();
@@ -126,6 +140,8 @@ export function ModelVersionDetails({
     key: 'model-version-details-accordions',
     defaultValue: ['version-details'],
   });
+  const isOwner = model.user?.id === user?.id;
+  const isOwnerOrMod = isOwner || user?.isModerator;
 
   const primaryFile = getPrimaryFile(version.files, {
     metadata: user?.filePreferences,
@@ -135,7 +151,7 @@ export function ModelVersionDetails({
   const filesCount = version.files?.length;
   const hasFiles = filesCount > 0;
   const filesVisible = version.files?.filter(
-    (f) => f.visibility === ModelFileVisibility.Public || model.user.id === user?.id
+    (f) => f.visibility === ModelFileVisibility.Public || isOwnerOrMod
   );
   const filesVisibleCount = filesVisible.length;
   const hasVisibleFiles = filesVisibleCount > 0;
@@ -265,7 +281,9 @@ export function ModelVersionDetails({
         />
       ),
     },
-    { label: 'Uploaded', value: formatDate(version.createdAt) },
+    version.status === 'Published'
+      ? { label: 'Published', value: formatDate(version.publishedAt) }
+      : { label: 'Uploaded', value: formatDate(version.createdAt) },
     {
       label: 'Base Model',
       value:
@@ -402,7 +420,7 @@ export function ModelVersionDetails({
   );
   const primaryFileDetails = primaryFile && getFileDetails(primaryFile);
 
-  const downloadMenuItems = version.files?.map((file) =>
+  const downloadMenuItems = filesVisible.map((file) =>
     !archived && hasAccess ? (
       <Menu.Item
         key={file.id}
@@ -477,8 +495,6 @@ export function ModelVersionDetails({
 
   const cleanDescription = version.description ? removeTags(version.description) : '';
 
-  const isOwner = model.user?.id === user?.id;
-  const isOwnerOrMod = isOwner || user?.isModerator;
   const hasPosts = !!version.posts?.length;
   const showPublishButton =
     isOwnerOrMod &&
@@ -571,13 +587,17 @@ export function ModelVersionDetails({
             </Stack>
           ) : (
             <Stack spacing={4}>
-              <Group spacing="xs" style={{ alignItems: 'flex-start', flexWrap: 'nowrap' }}>
-                {canGenerate && (
-                  <GenerateButton modelVersionId={version.id} data-activity="create:model" />
-                )}
+              <Group spacing="xs" className={classes.ctaContainer}>
+                <Group spacing="xs" sx={{ flex: 1, ['> *']: { flexGrow: 1 } }} noWrap>
+                  {canGenerate && (
+                    <GenerateButton
+                      modelVersionId={version.id}
+                      data-activity="create:model"
+                      sx={{ flex: '2 !important', paddingLeft: 8, paddingRight: 12 }}
+                    />
+                  )}
 
-                {displayCivitaiLink && (
-                  <Stack sx={canGenerate ? undefined : { flex: 1 }} spacing={4}>
+                  {displayCivitaiLink && (
                     <CivitaiLinkManageButton
                       modelId={model.id}
                       modelVersionId={version.id}
@@ -594,6 +614,8 @@ export function ModelVersionDetails({
                             onClick={onClick}
                             leftIcon={icon}
                             disabled={!primaryFile}
+                            sx={{ flex: '2 !important', paddingLeft: 8, paddingRight: 12 }}
+                            fullWidth
                           >
                             {label}
                           </Button>
@@ -605,12 +627,8 @@ export function ModelVersionDetails({
                               onClick={onClick}
                               disabled={!primaryFile}
                               variant="light"
-                              sx={{
-                                cursor: 'pointer',
-                                paddingLeft: 0,
-                                paddingRight: 0,
-                                width: '36px',
-                              }}
+                              sx={{ flex: 1, paddingLeft: 8, paddingRight: 8 }}
+                              fullWidth
                             >
                               {icon}
                             </Button>
@@ -618,104 +636,101 @@ export function ModelVersionDetails({
                         )
                       }
                     </CivitaiLinkManageButton>
-                  </Stack>
-                )}
+                  )}
 
-                {displayCivitaiLink || canGenerate ? (
-                  filesCount === 1 ? (
+                  {displayCivitaiLink || canGenerate ? (
+                    filesCount === 1 ? (
+                      <DownloadButton
+                        canDownload={version.canDownload}
+                        component="a"
+                        href={createModelFileDownloadUrl({
+                          versionId: version.id,
+                          primary: true,
+                        })}
+                        tooltip="Download"
+                        disabled={!primaryFile || archived}
+                        sx={{ flex: 1, paddingLeft: 8, paddingRight: 8 }}
+                        iconOnly
+                      />
+                    ) : (
+                      <Menu position="bottom-end">
+                        <Menu.Target>
+                          <DownloadButton
+                            canDownload={version.canDownload}
+                            disabled={!primaryFile || archived}
+                            sx={{ flex: 1, paddingLeft: 8, paddingRight: 8 }}
+                            iconOnly
+                          />
+                        </Menu.Target>
+                        <Menu.Dropdown>{downloadMenuItems}</Menu.Dropdown>
+                      </Menu>
+                    )
+                  ) : (
                     <DownloadButton
-                      canDownload={version.canDownload}
                       component="a"
                       href={createModelFileDownloadUrl({
                         versionId: version.id,
                         primary: true,
                       })}
-                      tooltip="Download"
+                      canDownload={version.canDownload}
                       disabled={!primaryFile || archived}
-                      iconOnly
-                    />
-                  ) : (
-                    <Menu position="bottom-end">
-                      <Menu.Target>
-                        <DownloadButton
-                          canDownload={version.canDownload}
-                          disabled={!primaryFile || archived}
-                          iconOnly
-                        />
-                      </Menu.Target>
-                      <Menu.Dropdown>{downloadMenuItems}</Menu.Dropdown>
-                    </Menu>
-                  )
-                ) : (
-                  <DownloadButton
-                    component="a"
-                    href={createModelFileDownloadUrl({
-                      versionId: version.id,
-                      primary: true,
-                    })}
-                    canDownload={version.canDownload}
-                    disabled={!primaryFile || archived}
-                    sx={{ flex: 1 }}
-                  >
-                    <Text align="center">
-                      {primaryFile ? (
-                        <>
-                          Download{' '}
-                          <Text className="inline sm:max-md:hidden" span>{`(${formatKBytes(
-                            primaryFile?.sizeKB
-                          )})`}</Text>
-                        </>
-                      ) : (
-                        'No file'
-                      )}
-                    </Text>
-                  </DownloadButton>
-                )}
-                {!displayCivitaiLink && <RunButton variant="light" modelVersionId={version.id} />}
-                <Tooltip label="Share" position="top" withArrow>
-                  <div>
-                    <ShareButton
-                      url={router.asPath}
-                      title={model.name}
-                      collect={{ modelId: model.id, type: CollectionType.Model }}
+                      sx={{ flex: '2 !important', paddingLeft: 8, paddingRight: 12 }}
                     >
-                      <Button
-                        sx={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
-                        color="gray"
-                      >
-                        <IconShare3 />
-                      </Button>
-                    </ShareButton>
-                  </div>
-                </Tooltip>
-
-                {onFavoriteClick && (
-                  <Tooltip label={isFavorite ? 'Unlike' : 'Like'} position="top" withArrow>
+                      <Text align="center">
+                        {primaryFile ? (
+                          <>
+                            Download <Text span>{`(${formatKBytes(primaryFile?.sizeKB)})`}</Text>
+                          </>
+                        ) : (
+                          'No file'
+                        )}
+                      </Text>
+                    </DownloadButton>
+                  )}
+                </Group>
+                <Group spacing="xs" sx={{ flex: 1, ['> *']: { flexGrow: 1 } }} noWrap>
+                  {!displayCivitaiLink && <RunButton variant="light" modelVersionId={version.id} />}
+                  <Tooltip label="Share" position="top" withArrow>
                     <div>
-                      <LoginRedirect reason="favorite-model">
-                        <Button
-                          onClick={() =>
-                            onFavoriteClick({ versionId: version.id, setTo: !isFavorite })
-                          }
-                          color={isFavorite ? 'green' : 'gray'}
-                          sx={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
-                        >
-                          <ThumbsUpIcon color="#fff" filled={isFavorite} />
+                      <ShareButton
+                        url={router.asPath}
+                        title={model.name}
+                        collect={{ modelId: model.id, type: CollectionType.Model }}
+                      >
+                        <Button sx={{ paddingLeft: 8, paddingRight: 8 }} color="gray" fullWidth>
+                          <IconShare3 size={24} />
                         </Button>
-                      </LoginRedirect>
+                      </ShareButton>
                     </div>
                   </Tooltip>
-                )}
-                <ToggleVaultButton modelVersionId={version.id}>
-                  {({ isLoading, isInVault, toggleVaultItem }) => (
-                    <Tooltip
-                      label={isInVault ? 'Remove from Vault' : 'Add To Vault'}
-                      position="top"
-                      withArrow
-                    >
+
+                  {onFavoriteClick && (
+                    <Tooltip label={isFavorite ? 'Unlike' : 'Like'} position="top" withArrow>
                       <div>
+                        <LoginRedirect reason="favorite-model">
+                          <Button
+                            onClick={() =>
+                              onFavoriteClick({ versionId: version.id, setTo: !isFavorite })
+                            }
+                            color={isFavorite ? 'green' : 'gray'}
+                            sx={{ paddingLeft: 8, paddingRight: 8 }}
+                            fullWidth
+                          >
+                            <ThumbsUpIcon color="#fff" filled={isFavorite} size={24} />
+                          </Button>
+                        </LoginRedirect>
+                      </div>
+                    </Tooltip>
+                  )}
+                  <ToggleVaultButton modelVersionId={version.id}>
+                    {({ isLoading, isInVault, toggleVaultItem }) => (
+                      <Tooltip
+                        label={isInVault ? 'Remove from Vault' : 'Add To Vault'}
+                        position="top"
+                        withArrow
+                      >
                         <Button
-                          sx={{ cursor: 'pointer', paddingLeft: 0, paddingRight: 0, width: '36px' }}
+                          sx={{ paddingLeft: 8, paddingRight: 8 }}
                           color={isInVault ? 'green' : 'gray'}
                           onClick={toggleVaultItem}
                           disabled={isLoading}
@@ -724,15 +739,15 @@ export function ModelVersionDetails({
                           {isLoading ? (
                             <Loader size="xs" />
                           ) : isInVault ? (
-                            <IconCloudCheck />
+                            <IconCloudCheck size={24} />
                           ) : (
-                            <IconCloudLock />
+                            <IconCloudLock size={24} />
                           )}
                         </Button>
-                      </div>
-                    </Tooltip>
-                  )}
-                </ToggleVaultButton>
+                      </Tooltip>
+                    )}
+                  </ToggleVaultButton>
+                </Group>
               </Group>
               {primaryFileDetails}
             </Stack>

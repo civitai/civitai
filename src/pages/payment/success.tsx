@@ -80,7 +80,7 @@ export default function PaymentSuccess() {
               size="md"
               rightIcon={<IconRosette />}
             >
-              Edit Profile
+              Customize Profile
             </Button>
           </Group>
           <Text

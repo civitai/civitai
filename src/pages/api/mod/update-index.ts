@@ -1,16 +1,31 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
-import { MODELS_SEARCH_INDEX, USERS_SEARCH_INDEX } from '~/server/common/constants';
+import {
+  ARTICLES_SEARCH_INDEX,
+  IMAGES_SEARCH_INDEX,
+  MODELS_SEARCH_INDEX,
+  USERS_SEARCH_INDEX,
+} from '~/server/common/constants';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { inJobContext } from '~/server/jobs/job';
-import { modelsSearchIndex, usersSearchIndex } from '~/server/search-index';
+import {
+  articlesSearchIndex,
+  imagesSearchIndex,
+  modelsSearchIndex,
+  usersSearchIndex,
+} from '~/server/search-index';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
 import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
 
 export const schema = z.object({
   updateIds: commaDelimitedNumberArray().optional(),
   deleteIds: commaDelimitedNumberArray().optional(),
-  index: z.enum([MODELS_SEARCH_INDEX, USERS_SEARCH_INDEX]),
+  index: z.enum([
+    MODELS_SEARCH_INDEX,
+    USERS_SEARCH_INDEX,
+    IMAGES_SEARCH_INDEX,
+    ARTICLES_SEARCH_INDEX,
+  ]),
 });
 export default ModEndpoint(async function updateIndexSync(
   req: NextApiRequest,
@@ -35,6 +50,12 @@ export default ModEndpoint(async function updateIndexSync(
           break;
         case MODELS_SEARCH_INDEX:
           await modelsSearchIndex.updateSync(data, jobContext);
+          break;
+        case IMAGES_SEARCH_INDEX:
+          await imagesSearchIndex.updateSync(data, jobContext);
+          break;
+        case ARTICLES_SEARCH_INDEX:
+          await articlesSearchIndex.updateSync(data, jobContext);
           break;
         default:
           break;

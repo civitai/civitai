@@ -306,6 +306,7 @@ export class Tracker {
   public reaction(values: {
     type: ReactionType;
     entityId: number;
+    ownerId: number;
     reaction: ReviewReactions;
     nsfw: NsfwLevelDeprecated;
   }) {
@@ -343,6 +344,7 @@ export class Tracker {
     tags: string[];
     ownerId: number;
     tosReason?: string;
+    resources?: number[];
   }) {
     return this.track('images', values);
   }

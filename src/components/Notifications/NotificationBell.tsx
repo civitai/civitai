@@ -148,10 +148,11 @@ export function NotificationBell() {
               <NotificationList
                 items={notifications}
                 onItemClick={(notification, keepOpened) => {
-                  readNotificationMutation.mutate({
-                    id: notification.id,
-                    category: notification.category,
-                  });
+                  if (!notification.read)
+                    readNotificationMutation.mutate({
+                      id: notification.id,
+                      category: notification.category,
+                    });
                   setOpened(keepOpened);
                 }}
               />

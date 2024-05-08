@@ -32,6 +32,8 @@ const trackSchema = z.object({
   filters: z
     .object({
       tags: z.number().array().optional(),
+      misaligned: z.boolean().optional(),
+      ratingModel: z.string().optional(),
     })
     .optional(),
 });
@@ -151,7 +153,7 @@ export const researchRouter = router({
         SELECT MAX(rr."imageId") as id
         FROM research_ratings rr
         WHERE rr."userId" = ${ctx.user.id}
-          AND rr."imageId" BETWEEN ${track.startingPoint} AND ${track.startingPoint + 1000000}
+          AND rr."imageId" BETWEEN ${track.startingPoint} AND ${track.startingPoint + 300000}
           AND rr."createdAt" > ${track.startTime.toISOString()}::timestamp;
       `;
       if (highestImageId?.id) userPosition.trackPosition = highestImageId.id;
@@ -175,6 +177,14 @@ export const researchRouter = router({
         WHERE it."imageId" = i.id
           AND it."tagId" IN (${Prisma.join(track.filters.tags)})
       )`);
+    }
+
+    if (track.filters?.misaligned) {
+      where.push(Prisma.sql`i."nsfwLevel" != i."aiNsfwLevel" AND i."aiNsfwLevel" > 0`);
+    }
+
+    if (track.filters?.ratingModel) {
+      where.push(Prisma.sql`i."aiModel" = ${track.filters.ratingModel}`);
     }
 
     const images = await dbRead.$queryRaw<RaterImage[]>`

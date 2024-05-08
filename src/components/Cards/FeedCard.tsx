@@ -1,8 +1,8 @@
-import { AspectRatio, Card, CardProps, createStyles } from '@mantine/core';
+import { AspectRatio, Card, CardProps } from '@mantine/core';
 import Link from 'next/link';
 import React, { forwardRef } from 'react';
 import { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
-import { DecorationFrame } from '~/components/Decorations/DecorationFrame';
+import { useFrameStyles } from '~/components/Cards/Cards.styles';
 
 type AspectRatio = 'portrait' | 'landscape' | 'square' | 'flat';
 const aspectRatioValues: Record<
@@ -36,19 +36,6 @@ const aspectRatioValues: Record<
   },
 };
 
-const useStyles = createStyles((theme) => {
-  return {
-    root: {
-      padding: '0 !important',
-      color: 'white',
-      borderRadius: theme.radius.md,
-      cursor: 'pointer',
-      position: 'relative',
-      overflow: 'hidden',
-    },
-  };
-});
-
 export const FeedCard = forwardRef<HTMLAnchorElement, Props>(
   (
     {
@@ -63,9 +50,12 @@ export const FeedCard = forwardRef<HTMLAnchorElement, Props>(
     ref
   ) => {
     const { stringRatio } = aspectRatioValues[aspectRatio];
-    const { classes, cx } = useStyles();
+    const { classes, cx } = useFrameStyles({
+      frame: frameDecoration?.data.cssFrame,
+      texture: frameDecoration?.data.texture,
+    });
 
-    const card = (
+    let card = (
       <Card<'a'>
         className={cx(classes.root, className)}
         {...props}
@@ -77,18 +67,22 @@ export const FeedCard = forwardRef<HTMLAnchorElement, Props>(
       </Card>
     );
 
-    return (
-      <div style={{ position: 'relative' }}>
-        {href ? (
-          <Link href={href} passHref>
-            {card}
-          </Link>
-        ) : (
-          card
-        )}
-        {frameDecoration && <DecorationFrame decoration={frameDecoration} />}
-      </div>
-    );
+    if (href)
+      card = (
+        <Link href={href} passHref>
+          {card}
+        </Link>
+      );
+
+    if (frameDecoration) {
+      card = (
+        <div className={classes.glow}>
+          <div className={cx('frame-decoration', classes.frame)}>{card}</div>
+        </div>
+      );
+    }
+
+    return card;
   }
 );
 

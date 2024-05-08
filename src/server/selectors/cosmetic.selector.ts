@@ -1,4 +1,4 @@
-import { TextProps } from '@mantine/core';
+import { CSSObject, TextProps } from '@mantine/core';
 import { CosmeticEntity, Prisma, MediaType } from '@prisma/client';
 import { ImageProps } from '~/components/ImageViewer/ImageViewer';
 
@@ -41,8 +41,16 @@ export type NamePlateCosmetic = Omit<SimpleCosmetic, 'data'> & {
     };
   };
 };
-export type ContentDecorationCosmetic = BadgeCosmetic & {
-  data: { offset?: string; crop?: string };
+export type ContentDecorationCosmetic = Omit<SimpleCosmetic, 'data'> & {
+  entityImage?: ImageProps & { entityId: number; entityType: string };
+  data: {
+    url?: string;
+    offset?: string;
+    crop?: string;
+    cssFrame?: string;
+    glow?: boolean;
+    texture?: { url: string; size: { width: number; height: number } };
+  };
 };
 export type ProfileBackgroundCosmetic = BadgeCosmetic & {
   data: { textColor?: string; backgroundColor?: string; offset?: string; type?: MediaType };

@@ -170,7 +170,6 @@ export function UserAvatar({
                   zIndex: 1,
                 }}
                 width="original"
-                anim={decoration.data.animated}
               />
             )}
             {avatarUser.profilePicture &&

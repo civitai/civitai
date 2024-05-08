@@ -37,6 +37,8 @@ import {
   UpdateImageInput,
   ImageRatingReviewOutput,
   ReportCsamImagesInput,
+  AddOrRemoveImageToolsOutput,
+  UpdateImageToolsOutput,
 } from '~/server/schema/image.schema';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { articlesSearchIndex, imagesSearchIndex } from '~/server/search-index';
@@ -74,10 +76,16 @@ import { baseS3Client } from '~/utils/s3-client';
 import { pgDbRead, pgDbWrite } from '~/server/db/pgDb';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { trackModActivity } from '~/server/services/moderator.service';
-import { nsfwBrowsingLevelsArray } from '~/shared/constants/browsingLevel.constants';
+import {
+  nsfwBrowsingLevelsArray,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import { getVotableTags2 } from '~/server/services/tag.service';
+import { Flags } from '~/shared/utils';
 import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
+import { leakingContentCounter } from '~/server/prom/client';
+import { postMetrics } from '~/server/metrics';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -123,10 +131,11 @@ export const deleteImageById = async ({
     }
 
     await imagesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
-    await dbWrite.$executeRaw`DELETE FROM "Image" WHERE id = ${id}`;
+    // await dbWrite.$executeRaw`DELETE FROM "Image" WHERE id = ${id}`;
     if (updatePost && image.postId) {
       await updatePostNsfwLevel(image.postId);
       await bustCachesForPost(image.postId);
+      postMetrics.queueUpdate(image.postId);
     }
     return image;
   } catch {
@@ -744,10 +753,12 @@ export const getAllImages = async ({
     } else if (sort === ImageSort.MostCollected) {
       orderBy = `im."collectedCount" DESC, im."reactionCount" DESC, im."imageId"`;
       if (!isGallery) AND.push(Prisma.sql`im."collectedCount" > 0`);
-    } else if (sort === ImageSort.MostTipped) {
-      orderBy = `im."tippedAmountCount" DESC, im."reactionCount" DESC, im."imageId"`;
-      if (!isGallery) AND.push(Prisma.sql`im."tippedAmountCount" > 0`);
-    } else if (sort === ImageSort.Random) orderBy = 'ct."randomId" DESC';
+    }
+    // else if (sort === ImageSort.MostTipped) {
+    //   orderBy = `im."tippedAmountCount" DESC, im."reactionCount" DESC, im."imageId"`;
+    //   if (!isGallery) AND.push(Prisma.sql`im."tippedAmountCount" > 0`);
+    // }
+    else if (sort === ImageSort.Random) orderBy = 'ct."randomId" DESC';
     else if (sort === ImageSort.Oldest) orderBy = `i."createdAt" ASC`;
     else {
       if (from.indexOf(`irr`) !== -1) {
@@ -1100,6 +1111,36 @@ export async function getTagIdsForImages(imageIds: number[]) {
   });
 }
 
+export async function getTagNamesForImages(imageIds: number[]) {
+  const imageTagsArr = await dbRead.$queryRaw<{ imageId: number; tag: string }[]>`
+    SELECT "imageId", t.name as tag
+    FROM "TagsOnImage" toi
+    JOIN "Tag" t ON t.id = toi."tagId"
+    WHERE "imageId" IN (${Prisma.join(imageIds)})
+  `;
+  const imageTags = imageTagsArr.reduce((acc, { imageId, tag }) => {
+    if (!acc[imageId]) acc[imageId] = [];
+    acc[imageId].push(tag);
+    return acc;
+  }, {} as Record<number, string[]>);
+  return imageTags;
+}
+
+export async function getResourceIdsForImages(imageIds: number[]) {
+  const imageResourcesArr = await dbRead.$queryRaw<{ imageId: number; modelVersionId: number }[]>`
+    SELECT "imageId", "modelVersionId"
+    FROM "ImageResource"
+    WHERE "imageId" IN (${Prisma.join(imageIds)})
+      AND "modelVersionId" IS NOT NULL
+  `;
+  const imageResources = imageResourcesArr.reduce((acc, { imageId, modelVersionId }) => {
+    if (!acc[imageId]) acc[imageId] = [];
+    acc[imageId].push(modelVersionId);
+    return acc;
+  }, {} as Record<number, number[]>);
+  return imageResources;
+}
+
 export async function clearImageTagIdsCache(imageId: number | number[]) {
   const imageIds = Array.isArray(imageId) ? imageId : [imageId];
   if (!imageIds.length) return;
@@ -1431,7 +1472,8 @@ export const getImagesForModelVersion = async ({
             SELECT
               ir."imageId" id,
               ir."modelVersionId",
-              row_number() OVER (PARTITION BY ir."modelVersionId" ORDER BY im."reactionCount" DESC) row_num
+              -- Community posts on the carousel follow the Oldest first rule. We are matching that here.
+              row_number() OVER (PARTITION BY ir."modelVersionId" ORDER BY p."createdAt" ASC) row_num
             FROM "ImageResource" ir
             JOIN "Image" i ON i.id = ir."imageId"
             JOIN "Post" p ON p.id = i."postId"
@@ -2549,7 +2591,7 @@ export async function get404Images() {
       AND c.name = '404 Contest'
       AND i."ingestion" = 'Scanned'
       AND i."needsReview" IS NULL
-      AND i."nsfwLevel" = 0
+      AND (i."nsfwLevel" & ${sfwBrowsingLevelsFlag}) != 0
       AND ci.status = 'ACCEPTED';
   `;
 
@@ -2719,6 +2761,12 @@ export async function updateImageNsfwLevel({
       create: { nsfwLevel, imageId: id, userId: user.id },
       update: { nsfwLevel },
     });
+
+    // Track potential content leaking
+    const current = await dbWrite.image.findFirst({ where: { id }, select: { nsfwLevel: true } });
+    if (current?.nsfwLevel === NsfwLevel.PG && nsfwLevel >= NsfwLevel.R) {
+      leakingContentCounter.inc();
+    }
   }
 }
 
@@ -2794,10 +2842,85 @@ export async function getImageRatingRequests({
   }
 
   const imageIds = results.map((x) => x.id);
-  const tags = await getVotableTags2({ ids: imageIds, user, type: 'image' });
+  const tags = await getVotableTags2({
+    ids: imageIds,
+    user,
+    type: 'image',
+    nsfwLevel: Flags.arrayToInstance([NsfwLevel.PG13, NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX]),
+  });
 
   return {
     nextCursor,
     items: results.map((item) => ({ ...item, tags: tags.filter((x) => x.imageId === item.id) })),
   };
 }
+
+// #region [image tools]
+async function authorizeImageToolsUse({
+  imageIds,
+  user,
+}: {
+  imageIds: number[];
+  user: SessionUser;
+}) {
+  if (!user.isModerator) {
+    const images = await dbRead.image.findMany({
+      where: { id: { in: imageIds }, userId: user.id },
+      select: { id: true },
+    });
+    const validatedIds = images.map((x) => x.id);
+    if (!imageIds.every((id) => validatedIds.includes(id))) throw throwAuthorizationError();
+  }
+}
+
+export async function addImageTools({
+  data,
+  user,
+}: {
+  data: AddOrRemoveImageToolsOutput['data'];
+  user: SessionUser;
+}) {
+  await authorizeImageToolsUse({ imageIds: data.map((x) => x.imageId), user });
+  await dbWrite.imageTool.createMany({ data, skipDuplicates: true });
+}
+
+export async function removeImageTools({
+  data,
+  user,
+}: {
+  data: AddOrRemoveImageToolsOutput['data'];
+  user: SessionUser;
+}) {
+  await authorizeImageToolsUse({ imageIds: data.map((x) => x.imageId), user });
+  const toolsByImage = data.reduce<Record<number, number[]>>((acc, { imageId, toolId }) => {
+    if (!acc[imageId]) acc[imageId] = [];
+    acc[imageId].push(toolId);
+    return acc;
+  }, {});
+
+  await dbWrite.$transaction(
+    Object.entries(toolsByImage).map(([imageId, toolIds]) =>
+      dbWrite.imageTool.deleteMany({ where: { imageId: Number(imageId), toolId: { in: toolIds } } })
+    )
+  );
+}
+
+export async function updateImageTools({
+  data,
+  user,
+}: {
+  data: UpdateImageToolsOutput['data'];
+  user: SessionUser;
+}) {
+  await authorizeImageToolsUse({ imageIds: data.map((x) => x.imageId), user });
+  await dbWrite.$transaction(
+    data.map(({ imageId, toolId, notes }) =>
+      dbWrite.imageTool.update({
+        where: { imageId_toolId: { imageId, toolId } },
+        data: { notes },
+        select: { imageId: true },
+      })
+    )
+  );
+}
+// #endregion

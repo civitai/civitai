@@ -49,6 +49,7 @@ export const constants = {
     'SD 1.4',
     'SD 1.5',
     'SD 1.5 LCM',
+    'SD 1.5 Hyper',
     'SD 2.0',
     'SD 2.0 768',
     'SD 2.1',
@@ -62,6 +63,7 @@ export const constants = {
     'SDXL Distilled',
     'SDXL Turbo',
     'SDXL Lightning',
+    'SDXL Hyper',
     'Stable Cascade',
     'SVD',
     'SVD XT',
@@ -70,7 +72,14 @@ export const constants = {
     'PixArt E',
     'Other',
   ],
-  hiddenBaseModels: ['ODOR', 'SD 2.1 768', 'SD 2.1 Unclip', 'SDXL Distilled'] as string[],
+  hiddenBaseModels: [
+    'ODOR',
+    'SD 2.1 768',
+    'SD 2.1 Unclip',
+    'SDXL Distilled',
+    'SDXL 0.9',
+    'SD 2.0 768',
+  ] as string[],
   modelFileTypes: [
     'Model',
     'Text Encoder',
@@ -282,14 +291,14 @@ export const constants = {
       cover: ':modelVersionId/:userId/cover.jpg',
     },
   },
-  supporterBadge: 'a288c8c0-8b79-4e13-abd1-348989d7bac8',
+  supporterBadge: 'f5b9e5ca-4c3d-4d35-b30d-c199e9c6b124',
   memberships: {
     tierOrder: ['founder', 'bronze', 'silver', 'gold'],
     badges: {
-      founder: 'a288c8c0-8b79-4e13-abd1-348989d7bac8',
-      bronze: 'a288c8c0-8b79-4e13-abd1-348989d7bac8',
-      silver: '26f5e4c8-0905-4f08-97d5-ad80e9fc292a',
-      gold: 'c1086607-bfb5-4f9f-b3fa-b8bd286cf9d1',
+      founder: 'f5b9e5ca-4c3d-4d35-b30d-c199e9c6b124',
+      bronze: 'f5b9e5ca-4c3d-4d35-b30d-c199e9c6b124',
+      silver: '76ac8cd6-00a3-41ef-9129-f514e66ee70f',
+      gold: '0f0b185e-0c36-4eb1-bc97-2f4be36da546',
     },
     founderDiscount: {
       maxDiscountDate: new Date('2024-05-01T00:00:00Z'),
@@ -313,6 +322,11 @@ export const constants = {
     sectionImageAspectRatio: 250 / 1288,
     sectionImageHeight: 250,
     sectionImageWidth: 1288,
+  },
+  cosmetics: {
+    frame: {
+      padding: 6,
+    },
   },
 } as const;
 export const activeBaseModels = constants.baseModels.filter(
@@ -357,10 +371,10 @@ export const baseModelSetTypes = [
 ] as const;
 export type BaseModelSetType = (typeof baseModelSetTypes)[number];
 export const baseModelSets: Record<BaseModelSetType, BaseModel[]> = {
-  SD1: ['SD 1.4', 'SD 1.5', 'SD 1.5 LCM'],
+  SD1: ['SD 1.4', 'SD 1.5', 'SD 1.5 LCM', 'SD 1.5 Hyper'],
   SD2: ['SD 2.0', 'SD 2.0 768', 'SD 2.1', 'SD 2.1 768', 'SD 2.1 Unclip'],
   SD3: ['SD 3'],
-  SDXL: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM', 'SDXL Lightning'],
+  SDXL: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM', 'SDXL Lightning', 'SDXL Hyper'],
   SDXLDistilled: ['SDXL Distilled'],
   SCascade: ['Stable Cascade'],
   Pony: ['Pony'],
@@ -417,6 +431,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'SD 1.4': baseLicenses['openrail'],
   'SD 1.5': baseLicenses['openrail'],
   'SD 1.5 LCM': baseLicenses['openrail++'],
+  'SD 1.5 Hyper': baseLicenses['openrail++'],
   'SD 2.0': baseLicenses['openrail'],
   'SD 2.0 768': baseLicenses['openrail'],
   'SD 2.1': baseLicenses['openrail'],
@@ -429,6 +444,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'SDXL Distilled': baseLicenses['openrail++'],
   'SDXL Turbo': baseLicenses['sdxl turbo'],
   'SDXL Lightning': baseLicenses['openrail++'],
+  'SDXL Hyper': baseLicenses['openrail++'],
   SVD: baseLicenses['svd'],
   'SVD XT': baseLicenses['svd'],
   'Playground v2': baseLicenses['playground v2'],
@@ -508,7 +524,7 @@ export const generation = {
   },
   maxValues: {
     seed: 4294967295,
-    clipSkip: 10,
+    clipSkip: 3,
   },
 } as const;
 
@@ -522,6 +538,7 @@ export const generationConfig = {
     // additionalResourceTypes: [{ type: ModelType.LORA, baseModel: 'SD1' }],
     additionalResourceTypes: [
       { type: ModelType.LORA, baseModelSet: 'SD1' },
+      { type: ModelType.DoRA, baseModelSet: 'SD1' },
       { type: ModelType.LoCon, baseModelSet: 'SD1' },
       { type: ModelType.TextualInversion, baseModelSet: 'SD1' },
       { type: ModelType.VAE, baseModelSet: 'SD1' },
@@ -553,6 +570,7 @@ export const generationConfig = {
   SDXL: {
     additionalResourceTypes: [
       { type: ModelType.LORA, baseModelSet: 'SDXL' },
+      { type: ModelType.DoRA, baseModelSet: 'SDXL' },
       { type: ModelType.LoCon, baseModelSet: 'SDXL' },
       { type: ModelType.TextualInversion, baseModelSet: 'SDXL', baseModels: ['SD 1.5'] },
       { type: ModelType.VAE, baseModelSet: 'SDXL' },
@@ -586,6 +604,11 @@ export const generationConfig = {
     additionalResourceTypes: [
       {
         type: ModelType.LORA,
+        baseModelSet: 'Pony',
+        baseModels: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
+      },
+      {
+        type: ModelType.DoRA,
         baseModelSet: 'Pony',
         baseModels: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
       },
@@ -702,6 +725,8 @@ export const RECAPTCHA_ACTIONS = {
 
 export type RecaptchaAction = keyof typeof RECAPTCHA_ACTIONS;
 
-export const creatorCardStats = ['followers', 'likes', 'uploads', 'downloads'];
+export const creatorCardStats = ['followers', 'likes', 'uploads', 'downloads', 'reactions'];
 export const creatorCardStatsDefaults = ['followers', 'likes'];
 export const creatorCardMaxStats = 3;
+
+export const milestoneNotificationFix = '2024-04-20';

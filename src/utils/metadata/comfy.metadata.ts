@@ -35,6 +35,7 @@ export const comfyMetadataProcessor = createMetadataProcessor({
       }
 
       if (node.class_type == 'KSampler') samplerNodes.push(node.inputs as SamplerNode);
+      if (node.class_type == 'KSampler (Efficient)') samplerNodes.push(node.inputs as SamplerNode);
 
       if (node.class_type == 'LoraLoader') {
         // Ignore lora nodes with strength 0
@@ -77,14 +78,16 @@ export const comfyMetadataProcessor = createMetadataProcessor({
         }
       }
     }
-    console.log('positive', initialSamplerNode.positive);
 
     const metadata: ImageMetaProps = {
       prompt: getPromptText(initialSamplerNode.positive, 'positive'),
       negativePrompt: getPromptText(initialSamplerNode.negative, 'negative'),
       cfgScale: initialSamplerNode.cfg,
       steps: initialSamplerNode.steps,
-      seed: getNumberValue(initialSamplerNode.seed, ['Value', 'seed']),
+      seed: getNumberValue(initialSamplerNode.seed ?? initialSamplerNode.noise_seed, [
+        'Value',
+        'seed',
+      ]),
       sampler: initialSamplerNode.sampler_name,
       scheduler: initialSamplerNode.scheduler,
       denoise: initialSamplerNode.denoise,
@@ -100,12 +103,6 @@ export const comfyMetadataProcessor = createMetadataProcessor({
       // Converting to string to reduce bytes size
       comfy: `{"prompt": ${exif.prompt}, "workflow": ${exif.workflow}}`,
     };
-
-    // Handle control net apply
-    if (initialSamplerNode.positive.class_type === 'ControlNetApply') {
-      const conditioningNode = initialSamplerNode.positive.inputs.conditioning as ComfyNode;
-      metadata.prompt = conditioningNode.inputs.text as string;
-    }
 
     // Map to automatic1111 terms for compatibility
     a1111Compatability(metadata);
@@ -132,12 +129,18 @@ function a1111Compatability(metadata: ImageMetaProps) {
 
   // Model
   const models = metadata.models as string[];
-  if (models.length > 0) {
+  if (models && models.length > 0) {
     metadata.Model = models[0].replace(/\.[^/.]+$/, '');
   }
 }
 
 function getPromptText(node: ComfyNode, target: 'positive' | 'negative' = 'positive'): string {
+  if (node.class_type === 'ControlNetApply')
+    return getPromptText(node.inputs.conditioning as ComfyNode, target);
+
+  // Handle wildcard nodes
+  if (node.inputs?.populated_text) node.inputs.text = node.inputs.populated_text;
+
   if (node.inputs?.text) {
     if (typeof node.inputs.text === 'string') return node.inputs.text;
     if (typeof (node.inputs.text as ComfyNode).class_type !== 'undefined')
@@ -169,6 +172,7 @@ type ComfyNode = {
 
 type SamplerNode = {
   seed: number;
+  noise_seed?: number;
   steps: number;
   cfg: number;
   sampler_name: string;

@@ -107,7 +107,7 @@ export function OnboardingBuzz() {
               <IconProgressBolt
                 color={theme.colors.yellow[7]}
                 size={20}
-                style={{ verticalAlign: 'middle' }}
+                style={{ verticalAlign: 'middle', display: 'inline' }}
               />
               {` Buzz Dashboard.`}
             </Text>

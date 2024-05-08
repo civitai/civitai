@@ -73,7 +73,7 @@ export const getUserCreator = async ({
   id?: number;
   leaderboardId?: string;
 }) => {
-  return dbRead.user.findFirst({
+  const user = await dbRead.user.findFirst({
     where: {
       ...where,
       deletedAt: null,
@@ -105,6 +105,7 @@ export const getUserCreator = async ({
           favoriteCountAllTime: true,
           thumbsUpCountAllTime: true,
           followerCountAllTime: true,
+          reactionCountAllTime: true,
         },
       },
       rank: {
@@ -127,15 +128,23 @@ export const getUserCreator = async ({
       profilePicture: {
         select: profileImageSelect,
       },
-      _count: {
-        select: {
-          models: {
-            where: { status: 'Published' },
-          },
-        },
-      },
     },
   });
+  if (!user) return null;
+
+  const modelCount = dbRead.model.count({
+    where: {
+      userId: user?.id,
+      status: 'Published',
+    },
+  });
+
+  return {
+    ...user,
+    _count: {
+      models: Number(modelCount),
+    },
+  };
 };
 
 type GetUsersRow = {
@@ -510,6 +519,7 @@ export async function softDeleteUser({ id }: { id: number }) {
   await cancelSubscription({ userId: id });
   await dbWrite.user.update({ where: { id }, data: { bannedAt: new Date() } });
   await invalidateSession(id);
+  await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
 }
 
 export const updateAccountScope = async ({
@@ -988,9 +998,20 @@ export const toggleBookmarked = async ({
   userId: number;
   setTo?: boolean;
 }) => {
-  const collection = await dbRead.collection.findFirstOrThrow({
+  let collection = await dbRead.collection.findFirst({
     where: { userId, type, mode: CollectionMode.Bookmark },
   });
+  if (!collection) {
+    collection = await dbWrite.collection.create({
+      data: {
+        userId,
+        type,
+        mode: CollectionMode.Bookmark,
+        name: `Bookmarked ${type}`,
+        description: `Your bookmarked ${type.toLowerCase()} will appear in this collection.`,
+      },
+    });
+  }
 
   const entityProp = collectionEntityProps[type];
   const collectionItem = await dbRead.collectionItem.findFirst({

@@ -5,13 +5,14 @@ import { GetByIdInput } from '~/server/schema/base.schema';
 import { EquipCosmeticInput, GetPaginatedCosmeticsInput } from '~/server/schema/cosmetic.schema';
 import {
   ContentDecorationCosmetic,
-  SimpleCosmetic,
   WithClaimKey,
   simpleCosmeticSelect,
 } from '~/server/selectors/cosmetic.selector';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { cachedObject, bustCachedArray } from '~/server/utils/cache-helpers';
+import { articlesSearchIndex, imagesSearchIndex, modelsSearchIndex } from '~/server/search-index';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 
 export async function getCosmeticDetail({ id }: GetByIdInput) {
   const cosmetic = await dbRead.cosmetic.findUnique({
@@ -81,6 +82,7 @@ export async function equipCosmeticToEntity({
     select: {
       obtainedAt: true,
       equippedToId: true,
+      equippedToType: true,
       forId: true,
       forType: true,
       cosmetic: { select: { type: true } },
@@ -97,9 +99,9 @@ export async function equipCosmeticToEntity({
     throw new Error('You cannot equip this cosmetic to this entity');
   }
 
-  // Unquip whaetver version of this cosmetic is equipped on that card
+  // Unequip any cosmetic equipped on that entity
   await dbWrite.userCosmetic.updateMany({
-    where: { userId, cosmeticId, equippedToId, equippedToType },
+    where: { userId, equippedToId, equippedToType },
     data: { equippedToId: null, equippedToType: null, equippedAt: null },
   });
 
@@ -109,6 +111,26 @@ export async function equipCosmeticToEntity({
   });
 
   await deleteEntityCosmeticCache({ entityId: equippedToId, entityType: equippedToType });
+  if (equippedToType === 'Model')
+    await modelsSearchIndex.queueUpdate([
+      { id: equippedToId, action: SearchIndexUpdateQueueAction.Update },
+    ]);
+  if (equippedToType === 'Image')
+    await imagesSearchIndex.queueUpdate([
+      { id: equippedToId, action: SearchIndexUpdateQueueAction.Update },
+    ]);
+  if (equippedToType === 'Article')
+    await articlesSearchIndex.queueUpdate([
+      { id: equippedToId, action: SearchIndexUpdateQueueAction.Update },
+    ]);
+
+  // Clear cache for previous entity if it was equipped
+  if (userCosmetic.equippedToId && userCosmetic.equippedToType) {
+    await deleteEntityCosmeticCache({
+      entityId: userCosmetic.equippedToId,
+      entityType: userCosmetic.equippedToType,
+    });
+  }
 
   return updated;
 }
@@ -126,6 +148,18 @@ export async function unequipCosmetic({
   });
 
   await deleteEntityCosmeticCache({ entityId: equippedToId, entityType: equippedToType });
+  if (equippedToType === 'Model')
+    await modelsSearchIndex.queueUpdate([
+      { id: equippedToId, action: SearchIndexUpdateQueueAction.Update },
+    ]);
+  if (equippedToType === 'Image')
+    await imagesSearchIndex.queueUpdate([
+      { id: equippedToId, action: SearchIndexUpdateQueueAction.Update },
+    ]);
+  if (equippedToType === 'Article')
+    await articlesSearchIndex.queueUpdate([
+      { id: equippedToId, action: SearchIndexUpdateQueueAction.Update },
+    ]);
 
   return updated;
 }

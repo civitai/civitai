@@ -155,7 +155,11 @@ export default function ResourceSelectModal({
     <ResourceSelectContext.Provider
       value={{ onSelect: handleSelect, canGenerate, isTraining, resources: _resources }}
     >
-      <InstantSearch searchClient={searchClient} indexName={searchIndexMap.models}>
+      <InstantSearch
+        searchClient={searchClient}
+        indexName={searchIndexMap.models}
+        future={{ preserveSharedStateOnUnmount: true }}
+      >
         <Configure hitsPerPage={20} filters={[...filters, ...exclude].join(' AND ')} />
         <Stack>
           <CustomSearchBox isMobile={isMobile} autoFocus />

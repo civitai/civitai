@@ -202,7 +202,7 @@ export const getFileForModelVersion = async ({
     earlyAccessTimeframe: modelVersion.earlyAccessTimeFrame,
   });
   const inEarlyAccess = deadline !== undefined && new Date() < deadline;
-  if (!noAuth && !user?.tier && !isMod && inEarlyAccess) {
+  if (!noAuth && !user?.tier && !isMod && !isOwner && inEarlyAccess) {
     return { status: 'early-access', details: { deadline } };
   }
 
@@ -223,6 +223,7 @@ export const getFileForModelVersion = async ({
         id: true,
         url: true,
         name: true,
+        overrideName: true,
         type: true,
         metadata: true,
         hashes: { select: { hash: true }, where: { type: 'SHA256' } },
@@ -251,6 +252,7 @@ export const getFileForModelVersion = async ({
       modelVersionId,
       nsfw: modelVersion.model.nsfw,
       inEarlyAccess,
+      metadata: file.metadata as FileMetadata,
     };
   } catch (error) {
     return { status: 'error' };
@@ -264,8 +266,10 @@ export function getDownloadFilename({
 }: {
   model: { name: string; type: ModelType };
   modelVersion: { name: string; trainedWords?: string[] };
-  file: { name: string; type: ModelFileType | string };
+  file: { name: string; overrideName?: string; type: ModelFileType | string };
 }) {
+  if (file.overrideName) return file.overrideName;
+
   let fileName = file.name;
   const modelName = filenamize(model.name);
   let versionName = filenamize(replaceInsensitive(modelVersion.name, modelName, ''));
@@ -320,12 +324,14 @@ type ModelVersionFileResult =
       modelVersionId: number;
       nsfw: boolean;
       inEarlyAccess: boolean;
+      metadata: FileMetadata;
     };
 
 type FileResult = {
   type: string;
   id: number;
   name: string;
+  overrideName?: string;
   metadata: Prisma.JsonValue;
   hashes: {
     hash: string;

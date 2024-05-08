@@ -470,11 +470,11 @@ export const getModelsRaw = async ({
     orderBy = `mm."commentCount" DESC, mm."thumbsUpCount" DESC, mm."modelId"`;
   else if (sort === ModelSort.MostCollected)
     orderBy = `mm."collectedCount" DESC, mm."thumbsUpCount" DESC, mm."modelId"`;
-  else if (sort === ModelSort.MostTipped)
-    orderBy = `mm."tippedAmountCount" DESC, mm."thumbsUpCount" DESC, mm."modelId"`;
+  // else if (sort === ModelSort.MostTipped)
+  //   orderBy = `mm."tippedAmountCount" DESC, mm."thumbsUpCount" DESC, mm."modelId"`;
   else if (sort === ModelSort.ImageCount)
     orderBy = `mm."imageCount" DESC, mm."thumbsUpCount" DESC, mm."modelId"`;
-  else if (sort === ModelSort.Oldest) orderBy = `m."lastVersionAt" ASC`;
+  else if (sort === ModelSort.Oldest) orderBy = `m."lastVersionAt" ASC, m."id"`;
 
   // eslint-disable-next-line prefer-const
   let { where: cursorClause, prop: cursorProp } = getCursor(orderBy, cursor);
@@ -1006,7 +1006,6 @@ export const getModelsWithImagesAndModelVersions = async ({
   user?: SessionUser;
 }) => {
   input.limit = input.limit ?? 100;
-  const take = input.limit + 1;
 
   let modelVersionWhere: Prisma.ModelVersionWhereInput | undefined = {};
 
@@ -1023,7 +1022,7 @@ export const getModelsWithImagesAndModelVersions = async ({
   }
 
   const { items, isPrivate, nextCursor } = await getModelsRaw({
-    input: { ...input, take },
+    input: { ...input, take: input.limit },
     user,
     include: ['cosmetics'],
   });
@@ -1267,6 +1266,14 @@ ModelUpsertInput & {
   meta?: Prisma.ModelCreateInput['meta'];
   isModerator?: boolean;
 }) => {
+  // don't allow updating of locked properties
+  if (!isModerator) {
+    const lockedProperties = data.lockedProperties ?? [];
+    for (const prop of lockedProperties) {
+      const key = prop as keyof typeof data;
+      if (data[key] !== undefined) delete data[key];
+    }
+  }
   if (!id || templateId) {
     const result = await dbWrite.model.create({
       select: { id: true, nsfwLevel: true },
@@ -1417,9 +1424,7 @@ export const publishModelById = async ({
   if (includeVersions && status !== ModelStatus.Scheduled) {
     // Send to orchestrator
     Promise.all(
-      model.modelVersions.map((version) =>
-        prepareModelInOrchestrator({ id: version.id, baseModel: version.baseModel })
-      )
+      model.modelVersions.map((version) => prepareModelInOrchestrator({ id: version.id }))
     );
   }
 

@@ -17,7 +17,7 @@ ALTER TABLE "Article"
 CREATE TYPE "EntityType" AS ENUM ('Image', 'Post', 'Article', 'Bounty', 'BountyEntry', 'ModelVersion', 'Model', 'Collection');
 
 -- CreateEnum
-CREATE TYPE "JobQueueType" AS ENUM ('CleanUp', 'UpdateMetrics', 'UpdateNsfwLevel', 'UpdateSearchIndex');
+CREATE TYPE "JobQueueType" AS ENUM ('CleanUp', 'UpdateMetrics', 'UpdateNsfwLevel', 'UpdateSearchIndex', 'CleanIfEmpty');
 
 -- CreateTable
 CREATE TABLE "JobQueue" (

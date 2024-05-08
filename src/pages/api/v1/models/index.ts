@@ -17,6 +17,7 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import { booleanString } from '~/utils/zod-helpers';
 import { getUserBookmarkCollections } from '~/server/services/user.service';
+import { safeDecodeURIComponent } from '~/utils/string-helpers';
 
 type Metadata = {
   currentPage?: number;
@@ -130,7 +131,7 @@ export default MixedAuthEndpoint(async function handler(
               files: includeDownloadUrl
                 ? castedFiles.map(({ hashes, ...file }) => ({
                     ...file,
-                    name: decodeURIComponent(
+                    name: safeDecodeURIComponent(
                       getDownloadFilename({ model, modelVersion: version, file })
                     ),
                     hashes: hashesAsObject(hashes),

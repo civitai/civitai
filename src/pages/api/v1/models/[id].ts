@@ -12,6 +12,7 @@ import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { removeEmpty } from '~/utils/object-helpers';
+import { safeDecodeURIComponent } from '~/utils/string-helpers';
 
 const hashesAsObject = (hashes: { type: ModelHashType; hash: string }[]) =>
   hashes.reduce((acc, { type, hash }) => ({ ...acc, [type]: hash }), {});
@@ -72,7 +73,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
               ? castedFiles.map(({ hashes, metadata, ...file }) => ({
                   ...file,
                   metadata: removeEmpty(metadata),
-                  name: decodeURIComponent(
+                  name: safeDecodeURIComponent(
                     getDownloadFilename({ model, modelVersion: version, file })
                   ),
                   hashes: hashesAsObject(hashes),

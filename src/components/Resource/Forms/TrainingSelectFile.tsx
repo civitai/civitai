@@ -55,12 +55,14 @@ const EpochRow = ({
   setSelectedFile,
   onPublishClick,
   loading,
+  incomplete,
 }: {
   epoch: EpochSchema;
   selectedFile: string | undefined;
   setSelectedFile: React.Dispatch<React.SetStateAction<string | undefined>>;
   onPublishClick: (modelUrl: string) => void;
   loading?: boolean;
+  incomplete?: boolean;
 }) => {
   const { classes, cx } = useStyles();
 
@@ -94,7 +96,11 @@ const EpochRow = ({
                 Download
               </Text>
             </DownloadButton>
-            <Button loading={loading} onClick={() => onPublishClick(epoch.model_url)}>
+            <Button
+              disabled={incomplete}
+              loading={loading}
+              onClick={() => onPublishClick(epoch.model_url)}
+            >
               <Group spacing={4} noWrap>
                 <IconSend size={20} />
                 Publish
@@ -361,6 +367,7 @@ export default function TrainingSelectFile({
             setSelectedFile={setSelectedFile}
             onPublishClick={handleSubmit}
             loading={awaitInvalidate}
+            incomplete={resultsLoading}
           />
           {epochs.length > 1 && (
             <>
@@ -377,6 +384,7 @@ export default function TrainingSelectFile({
                   setSelectedFile={setSelectedFile}
                   onPublishClick={handleSubmit}
                   loading={awaitInvalidate}
+                  incomplete={resultsLoading}
                 />
               ))}
             </>
@@ -385,9 +393,6 @@ export default function TrainingSelectFile({
       )}
 
       <Group mt="xl" position="right">
-        {/*<Button variant="default" onClick={onBackClick}>*/}
-        {/*  Back*/}
-        {/*</Button>*/}
         <Button onClick={() => handleSubmit()} disabled={resultsLoading} loading={awaitInvalidate}>
           Next
         </Button>

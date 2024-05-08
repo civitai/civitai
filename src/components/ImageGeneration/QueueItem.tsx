@@ -23,7 +23,7 @@ import {
 
 import { Currency } from '@prisma/client';
 import dayjs from 'dayjs';
-import { useMemo } from 'react';
+import { useEffect, useState } from 'react';
 import { Collection } from '~/components/Collection/Collection';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
@@ -47,6 +47,9 @@ import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 
 const PENDING_STATUSES = [GenerationRequestStatus.Pending, GenerationRequestStatus.Processing];
+const LONG_DELAY_TIME = 5; // minutes
+const EXPIRY_TIME = 10; // minutes
+const delayTimeouts = new Map<string, NodeJS.Timeout>();
 
 // export function QueueItem({ data: request, index }: { data: Generation.Request; index: number }) {
 export function QueueItem({ request }: Props) {
@@ -57,6 +60,7 @@ export function QueueItem({ request }: Props) {
 
   const { copied, copy } = useClipboard();
 
+  const [showDelayedMessage, setShowDelayedMessage] = useState(false);
   const status = request.status ?? GenerationRequestStatus.Pending;
   const isDraft = request.sequential ?? false;
   const pendingProcessing =
@@ -70,6 +74,23 @@ export function QueueItem({ request }: Props) {
   const deleteImageMutation = useDeleteGenerationRequestImages();
   const deleteMutation = useDeleteGenerationRequest();
   const cancellingDeleting = deleteImageMutation.isLoading || deleteMutation.isLoading;
+
+  useEffect(() => {
+    if (!pendingProcessing) return;
+    const id = request.id.toString();
+    if (delayTimeouts.has(id)) clearTimeout(delayTimeouts.get(id)!);
+    delayTimeouts.set(
+      id,
+      setTimeout(() => {
+        setShowDelayedMessage(true);
+        delayTimeouts.delete(id);
+      }, LONG_DELAY_TIME * 60 * 1000)
+    );
+    return () => {
+      if (delayTimeouts.has(id)) clearTimeout(delayTimeouts.get(id)!);
+    };
+  }, [request.id, request.createdAt, pendingProcessing]);
+  const refundTime = dayjs(request.createdAt).add(EXPIRY_TIME, 'minute').toDate();
 
   const handleDeleteQueueItem = () => {
     deleteMutation.mutate({ id: request.id });
@@ -122,10 +143,6 @@ export function QueueItem({ request }: Props) {
   //   if (showBoost) openBoostModal({ request, cb: boost });
   //   else boost(request);
   // };
-
-  const refundTime = useMemo(() => {
-    return !failed ? undefined : dayjs(request.createdAt).add(1, 'minutes').toDate();
-  }, [failed, request.createdAt]);
 
   const refunded = Math.ceil(
     !!request.cost
@@ -213,16 +230,19 @@ export function QueueItem({ request }: Props) {
             </Button>
           </div>
         )} */}
-        {refundTime && refundTime > new Date() && (
+        {showDelayedMessage && pendingProcessing && (
           <Alert color="yellow" p={0}>
-            <div className="flex items-center px-3 py-1 gap-1">
+            <div className="flex items-center px-2 py-1 gap-2">
               <Text size="xs" color="yellow" lh={1}>
                 <IconAlertTriangleFilled size={20} />
               </Text>
               <Text size="xs" lh={1.2} color="yellow">
-                {`There was an error generating. You will be refunded for any undelivered images by ${formatDateMin(
+                <Text weight={500} component="span">
+                  This is taking longer than usual.
+                </Text>
+                {` Don't want to wait? Cancel this job to get refunded for any undelivered images. If we aren't done by ${formatDateMin(
                   refundTime
-                )}.`}
+                )} we'll refund you automatically.`}
               </Text>
             </div>
           </Alert>

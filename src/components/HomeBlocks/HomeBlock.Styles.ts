@@ -35,15 +35,16 @@ export const useHomeBlockGridStyles = createStyles<string, { count: number; rows
       grid: {
         display: 'grid',
         gridTemplateColumns: `repeat(auto-fill, minmax(320px, 1fr))`,
-        columnGap: theme.spacing.md,
+        // gap: theme.spacing.md,
         gridTemplateRows: `repeat(${rows}, auto)`,
         gridAutoRows: 0,
         overflow: 'hidden',
-        marginTop: -theme.spacing.md,
-        paddingBottom: theme.spacing.md,
+        margin: -theme.spacing.md / 2,
+        // marginTop: -theme.spacing.md,
+        // paddingBottom: theme.spacing.md,
 
         '& > *': {
-          marginTop: theme.spacing.md,
+          margin: theme.spacing.md / 2,
         },
 
         [containerQuery.smallerThan('md')]: {
@@ -70,21 +71,6 @@ export const useHomeBlockGridStyles = createStyles<string, { count: number; rows
         },
       },
 
-      gridCarousel: {
-        gridAutoFlow: 'column',
-        gridTemplateColumns: `repeat(${count}, 280px)`,
-        gridTemplateRows: 'auto',
-        scrollSnapType: 'x mandatory',
-        overflowX: 'auto',
-        marginRight: -theme.spacing.md,
-        marginLeft: -theme.spacing.md,
-        paddingLeft: theme.spacing.md,
-
-        '& > *': {
-          scrollSnapAlign: 'center',
-        },
-      },
-
       meta: {
         display: 'none',
         [containerQuery.smallerThan('md')]: {
@@ -103,6 +89,21 @@ export const useHomeBlockGridStyles = createStyles<string, { count: number; rows
 
         [containerQuery.smallerThan('md')]: {
           display: 'none',
+        },
+      },
+
+      gridCarousel: {
+        gridAutoFlow: 'column',
+        gridTemplateColumns: `repeat(${count}, 280px)`,
+        gridTemplateRows: 'auto',
+        scrollSnapType: 'x mandatory',
+        overflowX: 'auto',
+        marginRight: -theme.spacing.md,
+        marginLeft: -theme.spacing.md,
+        paddingLeft: theme.spacing.md,
+
+        '& > *': {
+          scrollSnapAlign: 'center',
         },
       },
     };

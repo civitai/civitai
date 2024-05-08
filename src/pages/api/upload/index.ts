@@ -5,6 +5,7 @@ import { extname } from 'node:path';
 import { filenamize, generateToken } from '~/utils/string-helpers';
 import { getMultipartPutUrl } from '~/utils/s3-utils';
 import { logToDb } from '~/utils/logging';
+import { env } from '~/env/server.mjs';
 
 const upload = async (req: NextApiRequest, res: NextApiResponse) => {
   const session = await getServerAuthSession({ req, res });
@@ -19,6 +20,10 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
   const filename = filenamize(fullFilename.replace(ext, ''));
   let { type } = req.body;
   if (!type || !Object.values(UploadType).includes(type)) type = UploadType.Default;
+
+  if (env.UPLOAD_PROHIBITED_EXTENSIONS?.includes(ext)) {
+    return res.status(400).json({ error: 'File type not allowed' });
+  }
 
   const key = `${type ?? UploadType.Default}/${userId}/${filename}.${generateToken(4)}${ext}`;
   const result = await getMultipartPutUrl(key, req.body.size);

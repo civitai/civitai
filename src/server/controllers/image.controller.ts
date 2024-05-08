@@ -12,6 +12,8 @@ import {
   getImageDetail,
   getImageModerationReviewQueue,
   getImageResources,
+  getResourceIdsForImages,
+  getTagNamesForImages,
   moderateImages,
 } from './../services/image.service';
 import { ReportReason, ReportStatus } from '@prisma/client';
@@ -31,12 +33,18 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { BlockedReason, ImageSort, NsfwLevel } from '~/server/common/enums';
+import {
+  BlockedReason,
+  ImageSort,
+  NsfwLevel,
+  SearchIndexUpdateQueueAction,
+} from '~/server/common/enums';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { hasEntityAccess } from '../services/common.service';
 import { getGallerySettingsByModelId } from '~/server/services/model.service';
 import { Flags } from '~/shared/utils';
 import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
+import { imagesSearchIndex } from '~/server/search-index';
 
 export const moderateImageHandler = async ({
   input,
@@ -53,12 +61,19 @@ export const moderateImageHandler = async ({
       activity: 'review',
     });
     if (affected) {
+      const ids = affected.map((x) => x.id);
+      const imageTags = await getTagNamesForImages(ids);
+      const imageResources = await getResourceIdsForImages(ids);
       for (const { id, userId, nsfwLevel } of affected) {
+        const tags = imageTags[id] ?? [];
+        tags.push(input.reviewType ?? 'other');
+        const resources = imageResources[id] ?? [];
         await ctx.track.image({
           type: 'DeleteTOS',
           imageId: id,
           nsfw: getNsfwLevelDeprecatedReverseMapping(nsfwLevel),
-          tags: [input.reviewType ?? 'other'],
+          tags,
+          resources,
           tosReason: input.reviewType ?? 'other',
           ownerId: userId,
         });
@@ -124,15 +139,6 @@ export const setTosViolationHandler = async ({
       where: { id },
       select: {
         nsfwLevel: true,
-        tags: {
-          select: {
-            tag: {
-              select: {
-                name: true,
-              },
-            },
-          },
-        },
         userId: true,
         postId: true,
         post: {
@@ -180,11 +186,16 @@ export const setTosViolationHandler = async ({
       },
     });
 
+    await imagesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
+
+    const imageTags = await getTagNamesForImages([id]);
+    const imageResources = await getResourceIdsForImages([id]);
     await ctx.track.image({
       type: 'DeleteTOS',
       imageId: id,
       nsfw: getNsfwLevelDeprecatedReverseMapping(image.nsfwLevel),
-      tags: image.tags.map((x) => x.tag.name),
+      tags: imageTags[id] ?? [],
+      resources: imageResources[id] ?? [],
       tosReason: 'manual',
       ownerId: image.userId,
     });
@@ -195,14 +206,14 @@ export const setTosViolationHandler = async ({
   }
 };
 
-export const updateImageHandler = async ({ input }: { input: UpdateImageInput }) => {
-  try {
-    return await updateImage({ ...input });
-  } catch (error) {
-    if (error instanceof TRPCError) throw error;
-    else throw throwDbError(error);
-  }
-};
+// export const updateImageHandler = async ({ input }: { input: UpdateImageInput }) => {
+//   try {
+//     return await updateImage({ ...input });
+//   } catch (error) {
+//     if (error instanceof TRPCError) throw error;
+//     else throw throwDbError(error);
+//   }
+// };
 
 export const getImageDetailHandler = async ({ input }: { input: GetByIdInput }) => {
   try {
@@ -273,7 +284,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
         limit: Math.ceil(limit * 3), // Overscan so that I can merge by postId
         user: ctx.user,
         headers: { src: 'getImagesAsPostsInfiniteHandler' },
-        include: [...input.include, 'tagIds'],
+        include: [...input.include, 'tagIds', 'profilePictures'],
       });
 
       // Merge images by postId
@@ -367,14 +378,14 @@ export const getImagesAsPostsInfiniteHandler = async ({
         if (aComments > bComments) return -1;
         return 0;
       });
-    else if (input.sort === ImageSort.MostTipped)
-      results.sort((a, b) => {
-        const aTips = a.images[0].stats?.tippedAmountCountAllTime ?? 0;
-        const bTips = b.images[0].stats?.tippedAmountCountAllTime ?? 0;
-        if (aTips < bTips) return 1;
-        if (aTips > bTips) return -1;
-        return 0;
-      });
+    // else if (input.sort === ImageSort.MostTipped)
+    //   results.sort((a, b) => {
+    //     const aTips = a.images[0].stats?.tippedAmountCountAllTime ?? 0;
+    //     const bTips = b.images[0].stats?.tippedAmountCountAllTime ?? 0;
+    //     if (aTips < bTips) return 1;
+    //     if (aTips > bTips) return -1;
+    //     return 0;
+    //   });
     else if (input.sort === ImageSort.MostCollected)
       results.sort((a, b) => {
         const aCollections = a.images[0].stats?.collectedCountAllTime ?? 0;

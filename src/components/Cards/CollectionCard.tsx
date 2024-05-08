@@ -95,12 +95,9 @@ export function CollectionCard({ data, sx }: Props) {
           )}
         </div>
 
-        <Stack
-          className={cx(classes.contentOverlay, classes.bottom, classes.gradientOverlay)}
-          spacing="sm"
-        >
+        <Stack className={cx(classes.contentOverlay, classes.bottom)} spacing="sm">
           <Group position="apart" align="flex-end" noWrap>
-            <Text size="xl" weight={700} lineClamp={2} lh={1.2}>
+            <Text className={classes.dropShadow} size="xl" weight={700} lineClamp={2} lh={1.2}>
               {data.name}
             </Text>
             <Group spacing={4} noWrap>

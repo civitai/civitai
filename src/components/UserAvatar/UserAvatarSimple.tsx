@@ -69,7 +69,6 @@ export function UserAvatarSimple({
                 zIndex: 2,
               }}
               width="original"
-              anim={decoration.data.animated}
             />
           )}
         </div>
@@ -78,7 +77,14 @@ export function UserAvatarSimple({
         <Text size="sm">[deleted]</Text>
       ) : (
         <>
-          <Text size="sm" weight={500} lineClamp={1} {...additionalTextProps}>
+          <Text
+            size="sm"
+            weight={500}
+            lineClamp={1}
+            color="white"
+            className={classes.username}
+            {...additionalTextProps}
+          >
             {username}
           </Text>
           {badge?.data.url && (
@@ -108,5 +114,12 @@ const useStyles = createStyles((theme) => ({
     height: 32,
     width: 32,
     position: 'relative',
+  },
+  username: {
+    verticalAlign: 'middle',
+    filter:
+      theme.colorScheme === 'dark'
+        ? 'drop-shadow(1px 1px 1px rgba(0, 0, 0, 0.8))'
+        : 'drop-shadow(1px 1px 1px rgba(0, 0, 0, 0.2))',
   },
 }));

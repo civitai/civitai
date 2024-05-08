@@ -1,6 +1,8 @@
 import { createJob } from './job';
-import { redis } from '~/server/redis/client';
+import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { CacheTTL } from '~/server/common/constants';
+import { mergeQueue } from '~/server/redis/queues';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 
 export const cacheCleanup = createJob('cache-cleanup', '0 */1 * * *', async () => {
   // Clean rate limit keys
@@ -24,4 +26,12 @@ export const cacheCleanup = createJob('cache-cleanup', '0 */1 * * *', async () =
     if (Number(value) < tokenCutoff) toRemove.add(key);
   }
   if (toRemove.size > 0) await redis.hDel('session:invalid-tokens', [...toRemove]);
+
+  // Merge queues
+  const queues = await redis.hGetAll(REDIS_KEYS.QUEUES.BUCKETS);
+  const mergeTasks = Object.entries(queues).map(([key, buckets]) => async () => {
+    if (buckets.split(',').length === 1) return;
+    await mergeQueue(key);
+  });
+  await limitConcurrency(mergeTasks, 3);
 });

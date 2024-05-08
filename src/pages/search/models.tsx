@@ -61,13 +61,13 @@ const RenderFilters = () => {
         title="Filter by Base Model"
         attribute="version.baseModel"
         sortBy={['name']}
-        limit={20}
+        limit={100}
       />
       <ChipRefinementList
         title="Filter by Model Type"
         attribute="type"
         sortBy={['name']}
-        limit={20}
+        limit={100}
       />
       <ChipRefinementList
         title="Filter by Checkpoint Type"

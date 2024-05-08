@@ -760,13 +760,13 @@ function ChatInputBox({
   );
 }
 
+// TODO disable just "image.civitai.com" with nothing else
 const civRegex = new RegExp(
-  `^(?:https?:\/\/)?(?:image\.)?(?:${(env.NEXT_PUBLIC_BASE_URL ?? 'civitai.com').replace(
-    /^https?:\/\//,
-    ''
-  )}|civitai.com)`
+  `^(?:https?://)?(?:image\\.)?(?:${(env.NEXT_PUBLIC_BASE_URL ?? 'civitai.com')
+    .replace(/^https?:\/\//, '')
+    .replace(/\./g, '\\.')}|civitai\\.com)`
 );
-const externalRegex = new RegExp('^(?:https?://)?(github.com|twitter.com|x.com)');
+const externalRegex = /^(?:https?:\/\/)?(?:www\.)?(github\.com|twitter\.com|x\.com)/;
 // const airRegex = /^(?:urn:air:\w+:\w+:)?civitai:(?<mId>\d+)@(?<mvId>\d+)$/i;
 export const airRegex = /^civitai:(?<mId>\d+)@(?<mvId>\d+)$/i;
 

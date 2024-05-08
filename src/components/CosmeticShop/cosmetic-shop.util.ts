@@ -1,8 +1,12 @@
+import { CosmeticType } from '@prisma/client';
+import { z } from 'zod';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useZodRouteParams } from '~/hooks/useZodRouteParams';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   GetAllCosmeticShopSections,
   GetPaginatedCosmeticShopItemInput,
+  GetShopInput,
   PurchaseCosmeticShopItemInput,
   UpdateCosmeticShopSectionsOrderInput,
   UpsertCosmeticShopItemInput,
@@ -10,6 +14,7 @@ import {
 } from '~/server/schema/cosmetic-shop.schema';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { numericStringArray, stringArray } from '~/utils/zod-helpers';
 
 export const useQueryCosmeticShopItemsPaged = (
   filters?: Partial<GetPaginatedCosmeticShopItemInput>,
@@ -89,6 +94,7 @@ export const useQueryCosmeticShopSection = ({ id }: { id: number }) => {
 
 export const useMutateCosmeticShop = () => {
   const queryUtils = trpc.useContext();
+  const currentUser = useCurrentUser();
 
   const onError = (error: any, message = 'There was an error while performing your request') => {
     try {
@@ -154,7 +160,6 @@ export const useMutateCosmeticShop = () => {
 
           return aPlacement - bPlacement;
         });
-        console.log(data, updated, sortedSectionIds);
 
         return updated;
       });
@@ -165,8 +170,42 @@ export const useMutateCosmeticShop = () => {
   });
 
   const purchaseShopItemMutation = trpc.cosmeticShop.purchaseShopItem.useMutation({
-    async onSuccess() {
+    async onSuccess(_, { shopItemId }) {
       await queryUtils.userProfile.get.invalidate();
+      if (currentUser?.id) {
+        await queryUtils.user.getCreator.invalidate({
+          id: currentUser.id,
+        });
+      }
+
+      queryUtils.cosmeticShop.getShop.setData({}, (data) => {
+        if (!data) return [];
+
+        const sections = data.map((section) => {
+          const updatedItems = section.items.map((item) => {
+            if (item.shopItem.id === shopItemId) {
+              return {
+                ...item,
+                shopItem: {
+                  ...item.shopItem,
+                  availableQuantity: item.shopItem.availableQuantity
+                    ? item.shopItem.availableQuantity - 1
+                    : null,
+                },
+              };
+            }
+
+            return item;
+          });
+
+          return {
+            ...section,
+            items: updatedItems,
+          };
+        });
+
+        return sections;
+      });
     },
     onError(error) {
       onError(error, 'Failed to purchase cosmetic');
@@ -208,8 +247,19 @@ export const useMutateCosmeticShop = () => {
   };
 };
 
-export const useQueryShop = () => {
-  const { data = [], ...rest } = trpc.cosmeticShop.getShop.useQuery();
+export const useQueryShop = (
+  filters?: Partial<GetShopInput>,
+  options?: { keepPreviousData?: boolean; enabled?: boolean }
+) => {
+  const { data = [], ...rest } = trpc.cosmeticShop.getShop.useQuery(
+    {
+      ...filters,
+    },
+    {
+      ...options,
+      enabled: options?.enabled ?? true,
+    }
+  );
 
   if (data) {
     return { cosmeticShopSections: data, ...rest };
@@ -217,3 +267,11 @@ export const useQueryShop = () => {
 
   return { cosmeticShopSections: [], ...rest };
 };
+
+const cosmeticShopQueryParams = z
+  .object({
+    cosmeticTypes: stringArray(),
+  })
+  .partial();
+export const useCosmeticShopQueryParams = () => useZodRouteParams(cosmeticShopQueryParams);
+export type CosmeticShopQueryParams = z.output<typeof cosmeticShopQueryParams>;

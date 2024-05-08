@@ -104,7 +104,8 @@ export function CreatorCard({
               avatarProps={{ size: 32 }}
               user={creator}
               subText={
-                subText ?? creator.createdAt ? `Joined ${formatDate(creator.createdAt)}` : undefined
+                subText ??
+                (creator.createdAt ? `Joined ${formatDate(creator.createdAt)}` : undefined)
               }
               withUsername
               linkToProfile
@@ -193,6 +194,7 @@ export const CreatorCardV2 = ({
       downloadCountAllTime: 0,
       thumbsUpCountAllTime: 0,
       followerCountAllTime: 0,
+      reactionCountAllTime: 0,
     },
     publicSettings: {
       creatorCardStatsPreferences: [],
@@ -207,7 +209,9 @@ export const CreatorCardV2 = ({
   const cosmetics = uniqBy(
     [
       ...(cosmeticOverwrites ?? []).map((c) => ({ cosmetic: c, data: {} })),
-      ...(useEquippedCosmetics ? creator?.cosmetics?.filter(({ cosmetic }) => !!cosmetic) : []),
+      ...(useEquippedCosmetics
+        ? (creator?.cosmetics ?? []).filter(({ cosmetic }) => !!cosmetic)
+        : []),
     ],
     'cosmetic.type'
   );
@@ -240,6 +244,7 @@ export const CreatorCardV2 = ({
             width="original"
             type={backgroundImage.data.type ?? 'image'}
             transcode={isVideo}
+            anim={true}
             wrapperProps={{
               style: {
                 position: 'absolute',
@@ -282,7 +287,7 @@ export const CreatorCardV2 = ({
         <Stack p="md">
           <Group position="apart" align="flex-start" mih={60} style={{ zIndex: 1 }}>
             <Group>
-              <Group spacing={8}>
+              <Group spacing={4}>
                 <RankBadge size="md" rank={creator.rank} />
                 {stats && displayStats.length > 0 && (
                   <UserStatBadgesV2
@@ -293,6 +298,9 @@ export const CreatorCardV2 = ({
                     favorites={displayStats.includes('likes') ? stats.thumbsUpCountAllTime : null}
                     downloads={
                       displayStats.includes('downloads') ? stats.downloadCountAllTime : null
+                    }
+                    reactions={
+                      displayStats.includes('reactions') ? stats.reactionCountAllTime : null
                     }
                     colorOverrides={backgroundImage?.data}
                   />
@@ -307,9 +315,9 @@ export const CreatorCardV2 = ({
           </Group>
           <Box className={classes.profileDetailsContainer}>
             <Stack spacing="xs" className={classes.profileDetails} py={8} h="100%">
-              <Group align="center" position="apart">
+              <Group align="center" position="apart" noWrap>
                 <UserProfileLink user={creator} linkToProfile>
-                  <Group>
+                  <Group noWrap>
                     <Box className={classes.avatar}>
                       <UserAvatar
                         size="lg"
@@ -418,7 +426,7 @@ export const CreatorCardV2 = ({
 };
 
 type Props = {
-  user: UserWithCosmetics;
+  user: { id: number } & Partial<UserWithCosmetics>;
   tipBuzzEntityId?: number;
   tipBuzzEntityType?: string;
   withActions?: boolean;
@@ -426,7 +434,7 @@ type Props = {
 } & Omit<CardProps, 'children'>;
 
 type PropsV2 = Props & {
-  user: UserWithCosmetics;
+  user: { id: number } & Partial<UserWithCosmetics>;
   tipBuzzEntityId?: number;
   tipBuzzEntityType?: string;
   withActions?: boolean;

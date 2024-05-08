@@ -184,7 +184,14 @@ export async function getNsfwLevelRelatedEntities(source: {
 const batchSize = 1000;
 function batcher(ids: number[], fn: (ids: number[]) => Promise<void>) {
   return chunk(ids, batchSize).map((chunk) => async () => {
-    if (chunk.length > 0) await fn(chunk);
+    try {
+      if (chunk.length > 0) {
+        // console.log('processing chunk', chunk.length, fn.name);
+        await fn(chunk);
+      }
+    } catch (e) {
+      console.log('processing chunk', chunk.length, fn.name);
+    }
   });
 }
 
@@ -227,6 +234,7 @@ export async function updateNsfwLevels({
 }
 
 export async function updatePostNsfwLevels(postIds: number[]) {
+  if (!postIds.length) return;
   await dbWrite.$queryRaw(Prisma.sql`
     WITH level AS (
       SELECT DISTINCT ON (p.id) p.id, bit_or(i."nsfwLevel") "nsfwLevel"
@@ -243,58 +251,61 @@ export async function updatePostNsfwLevels(postIds: number[]) {
 }
 
 export async function updateArticleNsfwLevels(articleIds: number[]) {
+  if (!articleIds.length) return;
   const articles = await dbWrite.$queryRaw<{ id: number }[]>(Prisma.sql`
-    WITH level AS (
-      SELECT DISTINCT ON (a.id) a.id, bit_or(i."nsfwLevel") "nsfwLevel"
-      FROM "Article" a
-      JOIN "Image" i ON a."coverId" = i.id
-      WHERE a.id IN (${Prisma.join(articleIds)})
-      GROUP BY a.id
-    )
-    UPDATE "Article" a
-    SET "nsfwLevel" = (
-      CASE
-        WHEN a."userNsfwLevel" > a."nsfwLevel" THEN a."userNsfwLevel"
-        ELSE level."nsfwLevel"
-      END
-    )
-    FROM level
-    WHERE level.id = a.id AND level."nsfwLevel" != a."nsfwLevel"
-    RETURNING a.id;
-  `);
+      WITH level AS (
+        SELECT DISTINCT ON (a.id) a.id, bit_or(i."nsfwLevel") "nsfwLevel"
+        FROM "Article" a
+        JOIN "Image" i ON a."coverId" = i.id
+        WHERE a.id IN (${Prisma.join(articleIds)})
+        GROUP BY a.id
+      )
+      UPDATE "Article" a
+      SET "nsfwLevel" = (
+        CASE
+          WHEN a."userNsfwLevel" > a."nsfwLevel" THEN a."userNsfwLevel"
+          ELSE level."nsfwLevel"
+        END
+      )
+      FROM level
+      WHERE level.id = a.id AND level."nsfwLevel" != a."nsfwLevel"
+      RETURNING a.id;
+    `);
   await articlesSearchIndex.queueUpdate(
     articles.map(({ id }) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
   );
 }
 
 export async function updateBountyNsfwLevels(bountyIds: number[]) {
+  if (!bountyIds.length) return;
   const bounties = await dbWrite.$queryRaw<{ id: number }[]>(Prisma.sql`
-    WITH level AS (
-      SELECT DISTINCT ON ("entityId")
-        "entityId",
-        bit_or(i."nsfwLevel") "nsfwLevel"
-      FROM "ImageConnection" ic
-      JOIN "Image" i ON i.id = ic."imageId"
-      JOIN "Bounty" b on b.id = ic."entityId" AND ic."entityType" = 'Bounty'
-      WHERE ic."entityType" = 'Bounty' AND ic."entityId" IN (${Prisma.join(bountyIds)})
-      GROUP BY 1
-    )
-    UPDATE "Bounty" b SET "nsfwLevel" = (
-      CASE
-        WHEN b.nsfw = TRUE THEN ${nsfwBrowsingLevelsFlag}
-        ELSE level."nsfwLevel"
-      END
-    )
-    FROM level
-    WHERE level."entityId" = b.id AND level."nsfwLevel" != b."nsfwLevel"
-    RETURNING b.id;
-  `);
+      WITH level AS (
+        SELECT DISTINCT ON ("entityId")
+          "entityId",
+          bit_or(i."nsfwLevel") "nsfwLevel"
+        FROM "ImageConnection" ic
+        JOIN "Image" i ON i.id = ic."imageId"
+        JOIN "Bounty" b on b.id = ic."entityId" AND ic."entityType" = 'Bounty'
+        WHERE ic."entityType" = 'Bounty' AND ic."entityId" IN (${Prisma.join(bountyIds)})
+        GROUP BY 1
+      )
+      UPDATE "Bounty" b SET "nsfwLevel" = (
+        CASE
+          WHEN b.nsfw = TRUE THEN ${nsfwBrowsingLevelsFlag}
+          ELSE level."nsfwLevel"
+        END
+      )
+      FROM level
+      WHERE level."entityId" = b.id AND level."nsfwLevel" != b."nsfwLevel"
+      RETURNING b.id;
+    `);
   await bountiesSearchIndex.queueUpdate(
     bounties.map(({ id }) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
   );
 }
 
 export async function updateBountyEntryNsfwLevels(bountyEntryIds: number[]) {
+  if (!bountyEntryIds.length) return;
   await dbWrite.$queryRaw<{ id: number }[]>(Prisma.sql`
     WITH level AS (
       SELECT DISTINCT ON ("entityId")
@@ -314,6 +325,7 @@ export async function updateBountyEntryNsfwLevels(bountyEntryIds: number[]) {
 }
 
 export async function updateCollectionsNsfwLevels(collectionIds: number[]) {
+  if (!collectionIds.length) return;
   const collections = await dbWrite.$queryRaw<{ id: number }[]>(Prisma.sql`
     UPDATE "Collection" c
     SET "nsfwLevel" = (
@@ -329,6 +341,7 @@ export async function updateCollectionsNsfwLevels(collectionIds: number[]) {
           CollectionItemStatus.ACCEPTED
         }::"CollectionItemStatus"
       )
+      END
     )
     WHERE c.id IN (${Prisma.join(collectionIds)})
     RETURNING c.id;
@@ -339,15 +352,15 @@ export async function updateCollectionsNsfwLevels(collectionIds: number[]) {
 }
 
 export async function updateModelNsfwLevels(modelIds: number[]) {
+  if (!modelIds.length) return;
   const models = await dbWrite.$queryRaw<{ id: number }[]>(Prisma.sql`
     WITH level AS (
-      SELECT DISTINCT ON ("modelId")
+      SELECT
         mv."modelId" as "id",
         bit_or(mv."nsfwLevel") "nsfwLevel"
       FROM "ModelVersion" mv
-      JOIN "Model" m on m.id = mv."modelId"
-      WHERE m.id IN (${Prisma.join(modelIds)})
-      GROUP BY mv.id
+      WHERE mv."modelId" IN (${Prisma.join(modelIds)})
+      GROUP BY mv."modelId"
     )
     UPDATE "Model" m
     SET "nsfwLevel" = (
@@ -366,6 +379,7 @@ export async function updateModelNsfwLevels(modelIds: number[]) {
 }
 
 export async function updateModelVersionNsfwLevels(modelVersionIds: number[]) {
+  if (!modelVersionIds.length) return;
   await dbWrite.$queryRaw<{ id: number }[]>(Prisma.sql`
     WITH level as (
       SELECT

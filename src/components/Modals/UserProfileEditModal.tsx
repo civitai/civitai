@@ -404,7 +404,7 @@ const { openModal, Modal } = createContextModal({
         <Stack>
           <Group position="apart">
             <Text size={24} weight={590}>
-              Edit Profile
+              Customize Profile
             </Text>
 
             <Group>
@@ -453,7 +453,7 @@ const { openModal, Modal } = createContextModal({
             <Stack spacing="md">
               {featureFlags.cosmeticShop && (
                 <>
-                  <InputProfileImageUpload name="profilePicture" label="Edit profile image" />
+                  <InputProfileImageUpload name="profilePicture" label="Edit avatar" />
                   <Divider label="Showcase Stats" />
                   <InputChipGroup spacing={8} name="creatorCardStatsPreferences" multiple>
                     {Object.values(creatorCardStats).map((type, index) => (
@@ -471,7 +471,7 @@ const { openModal, Modal } = createContextModal({
                   <InputCosmeticSelect
                     name="profileDecoration"
                     label="Avatar decoration"
-                    shopUrl="/cosmetic-shop"
+                    shopUrl={`/shop?cosmeticTypes=${CosmeticType.ProfileDecoration}`}
                     data={decorations}
                     nothingFound={
                       <Text size="xs">You don&rsquo;t have any avatar decorations yet</Text>
@@ -481,7 +481,7 @@ const { openModal, Modal } = createContextModal({
                   <InputCosmeticSelect
                     name="profileBackground"
                     label="Creator Card Backgrounds"
-                    shopUrl="/cosmetic-shop"
+                    shopUrl={`/shop?cosmeticTypes=${CosmeticType.ProfileBackground}`}
                     nothingFound={
                       <Text size="xs">You don&rsquo;t have any profile backgrounds yet</Text>
                     }
@@ -494,7 +494,7 @@ const { openModal, Modal } = createContextModal({
               <InputCosmeticSelect
                 name="badge"
                 label="Featured Badge"
-                shopUrl={featureFlags.cosmeticShop ? '/cosmetic-shop' : undefined}
+                shopUrl={`/shop?cosmeticTypes=${CosmeticType.Badge}`}
                 nothingFound={<Text size="xs">You don&rsquo;t have any badges yet</Text>}
                 data={badges}
                 onShopClick={handleClose}
