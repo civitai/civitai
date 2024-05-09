@@ -1,6 +1,6 @@
-import { ImageMetaProps } from '~/server/schema/image.schema';
-import { SDResource, createMetadataProcessor } from '~/utils/metadata/base.metadata';
 import { unescape } from 'lodash-es';
+import { ImageMetaProps } from '~/server/schema/image.schema';
+import { createMetadataProcessor, SDResource } from '~/utils/metadata/base.metadata';
 import { parseAIR } from '~/utils/string-helpers';
 
 type CivitaiResource = {
@@ -43,6 +43,7 @@ const excludedKeys = [
   'controlNets',
   'denoise',
   'other',
+  'external',
 ];
 function parseDetailsLine(line: string | undefined): Record<string, any> {
   const result: Record<string, any> = {};

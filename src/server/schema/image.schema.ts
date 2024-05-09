@@ -55,6 +55,7 @@ export const externalMetaSchema = z.object({
    * Limited to 10 props
    */
   details: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional(),
+  // details: z.record(z.string(), z.coerce.string()).optional(),
   /**
    * Link back to the URL used to create the media
    */
