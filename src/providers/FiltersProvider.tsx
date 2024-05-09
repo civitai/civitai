@@ -68,6 +68,8 @@ const imageFilterSchema = z.object({
   notPublished: z.boolean().optional(),
   hidden: z.boolean().optional(),
   followed: z.boolean().optional(),
+  tools: z.number().array().optional(),
+  techniques: z.number().array().optional(),
 });
 
 const modelImageFilterSchema = imageFilterSchema.extend({

@@ -166,9 +166,15 @@ export function PostEditProvider({ post, params = {}, children, ...extendedParam
         await queryUtils.post.getEdit.invalidate({ id: postId });
         // await queryUtils.post.getEdit.setData({ id: postId }, (old) => {
         //   const { post, images } = store.getState();
+        //   if (!post) return old;
+        //   console.log({
+        //     ...post,
+        //     detail: post.detail ?? null,
+        //     images: images.map((x) => (x.type === 'added' ? x.data : undefined)).filter(isDefined),
+        //   });
         //   return {
-        //     ...old,
-        //     ...(post as PostDetailEditable),
+        //     ...post,
+        //     detail: post.detail ?? null,
         //     images: images.map((x) => (x.type === 'added' ? x.data : undefined)).filter(isDefined),
         //   };
         // });
@@ -186,7 +192,7 @@ export function PostEditProvider({ post, params = {}, children, ...extendedParam
     return () => {
       Router.events.off('routeChangeStart', handleBrowsingAway);
     };
-  }, [modelVersionId, modelId, postId, post]); // eslint-disable-line
+  }, [modelVersionId, modelId, postId]); // eslint-disable-line
 
   return (
     <StoreContext.Provider value={store}>

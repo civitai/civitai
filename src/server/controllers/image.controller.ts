@@ -21,12 +21,7 @@ import { TRPCError } from '@trpc/server';
 import { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
-import { UpdateImageInput } from '~/server/schema/image.schema';
-import {
-  deleteImageById,
-  updateImageReportStatusByReason,
-  updateImage,
-} from '~/server/services/image.service';
+import { deleteImageById, updateImageReportStatusByReason } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
 import {
   throwAuthorizationError,
@@ -200,24 +195,6 @@ export const setTosViolationHandler = async ({
       ownerId: image.userId,
     });
     return image;
-  } catch (error) {
-    if (error instanceof TRPCError) throw error;
-    else throw throwDbError(error);
-  }
-};
-
-// export const updateImageHandler = async ({ input }: { input: UpdateImageInput }) => {
-//   try {
-//     return await updateImage({ ...input });
-//   } catch (error) {
-//     if (error instanceof TRPCError) throw error;
-//     else throw throwDbError(error);
-//   }
-// };
-
-export const getImageDetailHandler = async ({ input }: { input: GetByIdInput }) => {
-  try {
-    return await getImageDetail({ ...input });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -460,20 +437,6 @@ export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ct
       userId: ctx.user?.id,
       isModerator: ctx.user?.isModerator,
     });
-
-    if (result.postId) {
-      const [access] = await hasEntityAccess({
-        userId: ctx?.user?.id,
-        isModerator: ctx?.user?.isModerator,
-        entityIds: [result.postId],
-        entityType: 'Post',
-      });
-
-      // Cannot get images by ID without access
-      if (!access?.hasAccess) {
-        return null;
-      }
-    }
 
     return result;
   } catch (error) {

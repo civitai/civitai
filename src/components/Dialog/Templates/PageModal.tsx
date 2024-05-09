@@ -16,7 +16,8 @@ export function PageModal(props: ModalProps) {
   return (
     <Modal
       {...props}
-      target="main"
+      target="#main"
+      zIndex={10000}
       styles={{
         root: { position: 'absolute' },
         body: { height: '100%', width: '100%', display: 'flex', flexDirection: 'column' },

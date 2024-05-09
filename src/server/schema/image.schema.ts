@@ -134,11 +134,11 @@ export const imageSchema = z.object({
   width: z.number().nullish(),
   // analysis: imageAnalysisSchema.optional(),
   // tags: z.array(tagSchema).optional(),
-  needsReview: z.string().nullish(),
+  // needsReview: z.string().nullish(),
   mimeType: z.string().optional(),
   sizeKB: z.number().optional(),
   postId: z.number().nullish(),
-  resources: z.array(imageResourceUpsertSchema).optional(),
+  // resources: z.array(imageResourceUpsertSchema).optional(),
   type: z.nativeEnum(MediaType).default(MediaType.image),
   metadata: z.object({}).passthrough().optional(),
 });
@@ -201,7 +201,6 @@ export const ingestImageSchema = z.object({
   width: z.coerce.number().nullish(),
 });
 
-// #region [new schemas]
 const imageInclude = z.enum([
   'tags',
   'count',
@@ -250,6 +249,8 @@ export const getInfiniteImagesSchema = baseQuerySchema
     fromPlatform: z.coerce.boolean().optional(),
     notPublished: z.coerce.boolean().optional(),
     pending: z.boolean().optional(),
+    tools: z.number().array().optional(),
+    techniques: z.number().array().optional(),
   })
   .transform((value) => {
     if (value.withTags) {
@@ -270,7 +271,6 @@ export const getImageSchema = z.object({
   // excludedTagIds: z.array(z.number()).optional(),
   // excludedUserIds: z.array(z.number()).optional(),
 });
-// #endregion
 
 export type RemoveImageResourceSchema = z.infer<typeof removeImageResourceSchema>;
 export const removeImageResourceSchema = z.object({

@@ -1,7 +1,6 @@
 import { cacheIt, edgeCacheIt } from './../middleware.trpc';
 import {
   getEntitiesCoverImageHandler,
-  getImageDetailHandler,
   getImageHandler,
   getImageResourcesHandler,
   getImagesAsPostsInfiniteHandler,
@@ -56,6 +55,7 @@ import {
   updateImageTechniques,
   removeImageTechniques,
   addImageTechniques,
+  getImageDetail,
 } from '~/server/services/image.service';
 import { CacheTTL } from '~/server/common/constants';
 import { z } from 'zod';
@@ -101,12 +101,9 @@ export const imageRouter = router({
     .use(isOwnerOrModerator)
     .mutation(deleteImageHandler),
   setTosViolation: moderatorProcedure.input(getByIdSchema).mutation(setTosViolationHandler),
-  // Unused
-  // update: protectedProcedure
-  //   .input(updateImageSchema)
-  //   .use(isOwnerOrModerator)
-  //   .mutation(updateImageHandler),
-  getDetail: publicProcedure.input(getByIdSchema).query(getImageDetailHandler),
+  getDetail: publicProcedure
+    .input(getByIdSchema)
+    .query(({ input }) => getImageDetail({ ...input })),
   getInfinite: publicProcedure.input(getInfiniteImagesSchema).query(getInfiniteImagesHandler),
   getImagesForModelVersion: publicProcedure
     .input(getByIdSchema)
