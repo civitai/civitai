@@ -58,7 +58,7 @@ BEGIN
     PERFORM create_job_queue_record(OLD.id, 'Post', 'CleanUp');
 
   -- On post publish, create a job to update the nsfw level of the related entities (modelVersions, collectionItems)
-  ELSIF ((NEW."publishedAt" IS NOT NULL AND OLD."publishedAt" IS NULL AND OLD."nsfwLevel" != 0) OR (NEW."publishedAt" IS NOT NULL AND OLD."nsfwLevel" != NEW."nsfwLevel")) THEN
+  ELSIF (NEW."publishedAt" IS NOT NULL AND OLD."publishedAt" IS NULL AND OLD."nsfwLevel" != 0) THEN
     PERFORM create_job_queue_record(NEW.id, 'Post', 'UpdateNsfwLevel');
   END IF;
   RETURN NULL;
@@ -66,7 +66,7 @@ END;
 $post_nsfw_level$ LANGUAGE plpgsql;
 ---
 CREATE OR REPLACE TRIGGER post_nsfw_level_change
-AFTER UPDATE OF "publishedAt", "nsfwLevel" OR DELETE ON "Post"
+AFTER UPDATE OF "publishedAt" OR DELETE ON "Post"
 FOR EACH ROW
 EXECUTE FUNCTION update_post_nsfw_level();
 

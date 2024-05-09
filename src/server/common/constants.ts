@@ -329,6 +329,9 @@ export const constants = {
       padding: 6,
     },
   },
+  modelGallery: {
+    maxPinnedPosts: 6,
+  },
 } as const;
 export const activeBaseModels = constants.baseModels.filter(
   (model) => !constants.hiddenBaseModels.includes(model)

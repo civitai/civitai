@@ -46,7 +46,7 @@ import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 
 export function AddUserContentModal({ collectionId, opened, onClose, ...props }: Props) {
   const currentUser = useCurrentUser();
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
 
   const selected = useStore((state) => Object.keys(state.selected).map(Number));
   const deselectAll = useStore((state) => state.deselectAll);
@@ -242,8 +242,11 @@ export function AddUserContentModal({ collectionId, opened, onClose, ...props }:
                             hidden: undefined,
                             types: undefined,
                             withMeta: undefined,
+                            followed: undefined,
+                            fromPlatform: undefined,
                           }}
                           renderItem={SelectableImageCard}
+                          nextPageLoaderOptions={{ root: undefined }}
                         />
                       )}
                     </ScrollArea.Autosize>

@@ -15,7 +15,7 @@ import { useDebouncedValue, useDidUpdate } from '@mantine/hooks';
 import { IconCheck, IconSearch, IconX } from '@tabler/icons-react';
 import React, { useRef, useState } from 'react';
 import { trpc } from '~/utils/trpc';
-import { useToggleGallerySettings } from './gallery.utils';
+import { useGallerySettings } from './gallery.utils';
 import {
   allBrowsingLevelsFlag,
   browsingLevelDescriptions,
@@ -41,8 +41,7 @@ export function GalleryModerationModal({ modelId }: { modelId: number }) {
 }
 
 export function HiddenTagsSection({ modelId }: { modelId: number }) {
-  const { data: gallerySettings } = trpc.model.getGallerySettings.useQuery({ id: modelId });
-  const toggleGallerySettings = useToggleGallerySettings({ modelId: modelId });
+  const { gallerySettings, toggle } = useGallerySettings({ modelId: modelId });
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [search, setSearch] = useState('');
   const [debouncedSearch] = useDebouncedValue(search, 300);
@@ -60,7 +59,7 @@ export function HiddenTagsSection({ modelId }: { modelId: number }) {
   const hiddenTags = gallerySettings?.hiddenTags ?? [];
 
   const handleToggleBlockedTag = async (tag: { id: number; name: string }) => {
-    await toggleGallerySettings({ modelId: modelId, tags: [tag] }).catch(() => null);
+    await toggle({ modelId: modelId, tags: [tag] }).catch(() => null);
     setSearch('');
   };
 
@@ -121,8 +120,7 @@ export function HiddenTagsSection({ modelId }: { modelId: number }) {
 }
 
 export function HiddenUsersSection({ modelId }: { modelId: number }) {
-  const { data: gallerySettings } = trpc.model.getGallerySettings.useQuery({ id: modelId });
-  const toggleGallerySettings = useToggleGallerySettings({ modelId: modelId });
+  const { gallerySettings, toggle } = useGallerySettings({ modelId: modelId });
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [search, setSearch] = useState('');
   const [debouncedSearch] = useDebouncedValue(search, 300);
@@ -136,7 +134,7 @@ export function HiddenUsersSection({ modelId }: { modelId: number }) {
     [];
 
   const handleToggleBlocked = async (user: { id: number; username: string | null }) => {
-    await toggleGallerySettings({ modelId: modelId, users: [user] }).catch(() => null);
+    await toggle({ modelId: modelId, users: [user] }).catch(() => null);
     setSearch('');
   };
 
@@ -197,7 +195,7 @@ export function HiddenUsersSection({ modelId }: { modelId: number }) {
 }
 
 function MatureContentSection({ modelId }: { modelId: number }) {
-  const { data: gallerySettings } = trpc.model.getGallerySettings.useQuery({ id: modelId });
+  const { gallerySettings } = useGallerySettings({ modelId });
   if (!gallerySettings) return null;
   return <BrowsingLevelsStacked level={gallerySettings.level} modelId={modelId} />;
 }
@@ -211,7 +209,7 @@ function BrowsingLevelsStacked({
   modelId: number;
 }) {
   const { classes, cx } = useStyles();
-  const toggleGallerySettings = useToggleGallerySettings({ modelId: modelId });
+  const { toggle } = useGallerySettings({ modelId: modelId });
   const [browsingLevel, setBrowsingLevel] = useState(level);
   const toggleBrowsingLevel = (level: number) => {
     setBrowsingLevel((state) => {
@@ -222,7 +220,7 @@ function BrowsingLevelsStacked({
   };
 
   useDidUpdate(() => {
-    debouncer(() => toggleGallerySettings({ modelId, level: browsingLevel }));
+    debouncer(() => toggle({ modelId, level: browsingLevel }));
   }, [browsingLevel]);
 
   return (

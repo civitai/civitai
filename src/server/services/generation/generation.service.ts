@@ -37,8 +37,6 @@ import {
   BaseModel,
   baseModelSets,
   BaseModelSetType,
-  CacheTTL,
-  constants,
   draftMode,
   getGenerationConfig,
   Sampler,
@@ -53,7 +51,6 @@ import orchestratorCaller from '~/server/http/orchestrator/orchestrator.caller';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { includesNsfw, includesPoi, includesMinor } from '~/utils/metadata/audit';
-import { bustCachedArray, cachedArray } from '~/server/utils/cache-helpers';
 import { fromJson, toJson } from '~/utils/json-helpers';
 import { extModeration } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
@@ -66,6 +63,7 @@ import { SearchIndexUpdateQueueAction, GenerationRequestStatus } from '~/server/
 import { UserTier } from '~/server/schema/user.schema';
 import { Orchestrator } from '~/server/http/orchestrator/orchestrator.types';
 import { generatorFeedbackReward } from '~/server/rewards';
+import { resourceDataCache } from '~/server/redis/caches';
 
 export function parseModelVersionId(assetId: string) {
   const pattern = /^@civitai\/(\d+)$/;
@@ -243,29 +241,11 @@ export const getGenerationResources = async (
   );
 };
 
-const getResourceData = async (modelVersionIds: number[]) => {
-  return await cachedArray<GenerationResourceSelect>({
-    key: REDIS_KEYS.GENERATION.RESOURCE_DATA,
-    ids: modelVersionIds,
-    idKey: 'id',
-    lookupFn: async (ids) => {
-      const dbResults = await dbRead.modelVersion.findMany({
-        where: { id: { in: ids as number[] } },
-        select: generationResourceSelect,
-      });
-
-      const results = dbResults.reduce((acc, result) => {
-        acc[result.id] = result;
-        return acc;
-      }, {} as Record<string, GenerationResourceSelect>);
-      return results;
-    },
-    ttl: CacheTTL.hour,
-  });
-};
-
-export async function deleteResourceDataCache(modelVersionIds: number | number[]) {
-  await bustCachedArray(REDIS_KEYS.GENERATION.RESOURCE_DATA, 'id', modelVersionIds);
+function getResourceData(modelVersionIds: number[]) {
+  return resourceDataCache.fetch(modelVersionIds);
+}
+export function deleteResourceDataCache(modelVersionIds: number | number[]) {
+  return resourceDataCache.bust(modelVersionIds);
 }
 
 const baseModelSetsEntries = Object.entries(baseModelSets);
