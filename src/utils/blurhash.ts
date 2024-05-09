@@ -6,14 +6,6 @@ export type HashResult = {
   height: number;
 };
 
-export const loadImage = async (src: string) =>
-  new Promise<HTMLImageElement>((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => resolve(img);
-    img.onerror = (...args) => reject(args);
-    img.src = src;
-  });
-
 // export const getImageData = async (img: HTMLImageElement) => {
 //   const canvas = document.createElement('canvas');
 //   const { height: h, width: w } = img;

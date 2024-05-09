@@ -5,9 +5,6 @@ import { DragEvent } from 'react';
 import { constants } from '~/server/common/constants';
 import { IMAGE_MIME_TYPE, MIME_TYPES, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
 import { fetchBlob } from '~/utils/file-utils';
-import { formatBytes } from '~/utils/number-helpers';
-import { PreprocessFileReturnType } from '~/utils/media-preprocessors';
-import { MediaUploadOnCompleteProps, useMediaUpload } from '~/hooks/useMediaUpload';
 
 const MAX_IMAGE_SIZE = constants.mediaUpload.maxImageFileSize;
 
@@ -39,7 +36,13 @@ export function MediaDropzone({
   // #region [handle drop]
   const handleDropCapture = async (e: DragEvent) => {
     const url = e.dataTransfer.getData('text/uri-list');
-    if (!url.startsWith('https://orchestration.civitai.com')) return;
+    if (
+      !(
+        url.startsWith('https://orchestration.civitai.com') ||
+        url.startsWith('https://orchestration-stage.civitai.com')
+      )
+    )
+      return;
     const blob = await fetchBlob(url);
     if (!blob) return;
     const file = new File([blob], url.substring(url.lastIndexOf('/')), { type: blob.type });

@@ -7,38 +7,39 @@ import {
   TagType,
 } from '@prisma/client';
 import { SessionUser } from 'next-auth';
-import { NsfwLevel, PostSort } from '~/server/common/enums';
+import { env } from 'process';
+import { PostSort } from '~/server/common/enums';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
-import { ImageMetaProps, getInfiniteImagesSchema } from '~/server/schema/image.schema';
+import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import {
+  editPostImageSelect,
   PostImageEditProps,
   PostImageEditSelect,
-  editPostImageSelect,
   postSelect,
 } from '~/server/selectors/post.selector';
 import { simpleTagSelect } from '~/server/selectors/tag.selector';
-import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
+import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import {
   deleteImageById,
   deleteImagesForModelVersionCache,
   getImagesForPosts,
   ingestImage,
 } from '~/server/services/image.service';
-import {
-  getTagCountForImages,
-  getTypeCategories,
-  getVotableImageTags,
-} from '~/server/services/tag.service';
+import { findOrCreateTagsByName, getVotableImageTags } from '~/server/services/tag.service';
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
+import { bustCacheTag, queryCache } from '~/server/utils/cache-helpers';
 import {
   throwAuthorizationError,
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { PreprocessFileReturnType } from '~/utils/media-preprocessors';
+import { postgresSlugify } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
+import { CacheTTL } from '../common/constants';
 import {
   AddPostImageInput,
   AddPostTagInput,
@@ -50,17 +51,6 @@ import {
   ReorderPostImagesInput,
   UpdatePostImageInput,
 } from './../schema/post.schema';
-import { postgresSlugify } from '~/utils/string-helpers';
-import { bustCacheTag, queryCache } from '~/server/utils/cache-helpers';
-import { env } from 'process';
-import { CacheTTL } from '../common/constants';
-import { PreprocessFileReturnType } from '~/utils/media-preprocessors';
-import {
-  BadgeCosmetic,
-  ContentDecorationCosmetic,
-  WithClaimKey,
-} from '~/server/selectors/cosmetic.selector';
-import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 
 type GetAllPostsRaw = {
   id: number;
@@ -496,10 +486,23 @@ export const getPostEditImages = async ({ id, user }: GetByIdInput & { user: Ses
 export const createPost = async ({
   userId,
   tag,
+  tags,
   ...data
 }: PostCreateInput & { userId: number }): Promise<PostDetailEditable> => {
+  const tagsToAdd: number[] = [];
+  if (tags && tags.length > 0) {
+    const tagObj = await findOrCreateTagsByName(tags);
+    Object.values(tagObj).forEach((t) => {
+      if (t !== undefined) tagsToAdd.push(t);
+    });
+  }
+  if (tag) {
+    tagsToAdd.push(tag);
+  }
+  const tagData = tagsToAdd.map((t) => ({ tagId: t }));
+
   const post = await dbWrite.post.create({
-    data: { ...data, userId, tags: tag ? { create: { tagId: tag } } : undefined },
+    data: { ...data, userId, tags: tagsToAdd.length > 0 ? { create: tagData } : undefined },
     select: postSelect,
   });
   return {
@@ -578,7 +581,7 @@ export const getPostTags = async ({
   ).sort((a, b) => b.postCount - a.postCount);
 };
 
-export const addPostTag = async ({ tagId, id: postId, name: initialName }: AddPostTagInput) => {
+export const addPostTag = async ({ id: postId, name: initialName }: AddPostTagInput) => {
   const name = initialName.toLowerCase().trim();
   return await dbWrite.$transaction(async (tx) => {
     const tag = await tx.tag.findUnique({
