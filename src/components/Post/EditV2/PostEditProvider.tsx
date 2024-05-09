@@ -146,7 +146,7 @@ export function PostEditProvider({ post, params = {}, children, ...extendedParam
         .map((x) => (x.type === 'added' ? x.data : undefined))
         .filter(isDefined);
       const postImages = post?.images ?? [];
-      const images = isSamePost ? uniqBy([addedImages, ...postImages], 'id') : postImages;
+      const images = isSamePost ? uniqBy([...postImages, ...addedImages], 'id') : postImages;
 
       return {
         post,
@@ -163,15 +163,16 @@ export function PostEditProvider({ post, params = {}, children, ...extendedParam
       if (postId) {
         console.log('browse away');
         await queryUtils.post.get.invalidate({ id: postId });
-        await queryUtils.post.getEdit.invalidate({ id: postId });
-        // await queryUtils.post.getEdit.setData({ id: postId }, (old) => {
-        //   const { post, images } = store.getState();
-        //   return {
-        //     ...old,
-        //     ...(post as PostDetailEditable),
-        //     images: images.map((x) => (x.type === 'added' ? x.data : undefined)).filter(isDefined),
-        //   };
-        // });
+        // await queryUtils.post.getEdit.invalidate({ id: postId });
+        await queryUtils.post.getEdit.setData({ id: postId }, (old) => {
+          const { post, images } = store.getState();
+          if (!post) return old;
+          return {
+            ...post,
+            detail: post.detail ?? null,
+            images: images.map((x) => (x.type === 'added' ? x.data : undefined)).filter(isDefined),
+          };
+        });
         await queryUtils.post.getInfinite.invalidate();
         await queryUtils.image.getInfinite.invalidate({ postId });
         if (modelVersionId) {
