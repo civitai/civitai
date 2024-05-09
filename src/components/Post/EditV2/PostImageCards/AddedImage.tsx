@@ -476,7 +476,7 @@ function EditDetail() {
         {/*
  // #region [tags]
  */}
-        {(!!image.tags.length || isScanned) && (
+        {(!!image.tags?.length || isScanned) && (
           <>
             <Divider />
             <VotableTags
