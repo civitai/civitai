@@ -20,6 +20,7 @@ import {
   userMetrics,
 } from '~/server/metrics';
 import { playfab } from '~/server/playfab/client';
+import { profilePictureCache, userCosmeticCache } from '~/server/redis/caches';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
@@ -44,7 +45,6 @@ import { deleteImageById } from '~/server/services/image.service';
 import { cancelSubscription } from '~/server/services/stripe.service';
 import { getSystemPermissions } from '~/server/services/system-cache';
 import { HiddenModels } from '~/server/services/user-preferences.service';
-import { bustCachedArray, cachedObject } from '~/server/utils/cache-helpers';
 import {
   handleLogError,
   throwBadRequestError,
@@ -55,6 +55,7 @@ import { invalidateSession } from '~/server/utils/session-helpers';
 import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
 import blockedUsernames from '~/utils/blocklist-username.json';
 import { removeEmpty } from '~/utils/object-helpers';
+import { simpleCosmeticSelect } from '../selectors/cosmetic.selector';
 import { ProfileImage, profileImageSelect } from '../selectors/image.selector';
 import {
   ToggleUserArticleEngagementsInput,
@@ -62,7 +63,6 @@ import {
   UserSettingsSchema,
   UserTier,
 } from './../schema/user.schema';
-import { simpleCosmeticSelect } from '../selectors/cosmetic.selector';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
 export const getUserCreator = async ({
@@ -720,81 +720,20 @@ export const getUserCosmetics = ({
   });
 };
 
-type UserCosmeticLookup = {
-  userId: number;
-  cosmetics: {
-    cosmetic: {
-      id: number;
-      name: string;
-      type: CosmeticType;
-      data: Prisma.JsonValue;
-      source: CosmeticSource;
-    };
-    data: Prisma.JsonValue;
-  }[];
-};
-
 export async function getCosmeticsForUsers(userIds: number[]) {
-  const userCosmetics = await cachedObject<UserCosmeticLookup>({
-    key: REDIS_KEYS.COSMETICS,
-    idKey: 'userId',
-    ids: userIds,
-    lookupFn: async (ids) => {
-      const userCosmeticsRaw = await dbRead.userCosmetic.findMany({
-        where: { userId: { in: ids }, equippedAt: { not: null }, equippedToId: null },
-        select: {
-          userId: true,
-          data: true,
-          cosmetic: { select: { id: true, data: true, type: true, source: true, name: true } },
-        },
-      });
-      const results = userCosmeticsRaw.reduce((acc, { userId, ...cosmetic }) => {
-        acc[userId] ??= { userId, cosmetics: [] };
-        acc[userId].cosmetics.push(cosmetic);
-        return acc;
-      }, {} as Record<number, UserCosmeticLookup>);
-      return results;
-    },
-    ttl: 60 * 60 * 24, // 24 hours
-  });
-
+  const userCosmetics = await userCosmeticCache.fetch(userIds);
   return Object.fromEntries(Object.values(userCosmetics).map((x) => [x.userId, x.cosmetics]));
 }
 
 export async function deleteUserCosmeticCache(userId: number) {
-  await bustCachedArray(REDIS_KEYS.COSMETICS, 'userId', userId);
+  await userCosmeticCache.bust(userId);
 }
 
 export async function getProfilePicturesForUsers(userIds: number[]) {
-  return await cachedObject<ProfileImage>({
-    key: REDIS_KEYS.PROFILE_PICTURES,
-    idKey: 'userId',
-    ids: userIds,
-    lookupFn: async (ids) => {
-      const profilePictures = await dbRead.$queryRaw<ProfileImage[]>`
-        SELECT i.id,
-               i.name,
-               i.url,
-               i."nsfwLevel",
-               i.hash,
-               i."userId",
-               i.ingestion,
-               i.type,
-               i.width,
-               i.height,
-               i.metadata
-        FROM "User" u
-               JOIN "Image" i ON i.id = u."profilePictureId"
-        WHERE u.id IN (${Prisma.join(ids as number[])})
-      `;
-      return Object.fromEntries(profilePictures.map((x) => [x.userId, x]));
-    },
-    ttl: 60 * 60 * 24, // 24 hours
-  });
+  return await profilePictureCache.fetch(userIds);
 }
-
 export async function deleteUserProfilePictureCache(userId: number) {
-  await bustCachedArray(REDIS_KEYS.PROFILE_PICTURES, 'userId', userId);
+  await profilePictureCache.bust(userId);
 }
 
 // #region [article engagement]

@@ -52,11 +52,8 @@ export const REDIS_KEYS = {
     COUNT: 'download:count',
     LIMITS: 'download:limits',
   },
-  TAG_IDS_FOR_IMAGES: 'tagIdsForImages',
-  COSMETICS: 'cosmetics',
-  PROFILE_PICTURES: 'profile-pictures',
+
   BUZZ_EVENTS: 'buzz-events',
-  IMAGES_FOR_MODEL_VERSION: 'images-for-model-version',
   GENERATION: {
     RESOURCE_DATA: 'generation:resource-data',
     COUNT: 'generation:count',
@@ -80,6 +77,10 @@ export const REDIS_KEYS = {
   CACHES: {
     FILES_FOR_MODEL_VERSION: 'caches:files-for-model-version',
     MULTIPLIERS_FOR_USER: 'caches:multipliers-for-user',
+    TAG_IDS_FOR_IMAGES: 'caches:tagIdsForImages',
+    COSMETICS: 'caches:cosmetics',
+    PROFILE_PICTURES: 'caches:profile-pictures',
+    IMAGES_FOR_MODEL_VERSION: 'caches:images-for-model-version',
   },
   QUEUES: {
     BUCKETS: 'queues:buckets',

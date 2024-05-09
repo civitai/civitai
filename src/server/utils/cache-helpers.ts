@@ -46,17 +46,15 @@ export async function bustCacheTag(tag: string | string[]) {
 
 type CachedLookupOptions<T extends object> = {
   key: string;
-  ids: number[];
   idKey: keyof T;
-  lookupFn: (ids: number[]) => Promise<Record<string, object>>;
+  lookupFn: (ids: number[], fromWrite?: boolean) => Promise<Record<string, object>>;
   appendFn?: (results: Set<T>) => Promise<void>;
   ttl?: number;
   debounceTime?: number;
   cacheNotFound?: boolean;
 };
-export async function cachedArray<T extends object>({
+export function createCachedArray<T extends object>({
   key,
-  ids,
   idKey,
   lookupFn,
   appendFn,
@@ -64,82 +62,122 @@ export async function cachedArray<T extends object>({
   debounceTime = 10,
   cacheNotFound = true,
 }: CachedLookupOptions<T>) {
-  if (!ids.length) return [];
-  const results = new Set<T>();
-  const cacheJsons = await redis.hmGet(key, ids.map(String));
-  const cacheArray = cacheJsons.filter((x) => x !== null).map((x) => JSON.parse(x));
-  const cache = Object.fromEntries(cacheArray.map((x) => [x[idKey], x]));
+  async function fetch(ids: number[]) {
+    const results = new Set<T>();
+    const cacheJsons = await redis.hmGet(key, ids.map(String));
+    const cacheArray = cacheJsons.filter((x) => x !== null).map((x) => JSON.parse(x));
+    const cache = Object.fromEntries(cacheArray.map((x) => [x[idKey], x]));
 
-  const cacheCutoff = Date.now() - ttl * 1000; // convert to ms (keeping ttl in seconds for redis similarity)
-  const cacheDebounceCutoff = Date.now() - debounceTime * 1000;
-  const cacheMisses = new Set<number>();
-  const dontCache = new Set<number>();
-  for (const id of [...new Set(ids)]) {
-    const cached = cache[id];
-    if (cached && cached.cachedAt > cacheCutoff) {
-      if (cached.notFound) continue;
-      if (cached.debounce) {
-        if (cached.cachedAt > cacheDebounceCutoff) dontCache.add(id);
-        cacheMisses.add(id);
-        continue;
-      }
-      results.add(cached);
-    } else cacheMisses.add(id);
-  }
-
-  if (dontCache.size > 0)
-    log(`${key}: Cache debounce - ${dontCache.size} items: ${[...dontCache].join(', ')}`);
-
-  // If we have cache misses, we need to fetch from the DB
-  if (cacheMisses.size > 0) {
-    log(`${key}: Cache miss - ${cacheMisses.size} items: ${[...cacheMisses].join(', ')}`);
-    const dbResults = await lookupFn([...cacheMisses] as typeof ids);
-
-    const toCache: Record<string, string> = {};
-    const toCacheNotFound: Record<string, string> = {};
-    const cachedAt = Date.now();
-    for (const id of cacheMisses) {
-      const result = dbResults[id];
-      if (!result) {
-        if (cacheNotFound)
-          toCacheNotFound[id] = JSON.stringify({ [idKey]: id, notFound: true, cachedAt });
-        continue;
-      }
-      results.add(result as T);
-      if (!dontCache.has(id)) toCache[id] = JSON.stringify({ ...result, cachedAt });
+    const cacheCutoff = Date.now() - ttl * 1000; // convert to ms (keeping ttl in seconds for redis similarity)
+    const cacheDebounceCutoff = Date.now() - debounceTime * 1000;
+    const cacheMisses = new Set<number>();
+    const dontCache = new Set<number>();
+    for (const id of [...new Set(ids)]) {
+      const cached = cache[id];
+      if (cached && cached.cachedAt > cacheCutoff) {
+        if (cached.notFound) continue;
+        if (cached.debounce) {
+          if (cached.cachedAt > cacheDebounceCutoff) dontCache.add(id);
+          cacheMisses.add(id);
+          continue;
+        }
+        results.add(cached);
+      } else cacheMisses.add(id);
     }
 
-    // then cache the results
-    if (Object.keys(toCache).length > 0) await redis.hSet(key, toCache);
+    if (dontCache.size > 0)
+      log(`${key}: Cache debounce - ${dontCache.size} items: ${[...dontCache].join(', ')}`);
 
-    // Use NX to avoid overwriting a value with a not found...
-    if (Object.keys(toCacheNotFound).length > 0)
-      for (const [id, value] of Object.entries(toCacheNotFound)) await redis.hSetNX(key, id, value);
+    // If we have cache misses, we need to fetch from the DB
+    if (cacheMisses.size > 0) {
+      log(`${key}: Cache miss - ${cacheMisses.size} items: ${[...cacheMisses].join(', ')}`);
+      const dbResults = await lookupFn([...cacheMisses] as typeof ids);
+
+      const toCache: Record<string, string> = {};
+      const toCacheNotFound: Record<string, string> = {};
+      const cachedAt = Date.now();
+      for (const id of cacheMisses) {
+        const result = dbResults[id];
+        if (!result) {
+          if (cacheNotFound)
+            toCacheNotFound[id] = JSON.stringify({ [idKey]: id, notFound: true, cachedAt });
+          continue;
+        }
+        results.add(result as T);
+        if (!dontCache.has(id)) toCache[id] = JSON.stringify({ ...result, cachedAt });
+      }
+
+      // then cache the results
+      if (Object.keys(toCache).length > 0) await redis.hSet(key, toCache);
+
+      // Use NX to avoid overwriting a value with a not found...
+      if (Object.keys(toCacheNotFound).length > 0)
+        for (const [id, value] of Object.entries(toCacheNotFound))
+          await redis.hSetNX(key, id, value);
+    }
+
+    if (appendFn) await appendFn(results);
+
+    return [...results];
   }
 
-  if (appendFn) await appendFn(results);
+  async function bust(id: number | number[]) {
+    const ids = Array.isArray(id) ? id : [id];
+    if (ids.length === 0) return;
 
-  return [...results];
+    const cachedAt = Date.now();
+    const toCache = Object.fromEntries(
+      ids.map((id) => [id, JSON.stringify({ [idKey]: id, cachedAt, debounce: true })])
+    ) as Record<string, string>;
+    await redis.hSet(key, toCache);
+    log(`Busted ${ids.length} ${key} items: ${ids.join(', ')}`);
+  }
+
+  async function refresh(id: number | number[]) {
+    if (!Array.isArray(id)) id = [id];
+
+    const results = await lookupFn(id, true);
+    const cachedAt = Date.now();
+    const toCache = Object.fromEntries(
+      Object.entries(results).map(([key, x]) => [key, JSON.stringify({ ...x, cachedAt })])
+    );
+    await redis.hSet(key, toCache);
+
+    const toRemove = id.filter((x) => !results[x]).map(String);
+    await redis.hDel(key, toRemove);
+  }
+
+  async function cleanup() {
+    const toRemove: string[] = [];
+    const cacheJsons = await redis.hGetAll(key);
+    const cacheCutoff = Date.now() - ttl * 1000;
+    for (const [id, cachedJson] of Object.entries(cacheJsons)) {
+      if (!cachedJson) toRemove.push(id);
+      else {
+        const cached = JSON.parse(cachedJson);
+        if (cached.cachedAt < cacheCutoff) toRemove.push(id);
+      }
+    }
+    if (toRemove.length > 0) await redis.hDel(key, toRemove);
+  }
+
+  return { fetch, bust, refresh, cleanup };
 }
+export type CachedArray<T extends object> = ReturnType<typeof createCachedArray<T>>;
 
-export async function bustCachedArray(key: string, idKey: string, id: number | number[]) {
-  const ids = Array.isArray(id) ? id : [id];
-  if (ids.length === 0) return;
+export function createCachedObject<T extends object>(lookupOptions: CachedLookupOptions<T>) {
+  const cachedArray = createCachedArray<T>(lookupOptions);
 
-  const cachedAt = Date.now();
-  const toCache = Object.fromEntries(
-    ids.map((id) => [id, JSON.stringify({ [idKey]: id, cachedAt, debounce: true })])
-  ) as Record<string, string>;
-  await redis.hSet(key, toCache);
-  log(`Busted ${ids.length} ${key} items: ${ids.join(', ')}`);
+  async function fetch(ids: number[]) {
+    const results = await cachedArray.fetch(ids);
+    return Object.fromEntries(
+      results.map((x) => [(x[lookupOptions.idKey] as number | string).toString(), x])
+    ) as Record<string, T>;
+  }
+
+  return { ...cachedArray, fetch };
 }
-
-export async function cachedObject<T extends object>(lookupOptions: CachedLookupOptions<T>) {
-  const results = await cachedArray<T>(lookupOptions);
-  return Object.fromEntries(
-    results.map((x) => [(x[lookupOptions.idKey] as number | string).toString(), x])
-  ) as Record<string, T>;
-}
+export type CachedObject<T extends object> = ReturnType<typeof createCachedObject<T>>;
 
 export type CachedCounterOptions = {
   ttl?: number;
