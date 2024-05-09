@@ -394,6 +394,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
           sx={{ flexShrink: 1 }}
           onChange={onTargetChange}
           autoComplete="off"
+          withinPortal
         />
         <ClearableAutoComplete
           ref={inputRef}
