@@ -268,6 +268,41 @@ export const useQueryShop = (
   return { cosmeticShopSections: [], ...rest };
 };
 
+export const useShopLastViewed = () => {
+  const currentUser = useCurrentUser();
+  const { data, isLoading, isFetched, ...rest } = trpc.user.getSettings.useQuery(undefined, {
+    enabled: !!currentUser,
+  });
+
+  const { cosmeticStoreLastViewed: lastViewed } = data ?? {
+    cosmeticStoreLastViewed: null,
+  };
+
+  const updateUserSettings = trpc.user.setSettings.useMutation({
+    onError(_error, _payload, context) {
+      // Simply ignore really. We don't want to show an error notification for this.
+    },
+  });
+
+  const updateLastViewed = async () => {
+    if (!currentUser || updateUserSettings.isLoading || updateUserSettings.isSuccess) {
+      return;
+    }
+
+    updateUserSettings.mutate({
+      cosmeticStoreLastViewed: new Date(),
+    });
+  };
+
+  return {
+    lastViewed,
+    isLoading,
+    isFetched,
+    updateLastViewed,
+    updatedLastViewed: updateUserSettings.isSuccess,
+  };
+};
+
 const cosmeticShopQueryParams = z
   .object({
     cosmeticTypes: stringArray(),

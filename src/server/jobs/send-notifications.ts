@@ -35,12 +35,16 @@ export const sendNotificationsJob = createJob('send-notifications', '*/1 * * * *
           if (query) {
             const start = Date.now();
             if (isPromise(query)) query = await query;
-            query = query.replace(/;\s*$/, '') + ' RETURNING category, "userId"';
+            query = !query.includes('RETURNING') // If for any reason we're using returning inside a query this could break.
+              ? query.replace(/;\s*$/, '') + ' RETURNING category, "userId"'
+              : query;
 
             const request = await pgDbWrite.cancellableQuery<NotificationAddedRow>(query);
             e.on('cancel', request.cancel);
             const additions = await request.result();
-            counter.add(additions);
+            if (additions.length > 0) {
+              counter.add(additions);
+            }
 
             await setLastSent();
             log('sent', key, 'notifications in', (Date.now() - start) / 1000, 's');

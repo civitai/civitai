@@ -9,12 +9,15 @@ import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { stringifyAIR } from '~/utils/string-helpers';
 import { BaseModel } from '~/server/common/constants';
-import { ModelType, Prisma } from '@prisma/client';
+import { Availability, ModelType, Prisma } from '@prisma/client';
 
 const schema = z.object({ id: z.coerce.number() });
 type VersionRow = {
   id: number;
+  versionName: string;
+  availability: Availability;
   modelId: number;
+  modelName: string;
   baseModel: BaseModel;
   status: string;
   type: ModelType;
@@ -43,7 +46,15 @@ export default MixedAuthEndpoint(async function handler(
   if (!user?.isModerator) where.push(Prisma.sql`mv.status = 'Published'`);
 
   const [modelVersion] = await dbRead.$queryRaw<VersionRow[]>`
-    SELECT mv.id, "modelId", mv."baseModel", mv.status, m.type
+    SELECT
+      mv.id,
+      mv.name as "versionName",
+      "modelId",
+      m.name as "modelName",
+      mv."baseModel",
+      mv.status,
+      mv.availability,
+      m.type
     FROM "ModelVersion" mv
     JOIN "Model" m ON m.id = mv."modelId"
     WHERE ${Prisma.join(where, ' AND ')}
@@ -64,6 +75,9 @@ export default MixedAuthEndpoint(async function handler(
   const data = {
     air,
     size: primaryFile.sizeKB,
+    versionName: modelVersion.versionName,
+    modelName: modelVersion.modelName,
+    availability: modelVersion.availability,
     hashes: {},
     downloadUrls: [
       `${baseUrl.origin}${createModelFileDownloadUrl({

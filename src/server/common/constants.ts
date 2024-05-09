@@ -324,6 +324,11 @@ export const constants = {
     sectionImageHeight: 250,
     sectionImageWidth: 1288,
   },
+  cosmetics: {
+    frame: {
+      padding: 6,
+    },
+  },
 } as const;
 export const activeBaseModels = constants.baseModels.filter(
   (model) => !constants.hiddenBaseModels.includes(model)

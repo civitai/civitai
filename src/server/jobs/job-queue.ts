@@ -1,6 +1,6 @@
 import { dbRead, dbWrite } from '~/server/db/client';
 import { createJob } from './job';
-import { EntityType, JobQueueType } from '@prisma/client';
+import { EntityType, JobQueueType, Prisma } from '@prisma/client';
 import {
   getNsfwLevelRelatedEntities,
   updateNsfwLevels,
@@ -132,10 +132,11 @@ const handleJobQueueCleanIfEmpty = createJob(
     //handle cleanup
     const cleanupPosts = () =>
       chunk(jobQueueIds.postIds, batchSize).map((ids) => async () => {
+        if (!ids.length) return;
         // Delete posts that have no images
         await dbWrite.$executeRaw`
           DELETE FROM "Post" p
-          WHERE id IN (${ids}) AND NOT EXISTS (
+          WHERE id IN (${Prisma.join(ids)}) AND NOT EXISTS (
             SELECT 1 FROM "Image" WHERE "postId" = p.id
           )
         `;

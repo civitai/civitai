@@ -323,6 +323,9 @@ const formatGenerationRequests = async (requests: Generation.Api.RequestProps[])
         baseModel,
         negativePrompt,
         seed: params.seed === -1 ? undefined : params.seed,
+        sampler: Object.entries(samplersToSchedulers).find(
+          ([sampler, scheduler]) => scheduler === params.scheduler
+        )?.[0],
       },
       resources: assets
         .map((assetId): Generation.Resource | undefined => {
@@ -709,9 +712,9 @@ export const createGenerationRequest = async ({
   const isPromptNsfw = includesNsfw(params.prompt);
   nsfw ??= isPromptNsfw !== false;
 
-  // Disable nsfw if the prompt contains poi/minor words
-  const hasPoi = includesPoi(params.prompt) || resourceData.some((x) => x.model.poi);
-  if (hasPoi || includesMinor(params.prompt)) nsfw = false;
+  // Disable nsfw if the prompt contains minor words
+  // POI is handled via SPMs within the worker
+  if (includesMinor(params.prompt)) nsfw = false;
 
   const negativePrompts = [negativePrompt ?? ''];
   if (!nsfw && status.sfwEmbed) {
@@ -1182,10 +1185,10 @@ export const textToImageTestRun = async ({
     sampler = draftData.sampler;
   }
 
+  const isSd1 = baseModel === 'SD1';
   const response = await orchestratorCaller.textToImage({
     payload: {
-      // Civitai SDXL - Irrelevant, not used for cost calculation.
-      model: '@civitai/128078',
+      model: isSd1 ? `@civitai/128713` : '@civitai/128078',
       baseModel: baseModelToOrchestration[baseModel as BaseModelSetType],
       properties: {},
       quantity: quantity,

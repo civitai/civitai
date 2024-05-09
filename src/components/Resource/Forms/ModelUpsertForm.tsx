@@ -25,6 +25,7 @@ import {
   Form,
   InputCheckbox,
   InputCheckboxGroup,
+  InputMultiSelect,
   InputRTE,
   InputSegmentedControl,
   InputSelect,
@@ -44,6 +45,7 @@ import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 
 import { ModelById } from '~/types/router';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { isDefined } from '~/utils/type-guards';
 
 const schema = modelUpsertSchema
   .extend({
@@ -77,10 +79,7 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
   const result = querySchema.safeParse(router.query);
   const currentUser = useCurrentUser();
 
-  const lockedPropertiesRef = useRef<string[]>(model?.lockedProperties ?? []);
-  const canEditNsfw = !currentUser?.isModerator ? !model?.lockedProperties?.includes('nsfw') : true;
-  const canEditPoi = !currentUser?.isModerator ? !model?.lockedProperties?.includes('poi') : true;
-
+  const lockableProperties = ['nsfw', 'poi', 'category'];
   const defaultCategory = result.success ? result.data.category : undefined;
   const defaultValues: z.infer<typeof schema> = {
     ...model,
@@ -154,30 +153,24 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
         tagsOnModels && selectedCategory ? tagsOnModels.concat([selectedCategory]) : tagsOnModels;
       upsertModelMutation.mutate({
         ...rest,
-        nsfw: canEditNsfw ? rest?.nsfw : undefined,
-        poi: canEditPoi ? rest?.poi : undefined,
         tagsOnModels: tags,
         templateId,
         bountyId,
-        lockedProperties: lockedPropertiesRef.current,
       });
     } else onSubmit(defaultValues);
   };
 
   useEffect(() => {
-    if (currentUser?.isModerator) {
-      if (nsfw)
-        lockedPropertiesRef.current = [...new Set([...lockedPropertiesRef.current, 'nsfw'])];
-      else lockedPropertiesRef.current = lockedPropertiesRef.current.filter((x) => x !== 'nsfw');
-    }
-  }, [currentUser?.isModerator, nsfw]);
-
-  useEffect(() => {
-    if (currentUser?.isModerator) {
-      if (poi) lockedPropertiesRef.current = [...new Set([...lockedPropertiesRef.current, 'poi'])];
-      else lockedPropertiesRef.current = lockedPropertiesRef.current.filter((x) => x !== 'poi');
-    }
-  }, [currentUser?.isModerator, poi]);
+    const subscription = form.watch((value, { name, type }) => {
+      if (name && lockableProperties.includes(name) && !value.lockedProperties?.includes(name)) {
+        const locked = (value.lockedProperties ?? []).filter(isDefined);
+        form.setValue('lockedProperties', [...locked, name]);
+      }
+    });
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, []); // eslint-disable-line
 
   useEffect(() => {
     if (model)
@@ -189,6 +182,14 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [defaultCategory, model]);
+
+  function isLocked(key: string) {
+    return !currentUser?.isModerator ? model?.lockedProperties?.includes(key) : false;
+  }
+
+  function isLockedDescription(key: string, defaultDescription?: string) {
+    return model?.lockedProperties?.includes(key) ? 'Locked by moderator' : defaultDescription;
+  }
 
   return (
     <Form form={form} onSubmit={handleSubmit}>
@@ -244,6 +245,8 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
             </Stack>
             <InputSelect
               name="category"
+              disabled={isLocked('category')}
+              description={isLockedDescription('category')}
               label={
                 <Group spacing={4} noWrap>
                   <Input.Label>Category</Input.Label>
@@ -365,16 +368,29 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                 <InputCheckbox
                   name="poi"
                   label="Depicts an actual person"
-                  description="For Example: Tom Cruise or Tom Cruise as Maverick"
-                  disabled={!canEditPoi}
+                  description={isLockedDescription(
+                    'category',
+                    'For Example: Tom Cruise or Tom Cruise as Maverick'
+                  )}
+                  disabled={isLocked('poi')}
                 />
                 <InputCheckbox
                   name="nsfw"
                   label="Is intended to produce mature themes"
-                  disabled={!canEditNsfw}
+                  disabled={isLocked('nsfw')}
+                  description={isLockedDescription('category')}
                 />
               </Stack>
             </Paper>
+            {currentUser?.isModerator && (
+              <Paper radius="md" p="xl" withBorder>
+                <InputMultiSelect
+                  name="lockedProperties"
+                  label="Locked properties"
+                  data={lockableProperties}
+                />
+              </Paper>
+            )}
             {hasPoiInNsfw && (
               <>
                 <Alert color="red" pl={10}>

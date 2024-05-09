@@ -1251,21 +1251,19 @@ const prepareModelVersions = (versions: ModelInput['modelVersions']) => {
   });
 };
 
-export const upsertModel = async ({
-  id,
-  tagsOnModels,
-  userId,
-  templateId,
-  bountyId,
-  meta,
-  isModerator,
-  ...data
-}: // TODO.manuel: hardcoding meta type since it causes type issues in lots of places if we set it in the schema
-ModelUpsertInput & {
-  userId: number;
-  meta?: Prisma.ModelCreateInput['meta'];
-  isModerator?: boolean;
-}) => {
+export const upsertModel = async (
+  input: ModelUpsertInput & {
+    userId: number;
+    meta?: Prisma.ModelCreateInput['meta']; // TODO.manuel: hardcoding meta type since it causes type issues in lots of places if we set it in the schema
+    isModerator?: boolean;
+  }
+) => {
+  if (!input.isModerator) {
+    for (const key of input.lockedProperties ?? []) delete input[key as keyof typeof input];
+  }
+
+  const { id, tagsOnModels, userId, templateId, bountyId, meta, isModerator, ...data } = input;
+
   // don't allow updating of locked properties
   if (!isModerator) {
     const lockedProperties = data.lockedProperties ?? [];

@@ -10,6 +10,9 @@ import {
   Group,
   Button,
   Loader,
+  ActionIcon,
+  Anchor,
+  UnstyledButton,
 } from '@mantine/core';
 import { CosmeticType } from '@prisma/client';
 import { useRouter } from 'next/router';
@@ -28,6 +31,8 @@ import { CosmeticShopItemGetById } from '~/types/router';
 import { showSuccessNotification } from '~/utils/notifications';
 import { getDisplayName } from '~/utils/string-helpers';
 import { IconAlertTriangleFilled } from '@tabler/icons-react';
+import dayjs from 'dayjs';
+import { NotificationToggle } from '~/components/Notifications/NotificationToggle';
 
 type Props = { shopItem: CosmeticShopItemGetById };
 
@@ -94,6 +99,22 @@ export const CosmeticShopItemPurchaseCompleteModal = ({
           <Button radius="xl" mx="auto" onClick={handleApplyDecoration} loading={isLoading}>
             {cosmetic.type === CosmeticType.ContentDecoration ? 'Go to my profile' : 'Apply now'}
           </Button>
+          <NotificationToggle type="cosmetic-shop-item-added-to-section">
+            {({ onToggle, isEnabled }) =>
+              isEnabled ? null : (
+                <Group>
+                  <Text size="xs" align="center">
+                    Do not miss out on new items in the shop!
+                    <UnstyledButton onClick={onToggle}>
+                      <Text size="xs" component="span" color="blue">
+                        Click here to Enable notifications
+                      </Text>
+                    </UnstyledButton>
+                  </Text>
+                </Group>
+              )
+            }
+          </NotificationToggle>
         </Stack>
       </Stack>
     </Modal>
@@ -111,6 +132,9 @@ export const CosmeticShopItemPreviewModal = ({ shopItem }: Props) => {
     .flat()
     .some(({ id }) => id === cosmetic.id);
   const canPurchase = cosmetic.type === CosmeticType.ContentDecoration || !hasCosmetic;
+  const isAvailable =
+    (shopItem.availableQuantity === null || shopItem.availableQuantity > 0) &&
+    (shopItem.availableFrom === null || dayjs(shopItem.availableFrom).isBefore(dayjs()));
 
   const handlePurchaseShopItem = async () => {
     try {
@@ -157,9 +181,12 @@ export const CosmeticShopItemPreviewModal = ({ shopItem }: Props) => {
       <Grid m={0}>
         <Grid.Col span={12} md={5} className={classes.sample}>
           <Stack spacing="lg" px="md" h="100%">
-            <Text className={classes.text} size="sm">
-              {getDisplayName(cosmetic.type)}
-            </Text>
+            <Group position="apart" noWrap>
+              <Text className={classes.text} size="sm">
+                {getDisplayName(cosmetic.type)}
+              </Text>
+              <CloseButton className="show-mobile" onClick={dialog.onClose} />
+            </Group>
             <Center my="auto" h={250}>
               <CosmeticSample cosmetic={cosmetic} size="lg" />
             </Center>
@@ -175,7 +202,7 @@ export const CosmeticShopItemPreviewModal = ({ shopItem }: Props) => {
               <>
                 {canPurchase ? (
                   <BuzzTransactionButton
-                    disabled={purchasingShopItem}
+                    disabled={purchasingShopItem || !isAvailable}
                     loading={purchasingShopItem}
                     buzzAmount={shopItem.unitAmount}
                     radius="xl"
@@ -210,7 +237,7 @@ export const CosmeticShopItemPreviewModal = ({ shopItem }: Props) => {
           </Stack>
         </Grid.Col>
         <Grid.Col span={12} md={7} className={classes.preview}>
-          <Stack spacing={0} h={0} align="flex-end">
+          <Stack spacing={0} h={0} align="flex-end" className="hide-mobile">
             <CloseButton onClick={dialog.onClose} />
           </Stack>
           <Stack px="md" h="100%" justify="center">
