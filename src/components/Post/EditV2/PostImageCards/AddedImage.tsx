@@ -459,7 +459,7 @@ function EditDetail() {
                   </Button>
                 </ImageToolsPopover>
               </div>
-              {!!image.tools.length && (
+              {!!image.tools?.length && (
                 <ul className="flex flex-col">
                   {sortAlphabeticallyBy([...image.tools], (x) => x.name).map((tool, index) => (
                     <li key={tool.id} className="list-none">

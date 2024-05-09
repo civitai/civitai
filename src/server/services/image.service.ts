@@ -605,7 +605,9 @@ export const getAllImages = async ({
   }
 
   if (include.includes('meta')) {
-    AND.push(Prisma.sql`NOT (i.meta IS NULL OR jsonb_typeof(i.meta) = 'null')`);
+    AND.push(
+      Prisma.sql`NOT (i.meta IS NULL OR jsonb_typeof(i.meta) = 'null' OR i."hideMeta" = TRUE)`
+    );
   }
 
   if (fromPlatform) {
