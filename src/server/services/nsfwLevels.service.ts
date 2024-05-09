@@ -359,6 +359,7 @@ export async function updateModelNsfwLevels(modelIds: number[]) {
         bit_or(mv."nsfwLevel") "nsfwLevel"
       FROM "ModelVersion" mv
       WHERE mv."modelId" IN (${Prisma.join(modelIds)})
+      AND mv.status = 'Published'
       GROUP BY mv."modelId"
     )
     UPDATE "Model" m
