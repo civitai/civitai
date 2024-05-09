@@ -35,7 +35,8 @@ import { commaDelimitedStringArray } from '~/utils/zod-helpers';
 
 const TRANSMITTER_KEY = 'post-intent';
 const DETAIL_LIMIT = 10;
-const allowedHosts: string[] = ['localhost:3000'];
+// TODO change these
+const allowedHosts: string[] = ['localhost:3000', 'dev.civitai.com', 'civitai.com'];
 
 const postQuerySchema = z.object({
   /**
