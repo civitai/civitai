@@ -1,6 +1,8 @@
 import { TRPCError } from '@trpc/server';
 import { env } from '~/env/server.mjs';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { eventEngine } from '~/server/events';
+import { userMultipliersCache } from '~/server/redis/caches';
 import {
   BuzzAccountType,
   CompleteStripeBuzzPurchaseTransactionInput,
@@ -21,14 +23,9 @@ import {
   withRetries,
 } from '~/server/utils/errorHandling';
 import { getServerStripe } from '~/server/utils/get-server-stripe';
+import { stripTime } from '~/utils/date-helpers';
 import { QS } from '~/utils/qs';
 import { getUsers } from './user.service';
-import { stripTime } from '~/utils/date-helpers';
-import { eventEngine } from '~/server/events';
-import { REDIS_KEYS } from '~/server/redis/client';
-import { CacheTTL } from '~/server/common/constants';
-import { bustCachedArray, cachedObject } from '~/server/utils/cache-helpers';
-import { Prisma } from '@prisma/client';
 
 type AccountType = 'User';
 
@@ -60,52 +57,17 @@ export async function getUserBuzzAccount({ accountId, accountType }: GetUserBuzz
   );
 }
 
-type CachedUserMultiplier = {
-  userId: number;
-  rewardsMultiplier: number;
-  purchasesMultiplier: number;
-};
-export async function getMultipliersForUserCache(userIds: number[]) {
-  return await cachedObject<CachedUserMultiplier>({
-    key: REDIS_KEYS.CACHES.MULTIPLIERS_FOR_USER,
-    idKey: 'userId',
-    ids: userIds,
-    ttl: CacheTTL.day,
-    lookupFn: async (ids) => {
-      if (ids.length === 0) return {};
-
-      const multipliers = await dbRead.$queryRaw<CachedUserMultiplier[]>`
-        SELECT
-          cs."userId",
-          COALESCE((p.metadata->>'rewardsMultiplier')::float, 1) as "rewardsMultiplier",
-          COALESCE((p.metadata->>'purchasesMultiplier')::float, 1) as "purchasesMultiplier"
-        FROM "CustomerSubscription" cs
-        JOIN "Product" p ON p.id = cs."productId"
-        WHERE cs."userId" IN (${Prisma.join(ids)});
-      `;
-
-      const records: Record<number, CachedUserMultiplier> = Object.fromEntries(
-        multipliers.map((m) => [m.userId, m])
-      );
-      for (const userId of ids) {
-        if (records[userId]) continue;
-        records[userId] = { userId, rewardsMultiplier: 1, purchasesMultiplier: 1 };
-      }
-
-      return records;
-    },
-  });
+export function getMultipliersForUserCache(userIds: number[]) {
+  return userMultipliersCache.fetch(userIds);
 }
-
 export async function getMultipliersForUser(userId: number, refresh = false) {
   if (refresh) await deleteMultipliersForUserCache(userId);
 
   const multipliers = await getMultipliersForUserCache([userId]);
   return multipliers[userId];
 }
-
-export async function deleteMultipliersForUserCache(userId: number) {
-  await bustCachedArray(REDIS_KEYS.CACHES.MULTIPLIERS_FOR_USER, 'userId', userId);
+export function deleteMultipliersForUserCache(userId: number) {
+  return userMultipliersCache.bust(userId);
 }
 
 export async function getUserBuzzTransactions({

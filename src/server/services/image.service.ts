@@ -7,8 +7,6 @@ import {
   ReportReason,
   ReportStatus,
   ReviewReactions,
-  TagSource,
-  TagType,
 } from '@prisma/client';
 
 import { TRPCError } from '@trpc/server';
@@ -17,45 +15,65 @@ import { SessionUser } from 'next-auth';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server.mjs';
 import { VotableTagModel } from '~/libs/tags';
-import { BlockedReason, ImageScanType, ImageSort, NsfwLevel } from '~/server/common/enums';
+import { purgeCache } from '~/server/cloudflare/client';
+import { CacheTTL, constants } from '~/server/common/constants';
+import {
+  BlockedReason,
+  ImageScanType,
+  ImageSort,
+  NsfwLevel,
+  SearchIndexUpdateQueueAction,
+} from '~/server/common/enums';
+import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { redis, REDIS_KEYS } from '~/server/redis/client';
+import { pgDbRead } from '~/server/db/pgDb';
+import { postMetrics } from '~/server/metrics';
+import { leakingContentCounter } from '~/server/prom/client';
+import { imagesForModelVersionsCache, tagIdsForImagesCache } from '~/server/redis/caches';
+import { REDIS_KEYS } from '~/server/redis/client';
+import { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
 import {
-  GetByIdInput,
-  InfiniteQueryInput,
-  PaginationInput,
-  UserPreferencesInput,
-} from '~/server/schema/base.schema';
-import {
+  AddOrRemoveImageToolsOutput,
   CreateImageSchema,
   GetEntitiesCoverImage,
   GetInfiniteImagesOutput,
   ImageEntityType,
+  ImageRatingReviewOutput,
   ImageReviewQueueInput,
   ImageUploadProps,
-  UpdateImageNsfwLevelOutput,
-  UpdateImageInput,
-  ImageRatingReviewOutput,
   ReportCsamImagesInput,
-  AddOrRemoveImageToolsOutput,
+  UpdateImageInput,
+  UpdateImageNsfwLevelOutput,
   UpdateImageToolsOutput,
   AddOrRemoveImageTechniquesOutput,
   UpdateImageTechniqueOutput,
 } from '~/server/schema/image.schema';
-import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { articlesSearchIndex, imagesSearchIndex } from '~/server/search-index';
+import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
+import { ImageResourceHelperModel } from '~/server/selectors/image.selector';
 import { ImageV2Model } from '~/server/selectors/imagev2.selector';
 import { imageTagCompositeSelect, simpleTagSelect } from '~/server/selectors/tag.selector';
+import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
+import { trackModActivity } from '~/server/services/moderator.service';
 import { bustCachesForPost, updatePostNsfwLevel } from '~/server/services/post.service';
+import { bulkSetReportStatus } from '~/server/services/report.service';
 import { getModeratedTags, getTagsNeedingReview } from '~/server/services/system-cache';
+import { getVotableTags2 } from '~/server/services/tag.service';
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { getPeriods } from '~/server/utils/enum-helpers';
 import {
   throwAuthorizationError,
   throwBadRequestError,
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { getCursor } from '~/server/utils/pagination-helpers';
+import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { Flags } from '~/shared/utils';
 import { logToDb } from '~/utils/logging';
+import { promptWordReplace } from '~/utils/metadata/audit';
+import { baseS3Client } from '~/utils/s3-client';
 import { isDefined } from '~/utils/type-guards';
 import {
   GetImageInput,
@@ -65,29 +83,6 @@ import {
   ingestImageSchema,
   isImageResource,
 } from './../schema/image.schema';
-import { ImageResourceHelperModel } from '~/server/selectors/image.selector';
-import { purgeCache } from '~/server/cloudflare/client';
-import { limitConcurrency } from '~/server/utils/concurrency-helpers';
-import { promptWordReplace } from '~/utils/metadata/audit';
-import { getCursor, getPagination } from '~/server/utils/pagination-helpers';
-import { bustCachedArray, cachedObject, queryCache } from '~/server/utils/cache-helpers';
-import { CacheTTL, constants } from '~/server/common/constants';
-import { getPeriods } from '~/server/utils/enum-helpers';
-import { bulkSetReportStatus } from '~/server/services/report.service';
-import { baseS3Client } from '~/utils/s3-client';
-import { pgDbRead, pgDbWrite } from '~/server/db/pgDb';
-import { getImageGenerationProcess } from '~/server/common/model-helpers';
-import { trackModActivity } from '~/server/services/moderator.service';
-import {
-  nsfwBrowsingLevelsArray,
-  sfwBrowsingLevelsFlag,
-} from '~/shared/constants/browsingLevel.constants';
-import { getVotableTags2 } from '~/server/services/tag.service';
-import { Flags } from '~/shared/utils';
-import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
-import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
-import { leakingContentCounter } from '~/server/prom/client';
-import { postMetrics } from '~/server/metrics';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -1087,30 +1082,14 @@ export const getAllImages = async ({
   };
 };
 
-async function tagLookup(imageId: number | number[], fromWrite = false) {
-  const imageIds = Array.isArray(imageId) ? imageId : [imageId];
-  const db = fromWrite ? dbWrite : dbRead;
-  const tags = await db.tagsOnImage.findMany({
-    where: { imageId: { in: imageIds }, disabled: false },
-    select: { tagId: true, imageId: true },
-  });
-
-  const result = tags.reduce((acc, { tagId, imageId }) => {
-    acc[imageId.toString()] ??= { imageId, tags: [] };
-    acc[imageId.toString()].tags.push(tagId);
-    return acc;
-  }, {} as Record<string, { imageId: number; tags: number[] }>);
-  return result;
-}
-
 export async function getTagIdsForImages(imageIds: number[]) {
-  return await cachedObject<{ imageId: number; tags: number[] }>({
-    key: REDIS_KEYS.TAG_IDS_FOR_IMAGES,
-    idKey: 'imageId',
-    ids: imageIds,
-    ttl: CacheTTL.day,
-    lookupFn: tagLookup,
-  });
+  return await tagIdsForImagesCache.fetch(imageIds);
+}
+export async function clearImageTagIdsCache(imageId: number | number[]) {
+  await tagIdsForImagesCache.bust(imageId);
+}
+export async function updateImageTagIdsForImages(imageId: number | number[]) {
+  await tagIdsForImagesCache.refresh(imageId);
 }
 
 export async function getTagNamesForImages(imageIds: number[]) {
@@ -1141,27 +1120,6 @@ export async function getResourceIdsForImages(imageIds: number[]) {
     return acc;
   }, {} as Record<number, number[]>);
   return imageResources;
-}
-
-export async function clearImageTagIdsCache(imageId: number | number[]) {
-  const imageIds = Array.isArray(imageId) ? imageId : [imageId];
-  if (!imageIds.length) return;
-
-  await redis.hDel(
-    REDIS_KEYS.TAG_IDS_FOR_IMAGES,
-    imageIds.map((x) => x.toString())
-  );
-}
-
-export async function updateImageTagIdsForImages(imageId: number | number[]) {
-  const results = await tagLookup(imageId, true);
-  if (Object.keys(results).length === 0) return;
-
-  const cachedAt = Date.now();
-  const toCache = Object.fromEntries(
-    Object.entries(results).map(([key, x]) => [key, JSON.stringify({ ...x, cachedAt })])
-  );
-  await redis.hSet(REDIS_KEYS.TAG_IDS_FOR_IMAGES, toCache);
 }
 
 type GetImageRaw = GetAllImagesRaw & {
@@ -1329,7 +1287,7 @@ export const getImageResources = async ({ id }: GetByIdInput) => {
   return resources;
 };
 
-type ImagesForModelVersions = {
+export type ImagesForModelVersions = {
   id: number;
   userId: number;
   name: string;
@@ -1518,42 +1476,11 @@ export const getImagesForModelVersion = async ({
   return images;
 };
 
-type CachedImagesForModelVersions = {
-  modelVersionId: number;
-  images: ImagesForModelVersions[];
-};
 export async function getImagesForModelVersionCache(modelVersionIds: number[]) {
-  return await cachedObject<CachedImagesForModelVersions>({
-    key: REDIS_KEYS.IMAGES_FOR_MODEL_VERSION,
-    idKey: 'modelVersionId',
-    ids: modelVersionIds,
-    ttl: CacheTTL.sm,
-    lookupFn: async (ids) => {
-      const images = await getImagesForModelVersion({ modelVersionIds: ids, imagesPerVersion: 20 });
-
-      const records: Record<number, CachedImagesForModelVersions> = {};
-      for (const image of images) {
-        if (!records[image.modelVersionId])
-          records[image.modelVersionId] = { modelVersionId: image.modelVersionId, images: [] };
-        records[image.modelVersionId].images.push(image);
-      }
-
-      return records;
-    },
-    appendFn: async (records) => {
-      const imageIds = [...records].flatMap((x) => x.images.map((i) => i.id));
-      const tagIdsVar = await getTagIdsForImages(imageIds);
-      for (const entry of records) {
-        for (const image of entry.images) {
-          image.tags = tagIdsVar?.[image.id]?.tags;
-        }
-      }
-    },
-  });
+  return await imagesForModelVersionsCache.fetch(modelVersionIds);
 }
-
 export async function deleteImagesForModelVersionCache(modelVersionId: number) {
-  await bustCachedArray(REDIS_KEYS.IMAGES_FOR_MODEL_VERSION, 'modelVersionId', modelVersionId);
+  await imagesForModelVersionsCache.bust(modelVersionId);
 }
 
 export const getImagesForPosts = async ({

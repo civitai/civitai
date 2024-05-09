@@ -47,6 +47,13 @@ body {
   .show-mobile {
     display: block;
   }
+
+  .notifications-container {
+    top: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    bottom: unset;
+  }
 }
 
 a {

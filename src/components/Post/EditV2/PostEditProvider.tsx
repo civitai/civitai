@@ -164,6 +164,14 @@ export function PostEditProvider({ post, params = {}, children, ...extendedParam
         console.log('browse away');
         await queryUtils.post.get.invalidate({ id: postId });
         await queryUtils.post.getEdit.invalidate({ id: postId });
+        // await queryUtils.post.getEdit.setData({ id: postId }, (old) => {
+        //   const { post, images } = store.getState();
+        //   return {
+        //     ...old,
+        //     ...(post as PostDetailEditable),
+        //     images: images.map((x) => (x.type === 'added' ? x.data : undefined)).filter(isDefined),
+        //   };
+        // });
         await queryUtils.post.getInfinite.invalidate();
         await queryUtils.image.getInfinite.invalidate({ postId });
         if (modelVersionId) {
@@ -174,11 +182,11 @@ export function PostEditProvider({ post, params = {}, children, ...extendedParam
       }
     };
 
-    Router.events.on('routeChangeComplete', handleBrowsingAway);
+    Router.events.on('routeChangeStart', handleBrowsingAway);
     return () => {
-      Router.events.off('routeChangeComplete', handleBrowsingAway);
+      Router.events.off('routeChangeStart', handleBrowsingAway);
     };
-  }, [modelVersionId, modelId, postId]); // eslint-disable-line
+  }, [modelVersionId, modelId, postId, post]); // eslint-disable-line
 
   return (
     <StoreContext.Provider value={store}>

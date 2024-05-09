@@ -1,13 +1,5 @@
-import dayjs from 'dayjs';
 import { NextApiRequest, NextApiResponse } from 'next';
-import { dbRead } from '~/server/db/client';
-import { eventEngine } from '~/server/events';
-import ncmecCaller from '~/server/http/ncmec/ncmec.caller';
-import { REDIS_KEYS } from '~/server/redis/client';
-import { getTopContributors } from '~/server/services/buzz.service';
 import { deleteImagesForModelVersionCache } from '~/server/services/image.service';
-import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
-import { bustCachedArray } from '~/server/utils/cache-helpers';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {

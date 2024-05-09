@@ -1,20 +1,10 @@
 import { Prisma } from '@prisma/client';
-import { CacheTTL } from '~/server/common/constants';
-import { dbRead, dbWrite } from '~/server/db/client';
-import { REDIS_KEYS } from '~/server/redis/client';
+import { dbWrite } from '~/server/db/client';
+import { filesForModelVersionCache } from '~/server/redis/caches';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { ModelFileCreateInput, ModelFileUpdateInput } from '~/server/schema/model-file.schema';
-import { ModelFileModel, modelFileSelect } from '~/server/selectors/modelFile.selector';
-import { bustCachedArray, cachedObject } from '~/server/utils/cache-helpers';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { prepareFile } from '~/utils/file-helpers';
-
-export const getFilesByVersionIds = ({ ids }: { ids: number[] }) => {
-  return dbRead.modelFile.findMany({
-    where: { modelVersionId: { in: ids } },
-    select: modelFileSelect,
-  });
-};
 
 export function reduceToBasicFileMetadata(
   metadataRaw: Prisma.JsonValue | BasicFileMetadata
@@ -28,43 +18,11 @@ export function reduceToBasicFileMetadata(
   };
 }
 
-type CacheFilesForModelVersions = {
-  modelVersionId: number;
-  files: ModelFileModel[];
-};
 export async function getFilesForModelVersionCache(modelVersionIds: number[]) {
-  return await cachedObject<CacheFilesForModelVersions>({
-    key: REDIS_KEYS.CACHES.FILES_FOR_MODEL_VERSION,
-    idKey: 'modelVersionId',
-    ids: modelVersionIds,
-    ttl: CacheTTL.sm,
-    lookupFn: async (ids) => {
-      let files = await getFilesByVersionIds({ ids });
-      files =
-        files?.map(({ metadata, ...file }) => {
-          return {
-            ...file,
-            metadata: reduceToBasicFileMetadata(metadata),
-          };
-        }) ?? [];
-
-      const records: Record<number, CacheFilesForModelVersions> = {};
-      for (const file of files) {
-        if (!records[file.modelVersionId])
-          records[file.modelVersionId] = { modelVersionId: file.modelVersionId, files: [] };
-        records[file.modelVersionId].files.push(file);
-      }
-      return records;
-    },
-  });
+  return await filesForModelVersionCache.fetch(modelVersionIds);
 }
-
 export async function deleteFilesForModelVersionCache(modelVersionId: number) {
-  await bustCachedArray(
-    REDIS_KEYS.CACHES.FILES_FOR_MODEL_VERSION,
-    'modelVersionId',
-    modelVersionId
-  );
+  await filesForModelVersionCache.bust(modelVersionId);
 }
 
 export async function createFile<TSelect extends Prisma.ModelFileSelect>({
