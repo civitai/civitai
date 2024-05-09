@@ -56,7 +56,6 @@ async function getPostConnectedEntities(postIds: number[]) {
       where: { postId: { in: postIds } },
       select: { collectionId: true },
     }),
-    ,
   ]);
 
   return {
