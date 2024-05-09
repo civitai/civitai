@@ -33,6 +33,7 @@ export const comfyMetaSchema = z
   })
   .partial();
 
+// TODO do we need mediaUrl in here to confirm?
 export const externalMetaSchema = z.object({
   /**
    * Name and/or homepage for your service
@@ -53,15 +54,15 @@ export const externalMetaSchema = z.object({
    * Key-value object for custom parameters specific to your service.
    * Limited to 10 props
    */
-  details: z.record(z.string(), z.string()).optional(), // TODO string or number here?
+  details: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional(),
   /**
    * Link back to the URL used to create the media
    */
-  createUrl: z.string().optional(),
+  createUrl: z.string().url().optional(),
   /**
    * URL to link back to the source of the media
    */
-  referenceUrl: z.string().url().optional(), // TODO move this out to details?
+  referenceUrl: z.string().url().optional(),
 });
 export type ExternalMetaSchema = z.infer<typeof externalMetaSchema>;
 

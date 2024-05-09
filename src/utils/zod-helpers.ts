@@ -1,8 +1,6 @@
-import { z, ZodNumber, ZodArray } from 'zod';
-import { parseNumericString, parseNumericStringArray } from '~/utils/query-string-helpers';
+import { z, ZodArray, ZodNumber } from 'zod';
 import { sanitizeHtml, santizeHtmlOptions } from '~/utils/html-helpers';
-import { isNumeric } from '~/utils/number-helpers';
-import { defaultsDeep } from 'lodash-es';
+import { parseNumericString, parseNumericStringArray } from '~/utils/query-string-helpers';
 
 /** Converts a string to a number */
 export function numericString<I extends ZodNumber>(schema?: I) {

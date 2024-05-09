@@ -29,6 +29,7 @@ import {
   ingestImage,
 } from '~/server/services/image.service';
 import { findOrCreateTagsByName, getVotableImageTags } from '~/server/services/tag.service';
+import { getToolByDomain, getToolByName } from '~/server/services/tool.service';
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
 import { bustCacheTag, queryCache } from '~/server/utils/cache-helpers';
 import {
@@ -631,12 +632,24 @@ export const addPostImage = async ({
   user,
   ...props
 }: AddPostImageInput & { user: SessionUser }) => {
+  let toolId: number | undefined;
+  const { name: sourceName, homepage: sourceHomepage } = meta?.external?.source ?? {};
+  if (sourceName || sourceHomepage) {
+    if (sourceName) {
+      toolId = (await getToolByName(sourceName))?.id;
+    }
+    if (sourceHomepage && !toolId) {
+      toolId = (await getToolByDomain(sourceHomepage))?.id;
+    }
+  }
+
   const partialResult = await dbWrite.image.create({
     data: {
       ...props,
       userId: user.id,
       meta: meta !== null ? (meta as Prisma.JsonObject) : Prisma.JsonNull,
       generationProcess: meta ? getImageGenerationProcess(meta as Prisma.JsonObject) : null,
+      tools: toolId ? { create: { toolId } } : undefined,
     },
     select: { id: true },
   });

@@ -353,6 +353,7 @@ export const zipModelFileTypes: ModelFileFormat[] = ['Core ML', 'Diffusers', 'ON
 export type ZipModelFileType = (typeof zipModelFileTypes)[number];
 
 export const POST_IMAGE_LIMIT = 20;
+export const POST_TAG_LIMIT = 5;
 export const CAROUSEL_LIMIT = 20;
 export const DEFAULT_EDGE_IMAGE_WIDTH = 450;
 

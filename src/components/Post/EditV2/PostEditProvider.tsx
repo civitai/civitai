@@ -161,7 +161,7 @@ export function PostEditProvider({ post, params = {}, children, ...extendedParam
   useEffect(() => {
     const handleBrowsingAway = async () => {
       if (postId) {
-        console.log('browse away');
+        // console.log('browse away');
         await queryUtils.post.get.invalidate({ id: postId });
         await queryUtils.post.getEdit.invalidate({ id: postId });
         await queryUtils.post.getInfinite.invalidate();

@@ -17,7 +17,7 @@ import { useRouter } from 'next/router';
 import React, { useEffect, useState } from 'react';
 import { z } from 'zod';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { constants } from '~/server/common/constants';
+import { constants, POST_TAG_LIMIT } from '~/server/common/constants';
 import { IMAGE_MIME_TYPE, MEDIA_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
 import { externalMetaSchema } from '~/server/schema/image.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -58,6 +58,7 @@ const postQuerySchema = z.object({
   detailsUrl: z.string().url().optional(),
   /**
    * Tags to apply to the post (comma delimited)
+   * Maximum of 5
    */
   tags: commaDelimitedStringArray().optional(),
 });
@@ -179,6 +180,26 @@ export default function IntentPost() {
       return;
     }
 
+    const { data } = queryParse;
+
+    if (data.tags && data.tags.length > POST_TAG_LIMIT) {
+      setProgress((prev) =>
+        transformProgress(prev, {
+          title: 'Parsing params',
+          status: 'failed',
+          errors: [
+            <Group key="tagfail">
+              <Code>tags</Code>
+              <Text color="dimmed" size="sm">
+                Maximum of {POST_TAG_LIMIT} tags allowed (found {data.tags!.length})
+              </Text>
+            </Group>,
+          ],
+        })
+      );
+      return;
+    }
+
     setProgress((prev) =>
       transformProgress(prev, {
         title: 'Parsing params',
@@ -186,8 +207,6 @@ export default function IntentPost() {
         errors: [],
       })
     );
-
-    const { data } = queryParse;
 
     const fetchBlob = async (src: string) => {
       let blob;
@@ -344,6 +363,12 @@ export default function IntentPost() {
         );
         return false;
       }
+
+      // TODO it is possible we will eventually want to do some test of mediaUrl domain = detailsUrl domain
+      //  but that can cause problems for different cdns vs apis.
+      //  Another option is putting the mediaUrl into the detailsUrl structure
+      //  but that can impose extra work if the partner just wants to put their name and homepage on everything
+      //  and not worry about having to modify the API to include each URL
 
       const { data: detailData } = detailParse;
 
