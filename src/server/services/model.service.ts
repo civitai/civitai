@@ -1883,7 +1883,7 @@ export const getGalleryHiddenPreferences = async ({
 }: {
   settings: ModelGallerySettingsSchema;
 }) => {
-  const { tags, users, images, level } = settings;
+  const { tags, users, images, level, pinnedPosts } = settings;
   const hiddenTags =
     tags && tags.length
       ? await dbRead.tag.findMany({
@@ -1905,6 +1905,7 @@ export const getGalleryHiddenPreferences = async ({
     hiddenUsers,
     hiddenImages: images ?? [],
     level: level ?? allBrowsingLevelsFlag,
+    pinnedPosts: pinnedPosts ?? {},
   };
 };
 

@@ -52,6 +52,7 @@ import { Flags } from '~/shared/utils';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { QS } from '~/utils/qs';
 import { ImageFiltersDropdown } from '~/components/Image/Filters/ImageFiltersDropdown';
+import { useGallerySettings } from '~/components/Image/AsPosts/gallery.utils';
 
 type ModelVersionsProps = { id: number; name: string; modelId: number };
 type ImagesAsPostsInfiniteState = {
@@ -111,7 +112,7 @@ export default function ImagesAsPostsInfinite({
   });
 
   const browsingLevel = useBrowsingLevelDebounced();
-  const { data: gallerySettings } = trpc.model.getGallerySettings.useQuery({ id: model.id });
+  const { gallerySettings } = useGallerySettings({ modelId: model.id });
   let intersection = browsingLevel;
   if (gallerySettings?.level) {
     intersection = Flags.intersection(browsingLevel, gallerySettings.level);
