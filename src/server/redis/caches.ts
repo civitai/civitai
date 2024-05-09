@@ -211,7 +211,8 @@ export const userMultipliersCache = createCachedObject<CachedUserMultiplier>({
         COALESCE((p.metadata->>'purchasesMultiplier')::float, 1) as "purchasesMultiplier"
       FROM "CustomerSubscription" cs
       JOIN "Product" p ON p.id = cs."productId"
-      WHERE cs."userId" IN (${Prisma.join(ids)});
+      WHERE cs."userId" IN (${Prisma.join(ids)})
+        AND cs."status" IN ('active', 'trialing');
     `;
 
     const records: Record<number, CachedUserMultiplier> = Object.fromEntries(

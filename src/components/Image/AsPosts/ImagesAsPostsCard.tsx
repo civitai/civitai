@@ -147,10 +147,10 @@ export function ImagesAsPostsCard({
       : false;
     const alreadyPinned =
       gallerySettings && image.postId
-        ? gallerySettings.pinnedPosts[currentModelVersionId]?.includes(image.postId)
+        ? gallerySettings.pinnedPosts?.[currentModelVersionId]?.includes(image.postId)
         : false;
     const maxedOut = gallerySettings
-      ? (gallerySettings.pinnedPosts[currentModelVersionId]?.length ?? 0) >=
+      ? (gallerySettings.pinnedPosts?.[currentModelVersionId]?.length ?? 0) >=
         constants.modelGallery.maxPinnedPosts
       : false;
 
@@ -203,7 +203,7 @@ export function ImagesAsPostsCard({
 
   const isThumbsUp = !!data.review?.recommended;
   const pinned = gallerySettings
-    ? gallerySettings.pinnedPosts[currentModelVersionId]?.includes(data.postId)
+    ? gallerySettings.pinnedPosts?.[currentModelVersionId]?.includes(data.postId)
     : false;
   const isOP = data.user.id === model?.user.id;
   const carouselHeight = height - 58 - 8 - (pinned ? 0 : 0);
