@@ -141,10 +141,10 @@ export function createCachedArray<T extends object>({
     const toCache = Object.fromEntries(
       Object.entries(results).map(([key, x]) => [key, JSON.stringify({ ...x, cachedAt })])
     );
-    await redis.hSet(key, toCache);
+    if (Object.keys(toCache).length > 0) await redis.hSet(key, toCache);
 
     const toRemove = id.filter((x) => !results[x]).map(String);
-    await redis.hDel(key, toRemove);
+    if (toRemove.length > 0) await redis.hDel(key, toRemove);
   }
 
   async function cleanup() {
