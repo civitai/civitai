@@ -81,7 +81,7 @@ export const useGallerySettings = ({ modelId }: { modelId: number }) => {
                 ...pinnedPosts.postIds,
               ],
             }
-        : data?.pinnedPosts ?? [],
+        : data?.pinnedPosts ?? {},
     };
 
     return updateGallerySettingsMutation.mutateAsync({

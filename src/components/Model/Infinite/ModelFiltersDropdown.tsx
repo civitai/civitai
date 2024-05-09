@@ -116,6 +116,7 @@ export function DumbModelFiltersDropdown({
       hidden: undefined,
       archived: undefined,
       fileFormats: undefined,
+      fromPlatform: false,
       period: MetricTimeframe.AllTime,
     };
 
