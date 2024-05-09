@@ -182,9 +182,10 @@ export async function getCosmeticsForEntity({
         SELECT c.id, c.data, uc."equippedToId", uc."claimKey"
         FROM "UserCosmetic" uc
         JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
-        WHERE uc."equippedToId" IN (${Prisma.join(ids as number[])})
-              AND uc."equippedToType" = '${Prisma.raw(entity)}'::"CosmeticEntity"
-              AND c.type = 'ContentDecoration';
+        WHERE c.type = 'ContentDecoration'
+              AND uc."equippedToId" IS NOT NULL
+              AND uc."equippedToId" IN (${Prisma.join(ids as number[])})
+              AND uc."equippedToType" = '${Prisma.raw(entity)}'::"CosmeticEntity";       
       `;
       return Object.fromEntries(entityCosmetics.map((x) => [x.equippedToId, x]));
     },

@@ -427,12 +427,20 @@ const onUpdateQueueProcess = async ({ db, indexName }: { db: PrismaClient; index
 
   const batchCount = Math.ceil(queue.content.length / READ_BATCH_SIZE);
 
+  console.log(
+    'onUpdateQueueProcess :: batchCount',
+    batchCount,
+    'content size: ',
+    queue.content.length
+  );
+
   const itemsToIndex: Awaited<ReturnType<typeof onFetchItemsToIndex>> = {
     indexReadyRecords: [],
     indexRecordsWithImages: [],
   };
 
   for (let batchNumber = 0; batchNumber < batchCount; batchNumber++) {
+    console.log('onUpdateQueueProcess :: Starting batch ', batchNumber, ' of ', batchCount);
     const batch = queue.content.slice(
       batchNumber * READ_BATCH_SIZE,
       batchNumber * READ_BATCH_SIZE + READ_BATCH_SIZE
@@ -444,8 +452,27 @@ const onUpdateQueueProcess = async ({ db, indexName }: { db: PrismaClient; index
       whereOr: [{ id: { in: batch } }],
     });
 
-    itemsToIndex.indexReadyRecords.push(...indexReadyRecords);
-    itemsToIndex.indexRecordsWithImages.push(...indexRecordsWithImages);
+    if (indexReadyRecords.length > 0) {
+      await updateDocs({
+        indexName,
+        documents: indexReadyRecords,
+        batchSize: MEILISEARCH_DOCUMENT_BATCH_SIZE,
+        // jobContext,
+      });
+
+      console.log('onUpdateQueueProcess :: base tasks for updated items have been added');
+    }
+
+    if (indexRecordsWithImages.length > 0) {
+      await updateDocs({
+        indexName,
+        documents: indexRecordsWithImages,
+        batchSize: MEILISEARCH_DOCUMENT_BATCH_SIZE,
+        // jobContext,
+      });
+
+      console.log('onUpdateQueueProcess :: image tasks for updated items have been added');
+    }
   }
 
   await queue.commit();
@@ -473,45 +500,15 @@ const onIndexUpdate = async ({
     await onSearchIndexDocumentsCleanup({ db, indexName: INDEX_ID, ids: deleteIds });
   }
 
-  const modelTasks: EnqueuedTask[] = [];
-
   if (lastUpdatedAt) {
     // Only if this is an update (NOT a reset or first run) will we care for queued items:
 
     // Update whatever items we have on the queue.
     // Do it on batches, since it's possible that there are far more items than we expect:
-    const {
-      indexReadyRecords: updateIndexReadyRecords,
-      indexRecordsWithImages: updateIndexRecordsWithImages,
-    } = await onUpdateQueueProcess({
+    await onUpdateQueueProcess({
       db,
       indexName,
     });
-
-    if (updateIndexReadyRecords.length > 0) {
-      const updateBaseTasks = await updateDocs({
-        indexName,
-        documents: updateIndexReadyRecords,
-        batchSize: MEILISEARCH_DOCUMENT_BATCH_SIZE,
-        // jobContext,
-      });
-
-      console.log('onIndexUpdate :: base tasks for updated items have been added');
-      modelTasks.push(...updateBaseTasks);
-    }
-
-    if (updateIndexRecordsWithImages.length > 0) {
-      const updateImageTasks = await updateDocs({
-        indexName,
-        documents: updateIndexRecordsWithImages,
-        batchSize: MEILISEARCH_DOCUMENT_BATCH_SIZE,
-        // jobContext,
-      });
-
-      console.log('onIndexUpdate :: image tasks for updated items have been added');
-
-      modelTasks.push(...updateImageTasks);
-    }
   }
 
   // Now, we can tackle new additions
@@ -552,7 +549,7 @@ const onIndexUpdate = async ({
       break;
     }
 
-    const baseTasks = await updateDocs({
+    await updateDocs({
       indexName,
       documents: indexReadyRecords,
       batchSize: MEILISEARCH_DOCUMENT_BATCH_SIZE,
@@ -561,7 +558,7 @@ const onIndexUpdate = async ({
 
     console.log('onIndexUpdate :: base tasks have been added');
 
-    const imagesTasks = await updateDocs({
+    await updateDocs({
       indexName,
       documents: indexRecordsWithImages,
       batchSize: MEILISEARCH_DOCUMENT_BATCH_SIZE,
@@ -569,9 +566,6 @@ const onIndexUpdate = async ({
     });
 
     console.log('onIndexUpdate :: image tasks have been added');
-
-    modelTasks.push(...baseTasks);
-    modelTasks.push(...imagesTasks);
 
     offset += indexReadyRecords.length;
   }
