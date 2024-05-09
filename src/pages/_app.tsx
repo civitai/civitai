@@ -153,7 +153,10 @@ function MyApp(props: CustomAppProps) {
                                     <PaypalProvider>
                                       <HiddenPreferencesProvider>
                                         <CivitaiLinkProvider>
-                                          <NotificationsProvider zIndex={9999}>
+                                          <NotificationsProvider
+                                            className="notifications-container"
+                                            zIndex={9999}
+                                          >
                                             <BrowserRouterProvider>
                                               <RecaptchaWidgetProvider>
                                                 <ChatContextProvider>
