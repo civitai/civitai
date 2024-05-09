@@ -546,7 +546,7 @@ function PinnedIndicator({
   const { classes, cx } = useStyles();
 
   return (
-    <HoverCard width={300} withinPortal>
+    <HoverCard width={300} withArrow withinPortal>
       <HoverCard.Target>
         <ThemeIcon {...themeIconProps} className={cx(classes.pinnedIndicator, className)}>
           <IconPinFilled {...iconProps} />
