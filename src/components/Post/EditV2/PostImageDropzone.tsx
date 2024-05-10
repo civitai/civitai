@@ -64,7 +64,7 @@ export function PostImageDropzone({
       const { postId = context?.postId, modelVersionId } = params;
       if (!postId) throw new Error('missing post id');
       setImages((images) => {
-        const index = Math.max(0, ...images.map((x) => x.data.index)) + 1;
+        // const index = Math.max(0, ...images.map((x) => x.data.index)) + 1;
         switch (props.status) {
           case 'added':
             const externalDetailsUrl = useExternalMetaStore.getState().getUrl();
@@ -73,7 +73,6 @@ export function PostImageDropzone({
               ...props,
               postId,
               modelVersionId,
-              index,
               width: props.metadata.width,
               height: props.metadata.height,
               hash: props.metadata.hash,
@@ -81,11 +80,11 @@ export function PostImageDropzone({
             });
 
             addImageMutation.mutate(payload);
-            return [...images, { type: 'resolving', data: { ...props, index: 999 } }];
+            return [...images, { type: 'resolving', data: { ...props } }];
           case 'blocked':
-            return [...images, { type: 'blocked', data: { ...props, index } }];
+            return [...images, { type: 'blocked', data: { ...props } }];
           case 'error':
-            return [...images, { type: 'error', data: { ...props, index } }];
+            return [...images, { type: 'error', data: { ...props } }];
           default:
             return images;
         }
@@ -126,7 +125,6 @@ export function PostImageDropzone({
       const files = await orchestratorMediaTransmitter.getFiles(src);
       if (files.length) handleDrop([...files]);
     }
-
     handleSrc();
   }, []); // eslint-disable-line
   // #endregion
