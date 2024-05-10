@@ -18,7 +18,8 @@ import React, { useEffect, useState } from 'react';
 import { z } from 'zod';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { Meta } from '~/components/Meta/Meta';
-import { constants, POST_INTENT_DETAILS_HOSTS, POST_TAG_LIMIT } from '~/server/common/constants';
+import { env } from '~/env/client.mjs';
+import { constants, POST_TAG_LIMIT } from '~/server/common/constants';
 import { IMAGE_MIME_TYPE, MEDIA_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
 import { externalMetaSchema } from '~/server/schema/image.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -332,7 +333,10 @@ export default function IntentPost() {
       }
 
       const srcUrl = new URL(src);
-      if (!POST_INTENT_DETAILS_HOSTS.includes(srcUrl.host)) {
+      if (
+        !env.NEXT_PUBLIC_POST_INTENT_DETAILS_HOSTS ||
+        !env.NEXT_PUBLIC_POST_INTENT_DETAILS_HOSTS.split(',').includes(srcUrl.origin)
+      ) {
         throw new Error('This domain is not approved. Please contact us to be added.');
       }
 

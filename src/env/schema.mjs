@@ -185,6 +185,11 @@ export const clientSchema = z.object({
   NEXT_PUBLIC_RECAPTCHA_KEY: z.string(),
   NEXT_PUBLIC_ADS: zc.booleanString.default(false),
   NEXT_PUBLIC_PAYPAL_CLIENT_ID: z.string().optional(),
+  NEXT_PUBLIC_POST_INTENT_DETAILS_HOSTS: z.preprocess((value) => {
+    if (typeof value !== 'string') return null;
+    value.split(',').map((v) => new URL(v));
+    return value;
+  }, z.string()).optional(),
 });
 
 /**
@@ -222,4 +227,5 @@ export const clientEnv = {
   NEXT_PUBLIC_RECAPTCHA_KEY: process.env.NEXT_PUBLIC_RECAPTCHA_KEY,
   NEXT_PUBLIC_ADS: process.env.NEXT_PUBLIC_ADS === 'true',
   NEXT_PUBLIC_PAYPAL_CLIENT_ID: process.env.NEXT_PUBLIC_PAYPAL_CLIENT_ID,
+  NEXT_PUBLIC_POST_INTENT_DETAILS_HOSTS: process.env.NEXT_PUBLIC_POST_INTENT_DETAILS_HOSTS,
 };

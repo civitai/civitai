@@ -34,7 +34,7 @@ export function commaDelimitedStringObject() {
   }, z.record(z.string()));
 }
 
-function stringToArray(value: unknown) {
+export function stringToArray(value: unknown) {
   if (!Array.isArray(value) && typeof value === 'string')
     return value.split(',').map((x) => x.trim());
   return ((value ?? []) as unknown[]).map(String);
