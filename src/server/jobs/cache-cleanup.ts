@@ -35,7 +35,4 @@ export const cacheCleanup = createJob('cache-cleanup', '0 */1 * * *', async () =
     await mergeQueue(key);
   });
   await limitConcurrency(mergeTasks, 3);
-
-  // Clean up old caches
-  for (const cache of Object.values(caches)) await cache.cleanup();
 });

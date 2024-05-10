@@ -65,17 +65,16 @@ export function createCachedArray<T extends object>({
   async function fetch(ids: number[]) {
     if (!ids.length) return [];
     const results = new Set<T>();
-    const cacheJsons = await redis.hmGet(key, ids.map(String));
-    const cacheArray = cacheJsons.filter((x) => x !== null).map((x) => JSON.parse(x));
+    const cacheJsons = await Promise.all(ids.map((id) => redis.get(`${key}:${id}`)));
+    const cacheArray = cacheJsons.filter((x) => x !== null).map((x) => JSON.parse(x ?? '{}'));
     const cache = Object.fromEntries(cacheArray.map((x) => [x[idKey], x]));
 
-    const cacheCutoff = Date.now() - ttl * 1000; // convert to ms (keeping ttl in seconds for redis similarity)
     const cacheDebounceCutoff = Date.now() - debounceTime * 1000;
     const cacheMisses = new Set<number>();
     const dontCache = new Set<number>();
     for (const id of [...new Set(ids)]) {
       const cached = cache[id];
-      if (cached && cached.cachedAt > cacheCutoff) {
+      if (cached) {
         if (cached.notFound) continue;
         if (cached.debounce) {
           if (cached.cachedAt > cacheDebounceCutoff) dontCache.add(id);
@@ -109,12 +108,23 @@ export function createCachedArray<T extends object>({
       }
 
       // then cache the results
-      if (Object.keys(toCache).length > 0) await redis.hSet(key, toCache);
+      if (Object.keys(toCache).length > 0)
+        await Promise.all(
+          Object.entries(toCache).map(([id, cache]) =>
+            redis.set(`${key}:${id}`, cache, { EX: ttl })
+          )
+        );
 
       // Use NX to avoid overwriting a value with a not found...
       if (Object.keys(toCacheNotFound).length > 0)
-        for (const [id, value] of Object.entries(toCacheNotFound))
-          await redis.hSetNX(key, id, value);
+        await Promise.all(
+          Object.entries(toCacheNotFound).map(([id, cache]) => {
+            return Promise.all([
+              redis.setNX(`${key}:${id}`, cache),
+              redis.expire(`${key}:${id}`, ttl),
+            ]);
+          })
+        );
     }
 
     if (appendFn) await appendFn(results);
@@ -126,11 +136,9 @@ export function createCachedArray<T extends object>({
     const ids = Array.isArray(id) ? id : [id];
     if (ids.length === 0) return;
 
-    const cachedAt = Date.now();
-    const toCache = Object.fromEntries(
-      ids.map((id) => [id, JSON.stringify({ [idKey]: id, cachedAt, debounce: true })])
-    ) as Record<string, string>;
-    await redis.hSet(key, toCache);
+    await Promise.all(
+      ids.map((id) => redis.set(`${key}:${id}`, JSON.stringify({ [idKey]: id, debounce: true })))
+    );
     log(`Busted ${ids.length} ${key} items: ${ids.join(', ')}`);
   }
 
@@ -138,31 +146,15 @@ export function createCachedArray<T extends object>({
     if (!Array.isArray(id)) id = [id];
 
     const results = await lookupFn(id, true);
-    const cachedAt = Date.now();
-    const toCache = Object.fromEntries(
-      Object.entries(results).map(([key, x]) => [key, JSON.stringify({ ...x, cachedAt })])
+    await Promise.all(
+      Object.entries(results).map(([key, x]) => redis.set(`${key}:${key}`, JSON.stringify(x)))
     );
-    if (Object.keys(toCache).length > 0) await redis.hSet(key, toCache);
 
     const toRemove = id.filter((x) => !results[x]).map(String);
-    if (toRemove.length > 0) await redis.hDel(key, toRemove);
+    await Promise.all(toRemove.map((id) => redis.del(`${key}:${id}`)));
   }
 
-  async function cleanup() {
-    const toRemove: string[] = [];
-    const cacheJsons = await redis.hGetAll(key);
-    const cacheCutoff = Date.now() - ttl * 1000;
-    for (const [id, cachedJson] of Object.entries(cacheJsons)) {
-      if (!cachedJson) toRemove.push(id);
-      else {
-        const cached = JSON.parse(cachedJson);
-        if (cached.cachedAt < cacheCutoff) toRemove.push(id);
-      }
-    }
-    if (toRemove.length > 0) await redis.hDel(key, toRemove);
-  }
-
-  return { fetch, bust, refresh, cleanup };
+  return { fetch, bust, refresh };
 }
 export type CachedArray<T extends object> = ReturnType<typeof createCachedArray<T>>;
 
