@@ -10,7 +10,17 @@ export const generationStatusColors: Record<GenerationRequestStatus, MantineColo
   [GenerationRequestStatus.Error]: 'red',
 };
 
-export const defaultCheckpoints = {
+// TODO - improve this
+export const defaultCheckpoints: Record<
+  string,
+  {
+    ecosystem: string;
+    type: string;
+    source: string;
+    model: number;
+    version: number;
+  }
+> = {
   SD1: {
     ecosystem: 'sd1',
     type: 'model',
