@@ -64,6 +64,7 @@ import { UserTier } from '~/server/schema/user.schema';
 import { Orchestrator } from '~/server/http/orchestrator/orchestrator.types';
 import { generatorFeedbackReward } from '~/server/rewards';
 import { resourceDataCache } from '~/server/redis/caches';
+import { defaultCheckpoints, getBaseModelSetKey } from '~/shared/constants/generation.constants';
 
 export function parseModelVersionId(assetId: string) {
   const pattern = /^@civitai\/(\d+)$/;
@@ -930,9 +931,16 @@ const getImageGenerationData = async (id: number): Promise<Generation.Data> => {
     ...meta
   } = imageGenerationSchema.parse(image.meta);
 
-  const resources = await dbRead.$queryRaw<
-    Array<Generation.Resource & { covered: boolean; hash?: string; strength?: number }>
-  >`
+  async function getResources({ imageId, versionId }: { imageId?: number; versionId?: number }) {
+    const AND: Prisma.Sql[] = [];
+    if (imageId) AND.push(Prisma.sql`ir."imageId" = ${imageId}`);
+    if (versionId) AND.push(Prisma.sql`ir."modelVersionId" = ${versionId}`);
+
+    if (!AND.length) throw new Error('missing query param in `getResources`');
+
+    return await dbRead.$queryRaw<
+      Array<Generation.Resource & { covered: boolean; hash?: string; strength?: number }>
+    >`
     SELECT
       mv.id,
       mv.name,
@@ -947,11 +955,28 @@ const getImageGenerationData = async (id: number): Promise<Generation.Data> => {
     FROM "ImageResource" ir
     JOIN "ModelVersion" mv on mv.id = ir."modelVersionId"
     JOIN "Model" m on m.id = mv."modelId"
-    JOIN "GenerationCoverage" gc on gc."modelVersionId" = mv.id
-    WHERE ir."imageId" = ${id}
+    LEFT JOIN "GenerationCoverage" gc on gc."modelVersionId" = mv.id
+    WHERE ${Prisma.join(AND, ' AND ')}
   `;
+  }
 
-  const deduped = uniqBy(resources, 'id');
+  const resources = await getResources({ imageId: id });
+
+  // if the checkpoint exists but isn't covered, add a default based off checkpoint `modelType`
+  const checkpoint = resources.find((x) => x.modelType === 'Checkpoint');
+  if (!checkpoint?.covered && checkpoint?.modelType) {
+    const baseModel = getBaseModelSetKey(checkpoint.baseModel);
+    const defaultCheckpoint = baseModel ? defaultCheckpoints[baseModel as any] : undefined;
+    console.log({ baseModel, defaultCheckpoint });
+    console.log(checkpoint);
+    if (defaultCheckpoint) {
+      const [result] = await getResources({
+        versionId: defaultCheckpoint.version,
+      });
+      if (result) resources.unshift(result);
+    }
+  }
+  const deduped = uniqBy(resources, 'id').filter((x) => x.covered);
   for (const resource of deduped) {
     if (resource.strength) resource.strength /= 100;
   }
@@ -986,10 +1011,13 @@ const getImageGenerationData = async (id: number): Promise<Generation.Data> => {
   if (meta.seed == 0) meta.seed = undefined;
 
   return {
-    resources: deduped.map((resource) => ({
-      ...resource,
-      strength: resource.strength ?? 1,
-    })),
+    // only send back resources if we have a checkpoint resource
+    resources: !model
+      ? []
+      : deduped.map((resource) => ({
+          ...resource,
+          strength: resource.strength ?? 1,
+        })),
     params: {
       ...meta,
       clipSkip,
