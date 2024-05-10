@@ -377,7 +377,7 @@ export const baseModelSets: Record<BaseModelSetType, BaseModel[]> = {
   SD1: ['SD 1.4', 'SD 1.5', 'SD 1.5 LCM', 'SD 1.5 Hyper'],
   SD2: ['SD 2.0', 'SD 2.0 768', 'SD 2.1', 'SD 2.1 768', 'SD 2.1 Unclip'],
   SD3: ['SD 3'],
-  SDXL: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM', 'SDXL Lightning', 'SDXL Hyper'],
+  SDXL: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM', 'SDXL Lightning', 'SDXL Hyper', 'SDXL Turbo'],
   SDXLDistilled: ['SDXL Distilled'],
   SCascade: ['Stable Cascade'],
   Pony: ['Pony'],
@@ -551,14 +551,6 @@ export const generationConfig = {
       { label: 'Landscape', width: 768, height: 512 },
       { label: 'Portrait', width: 512, height: 768 },
     ],
-    costs: {
-      // TODO.imageGenerationBuzzCharge - Remove all cost calculation from the front-end. This is done by the orchestrator.
-      base: 0,
-      quantity: 1,
-      steps: 30,
-      width: 512,
-      height: 512,
-    },
     checkpoint: {
       id: 128713,
       name: '8',
@@ -583,15 +575,6 @@ export const generationConfig = {
       { label: 'Landscape', width: 1216, height: 832 },
       { label: 'Portrait', width: 832, height: 1216 },
     ],
-    costs: {
-      // TODO.imageGenerationBuzzCharge - Remove all cost calculation from the front-end. This is done by the orchestrator.
-      // base: 4,
-      base: 0,
-      quantity: 1,
-      steps: 30,
-      width: 1024,
-      height: 1024,
-    },
     checkpoint: {
       id: 128078,
       name: 'v1.0 VAE fix',
@@ -627,15 +610,6 @@ export const generationConfig = {
       { label: 'Landscape', width: 1216, height: 832 },
       { label: 'Portrait', width: 832, height: 1216 },
     ],
-    costs: {
-      // TODO.generation: Uncomment this out by next week once we start charging for SDXL generation
-      // base: 4,
-      base: 0,
-      quantity: 1,
-      steps: 40,
-      width: 1024,
-      height: 1024,
-    },
     checkpoint: {
       id: 290640,
       name: 'V6 (start with this one)',

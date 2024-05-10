@@ -34,7 +34,7 @@ export function AddArtFrameMenuItem(props: CardDecorationModalProps) {
         onClick();
       }}
     >
-      {currentCosmetic ? 'Remove Art Frame' : 'Add Art Frame'}
+      {currentCosmetic ? 'Remove Content Decoration' : 'Add Content Decoration'} 
     </Menu.Item>
   );
 }
