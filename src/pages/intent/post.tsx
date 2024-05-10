@@ -17,6 +17,7 @@ import { useRouter } from 'next/router';
 import React, { useEffect, useState } from 'react';
 import { z } from 'zod';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { Meta } from '~/components/Meta/Meta';
 import { constants, POST_INTENT_DETAILS_HOSTS, POST_TAG_LIMIT } from '~/server/common/constants';
 import { IMAGE_MIME_TYPE, MEDIA_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
 import { externalMetaSchema } from '~/server/schema/image.schema';
@@ -440,95 +441,99 @@ export default function IntentPost() {
   const hasError = progress.find((p) => p.status === 'failed');
 
   return (
-    <Container my="lg" size="xs">
-      <Stack>
-        <Title order={2}>Create New Post</Title>
-        <Paper
-          p="sm"
-          withBorder
-          style={{
-            background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[1],
-          }}
-        >
-          <Timeline color="green" active={activeStep} bulletSize={22} lineWidth={1}>
-            {progress.map((p, idx) => {
-              const Icon =
-                p.status === 'success'
-                  ? IconCheck
-                  : p.status === 'skipped'
-                  ? IconMinus
-                  : p.status === 'failed'
-                  ? IconX
-                  : idx === activeStep
-                  ? Loader
-                  : IconMinus;
-              // const color = p.status === undefined ? 'gray' : p.status === 'failed' ? 'red' : 'green';
-              const color =
-                p.status === undefined
-                  ? 'gray'
-                  : p.status === 'skipped'
-                  ? 'cyan'
-                  : p.status === 'success'
-                  ? 'green'
-                  : 'red';
-              return (
-                <Timeline.Item
-                  key={p.title}
-                  // bullet={<Icon size={12} />}
-                  bullet={
-                    <ThemeIcon color={color} radius="xl" size={24}>
-                      <Icon size={12} />
-                    </ThemeIcon>
-                  }
-                  title={p.title}
-                  // color={color}
-                >
-                  <Group position="left" align="start">
-                    <Stack mt="xs" spacing={6}>
-                      {p.errors.length > 0 ? (
-                        p.errors.map((e, idx) => (
-                          <Group noWrap key={idx}>
-                            <IconX color="red" size={16} style={{ flex: '0 0 auto' }} />
-                            {e}
-                          </Group>
-                        ))
-                      ) : p.status !== undefined ? (
-                        <Text color="dimmed" size="sm">
-                          {p.msg ?? `${titleCase(p.status)}!`}
-                        </Text>
-                      ) : (
-                        <></>
-                      )}
-                    </Stack>
-                    {p.title === 'Checking media' && !!previewUrl && (
-                      <Group position="center" style={{ flexGrow: 1 }}>
-                        <EdgeMedia
-                          width={150}
-                          src={previewUrl.url}
-                          type={previewUrl.type}
-                          style={{
-                            height: '150px',
-                            objectFit: 'cover',
-                          }}
-                        />
-                      </Group>
-                    )}
-                  </Group>
-                </Timeline.Item>
-              );
-            })}
-          </Timeline>
-        </Paper>
-        <Group position="right">
-          <Button
-            disabled={!readyData || !!hasError}
-            loading={!!creatingPost}
-            onClick={() => doCreate()}
+    <>
+      <Meta title="Create a Post | Civitai" />
+      <Container my="lg" size="xs">
+        <Stack>
+          <Title order={2}>Create New Post</Title>
+          <Paper
+            p="sm"
+            withBorder
+            style={{
+              background:
+                theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[1],
+            }}
           >
-            {creatingPost ?? (!readyData && !hasError ? 'Parsing...' : 'Proceed')}
-          </Button>
-        </Group>
-      </Stack>
-    </Container>
+            <Timeline color="green" active={activeStep} bulletSize={22} lineWidth={1}>
+              {progress.map((p, idx) => {
+                const Icon =
+                  p.status === 'success'
+                    ? IconCheck
+                    : p.status === 'skipped'
+                    ? IconMinus
+                    : p.status === 'failed'
+                    ? IconX
+                    : idx === activeStep
+                    ? Loader
+                    : IconMinus;
+                // const color = p.status === undefined ? 'gray' : p.status === 'failed' ? 'red' : 'green';
+                const color =
+                  p.status === undefined
+                    ? 'gray'
+                    : p.status === 'skipped'
+                    ? 'cyan'
+                    : p.status === 'success'
+                    ? 'green'
+                    : 'red';
+                return (
+                  <Timeline.Item
+                    key={p.title}
+                    // bullet={<Icon size={12} />}
+                    bullet={
+                      <ThemeIcon color={color} radius="xl" size={24}>
+                        <Icon size={12} />
+                      </ThemeIcon>
+                    }
+                    title={p.title}
+                    // color={color}
+                  >
+                    <Group position="left" align="start">
+                      <Stack mt="xs" spacing={6}>
+                        {p.errors.length > 0 ? (
+                          p.errors.map((e, idx) => (
+                            <Group noWrap key={idx}>
+                              <IconX color="red" size={16} style={{ flex: '0 0 auto' }} />
+                              {e}
+                            </Group>
+                          ))
+                        ) : p.status !== undefined ? (
+                          <Text color="dimmed" size="sm">
+                            {p.msg ?? `${titleCase(p.status)}!`}
+                          </Text>
+                        ) : (
+                          <></>
+                        )}
+                      </Stack>
+                      {p.title === 'Checking media' && !!previewUrl && (
+                        <Group position="center" style={{ flexGrow: 1 }}>
+                          <EdgeMedia
+                            width={150}
+                            src={previewUrl.url}
+                            type={previewUrl.type}
+                            style={{
+                              height: '150px',
+                              objectFit: 'cover',
+                            }}
+                          />
+                        </Group>
+                      )}
+                    </Group>
+                  </Timeline.Item>
+                );
+              })}
+            </Timeline>
+          </Paper>
+          <Group position="right">
+            <Button
+              disabled={!readyData || !!hasError}
+              loading={!!creatingPost}
+              onClick={() => doCreate()}
+            >
+              {creatingPost ?? (!readyData && !hasError ? 'Parsing...' : 'Proceed')}
+            </Button>
+          </Group>
+        </Stack>
+      </Container>
+    </>
   );
 }
