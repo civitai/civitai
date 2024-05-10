@@ -11,11 +11,9 @@ import {
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { isDefined } from '~/utils/type-guards';
-import { calculateGenerationBill } from '~/server/common/generation';
 import { RunType } from '~/store/generation.store';
 import { uniqBy } from 'lodash';
 import {
-  CreateGenerationRequestInput,
   GenerateFormModel,
   GenerationRequestTestRunSchema,
   generationStatusSchema,
@@ -27,10 +25,8 @@ import { Generation } from '~/server/services/generation/generation.types';
 import { findClosest } from '~/utils/number-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { showErrorNotification } from '~/utils/notifications';
-import { ModelType } from '@prisma/client';
-import { useDebouncedValue } from '@mantine/hooks';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { getBaseModelSetKey } from '~/shared/constants/generation.constants';
 
 export const useGenerationFormStore = create<Partial<GenerateFormModel>>()(
   persist(() => ({}), { name: 'generation-form-2', version: 0 })
@@ -350,13 +346,6 @@ export const getClosestAspectRatio = (width?: number, height?: number, baseModel
 };
 
 // TODO - move these somewhere that makes more sense
-export const getBaseModelSetKey = (baseModel?: string) => {
-  if (!baseModel) return undefined;
-  return Object.entries(baseModelSets).find(
-    ([key, baseModels]) => key === baseModel || baseModels.includes(baseModel as BaseModel)
-  )?.[0] as BaseModelSetType | undefined;
-};
-
 export const getBaseModelSet = (baseModel?: string) => {
   if (!baseModel) return undefined;
   return Object.entries(baseModelSets).find(

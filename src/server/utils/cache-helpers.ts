@@ -63,6 +63,7 @@ export function createCachedArray<T extends object>({
   cacheNotFound = true,
 }: CachedLookupOptions<T>) {
   async function fetch(ids: number[]) {
+    if (!ids.length) return [];
     const results = new Set<T>();
     const cacheJsons = await redis.hmGet(key, ids.map(String));
     const cacheArray = cacheJsons.filter((x) => x !== null).map((x) => JSON.parse(x));

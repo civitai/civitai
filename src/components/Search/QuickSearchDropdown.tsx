@@ -158,7 +158,6 @@ export const QuickSearchDropdown = ({
     <InstantSearch
       searchClient={disableInitialSearch ? searchClient : meilisearch}
       indexName={searchIndexMap[targetIndex]}
-      future={{ preserveSharedStateOnUnmount: true }}
     >
       <Configure hitsPerPage={dropdownItemLimit} filters={filters} />
       {indexSupportsNsfwLevel && <BrowsingLevelFilter attributeName="nsfwLevel" />}

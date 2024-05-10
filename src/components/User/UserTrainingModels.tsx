@@ -386,9 +386,8 @@ export default function UserTrainingModels() {
                               py={0}
                               sx={{ fontSize: 12, fontWeight: 600, height: 20 }}
                               component="a"
-                              href={`https://forms.clickup.com/8459928/f/825mr-7951/OKTROKPXB4DXQQ18U8?Model%20File%20ID=${thisFile.id}`}
+                              href="/support-portal"
                               target="_blank"
-                              rel="nofollow noreferrer"
                               onMouseUp={(e) => {
                                 e.preventDefault();
                                 e.stopPropagation();

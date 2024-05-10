@@ -7,8 +7,6 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { ScannerTasks } from '~/server/jobs/scan-files';
 import { modelsSearchIndex } from '~/server/search-index';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
-import { bytesToKB } from '~/utils/number-helpers';
-import { getGetUrl } from '~/utils/s3-utils';
 
 export default WebhookEndpoint(async (req, res) => {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
@@ -44,7 +42,7 @@ export default WebhookEndpoint(async (req, res) => {
   // Update url if we imported/moved the file
   if (tasks.includes('Import')) {
     data.exists = scanResult.fileExists === 1;
-    const bucket = env.S3_SETTLED_BUCKET;
+    const bucket = env.S3_UPLOAD_BUCKET;
     const scannerImportedFile = !file.url.includes(bucket) && scanResult.url.includes(bucket);
     if (data.exists && scannerImportedFile) data.url = scanResult.url;
     if (!data.exists) await unpublish(file.modelVersionId);
@@ -52,30 +50,28 @@ export default WebhookEndpoint(async (req, res) => {
 
   if (tasks.includes('Convert')) {
     // TODO justin: handle conversion result
-    const [format, { url, hashes, conversionOutput }] = Object.entries(scanResult.conversions)[0];
-    const baseUrl = url.split('?')[0];
-    const convertedName = baseUrl.split('/').pop();
-    if (convertedName) {
-      const { url: s3Url } = await getGetUrl(baseUrl);
-      const { headers } = await fetch(s3Url, { method: 'HEAD' });
-      const sizeKB = bytesToKB(parseInt(headers.get('Content-Length') ?? '0'));
-      await dbWrite.modelFile.create({
-        data: {
-          name: convertedName,
-          sizeKB,
-          modelVersionId: file.modelVersionId,
-          url: baseUrl,
-          type: file.type,
-          metadata: { format: format === 'safetensors' ? 'SafeTensor' : 'PickleTensor' },
-          hashes: {
-            create: Object.entries(hashes).map(([type, hash]) => ({
-              type: hashTypeMap[type.toLowerCase()] as ModelHashType,
-              hash,
-            })),
-          },
-        },
-      });
-    }
+    // TODO koen: include the new size in the conversionOutput
+    // const [format, { url, hashes, conversionOutput }] = Object.entries(scanResult.conversions)[0];
+    // const baseUrl = url.split('?')[0];
+    // const convertedName = baseUrl.split('/').pop();
+    // if (convertedName) {
+    //   await dbWrite.modelFile.create({
+    //     data: {
+    //       name: convertedName,
+    //       sizeKB,
+    //       modelVersionId: file.modelVersionId,
+    //       url: baseUrl,
+    //       type: file.type,
+    //       metadata: { format: format === 'safetensors' ? 'SafeTensor' : 'PickleTensor' },
+    //       hashes: {
+    //         create: Object.entries(hashes).map(([type, hash]) => ({
+    //           type: hashTypeMap[type.toLowerCase()] as ModelHashType,
+    //           hash,
+    //         })),
+    //       },
+    //     },
+    //   });
+    // }
   }
 
   // Update if we made changes...

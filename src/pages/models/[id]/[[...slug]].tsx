@@ -136,7 +136,7 @@ export const getServerSideProps = createServerSideProps({
     const version = await getDefaultModelVersion({ modelId: id, modelVersionId }).catch(() => null);
     const modelVersionIdParsed = modelVersionId ?? version?.id;
 
-    if (!modelVersionIdParsed) {
+    if (!modelVersionIdParsed && !session?.user?.isModerator) {
       return { notFound: true };
     }
 
@@ -457,7 +457,9 @@ export default function ModelDetailsV2({
         </Alert>
       </Center>
     );
-  if (modelDoesntExist || (modelDeleted && !isModerator) || modelNotVisible) return <NotFound />;
+
+  if (modelDoesntExist || (modelDeleted && !isModerator) || (modelNotVisible && !isModerator))
+    return <NotFound />;
 
   const image = versionImages.find((image) => getIsSafeBrowsingLevel(image.nsfwLevel));
   const imageUrl = image ? getEdgeUrl(image.url, { width: 1200 }) : undefined;

@@ -41,9 +41,10 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
   onComplete,
 }: UseMediaUploadProps<TContext>) {
   // #region [state]
-  const canAdd = max - count > 0;
   const [error, setError] = useState<Error>();
   const { files, upload, reset, removeFile } = useFileUpload();
+  const canAdd =
+    max - count > 0 && !files.some((x) => x.status === 'uploading' || x.status === 'pending');
   const onCompleteRef = useRef(onComplete);
   onCompleteRef.current = onComplete;
   // #endregion
