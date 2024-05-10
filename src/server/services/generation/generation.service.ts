@@ -43,9 +43,6 @@ import {
 } from '~/server/common/constants';
 import { imageGenerationSchema } from '~/server/schema/image.schema';
 import { uniqBy } from 'lodash-es';
-import { TransactionType } from '~/server/schema/buzz.schema';
-import { createBuzzTransaction, refundTransaction } from '~/server/services/buzz.service';
-import { calculateGenerationBill } from '~/server/common/generation';
 import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import orchestratorCaller from '~/server/http/orchestrator/orchestrator.caller';
 import { redis, REDIS_KEYS } from '~/server/redis/client';

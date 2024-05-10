@@ -44,9 +44,11 @@ export const defaultCheckpoints: Record<
   },
 };
 
+// #region [utils]
 export const getBaseModelSetKey = (baseModel?: string) => {
   if (!baseModel) return undefined;
   return Object.entries(baseModelSets).find(
     ([key, baseModels]) => key === baseModel || baseModels.includes(baseModel as BaseModel)
   )?.[0] as BaseModelSetType | undefined;
 };
+// #endregion
