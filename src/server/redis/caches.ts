@@ -161,36 +161,27 @@ export const imagesForModelVersionsCache = createCachedObject<CachedImagesForMod
   },
 });
 
-export const cosmeticEntityCaches = (() => {
-  const caches = Object.fromEntries(
-    Object.values(CosmeticEntity).map((entity) => [
-      entity as CosmeticEntity,
-      createCachedObject<WithClaimKey<ContentDecorationCosmetic>>({
-        key: `${REDIS_KEYS.CACHES.COSMETICS}:${entity}`,
-        idKey: 'equippedToId',
-        lookupFn: async (ids) => {
-          const entityCosmetics = await dbRead.$queryRaw<WithClaimKey<ContentDecorationCosmetic>[]>`
-            SELECT c.id, c.data, uc."equippedToId", uc."claimKey"
-            FROM "UserCosmetic" uc
-            JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
-            WHERE uc."equippedToId" IN (${Prisma.join(ids as number[])})
-              AND uc."equippedToType" = '${Prisma.raw(entity)}'::"CosmeticEntity"
-              AND c.type = 'ContentDecoration';
-          `;
-          return Object.fromEntries(entityCosmetics.map((x) => [x.equippedToId, x]));
-        },
-        ttl: 60 * 60 * 24, // 24 hours
-      }),
-    ])
-  ) as Record<CosmeticEntity, CachedObject<WithClaimKey<ContentDecorationCosmetic>>>;
-  async function cleanup() {
-    for (const cache of Object.values(caches)) await cache.cleanup();
-  }
-  return {
-    ...caches,
-    cleanup,
-  };
-})();
+export const cosmeticEntityCaches = Object.fromEntries(
+  Object.values(CosmeticEntity).map((entity) => [
+    entity as CosmeticEntity,
+    createCachedObject<WithClaimKey<ContentDecorationCosmetic>>({
+      key: `${REDIS_KEYS.CACHES.COSMETICS}:${entity}`,
+      idKey: 'equippedToId',
+      lookupFn: async (ids) => {
+        const entityCosmetics = await dbRead.$queryRaw<WithClaimKey<ContentDecorationCosmetic>[]>`
+          SELECT c.id, c.data, uc."equippedToId", uc."claimKey"
+          FROM "UserCosmetic" uc
+          JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
+          WHERE uc."equippedToId" IN (${Prisma.join(ids as number[])})
+            AND uc."equippedToType" = '${Prisma.raw(entity)}'::"CosmeticEntity"
+            AND c.type = 'ContentDecoration';
+        `;
+        return Object.fromEntries(entityCosmetics.map((x) => [x.equippedToId, x]));
+      },
+      ttl: 60 * 60 * 24, // 24 hours
+    }),
+  ])
+) as Record<CosmeticEntity, CachedObject<WithClaimKey<ContentDecorationCosmetic>>>;
 
 type CachedUserMultiplier = {
   userId: number;

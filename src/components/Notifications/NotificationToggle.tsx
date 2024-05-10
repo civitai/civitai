@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import { useMemo } from 'react';
 import { useNotificationSettings } from '~/components/Notifications/notifications.utils';
 import {
   notificationCategoryTypes,
@@ -20,7 +20,7 @@ export function NotificationToggle({
     isEnabled: boolean;
   }) => JSX.Element | null;
 }) {
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
 
   const { notificationSettings, isLoading } = useNotificationSettings();
 
@@ -50,19 +50,11 @@ export function NotificationToggle({
     },
   });
 
-  console.log(
-    notificationCategoryTypes,
-    Object.values(notificationCategoryTypes).flat()
-    // Object.entries(notificationCategoryTypes)
-    // .flatten()
-    // .find((x) => x.type === type)
-  );
-
   const notification = useMemo(() => {
     return Object.values(notificationCategoryTypes)
       .flat()
       .find((x) => x.type === type);
-  }, [notificationCategoryTypes]);
+  }, [type]);
 
   if (!notification || isLoading) {
     return null;

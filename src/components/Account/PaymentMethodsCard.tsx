@@ -21,6 +21,9 @@ import { IconCreditCard, IconCurrencyDollar, IconMoodDollar, IconTrash } from '@
 import { openConfirmModal } from '@mantine/modals';
 import { StripePaymentMethodSetup } from '~/components/Stripe/StripePaymentMethodSetup';
 import { UserPaymentMethod } from '~/types/router';
+import { booleanString } from '~/utils/zod-helpers';
+import { useRouter } from 'next/router';
+import { z } from 'zod';
 
 export const PaymentMethodItem = ({
   paymentMethod,
@@ -107,9 +110,16 @@ export const PaymentMethodItem = ({
       );
   }
 };
+
+const querySchema = z.object({
+  missingPaymentMethod: booleanString().optional(),
+});
+
 export function PaymentMethodsCard() {
   const { deletingPaymentMethod, deletePaymentMethod } = useMutateStripe();
   const { userPaymentMethods, isLoading: isLoadingPaymentMethods } = useUserPaymentMethods();
+  const router = useRouter();
+  const result = querySchema.safeParse(router.query);
 
   const handleDeletePaymentMethod = (paymentMethodId: string) => {
     openConfirmModal({
@@ -135,11 +145,17 @@ export function PaymentMethodsCard() {
   };
 
   return (
-    <Card withBorder id="settings">
+    <Card withBorder>
       <Stack>
         <Title order={2} id="payment-methods">
           Payment methods
         </Title>
+        {result.success && result.data.missingPaymentMethod && (
+          <Text color="red" size="sm">
+            It looks like you are trying to upgrade your membership but we do not have a payment
+            method setup for you. Please add one before attempting to upgrade.
+          </Text>
+        )}
         <Divider label="Your payment methods" />
         {isLoadingPaymentMethods ? (
           <Center>
