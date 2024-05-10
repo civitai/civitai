@@ -106,6 +106,7 @@ export async function equipCosmeticToEntity({
   });
 
   await deleteEntityCosmeticCache({ entityId: equippedToId, entityType: equippedToType });
+
   if (equippedToType === 'Model')
     await modelsSearchIndex.queueUpdate([
       { id: equippedToId, action: SearchIndexUpdateQueueAction.Update },
@@ -143,6 +144,7 @@ export async function unequipCosmetic({
   });
 
   await deleteEntityCosmeticCache({ entityId: equippedToId, entityType: equippedToType });
+
   if (equippedToType === 'Model')
     await modelsSearchIndex.queueUpdate([
       { id: equippedToId, action: SearchIndexUpdateQueueAction.Update },
