@@ -64,20 +64,20 @@ export const useGallerySettings = ({ modelId }: { modelId: number }) => {
       level: level ?? data?.level,
       pinnedPosts: pinnedPosts
         ? pinnedPosts.postIds.some((id) => {
-            const versionPinnedPosts = data.pinnedPosts[pinnedPosts.modelVersionId] ?? [];
+            const versionPinnedPosts = data.pinnedPosts?.[pinnedPosts.modelVersionId] ?? [];
             return versionPinnedPosts.includes(id);
           })
           ? {
               ...data.pinnedPosts,
               [pinnedPosts.modelVersionId]:
-                data.pinnedPosts[pinnedPosts.modelVersionId]?.filter(
+                data.pinnedPosts?.[pinnedPosts.modelVersionId]?.filter(
                   (id) => !pinnedPosts.postIds.includes(id)
                 ) ?? [],
             }
           : {
               ...data.pinnedPosts,
               [pinnedPosts.modelVersionId]: [
-                ...(data.pinnedPosts[pinnedPosts.modelVersionId] ?? []),
+                ...(data.pinnedPosts?.[pinnedPosts.modelVersionId] ?? []),
                 ...pinnedPosts.postIds,
               ],
             }

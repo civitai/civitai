@@ -275,7 +275,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
       ? await getGallerySettingsByModelId({ id: input.modelId })
       : null;
     const hiddenImagesIds = modelGallerySettings?.hiddenImages ?? [];
-    const pinnedPosts = modelGallerySettings?.pinnedPosts;
+    const pinnedPosts = modelGallerySettings?.pinnedPosts ?? {};
     const versionPinnedPosts =
       pinnedPosts && input.modelVersionId ? pinnedPosts[input.modelVersionId] ?? [] : [];
 
