@@ -558,6 +558,9 @@ export const upsertCollection = async ({
           id: true,
           mode: true,
           image: { select: { id: true, url: true, ingestion: true, type: true } },
+          read: true,
+          write: true,
+          userId: true,
         },
         where: { id },
         data: {
@@ -603,11 +606,43 @@ export const upsertCollection = async ({
         where: { collectionId: updated.id },
         data: { publishedAt: new Date() },
       });
-    } else {
+    } else if (updated.mode !== CollectionMode.Contest) {
       // otherwise set publishedAt to null
       await dbWrite.post.updateMany({
         where: { collectionId: updated.id },
         data: { publishedAt: null },
+      });
+    }
+
+    // Update contributors:
+    if (
+      (input.write && input.write !== updated.write) ||
+      (input.read && input.read !== updated.read)
+    ) {
+      // Update contributors permissions:
+      const permissions: CollectionContributorPermission[] = [];
+      if (updated.read !== CollectionReadConfiguration.Private) {
+        permissions.push(CollectionContributorPermission.VIEW);
+      }
+
+      if (updated.write === CollectionWriteConfiguration.Public) {
+        permissions.push(CollectionContributorPermission.ADD);
+      }
+
+      if (updated.write === CollectionWriteConfiguration.Review) {
+        permissions.push(CollectionContributorPermission.ADD_REVIEW);
+      }
+
+      await dbWrite.collectionContributor.updateMany({
+        where: {
+          collectionId: updated.id,
+          userId: {
+            not: updated.userId,
+          },
+        },
+        data: {
+          permissions,
+        },
       });
     }
 
