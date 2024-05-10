@@ -63,6 +63,7 @@ export function createCachedArray<T extends object>({
   cacheNotFound = true,
 }: CachedLookupOptions<T>) {
   async function fetch(ids: number[]) {
+    if (!ids.length) return [];
     const results = new Set<T>();
     const cacheJsons = await redis.hmGet(key, ids.map(String));
     const cacheArray = cacheJsons.filter((x) => x !== null).map((x) => JSON.parse(x));
@@ -141,10 +142,10 @@ export function createCachedArray<T extends object>({
     const toCache = Object.fromEntries(
       Object.entries(results).map(([key, x]) => [key, JSON.stringify({ ...x, cachedAt })])
     );
-    await redis.hSet(key, toCache);
+    if (Object.keys(toCache).length > 0) await redis.hSet(key, toCache);
 
     const toRemove = id.filter((x) => !results[x]).map(String);
-    await redis.hDel(key, toRemove);
+    if (toRemove.length > 0) await redis.hDel(key, toRemove);
   }
 
   async function cleanup() {
