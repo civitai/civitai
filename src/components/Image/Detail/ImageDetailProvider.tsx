@@ -1,9 +1,9 @@
 import { useDidUpdate, useHotkeys, useLocalStorage } from '@mantine/hooks';
-import { ImageGuardConnect } from '~/components/ImageGuard/ImageGuard2';
+import { ConnectProps, ImageGuardConnect } from '~/components/ImageGuard/ImageGuard2';
 import { useQueryImages } from '~/components/Image/image.utils';
 import { ReviewReactions } from '@prisma/client';
 import { useRouter } from 'next/router';
-import { createContext, useContext, useEffect, useMemo } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
@@ -20,7 +20,7 @@ type ImageDetailState = {
   image?: ImageGetInfinite[number] | ImageGetById;
   isLoading: boolean;
   active: boolean;
-  connect: ImageGuardConnect;
+  connect: ConnectProps;
   isMod?: boolean;
   isOwner?: boolean;
   shareUrl: string;
@@ -63,10 +63,12 @@ export function ImageDetailProvider({
   } & Record<string, unknown>;
 }) {
   const isMobile = useIsMobile();
-  const [active, setActive] = useLocalStorage({
+  const mobileState = useState(false);
+  const desktopState = useLocalStorage({
     key: `image-detail-open`,
     defaultValue: true,
   });
+  const [active, setActive] = isMobile ? mobileState : desktopState; // TODO - refine - there is some jank when screen size changes to mobile
 
   const router = useRouter();
   const browserRouter = useBrowserRouter();
@@ -187,13 +189,13 @@ export function ImageDetailProvider({
   const isMod = currentUser?.isModerator ?? false;
   const isOwner = currentUser?.id === image?.user.id;
 
-  const connect: ImageGuardConnect = modelId
+  const connect: ConnectProps = modelId
     ? { connectType: 'model', connectId: modelId }
     : postId
     ? { connectType: 'post', connectId: postId }
     : username
     ? { connectType: 'user', connectId: username }
-    : ({} as any);
+    : {};
 
   return (
     <ImageDetailContext.Provider

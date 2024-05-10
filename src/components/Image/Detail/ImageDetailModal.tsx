@@ -6,6 +6,7 @@ import { ImageDetailProvider } from '~/components/Image/Detail/ImageDetailProvid
 import { ImagesContextState } from '~/components/Image/Providers/ImagesProvider';
 import { imagesQueryParamSchema } from '~/components/Image/image.utils';
 import { removeEmpty } from '../../../utils/object-helpers';
+import { ImageDetail2 } from '~/components/Image/DetailV2/ImageDetail2';
 
 export default function ImageDetailModal({
   imageId,
@@ -30,7 +31,7 @@ export default function ImageDetailModal({
         images={images}
         hideReactionCount={hideReactionCount}
       >
-        <ImageDetail />
+        <ImageDetail2 />
       </ImageDetailProvider>
     </PageModal>
   );

@@ -23,8 +23,6 @@ type ImageProps = {
   userId?: number;
   user?: { id: number };
   url?: string | null;
-  // tags?: number[];
-  // tagIds?: number[];
 };
 
 type ConnectId = string | number;
@@ -43,7 +41,7 @@ type ConnectType =
 
 export type ImageGuardConnect = { connectType: ConnectType; connectId: ConnectId };
 
-type ConnectProps =
+export type ConnectProps =
   | { connectType?: never; connectId?: never }
   | { connectType: ConnectType; connectId: ConnectId };
 
@@ -78,22 +76,15 @@ function useImageGuardContext() {
   return context;
 }
 
-export function ImageGuard2({
-  image,
-  children,
-  connectId,
-  connectType,
-  explain = true,
-}: {
+type UseImageGuardProps = {
   image: ImageProps;
-  children: (show: boolean) => React.ReactElement | null;
-  explain?: boolean;
-} & ConnectProps) {
+} & ConnectProps;
+
+function useImageGuard({ image, connectId, connectType }: UseImageGuardProps) {
   const currentUser = useCurrentUser();
   const showImage = useShowImagesStore(useCallback((state) => state[image.id], [image.id]));
   const key = getConnectionKey({ connectType, connectId });
-  const { tosViolation, nsfwLevel = 0 } = useImageStore(image);
-  const { classes } = useBadgeStyles({ browsingLevel: nsfwLevel });
+  const { nsfwLevel = 0, ...rest } = useImageStore(image);
 
   const showConnect = useShowConnectionStore(
     useCallback((state) => (key ? state[key] : undefined), [key])
@@ -106,18 +97,34 @@ export function ImageGuard2({
   const safe = !nsfw ? true : !shouldBlur;
   const show = safe || (showConnect ?? showImage);
 
+  return {
+    safe,
+    show,
+    browsingLevel: nsfwLevel,
+    imageId: image.id,
+    key,
+    nsfw,
+    userId,
+    ...rest,
+  };
+}
+
+export function ImageGuard2({
+  image,
+  children,
+  explain = true,
+  ...connectProps
+}: {
+  image: ImageProps;
+  children: (show: boolean) => React.ReactElement | null;
+  explain?: boolean;
+} & ConnectProps) {
+  const state = useImageGuard({ image, ...connectProps });
+  const { safe, show, browsingLevel, imageId, key, nsfw, userId, tosViolation } = state;
+  const { classes } = useBadgeStyles({ browsingLevel });
+
   return (
-    <ImageGuardCtx.Provider
-      value={{
-        safe,
-        show,
-        browsingLevel: nsfwLevel,
-        imageId: image.id,
-        key,
-        nsfw,
-        userId,
-      }}
-    >
+    <ImageGuardCtx.Provider value={state}>
       {!show && explain && (
         <BlurToggle>
           {(toggle) => (
@@ -132,7 +139,7 @@ export function ImageGuard2({
                   classNames={classes}
                   className="shadow shadow-black/30 min-w-[32px] text-center"
                 >
-                  {browsingLevelLabels[nsfwLevel as NsfwLevel]}
+                  {browsingLevelLabels[browsingLevel as NsfwLevel]}
                 </Badge>
                 <Button
                   onClick={toggle}
@@ -319,3 +326,17 @@ const useBadgeStyles = createStyles((theme, params: { browsingLevel?: number }) 
 });
 
 ImageGuard2.BlurToggle = BlurToggle;
+
+export function ImageGuardContent({
+  image,
+  children,
+  ...connectProps
+}: {
+  image: ImageProps;
+  children: (show: boolean) => React.ReactElement | null;
+} & ConnectProps) {
+  const state = useImageGuard({ image, ...connectProps });
+  const { show } = state;
+
+  return children(show);
+}

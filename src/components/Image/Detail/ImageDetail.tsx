@@ -1,6 +1,5 @@
 import {
   ActionIcon,
-  BackgroundImage,
   Box,
   Button,
   Card,
@@ -21,18 +20,14 @@ import {
   IconDotsVertical,
   IconEye,
   IconFlag,
-  IconX,
 } from '@tabler/icons-react';
 import { adsRegistry } from '~/components/Ads/adsRegistry';
 import { Adunit } from '~/components/Ads/AdUnit';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
-import { TipBuzzButton } from '~/components/Buzz/TipBuzzButton';
-import { ChatUserButton } from '~/components/Chat/ChatUserButton';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
-import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
 import { ImageDetailCarousel } from '~/components/Image/Detail/ImageDetailCarousel';
 import { ImageDetailComments } from '~/components/Image/Detail/ImageDetailComments';
 import { ImageDetailContextMenu } from '~/components/Image/Detail/ImageDetailContextMenu';
@@ -45,17 +40,13 @@ import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 import { TrackView } from '~/components/TrackView/TrackView';
-import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { env } from '~/env/client.mjs';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
-import { useImageStore } from '~/store/image.store';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { ProfileBackgroundCosmetic } from '~/server/selectors/cosmetic.selector';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { applyCosmeticThemeColors } from '~/libs/sx-helpers';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
 
 export function ImageDetail() {

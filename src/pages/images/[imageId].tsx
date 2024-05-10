@@ -6,6 +6,7 @@ import { imagesQueryParamSchema } from '~/components/Image/image.utils';
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
 import { setPageOptions } from '~/components/AppLayout/AppLayout';
 import { NotFound } from '~/components/AppLayout/NotFound';
+import { ImageDetail2 } from '~/components/Image/DetailV2/ImageDetail2';
 
 export default function ImagePage() {
   const router = useBrowserRouter();
@@ -16,7 +17,7 @@ export default function ImagePage() {
 
   return (
     <ImageDetailProvider imageId={imageId} filters={filters}>
-      <ImageDetail />
+      <ImageDetail2 />
     </ImageDetailProvider>
   );
 }
