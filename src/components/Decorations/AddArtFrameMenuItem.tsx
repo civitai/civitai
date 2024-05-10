@@ -17,7 +17,7 @@ export function AddArtFrameMenuItem(props: CardDecorationModalProps) {
         dialogStore.trigger({ component: CardDecorationModal, props });
       }}
     >
-      Add Art Frame
+      Add Content Decoration
     </Menu.Item>
   );
 }
