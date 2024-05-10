@@ -1,5 +1,5 @@
 import { useDidUpdate, useHotkeys, useLocalStorage } from '@mantine/hooks';
-import { ConnectProps, ImageGuardConnect } from '~/components/ImageGuard/ImageGuard2';
+import { ConnectProps } from '~/components/ImageGuard/ImageGuard2';
 import { useQueryImages } from '~/components/Image/image.utils';
 import { ReviewReactions } from '@prisma/client';
 import { useRouter } from 'next/router';
@@ -25,6 +25,7 @@ type ImageDetailState = {
   isOwner?: boolean;
   shareUrl: string;
   canNavigate?: boolean;
+  index: number;
   toggleInfo: () => void;
   close: () => void;
   next: () => void;
@@ -91,10 +92,16 @@ export function ImageDetailProvider({
 
   const shouldFetchImage =
     !imagesLoading && (images.length === 0 || !images.find((x) => x.id === imageId));
+  // TODO - this needs to return the data as `ImagesInfiniteModel`
+  // alternatively, we always query multiple images, with the cursor starting at `imageId`
   const { data: prefetchedImage, isInitialLoading: imageLoading } = trpc.image.get.useQuery(
     { id: imageId },
     { enabled: shouldFetchImage }
   );
+
+  if (prefetchedImage && shouldFetchImage) {
+    images.unshift(prefetchedImage as any);
+  }
 
   useEffect(() => {
     if (prefetchedImage && shouldFetchImage) {
@@ -118,8 +125,15 @@ export function ImageDetailProvider({
     }
   }, [isMobile]);
 
+  function findCurrentImageIndex() {
+    const index = images.findIndex((x) => x.id === imageId);
+    return index > -1 ? index : 0;
+  }
+
+  const index = findCurrentImageIndex();
+  const image = images[index];
   // const images = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data]);
-  const image = images.find((x) => x.id === imageId) ?? prefetchedImage ?? undefined;
+  // const image = images.find((x) => x.id === imageId) ?? prefetchedImage ?? undefined;
   // #endregion
 
   // #region [back button functionality]
@@ -145,17 +159,14 @@ export function ImageDetailProvider({
   // #endregion
 
   // #region [navigation]
-  /**NOTES**
-  - when our current image is not found in the images array, we can navigate away from it, but we can't use the arrows to navigate back to it.
-*/
-  const index = images.findIndex((x) => x.id === imageId);
   const prevIndex = index - 1;
   const nextIndex = index + 1;
-  const canNavigate = index > -1 ? images.length > 1 : images.length > 0; // see notes
+  const canNavigate = images.length > 1;
 
   const navigate = (id: number) => {
     const query = browserRouter.query;
     const [, queryString] = browserRouter.asPath.split('?');
+    console.log({ id });
     browserRouter.replace(
       { query: { ...query, imageId: id } },
       {
@@ -166,6 +177,7 @@ export function ImageDetailProvider({
   };
 
   const previous = () => {
+    console.log('prev', canNavigate);
     if (canNavigate) {
       const id = prevIndex > -1 ? images[prevIndex].id : images[images.length - 1].id;
       navigate(id);
@@ -173,6 +185,7 @@ export function ImageDetailProvider({
   };
 
   const next = () => {
+    console.log('next', canNavigate);
     if (canNavigate) {
       const id = nextIndex < images.length ? images[nextIndex].id : images[0].id;
       navigate(id);
@@ -187,7 +200,7 @@ export function ImageDetailProvider({
   }, [browserRouter]);
 
   const isMod = currentUser?.isModerator ?? false;
-  const isOwner = currentUser?.id === image?.user.id;
+  const isOwner = currentUser?.id === images[index]?.user.id;
 
   const connect: ConnectProps = modelId
     ? { connectType: 'model', connectId: modelId }
@@ -214,6 +227,7 @@ export function ImageDetailProvider({
         shareUrl,
         canNavigate,
         navigate,
+        index,
       }}
     >
       {children}
