@@ -1,7 +1,7 @@
 // @ts-check
 import { z } from 'zod';
 import { zc } from '~/utils/schema-helpers';
-import { commaDelimitedStringArray, commaDelimitedStringObject } from '~/utils/zod-helpers';
+import { commaDelimitedStringArray, commaDelimitedStringObject, stringToArray } from '~/utils/zod-helpers';
 
 /**
  * Specify your server-side environment variables schema here.
@@ -148,6 +148,7 @@ export const serverSchema = z.object({
   FRESHDESK_DOMAIN: z.string().optional(),
   FRESHDESK_TOKEN: z.string().optional(),
   UPLOAD_PROHIBITED_EXTENSIONS: commaDelimitedStringArray().optional(),
+  POST_INTENT_DETAILS_HOSTS: z.preprocess(stringToArray, z.array(z.string().url()).optional()),
 });
 
 /**
@@ -184,11 +185,6 @@ export const clientSchema = z.object({
   NEXT_PUBLIC_RECAPTCHA_KEY: z.string(),
   NEXT_PUBLIC_ADS: zc.booleanString.default(false),
   NEXT_PUBLIC_PAYPAL_CLIENT_ID: z.string().optional(),
-  NEXT_PUBLIC_POST_INTENT_DETAILS_HOSTS: z.preprocess((value) => {
-    if (typeof value !== 'string') return null;
-    value.split(',').map((v) => new URL(v));
-    return value;
-  }, z.string()).optional(),
 });
 
 /**
@@ -226,5 +222,4 @@ export const clientEnv = {
   NEXT_PUBLIC_RECAPTCHA_KEY: process.env.NEXT_PUBLIC_RECAPTCHA_KEY,
   NEXT_PUBLIC_ADS: process.env.NEXT_PUBLIC_ADS === 'true',
   NEXT_PUBLIC_PAYPAL_CLIENT_ID: process.env.NEXT_PUBLIC_PAYPAL_CLIENT_ID,
-  NEXT_PUBLIC_POST_INTENT_DETAILS_HOSTS: process.env.NEXT_PUBLIC_POST_INTENT_DETAILS_HOSTS,
 };

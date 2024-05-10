@@ -67,6 +67,8 @@ export function PostImageDropzone({
         const index = Math.max(0, ...images.map((x) => x.data.index)) + 1;
         switch (props.status) {
           case 'added':
+            const externalDetailsUrl = useExternalMetaStore.getState().getUrl();
+
             const payload = addPostImageSchema.parse({
               ...props,
               postId,
@@ -75,12 +77,9 @@ export function PostImageDropzone({
               width: props.metadata.width,
               height: props.metadata.height,
               hash: props.metadata.hash,
+              externalDetailsUrl,
             });
 
-            const externalData = useExternalMetaStore.getState().getData();
-            if (externalData && Object.keys(externalData).length > 0) {
-              payload.meta = { ...(payload.meta ?? {}), external: externalData };
-            }
             addImageMutation.mutate(payload);
             return [...images, { type: 'resolving', data: { ...props, index: 999 } }];
           case 'blocked':

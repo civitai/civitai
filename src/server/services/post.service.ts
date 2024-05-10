@@ -7,11 +7,13 @@ import {
   TagType,
 } from '@prisma/client';
 import { SessionUser } from 'next-auth';
-import { env } from 'process';
+import { env } from '~/env/server.mjs';
 import { PostSort } from '~/server/common/enums';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
+import { externalMetaSchema } from '~/server/schema/image.schema';
 import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import {
   editPostImageSelect,
@@ -489,7 +491,9 @@ export const createPost = async ({
   tag,
   tags,
   ...data
-}: PostCreateInput & { userId: number }): Promise<PostDetailEditable> => {
+}: PostCreateInput & {
+  userId: number;
+}): Promise<PostDetailEditable> => {
   const tagsToAdd: number[] = [];
   if (tags && tags.length > 0) {
     const tagObj = await findOrCreateTagsByName(tags);
@@ -549,28 +553,24 @@ export const getPostTags = async ({
 }: GetPostTagsInput & { excludedTagIds?: number[] }) => {
   const showTrending = query === undefined || query.length < 2;
   const tags = await dbRead.$queryRaw<PostQueryResult>`
-    SELECT
-      t.id,
-      t.name,
-      (
-        SELECT COALESCE(
-        (
-            SELECT MAX(pt."nsfwLevel")
-            FROM "TagsOnTags" tot
-            JOIN "Tag" pt ON tot."fromTagId" = pt.id
-            WHERE tot."toTagId" = t.id
-        ), t."nsfwLevel") "nsfwLevel"
-      ) "nsfwLevel",
-      t."isCategory",
-      COALESCE(${
-        showTrending ? Prisma.sql`s."postCountWeek"` : Prisma.sql`s."postCountAllTime"`
-      }, 0)::int AS "postCount"
+    SELECT t.id,
+           t.name,
+           (SELECT COALESCE(
+                     (SELECT MAX(pt."nsfwLevel")
+                      FROM "TagsOnTags" tot
+                             JOIN "Tag" pt ON tot."fromTagId" = pt.id
+                      WHERE tot."toTagId" = t.id), t."nsfwLevel") "nsfwLevel") "nsfwLevel",
+           t."isCategory",
+           COALESCE(${
+             showTrending ? Prisma.sql`s."postCountWeek"` : Prisma.sql`s."postCountAllTime"`
+           }, 0)::int AS                                                       "postCount"
     FROM "Tag" t
-    LEFT JOIN "TagStat" s ON s."tagId" = t.id
-    LEFT JOIN "TagRank" r ON r."tagId" = t.id
-    WHERE
-      ${showTrending ? Prisma.sql`t."isCategory" = true` : Prisma.sql`t.name ILIKE ${query + '%'}`}
-      ${nsfwLevel ? Prisma.sql`AND (t."nsfwLevel" & ${nsfwLevel}) != 0` : ``}
+           LEFT JOIN "TagStat" s ON s."tagId" = t.id
+           LEFT JOIN "TagRank" r ON r."tagId" = t.id
+    WHERE ${
+      showTrending ? Prisma.sql`t."isCategory" = true` : Prisma.sql`t.name ILIKE ${query + '%'}`
+    }
+            ${nsfwLevel ? Prisma.sql`AND (t."nsfwLevel" & ${nsfwLevel}) != 0` : ``}
     ORDER BY ${Prisma.raw(
       showTrending ? `r."postCountWeekRank" ASC` : `r."postCountAllTimeRank" ASC`
     )}
@@ -626,12 +626,73 @@ export const removePostTag = ({ tagId, id: postId }: RemovePostTagInput) => {
   return dbWrite.tagsOnPost.delete({ where: { tagId_postId: { tagId, postId } } });
 };
 
+const log = (data: MixedObject) => {
+  logToAxiom({ name: 'post-service', type: 'error', ...data }).catch();
+};
+
+const DETAIL_LIMIT = 10;
+
+const parseExternalMetadata = async (src: string | undefined, user: number) => {
+  if (!src) return;
+
+  const srcUrl = new URL(src);
+  if (!env.POST_INTENT_DETAILS_HOSTS || !env.POST_INTENT_DETAILS_HOSTS.includes(srcUrl.origin)) {
+    return log({ user, message: 'This domain is not approved for external parsing.', domain: src });
+  }
+
+  let respJson;
+  try {
+    const response = await fetch(src);
+    respJson = await response.json();
+  } catch (e) {
+    return log({ user, message: 'Failure fetching JSON data from external URL.', domain: src });
+  }
+
+  const detailParse = externalMetaSchema.safeParse(respJson);
+  if (!detailParse.success) {
+    return log({
+      user,
+      message: 'Failure parsing JSON data from external URL.',
+      domain: src,
+      issues: detailParse.error.issues,
+    });
+  }
+
+  // TODO it is possible we will eventually want to do some test of mediaUrl domain = detailsUrl domain
+  //  but that can cause problems for different cdns vs apis.
+  //  Another option is putting the mediaUrl into the detailsUrl structure
+  //  but that can impose extra work if the partner just wants to put their name and homepage on everything
+  //  and not worry about having to modify the API to include each URL
+
+  const { data: detailData } = detailParse;
+
+  if (!!detailData.details) {
+    const detailLength = Object.keys(detailData.details).length;
+    if (detailLength > DETAIL_LIMIT) {
+      return log({
+        user,
+        message: 'Too many keys in "details" for external data.',
+        domain: src,
+        found: detailLength,
+      });
+    }
+  }
+
+  return detailData;
+};
+
 export const addPostImage = async ({
   modelVersionId,
   meta,
   user,
+  externalDetailsUrl,
   ...props
 }: AddPostImageInput & { user: SessionUser }) => {
+  const externalData = await parseExternalMetadata(externalDetailsUrl, user.id);
+  if (externalData) {
+    meta = { ...meta, external: externalData };
+  }
+
   let toolId: number | undefined;
   const { name: sourceName, homepage: sourceHomepage } = meta?.external?.source ?? {};
   if (sourceName || sourceHomepage) {
@@ -700,12 +761,11 @@ export const addPostImage = async ({
 
 export async function bustCachesForPost(postId: number) {
   const [result] = await dbRead.$queryRaw<{ isShowcase: boolean; modelVersionId: number }[]>`
-    SELECT
-      m."userId" = p."userId" as "isShowcase",
-      p."modelVersionId"
+    SELECT m."userId" = p."userId" as "isShowcase",
+           p."modelVersionId"
     FROM "Post" p
-    JOIN "ModelVersion" mv ON mv."id" = p."modelVersionId"
-    JOIN "Model" m ON m."id" = mv."modelId"
+           JOIN "ModelVersion" mv ON mv."id" = p."modelVersionId"
+           JOIN "Model" m ON m."id" = mv."modelId"
     WHERE p."id" = ${postId}
   `;
 

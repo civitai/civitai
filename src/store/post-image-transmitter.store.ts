@@ -1,6 +1,5 @@
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
-import { ExternalMetaSchema } from '~/server/schema/image.schema';
 import { getOrchestratorMediaFilesFromUrls } from '~/utils/orchestration';
 
 const useOrchestratorUrlStore = create<{
@@ -32,18 +31,16 @@ export const orchestratorMediaTransmitter = {
   },
 };
 
-// type StringRecord = { [p: string]: unknown };
-
 export const useExternalMetaStore = create<{
-  data: ExternalMetaSchema;
-  setData: (properties: ExternalMetaSchema) => void;
-  getData: () => ExternalMetaSchema;
+  url: string | undefined;
+  setUrl: (url: string | undefined) => void;
+  getUrl: () => string | undefined;
 }>((set, get) => ({
-  data: {},
-  setData: (properties) => set({ data: properties }),
-  getData: () => {
-    const properties = get().data;
-    set({ data: {} });
-    return properties;
+  url: undefined,
+  setUrl: (url) => set({ url }),
+  getUrl: () => {
+    const url = get().url;
+    set({ url: undefined });
+    return url;
   },
 }));

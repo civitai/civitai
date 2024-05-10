@@ -18,10 +18,8 @@ import React, { useEffect, useState } from 'react';
 import { z } from 'zod';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { Meta } from '~/components/Meta/Meta';
-import { env } from '~/env/client.mjs';
 import { constants, POST_TAG_LIMIT } from '~/server/common/constants';
 import { IMAGE_MIME_TYPE, MEDIA_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
-import { externalMetaSchema } from '~/server/schema/image.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import {
   orchestratorMediaTransmitter,
@@ -36,7 +34,6 @@ import { trpc } from '~/utils/trpc';
 import { commaDelimitedStringArray } from '~/utils/zod-helpers';
 
 const TRANSMITTER_KEY = 'post-intent';
-const DETAIL_LIMIT = 10;
 
 const postQuerySchema = z.object({
   /**
@@ -82,7 +79,7 @@ export const getServerSideProps = createServerSideProps({
 });
 
 type ParseProgress = {
-  title: 'Parsing params' | 'Checking media' | 'Fetching details';
+  title: 'Parsing params' | 'Checking media';
   status: 'success' | 'failed' | 'skipped' | undefined;
   errors: React.ReactNode[];
   msg?: React.ReactNode;
@@ -98,7 +95,6 @@ export default function IntentPost() {
   const [progress, setProgress] = useState<ParseProgress[]>([
     { title: 'Parsing params', status: undefined, errors: [] },
     { title: 'Checking media', status: undefined, errors: [] },
-    { title: 'Fetching details', status: undefined, errors: [] },
   ]);
 
   const createPostMutation = trpc.post.create.useMutation();
@@ -125,21 +121,20 @@ export default function IntentPost() {
 
           setCreatingPost('Redirecting...');
 
-          await router.push({
-            pathname: `/posts/${res.id}/edit`,
-            query: { src: TRANSMITTER_KEY },
-          });
-          // TODO swap this back
-          // await router.replace(
-          //   {
-          //     pathname: `/posts/${res.id}/edit`,
-          //     query: { src: TRANSMITTER_KEY },
-          //   },
-          //   undefined,
-          //   {
-          //     shallow: true,
-          //   }
-          // );
+          // await router.push({
+          //   pathname: `/posts/${res.id}/edit`,
+          //   query: { src: TRANSMITTER_KEY },
+          // });
+          await router.replace(
+            {
+              pathname: `/posts/${res.id}/edit`,
+              query: { src: TRANSMITTER_KEY },
+            },
+            undefined,
+            {
+              shallow: true,
+            }
+          );
           setCreatingPost(undefined);
         },
         onError(error) {
@@ -319,107 +314,12 @@ export default function IntentPost() {
       }
     };
 
-    const fetchDetails = async (src: string | undefined) => {
-      if (!src) {
-        setProgress((prev) =>
-          transformProgress(prev, {
-            title: 'Fetching details',
-            status: 'skipped',
-            errors: [],
-            msg: <Text fs="italic">Skipped</Text>,
-          })
-        );
-        return true;
-      }
-
-      const srcUrl = new URL(src);
-      if (
-        !env.NEXT_PUBLIC_POST_INTENT_DETAILS_HOSTS ||
-        !env.NEXT_PUBLIC_POST_INTENT_DETAILS_HOSTS.split(',').includes(srcUrl.origin)
-      ) {
-        throw new Error('This domain is not approved. Please contact us to be added.');
-      }
-
-      let respJson;
-      try {
-        const response = await fetch(src);
-        respJson = await response.json();
-      } catch (e) {
-        console.log(e);
-        throw new Error('Could not fetch details from that url');
-      }
-
-      const detailParse = externalMetaSchema.safeParse(respJson);
-      if (!detailParse.success) {
-        setProgress((prev) =>
-          transformProgress(prev, {
-            title: 'Fetching details',
-            status: 'failed',
-            errors: detailParse.error.issues.map((i, idx) => (
-              <Group key={idx}>
-                <Code>{i.path.join('.')}</Code>
-                <Text color="dimmed" size="sm">
-                  {i.message}
-                </Text>
-              </Group>
-            )),
-          })
-        );
-        return false;
-      }
-
-      // TODO it is possible we will eventually want to do some test of mediaUrl domain = detailsUrl domain
-      //  but that can cause problems for different cdns vs apis.
-      //  Another option is putting the mediaUrl into the detailsUrl structure
-      //  but that can impose extra work if the partner just wants to put their name and homepage on everything
-      //  and not worry about having to modify the API to include each URL
-
-      const { data: detailData } = detailParse;
-
-      if (!!detailData.details) {
-        const detailLength = Object.keys(detailData.details).length;
-        if (detailLength > DETAIL_LIMIT) {
-          throw new Error(
-            `Too many keys in "details" (${detailLength}). Maximum is ${DETAIL_LIMIT}`
-          );
-        }
-      }
-
-      useExternalMetaStore.getState().setData(detailData);
-
-      setProgress((prev) =>
-        transformProgress(prev, {
-          title: 'Fetching details',
-          status: 'success',
-          errors: [],
-        })
-      );
-
-      return true;
-    };
-
     fetchBlob(data.mediaUrl)
       .then(() => {
-        fetchDetails(data.detailsUrl)
-          .then((ret) => {
-            if (!ret) return;
-            setReadyData(data);
-          })
-          .catch((e: Error) => {
-            setProgress((prev) =>
-              transformProgress(prev, {
-                title: 'Fetching details',
-                status: 'failed',
-                errors: [
-                  <Text key={e.message} color="dimmed" size="sm">
-                    {e.message.split('. ').map((m, idx) => (
-                      <p key={idx}>{m}</p>
-                    ))}
-                  </Text>,
-                ],
-              })
-            );
-          });
+        if (data.detailsUrl) {
+          useExternalMetaStore.getState().setUrl(data.detailsUrl);
+        }
+        setReadyData(data);
       })
       .catch((e: Error) => {
         setProgress((prev) =>
