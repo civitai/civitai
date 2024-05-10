@@ -4,6 +4,7 @@ import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { formatBytes } from '~/utils/number-helpers';
 
 export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {
+  return res.status(200).json({ message: 'disabled' });
   const memoryByType: Record<string, number> = {};
   const stats = {
     total: 0,

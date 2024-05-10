@@ -964,8 +964,6 @@ const getImageGenerationData = async (id: number): Promise<Generation.Data> => {
   if (!checkpoint?.covered && checkpoint?.modelType) {
     const baseModel = getBaseModelSetKey(checkpoint.baseModel);
     const defaultCheckpoint = baseModel ? defaultCheckpoints[baseModel as any] : undefined;
-    console.log({ baseModel, defaultCheckpoint });
-    console.log(checkpoint);
     if (defaultCheckpoint) {
       const [result] = await getResources({
         versionId: defaultCheckpoint.version,
