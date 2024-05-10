@@ -606,7 +606,7 @@ export const upsertCollection = async ({
         where: { collectionId: updated.id },
         data: { publishedAt: new Date() },
       });
-    } else if (updated.mode !== CollectionMode.Contest) {
+    } else if (!updated.mode) {
       // otherwise set publishedAt to null
       await dbWrite.post.updateMany({
         where: { collectionId: updated.id },
