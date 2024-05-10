@@ -310,7 +310,8 @@ export const completeOnboardingHandler = async ({
     const isComplete = onboarding === OnboardingComplete;
     if (isComplete && changed) onboardingCompletedCounter.inc();
   } catch (e) {
-    onboardingErrorCounter.inc();
+    const err = e as Error;
+    if (!err.message.includes('constraint failed')) onboardingErrorCounter.inc();
     if (e instanceof TRPCError) throw e;
     throw throwDbError(e);
   }
