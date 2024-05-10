@@ -357,6 +357,12 @@ export type ZipModelFileType = (typeof zipModelFileTypes)[number];
 
 export const POST_IMAGE_LIMIT = 20;
 export const POST_TAG_LIMIT = 5;
+export const POST_INTENT_DETAILS_HOSTS: string[] = [
+  'localhost:3000',
+  'dev.civitai.com',
+  'civitai.com',
+];
+
 export const CAROUSEL_LIMIT = 20;
 export const DEFAULT_EDGE_IMAGE_WIDTH = 450;
 

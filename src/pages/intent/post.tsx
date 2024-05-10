@@ -17,7 +17,7 @@ import { useRouter } from 'next/router';
 import React, { useEffect, useState } from 'react';
 import { z } from 'zod';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { constants, POST_TAG_LIMIT } from '~/server/common/constants';
+import { constants, POST_INTENT_DETAILS_HOSTS, POST_TAG_LIMIT } from '~/server/common/constants';
 import { IMAGE_MIME_TYPE, MEDIA_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
 import { externalMetaSchema } from '~/server/schema/image.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -35,8 +35,6 @@ import { commaDelimitedStringArray } from '~/utils/zod-helpers';
 
 const TRANSMITTER_KEY = 'post-intent';
 const DETAIL_LIMIT = 10;
-// TODO change these
-const allowedHosts: string[] = ['localhost:3000', 'dev.civitai.com', 'civitai.com'];
 
 const postQuerySchema = z.object({
   /**
@@ -333,7 +331,7 @@ export default function IntentPost() {
       }
 
       const srcUrl = new URL(src);
-      if (!allowedHosts.includes(srcUrl.host)) {
+      if (!POST_INTENT_DETAILS_HOSTS.includes(srcUrl.host)) {
         throw new Error('This domain is not approved. Please contact us to be added.');
       }
 
@@ -383,8 +381,6 @@ export default function IntentPost() {
       }
 
       useExternalMetaStore.getState().setData(detailData);
-
-      // TODO add tool
 
       setProgress((prev) =>
         transformProgress(prev, {
