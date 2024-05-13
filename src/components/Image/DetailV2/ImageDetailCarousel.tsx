@@ -9,41 +9,30 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { useAspectRatioFit } from '~/hooks/useAspectRatioFit';
 import { constants } from '~/server/common/constants';
 import { ImagesInfiniteModel } from '~/server/services/image.service';
-import { isDefined } from '~/utils/type-guards';
 
 export function ImageDetailCarousel() {
   const { images, index, canNavigate, connect, navigate } = useImageDetailContext();
-  const renderRef = useRef<ImagesInfiniteModel[]>([]);
-  renderRef.current = [images[index - 1], images[index], images[index + 1]].filter(isDefined);
+  const navigateRef = useRef(navigate);
+  navigateRef.current = navigate;
 
   const [embla, setEmbla] = useState<Embla | null>(null);
-  const [slidesInView, setSlidesInView] = useState<number[]>(() => {
-    const renderIndex = renderRef.current.findIndex((x) => x.id === images[index].id);
-    return [renderIndex > -1 ? renderIndex : 0];
-  });
-  console.log({ index, renderImages: renderRef.current });
+  const [slidesInView, setSlidesInView] = useState<number[]>([index]);
 
   const handleSlideChange = (slide: number) => {
-    const renderImage = renderRef.current[slide];
-    console.log('change', index, renderRef.current);
-    const imageId = images.find((x) => x.id === renderImage.id)?.id;
-    if (imageId) navigate(imageId);
+    const imageId = images[slide].id;
+    if (imageId) navigateRef.current(imageId);
   };
 
   useEffect(() => {
     if (!embla) return;
-    const onSelect = () => setSlidesInView([...embla.slidesInView(true), ...embla.slidesInView()]);
+    const onSelect = () => {
+      setSlidesInView([...embla.slidesInView(true), ...embla.slidesInView()]);
+    };
     embla.on('select', onSelect);
     return () => {
       embla.off('select', onSelect);
     };
   }, [embla]);
-
-  useEffect(() => {
-    setTimeout(() => {
-      embla?.reInit();
-    }, 0);
-  }, [index]);
 
   if (!images.length) return null;
 
@@ -58,7 +47,7 @@ export function ImageDetailCarousel() {
         height="100%"
         initialSlide={slidesInView[0]}
       >
-        {renderRef.current.map((image, index) => (
+        {images.map((image, index) => (
           <Carousel.Slide key={image.id}>
             {slidesInView.includes(index) && <ImageContent image={image} {...connect} />}
           </Carousel.Slide>

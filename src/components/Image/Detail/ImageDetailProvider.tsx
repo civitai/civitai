@@ -166,7 +166,6 @@ export function ImageDetailProvider({
   const navigate = (id: number) => {
     const query = browserRouter.query;
     const [, queryString] = browserRouter.asPath.split('?');
-    console.log({ id });
     browserRouter.replace(
       { query: { ...query, imageId: id } },
       {
