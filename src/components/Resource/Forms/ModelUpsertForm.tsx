@@ -162,7 +162,12 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
 
   useEffect(() => {
     const subscription = form.watch((value, { name, type }) => {
-      if (name && lockableProperties.includes(name) && !value.lockedProperties?.includes(name)) {
+      if (
+        currentUser?.isModerator &&
+        name &&
+        lockableProperties.includes(name) &&
+        !value.lockedProperties?.includes(name)
+      ) {
         const locked = (value.lockedProperties ?? []).filter(isDefined);
         form.setValue('lockedProperties', [...locked, name]);
       }
