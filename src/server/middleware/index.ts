@@ -3,12 +3,18 @@ import { getToken } from 'next-auth/jwt';
 import { NextRequest, NextResponse } from 'next/server';
 import { civitaiTokenCookieName } from '~/libs/auth';
 import { apiCacheMiddleware } from '~/server/middleware/api-cache.middleware';
+import { entryExitMiddleware } from '~/server/middleware/entry-exit.middleware';
 import { Middleware } from '~/server/middleware/middleware-utils';
 import { redirectsMiddleware } from '~/server/middleware/redirects.middleware';
 import { routeGuardsMiddleware } from '~/server/middleware/route-guards.middleware';
 
 // NOTE: order matters!
-const middlewares: Middleware[] = [routeGuardsMiddleware, apiCacheMiddleware, redirectsMiddleware];
+const middlewares: Middleware[] = [
+  routeGuardsMiddleware,
+  apiCacheMiddleware,
+  redirectsMiddleware,
+  entryExitMiddleware,
+];
 
 export const middlewareMatcher = middlewares.flatMap((middleware) => middleware.matcher);
 
