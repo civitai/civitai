@@ -14,7 +14,6 @@ export const config = {
     '/api/v1/:path*',
     '/models/:path*',
     '/user/:path*',
-    '/:path*',
   ],
   api: {
     bodyParser: {

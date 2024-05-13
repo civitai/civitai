@@ -911,6 +911,8 @@ export const getResourceGenerationData = async ({
   };
 };
 
+type ResourceUsedRow = Generation.Resource & { covered: boolean; hash?: string; strength?: number };
+const defaultCheckpointData: Partial<Record<BaseModelSetType, ResourceUsedRow>> = {};
 const getImageGenerationData = async (id: number): Promise<Generation.Data> => {
   const image = await dbRead.image.findUnique({
     where: { id },
@@ -928,16 +930,7 @@ const getImageGenerationData = async (id: number): Promise<Generation.Data> => {
     ...meta
   } = imageGenerationSchema.parse(image.meta);
 
-  async function getResources({ imageId, versionId }: { imageId?: number; versionId?: number }) {
-    const AND: Prisma.Sql[] = [];
-    if (imageId) AND.push(Prisma.sql`ir."imageId" = ${imageId}`);
-    if (versionId) AND.push(Prisma.sql`ir."modelVersionId" = ${versionId}`);
-
-    if (!AND.length) throw new Error('missing query param in `getResources`');
-
-    return await dbRead.$queryRaw<
-      Array<Generation.Resource & { covered: boolean; hash?: string; strength?: number }>
-    >`
+  const resources = await dbRead.$queryRaw<ResourceUsedRow[]>`
     SELECT
       mv.id,
       mv.name,
@@ -953,22 +946,26 @@ const getImageGenerationData = async (id: number): Promise<Generation.Data> => {
     JOIN "ModelVersion" mv on mv.id = ir."modelVersionId"
     JOIN "Model" m on m.id = mv."modelId"
     LEFT JOIN "GenerationCoverage" gc on gc."modelVersionId" = mv.id
-    WHERE ${Prisma.join(AND, ' AND ')}
+    WHERE ir."imageId" = ${id};
   `;
-  }
-
-  const resources = await getResources({ imageId: id });
 
   // if the checkpoint exists but isn't covered, add a default based off checkpoint `modelType`
   const checkpoint = resources.find((x) => x.modelType === 'Checkpoint');
   if (!checkpoint?.covered && checkpoint?.modelType) {
     const baseModel = getBaseModelSetKey(checkpoint.baseModel);
     const defaultCheckpoint = baseModel ? defaultCheckpoints[baseModel as any] : undefined;
-    if (defaultCheckpoint) {
-      const [result] = await getResources({
-        versionId: defaultCheckpoint.version,
-      });
-      if (result) resources.unshift(result);
+    if (baseModel && defaultCheckpoint) {
+      if (!defaultCheckpointData[baseModel]) {
+        const resource = await dbRead.modelVersion.findFirst({
+          where: { id: defaultCheckpoint.version },
+          select: generationResourceSelect,
+        });
+        if (resource) {
+          defaultCheckpointData[baseModel] = { ...mapGenerationResource(resource), covered: true };
+        }
+      }
+      if (defaultCheckpointData[baseModel])
+        resources.unshift(defaultCheckpointData[baseModel] as ResourceUsedRow);
     }
   }
   const deduped = uniqBy(resources, 'id').filter((x) => x.covered);

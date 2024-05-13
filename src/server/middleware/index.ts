@@ -9,12 +9,7 @@ import { redirectsMiddleware } from '~/server/middleware/redirects.middleware';
 import { routeGuardsMiddleware } from '~/server/middleware/route-guards.middleware';
 
 // NOTE: order matters!
-const middlewares: Middleware[] = [
-  routeGuardsMiddleware,
-  apiCacheMiddleware,
-  redirectsMiddleware,
-  entryExitMiddleware,
-];
+const middlewares: Middleware[] = [routeGuardsMiddleware, apiCacheMiddleware, redirectsMiddleware];
 
 export const middlewareMatcher = middlewares.flatMap((middleware) => middleware.matcher);
 
