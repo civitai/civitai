@@ -164,8 +164,8 @@ export function RoutedDialogLink<T extends DialogKey, TPassHref extends boolean 
     return cloneElement(children as React.ReactElement, {
       href: asPath,
       onClick: handleClick,
-      className,
-      style,
+      // className,
+      // style,
     });
   }
 

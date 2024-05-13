@@ -20,7 +20,6 @@ import {
   IconDotsVertical,
   IconEye,
   IconEyeOff,
-  IconInfoCircle,
   IconPencil,
   IconPlus,
   IconTrash,
@@ -46,7 +45,6 @@ import { BrowsingLevelBadge } from '~/components/ImageGuard/ImageGuard2';
 import { openSetBrowsingLevelModal } from '~/components/Dialog/dialog-registry';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { CustomCard } from './CustomCard';
-import { create } from 'zustand';
 import { createSelectStore } from '~/store/select.store';
 import { ImageTechniquesPopover } from '~/components/Post/EditV2/Techniques/PostImageTechniquesPopover';
 import { PostImageTechnique } from '~/components/Post/EditV2/Techniques/PostImageTechnique';
@@ -58,6 +56,7 @@ const simpleMetaProps = {
   steps: 'Steps',
   sampler: 'Sampler',
   seed: 'Seed',
+  clipSkip: 'Clip skip',
 } as const;
 // #endregion
 

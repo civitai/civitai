@@ -166,7 +166,7 @@ export function VotableTag({
   const canVote = tagId;
   let badge = (
     <Badge
-      radius="xs"
+      radius="sm"
       key={tagId}
       sx={{
         position: 'relative',

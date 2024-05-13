@@ -7,6 +7,7 @@ import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProv
 import { ConnectProps, ImageGuardContent } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { useAspectRatioFit } from '~/hooks/useAspectRatioFit';
+import { useResizeObserver } from '~/hooks/useResizeObserver';
 import { constants } from '~/server/common/constants';
 import { ImagesInfiniteModel } from '~/server/services/image.service';
 
@@ -28,16 +29,21 @@ export function ImageDetailCarousel() {
     const onSelect = () => {
       setSlidesInView([...embla.slidesInView(true), ...embla.slidesInView()]);
     };
+
     embla.on('select', onSelect);
     return () => {
       embla.off('select', onSelect);
     };
   }, [embla]);
 
+  const ref = useResizeObserver<HTMLDivElement>((e) => {
+    embla?.reInit();
+  });
+
   if (!images.length) return null;
 
   return (
-    <div className="flex justify-stretch items-stretch flex-1">
+    <div ref={ref} className="flex justify-stretch items-stretch flex-1 min-h-0">
       <Carousel
         withControls={canNavigate}
         draggable={canNavigate}
@@ -68,7 +74,7 @@ function ImageContent({ image }: { image: ImagesInfiniteModel } & ConnectProps) 
       {(safe) => (
         <div ref={setRef} className="h-full w-full flex justify-center items-center">
           {!safe ? (
-            <div className="relative max-h-full max-w-full " style={{ height, width }}>
+            <div className="relative h-full w-full" style={{ maxHeight: height, maxWidth: width }}>
               <MediaHash {...image} />
             </div>
           ) : (

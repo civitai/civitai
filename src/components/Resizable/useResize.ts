@@ -75,6 +75,7 @@ export const useResize = (options: Props) => {
         frame.current = requestAnimationFrame(() => {
           ref.style.width = `${width}px`;
         });
+        window.dispatchEvent(new Event('resize'));
       }
     },
     [isResizing] // eslint-disable-line

@@ -120,11 +120,38 @@ export function ImageGuard2({
   explain?: boolean;
 } & ConnectProps) {
   const state = useImageGuard({ image, ...connectProps });
-  const { safe, show, browsingLevel, imageId, key, nsfw, userId, tosViolation } = state;
-  const { classes } = useBadgeStyles({ browsingLevel });
+  const { show, browsingLevel, tosViolation } = state;
 
   return (
     <ImageGuardCtx.Provider value={state}>
+      <ImageGuardContentInner
+        show={show}
+        browsingLevel={browsingLevel}
+        tosViolation={tosViolation}
+        explain={explain}
+      >
+        {children(show)}
+      </ImageGuardContentInner>
+    </ImageGuardCtx.Provider>
+  );
+}
+
+function ImageGuardContentInner({
+  show,
+  explain,
+  browsingLevel,
+  tosViolation,
+  children,
+}: {
+  show: boolean;
+  explain?: boolean;
+  browsingLevel: number;
+  tosViolation?: boolean;
+  children: React.ReactNode;
+}) {
+  const { classes } = useBadgeStyles({ browsingLevel });
+  return (
+    <>
       {!show && explain && (
         <BlurToggle>
           {(toggle) => (
@@ -171,9 +198,9 @@ export function ImageGuard2({
           <Alert color="red">TOS Violation</Alert>
         </Center>
       ) : (
-        children(show)
+        children
       )}
-    </ImageGuardCtx.Provider>
+    </>
   );
 }
 
@@ -204,9 +231,11 @@ export function BrowsingLevelBadge({
 
 function BlurToggle({
   className,
+  classNames,
   children,
   sfwClassName,
   nsfwClassName,
+  color,
   ...badgeProps
 }: Omit<BadgeProps, 'children'> & {
   children?: (toggle: (e: React.MouseEvent<HTMLElement, MouseEvent>) => void) => React.ReactElement;
@@ -242,6 +271,7 @@ function BlurToggle({
           e.stopPropagation();
           openSetBrowsingLevelModal({ imageId, nsfwLevel: browsingLevel });
         }}
+        color={!nsfw ? color : undefined}
         {...badgeProps}
       >
         {browsingLevelLabels[browsingLevel]}
@@ -252,7 +282,7 @@ function BlurToggle({
   return (
     <Badge
       component="button"
-      classNames={classes}
+      classNames={{ ...classes, ...classNames }}
       className={cx(badgeClass, 'cursor-pointer')}
       {...badgeProps}
       onClick={toggle}
@@ -308,7 +338,7 @@ function toggleShow({
 
 const useBadgeStyles = createStyles((theme, params: { browsingLevel?: number }) => {
   const backgroundColor = getIsSafeBrowsingLevel(params.browsingLevel ?? 0)
-    ? theme.fn.rgba('#000', 0.31)
+    ? undefined
     : theme.fn.rgba(theme.colors.red[9], 0.6);
   return {
     root: {
@@ -330,13 +360,24 @@ ImageGuard2.BlurToggle = BlurToggle;
 export function ImageGuardContent({
   image,
   children,
+  explain = true,
   ...connectProps
 }: {
   image: ImageProps;
+  explain?: boolean;
   children: (show: boolean) => React.ReactElement | null;
 } & ConnectProps) {
   const state = useImageGuard({ image, ...connectProps });
-  const { show } = state;
+  const { show, browsingLevel, tosViolation } = state;
 
-  return children(show);
+  return (
+    <ImageGuardContentInner
+      show={show}
+      browsingLevel={browsingLevel}
+      tosViolation={tosViolation}
+      explain={explain}
+    >
+      {children(show)}
+    </ImageGuardContentInner>
+  );
 }

@@ -168,6 +168,7 @@ export const CommentForm = ({
           onFocus={!autoFocus ? () => setFocused(true) : undefined}
           onSuperEnter={() => form.handleSubmit(handleSubmit)()}
           classNames={{
+            root: 'rounded-3xl border-none overflow-hidden',
             content: classes.content,
           }}
         />
@@ -192,8 +193,8 @@ const useStyles = createStyles((theme) => ({
     fontSize: 14,
 
     '.ProseMirror': {
-      padding: 10,
-      minHeight: 22,
+      padding: `8px 12px`,
+      minHeight: 38,
       cursor: 'text',
     },
   },
