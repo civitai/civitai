@@ -420,7 +420,6 @@ const onUpdateQueueProcess = async ({ db, indexName }: { db: PrismaClient; index
     ' have been updated and will be re-indexed'
   );
 
-  const itemsToIndex: ImageSearchIndexRecord[] = [];
   const batches = chunk(queue.content, READ_BATCH_SIZE);
   for (const batch of batches) {
     const newItems = await onFetchItemsToIndex({
@@ -430,11 +429,15 @@ const onUpdateQueueProcess = async ({ db, indexName }: { db: PrismaClient; index
       isIndexUpdate: true,
     });
 
-    itemsToIndex.push(...newItems);
+    await updateDocs({
+      indexName,
+      documents: newItems,
+      batchSize: MEILISEARCH_DOCUMENT_BATCH_SIZE,
+      // jobContext,
+    });
   }
 
   await queue.commit();
-  return itemsToIndex;
 };
 
 const onIndexUpdate = async ({
@@ -455,30 +458,6 @@ const onIndexUpdate = async ({
   );
 
   let offset = -1; // such that it starts on 0.
-  const imageTasks: EnqueuedTask[] = [];
-
-  if (lastUpdatedAt) {
-    // Only if this is an update (NOT a reset or first run) will we care for queued items:
-
-    // Update whatever items we have on the queue.
-    // Do it on batches, since it's possible that there are far more items than we expect:
-    const updateTasks = await onUpdateQueueProcess({
-      db,
-      indexName,
-    });
-
-    if (updateTasks.length > 0) {
-      const updateBaseTasks = await updateDocs({
-        indexName,
-        documents: updateTasks,
-        batchSize: MEILISEARCH_DOCUMENT_BATCH_SIZE,
-        // jobContext,
-      });
-
-      console.log('onIndexUpdate :: base tasks for updated items have been added');
-      imageTasks.push(...updateBaseTasks);
-    }
-  }
 
   while (true) {
     // jobContext.checkIfCanceled();
@@ -500,10 +479,21 @@ const onIndexUpdate = async ({
       // jobContext,
     });
 
-    imageTasks.push(...tasks);
-
     // Update offset to last index recorded.
     offset = indexReadyRecords[indexReadyRecords.length - 1].id;
+  }
+
+  if (lastUpdatedAt) {
+    // Only if this is an update (NOT a reset or first run) will we care for queued items:
+
+    // Update whatever items we have on the queue.
+    // Do it on batches, since it's possible that there are far more items than we expect:
+    const updateTasks = await onUpdateQueueProcess({
+      db,
+      indexName,
+    });
+
+    console.log('onIndexUpdate :: base tasks for updated items have been added');
   }
 
   console.log('onIndexUpdate :: index update complete');

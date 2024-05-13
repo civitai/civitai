@@ -500,17 +500,6 @@ const onIndexUpdate = async ({
     await onSearchIndexDocumentsCleanup({ db, indexName: INDEX_ID, ids: deleteIds });
   }
 
-  if (lastUpdatedAt) {
-    // Only if this is an update (NOT a reset or first run) will we care for queued items:
-
-    // Update whatever items we have on the queue.
-    // Do it on batches, since it's possible that there are far more items than we expect:
-    await onUpdateQueueProcess({
-      db,
-      indexName,
-    });
-  }
-
   // Now, we can tackle new additions
   let offset = 0;
   while (true) {
@@ -568,6 +557,18 @@ const onIndexUpdate = async ({
     console.log('onIndexUpdate :: image tasks have been added');
 
     offset += indexReadyRecords.length;
+  }
+
+  // We'll atempt to process the queue at the end - mainly cause redis can grow big.
+  if (lastUpdatedAt) {
+    // Only if this is an update (NOT a reset or first run) will we care for queued items:
+
+    // Update whatever items we have on the queue.
+    // Do it on batches, since it's possible that there are far more items than we expect:
+    await onUpdateQueueProcess({
+      db,
+      indexName,
+    });
   }
 
   console.log('onIndexUpdate :: Indexing complete');
