@@ -4,6 +4,10 @@ import { clickhouse } from '~/server/clickhouse/client';
 import { pgDbWrite } from '~/server/db/pgDb';
 import { limitConcurrency, Task } from '~/server/utils/concurrency-helpers';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
+import {
+  allInjectedNegatives,
+  allInjectedPositives,
+} from '~/shared/constants/generation.constants';
 
 const schema = z.object({
   cursor: z.coerce.number().min(0).optional().default(0),
@@ -188,6 +192,7 @@ type GenerationMetrics = {
   year: number;
   all_time: number;
 };
+const injectedVersionIds = [...allInjectedNegatives, ...allInjectedPositives].map((r) => r.id);
 function modelGenerationMetrics(ctx: MigrationContext) {
   return async () => {
     if (ctx.stop || !clickhouse) return;
@@ -198,21 +203,22 @@ function modelGenerationMetrics(ctx: MigrationContext) {
     `);
     ctx.cancelFns.push(getVersionsQuery.cancel);
     const versions = await getVersionsQuery.result();
-    const versionIds = versions.map((v) => v.id);
+    const versionIds = versions.map((v) => v.id).filter((id) => !injectedVersionIds.includes(id));
+    if (!versionIds.length) return;
 
     console.log('Update model generation metrics ' + ctx.start + '-' + ctx.end);
     console.time('Fetch version generation metrics ' + ctx.start + '-' + ctx.end);
     const metrics = await clickhouse.$query<GenerationMetrics>`
       SELECT
-          modelVersionId,
-          sumIf(count, createdDate = current_date()) day,
-          sumIf(count, createdDate >= subtractDays(current_date(), 7)) week,
-          sumIf(count, createdDate >= subtractMonths(current_date(), 1)) month,
-          sumIf(count, createdDate >= subtractYears(current_date(), 1)) year,
-          sum(count) all_time
-      FROM daily_resource_generation_counts
-      WHERE modelVersionId IN (${versionIds.join(',')})
-      GROUP BY modelVersionId
+        modelVersionId,
+        countIf(date = current_date()) day,
+        countIf(date >= subtractDays(current_date(), 7)) week,
+        countIf(date >= subtractMonths(current_date(), 1)) month,
+        countIf(date >= subtractYears(current_date(), 1)) year,
+        count(*) all_time
+      FROM daily_user_resource
+      WHERE modelVersionId IN (${versionIds})
+      GROUP BY modelVersionId;
     `;
     const metricsJson = JSON.stringify(metrics);
     console.timeEnd('Fetch version generation metrics ' + ctx.start + '-' + ctx.end);

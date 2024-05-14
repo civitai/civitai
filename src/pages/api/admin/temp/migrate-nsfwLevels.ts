@@ -63,10 +63,10 @@ export default WebhookEndpoint(async (req, res) => {
     //   type: 'bountyEntries',
     //   fn: migrateBountyEntries,
     // },
-    // {
-    //   type: 'modelVersions',
-    //   fn: migrateModelVersions,
-    // },
+    {
+      type: 'modelVersions',
+      fn: migrateModelVersions,
+    },
     {
       type: 'models',
       fn: migrateModels,

@@ -26,5 +26,10 @@ export const getServerAuthSession = async ({
     if (!req.context?.session) req.context.session = await getSessionFromBearerToken(token);
     return req.context.session as Session | null;
   }
-  return getServerSession(req, res, authOptions);
+  try {
+    const session = await getServerSession(req, res, authOptions);
+    return session;
+  } catch (error) {
+    return null;
+  }
 };

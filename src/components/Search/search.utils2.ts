@@ -18,10 +18,11 @@ function modelsTransform(items: Hit<ModelSearchIndexRecord>[]) {
     ...item,
     nsfwLevel: flagifyBrowsingLevel(item.nsfwLevel),
     tags: item.tags.map((t) => t.id),
-    images: item.images.map((image) => ({
-      ...image,
-      tags: image.tags?.map((t) => t.id),
-    })),
+    images:
+      item.images?.map((image) => ({
+        ...image,
+        tags: image.tags?.map((t) => t.id),
+      })) ?? [],
   }));
 }
 

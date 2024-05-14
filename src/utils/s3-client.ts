@@ -266,7 +266,6 @@ export const baseS3Client = new S3Client({
 
 export const S3 = {
   uploadBucket: new S3Bucket({ client: baseS3Client, bucket: env.S3_UPLOAD_BUCKET }),
-  settledBucket: new S3Bucket({ client: baseS3Client, bucket: env.S3_SETTLED_BUCKET }),
   imageBucket: new S3Bucket({ client: baseS3Client, bucket: env.S3_IMAGE_UPLOAD_BUCKET }),
   imageCacheBucket: new S3Bucket({ client: baseS3Client, bucket: env.S3_IMAGE_CACHE_BUCKET }),
   // csamBucket: new S3Bucket({ client: csamS3Client, bucket: env.CSAM_BUCKET_NAME }),

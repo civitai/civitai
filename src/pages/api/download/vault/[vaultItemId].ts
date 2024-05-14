@@ -1,12 +1,10 @@
 import { NextApiRequest, NextApiResponse } from 'next';
-import { env } from 'process';
 import requestIp from 'request-ip';
 import { z } from 'zod';
+import { env } from '~/env/server.mjs';
 import { constants } from '~/server/common/constants';
-
-import { dbRead, dbWrite } from '~/server/db/client';
+import { dbRead } from '~/server/db/client';
 import { VaultItemFilesSchema } from '~/server/schema/vault.schema';
-import { getFileForModelVersion } from '~/server/services/file.service';
 import { getVaultWithStorage } from '~/server/services/vault.service';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { RateLimitedEndpoint } from '~/server/utils/rate-limiting';

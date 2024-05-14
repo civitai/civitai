@@ -7,6 +7,7 @@ import Router from 'next/router';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Button, Stack, Text } from '@mantine/core';
 import { openContextModal } from '@mantine/modals';
+import { showErrorNotification } from '~/utils/notifications';
 
 export function SubscribeButton({
   children,
@@ -32,6 +33,12 @@ export function SubscribeButton({
         const stripe = await getClientStripe();
         await stripe.redirectToCheckout({ sessionId });
       }
+    },
+    async onError(error) {
+      showErrorNotification({
+        title: 'Sorry, there was an error while trying to subscribe. Please try again later',
+        error: new Error(error.message),
+      });
     },
   });
 

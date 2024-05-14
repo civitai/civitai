@@ -1,3 +1,4 @@
+import { MantineTheme } from '@mantine/core';
 import {
   BountyType,
   Currency,
@@ -8,12 +9,11 @@ import {
   ModelVersionSponsorshipSettingsType,
   ReviewReactions,
 } from '@prisma/client';
+import { IconBolt, IconCurrencyDollar, TablerIconsProps } from '@tabler/icons-react';
 import { ModelSort } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
-import { IconBolt, IconCurrencyDollar, TablerIconsProps } from '@tabler/icons-react';
-import { MantineTheme } from '@mantine/core';
-import { ArticleSort, CollectionSort, ImageSort, PostSort, QuestionSort } from './enums';
 import { Generation } from '~/server/services/generation/generation.types';
+import { ArticleSort, CollectionSort, ImageSort, PostSort, QuestionSort } from './enums';
 
 export const constants = {
   modelFilterDefaults: {
@@ -204,6 +204,7 @@ export const constants = {
   maxTrainingRetries: 2,
   mediaUpload: {
     maxImageFileSize: 50 * 1024 ** 2, // 50MB
+    maxVideoFileSize: 500 * 1024 ** 2, // 500MB
     maxVideoDimension: 3840,
     maxVideoDurationSeconds: 120,
   },
@@ -328,6 +329,9 @@ export const constants = {
       padding: 6,
     },
   },
+  modelGallery: {
+    maxPinnedPosts: 6,
+  },
 } as const;
 export const activeBaseModels = constants.baseModels.filter(
   (model) => !constants.hiddenBaseModels.includes(model)
@@ -352,6 +356,7 @@ export const zipModelFileTypes: ModelFileFormat[] = ['Core ML', 'Diffusers', 'ON
 export type ZipModelFileType = (typeof zipModelFileTypes)[number];
 
 export const POST_IMAGE_LIMIT = 20;
+export const POST_TAG_LIMIT = 5;
 export const CAROUSEL_LIMIT = 20;
 export const DEFAULT_EDGE_IMAGE_WIDTH = 450;
 
@@ -374,7 +379,7 @@ export const baseModelSets: Record<BaseModelSetType, BaseModel[]> = {
   SD1: ['SD 1.4', 'SD 1.5', 'SD 1.5 LCM', 'SD 1.5 Hyper'],
   SD2: ['SD 2.0', 'SD 2.0 768', 'SD 2.1', 'SD 2.1 768', 'SD 2.1 Unclip'],
   SD3: ['SD 3'],
-  SDXL: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM', 'SDXL Lightning', 'SDXL Hyper'],
+  SDXL: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM', 'SDXL Lightning', 'SDXL Hyper', 'SDXL Turbo'],
   SDXLDistilled: ['SDXL Distilled'],
   SCascade: ['Stable Cascade'],
   Pony: ['Pony'],
@@ -548,14 +553,6 @@ export const generationConfig = {
       { label: 'Landscape', width: 768, height: 512 },
       { label: 'Portrait', width: 512, height: 768 },
     ],
-    costs: {
-      // TODO.imageGenerationBuzzCharge - Remove all cost calculation from the front-end. This is done by the orchestrator.
-      base: 0,
-      quantity: 1,
-      steps: 30,
-      width: 512,
-      height: 512,
-    },
     checkpoint: {
       id: 128713,
       name: '8',
@@ -580,15 +577,6 @@ export const generationConfig = {
       { label: 'Landscape', width: 1216, height: 832 },
       { label: 'Portrait', width: 832, height: 1216 },
     ],
-    costs: {
-      // TODO.imageGenerationBuzzCharge - Remove all cost calculation from the front-end. This is done by the orchestrator.
-      // base: 4,
-      base: 0,
-      quantity: 1,
-      steps: 30,
-      width: 1024,
-      height: 1024,
-    },
     checkpoint: {
       id: 128078,
       name: 'v1.0 VAE fix',
@@ -624,15 +612,6 @@ export const generationConfig = {
       { label: 'Landscape', width: 1216, height: 832 },
       { label: 'Portrait', width: 832, height: 1216 },
     ],
-    costs: {
-      // TODO.generation: Uncomment this out by next week once we start charging for SDXL generation
-      // base: 4,
-      base: 0,
-      quantity: 1,
-      steps: 40,
-      width: 1024,
-      height: 1024,
-    },
     checkpoint: {
       id: 290640,
       name: 'V6 (start with this one)',

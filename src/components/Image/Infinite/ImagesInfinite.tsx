@@ -19,7 +19,7 @@ import { NoContent } from '~/components/NoContent/NoContent';
 import Link from 'next/link';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { FeedWrapper } from '~/components/Feed/FeedWrapper';
-import { Feed } from '~/components/ImageGeneration/Feed';
+import { IntersectionOptions } from 'react-intersection-observer';
 
 type ImageFilters = {
   modelId?: number;
@@ -48,6 +48,7 @@ type ImagesInfiniteProps = {
   filterType?: 'images' | 'videos';
   showAds?: boolean;
   showEmptyCta?: boolean;
+  nextPageLoaderOptions?: IntersectionOptions;
 };
 
 export default function ImagesInfinite(props: ImagesInfiniteProps) {
@@ -66,6 +67,7 @@ export function ImagesInfiniteContent({
   filterType = 'images',
   showAds,
   showEmptyCta,
+  nextPageLoaderOptions,
 }: ImagesInfiniteProps) {
   const imageFilters = useImageFilters(filterType);
   const filters = removeEmpty({ ...imageFilters, ...filterOverrides, withTags });
@@ -112,6 +114,7 @@ export function ImagesInfiniteContent({
               loadCondition={!isFetching && hasNextPage}
               // Forces a re-render whenever the amount of images fetched changes. Forces load-more if available.
               style={{ gridColumn: '1/-1' }}
+              inViewOptions={nextPageLoaderOptions}
             >
               <Center p="xl" sx={{ height: 36 }} mt="md">
                 <Loader />

@@ -1,18 +1,13 @@
 import { CosmeticEntity, Prisma } from '@prisma/client';
 import dayjs from 'dayjs';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { cosmeticEntityCaches } from '~/server/redis/caches';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { EquipCosmeticInput, GetPaginatedCosmeticsInput } from '~/server/schema/cosmetic.schema';
-import {
-  ContentDecorationCosmetic,
-  WithClaimKey,
-  simpleCosmeticSelect,
-} from '~/server/selectors/cosmetic.selector';
-import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
-import { REDIS_KEYS } from '~/server/redis/client';
-import { cachedObject, bustCachedArray } from '~/server/utils/cache-helpers';
 import { articlesSearchIndex, imagesSearchIndex, modelsSearchIndex } from '~/server/search-index';
-import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { simpleCosmeticSelect } from '~/server/selectors/cosmetic.selector';
+import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 
 export async function getCosmeticDetail({ id }: GetByIdInput) {
   const cosmetic = await dbRead.cosmetic.findUnique({
@@ -111,6 +106,7 @@ export async function equipCosmeticToEntity({
   });
 
   await deleteEntityCosmeticCache({ entityId: equippedToId, entityType: equippedToType });
+
   if (equippedToType === 'Model')
     await modelsSearchIndex.queueUpdate([
       { id: equippedToId, action: SearchIndexUpdateQueueAction.Update },
@@ -148,6 +144,7 @@ export async function unequipCosmetic({
   });
 
   await deleteEntityCosmeticCache({ entityId: equippedToId, entityType: equippedToType });
+
   if (equippedToType === 'Model')
     await modelsSearchIndex.queueUpdate([
       { id: equippedToId, action: SearchIndexUpdateQueueAction.Update },
@@ -172,25 +169,7 @@ export async function getCosmeticsForEntity({
   entity: CosmeticEntity;
 }) {
   if (ids.length === 0) return {};
-
-  return await cachedObject<WithClaimKey<ContentDecorationCosmetic>>({
-    key: `${REDIS_KEYS.COSMETICS}:${entity}`,
-    idKey: 'equippedToId',
-    ids,
-    lookupFn: async (ids) => {
-      const entityCosmetics = await dbRead.$queryRaw<WithClaimKey<ContentDecorationCosmetic>[]>`
-        SELECT c.id, c.data, uc."equippedToId", uc."claimKey"
-        FROM "UserCosmetic" uc
-        JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
-        WHERE c.type = 'ContentDecoration'
-              AND uc."equippedToId" IS NOT NULL
-              AND uc."equippedToId" IN (${Prisma.join(ids as number[])})
-              AND uc."equippedToType" = '${Prisma.raw(entity)}'::"CosmeticEntity";       
-      `;
-      return Object.fromEntries(entityCosmetics.map((x) => [x.equippedToId, x]));
-    },
-    ttl: 60 * 60 * 24, // 24 hours
-  });
+  return await cosmeticEntityCaches[entity].fetch(ids);
 }
 
 export async function deleteEntityCosmeticCache({
@@ -200,5 +179,5 @@ export async function deleteEntityCosmeticCache({
   entityId: number;
   entityType: CosmeticEntity;
 }) {
-  await bustCachedArray(`${REDIS_KEYS.COSMETICS}:${entityType}`, 'equippedToId', entityId);
+  return await cosmeticEntityCaches[entityType].bust(entityId);
 }

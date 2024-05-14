@@ -352,7 +352,7 @@ export async function toggleHidden({
     case 'model':
       return await toggleHideModel({ userId, modelId: data[0].id });
     case 'user':
-      return await toggleHideUser({ userId, targetUserId: data[0].id });
+      return await toggleHideUser({ userId, targetUserId: data[0].id, setTo: hidden });
     case 'tag':
       return await toggleHiddenTags({ tagIds: data.map((x) => x.id), hidden, userId });
     default:
@@ -482,9 +482,11 @@ async function toggleHideModel({
 async function toggleHideUser({
   userId,
   targetUserId,
+  setTo,
 }: {
   userId: number;
   targetUserId: number;
+  setTo?: boolean;
 }): Promise<HiddenPreferencesDiff> {
   const engagement = await dbWrite.userEngagement.findUnique({
     where: { userId_targetUserId: { userId, targetUserId } },
@@ -494,7 +496,7 @@ async function toggleHideUser({
     await dbWrite.userEngagement.create({
       data: { userId, targetUserId, type: 'Hide' },
     });
-  else if (engagement.type === 'Hide')
+  else if (engagement.type === 'Hide' && setTo !== true)
     await dbWrite.userEngagement.delete({
       where: { userId_targetUserId: { userId, targetUserId } },
     });

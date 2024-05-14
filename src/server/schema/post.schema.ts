@@ -7,6 +7,7 @@ import { imageMetaSchema } from '~/server/schema/image.schema';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
+import { commaDelimitedStringArray } from '~/utils/zod-helpers';
 
 export type PostsFilterInput = z.infer<typeof postsFilterSchema>;
 export const postsFilterSchema = z.object({
@@ -46,7 +47,9 @@ export type PostCreateInput = z.infer<typeof postCreateSchema>;
 export const postCreateSchema = z.object({
   modelVersionId: z.number().nullish(),
   title: z.string().trim().nullish(),
+  detail: z.string().nullish(),
   tag: z.number().nullish(),
+  tags: commaDelimitedStringArray().optional(),
   publishedAt: z.date().optional(),
   collectionId: z.number().optional(),
 });
@@ -92,6 +95,7 @@ export const addPostImageSchema = z.object({
   }, imageMetaSchema.nullish()),
   type: z.nativeEnum(MediaType).default(MediaType.image),
   metadata: z.object({}).passthrough().optional(),
+  externalDetailsUrl: z.string().url().optional(),
 });
 
 export type UpdatePostImageInput = z.infer<typeof updatePostImageSchema>;

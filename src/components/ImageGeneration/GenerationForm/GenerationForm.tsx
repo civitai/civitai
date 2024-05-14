@@ -387,23 +387,25 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                 </Accordion.Item>
               </PersistentAccordion>
             </Card.Section>
+            {unstableResources.length > 0 && (
+              <Card.Section>
+                <Alert color="yellow" title="Unstable Resources" radius={0}>
+                  <Text size="xs">
+                    The following resources are currently unstable and may not be available for
+                    generation
+                  </Text>
+                  <List size="xs">
+                    {unstableResources.map((resource) => (
+                      <List.Item key={resource.id}>
+                        {resource.modelName} - {resource.name}
+                      </List.Item>
+                    ))}
+                  </List>
+                </Alert>
+              </Card.Section>
+            )}
           </Card>
 
-          {unstableResources.length > 0 && (
-            <Alert color="yellow" title="Unstable Resources">
-              <Text size="xs">
-                The following resources are currently unstable and may not be available for
-                generation
-              </Text>
-              <List size="xs">
-                {unstableResources.map((resource) => (
-                  <List.Item key={resource.id}>
-                    {resource.modelName} - {resource.name}
-                  </List.Item>
-                ))}
-              </List>
-            </Alert>
-          )}
           <Stack spacing={0}>
             <Input.Wrapper
               label={

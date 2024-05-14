@@ -1,21 +1,19 @@
+import SharedWorker from '@okikio/sharedworker';
 import { createContext, useContext, useRef } from 'react';
 import { v4 as uuidv4 } from 'uuid';
-
-import { auditMetaData } from '~/utils/metadata/audit';
+import { blurHashImage } from '~/utils/blurhash';
+import { loadImage } from '~/utils/media-preprocessors';
 import { getMetadata } from '~/utils/metadata';
+import { auditMetaData } from '~/utils/metadata/audit';
+import { bytesToKB } from '~/utils/number-helpers';
 import {
   AnalysisMessage,
   ErrorMessage,
   ImageProcessing,
   ScanImageMessage,
   StatusMessage,
-  WorkerIncomingMessage,
   WorkerOutgoingMessage,
 } from '~/workers/image-processing-worker-types';
-// @ts-ignore
-import SharedWorker from '@okikio/sharedworker';
-import { loadImage, blurHashImage } from '~/utils/blurhash';
-import { bytesToKB } from '~/utils/number-helpers';
 
 type MessageCallback = (data: ScanImageMessage) => void;
 
