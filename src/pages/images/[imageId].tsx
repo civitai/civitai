@@ -7,20 +7,21 @@ import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvid
 import { setPageOptions } from '~/components/AppLayout/AppLayout';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { ImageDetail2 } from '~/components/Image/DetailV2/ImageDetail2';
+import { createPage } from '~/components/AppLayout/createPage';
 
-export default function ImagePage() {
-  const router = useBrowserRouter();
-  const imageId = router.query.imageId;
-  const filters = imagesQueryParamSchema.parse(router.query);
+// export default function ImagePage() {
+//   const router = useBrowserRouter();
+//   const imageId = router.query.imageId;
+//   const filters = imagesQueryParamSchema.parse(router.query);
 
-  if (!imageId) return <NotFound />;
+//   if (!imageId) return <NotFound />;
 
-  return (
-    <ImageDetailProvider imageId={imageId} filters={filters}>
-      <ImageDetail2 />
-    </ImageDetailProvider>
-  );
-}
+//   return (
+//     <ImageDetailProvider imageId={imageId} filters={filters}>
+//       <ImageDetail2 />
+//     </ImageDetailProvider>
+//   );
+// }
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -33,4 +34,19 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
-setPageOptions(ImagePage, { withScrollArea: false });
+export default createPage(
+  function ImagePage() {
+    const router = useBrowserRouter();
+    const imageId = router.query.imageId;
+    const filters = imagesQueryParamSchema.parse(router.query);
+
+    if (!imageId) return <NotFound />;
+
+    return (
+      <ImageDetailProvider imageId={imageId} filters={filters}>
+        <ImageDetail2 />
+      </ImageDetailProvider>
+    );
+  },
+  { layout: ({ children }) => <>{children}</> }
+);

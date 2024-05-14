@@ -75,11 +75,15 @@ export const useResize = (options: Props) => {
         frame.current = requestAnimationFrame(() => {
           ref.style.width = `${width}px`;
         });
-        window.dispatchEvent(new Event('resize'));
+        // window.dispatchEvent(new Event('resize'));
       }
     },
     [isResizing] // eslint-disable-line
   );
+
+  // useEffect(() => {
+  //   window.dispatchEvent(new Event('resize'));
+  // }, []);
 
   useEffect(() => {
     window.addEventListener('mousemove', resize);

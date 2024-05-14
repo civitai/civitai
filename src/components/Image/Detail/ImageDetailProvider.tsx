@@ -176,7 +176,6 @@ export function ImageDetailProvider({
   };
 
   const previous = () => {
-    console.log('prev', canNavigate);
     if (canNavigate) {
       const id = prevIndex > -1 ? images[prevIndex].id : images[images.length - 1].id;
       navigate(id);
@@ -184,7 +183,6 @@ export function ImageDetailProvider({
   };
 
   const next = () => {
-    console.log('next', canNavigate);
     if (canNavigate) {
       const id = nextIndex < images.length ? images[nextIndex].id : images[0].id;
       navigate(id);

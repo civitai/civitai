@@ -46,7 +46,6 @@ import { openContext } from '~/providers/CustomModalsProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { containerQuery } from '~/utils/mantine-css-helpers';
-import { ProfileBackgroundCosmetic } from '~/server/selectors/cosmetic.selector';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
 
 export function ImageDetail() {
@@ -58,10 +57,6 @@ export function ImageDetail() {
   if (!image) return <NotFound />;
 
   const nsfw = !getIsSafeBrowsingLevel(image.nsfwLevel);
-
-  const backgroundImage = image.user?.cosmetics.find(({ cosmetic }) =>
-    cosmetic ? cosmetic.type === 'ProfileBackground' : undefined
-  )?.cosmetic as Omit<ProfileBackgroundCosmetic, 'description' | 'obtainedAt'>;
 
   return (
     <>

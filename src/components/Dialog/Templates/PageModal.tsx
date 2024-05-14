@@ -13,6 +13,17 @@ export function PageModal(props: ModalProps) {
     };
   }, [opened]);
 
+  // useEffect(() => {
+  //   const element = document.querySelector<HTMLElement>('#main');
+  //   console.log({ opened, element });
+  //   if (!element) return;
+  //   element.style.visibility = opened ? 'hidden' : 'visible';
+
+  //   return () => {
+  //     element.style.visibility = 'visible';
+  //   };
+  // }, [opened]);
+
   return (
     <Modal
       {...props}

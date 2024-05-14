@@ -27,7 +27,7 @@ export function ImageDetailCarousel() {
   useEffect(() => {
     if (!embla) return;
     const onSelect = () => {
-      setSlidesInView([...embla.slidesInView(true), ...embla.slidesInView()]);
+      setSlidesInView([...embla.slidesInView(true)]);
     };
 
     embla.on('select', onSelect);
@@ -36,7 +36,8 @@ export function ImageDetailCarousel() {
     };
   }, [embla]);
 
-  const ref = useResizeObserver<HTMLDivElement>((e) => {
+  const ref = useResizeObserver<HTMLDivElement>(() => {
+    console.log('test');
     embla?.reInit();
   });
 

@@ -7,6 +7,7 @@ type ObserverCallback = {
 
 let resizeObserver: ResizeObserver | undefined;
 const callbackMap = new WeakMap<Element, ObserverCallback[]>();
+let frameId = 0;
 
 export const useResizeObserver = <T extends HTMLElement = HTMLElement>(
   callback: ResizeFunc,
@@ -14,7 +15,6 @@ export const useResizeObserver = <T extends HTMLElement = HTMLElement>(
 ) => {
   const ref = useRef<T>(null);
   const { observeChildren } = options ?? {};
-  const frameID = useRef(0);
   const callbackRef = useRef<ResizeFunc | null>(null);
 
   callbackRef.current = callback;
@@ -25,8 +25,9 @@ export const useResizeObserver = <T extends HTMLElement = HTMLElement>(
 
     if (!resizeObserver)
       resizeObserver = new ResizeObserver((entries: ResizeObserverEntry[]) => {
-        if (entries.length > 0) cancelAnimationFrame(frameID.current);
-        frameID.current = requestAnimationFrame(() => {
+        console.log({ frameId });
+        if (entries.length > 0) cancelAnimationFrame(frameId);
+        frameId = requestAnimationFrame(() => {
           for (const entry of entries) {
             const callbacks = callbackMap.get(entry.target) ?? [];
             for (const cbRef of callbacks) {
@@ -96,8 +97,8 @@ export const useResizeObserver = <T extends HTMLElement = HTMLElement>(
         unobserveElements([node]);
       }
 
-      if (frameID.current) {
-        cancelAnimationFrame(frameID.current);
+      if (frameId) {
+        cancelAnimationFrame(frameId);
       }
     };
   }, [observeChildren]);

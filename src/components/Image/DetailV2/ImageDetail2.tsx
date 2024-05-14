@@ -23,6 +23,8 @@ import {
   IconAlertTriangle,
   IconBookmark,
   IconBrandWechat,
+  IconChevronDown,
+  IconChevronUp,
   IconDotsVertical,
   IconEye,
   IconFlag,
@@ -54,8 +56,6 @@ import { env } from '~/env/client.mjs';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
-import { containerQuery } from '~/utils/mantine-css-helpers';
-import { ProfileBackgroundCosmetic } from '~/server/selectors/cosmetic.selector';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { ImageResources } from '~/components/Image/DetailV2/ImageResources';
 import { LineClamp } from '~/components/LineClamp/LineClamp';
@@ -126,9 +126,62 @@ export function ImageDetail2() {
 
   const canCreate = !!image.meta?.prompt && !image.hideMeta;
 
+  const Chevron = !active ? IconChevronUp : IconChevronDown;
+
+  const LeftImageControls = (
+    <>
+      {canCreate && (
+        <Button
+          {...sharedButtonProps}
+          color="blue"
+          onClick={() => generationPanel.open({ type: 'image', id: image.id })}
+          data-activity="remix:image"
+        >
+          <div className="glow" />
+          <Group spacing={4} noWrap>
+            <IconBrush size={16} />
+            <Text size="xs">Remix</Text>
+          </Group>
+        </Button>
+      )}
+      {/* <Badge {...sharedBadgeProps}>
+        <IconEye {...sharedIconProps} />
+        <Text color="white" size="xs" align="center" weight={500}>
+          {abbreviateNumber(image.stats?.viewCountAllTime ?? 0)}
+        </Text>
+      </Badge> */}
+      <Button {...sharedButtonProps} onClick={handleSaveClick}>
+        <IconBookmark {...sharedIconProps} />
+        <Text color="white" size="xs" align="center" weight={500}>
+          Save
+        </Text>
+      </Button>
+      {image.postId && (
+        <RoutedDialogLink
+          name="postDetail"
+          state={{ postId: image.postId }}
+          className="hidden @md:block"
+        >
+          <Button {...sharedButtonProps}>
+            <IconPhoto {...sharedIconProps} />
+            <Text color="white" size="xs" align="center" weight={500}>
+              View Post
+            </Text>
+          </Button>
+        </RoutedDialogLink>
+      )}
+      <TipBuzzButton
+        {...sharedButtonProps}
+        toUserId={image.user.id}
+        entityId={image.id}
+        entityType="Image"
+      />
+    </>
+  );
+
   return (
-    <div className="h-full w-full max-w-full max-h-full flex bg-gray-2 dark:bg-dark-9">
-      <div className="flex-1 flex flex-col relative ">
+    <div className="h-full w-full max-w-full max-h-full flex bg-gray-2 dark:bg-dark-9 relative overflow-hidden">
+      <div className="flex-1 flex flex-col relative @max-md:pb-[60px]">
         <ImageGuard2 image={image} explain={false}>
           {(safe) => (
             <>
@@ -136,40 +189,13 @@ export function ImageDetail2() {
               <div className="flex justify-between flex-wrap gap-3 p-3">
                 <div className="flex gap-8">
                   <CloseButton onClick={close} variant="filled" className="h-9 w-9 rounded-full" />
-                  <div className="flex gap-1">
+                  <div className="@max-md:hidden flex gap-1">
                     <ImageGuard2.BlurToggle {...sharedBadgeProps} />
-                    <Badge {...sharedBadgeProps}>
-                      <IconEye {...sharedIconProps} />
-                      <Text color="white" size="xs" align="center" weight={500}>
-                        {abbreviateNumber(image.stats?.viewCountAllTime ?? 0)}
-                      </Text>
-                    </Badge>
-                    <Button {...sharedButtonProps} onClick={handleSaveClick}>
-                      <IconBookmark {...sharedIconProps} />
-                      <Text color="white" size="xs" align="center" weight={500}>
-                        Save
-                      </Text>
-                    </Button>
-                    {image.postId && (
-                      <RoutedDialogLink name="postDetail" state={{ postId: image.postId }}>
-                        <Button {...sharedButtonProps}>
-                          <IconPhoto {...sharedIconProps} />
-                          <Text color="white" size="xs" align="center" weight={500}>
-                            View Post
-                          </Text>
-                        </Button>
-                      </RoutedDialogLink>
-                    )}
-                    <TipBuzzButton
-                      {...sharedButtonProps}
-                      toUserId={image.user.id}
-                      entityId={image.id}
-                      entityType="Image"
-                    />
+                    {LeftImageControls}
                   </div>
                 </div>
                 <div className="flex gap-1">
-                  {canCreate && (
+                  {/* {canCreate && (
                     <Button
                       {...sharedButtonProps}
                       color="blue"
@@ -182,7 +208,13 @@ export function ImageDetail2() {
                         <Text size="xs">Remix</Text>
                       </Group>
                     </Button>
-                  )}
+                  )} */}
+                  <Badge {...sharedBadgeProps}>
+                    <IconEye {...sharedIconProps} />
+                    <Text color="white" size="xs" align="center" weight={500}>
+                      {abbreviateNumber(image.stats?.viewCountAllTime ?? 0)}
+                    </Text>
+                  </Badge>
                   <ShareButton
                     url={shareUrl}
                     title={`Image by ${image.user.username}`}
@@ -248,95 +280,107 @@ export function ImageDetail2() {
           )}
         </ImageGuard2>
       </div>
-      <ScrollArea className="w-[450px] min-w-[450px] p-3 h-full">
-        <div className="flex flex-col gap-3">
-          <SmartCreatorCard
-            user={image.user}
-            subText={
-              <Text size="xs" color="dimmed">
-                {image.publishedAt ? (
-                  <>
-                    Uploaded <DaysFromNow date={image.publishedAt} />
-                  </>
-                ) : (
-                  'Not published'
-                )}
+      <div
+        className={` @max-md:absolute @max-md:inset-0 ${
+          !active ? '@max-md:translate-y-[calc(100%-60px)]' : '@max-md:transition-transform'
+        } @md:w-[450px] @md:min-w-[450px] bg-gray-2 dark:bg-dark-9 flex flex-col`}
+      >
+        <div className="@md:hidden p-3 @max-md:shadow-topper rounded-md flex justify-between items-center">
+          <div className="flex gap-1">{LeftImageControls}</div>
+          <ActionIcon {...sharedActionIconProps} onClick={toggleInfo}>
+            <Chevron {...sharedIconProps} />
+          </ActionIcon>
+        </div>
+        <ScrollArea className="p-3 flex-1 @max-md:pt-0">
+          <div className="flex flex-col gap-3">
+            <SmartCreatorCard
+              user={image.user}
+              subText={
+                <Text size="xs" color="dimmed">
+                  {image.publishedAt ? (
+                    <>
+                      Uploaded <DaysFromNow date={image.publishedAt} />
+                    </>
+                  ) : (
+                    'Not published'
+                  )}
+                </Text>
+              }
+              tipBuzzEntityId={image.id}
+              tipBuzzEntityType="Image"
+              className="rounded-xl"
+            />
+            <VotableTags
+              entityType="image"
+              entityId={image.id}
+              canAdd
+              collapsible
+              nsfwLevel={image.nsfwLevel}
+            />
+            <Card className="rounded-xl flex flex-col gap-3">
+              <Text className="flex items-center gap-2 font-semibold text-xl">
+                <IconBrandWechat />
+                <span>Discussion</span>
               </Text>
-            }
-            tipBuzzEntityId={image.id}
-            tipBuzzEntityType="Image"
-            className="rounded-xl"
-          />
-          <VotableTags
-            entityType="image"
-            entityId={image.id}
-            canAdd
-            collapsible
-            nsfwLevel={image.nsfwLevel}
-          />
-          <Card className="rounded-xl flex flex-col gap-3">
-            <Text className="flex items-center gap-2 font-semibold text-xl">
-              <IconBrandWechat />
-              <span>Discussion</span>
-            </Text>
-            <ImageDetailComments imageId={image.id} userId={image.user.id} />
-          </Card>
-          <Card className="rounded-xl flex flex-col gap-3">
-            <Text className="flex items-center gap-2 font-semibold text-xl">
-              <IconForms />
-              <span>Generation data</span>
-            </Text>
-            <ImageResources imageId={image.id} />
-            {image.meta && (
-              <>
-                {(image.meta.prompt || image.meta.negativePrompt) && <Divider />}
-                {image.meta.prompt && (
-                  <div className="flex flex-col">
-                    <div className="flex justify-between items-center">
-                      <Text className="text-lg font-semibold">Prompt</Text>
-                    </div>
-                    <LineClamp color="dimmed" className="text-sm">
-                      {image.meta.prompt}
-                    </LineClamp>
-                  </div>
-                )}
-                {image.meta.negativePrompt && (
-                  <div className="flex flex-col">
-                    <div className="flex justify-between items-center">
-                      <Text className="text-md font-semibold">Negative prompt</Text>
-                    </div>
-                    <LineClamp color="dimmed" className="text-sm">
-                      {image.meta.negativePrompt}
-                    </LineClamp>
-                  </div>
-                )}
-                {hasSimpleMeta && (
-                  <>
-                    <Divider />
+              <ImageDetailComments imageId={image.id} userId={image.user.id} />
+            </Card>
+            <Card className="rounded-xl flex flex-col gap-3">
+              <Text className="flex items-center gap-2 font-semibold text-xl">
+                <IconForms />
+                <span>Generation data</span>
+              </Text>
+              <ImageResources imageId={image.id} />
+              {image.meta && (
+                <>
+                  {(image.meta.prompt || image.meta.negativePrompt) && <Divider />}
+                  {image.meta.prompt && (
                     <div className="flex flex-col">
                       <div className="flex justify-between items-center">
-                        <Text className="text-lg font-semibold">Other metadata</Text>
+                        <Text className="text-lg font-semibold">Prompt</Text>
                       </div>
-                      <div className="flex flex-col">
-                        {simpleMeta.map(([key, label]) => (
-                          <div key={key} className="flex justify-between">
-                            <Text color="dimmed" className="leading-snug">
-                              {label}
-                            </Text>
-                            <Text className="leading-snug">
-                              {image.meta?.[key as SimpleMetaPropsKey]}
-                            </Text>
-                          </div>
-                        ))}
-                      </div>
+                      <LineClamp color="dimmed" className="text-sm">
+                        {image.meta.prompt}
+                      </LineClamp>
                     </div>
-                  </>
-                )}
-              </>
-            )}
-          </Card>
-        </div>
-      </ScrollArea>
+                  )}
+                  {image.meta.negativePrompt && (
+                    <div className="flex flex-col">
+                      <div className="flex justify-between items-center">
+                        <Text className="text-md font-semibold">Negative prompt</Text>
+                      </div>
+                      <LineClamp color="dimmed" className="text-sm">
+                        {image.meta.negativePrompt}
+                      </LineClamp>
+                    </div>
+                  )}
+                  {hasSimpleMeta && (
+                    <>
+                      <Divider />
+                      <div className="flex flex-col">
+                        <div className="flex justify-between items-center">
+                          <Text className="text-lg font-semibold">Other metadata</Text>
+                        </div>
+                        <div className="flex flex-col">
+                          {simpleMeta.map(([key, label]) => (
+                            <div key={key} className="flex justify-between">
+                              <Text color="dimmed" className="leading-snug">
+                                {label}
+                              </Text>
+                              <Text className="leading-snug">
+                                {image.meta?.[key as SimpleMetaPropsKey]}
+                              </Text>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </>
+              )}
+            </Card>
+          </div>
+        </ScrollArea>
+      </div>
     </div>
   );
 }

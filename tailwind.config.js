@@ -84,7 +84,7 @@ module.exports = {
     }
   },
   plugins: [
-    require('@tailwindcss/container-queries'),
+    require('./src/tailwind/container-queries'),
     plugin(function ({ matchUtilities, theme, addUtilities, addVariant, e }) {
       matchUtilities(
         {
