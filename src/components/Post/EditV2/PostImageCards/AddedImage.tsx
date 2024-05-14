@@ -10,9 +10,7 @@ import {
   Menu,
   Text,
 } from '@mantine/core';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import React, { createContext, useContext, useState } from 'react';
-import { VotableTags } from '~/components/VotableTags/VotableTags';
+import { ImageIngestionStatus } from '@prisma/client';
 import {
   IconArrowBackUp,
   IconChevronDown,
@@ -25,29 +23,30 @@ import {
   IconPlus,
   IconTrash,
 } from '@tabler/icons-react';
-import { dialogStore } from '~/components/Dialog/dialogStore';
+import React, { createContext, useContext, useState } from 'react';
 import { ConfirmDialog } from '~/components/Dialog/Common/ConfirmDialog';
-import { showErrorNotification } from '~/utils/notifications';
-import { trpc } from '~/utils/trpc';
+import { openSetBrowsingLevelModal } from '~/components/Dialog/dialog-registry';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { UnblockImage } from '~/components/Image/UnblockImage/UnblockImage';
+import { BrowsingLevelBadge } from '~/components/ImageGuard/ImageGuard2';
+import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { ImageMetaModal } from '~/components/Post/EditV2/ImageMetaModal';
 import {
   PostEditImageDetail,
   usePostEditStore,
   usePostPreviewContext,
 } from '~/components/Post/EditV2/PostEditProvider';
-import { ImageToolsPopover } from '~/components/Post/EditV2/PostImageToolsPopover';
 import { PostImageTool } from '~/components/Post/EditV2/PostImageTool';
-import { sortAlphabeticallyBy } from '~/utils/array-helpers';
-import { useImageStore } from '~/store/image.store';
-import { ImageIngestionStatus } from '@prisma/client';
-import { UnblockImage } from '~/components/Image/UnblockImage/UnblockImage';
+import { ImageToolsPopover } from '~/components/Post/EditV2/PostImageToolsPopover';
+import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { useCurrentUserRequired } from '~/hooks/useCurrentUser';
-import { BrowsingLevelBadge } from '~/components/ImageGuard/ImageGuard2';
-import { openSetBrowsingLevelModal } from '~/components/Dialog/dialog-registry';
-import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
-import { CustomCard } from './CustomCard';
-import { create } from 'zustand';
+import { useImageStore } from '~/store/image.store';
 import { createSelectStore } from '~/store/select.store';
+import { sortAlphabeticallyBy } from '~/utils/array-helpers';
+import { showErrorNotification } from '~/utils/notifications';
+import { trpc } from '~/utils/trpc';
+import { CustomCard } from './CustomCard';
 
 // #region [types]
 type SimpleMetaPropsKey = keyof typeof simpleMetaProps;
@@ -471,6 +470,15 @@ function EditDetail() {
               )}
             </CustomCard>
             {/* #endregion */}
+
+            {meta?.external && Object.keys(meta?.external).length > 0 && (
+              <CustomCard className="flex flex-col gap-2">
+                <h3 className=" text-lg font-semibold leading-none text-dark-7 dark:text-gray-0 ">
+                  External Data
+                </h3>
+                <Text>Found external data - will apply after post is published.</Text>
+              </CustomCard>
+            )}
           </div>
         </div>
         {/*

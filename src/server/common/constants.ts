@@ -1,3 +1,4 @@
+import { MantineTheme } from '@mantine/core';
 import {
   BountyType,
   Currency,
@@ -8,12 +9,11 @@ import {
   ModelVersionSponsorshipSettingsType,
   ReviewReactions,
 } from '@prisma/client';
+import { IconBolt, IconCurrencyDollar, TablerIconsProps } from '@tabler/icons-react';
 import { ModelSort } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
-import { IconBolt, IconCurrencyDollar, TablerIconsProps } from '@tabler/icons-react';
-import { MantineTheme } from '@mantine/core';
-import { ArticleSort, CollectionSort, ImageSort, PostSort, QuestionSort } from './enums';
 import { Generation } from '~/server/services/generation/generation.types';
+import { ArticleSort, CollectionSort, ImageSort, PostSort, QuestionSort } from './enums';
 
 export const constants = {
   modelFilterDefaults: {
@@ -204,6 +204,7 @@ export const constants = {
   maxTrainingRetries: 2,
   mediaUpload: {
     maxImageFileSize: 50 * 1024 ** 2, // 50MB
+    maxVideoFileSize: 500 * 1024 ** 2, // 500MB
     maxVideoDimension: 3840,
     maxVideoDurationSeconds: 120,
   },
@@ -355,6 +356,7 @@ export const zipModelFileTypes: ModelFileFormat[] = ['Core ML', 'Diffusers', 'ON
 export type ZipModelFileType = (typeof zipModelFileTypes)[number];
 
 export const POST_IMAGE_LIMIT = 20;
+export const POST_TAG_LIMIT = 5;
 export const CAROUSEL_LIMIT = 20;
 export const DEFAULT_EDGE_IMAGE_WIDTH = 450;
 

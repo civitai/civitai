@@ -2,16 +2,19 @@ import { Anchor, Progress, Text } from '@mantine/core';
 import { useEffect } from 'react';
 import { ContentPolicyLink } from '~/components/ContentPolicyLink/ContentPolicyLink';
 import { MediaDropzone } from '~/components/Image/ImageDropzone/MediaDropzone';
+import { usePostEditParams, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useMediaUpload } from '~/hooks/useMediaUpload';
-import { POST_IMAGE_LIMIT, constants } from '~/server/common/constants';
+import { constants, POST_IMAGE_LIMIT } from '~/server/common/constants';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
-import { PostDetailEditable } from '~/server/services/post.service';
-import { orchestratorMediaTransmitter } from '~/store/post-image-transmitter.store';
-import { trpc } from '~/utils/trpc';
-import { showErrorNotification } from '~/utils/notifications';
 import { addPostImageSchema } from '~/server/schema/post.schema';
-import { usePostEditParams, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
+import { PostDetailEditable } from '~/server/services/post.service';
+import {
+  orchestratorMediaTransmitter,
+  useExternalMetaStore,
+} from '~/store/post-image-transmitter.store';
+import { showErrorNotification } from '~/utils/notifications';
+import { trpc } from '~/utils/trpc';
 
 const max = POST_IMAGE_LIMIT;
 
@@ -53,7 +56,10 @@ export function PostImageDropzone({
   const { files, canAdd, error, upload, progress } = useMediaUpload<{ postId: number }>({
     count: images.length,
     max,
-    maxSize: [{ type: 'image', maxSize: constants.mediaUpload.maxImageFileSize }],
+    maxSize: [
+      { type: 'image', maxSize: constants.mediaUpload.maxImageFileSize },
+      { type: 'video', maxSize: constants.mediaUpload.maxVideoFileSize },
+    ],
     onComplete: (props, context) => {
       const { postId = context?.postId, modelVersionId } = params;
       if (!postId) throw new Error('missing post id');
@@ -61,7 +67,8 @@ export function PostImageDropzone({
         // const index = Math.max(0, ...images.map((x) => x.data.index)) + 1;
         switch (props.status) {
           case 'added':
-            props.index;
+            const externalDetailsUrl = useExternalMetaStore.getState().getUrl();
+
             const payload = addPostImageSchema.parse({
               ...props,
               postId,
@@ -69,7 +76,9 @@ export function PostImageDropzone({
               width: props.metadata.width,
               height: props.metadata.height,
               hash: props.metadata.hash,
+              externalDetailsUrl,
             });
+
             addImageMutation.mutate(payload);
             return [...images, { type: 'resolving', data: { ...props } }];
           case 'blocked':

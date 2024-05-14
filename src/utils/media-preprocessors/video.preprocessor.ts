@@ -9,7 +9,7 @@ const hasAudio = (video: any): boolean => {
   );
 };
 
-const getVideoData = async (src: string) =>
+export const getVideoData = async (src: string) =>
   new Promise<VideoMetadata>((resolve, reject) => {
     const video = document.createElement('video');
     video.onloadedmetadata = function () {

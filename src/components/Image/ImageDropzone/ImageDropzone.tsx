@@ -51,7 +51,13 @@ export function ImageDropzone({
 
   const handleDropCapture = async (e: DragEvent) => {
     const url = e.dataTransfer.getData('text/uri-list');
-    if (!url.startsWith('https://orchestration.civitai.com')) return;
+    if (
+      !(
+        url.startsWith('https://orchestration.civitai.com') ||
+        url.startsWith('https://orchestration-stage.civitai.com')
+      )
+    )
+      return;
     const blob = await fetchBlob(url);
     if (!blob) return;
     const file = new File([blob], url.substring(url.lastIndexOf('/')), { type: blob.type });
