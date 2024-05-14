@@ -17,6 +17,7 @@ import {
 } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
+import { showNotification, updateNotification } from '@mantine/notifications';
 import {
   IconArrowBackUp,
   IconBan,
@@ -33,6 +34,7 @@ import {
   IconPhoto,
   IconTrash,
   IconUserMinus,
+  IconX,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React, { useEffect } from 'react';
@@ -183,11 +185,26 @@ export const UserContextMenu = ({ username }: { username: string }) => {
   };
   const handleImpersonate = async () => {
     if (!user || !currentUser || !features.impersonation || user.id === currentUser?.id) return;
+    const notificationId = `impersonate-${user.id}`;
+
+    showNotification({
+      id: notificationId,
+      loading: true,
+      autoClose: false,
+      title: 'Switching accounts...',
+      message: `-> ${user.username} (${user.id})`,
+    });
 
     const tokenResp = await fetch(`${impersonateEndpoint}?${QS.stringify({ userId: user.id })}`);
     if (!tokenResp.ok) {
       const errMsg = await tokenResp.text();
-      showErrorNotification({ title: 'Failed to switch', error: new Error(errMsg) });
+      updateNotification({
+        id: notificationId,
+        icon: <IconX size={18} />,
+        color: 'red',
+        title: 'Failed to switch',
+        message: errMsg,
+      });
       return;
     }
 
