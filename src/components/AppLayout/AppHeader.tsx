@@ -79,6 +79,7 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { FeatureIntroductionModal } from '~/components/FeatureIntroduction/FeatureIntroduction';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Logo } from '~/components/Logo/Logo';
+import { ImpersonateButton } from '~/components/Moderation/ImpersonateButton';
 import { ModerationNav } from '~/components/Moderation/ModerationNav';
 import { NotificationBell } from '~/components/Notifications/NotificationBell';
 import { UploadTracker } from '~/components/Resource/UploadTracker';
@@ -837,6 +838,7 @@ export function AppHeader({
               {currentUser && <NotificationBell />}
               {currentUser && features.chat && <ChatButton />}
               {currentUser?.isModerator && <ModerationNav />}
+              {currentUser && <ImpersonateButton />}
             </Group>
             {!currentUser ? (
               <Button
@@ -956,6 +958,8 @@ export function AppHeader({
             {currentUser && <CivitaiLinkPopover />}
             {currentUser && <NotificationBell />}
             {currentUser && features.chat && <ChatButton />}
+            {/*{currentUser?.isModerator && <ModerationNav />}*/}
+            {currentUser && <ImpersonateButton />}
             <Burger
               opened={burgerOpened}
               onClick={() => setBurgerOpened(!burgerOpened)}

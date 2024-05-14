@@ -21,6 +21,7 @@ import {
   IconArrowBackUp,
   IconBan,
   IconCategory,
+  IconCrystalBall,
   IconDotsVertical,
   IconFileText,
   IconFlag,
@@ -38,6 +39,7 @@ import React, { useEffect } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { TipBuzzButton } from '~/components/Buzz/TipBuzzButton';
 import { ChatUserButton } from '~/components/Chat/ChatUserButton';
+import { useAccountContext } from '~/components/CivitaiWrapped/AccountProvider';
 import { CivitaiTabs } from '~/components/CivitaiWrapped/CivitaiTabs';
 import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -57,18 +59,23 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
+import { EncryptedDataSchema, impersonateEndpoint } from '~/server/schema/civToken.schema';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { formatDate } from '~/utils/date-helpers';
 import { sortDomainLinks } from '~/utils/domain-link';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { abbreviateNumber } from '~/utils/number-helpers';
+import { QS } from '~/utils/qs';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 export const UserContextMenu = ({ username }: { username: string }) => {
   const queryUtils = trpc.useUtils();
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
+  const { swapAccount, setOgAccount } = useAccountContext();
+
   const { data: user, isLoading: userLoading } = trpc.user.getCreator.useQuery(
     { username },
     { enabled: username !== constants.system.user.username }
@@ -174,6 +181,21 @@ export const UserContextMenu = ({ username }: { username: string }) => {
       onConfirm: () => deleteAccountMutation.mutate({ id: user.id }),
     });
   };
+  const handleImpersonate = async () => {
+    if (!user || !currentUser || !features.impersonation || user.id === currentUser?.id) return;
+
+    const tokenResp = await fetch(`${impersonateEndpoint}?${QS.stringify({ userId: user.id })}`);
+    if (!tokenResp.ok) {
+      const errMsg = await tokenResp.text();
+      showErrorNotification({ title: 'Failed to switch', error: new Error(errMsg) });
+      return;
+    }
+
+    const tokenJson: { token: EncryptedDataSchema } = await tokenResp.json();
+
+    setOgAccount({ id: currentUser.id, username: currentUser.username ?? '(unk)' });
+    await swapAccount(tokenJson.token);
+  };
 
   if (userLoading || !user) {
     return null;
@@ -205,6 +227,15 @@ export const UserContextMenu = ({ username }: { username: string }) => {
                   href={`${env.NEXT_PUBLIC_USER_LOOKUP_URL}${user.id}`}
                 >
                   Lookup User
+                </Menu.Item>
+              )}
+              {features.impersonation && user.id !== currentUser.id && (
+                <Menu.Item
+                  color="yellow"
+                  icon={<IconCrystalBall size={14} stroke={1.5} />}
+                  onClick={handleImpersonate}
+                >
+                  Impersonate User
                 </Menu.Item>
               )}
               <Menu.Item
