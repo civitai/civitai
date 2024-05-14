@@ -20,7 +20,7 @@ export function ImageDetailCarousel() {
   const [slidesInView, setSlidesInView] = useState<number[]>([index]);
 
   const handleSlideChange = (slide: number) => {
-    const imageId = images[slide].id;
+    const imageId = images[slide]?.id;
     if (imageId) navigateRef.current(imageId);
   };
 
@@ -37,7 +37,6 @@ export function ImageDetailCarousel() {
   }, [embla]);
 
   const ref = useResizeObserver<HTMLDivElement>(() => {
-    console.log('test');
     embla?.reInit();
   });
 

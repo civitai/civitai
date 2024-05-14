@@ -25,7 +25,6 @@ export const useResizeObserver = <T extends HTMLElement = HTMLElement>(
 
     if (!resizeObserver)
       resizeObserver = new ResizeObserver((entries: ResizeObserverEntry[]) => {
-        console.log({ frameId });
         if (entries.length > 0) cancelAnimationFrame(frameId);
         frameId = requestAnimationFrame(() => {
           for (const entry of entries) {

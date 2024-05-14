@@ -4,7 +4,7 @@ import { unescape } from 'lodash-es';
 import { parseAIR } from '~/utils/string-helpers';
 
 type CivitaiResource = {
-  weight: number;
+  weight?: number;
   air?: string;
   modelVersionId?: number;
   type?: string;

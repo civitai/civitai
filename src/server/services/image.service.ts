@@ -47,6 +47,7 @@ import {
   UpdateImageToolsOutput,
   AddOrRemoveImageTechniquesOutput,
   UpdateImageTechniqueOutput,
+  imageGenerationSchema,
 } from '~/server/schema/image.schema';
 import { articlesSearchIndex, imagesSearchIndex } from '~/server/search-index';
 import { ImageV2Model } from '~/server/selectors/imagev2.selector';
@@ -2908,3 +2909,76 @@ export async function updateImageTechniques({
   );
 }
 // #endregion
+
+export async function getImageGenerationData({ id }: { id: number }) {
+  const image = await dbRead.image.findUnique({
+    where: { id },
+    select: {
+      hideMeta: true,
+      meta: true,
+      tools: {
+        select: {
+          notes: true,
+          tool: {
+            select: {
+              id: true,
+              name: true,
+              icon: true,
+            },
+          },
+        },
+      },
+      techniques: {
+        select: {
+          notes: true,
+          technique: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+        },
+      },
+      resources: {
+        select: {
+          strength: true,
+          modelVersionId: true,
+          hash: true,
+        },
+      },
+    },
+  });
+  if (!image) throw throwNotFoundError();
+
+  const tools = image.tools.map(({ notes, tool }) => ({ ...tool, notes }));
+  const techniques = image.techniques.map(({ notes, technique }) => ({ ...technique, notes }));
+
+  const imageResources = await getImageResources({ id });
+  const resources = imageResources.map((imageResource) => {
+    const resource = image.resources.find((x) => x.modelVersionId === imageResource.modelVersionId);
+    return {
+      strength: resource?.strength ? resource.strength / 100 : undefined,
+      modelId: imageResource.modelId,
+      modelName: imageResource.modelName,
+      modelType: imageResource.modelType,
+      modelVersionId: imageResource.modelVersionId,
+      modelVersionName: imageResource.modelVersionName,
+      name: imageResource.name,
+      hash: imageResource.hash,
+    };
+  });
+
+  const {
+    'Clip skip': legacyClipSkip,
+    clipSkip = legacyClipSkip,
+    comfy,
+    ...meta
+  } = imageGenerationSchema.parse(image.meta);
+
+  return {
+    meta: !image.hideMeta ? { ...meta, clipSkip } : undefined,
+    resources,
+    tools,
+    techniques,
+  };
+}

@@ -56,6 +56,7 @@ import {
   removeImageTechniques,
   addImageTechniques,
   getImageDetail,
+  getImageGenerationData,
 } from '~/server/services/image.service';
 import { CacheTTL } from '~/server/common/constants';
 import { z } from 'zod';
@@ -145,6 +146,15 @@ export const imageRouter = router({
   getImageRatingRequests: moderatorProcedure
     .input(imageRatingReviewInput)
     .query(({ input, ctx }) => getImageRatingRequests({ ...input, user: ctx.user })),
+  getGenerationData: publicProcedure
+    .input(getByIdSchema)
+    .use(
+      edgeCacheIt({
+        ttl: CacheTTL.day, // Cache is purged on remove resource
+        tags: (i) => ['image-generation-data', `image-generation-data-${i.id}`],
+      })
+    )
+    .query(({ input }) => getImageGenerationData(input)),
 
   // #region [tools]
   addTools: protectedProcedure

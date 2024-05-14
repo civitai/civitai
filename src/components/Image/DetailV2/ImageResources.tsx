@@ -18,6 +18,7 @@ import Link from 'next/link';
 import { cloneElement, useMemo, useState } from 'react';
 
 import { IconBadge } from '~/components/IconBadge/IconBadge';
+import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProvider';
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -34,14 +35,11 @@ export function ImageResources({ imageId }: { imageId: number }) {
     defaultValue: false,
   });
 
-  const { data, isLoading } = trpc.image.getResources.useQuery(
-    { id: imageId },
-    { trpc: { context: { skipBatch: true } } }
-  );
+  const { data, isLoading } = trpc.image.getGenerationData.useQuery({ id: imageId });
 
   const resources = useMemo(() => {
     return (
-      data
+      data?.resources
         // remove duplicates items from data based on modelVersionId
         ?.filter(
           (resource, index, items) =>
@@ -78,26 +76,32 @@ export function ImageResources({ imageId }: { imageId: number }) {
         <Alert>There are no resources associated with this image</Alert>
       ) : (
         <ul className="list-none flex flex-col gap-0.5">
-          {(showAll ? resources : resources.slice(0, LIMIT)).map((resource) => {
-            return (
-              <li key={resource.id} className="flex justify-between items-center gap-3">
-                <Wrapper resource={resource}>
-                  <Text
-                    lineClamp={1}
-                    color="dimmed"
-                    className={`${resource.modelId ? 'underline cursor-pointer' : ''}`}
-                  >
-                    {resource.modelName ?? resource.name}
-                  </Text>
-                </Wrapper>
-                {resource.modelType && (
-                  <div className="flex gap-1">
-                    <Badge color="blue">{getDisplayName(resource.modelType)}</Badge>
-                  </div>
-                )}
-              </li>
-            );
-          })}
+          {(showAll ? resources : resources.slice(0, LIMIT)).map((resource, i) => (
+            <li
+              key={resource.modelVersionId ?? i}
+              className="flex justify-between items-center gap-3"
+            >
+              <Wrapper resource={resource}>
+                <Text
+                  lineClamp={1}
+                  color="dimmed"
+                  className={`${resource.modelId ? 'underline cursor-pointer' : ''}`}
+                >
+                  {resource.modelName ?? resource.name}
+                </Text>
+              </Wrapper>
+              {resource.modelType && (
+                <div className="flex gap-1">
+                  <Badge color="blue">{getDisplayName(resource.modelType)}</Badge>
+                  {!!resource.strength && (
+                    <Badge color="gray" variant="filled">
+                      {resource.strength}
+                    </Badge>
+                  )}
+                </div>
+              )}
+            </li>
+          ))}
         </ul>
       )}
       {resources.length > LIMIT && (

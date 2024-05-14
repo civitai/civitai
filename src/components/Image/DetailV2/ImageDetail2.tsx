@@ -29,6 +29,8 @@ import {
   IconEye,
   IconFlag,
   IconForms,
+  IconLayoutSidebarRightCollapse,
+  IconLayoutSidebarRightExpand,
   IconPhoto,
   IconShare3,
   TablerIconsProps,
@@ -58,14 +60,16 @@ import { ReportEntity } from '~/server/schema/report.schema';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { ImageResources } from '~/components/Image/DetailV2/ImageResources';
-import { LineClamp } from '~/components/LineClamp/LineClamp';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { TipBuzzButton } from '~/components/Buzz/TipBuzzButton';
 import { IconBrush } from '@tabler/icons-react';
 import { generationPanel } from '~/store/generation.store';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
+import { useLocalStorage } from '@mantine/hooks';
 
+import { ImageGenerationData } from '~/components/Image/DetailV2/ImageGenerationData';
+import { ImageProcess } from '~/components/Image/DetailV2/ImageProcess';
 type SimpleMetaPropsKey = keyof typeof simpleMetaProps;
 const simpleMetaProps = {
   cfgScale: 'Guidance',
@@ -106,6 +110,10 @@ export function ImageDetail2() {
   const theme = useMantineTheme();
   const { image: image, isLoading, active, close, toggleInfo, shareUrl } = useImageDetailContext();
   const { query } = useBrowserRouter();
+  const [sidebarOpen, setSidebarOpen] = useLocalStorage({
+    key: `image-detail-open`,
+    defaultValue: true,
+  });
 
   if (isLoading) return <PageLoader />;
   if (!image) return <NotFound />;
@@ -124,9 +132,14 @@ export function ImageDetail2() {
     });
   };
 
+  const handleSidebarToggle = () => setSidebarOpen((o) => !o);
+
   const canCreate = !!image.meta?.prompt && !image.hideMeta;
 
-  const Chevron = !active ? IconChevronUp : IconChevronDown;
+  const IconChevron = !active ? IconChevronUp : IconChevronDown;
+  const IconLayoutSidebarRight = !sidebarOpen
+    ? IconLayoutSidebarRightExpand
+    : IconLayoutSidebarRightCollapse;
 
   const LeftImageControls = (
     <>
@@ -144,12 +157,6 @@ export function ImageDetail2() {
           </Group>
         </Button>
       )}
-      {/* <Badge {...sharedBadgeProps}>
-        <IconEye {...sharedIconProps} />
-        <Text color="white" size="xs" align="center" weight={500}>
-          {abbreviateNumber(image.stats?.viewCountAllTime ?? 0)}
-        </Text>
-      </Badge> */}
       <Button {...sharedButtonProps} onClick={handleSaveClick}>
         <IconBookmark {...sharedIconProps} />
         <Text color="white" size="xs" align="center" weight={500}>
@@ -186,54 +193,48 @@ export function ImageDetail2() {
           {(safe) => (
             <>
               {/* HEADER */}
-              <div className="flex justify-between flex-wrap gap-3 p-3">
-                <div className="flex gap-8">
-                  <CloseButton onClick={close} variant="filled" className="h-9 w-9 rounded-full" />
+              <div className="flex justify-between gap-8 p-3">
+                <CloseButton onClick={close} variant="filled" className="h-9 w-9 rounded-full" />
+                <div className="flex flex-wrap justify-between gap-1 flex-1">
+                  {/* Placeholder */}
+                  <div className="@md:hidden" />
                   <div className="@max-md:hidden flex gap-1">
                     <ImageGuard2.BlurToggle {...sharedBadgeProps} />
                     {LeftImageControls}
                   </div>
-                </div>
-                <div className="flex gap-1">
-                  {/* {canCreate && (
-                    <Button
-                      {...sharedButtonProps}
-                      color="blue"
-                      onClick={() => generationPanel.open({ type: 'image', id: image.id })}
-                      data-activity="remix:image"
+
+                  <div className="flex gap-1">
+                    <Badge {...sharedBadgeProps}>
+                      <IconEye {...sharedIconProps} />
+                      <Text color="white" size="xs" align="center" weight={500}>
+                        {abbreviateNumber(image.stats?.viewCountAllTime ?? 0)}
+                      </Text>
+                    </Badge>
+                    <ShareButton
+                      url={shareUrl}
+                      title={`Image by ${image.user.username}`}
+                      collect={{ type: CollectionType.Image, imageId: image.id }}
                     >
-                      <div className="glow" />
-                      <Group spacing={4} noWrap>
-                        <IconBrush size={16} />
-                        <Text size="xs">Remix</Text>
-                      </Group>
-                    </Button>
-                  )} */}
-                  <Badge {...sharedBadgeProps}>
-                    <IconEye {...sharedIconProps} />
-                    <Text color="white" size="xs" align="center" weight={500}>
-                      {abbreviateNumber(image.stats?.viewCountAllTime ?? 0)}
-                    </Text>
-                  </Badge>
-                  <ShareButton
-                    url={shareUrl}
-                    title={`Image by ${image.user.username}`}
-                    collect={{ type: CollectionType.Image, imageId: image.id }}
-                  >
-                    <ActionIcon {...sharedActionIconProps}>
-                      <IconShare3 {...sharedIconProps} />
-                    </ActionIcon>
-                  </ShareButton>
-                  <LoginRedirect reason={'report-content'}>
-                    <ActionIcon {...sharedActionIconProps} onClick={handleReportClick}>
-                      <IconFlag {...sharedIconProps} />
-                    </ActionIcon>
-                  </LoginRedirect>
-                  <ImageDetailContextMenu>
-                    <ActionIcon {...sharedActionIconProps}>
-                      <IconDotsVertical {...sharedIconProps} />
-                    </ActionIcon>
-                  </ImageDetailContextMenu>
+                      <ActionIcon {...sharedActionIconProps}>
+                        <IconShare3 {...sharedIconProps} />
+                      </ActionIcon>
+                    </ShareButton>
+                    <LoginRedirect reason={'report-content'}>
+                      <ActionIcon {...sharedActionIconProps} onClick={handleReportClick}>
+                        <IconFlag {...sharedIconProps} />
+                      </ActionIcon>
+                    </LoginRedirect>
+                    <ImageDetailContextMenu>
+                      <ActionIcon {...sharedActionIconProps}>
+                        <IconDotsVertical {...sharedIconProps} />
+                      </ActionIcon>
+                    </ImageDetailContextMenu>
+                  </div>
+                </div>
+                <div className={`@max-md:hidden ${sidebarOpen ? 'ml-3 -mr-3' : ''}`}>
+                  <ActionIcon {...sharedActionIconProps} onClick={handleSidebarToggle}>
+                    <IconLayoutSidebarRight {...sharedIconProps} />
+                  </ActionIcon>
                 </div>
               </div>
               {/* IMAGE CAROUSEL */}
@@ -283,12 +284,14 @@ export function ImageDetail2() {
       <div
         className={` @max-md:absolute @max-md:inset-0 ${
           !active ? '@max-md:translate-y-[calc(100%-60px)]' : '@max-md:transition-transform'
-        } @md:w-[450px] @md:min-w-[450px] bg-gray-2 dark:bg-dark-9 flex flex-col`}
+        } @md:w-[450px] @md:min-w-[450px] ${
+          !sidebarOpen ? '@md:hidden' : ''
+        } bg-gray-2 dark:bg-dark-9 flex flex-col`}
       >
         <div className="@md:hidden p-3 @max-md:shadow-topper rounded-md flex justify-between items-center">
           <div className="flex gap-1">{LeftImageControls}</div>
           <ActionIcon {...sharedActionIconProps} onClick={toggleInfo}>
-            <Chevron {...sharedIconProps} />
+            <IconChevron {...sharedIconProps} />
           </ActionIcon>
         </div>
         <ScrollArea className="p-3 flex-1 @max-md:pt-0">
@@ -324,60 +327,8 @@ export function ImageDetail2() {
               </Text>
               <ImageDetailComments imageId={image.id} userId={image.user.id} />
             </Card>
-            <Card className="rounded-xl flex flex-col gap-3">
-              <Text className="flex items-center gap-2 font-semibold text-xl">
-                <IconForms />
-                <span>Generation data</span>
-              </Text>
-              <ImageResources imageId={image.id} />
-              {image.meta && (
-                <>
-                  {(image.meta.prompt || image.meta.negativePrompt) && <Divider />}
-                  {image.meta.prompt && (
-                    <div className="flex flex-col">
-                      <div className="flex justify-between items-center">
-                        <Text className="text-lg font-semibold">Prompt</Text>
-                      </div>
-                      <LineClamp color="dimmed" className="text-sm">
-                        {image.meta.prompt}
-                      </LineClamp>
-                    </div>
-                  )}
-                  {image.meta.negativePrompt && (
-                    <div className="flex flex-col">
-                      <div className="flex justify-between items-center">
-                        <Text className="text-md font-semibold">Negative prompt</Text>
-                      </div>
-                      <LineClamp color="dimmed" className="text-sm">
-                        {image.meta.negativePrompt}
-                      </LineClamp>
-                    </div>
-                  )}
-                  {hasSimpleMeta && (
-                    <>
-                      <Divider />
-                      <div className="flex flex-col">
-                        <div className="flex justify-between items-center">
-                          <Text className="text-lg font-semibold">Other metadata</Text>
-                        </div>
-                        <div className="flex flex-col">
-                          {simpleMeta.map(([key, label]) => (
-                            <div key={key} className="flex justify-between">
-                              <Text color="dimmed" className="leading-snug">
-                                {label}
-                              </Text>
-                              <Text className="leading-snug">
-                                {image.meta?.[key as SimpleMetaPropsKey]}
-                              </Text>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    </>
-                  )}
-                </>
-              )}
-            </Card>
+            <ImageGenerationData imageId={image.id} />
+            <ImageProcess imageId={image.id} />
           </div>
         </ScrollArea>
       </div>

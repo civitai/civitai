@@ -1,27 +1,11 @@
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { isNumber } from '~/utils/type-guards';
-import { ImageDetail } from '~/components/Image/Detail/ImageDetail';
 import { ImageDetailProvider } from '~/components/Image/Detail/ImageDetailProvider';
 import { imagesQueryParamSchema } from '~/components/Image/image.utils';
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
-import { setPageOptions } from '~/components/AppLayout/AppLayout';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { ImageDetail2 } from '~/components/Image/DetailV2/ImageDetail2';
 import { createPage } from '~/components/AppLayout/createPage';
-
-// export default function ImagePage() {
-//   const router = useBrowserRouter();
-//   const imageId = router.query.imageId;
-//   const filters = imagesQueryParamSchema.parse(router.query);
-
-//   if (!imageId) return <NotFound />;
-
-//   return (
-//     <ImageDetailProvider imageId={imageId} filters={filters}>
-//       <ImageDetail2 />
-//     </ImageDetailProvider>
-//   );
-// }
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,

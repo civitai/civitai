@@ -6,7 +6,6 @@ import { useRouter } from 'next/router';
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useIsMobile } from '~/hooks/useIsMobile';
 import { ImagesInfiniteModel } from '~/server/services/image.service';
 import { useHasClientHistory } from '~/store/ClientHistoryStore';
 import { ImageGetById, ImageGetInfinite } from '~/types/router';
@@ -63,19 +62,14 @@ export function ImageDetailProvider({
     collectionId?: number;
   } & Record<string, unknown>;
 }) {
-  const isMobile = useIsMobile();
-  const mobileState = useState(false);
-  const desktopState = useLocalStorage({
-    key: `image-detail-open`,
-    defaultValue: true,
-  });
-  const [active, setActive] = isMobile ? mobileState : desktopState; // TODO - refine - there is some jank when screen size changes to mobile
-
   const router = useRouter();
   const browserRouter = useBrowserRouter();
   const hasHistory = useHasClientHistory();
   const currentUser = useCurrentUser();
-  const { postId: queryPostId } = browserRouter.query;
+  const { postId: queryPostId, active = false } = browserRouter.query as {
+    postId?: number;
+    active?: boolean;
+  };
   const { modelId, modelVersionId, username, reactions, postId: filterPostId } = filters;
   const postId = queryPostId ?? filterPostId;
   // #region [data fetching]
@@ -117,14 +111,6 @@ export function ImageDetailProvider({
     }
   }, [prefetchedImage]); // eslint-disable-line
 
-  useDidUpdate(() => {
-    if (isMobile && active) {
-      setActive(false);
-    } else if (!isMobile && !active) {
-      setActive(true);
-    }
-  }, [isMobile]);
-
   function findCurrentImageIndex() {
     const index = images.findIndex((x) => x.id === imageId);
     return index > -1 ? index : 0;
@@ -132,8 +118,6 @@ export function ImageDetailProvider({
 
   const index = findCurrentImageIndex();
   const image = images[index];
-  // const images = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data]);
-  // const image = images.find((x) => x.id === imageId) ?? prefetchedImage ?? undefined;
   // #endregion
 
   // #region [back button functionality]
@@ -154,7 +138,9 @@ export function ImageDetailProvider({
 
   // #region [info toggle]
   const toggleInfo = () => {
-    setActive(!active);
+    if (!active)
+      browserRouter.push({ query: { ...browserRouter.query, active: true } }, browserRouter.asPath);
+    else if (active) browserRouter.back();
   };
   // #endregion
 
