@@ -284,8 +284,8 @@ export function ImageDetail2() {
               <IconChevron {...sharedIconProps} />
             </ActionIcon>
           </div>
-          <ScrollArea className="p-3 flex-1 @max-md:pt-0">
-            <div className="flex flex-col gap-3">
+          <ScrollArea className="p-3 py-0 flex-1">
+            <div className="flex flex-col gap-3 py-3 @max-md:pt-0">
               <SmartCreatorCard
                 user={image.user}
                 subText={
