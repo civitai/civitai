@@ -636,7 +636,7 @@ export const MODELS_SEARCH_INDEX = 'models_v9';
 export const IMAGES_SEARCH_INDEX = 'images_v6';
 export const ARTICLES_SEARCH_INDEX = 'articles_v5';
 export const USERS_SEARCH_INDEX = 'users_v3';
-export const COLLECTIONS_SEARCH_INDEX = 'collections_v3';
+export const COLLECTIONS_SEARCH_INDEX = 'collections_v4';
 export const BOUNTIES_SEARCH_INDEX = 'bounties_v3';
 
 export const modelVersionMonetizationTypeOptions: Record<ModelVersionMonetizationType, string> = {

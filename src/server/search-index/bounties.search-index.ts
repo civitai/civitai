@@ -242,8 +242,6 @@ export const bountiesSearchIndex = createSearchIndexUpdateProcessor({
 
     const { startId, endId } = data[0];
 
-    console.log(data);
-
     logger(
       `PrepareBatches :: Prepared batch: ${startId} - ${endId} ... Last updated: ${lastUpdatedAt}`
     );
