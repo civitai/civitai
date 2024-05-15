@@ -25,6 +25,7 @@ import { getDisplayName } from '~/utils/string-helpers';
 import { IconCalendar } from '@tabler/icons-react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { useRouter } from 'next/router';
+import { isDefined } from '~/utils/type-guards';
 
 export default function CollectionEditModal({ collectionId }: { collectionId?: number }) {
   const router = useRouter();
@@ -140,10 +141,16 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                   name="mode"
                   label="Mode"
                   data={[
-                    ...Object.values(CollectionMode).map((value) => ({
-                      value,
-                      label: getDisplayName(value),
-                    })),
+                    ...Object.values(CollectionMode)
+                      .map((value) =>
+                        [CollectionMode.Bookmark].some((v) => v === value)
+                          ? undefined
+                          : {
+                              value,
+                              label: getDisplayName(value),
+                            }
+                      )
+                      .filter(isDefined),
                   ]}
                   clearable
                 />
