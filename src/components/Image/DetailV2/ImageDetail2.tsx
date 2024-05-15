@@ -90,7 +90,6 @@ const sharedIconProps: TablerIconsProps = {
 export function ImageDetail2() {
   const theme = useMantineTheme();
   const { image: image, isLoading, active, close, toggleInfo, shareUrl } = useImageDetailContext();
-  const { query } = useBrowserRouter();
   const [sidebarOpen, setSidebarOpen] = useLocalStorage({
     key: `image-detail-open`,
     defaultValue: true,

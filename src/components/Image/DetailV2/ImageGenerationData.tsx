@@ -7,7 +7,6 @@ import { encodeMetadata } from '~/utils/metadata';
 import { trpc } from '~/utils/trpc';
 
 export function ImageGenerationData({ imageId }: { imageId: number }) {
-  console.log({ imageId });
   const { data } = trpc.image.getGenerationData.useQuery({ id: imageId });
 
   const { meta, resources } = data ?? {};

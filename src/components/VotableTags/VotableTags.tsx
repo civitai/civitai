@@ -1,17 +1,7 @@
-import {
-  ActionIcon,
-  Center,
-  Group,
-  GroupProps,
-  Loader,
-  MantineProvider,
-  createStyles,
-} from '@mantine/core';
+import { ActionIcon, Center, Group, GroupProps, Loader, createStyles } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { IconChevronDown, IconChevronUp } from '@tabler/icons-react';
 import { useMemo } from 'react';
-import { openSetBrowsingLevelModal } from '~/components/Dialog/dialog-registry';
-import { BrowsingLevelBadge } from '~/components/ImageGuard/ImageGuard2';
 import { VotableTag } from '~/components/VotableTags/VotableTag';
 import { VotableTagAdd } from '~/components/VotableTags/VotableTagAdd';
 import { VotableTagMature } from '~/components/VotableTags/VotableTagMature';
@@ -70,65 +60,52 @@ export function VotableTags({
 
   const showAddibles = !collapsible || showAll;
   return (
-    <MantineProvider theme={{ colorScheme: 'dark' }}>
-      <Group spacing={4} {...props}>
-        {/* {nsfwLevel && type === 'image' && (
-          <BrowsingLevelBadge
-            radius="xs"
-            browsingLevel={nsfwLevel}
-            className="cursor-pointer"
-            onClick={() =>
-              currentUser ? openSetBrowsingLevelModal({ imageId: id, nsfwLevel }) : undefined
-            }
-            sfwClassName={classes.nsfwBadge}
-          />
-        )} */}
-        {canAdd && (
-          <VotableTagAdd
-            addTag={(tag) => {
-              handleVote({ tags: [tag], vote: 1 });
-            }}
-          />
-        )}
-        {displayedTags.map((tag) => (
-          <VotableTag
-            key={tag.name}
-            entityId={id}
-            entityType={type}
-            tagId={tag.id}
-            name={tag.name}
-            initialVote={tag.vote}
-            needsReview={tag.needsReview}
-            concrete={tag.concrete}
-            lastUpvote={tag.lastUpvote}
-            type={tag.type}
-            nsfwLevel={tag.nsfwLevel}
-            score={tag.score}
-            onChange={({ name, vote }) => {
-              handleVote({ tags: [name], vote });
-            }}
-          />
-        ))}
-        {showAddibles && (
-          <>
-            {canAddModerated && (
-              <VotableTagMature
-                tags={tags}
-                addTag={(tag) => {
-                  const vote = tags.find((x) => x.name === tag && x.id === 0) ? 0 : 1;
-                  handleVote({ tags: [tag], vote, tagType: 'Moderation' });
-                }}
-              />
-            )}
-          </>
-        )}
-        {collapsible && tags.length > limit && (
-          <ActionIcon variant="transparent" size="sm" onClick={() => setShowAll((prev) => !prev)}>
-            {showAll ? <IconChevronUp strokeWidth={3} /> : <IconChevronDown strokeWidth={3} />}
-          </ActionIcon>
-        )}
-      </Group>
-    </MantineProvider>
+    <Group spacing={4} {...props}>
+      {canAdd && (
+        <VotableTagAdd
+          addTag={(tag) => {
+            handleVote({ tags: [tag], vote: 1 });
+          }}
+        />
+      )}
+      {displayedTags.map((tag) => (
+        <VotableTag
+          key={tag.name}
+          entityId={id}
+          entityType={type}
+          tagId={tag.id}
+          name={tag.name}
+          initialVote={tag.vote}
+          needsReview={tag.needsReview}
+          concrete={tag.concrete}
+          lastUpvote={tag.lastUpvote}
+          type={tag.type}
+          nsfwLevel={tag.nsfwLevel}
+          score={tag.score}
+          onChange={({ name, vote }) => {
+            handleVote({ tags: [name], vote });
+          }}
+        />
+      ))}
+      {showAddibles && (
+        <>
+          {canAddModerated && (
+            <VotableTagMature
+              tags={tags}
+              addTag={(tag) => {
+                const vote = tags.find((x) => x.name === tag && x.id === 0) ? 0 : 1;
+                handleVote({ tags: [tag], vote, tagType: 'Moderation' });
+              }}
+            />
+          )}
+        </>
+      )}
+      {collapsible && tags.length > limit && (
+        <ActionIcon variant="transparent" size="sm" onClick={() => setShowAll((prev) => !prev)}>
+          {showAll ? <IconChevronUp strokeWidth={3} /> : <IconChevronDown strokeWidth={3} />}
+        </ActionIcon>
+      )}
+    </Group>
   );
 }
 
