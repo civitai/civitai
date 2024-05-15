@@ -83,7 +83,7 @@ export function BountyEntryCard({ data, currency, renderActions }: Props) {
                 >
                   <UserAvatar
                     user={user}
-                    avatarProps={{ radius: 'md', size: 32 }}
+                    avatarProps={{ radius: 'xl', size: 32 }}
                     withUsername
                     subText={
                       <Text size="xs" color="dimmed">
