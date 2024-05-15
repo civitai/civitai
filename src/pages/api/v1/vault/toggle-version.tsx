@@ -23,7 +23,7 @@ export default AuthedEndpoint(
       return res.json(
         removeEmpty({
           success: true,
-          vaultId: result?.vaultId,
+          vaultId: result?.id,
         })
       );
     } catch (error) {

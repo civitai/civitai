@@ -10,7 +10,7 @@ import { getModelVersionDataForVault } from '~/server/services/vault.service';
 import { withRetries } from '~/server/utils/errorHandling';
 import { getModelVersionDetailsPDF } from '~/server/utils/pdf-helpers';
 import { fetchBlob } from '~/utils/file-utils';
-import { getCustomPutUrl } from '~/utils/s3-utils';
+import { getCustomPutUrl, getS3Client } from '~/utils/s3-utils';
 import { isDefined } from '~/utils/type-guards';
 import { VaultItemMetadataSchema } from '../schema/vault.schema';
 import { createJob, getJobDate } from './job';
@@ -50,6 +50,7 @@ export const processVaultItems = createJob('process-vault-items', '*/10 * * * *'
     },
   });
 
+  const s3 = await getS3Client();
   for (const vaultItem of vaultItems) {
     try {
       // Get model version info:
@@ -100,11 +101,16 @@ export const processVaultItems = createJob('process-vault-items', '*/10 * * * *'
           .replace(':userId', vaultItem.vaultId.toString()),
       };
 
-      const { url: detailsUploadUrl } = await getCustomPutUrl(env.S3_VAULT_BUCKET, keys.details);
-      const { url: imagesUploadUrl } = await getCustomPutUrl(env.S3_VAULT_BUCKET, keys.images);
+      const { url: detailsUploadUrl } = await getCustomPutUrl(
+        env.S3_VAULT_BUCKET,
+        keys.details,
+        s3
+      );
+      const { url: imagesUploadUrl } = await getCustomPutUrl(env.S3_VAULT_BUCKET, keys.images, s3);
       const { url: coverImageUploadUrl } = await getCustomPutUrl(
         env.S3_VAULT_BUCKET,
-        keys.coverImage
+        keys.coverImage,
+        s3
       );
 
       await Promise.all(
