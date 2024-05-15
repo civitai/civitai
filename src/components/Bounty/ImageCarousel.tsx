@@ -184,64 +184,66 @@ export function ImageCarouselContent({
         }}
       >
         {filteredImages.map((image) => (
-          <ImageGuard2 key={image.id} image={image} connectType={connectType} connectId={connectId}>
-            {(safe) => (
-              <Carousel.Slide>
-                <Box
-                  sx={{ cursor: 'pointer' }}
-                  onClick={onClick ? () => onClick(image) : undefined}
-                  tabIndex={0}
-                  role="button"
-                  onKeyDown={
-                    onClick
-                      ? (e) => {
-                          const keyDown = e.key !== undefined ? e.key : e.keyCode;
-                          if (
-                            keyDown === 'Enter' ||
-                            keyDown === 13 ||
-                            ['Spacebar', ' '].indexOf(keyDown as string) >= 0 ||
-                            keyDown === 32
-                          ) {
-                            // (prevent default so the page doesn't scroll when pressing space)
-                            e.preventDefault();
-                            onClick(image);
-                          }
-                        }
-                      : undefined
-                  }
-                >
-                  <Center className="h-full w-full">
-                    <div className="relative w-full">
-                      <ImageGuard2.BlurToggle className="absolute top-2 left-2 z-10" />
-                      <ImageContextMenu image={image} className="absolute top-2 right-2 z-10" />
-                      <ImagePreview
-                        image={image}
-                        edgeImageProps={{
-                          width: 450,
-                          style: { objectPosition: mobile ? 'top' : 'center' },
-                        }}
-                        radius="md"
-                        style={{ width: '100%' }}
-                        aspectRatio={1}
-                        nsfw={!safe}
-                      />
-                      {image.meta && (
-                        <ImageMetaPopover
-                          meta={image.meta}
-                          generationProcess={image.generationProcess ?? undefined}
-                          imageId={image.id}
-                        >
-                          <ActionIcon variant="light" className={classes.meta}>
-                            <IconInfoCircle color="white" strokeWidth={2.5} size={18} />
-                          </ActionIcon>
-                        </ImageMetaPopover>
-                      )}
-                    </div>
-                  </Center>
-                </Box>
-              </Carousel.Slide>
-            )}
-          </ImageGuard2>
+          <Carousel.Slide key={image.id}>
+            <Box
+              sx={{ cursor: 'pointer' }}
+              onClick={onClick ? () => onClick(image) : undefined}
+              tabIndex={0}
+              role="button"
+              onKeyDown={
+                onClick
+                  ? (e) => {
+                      const keyDown = e.key !== undefined ? e.key : e.keyCode;
+                      if (
+                        keyDown === 'Enter' ||
+                        keyDown === 13 ||
+                        ['Spacebar', ' '].indexOf(keyDown as string) >= 0 ||
+                        keyDown === 32
+                      ) {
+                        // (prevent default so the page doesn't scroll when pressing space)
+                        e.preventDefault();
+                        onClick(image);
+                      }
+                    }
+                  : undefined
+              }
+            >
+              <Center className="h-full w-full">
+                <div className="relative w-full">
+                  <ImageGuard2 image={image} connectType={connectType} connectId={connectId}>
+                    {(safe) => (
+                      <>
+                        <ImageGuard2.BlurToggle className="absolute top-2 left-2 z-10" />
+                        <ImageContextMenu image={image} className="absolute top-2 right-2 z-10" />
+                        <ImagePreview
+                          image={image}
+                          edgeImageProps={{
+                            width: 450,
+                            style: { objectPosition: mobile ? 'top' : 'center' },
+                          }}
+                          radius="md"
+                          style={{ width: '100%' }}
+                          aspectRatio={1}
+                          nsfw={!safe}
+                        />
+                        {image.meta && (
+                          <ImageMetaPopover
+                            meta={image.meta}
+                            generationProcess={image.generationProcess ?? undefined}
+                            imageId={image.id}
+                          >
+                            <ActionIcon variant="light" className={classes.meta}>
+                              <IconInfoCircle color="white" strokeWidth={2.5} size={18} />
+                            </ActionIcon>
+                          </ImageMetaPopover>
+                        )}
+                      </>
+                    )}
+                  </ImageGuard2>
+                </div>
+              </Center>
+            </Box>
+          </Carousel.Slide>
         ))}
         {hiddenExplained.hasHidden && (
           <Carousel.Slide>
