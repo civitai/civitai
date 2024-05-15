@@ -174,7 +174,7 @@ export function PostEditProvider({ post, params = {}, children, ...extendedParam
           };
         });
         await queryUtils.post.getInfinite.invalidate();
-        await queryUtils.image.getInfinite.invalidate({ postId });
+        await queryUtils.image.invalidate();
         if (modelVersionId) {
           await queryUtils.modelVersion.getById.invalidate({ id: modelVersionId });
           await queryUtils.image.getImagesAsPostsInfinite.invalidate();

@@ -52,6 +52,7 @@ export function ImageDetailCarousel() {
         getEmblaApi={setEmbla}
         height="100%"
         initialSlide={slidesInView[0]}
+        loop
       >
         {images.map((image, index) => (
           <Carousel.Slide key={image.id}>

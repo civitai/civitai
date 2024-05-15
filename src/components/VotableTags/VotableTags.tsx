@@ -72,7 +72,7 @@ export function VotableTags({
   return (
     <MantineProvider theme={{ colorScheme: 'dark' }}>
       <Group spacing={4} {...props}>
-        {nsfwLevel && type === 'image' && (
+        {/* {nsfwLevel && type === 'image' && (
           <BrowsingLevelBadge
             radius="xs"
             browsingLevel={nsfwLevel}
@@ -82,7 +82,7 @@ export function VotableTags({
             }
             sfwClassName={classes.nsfwBadge}
           />
-        )}
+        )} */}
         {canAdd && (
           <VotableTagAdd
             addTag={(tag) => {

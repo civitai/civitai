@@ -1,5 +1,6 @@
-import { Divider, Text } from '@mantine/core';
+import { Divider, Text, ActionIcon } from '@mantine/core';
 import { LineClamp } from '~/components/LineClamp/LineClamp';
+import { CopyButton } from '~/components/CopyButton/CopyButton';
 import { trpc } from '~/utils/trpc';
 
 type SimpleMetaPropsKey = keyof typeof simpleMetaProps;
@@ -28,6 +29,13 @@ export function ImageMeta({ imageId }: { imageId: number }) {
         <div className="flex flex-col">
           <div className="flex justify-between items-center">
             <Text className="text-lg font-semibold">Prompt</Text>
+            <CopyButton value={meta.prompt}>
+              {({ copy, Icon, color }) => (
+                <ActionIcon onClick={copy} color={color}>
+                  <Icon size={16} />
+                </ActionIcon>
+              )}
+            </CopyButton>
           </div>
           <LineClamp color="dimmed" className="text-sm">
             {meta.prompt}
@@ -38,6 +46,13 @@ export function ImageMeta({ imageId }: { imageId: number }) {
         <div className="flex flex-col">
           <div className="flex justify-between items-center">
             <Text className="text-md font-semibold">Negative prompt</Text>
+            <CopyButton value={meta.negativePrompt}>
+              {({ copy, Icon, color }) => (
+                <ActionIcon onClick={copy} color={color}>
+                  <Icon size={16} />
+                </ActionIcon>
+              )}
+            </CopyButton>
           </div>
           <LineClamp color="dimmed" className="text-sm">
             {meta.negativePrompt}
@@ -49,7 +64,7 @@ export function ImageMeta({ imageId }: { imageId: number }) {
           {(meta.prompt || meta.negativePrompt) && <Divider />}
           <div className="flex flex-col">
             <div className="flex justify-between items-center">
-              <Text className="text-lg font-semibold">Other metadata</Text>
+              <Text className="text-md font-semibold">Other metadata</Text>
             </div>
             <div className="flex flex-col">
               {simpleMeta.map(([key, label]) => (

@@ -54,7 +54,6 @@ import { ImageCSSAspectRatioWrap } from '~/components/Profile/ImageCSSAspectRati
 import { constants } from '~/server/common/constants';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';

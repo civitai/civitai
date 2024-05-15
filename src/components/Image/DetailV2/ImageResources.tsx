@@ -1,28 +1,12 @@
-import {
-  ActionIcon,
-  Alert,
-  Badge,
-  Card,
-  CopyButton,
-  Divider,
-  Group,
-  Skeleton,
-  Stack,
-  Text,
-  createStyles,
-} from '@mantine/core';
+import { ActionIcon, Alert, Badge, Skeleton, Stack, Text } from '@mantine/core';
 import { useSessionStorage } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
-import { IconDownload, IconMessageCircle2, IconX } from '@tabler/icons-react';
+import { IconX } from '@tabler/icons-react';
+import { uniqBy } from 'lodash';
 import Link from 'next/link';
-import { cloneElement, useMemo, useState } from 'react';
-
-import { IconBadge } from '~/components/IconBadge/IconBadge';
-import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProvider';
-import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
+import { cloneElement, useMemo } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
-import { abbreviateNumber } from '~/utils/number-helpers';
 import { getDisplayName, slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -39,18 +23,11 @@ export function ImageResources({ imageId }: { imageId: number }) {
 
   const resources = useMemo(() => {
     return (
-      data?.resources
-        // remove duplicates items from data based on modelVersionId
-        ?.filter(
-          (resource, index, items) =>
-            !!resource.modelVersionId &&
-            items.findIndex((t) => t.modelVersionId === resource.modelVersionId) === index
-        )
-        .map((resource, index) => {
-          const isAvailable = resource.modelVersionId !== null;
+      uniqBy(data?.resources ?? [], 'versionId')
+        .map((resource) => {
+          const isAvailable = resource.versionId !== null;
           return {
             ...resource,
-            key: resource.modelVersionId ?? resource.modelName ?? index,
             isAvailable,
           };
         })
@@ -62,7 +39,7 @@ export function ImageResources({ imageId }: { imageId: number }) {
     );
   }, [data]);
 
-  // TODO - mod tooling?
+  if (!resources.length) return null;
 
   return (
     <div className="flex flex-col gap-1.5">
@@ -76,18 +53,15 @@ export function ImageResources({ imageId }: { imageId: number }) {
         <Alert>There are no resources associated with this image</Alert>
       ) : (
         <ul className="list-none flex flex-col gap-0.5">
-          {(showAll ? resources : resources.slice(0, LIMIT)).map((resource, i) => (
-            <li
-              key={resource.modelVersionId ?? i}
-              className="flex justify-between items-center gap-3"
-            >
+          {(showAll ? resources : resources.slice(0, LIMIT)).map((resource) => (
+            <li key={resource.id} className="flex justify-between items-center gap-3">
               <Wrapper resource={resource}>
                 <Text
                   lineClamp={1}
                   color="dimmed"
                   className={`${resource.modelId ? 'underline cursor-pointer' : ''}`}
                 >
-                  {resource.modelName ?? resource.name}
+                  {resource.modelName}
                 </Text>
               </Wrapper>
               {resource.modelType && (
@@ -97,6 +71,9 @@ export function ImageResources({ imageId }: { imageId: number }) {
                     <Badge color="gray" variant="filled">
                       {resource.strength}
                     </Badge>
+                  )}
+                  {currentUser?.isModerator && (
+                    <RemoveResource imageId={imageId} resourceId={resource.id} />
                   )}
                 </div>
               )}
@@ -111,7 +88,7 @@ export function ImageResources({ imageId }: { imageId: number }) {
             className="cursor-pointer text-sm"
             onClick={() => setShowAll((x) => !x)}
           >
-            {!showAll ? 'Show more' : 'Show less'}
+            {!showAll ? `Show ${resources.length - LIMIT} more` : 'Show less'}
           </Text>
         </div>
       )}
@@ -123,14 +100,14 @@ const Wrapper = ({
   resource,
   children,
 }: {
-  resource: { modelId: number | null; modelName: string | null; modelVersionId: number | null };
+  resource: { modelId: number | null; modelName: string | null; versionId: number | null };
   children: React.ReactElement;
 }) => {
   if (!resource.modelId) return children;
   return (
     <Link
       href={`/models/${resource.modelId}/${slugit(resource.modelName ?? '')}?modelVersionId=${
-        resource.modelVersionId
+        resource.versionId
       }`}
       passHref
     >
@@ -138,3 +115,51 @@ const Wrapper = ({
     </Link>
   );
 };
+
+function RemoveResource({ imageId, resourceId }: { imageId: number; resourceId: number }) {
+  const queryUtils = trpc.useUtils();
+  const { mutate, isLoading } = trpc.image.removeResource.useMutation();
+  const handleRemoveResource = () => {
+    openConfirmModal({
+      centered: true,
+      title: 'Remove Resource',
+      children:
+        'Are you sure you want to remove this resource from this image? This action is destructive and cannot be reverted.',
+      labels: { confirm: 'Yes, remove it', cancel: 'Cancel' },
+      confirmProps: { color: 'red' },
+      onConfirm: () =>
+        mutate(
+          { id: resourceId },
+          {
+            async onSuccess() {
+              showSuccessNotification({
+                title: 'Successfully removed resource',
+                message: 'The resource was removed from the image',
+              });
+              await queryUtils.image.getResources.invalidate({ id: imageId });
+            },
+            onError(error) {
+              showErrorNotification({
+                title: 'Unable to remove resource',
+                error: new Error(error.message),
+              });
+            },
+          }
+        ),
+    });
+  };
+
+  return (
+    <ActionIcon
+      size="xs"
+      color="red"
+      variant="light"
+      onClick={handleRemoveResource}
+      disabled={isLoading}
+      h={20}
+      w={20}
+    >
+      <IconX size={14} stroke={1.5} />
+    </ActionIcon>
+  );
+}

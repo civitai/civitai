@@ -3,6 +3,7 @@ import {
   ImageGenerationProcess,
   ImageIngestionStatus,
   MediaType,
+  ModelType,
   Prisma,
   ReportReason,
   ReportStatus,
@@ -2939,13 +2940,6 @@ export async function getImageGenerationData({ id }: { id: number }) {
           },
         },
       },
-      resources: {
-        select: {
-          strength: true,
-          modelVersionId: true,
-          hash: true,
-        },
-      },
     },
   });
   if (!image) throw throwNotFoundError();
@@ -2953,31 +2947,39 @@ export async function getImageGenerationData({ id }: { id: number }) {
   const tools = image.tools.map(({ notes, tool }) => ({ ...tool, notes }));
   const techniques = image.techniques.map(({ notes, technique }) => ({ ...technique, notes }));
 
-  const imageResources = await getImageResources({ id });
-  const resources = imageResources.map((imageResource) => {
-    const resource = image.resources.find((x) => x.modelVersionId === imageResource.modelVersionId);
-    return {
-      strength: resource?.strength ? resource.strength / 100 : undefined,
-      modelId: imageResource.modelId,
-      modelName: imageResource.modelName,
-      modelType: imageResource.modelType,
-      modelVersionId: imageResource.modelVersionId,
-      modelVersionName: imageResource.modelVersionName,
-      name: imageResource.name,
-      hash: imageResource.hash,
-    };
-  });
+  const { rows: resources } = await pgDbRead.query<{
+    id: number;
+    strength?: number;
+    modelId: number;
+    modelName: string;
+    modelType: ModelType;
+    versionId: number;
+    versionName: string;
+  }>(Prisma.sql`
+    SELECT
+      ir.id,
+      ir.strength,
+      m.id as "modelId",
+      m.name as "modelName",
+      m.type as "modelType",
+      mv.id as "versionId",
+      mv.name as "versionName"
+    FROM "ImageResource" ir
+    JOIN "ModelVersion" mv ON mv.id = ir."modelVersionId"
+    JOIN "Model" m on mv."modelId" = m.id
+      WHERE ir."imageId" = ${id}
+  `);
 
-  const {
-    'Clip skip': legacyClipSkip,
-    clipSkip = legacyClipSkip,
-    comfy,
-    ...meta
-  } = imageGenerationSchema.parse(image.meta);
+  const parsedMeta = imageGenerationSchema.safeParse(image.meta);
+  const data = parsedMeta.success ? parsedMeta.data : {};
+  const { 'Clip skip': legacyClipSkip, clipSkip = legacyClipSkip, comfy, ...meta } = data;
 
   return {
-    meta: !image.hideMeta ? { ...meta, clipSkip } : undefined,
-    resources,
+    meta: parsedMeta.success && !image.hideMeta ? { ...meta, clipSkip } : undefined,
+    resources: resources.map((resource) => ({
+      ...resource,
+      strength: resource.strength ? resource.strength / 100 : undefined,
+    })),
     tools,
     techniques,
   };
