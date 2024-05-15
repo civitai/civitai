@@ -346,7 +346,9 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                         Additional Resources
                       </Text>
                       {additionalResourcesCount > 0 && (
-                        <Badge style={{ fontWeight: 590 }}>{additionalResourcesCount}</Badge>
+                        <Badge style={{ fontWeight: 590 }}>
+                          {additionalResourcesCount}/{limits.resources}
+                        </Badge>
                       )}
 
                       <Button
@@ -360,6 +362,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                         }}
                         radius="xl"
                         ml="auto"
+                        disabled={additionalResourcesCount >= limits.resources}
                       >
                         <Group spacing={4} noWrap>
                           <IconPlus size={16} />

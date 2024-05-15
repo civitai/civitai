@@ -2823,7 +2823,6 @@ model ChatMessage {
   chatId             Int
   content            String
   contentType        ChatMessageType @default(Markdown)
-  // isSystemMessage Boolean @default(false)
   referenceMessageId Int?
   editedAt           DateTime?
   // TODO deletedAt DateTime
@@ -2999,6 +2998,7 @@ model Tool {
   createdAt  DateTime    @default(now())
   enabled    Boolean     @default(true)
   type       ToolType
+  domain     String?
   imageTools ImageTool[]
 }
 

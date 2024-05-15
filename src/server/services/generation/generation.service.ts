@@ -61,7 +61,15 @@ import { UserTier } from '~/server/schema/user.schema';
 import { Orchestrator } from '~/server/http/orchestrator/orchestrator.types';
 import { generatorFeedbackReward } from '~/server/rewards';
 import { resourceDataCache } from '~/server/redis/caches';
-import { defaultCheckpoints, getBaseModelSetKey } from '~/shared/constants/generation.constants';
+import {
+  allInjectedNegatives,
+  allInjectedPositives,
+  defaultCheckpoints,
+  getBaseModelSetKey,
+  minorNegatives,
+  minorPositives,
+  safeNegatives,
+} from '~/shared/constants/generation.constants';
 
 export function parseModelVersionId(assetId: string) {
   const pattern = /^@civitai\/(\d+)$/;
@@ -73,13 +81,6 @@ export function parseModelVersionId(assetId: string) {
 
   return null;
 }
-
-// when removing a string from the `safeNegatives` array, add it to the `allSafeNegatives` array
-const safeNegatives = [{ id: 106916, triggerWord: 'civit_nsfw' }];
-const minorNegatives = [{ id: 250712, triggerWord: 'safe_neg' }];
-const minorPositives = [{ id: 250708, triggerWord: 'safe_pos' }];
-const allInjectedNegatives = [...safeNegatives, ...minorNegatives];
-const allInjectedPositives = [...minorPositives];
 
 function mapRequestStatus(label: string): GenerationRequestStatus {
   switch (label) {

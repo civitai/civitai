@@ -47,12 +47,15 @@ export function UserAvatarSimple({
       className="flex gap-2 items-center"
     >
       {displayProfilePicture && (
-        <div className={classes.profilePictureWrapper}>
-          {!profilePicture ? (
-            <Text size="sm">{username ? getInitials(username) : <IconUser size={32} />}</Text>
-          ) : (
-            <UserAvatarProfilePicture id={id} username={username} image={profilePicture} />
-          )}
+        <div style={{ position: 'relative' }}>
+          <div className={classes.profilePictureWrapper}>
+            {!profilePicture ? (
+              <Text size="sm">{username ? getInitials(username) : <IconUser size={32} />}</Text>
+            ) : (
+              <UserAvatarProfilePicture id={id} username={username} image={profilePicture} />
+            )}
+          </div>
+
           {decoration && decoration.data.url && (
             <EdgeMedia
               src={decoration.data.url}

@@ -1,7 +1,7 @@
 // @ts-check
 import { z } from 'zod';
 import { zc } from '~/utils/schema-helpers';
-import { commaDelimitedStringArray, commaDelimitedStringObject } from '~/utils/zod-helpers';
+import { commaDelimitedStringArray, commaDelimitedStringObject, stringToArray } from '~/utils/zod-helpers';
 
 /**
  * Specify your server-side environment variables schema here.
@@ -148,6 +148,7 @@ export const serverSchema = z.object({
   FRESHDESK_DOMAIN: z.string().optional(),
   FRESHDESK_TOKEN: z.string().optional(),
   UPLOAD_PROHIBITED_EXTENSIONS: commaDelimitedStringArray().optional(),
+  POST_INTENT_DETAILS_HOSTS: z.preprocess(stringToArray, z.array(z.string().url()).optional()),
 });
 
 /**

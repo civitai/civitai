@@ -11,11 +11,7 @@ const useOrchestratorUrlStore = create<{
     data: {},
     setData: (key, urls) =>
       set((state) => {
-        state.data[key] = urls.filter(
-          (url) =>
-            url.startsWith('https://orchestration.civitai.com') ||
-            url.startsWith('https://orchestration-stage.civitai.com')
-        );
+        state.data[key] = urls;
       }),
     getData: (key) => {
       const urls = get().data[key];
@@ -34,3 +30,17 @@ export const orchestratorMediaTransmitter = {
     return await getOrchestratorMediaFilesFromUrls(urls);
   },
 };
+
+export const useExternalMetaStore = create<{
+  url: string | undefined;
+  setUrl: (url: string | undefined) => void;
+  getUrl: () => string | undefined;
+}>((set, get) => ({
+  url: undefined,
+  setUrl: (url) => set({ url }),
+  getUrl: () => {
+    const url = get().url;
+    set({ url: undefined });
+    return url;
+  },
+}));

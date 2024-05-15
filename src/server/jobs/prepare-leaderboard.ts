@@ -4,6 +4,7 @@ import { constants } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { pgDbWrite } from '~/server/db/pgDb';
 import { applyDiscordLeaderboardRoles } from '~/server/jobs/apply-discord-roles';
+import { logToAxiom } from '~/server/logging/client';
 import { isLeaderboardPopulated } from '~/server/services/leaderboard.service';
 import { updateLeaderboardRank } from '~/server/services/user.service';
 import { limitConcurrency, Task } from '~/server/utils/concurrency-helpers';
@@ -61,12 +62,16 @@ const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async 
 
     log(`Leaderboard ${id} - Done - ${(Date.now() - start) / 1000}s`);
   });
-  await limitConcurrency(tasks, 3);
-  log('Leaderboards - Done');
-
-  await updateLegendsBoardResults();
-
-  await setLastRun();
+  try {
+    await limitConcurrency(tasks, 3);
+    log('Leaderboards - Done');
+    await updateLegendsBoardResults();
+    await setLastRun();
+  } catch (e) {
+    const error = e as Error;
+    logToAxiom({ type: 'leaderboard-error', message: error.message }).catch();
+    throw error;
+  }
 });
 
 async function updateLegendsBoardResults() {

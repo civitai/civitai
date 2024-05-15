@@ -7,38 +7,42 @@ import {
   TagType,
 } from '@prisma/client';
 import { SessionUser } from 'next-auth';
-import { NsfwLevel, PostSort } from '~/server/common/enums';
+import { env } from '~/env/server.mjs';
+import { PostSort } from '~/server/common/enums';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
-import { ImageMetaProps, getInfiniteImagesSchema } from '~/server/schema/image.schema';
+import { externalMetaSchema } from '~/server/schema/image.schema';
+import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import {
+  editPostImageSelect,
   PostImageEditProps,
   PostImageEditSelect,
-  editPostImageSelect,
   postSelect,
 } from '~/server/selectors/post.selector';
 import { simpleTagSelect } from '~/server/selectors/tag.selector';
-import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
+import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import {
   deleteImageById,
   deleteImagesForModelVersionCache,
   getImagesForPosts,
   ingestImage,
 } from '~/server/services/image.service';
-import {
-  getTagCountForImages,
-  getTypeCategories,
-  getVotableImageTags,
-} from '~/server/services/tag.service';
+import { findOrCreateTagsByName, getVotableImageTags } from '~/server/services/tag.service';
+import { getToolByDomain, getToolByName } from '~/server/services/tool.service';
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
+import { bustCacheTag, queryCache } from '~/server/utils/cache-helpers';
 import {
   throwAuthorizationError,
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { PreprocessFileReturnType } from '~/utils/media-preprocessors';
+import { postgresSlugify } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
+import { CacheTTL } from '../common/constants';
 import {
   AddPostImageInput,
   AddPostTagInput,
@@ -50,17 +54,6 @@ import {
   ReorderPostImagesInput,
   UpdatePostImageInput,
 } from './../schema/post.schema';
-import { postgresSlugify } from '~/utils/string-helpers';
-import { bustCacheTag, queryCache } from '~/server/utils/cache-helpers';
-import { env } from 'process';
-import { CacheTTL } from '../common/constants';
-import { PreprocessFileReturnType } from '~/utils/media-preprocessors';
-import {
-  BadgeCosmetic,
-  ContentDecorationCosmetic,
-  WithClaimKey,
-} from '~/server/selectors/cosmetic.selector';
-import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 
 type GetAllPostsRaw = {
   id: number;
@@ -497,10 +490,25 @@ export const getPostEditImages = async ({ id, user }: GetByIdInput & { user: Ses
 export const createPost = async ({
   userId,
   tag,
+  tags,
   ...data
-}: PostCreateInput & { userId: number }): Promise<PostDetailEditable> => {
+}: PostCreateInput & {
+  userId: number;
+}): Promise<PostDetailEditable> => {
+  const tagsToAdd: number[] = [];
+  if (tags && tags.length > 0) {
+    const tagObj = await findOrCreateTagsByName(tags);
+    Object.values(tagObj).forEach((t) => {
+      if (t !== undefined) tagsToAdd.push(t);
+    });
+  }
+  if (tag) {
+    tagsToAdd.push(tag);
+  }
+  const tagData = tagsToAdd.map((t) => ({ tagId: t }));
+
   const post = await dbWrite.post.create({
-    data: { ...data, userId, tags: tag ? { create: { tagId: tag } } : undefined },
+    data: { ...data, userId, tags: tagsToAdd.length > 0 ? { create: tagData } : undefined },
     select: postSelect,
   });
   return {
@@ -546,28 +554,24 @@ export const getPostTags = async ({
 }: GetPostTagsInput & { excludedTagIds?: number[] }) => {
   const showTrending = query === undefined || query.length < 2;
   const tags = await dbRead.$queryRaw<PostQueryResult>`
-    SELECT
-      t.id,
-      t.name,
-      (
-        SELECT COALESCE(
-        (
-            SELECT MAX(pt."nsfwLevel")
-            FROM "TagsOnTags" tot
-            JOIN "Tag" pt ON tot."fromTagId" = pt.id
-            WHERE tot."toTagId" = t.id
-        ), t."nsfwLevel") "nsfwLevel"
-      ) "nsfwLevel",
-      t."isCategory",
-      COALESCE(${
-        showTrending ? Prisma.sql`s."postCountWeek"` : Prisma.sql`s."postCountAllTime"`
-      }, 0)::int AS "postCount"
+    SELECT t.id,
+           t.name,
+           (SELECT COALESCE(
+                     (SELECT MAX(pt."nsfwLevel")
+                      FROM "TagsOnTags" tot
+                             JOIN "Tag" pt ON tot."fromTagId" = pt.id
+                      WHERE tot."toTagId" = t.id), t."nsfwLevel") "nsfwLevel") "nsfwLevel",
+           t."isCategory",
+           COALESCE(${
+             showTrending ? Prisma.sql`s."postCountWeek"` : Prisma.sql`s."postCountAllTime"`
+           }, 0)::int AS                                                       "postCount"
     FROM "Tag" t
-    LEFT JOIN "TagStat" s ON s."tagId" = t.id
-    LEFT JOIN "TagRank" r ON r."tagId" = t.id
-    WHERE
-      ${showTrending ? Prisma.sql`t."isCategory" = true` : Prisma.sql`t.name ILIKE ${query + '%'}`}
-      ${nsfwLevel ? Prisma.sql`AND (t."nsfwLevel" & ${nsfwLevel}) != 0` : ``}
+           LEFT JOIN "TagStat" s ON s."tagId" = t.id
+           LEFT JOIN "TagRank" r ON r."tagId" = t.id
+    WHERE ${
+      showTrending ? Prisma.sql`t."isCategory" = true` : Prisma.sql`t.name ILIKE ${query + '%'}`
+    }
+            ${nsfwLevel ? Prisma.sql`AND (t."nsfwLevel" & ${nsfwLevel}) != 0` : ``}
     ORDER BY ${Prisma.raw(
       showTrending ? `r."postCountWeekRank" ASC` : `r."postCountAllTimeRank" ASC`
     )}
@@ -579,7 +583,7 @@ export const getPostTags = async ({
   ).sort((a, b) => b.postCount - a.postCount);
 };
 
-export const addPostTag = async ({ tagId, id: postId, name: initialName }: AddPostTagInput) => {
+export const addPostTag = async ({ id: postId, name: initialName }: AddPostTagInput) => {
   const name = initialName.toLowerCase().trim();
   return await dbWrite.$transaction(async (tx) => {
     const tag = await tx.tag.findUnique({
@@ -623,18 +627,91 @@ export const removePostTag = ({ tagId, id: postId }: RemovePostTagInput) => {
   return dbWrite.tagsOnPost.delete({ where: { tagId_postId: { tagId, postId } } });
 };
 
+const log = (data: MixedObject) => {
+  logToAxiom({ name: 'post-service', type: 'error', ...data }).catch();
+};
+
+const DETAIL_LIMIT = 10;
+
+const parseExternalMetadata = async (src: string | undefined, user: number) => {
+  if (!src) return;
+
+  const srcUrl = new URL(src);
+  if (!env.POST_INTENT_DETAILS_HOSTS || !env.POST_INTENT_DETAILS_HOSTS.includes(srcUrl.origin)) {
+    return log({ user, message: 'This domain is not approved for external parsing.', domain: src });
+  }
+
+  let respJson;
+  try {
+    const response = await fetch(src);
+    respJson = await response.json();
+  } catch (e) {
+    return log({ user, message: 'Failure fetching JSON data from external URL.', domain: src });
+  }
+
+  const detailParse = externalMetaSchema.safeParse(respJson);
+  if (!detailParse.success) {
+    return log({
+      user,
+      message: 'Failure parsing JSON data from external URL.',
+      domain: src,
+      issues: detailParse.error.issues,
+    });
+  }
+
+  // TODO it is possible we will eventually want to do some test of mediaUrl domain = detailsUrl domain
+  //  but that can cause problems for different cdns vs apis.
+  //  Another option is putting the mediaUrl into the detailsUrl structure
+  //  but that can impose extra work if the partner just wants to put their name and homepage on everything
+  //  and not worry about having to modify the API to include each URL
+
+  const { data: detailData } = detailParse;
+
+  if (!!detailData.details) {
+    const detailLength = Object.keys(detailData.details).length;
+    if (detailLength > DETAIL_LIMIT) {
+      return log({
+        user,
+        message: 'Too many keys in "details" for external data.',
+        domain: src,
+        found: detailLength,
+      });
+    }
+  }
+
+  return detailData;
+};
+
 export const addPostImage = async ({
   modelVersionId,
   meta,
   user,
+  externalDetailsUrl,
   ...props
 }: AddPostImageInput & { user: SessionUser }) => {
+  const externalData = await parseExternalMetadata(externalDetailsUrl, user.id);
+  if (externalData) {
+    meta = { ...meta, external: externalData };
+  }
+
+  let toolId: number | undefined;
+  const { name: sourceName, homepage: sourceHomepage } = meta?.external?.source ?? {};
+  if (sourceName || sourceHomepage) {
+    if (sourceName) {
+      toolId = (await getToolByName(sourceName))?.id;
+    }
+    if (sourceHomepage && !toolId) {
+      toolId = (await getToolByDomain(sourceHomepage))?.id;
+    }
+  }
+
   const partialResult = await dbWrite.image.create({
     data: {
       ...props,
       userId: user.id,
       meta: meta !== null ? (meta as Prisma.JsonObject) : Prisma.JsonNull,
       generationProcess: meta ? getImageGenerationProcess(meta as Prisma.JsonObject) : null,
+      tools: toolId ? { create: { toolId } } : undefined,
     },
     select: { id: true },
   });
@@ -685,12 +762,11 @@ export const addPostImage = async ({
 
 export async function bustCachesForPost(postId: number) {
   const [result] = await dbRead.$queryRaw<{ isShowcase: boolean; modelVersionId: number }[]>`
-    SELECT
-      m."userId" = p."userId" as "isShowcase",
-      p."modelVersionId"
+    SELECT m."userId" = p."userId" as "isShowcase",
+           p."modelVersionId"
     FROM "Post" p
-    JOIN "ModelVersion" mv ON mv."id" = p."modelVersionId"
-    JOIN "Model" m ON m."id" = mv."modelId"
+           JOIN "ModelVersion" mv ON mv."id" = p."modelVersionId"
+           JOIN "Model" m ON m."id" = mv."modelId"
     WHERE p."id" = ${postId}
   `;
 
