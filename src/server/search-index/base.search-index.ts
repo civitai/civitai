@@ -51,6 +51,7 @@ type SearchIndexProcessor = {
   maxQueueSize?: number;
   primaryKey?: string;
   updateInterval?: number;
+  workerCount?: number;
 };
 
 const processSearchIndexTask = async (
@@ -117,6 +118,7 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
     updateInterval = DEFAULT_UPDATE_INTERVAL,
     primaryKey = 'id',
     maxQueueSize,
+    workerCount = 10,
   } = processor;
 
   return {
@@ -179,7 +181,7 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
         });
       }
 
-      const workers = Array.from({ length: 10 }).map(() => {
+      const workers = Array.from({ length: workerCount }).map(() => {
         return getTaskQueueWorker(
           queue,
           async (task) => processSearchIndexTask(processor, ctx, task),
@@ -235,7 +237,7 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
         });
       }
 
-      const workers = Array.from({ length: 10 }).map(() => {
+      const workers = Array.from({ length: workerCount }).map(() => {
         return getTaskQueueWorker(
           queue,
           async (task) => processSearchIndexTask(processor, ctx, task),
