@@ -3,27 +3,15 @@ import {
   AspectRatio,
   Box,
   BoxProps,
-  Center,
   createStyles,
   Group,
-  HoverCard,
   MantineNumberSize,
-  Menu,
-  Stack,
-  Text,
-  ThemeIcon,
 } from '@mantine/core';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { ImageModel } from '~/server/selectors/image.selector';
-// import { useImageLightbox } from '~/hooks/useImageLightbox';
+import { IconInfoCircle } from '@tabler/icons-react';
+import { CSSProperties } from 'react';
 import { EdgeMedia, EdgeMediaProps } from '~/components/EdgeMedia/EdgeMedia';
-import { ImageMetaProps } from '~/server/schema/image.schema';
-import { IconAlertTriangle, IconCheck, IconInfoCircle, IconX } from '@tabler/icons-react';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
-import { getClampedSize } from '~/utils/blurhash';
-import { CSSProperties, useState } from 'react';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { trpc } from '~/utils/trpc';
 import { ImageGetInfinite } from '~/types/router';
 
 type ImagePreviewProps = {
@@ -80,12 +68,6 @@ export function ImagePreview({
   }
 
   if (!width || !height) return null;
-  const { width: cw, height: ch } = getClampedSize(
-    width,
-    height,
-    edgeImageProps.height ?? edgeImageProps.width ?? 500,
-    edgeImageProps.height ? 'height' : edgeImageProps.width ? 'width' : 'all'
-  );
 
   const Meta = !nsfw && withMeta && meta && (
     <ImageMetaPopover meta={meta} generationProcess={generationProcess ?? 'txt2img'} imageId={id}>
