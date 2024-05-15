@@ -250,7 +250,7 @@ export function ImageDetailCarousel({ className }: GalleryCarouselProps) {
                     }
                     type={image.type}
                     style={{ maxHeight: '100%', maxWidth: '100%' }}
-                    width="original"
+                    width={image?.width ?? 'original'}
                     anim
                     controls
                     fadeIn
