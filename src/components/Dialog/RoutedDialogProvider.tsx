@@ -86,6 +86,7 @@ export function RoutedDialogProvider() {
         props: { ...browserRouter.query, ...state },
         options: { onClose: () => handleCloseRoutedDialog(name) },
         type: 'routed-dialog',
+        target: dialogs[name].target,
       });
     }
 

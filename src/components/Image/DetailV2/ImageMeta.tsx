@@ -68,8 +68,8 @@ export function ImageMeta({ imageId }: { imageId: number }) {
             </div>
             <div className="flex flex-col">
               {simpleMeta.map(([key, label]) => (
-                <div key={key} className="flex justify-between">
-                  <Text color="dimmed" className="leading-snug">
+                <div key={key} className="flex justify-between gap-3">
+                  <Text color="dimmed" className="leading-snug text-nowrap">
                     {label}
                   </Text>
                   <Text className="leading-snug">{meta[key as SimpleMetaPropsKey]}</Text>

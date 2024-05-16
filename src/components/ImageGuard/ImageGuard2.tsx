@@ -236,11 +236,13 @@ function BlurToggle({
   sfwClassName,
   nsfwClassName,
   color,
+  alwaysVisible,
   ...badgeProps
 }: Omit<BadgeProps, 'children'> & {
   children?: (toggle: (e: React.MouseEvent<HTMLElement, MouseEvent>) => void) => React.ReactElement;
   sfwClassName?: string;
   nsfwClassName?: string;
+  alwaysVisible?: boolean;
 }) {
   const currentUser = useCurrentUser();
   const { safe, show, browsingLevel, imageId, key, nsfw, userId } = useImageGuardContext();
@@ -262,15 +264,19 @@ function BlurToggle({
 
   if (safe) {
     const isOwnerOrModerator = currentUser?.isModerator || (userId && currentUser?.id === userId);
-    return isOwnerOrModerator ? (
+    return isOwnerOrModerator || alwaysVisible ? (
       <Badge
         classNames={classes}
         className={badgeClass}
-        onClick={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          openSetBrowsingLevelModal({ imageId, nsfwLevel: browsingLevel });
-        }}
+        onClick={
+          isOwnerOrModerator
+            ? (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                openSetBrowsingLevelModal({ imageId, nsfwLevel: browsingLevel });
+              }
+            : undefined
+        }
         color={!nsfw ? color : undefined}
         {...badgeProps}
       >

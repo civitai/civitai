@@ -32,5 +32,5 @@ export default createPage(
       </ImageDetailProvider>
     );
   },
-  { layout: ({ children }) => <>{children}</> }
+  { layout: ({ children }) => <main>{children}</main> }
 );

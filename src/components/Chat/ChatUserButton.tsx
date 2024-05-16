@@ -22,7 +22,7 @@ export function ChatUserButton({
   const handleClick = () => {
     setState((prev) => ({
       ...prev,
-      open: true,
+      open: !prev.open,
       isCreating: true,
       existingChatId: undefined,
       selectedUsers: [user],

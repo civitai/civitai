@@ -187,7 +187,7 @@ export function ImageDetail2() {
                     {/* Placeholder */}
                     <div className="@md:hidden" />
                     <div className="@max-md:hidden flex gap-1">
-                      <ImageGuard2.BlurToggle {...sharedBadgeProps} />
+                      <ImageGuard2.BlurToggle {...sharedBadgeProps} alwaysVisible />
                       {LeftImageControls}
                     </div>
 
@@ -195,6 +195,7 @@ export function ImageDetail2() {
                       <ImageGuard2.BlurToggle
                         {...sharedBadgeProps}
                         className={`${sharedBadgeProps.className} @md:hidden`}
+                        alwaysVisible
                       />
                       <Badge {...sharedBadgeProps}>
                         <IconEye {...sharedIconProps} />
