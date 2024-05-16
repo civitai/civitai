@@ -563,7 +563,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   });
 
   const watchFields = form.watch(['maxTrainEpochs', 'numRepeats', 'trainBatchSize']);
-  const watchFieldsBuzz = form.watch(['targetSteps']);
+  const watchFieldsBuzz = form.watch(['targetSteps', 'highPriority']);
   const watchFieldOptimizer = form.watch('optimizerType');
 
   // apply default overrides for base model upon selection
@@ -606,7 +606,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   }, [watchFields]);
 
   useEffect(() => {
-    const [targetSteps] = watchFieldsBuzz;
+    const [targetSteps, highPriority] = watchFieldsBuzz;
     const eta = calcEta({
       cost: status.cost,
       baseModel: formBaseModelType,
@@ -617,6 +617,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
       cost: status.cost,
       eta,
       isCustom,
+      isPriority: highPriority ?? false,
     });
     setEtaMins(eta);
     setBuzzCost(price);
@@ -639,8 +640,8 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     trpc.training.createRequestDryRun.useQuery(
       {
         baseModel: formBaseModel,
+        isPriority: watchFieldsBuzz[1],
         // cost: debouncedEtaMins,
-        //   TODO put highpriority
       },
       {
         refetchInterval: 1000 * 60,
@@ -1302,11 +1303,6 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
               </Accordion.Item>
             </Accordion>
             <Group mt="lg">
-              {/*
-              It should also increase the cost by 10%, or 100 ⚡ , whichever is more
-              Then set priority on the job you submit to lets say 1 (current is 2).
-              Also potentially add the interruptable  field set to false on the request too (depending on koen's timing)
-              */}
               <InputSwitch
                 name="highPriority"
                 label={
