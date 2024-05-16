@@ -1626,6 +1626,7 @@ export const removeImageResource = async ({ id }: GetByIdInput) => {
     });
     if (!resource) throw throwNotFoundError(`No image resource with id ${id}`);
 
+    purgeImageGenerationDataCache(id);
     purgeCache({ tags: [`image-resources-${id}`] });
 
     return resource;
@@ -2810,6 +2811,9 @@ export async function addImageTools({
 }) {
   await authorizeImagesAction({ imageIds: data.map((x) => x.imageId), user });
   await dbWrite.imageTool.createMany({ data, skipDuplicates: true });
+  for (const { imageId } of data) {
+    purgeImageGenerationDataCache(imageId);
+  }
 }
 
 export async function removeImageTools({
@@ -2831,6 +2835,9 @@ export async function removeImageTools({
       dbWrite.imageTool.deleteMany({ where: { imageId: Number(imageId), toolId: { in: toolIds } } })
     )
   );
+  for (const { imageId } of data) {
+    purgeImageGenerationDataCache(imageId);
+  }
 }
 
 export async function updateImageTools({
@@ -2850,6 +2857,9 @@ export async function updateImageTools({
       })
     )
   );
+  for (const { imageId } of data) {
+    purgeImageGenerationDataCache(imageId);
+  }
 }
 // #endregion
 
@@ -2863,6 +2873,9 @@ export async function addImageTechniques({
 }) {
   await authorizeImagesAction({ imageIds: data.map((x) => x.imageId), user });
   await dbWrite.imageTechnique.createMany({ data, skipDuplicates: true });
+  for (const { imageId } of data) {
+    purgeImageGenerationDataCache(imageId);
+  }
 }
 
 export async function removeImageTechniques({
@@ -2889,6 +2902,10 @@ export async function removeImageTechniques({
       })
     )
   );
+
+  for (const { imageId } of data) {
+    purgeImageGenerationDataCache(imageId);
+  }
 }
 
 export async function updateImageTechniques({
@@ -2908,9 +2925,15 @@ export async function updateImageTechniques({
       })
     )
   );
+  for (const { imageId } of data) {
+    purgeImageGenerationDataCache(imageId);
+  }
 }
 // #endregion
 
+export function purgeImageGenerationDataCache(id: number) {
+  purgeCache({ tags: [`image-generation-data-${id}`] });
+}
 export async function getImageGenerationData({ id }: { id: number }) {
   const image = await dbRead.image.findUnique({
     where: { id },

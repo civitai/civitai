@@ -29,6 +29,7 @@ import {
   deleteImagesForModelVersionCache,
   getImagesForPosts,
   ingestImage,
+  purgeImageGenerationDataCache,
 } from '~/server/services/image.service';
 import { findOrCreateTagsByName, getVotableImageTags } from '~/server/services/tag.service';
 import { getToolByDomain, getToolByName } from '~/server/services/tool.service';
@@ -784,6 +785,7 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
     },
     select: { id: true },
   });
+  purgeImageGenerationDataCache(image.id);
 };
 
 export const reorderPostImages = async ({ id: postId, imageIds }: ReorderPostImagesInput) => {

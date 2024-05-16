@@ -59,6 +59,7 @@ import { useLocalStorage } from '@mantine/hooks';
 
 import { ImageGenerationData } from '~/components/Image/DetailV2/ImageGenerationData';
 import { ImageProcess } from '~/components/Image/DetailV2/ImageProcess';
+import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 
 const sharedBadgeProps: Partial<Omit<BadgeProps, 'children'>> = {
   variant: 'filled',
@@ -214,11 +215,11 @@ export function ImageDetail2() {
                           <IconFlag {...sharedIconProps} />
                         </ActionIcon>
                       </LoginRedirect>
-                      <ImageDetailContextMenu>
+                      <ImageContextMenu image={image}>
                         <ActionIcon {...sharedActionIconProps}>
                           <IconDotsVertical {...sharedIconProps} />
                         </ActionIcon>
-                      </ImageDetailContextMenu>
+                      </ImageContextMenu>
                     </div>
                   </div>
                   <div className={`@max-md:hidden ${sidebarOpen ? 'ml-3 -mr-3' : ''}`}>

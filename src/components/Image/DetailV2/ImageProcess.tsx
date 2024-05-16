@@ -9,7 +9,7 @@ export function ImageProcess({ imageId }: { imageId: number }) {
   if (!data) return null;
 
   const { tools, techniques } = data;
-  if (!tools.length || !techniques.length) return null;
+  if (!tools.length && !techniques.length) return null;
 
   return (
     <Card className="rounded-xl flex flex-col gap-3">
