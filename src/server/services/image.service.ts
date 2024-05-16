@@ -2934,6 +2934,7 @@ export async function updateImageTechniques({
 export function purgeImageGenerationDataCache(id: number) {
   purgeCache({ tags: [`image-generation-data-${id}`] });
 }
+const strengthTypes: ModelType[] = ['TextualInversion', 'LORA'];
 export async function getImageGenerationData({ id }: { id: number }) {
   const image = await dbRead.image.findUnique({
     where: { id },
@@ -3001,7 +3002,10 @@ export async function getImageGenerationData({ id }: { id: number }) {
     meta: parsedMeta.success && !image.hideMeta ? { ...meta, clipSkip } : undefined,
     resources: resources.map((resource) => ({
       ...resource,
-      strength: resource.strength ? resource.strength / 100 : undefined,
+      strength:
+        strengthTypes.includes(resource.modelType) && resource.strength
+          ? resource.strength / 100
+          : undefined,
     })),
     tools,
     techniques,

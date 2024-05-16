@@ -32,5 +32,5 @@ export default createPage(
       </ImageDetailProvider>
     );
   },
-  { layout: ({ children }) => <main>{children}</main> }
+  { layout: ({ children }) => <main className="h-full w-full">{children}</main> }
 );

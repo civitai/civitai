@@ -106,7 +106,7 @@ export function PostImageTechnique({
           placeholder={`How was ${technique.name} used?`}
           value={notes}
           onChange={(e) => {
-            setNotes(e.target.value);
+            setNotes(e.target.value.slice(0, 1000));
             handleUpdateTechnique(e.target.value);
           }}
           classNames={{

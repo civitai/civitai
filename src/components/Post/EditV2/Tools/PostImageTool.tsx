@@ -99,7 +99,7 @@ export function PostImageTool({
           placeholder={`How was ${getDisplayName(tool.name)} used?`}
           value={notes}
           onChange={(e) => {
-            setNotes(e.target.value);
+            setNotes(e.target.value.slice(0, 1000));
             handleUpdateTool(e.target.value);
           }}
           classNames={{
