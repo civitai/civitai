@@ -175,18 +175,18 @@ export function ImageDetail2() {
         deIndex={nsfw || !!image.needsReview || image.availability === Availability.Unsearchable}
       />
       <TrackView entityId={image.id} entityType="Image" type="ImageView" nsfw={nsfw} />
-      <div className="h-full w-full max-w-full max-h-full flex bg-gray-2 dark:bg-dark-9 relative overflow-hidden">
-        <div className="flex-1 flex flex-col relative @max-md:pb-[60px]">
+      <div className="relative flex size-full max-h-full max-w-full overflow-hidden bg-gray-2 dark:bg-dark-9">
+        <div className="relative flex flex-1 flex-col @max-md:pb-[60px]">
           <ImageGuard2 image={image} explain={false}>
             {(safe) => (
               <>
                 {/* HEADER */}
                 <div className="flex justify-between gap-8 p-3">
-                  <CloseButton onClick={close} variant="filled" className="h-9 w-9 rounded-full" />
-                  <div className="flex flex-wrap justify-between gap-1 flex-1">
+                  <CloseButton onClick={close} variant="filled" className="size-9 rounded-full" />
+                  <div className="flex flex-1 flex-wrap justify-between gap-1">
                     {/* Placeholder */}
                     <div className="@md:hidden" />
-                    <div className="@max-md:hidden flex gap-1">
+                    <div className="flex gap-1 @max-md:hidden">
                       <ImageGuard2.BlurToggle {...sharedBadgeProps} alwaysVisible />
                       {LeftImageControls}
                     </div>
@@ -224,7 +224,7 @@ export function ImageDetail2() {
                       </ImageContextMenu>
                     </div>
                   </div>
-                  <div className={`@max-md:hidden ${sidebarOpen ? 'ml-3 -mr-3' : ''}`}>
+                  <div className={`@max-md:hidden ${sidebarOpen ? '-mr-3 ml-3' : ''}`}>
                     <ActionIcon {...sharedActionIconProps} onClick={handleSidebarToggle}>
                       <IconLayoutSidebarRight {...sharedIconProps} />
                     </ActionIcon>
@@ -279,15 +279,15 @@ export function ImageDetail2() {
             !active ? '@max-md:translate-y-[calc(100%-60px)]' : '@max-md:transition-transform'
           } @md:w-[450px] @md:min-w-[450px] ${
             !sidebarOpen ? '@md:hidden' : ''
-          } bg-gray-2 dark:bg-dark-9 flex flex-col z-10`}
+          } z-10 flex flex-col bg-gray-2 dark:bg-dark-9`}
         >
-          <div className="@md:hidden p-3 @max-md:shadow-topper rounded-md flex justify-between items-center">
+          <div className="@max-md:shadow-topper flex items-center justify-between rounded-md p-3 @md:hidden">
             <div className="flex gap-1">{LeftImageControls}</div>
             <ActionIcon {...sharedActionIconProps} onClick={toggleInfo}>
               <IconChevron {...sharedIconProps} />
             </ActionIcon>
           </div>
-          <ScrollArea className="p-3 py-0 flex-1">
+          <ScrollArea className="flex-1 p-3 py-0">
             <div className="flex flex-col gap-3 py-3 @max-md:pt-0">
               <SmartCreatorCard
                 user={image.user}
@@ -325,8 +325,8 @@ export function ImageDetail2() {
                 collapsible
                 nsfwLevel={image.nsfwLevel}
               />
-              <Card className="rounded-xl flex flex-col gap-3">
-                <Text className="flex items-center gap-2 font-semibold text-xl">
+              <Card className="flex flex-col gap-3 rounded-xl">
+                <Text className="flex items-center gap-2 text-xl font-semibold">
                   <IconBrandWechat />
                   <span>Discussion</span>
                 </Text>
