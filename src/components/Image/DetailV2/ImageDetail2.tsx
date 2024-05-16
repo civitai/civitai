@@ -15,6 +15,7 @@ import {
 import { Availability, CollectionType } from '@prisma/client';
 import {
   IconAlertTriangle,
+  IconBolt,
   IconBookmark,
   IconBrandWechat,
   IconChevronDown,
@@ -30,12 +31,10 @@ import {
 } from '@tabler/icons-react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NotFound } from '~/components/AppLayout/NotFound';
-import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { ImageDetailCarousel } from '~/components/Image/DetailV2/ImageDetailCarousel';
 import { ImageDetailComments } from '~/components/Image/Detail/ImageDetailComments';
-import { ImageDetailContextMenu } from '~/components/Image/Detail/ImageDetailContextMenu';
 import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProvider';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Meta } from '~/components/Meta/Meta';
@@ -51,7 +50,6 @@ import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constan
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import { TipBuzzButton } from '~/components/Buzz/TipBuzzButton';
 import { IconBrush } from '@tabler/icons-react';
 import { generationPanel } from '~/store/generation.store';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
@@ -61,6 +59,7 @@ import { ImageGenerationData } from '~/components/Image/DetailV2/ImageGeneration
 import { ImageProcess } from '~/components/Image/DetailV2/ImageProcess';
 import { ImageExternalMeta } from '~/components/Image/DetailV2/ImageExternalMeta';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
+import { InteractiveTipBuzzButton } from '~/components/Buzz/InteractiveTipBuzzButton';
 
 const sharedBadgeProps: Partial<Omit<BadgeProps, 'children'>> = {
   variant: 'filled',
@@ -130,7 +129,6 @@ export function ImageDetail2() {
           onClick={() => generationPanel.open({ type: 'image', id: image.id })}
           data-activity="remix:image"
         >
-          <div className="glow" />
           <Group spacing={4} noWrap>
             <IconBrush size={16} />
             <Text size="xs">Remix</Text>
@@ -157,12 +155,16 @@ export function ImageDetail2() {
           </Button>
         </RoutedDialogLink>
       )}
-      <TipBuzzButton
-        {...sharedButtonProps}
-        toUserId={image.user.id}
-        entityId={image.id}
-        entityType="Image"
-      />
+      <InteractiveTipBuzzButton toUserId={image.user.id} entityId={image.id} entityType="Image">
+        <Badge
+          {...sharedBadgeProps}
+          pr={12}
+          sx={{ fontSize: 12, fontWeight: 600, lineHeight: 1.5, color: theme.colors.accent[5] }}
+        >
+          <IconBolt size={14} fill="currentColor" />
+          Tip
+        </Badge>
+      </InteractiveTipBuzzButton>
     </>
   );
 
