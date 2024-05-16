@@ -19,7 +19,7 @@ export function ImageExternalMeta({ imageId }: { imageId: number }) {
       <div className="flex items-center gap-3">
         <Text className="flex items-center gap-2 font-semibold text-xl">
           <IconDatabase />
-          <span>External metadata</span>
+          <span>External data</span>
         </Text>
       </div>
       <div className="flex flex-col">
@@ -58,7 +58,7 @@ export function ImageExternalMeta({ imageId }: { imageId: number }) {
         {hasDetails && (
           <>
             {(hasSource || hasReference || hasCreate) && <Divider my="sm" />}
-            <Text className="text-md font-semibold">Extra metadata</Text>
+            <Text className="text-md font-semibold">Other metadata</Text>
             {Object.entries(external.details ?? {}).map(([k, v]) => (
               <div key={k} className="flex justify-between">
                 <Text color="dimmed" className="leading-snug">
