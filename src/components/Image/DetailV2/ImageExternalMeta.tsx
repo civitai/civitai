@@ -25,8 +25,8 @@ export function ImageExternalMeta({ imageId }: { imageId: number }) {
       <div className="flex flex-col">
         {/* TODO make URLs */}
         {hasSource && (
-          <div className="flex justify-between">
-            <Text color="dimmed" className="leading-snug">
+          <div className="flex justify-between gap-3">
+            <Text color="dimmed" className="leading-snug text-nowrap">
               Source
             </Text>
             {external.source?.name ? (
@@ -40,16 +40,16 @@ export function ImageExternalMeta({ imageId }: { imageId: number }) {
           </div>
         )}
         {hasReference && (
-          <div className="flex justify-between">
-            <Text color="dimmed" className="leading-snug">
+          <div className="flex justify-between gap-3">
+            <Text color="dimmed" className="leading-snug text-nowrap">
               Media URL
             </Text>
             <Text className="leading-snug">{external.referenceUrl}</Text>
           </div>
         )}
         {hasCreate && (
-          <div className="flex justify-between">
-            <Text color="dimmed" className="leading-snug">
+          <div className="flex justify-between gap-3">
+            <Text color="dimmed" className="leading-snug text-nowrap">
               Create URL
             </Text>
             <Text className="leading-snug">{external.createUrl}</Text>
@@ -60,8 +60,8 @@ export function ImageExternalMeta({ imageId }: { imageId: number }) {
             {(hasSource || hasReference || hasCreate) && <Divider my="sm" />}
             <Text className="text-md font-semibold">Other metadata</Text>
             {Object.entries(external.details ?? {}).map(([k, v]) => (
-              <div key={k} className="flex justify-between">
-                <Text color="dimmed" className="leading-snug">
+              <div key={k} className="flex justify-between gap-3">
+                <Text color="dimmed" className="leading-snug text-nowrap">
                   {titleCase(k)}
                 </Text>
                 <Text className="leading-snug">{v.toString()}</Text>
