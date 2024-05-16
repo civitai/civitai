@@ -19,6 +19,7 @@ import { NsfwLevel } from '~/server/common/enums';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
+import { getCosmeticsForUsers } from '~/server/services/user.service';
 
 const READ_BATCH_SIZE = 10000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 10000;
@@ -120,6 +121,7 @@ type ImageForSearchIndex = {
   mimeType: string | null;
   modelVersionId: number | null;
   baseModel?: string | null;
+  userId?: number | null;
   user: {
     id: number;
     image: string | null;
@@ -160,7 +162,6 @@ const imageWhere = [
   Prisma.sql`i."type" = 'image'`,
   Prisma.sql`i."needsReview" IS NULL`,
   Prisma.sql`p."publishedAt" IS NOT NULL`,
-  Prisma.sql`p.metadata->>'unpublishedAt' IS NULL`,
   Prisma.sql`p."availability" != 'Private'::"Availability"`,
   Prisma.sql`p."availability" != 'Unsearchable'::"Availability"`,
 ];
@@ -175,9 +176,19 @@ type ImageTag = {
   tagName: string;
 };
 
+type User = {
+  id: number;
+  username?: string | null;
+  deletedAt?: Date | null;
+  image?: string | null;
+  profilePictureId?: number | null;
+};
+
 const transformData = async ({
+  users,
   images,
   rawTags,
+  userCosmetics,
   imageCosmetics,
   profilePictures,
 }: {
@@ -185,8 +196,13 @@ const transformData = async ({
   rawTags: ImageTag[];
   imageCosmetics: Awaited<ReturnType<typeof getCosmeticsForEntity>>;
   profilePictures: ProfileImage[];
+  users: User[];
+  userCosmetics: Awaited<ReturnType<typeof getCosmeticsForUsers>>;
 }) => {
-  const records = images.map(({ user, cosmetics, meta, ...imageRecord }) => {
+  const records = images.map(({ meta, userId, ...imageRecord }) => {
+    const user = userId ? users.find((u) => u.id === userId) ?? null : null;
+    const userCosmetic = userId ? userCosmetics[userId] ?? null : null;
+
     const parsed = imageGenerationSchema
       .omit({ comfy: true, hashes: true })
       .partial()
@@ -216,7 +232,7 @@ const transformData = async ({
       meta: parsed.success ? parsed.data : {},
       user: {
         ...user,
-        cosmetics: cosmetics ?? [],
+        cosmetics: userCosmetic ?? [],
         profilePicture,
       },
       tagNames: tags.map((t) => t.name),
@@ -235,7 +251,7 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
   workerCount: 20,
   indexName: INDEX_ID,
   setup: onIndexSetup,
-  maxQueueSize: 25, // Avoids hogging too much memory.
+  maxQueueSize: 10, // Avoids hogging too much memory.
   prepareBatches: async ({ db }, lastUpdatedAt) => {
     const data = await db.$queryRaw<{ startId: number; endId: number }[]>`
       SELECT MIN(i.id) as "startId", MAX(i.id) as "endId" FROM "Image" i
@@ -318,47 +334,10 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
           WHERE im."imageId" IN (SELECT id FROM target)
             AND im."timeframe" = 'AllTime'::"MetricTimeframe"
           GROUP BY im."imageId"
-      ), users AS MATERIALIZED (
-        SELECT
-          u.id,
-          jsonb_build_object(
-            'id', u.id,
-            'username', u.username,
-            'deletedAt', u."deletedAt",
-            'image', u.image,
-            'profilePictureId', u."profilePictureId"
-          ) user
-        FROM "User" u
-        WHERE u.id IN (SELECT "userId" FROM target)
-        GROUP BY u.id
-      ), cosmetics AS MATERIALIZED (
-        SELECT
-          uc."userId",
-          jsonb_agg(
-            jsonb_build_object(
-              'data', uc.data,
-              'cosmetic', jsonb_build_object(
-                'id', c.id,
-                'data', c.data,
-                'type', c.type,
-                'source', c.source,
-                'name', c.name,
-                'leaderboardId', c."leaderboardId",
-                'leaderboardPosition', c."leaderboardPosition"
-              )
-            )
-          )  cosmetics
-        FROM "UserCosmetic" uc
-        JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
-        AND "equippedAt" IS NOT NULL
-        WHERE uc."userId" IN (SELECT "userId" FROM target) AND uc."equippedToId" IS NULL
-        GROUP BY uc."userId"
       )
       SELECT
         t.*,
-        (SELECT stats FROM stats s WHERE s."imageId" = t.id),
-        (SELECT "user" FROM users u WHERE u.id = t."userId"),
-        (SELECT cosmetics FROM cosmetics c WHERE c."userId" = t."userId")
+        (SELECT stats FROM stats s WHERE s."imageId" = t.id)
       FROM target t
     `;
 
@@ -368,6 +347,8 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
         rawTags: [],
         profilePictures: [],
         imageCosmetics: {},
+        userCosmetics: {},
+        users: [],
       };
     }
 
@@ -380,8 +361,21 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
       },
     });
 
+    const users = await db.user.findMany({
+      select: {
+        id: true,
+        username: true,
+        deletedAt: true,
+        image: true,
+        profilePictureId: true,
+      },
+      where: {
+        id: { in: images.map((i) => i.userId).filter(isDefined) },
+      },
+    });
+
     const profilePictures = await db.image.findMany({
-      where: { id: { in: images.map((i) => i.user.profilePictureId).filter(isDefined) } },
+      where: { id: { in: users.map((u) => u.profilePictureId).filter(isDefined) } },
       select: profileImageSelect,
     });
 
@@ -390,12 +384,16 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
       entity: 'Image',
     });
 
+    const userCosmetics = await getCosmeticsForUsers([
+      ...new Set<number>(images.map((i) => i.userId).filter(isDefined)),
+    ]);
+
     if (batch.type === 'update') {
       const affectedModels = await db.$queryRaw<{ modelId: number }[]>`
           SELECT
             m.id "modelId"
           FROM "Image" i
-          JOIN "Post" p ON p.id = i."postId" AND p."modelVersionId" IS NOT NULL AND p."publishedAt" IS NOT NULL AND p.metadata->>'unpublishedAt' IS NULL
+          JOIN "Post" p ON p.id = i."postId" AND p."modelVersionId" IS NOT NULL AND p."publishedAt" IS NOT NULL
           JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
           JOIN "Model" m ON m.id = mv."modelId" AND i."userId" = m."userId"
           WHERE i.id IN (${Prisma.join(images.map(({ id }) => id))})
@@ -416,6 +414,8 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
       rawTags,
       profilePictures,
       imageCosmetics: cosmetics,
+      userCosmetics,
+      users,
     };
   },
   transformData,
