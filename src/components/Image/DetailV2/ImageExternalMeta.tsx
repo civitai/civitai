@@ -1,5 +1,6 @@
-import { Card, Text } from '@mantine/core';
-import { IconForms } from '@tabler/icons-react';
+import { Card, Divider, Text } from '@mantine/core';
+import { IconDatabase } from '@tabler/icons-react';
+import { titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 export function ImageExternalMeta({ imageId }: { imageId: number }) {
@@ -8,13 +9,66 @@ export function ImageExternalMeta({ imageId }: { imageId: number }) {
   const { external } = data ?? {};
   if (!external) return null;
 
+  const hasSource = !!external.source && Object.keys(external.source).length > 0;
+  const hasReference = !!external.referenceUrl;
+  const hasCreate = !!external.createUrl;
+  const hasDetails = !!external.details && Object.keys(external.details).length > 0;
+
   return (
     <Card className="rounded-xl flex flex-col gap-3">
       <div className="flex items-center gap-3">
         <Text className="flex items-center gap-2 font-semibold text-xl">
-          <IconForms />
-          <span>External meta data</span>
+          <IconDatabase />
+          <span>External metadata</span>
         </Text>
+      </div>
+      <div className="flex flex-col">
+        {/* TODO make URLs */}
+        {hasSource && (
+          <div className="flex justify-between">
+            <Text color="dimmed" className="leading-snug">
+              Source
+            </Text>
+            {external.source?.name ? (
+              <Text className="leading-snug">
+                {external.source?.name}
+                {external.source?.homepage && ` (${external.source?.homepage})`}
+              </Text>
+            ) : (
+              <Text className="leading-snug">{external.source?.homepage}</Text>
+            )}
+          </div>
+        )}
+        {hasReference && (
+          <div className="flex justify-between">
+            <Text color="dimmed" className="leading-snug">
+              Media URL
+            </Text>
+            <Text className="leading-snug">{external.referenceUrl}</Text>
+          </div>
+        )}
+        {hasCreate && (
+          <div className="flex justify-between">
+            <Text color="dimmed" className="leading-snug">
+              Create URL
+            </Text>
+            <Text className="leading-snug">{external.createUrl}</Text>
+          </div>
+        )}
+        {hasDetails && (
+          <>
+            {(hasSource || hasReference || hasCreate) && <Divider my="sm" />}
+            <Text className="text-md font-semibold">Extra metadata</Text>
+            {Object.entries(external.details ?? {}).map(([k, v]) => (
+              <div key={k} className="flex justify-between">
+                <Text color="dimmed" className="leading-snug">
+                  {titleCase(k)}
+                </Text>
+                <Text className="leading-snug">{v.toString()}</Text>
+              </div>
+            ))}
+          </>
+        )}
       </div>
     </Card>
   );
