@@ -4,7 +4,7 @@ import { isProd } from '~/env/other';
 import { purgeCache } from '~/server/cloudflare/client';
 import { CacheTTL } from '~/server/common/constants';
 import { logToAxiom } from '~/server/logging/client';
-import { redis } from '~/server/redis/client';
+import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { UserPreferencesInput } from '~/server/schema/base.schema';
 import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
 import { middleware } from '~/server/trpc';
@@ -132,7 +132,20 @@ export function edgeCacheIt({ ttl = 60 * 3, expireAt, tags }: EdgeCacheItProps =
       ctx.cache.browserTTL = isProd ? Math.min(60, reqTTL) : 0;
       ctx.cache.edgeTTL = reqTTL;
       ctx.cache.staleWhileRevalidate = 30;
-      ctx.cache.tags = tags?.(input).map((x) => slugit(x));
+      const cacheTags = tags?.(input).map((x) => slugit(x));
+      if (cacheTags) {
+        if (ctx.req?.url) {
+          await Promise.all(
+            cacheTags
+              .map((tag) => {
+                const key = REDIS_KEYS.CACHES.EDGE_CACHED + ':' + tag;
+                return [redis.sAdd(key, ctx.req.url!), redis.expire(key, ttl)];
+              })
+              .flat()
+          );
+        }
+        ctx.cache.tags = cacheTags;
+      }
     }
 
     return result;

@@ -307,7 +307,6 @@ async function setCoverImageNsfwLevel() {
 
 const clearLeaderboardCache = createJob('clear-leaderboard-cache', '0 0 * * *', async () => {
   await purgeCache({ tags: ['leaderboard'] });
-  await purgeCache({ tags: ['image-resources'] });
 });
 
 export const leaderboardJobs = [
