@@ -235,7 +235,7 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
   workerCount: 20,
   indexName: INDEX_ID,
   setup: onIndexSetup,
-  maxQueueSize: 25, // Avoids hoggging too much memory.
+  maxQueueSize: 25, // Avoids hogging too much memory.
   prepareBatches: async ({ db }, lastUpdatedAt) => {
     const data = await db.$queryRaw<{ startId: number; endId: number }[]>`
       SELECT MIN(i.id) as "startId", MAX(i.id) as "endId" FROM "Image" i
