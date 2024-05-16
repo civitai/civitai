@@ -41,8 +41,8 @@ export type OnCompleteTask = BaseTask & {
 
 type TaskStatus = 'queued' | 'processing' | 'completed' | 'failed';
 
-const MAX_QUEUE_SIZE = 50; // Adjust the value based on your requirements
-const RETRY_TIMEOUT = 1000; // Adjust the value based on your requirements
+const MAX_QUEUE_SIZE_DEFAULT = 50;
+const RETRY_TIMEOUT = 1000;
 
 export class TaskQueue {
   queues: Record<Task['type'], Task[]>;
@@ -51,7 +51,7 @@ export class TaskQueue {
   stats: Record<TaskStatus, number>;
   maxQueueSize: number;
 
-  constructor(queueEntry: Task['type'] = 'pull', maxQueueSize = MAX_QUEUE_SIZE) {
+  constructor(queueEntry: Task['type'] = 'pull', maxQueueSize = MAX_QUEUE_SIZE_DEFAULT) {
     this.queues = {
       pull: [],
       transform: [],

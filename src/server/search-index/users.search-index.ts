@@ -178,6 +178,7 @@ export type UserSearchIndexRecord = Awaited<ReturnType<typeof transformData>>[nu
 export const usersSearchIndex = createSearchIndexUpdateProcessor({
   indexName: INDEX_ID,
   setup: onIndexSetup,
+  workerCount: 25,
   prepareBatches: async ({ db, logger }, lastUpdatedAt) => {
     const where = [
       ...WHERE,
