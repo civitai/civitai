@@ -59,6 +59,7 @@ import { useLocalStorage } from '@mantine/hooks';
 
 import { ImageGenerationData } from '~/components/Image/DetailV2/ImageGenerationData';
 import { ImageProcess } from '~/components/Image/DetailV2/ImageProcess';
+import { ImageExternalMeta } from '~/components/Image/DetailV2/ImageExternalMeta';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 
 const sharedBadgeProps: Partial<Omit<BadgeProps, 'children'>> = {
@@ -332,6 +333,7 @@ export function ImageDetail2() {
               </Card>
               <ImageGenerationData imageId={image.id} />
               <ImageProcess imageId={image.id} />
+              <ImageExternalMeta imageId={image.id} />
             </div>
           </ScrollArea>
         </div>

@@ -39,7 +39,6 @@ export function ImageGenerationData({ imageId }: { imageId: number }) {
       <ImageResources imageId={imageId} />
       {!!resources?.length && (meta?.prompt || meta?.negativePrompt) && <Divider />}
       <ImageMeta imageId={imageId} />
-      {/* TODO - add additional data here */}
     </Card>
   );
 }

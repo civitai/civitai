@@ -2995,7 +2995,7 @@ export async function getImageGenerationData({ id }: { id: number }) {
 
   const parsedMeta = imageGenerationSchema.safeParse(image.meta);
   const data = parsedMeta.success ? parsedMeta.data : {};
-  const { 'Clip skip': legacyClipSkip, clipSkip = legacyClipSkip, comfy, ...meta } = data;
+  const { 'Clip skip': legacyClipSkip, clipSkip = legacyClipSkip, comfy, external, ...meta } = data;
 
   return {
     meta: parsedMeta.success && !image.hideMeta ? { ...meta, clipSkip } : undefined,
@@ -3005,5 +3005,6 @@ export async function getImageGenerationData({ id }: { id: number }) {
     })),
     tools,
     techniques,
+    external,
   };
 }
