@@ -232,6 +232,7 @@ const transformData = async ({
 export type ImageSearchIndexRecord = Awaited<ReturnType<typeof transformData>>[number];
 
 export const imagesSearchIndex = createSearchIndexUpdateProcessor({
+  workerCount: 20,
   indexName: INDEX_ID,
   setup: onIndexSetup,
   maxQueueSize: 25, // Avoids hoggging too much memory.

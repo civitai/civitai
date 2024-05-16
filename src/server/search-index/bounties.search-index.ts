@@ -12,21 +12,17 @@ import {
   ImageGenerationProcess,
   MediaType,
   Prisma,
-  PrismaClient,
 } from '@prisma/client';
-import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { BOUNTIES_SEARCH_INDEX } from '~/server/common/constants';
 import { isDefined } from '~/utils/type-guards';
 import { dbRead } from '~/server/db/client';
 import { ImageMetadata } from '~/server/schema/media.schema';
 import { ImageModelWithIngestion, profileImageSelect } from '../selectors/image.selector';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
-import { SearchIndexUpdate } from '~/server/search-index/SearchIndexUpdate';
 
-const READ_BATCH_SIZE = 250; // 10 items per bounty are fetched for images. Careful with this number
+const READ_BATCH_SIZE = 1000; // 10 items per bounty are fetched for images. Careful with this number
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 1000;
 const INDEX_ID = BOUNTIES_SEARCH_INDEX;
-const SWAP_INDEX_ID = `${INDEX_ID}_NEW`;
 
 const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   const index = await getOrCreateIndex(indexName, { primaryKey: 'id' });
@@ -247,7 +243,7 @@ export const bountiesSearchIndex = createSearchIndexUpdateProcessor({
     );
 
     return {
-      batchSize: 1000,
+      batchSize: READ_BATCH_SIZE,
       startId,
       endId,
     };
