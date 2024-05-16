@@ -14,8 +14,14 @@ export type CivitaiAccount = {
   avatarUrl?: string;
 };
 type CivitaiAccounts = Record<string, CivitaiAccount>;
-
 const civitaiAccountsKey = 'civitai-accounts';
+
+type ogAccountType = {
+  id: number;
+  username: string;
+} | null;
+const ogAccountKey = 'civitai-og-account';
+
 const deleteCookieList = ['ref_code', 'ref_source'];
 
 type AccountState = {
@@ -23,7 +29,11 @@ type AccountState = {
   setAccounts: (val: ((prevState: CivitaiAccounts) => CivitaiAccounts) | CivitaiAccounts) => void;
   logout: () => Promise<void>;
   logoutAll: () => Promise<void>;
-  swapAccount: ({ token }: CivitaiAccount) => Promise<void>;
+  swapAccount: (token: EncryptedDataSchema) => Promise<void>;
+  removeAccount: (id: number) => void;
+  ogAccount: ogAccountType;
+  setOgAccount: (val: ((prevState: ogAccountType) => ogAccountType) | ogAccountType) => void;
+  removeOgAccount: () => void;
 };
 
 const AccountContext = createContext<AccountState | null>(null);
@@ -38,15 +48,25 @@ export const AccountProvider = ({ children }: { children: ReactNode }) => {
   const { data: userData } = useSession();
   const previousUserData = usePrevious(userData);
   const router = useRouter();
+
   const [accounts, setAccounts, removeAccounts] = useLocalStorage<CivitaiAccounts>({
     key: civitaiAccountsKey,
     defaultValue: {},
     getInitialValueInEffect: false,
   });
 
+  const [ogAccount, setOgAccount, removeOgAccount] = useLocalStorage<ogAccountType>({
+    key: ogAccountKey,
+    defaultValue: null,
+    // getInitialValueInEffect: false,
+  });
+
   const logout = async () => {
-    // Removes referral cookies on sign out
+    // Remove referral cookies on sign out
     deleteCookies(deleteCookieList);
+
+    // Remove og account storage
+    removeOgAccount();
 
     // - Remove logged out account from account switch list
     //   then log into first account in list if exists
@@ -60,7 +80,7 @@ export const AccountProvider = ({ children }: { children: ReactNode }) => {
       setAccounts(accounts);
 
       if (!!firstAccount) {
-        await swapAccount(firstAccount[1]);
+        await swapAccount(firstAccount[1].token);
         return;
       }
     }
@@ -70,12 +90,18 @@ export const AccountProvider = ({ children }: { children: ReactNode }) => {
 
   const logoutAll = async () => {
     deleteCookies(deleteCookieList);
+    removeOgAccount();
     removeAccounts();
     await signOut();
   };
 
-  const swapAccount = async ({ token }: CivitaiAccount) => {
+  const swapAccount = async (token: EncryptedDataSchema) => {
     await signIn('account-switch', { callbackUrl: router.asPath, ...token });
+  };
+
+  const removeAccount = (id: number) => {
+    delete accounts[id.toString()];
+    setAccounts(accounts);
   };
 
   // - Adjust localstorage active accounts and add new ones
@@ -147,6 +173,10 @@ export const AccountProvider = ({ children }: { children: ReactNode }) => {
         logout,
         logoutAll,
         swapAccount,
+        removeAccount,
+        ogAccount,
+        setOgAccount,
+        removeOgAccount,
       }}
     >
       {children}
