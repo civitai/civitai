@@ -359,8 +359,13 @@ export const publishModelVersionById = async ({
 
       await tx.$executeRaw`
         UPDATE "Post"
-        SET "metadata" = "metadata" - 'unpublishedAt' - 'unpublishedBy',
-          "publishedAt" = ${publishedAt}
+        SET
+          "publishedAt" = CASE 
+            WHEN "metadata"->>'prevPublishedAt' IS NOT NULL 
+            THEN to_timestamp("metadata"->>'prevPublishedAt', 'YYYY-MM-DD"T"HH24:MI:SS.MS')
+            ELSE ${publishedAt}
+          END,
+          "metadata" = "metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt'
         WHERE "userId" = ${updatedVersion.model.userId}
         AND "modelVersionId" = ${updatedVersion.id}
       `;
@@ -428,10 +433,13 @@ export const unpublishModelVersionById = async ({
 
       await tx.$executeRaw`
         UPDATE "Post"
-        SET "metadata" = "metadata" || jsonb_build_object(
-          'unpublishedAt', ${unpublishedAt},
-          'unpublishedBy', ${user.id}
-        )
+        SET 
+          "metadata" = "metadata" || jsonb_build_object(
+            'unpublishedAt', ${unpublishedAt},
+            'unpublishedBy', ${user.id},
+            'prevPublishedAt', "publishedAt"
+          ),
+          "publishedAt" = NULL
         WHERE "publishedAt" IS NOT NULL
         AND "userId" = ${updatedVersion.model.userId}
         AND "modelVersionId" = ${updatedVersion.id}

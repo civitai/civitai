@@ -1406,8 +1406,12 @@ export const publishModelById = async ({
         await tx.$executeRaw`
           UPDATE "Post"
           SET
-            "metadata" = "metadata" - 'unpublishedAt' - 'unpublishedBy',
-            "publishedAt" = ${publishedAt}
+            "publishedAt" = CASE 
+              WHEN "metadata"->>'prevPublishedAt' IS NOT NULL 
+              THEN to_timestamp("metadata"->>'prevPublishedAt', 'YYYY-MM-DD"T"HH24:MI:SS.MS')
+              ELSE ${publishedAt}
+            END,
+            "metadata" = "metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt'
           WHERE "userId" = ${model.userId}
           AND "modelVersionId" IN (${Prisma.join(versionIds, ',')})
         `;
@@ -1491,7 +1495,8 @@ export const unpublishModelById = async ({
         SET
           "metadata" = "metadata" || jsonb_build_object(
             'unpublishedAt', ${unpublishedAt},
-            'unpublishedBy', ${user.id}
+            'unpublishedBy', ${user.id},
+            "prevPublishedAt", "publishedAt"
           ),
           "publishedAt" = NULL
         WHERE "publishedAt" IS NOT NULL
