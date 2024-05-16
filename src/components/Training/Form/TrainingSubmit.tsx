@@ -39,6 +39,7 @@ import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import InputResourceSelect from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
+import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import {
   blockedCustomModels,
   goBack,
@@ -521,6 +522,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     samplePrompt2: z.string(),
     samplePrompt3: z.string(),
     staging: z.boolean().optional(),
+    highPriority: z.boolean().optional(),
   });
 
   // @ts-ignore ignoring because the reducer will use default functions in the next step in place of actual values
@@ -529,6 +531,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     samplePrompt2: thisTrainingDetails?.samplePrompts?.[1] ?? '',
     samplePrompt3: thisTrainingDetails?.samplePrompts?.[2] ?? '',
     staging: false,
+    highPriority: false,
     ...(thisTrainingDetails?.params
       ? thisTrainingDetails.params
       : trainingSettings.reduce((a, v) => ({ ...a, [v.name]: v.default }), {})),
@@ -637,6 +640,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
       {
         baseModel: formBaseModel,
         // cost: debouncedEtaMins,
+        //   TODO put highpriority
       },
       {
         refetchInterval: 1000 * 60,
@@ -773,6 +777,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
       samplePrompt2,
       samplePrompt3,
       staging,
+      highPriority,
       customModelSelect, //unsent
       optimizerArgs, //unsent
       ...paramData
@@ -810,6 +815,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         samplePrompts: [samplePrompt1, samplePrompt2, samplePrompt3],
         params: paramData,
         staging,
+        highPriority,
       },
     };
 
@@ -1295,10 +1301,33 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                 </Accordion.Panel>
               </Accordion.Item>
             </Accordion>
+            <Group mt="lg">
+              {/*
+              It should also increase the cost by 10%, or 100 ⚡ , whichever is more
+              Then set priority on the job you submit to lets say 1 (current is 2).
+              Also potentially add the interruptable  field set to false on the request too (depending on koen's timing)
+              */}
+              <InputSwitch
+                name="highPriority"
+                label={
+                  <Group spacing={4} noWrap>
+                    <InfoPopover size="xs" iconProps={{ size: 16 }}>
+                      Jump to the front of the training queue and ensure that your training run is
+                      uninterrupted.
+                    </InfoPopover>
+                    <Text>High Priority</Text>
+                  </Group>
+                }
+                labelPosition="left"
+              />
+              {currentUser?.isModerator && (
+                <InputSwitch name="staging" label="Test Mode" labelPosition="left" />
+              )}
+            </Group>
             <Paper
               shadow="xs"
               radius="sm"
-              mt="lg"
+              mt="md"
               w="fit-content"
               px="md"
               py="xs"
@@ -1339,11 +1368,6 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           </>
         )}
       </Stack>
-      {currentUser?.isModerator && (
-        <Group position="right" my="xs">
-          <InputSwitch name="staging" label="Test Mode" labelPosition="left" />
-        </Group>
-      )}
       <Group mt="xl" position="right">
         <Button variant="default" onClick={() => goBack(model.id, thisStep)}>
           Back
