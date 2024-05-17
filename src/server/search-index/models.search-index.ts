@@ -370,10 +370,34 @@ export const modelsSearchIndex = createSearchIndexUpdateProcessor({
       `PrepareBatches :: StartId: ${startId}, EndId: ${endId}. Last Updated at ${lastUpdatedAt}`
     );
 
+    const updatedIds = [];
+
+    if (lastUpdatedAt) {
+      let offset = 0;
+
+      while (true) {
+        const ids = await db.$queryRaw<{ id: number }[]>`
+        SELECT id FROM "Model"
+        WHERE status = ${ModelStatus.Published}::"ModelStatus"
+            AND availability != ${Availability.Unsearchable}::"Availability"
+            AND "updatedAt" >= ${lastUpdatedAt}
+        OFFSET ${offset} LIMIT ${READ_BATCH_SIZE};
+        `;
+
+        if (!ids.length) {
+          break;
+        }
+
+        offset += READ_BATCH_SIZE;
+        updatedIds.push(...ids.map((x) => x.id));
+      }
+    }
+
     return {
       batchSize: READ_BATCH_SIZE,
       startId,
       endId,
+      updatedIds,
     };
   },
   pullData: async ({ db, logger }, batch) => {
