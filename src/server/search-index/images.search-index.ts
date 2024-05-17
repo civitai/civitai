@@ -177,7 +177,7 @@ type ImageTag = {
 };
 
 type User = {
-  id: number;
+  id?: number;
   username?: string | null;
   deletedAt?: Date | null;
   image?: string | null;
@@ -210,7 +210,9 @@ const transformData = async ({
     const tags = rawTags
       .filter((rt) => rt.imageId === imageRecord.id)
       .map((rt) => ({ id: rt.tagId, name: rt.tagName }));
-    const profilePicture = profilePictures.find((p) => p.id === user.profilePictureId) ?? null;
+    const profilePicture = user
+      ? profilePictures.find((p) => p.id === user.profilePictureId) ?? null
+      : null;
 
     return {
       ...imageRecord,
@@ -248,10 +250,11 @@ const transformData = async ({
 export type ImageSearchIndexRecord = Awaited<ReturnType<typeof transformData>>[number];
 
 export const imagesSearchIndex = createSearchIndexUpdateProcessor({
-  workerCount: 20,
+  workerCount: 10,
   indexName: INDEX_ID,
   setup: onIndexSetup,
-  maxQueueSize: 10, // Avoids hogging too much memory.
+  maxQueueSize: 20, // Avoids hogging too much memory.
+  pullSteps: 3,
   prepareBatches: async ({ db }, lastUpdatedAt) => {
     const data = await db.$queryRaw<{ startId: number; endId: number }[]>`
       SELECT MIN(i.id) as "startId", MAX(i.id) as "endId" FROM "Image" i
@@ -272,7 +275,7 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
       endId,
     };
   },
-  pullData: async ({ db, logger }, batch) => {
+  pullData: async ({ db, logger }, batch, step, prevData) => {
     logger(`PullData :: Pulling data for batch: ${batch}`);
     const where = [
       ...imageWhere,
@@ -283,7 +286,8 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
         : undefined,
     ].filter(isDefined);
 
-    const images = await db.$queryRaw<ImageForSearchIndex[]>`
+    if (step === 0) {
+      const images = await db.$queryRaw<ImageForSearchIndex[]>`
       WITH target AS MATERIALIZED (
         SELECT
         i."id",
@@ -295,7 +299,9 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
         i."width",
         i."height",
         i."hash",
-        i."meta",
+        jsonb_build_object(
+          'prompt', i."meta"->'prompt'
+        ) "meta",
         i."hideMeta",
         i."generationProcess",
         i."createdAt",
@@ -340,56 +346,31 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
         (SELECT stats FROM stats s WHERE s."imageId" = t.id)
       FROM target t
     `;
+      if (images.length === 0) {
+        return null;
+      }
 
-    if (images.length === 0) {
       return {
-        images: [],
-        rawTags: [],
-        profilePictures: [],
-        imageCosmetics: {},
-        userCosmetics: {},
-        users: [],
+        images,
       };
     }
 
-    const rawTags = await db.imageTag.findMany({
-      where: { imageId: { in: images.map((i) => i.id) }, concrete: true },
-      select: {
-        imageId: true,
-        tagId: true,
-        tagName: true,
-      },
-    });
+    if (step === 1) {
+      // Pull tags:
+      const { images } = prevData as { images: ImageForSearchIndex[] };
 
-    const users = await db.user.findMany({
-      select: {
-        id: true,
-        username: true,
-        deletedAt: true,
-        image: true,
-        profilePictureId: true,
-      },
-      where: {
-        id: { in: images.map((i) => i.userId).filter(isDefined) },
-      },
-    });
+      const rawTags = await db.imageTag.findMany({
+        where: { imageId: { in: images.map((i) => i.id) }, concrete: true },
+        select: {
+          imageId: true,
+          tagId: true,
+          tagName: true,
+        },
+      });
 
-    const profilePictures = await db.image.findMany({
-      where: { id: { in: users.map((u) => u.profilePictureId).filter(isDefined) } },
-      select: profileImageSelect,
-    });
-
-    const cosmetics = await getCosmeticsForEntity({
-      ids: images.map((i) => i.id),
-      entity: 'Image',
-    });
-
-    const userCosmetics = await getCosmeticsForUsers([
-      ...new Set<number>(images.map((i) => i.userId).filter(isDefined)),
-    ]);
-
-    if (batch.type === 'update') {
-      const affectedModels = await db.$queryRaw<{ modelId: number }[]>`
+      // Also, queue model updates:
+      if (batch.type === 'update') {
+        const affectedModels = await db.$queryRaw<{ modelId: number }[]>`
           SELECT
             m.id "modelId"
           FROM "Image" i
@@ -399,24 +380,66 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
           WHERE i.id IN (${Prisma.join(images.map(({ id }) => id))})
         `;
 
-      const affectedModelIds = [...new Set(affectedModels.map(({ modelId }) => modelId))];
+        const affectedModelIds = [...new Set(affectedModels.map(({ modelId }) => modelId))];
 
-      await modelsSearchIndex.queueUpdate(
-        affectedModelIds.map((id) => ({
-          id: id,
-          action: SearchIndexUpdateQueueAction.Update,
-        }))
-      );
+        await modelsSearchIndex.queueUpdate(
+          affectedModelIds.map((id) => ({
+            id: id,
+            action: SearchIndexUpdateQueueAction.Update,
+          }))
+        );
+      }
+
+      return {
+        images,
+        rawTags,
+      };
     }
 
-    return {
-      images,
-      rawTags,
-      profilePictures,
-      imageCosmetics: cosmetics,
-      userCosmetics,
-      users,
-    };
+    if (step === 2) {
+      const { images, rawTags } = prevData as {
+        images: ImageForSearchIndex[];
+        rawTags: ImageTag[];
+      };
+
+      const users = await db.user.findMany({
+        select: {
+          id: true,
+          username: true,
+          deletedAt: true,
+          image: true,
+          profilePictureId: true,
+        },
+        where: {
+          id: { in: images.map((i) => i.userId).filter(isDefined) },
+        },
+      });
+
+      const profilePictures = await db.image.findMany({
+        where: { id: { in: users.map((u) => u.profilePictureId).filter(isDefined) } },
+        select: profileImageSelect,
+      });
+
+      const cosmetics = await getCosmeticsForEntity({
+        ids: images.map((i) => i.id),
+        entity: 'Image',
+      });
+
+      const userCosmetics = await getCosmeticsForUsers([
+        ...new Set<number>(images.map((i) => i.userId).filter(isDefined)),
+      ]);
+
+      return {
+        images,
+        rawTags,
+        profilePictures,
+        imageCosmetics: cosmetics,
+        userCosmetics,
+        users,
+      };
+    }
+
+    return null;
   },
   transformData,
   pushData: async ({ indexName }, data) => {

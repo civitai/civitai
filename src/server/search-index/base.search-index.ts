@@ -44,7 +44,12 @@ type SearchIndexProcessor = {
     startId: number;
     endId: number;
   }>;
-  pullData: (context: SearchIndexContext, batch: SearchIndexPullBatch) => Promise<any>;
+  pullData: (
+    context: SearchIndexContext,
+    batch: SearchIndexPullBatch,
+    step?: number,
+    prevData?: any
+  ) => Promise<any>;
   transformData: (data: any) => Promise<any>;
   pushData: (context: SearchIndexContext, data: any) => Promise<void>;
   onComplete?: (context: SearchIndexContext) => Promise<void>;
@@ -52,6 +57,7 @@ type SearchIndexProcessor = {
   primaryKey?: string;
   updateInterval?: number;
   workerCount?: number;
+  pullSteps?: number;
 };
 
 const processSearchIndexTask = async (
@@ -65,6 +71,7 @@ const processSearchIndexTask = async (
     if (type === 'pull') {
       context.logger('processSearchIndexTask :: pull :: Processing task', task);
       const t = task as PullTask;
+      const activeStep = t.currentStep ?? 0;
       const batch: SearchIndexPullBatch =
         t.mode === 'targeted'
           ? {
@@ -76,12 +83,32 @@ const processSearchIndexTask = async (
               startId: t.startId,
               endId: t.endId,
             };
-      const pulledData = await processor.pullData(context, batch);
-      context.logger('processSearchIndexTask :: pull :: Done');
-      return {
-        type: 'transform',
-        data: pulledData,
-      } as TransformTask;
+      const pulledData = await processor.pullData(context, batch, activeStep, t.currentData);
+
+      if (!pulledData) {
+        // We don't need to do anything if no data was pulled.
+        context.logger('processSearchIndexTask :: pull :: No data pulled. Marking as done.');
+        return 'done';
+      }
+
+      context.logger(
+        `processSearchIndexTask :: pull :: Done. ${
+          t.steps ? `Processing step ${activeStep + 1} of ${t.steps}` : ''
+        }`
+      );
+
+      if (t?.steps && activeStep + 1 < t.steps) {
+        return {
+          ...t,
+          currentData: pulledData,
+          currentStep: activeStep + 1,
+        } as PullTask;
+      } else {
+        return {
+          type: 'transform',
+          data: pulledData,
+        } as TransformTask;
+      }
     } else if (type === 'transform') {
       context.logger('processSearchIndexTask :: transform :: Processing task');
       const { data } = task as TransformTask;
@@ -164,6 +191,8 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
         queue.addTask({
           type: 'pull',
           mode: 'range',
+          steps: processor.pullSteps,
+          currentStep: 0,
           ...batch,
         });
       }
@@ -177,6 +206,8 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
         queue.addTask({
           type: 'pull',
           mode: 'targeted',
+          steps: processor.pullSteps,
+          currentStep: 0,
           ...batch,
         });
       }
@@ -233,6 +264,8 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
         queue.addTask({
           type: 'pull',
           mode: 'range',
+          steps: processor.pullSteps,
+          currentStep: 0,
           ...batch,
         });
       }

@@ -6,20 +6,21 @@ export type Task = PullTask | TransformTask | PushTask | OnCompleteTask;
 type BaseTask = {
   maxRetries?: number;
   retries?: number;
+  currentData?: any;
+  currentStep?: number;
+  steps?: number;
 };
 
 export type PullTask = BaseTask &
   (
     | {
         type: 'pull';
-
         mode: 'range';
         startId: number;
         endId: number;
       }
     | {
         type: 'pull';
-
         mode: 'targeted';
         ids: number[];
       }
@@ -87,7 +88,15 @@ export class TaskQueue {
     const queue = this.queues[task.type];
     // logInfo(`${task.pluginName}: Queuing ${task.type} task`);
     if (task.type !== this.queueEntry) await this.waitForQueueCapacity(queue);
-    queue.push(task);
+
+    // Work with steps on Pull tasks:
+
+    if (task.steps && task.currentStep !== 0) {
+      // Add to the top of the pile. to prio it.
+      queue.unshift(task);
+    } else {
+      queue.push(task);
+    }
     this.updateTaskStatus(task, 'queued');
     // logInfo(`${task.pluginName}: Queued ${task.type} task`);
   }
@@ -145,7 +154,7 @@ export class TaskQueue {
 
 export const getTaskQueueWorker = (
   queue: TaskQueue,
-  processor: (task: Task) => Promise<'error' | TransformTask | PushTask | 'done'>,
+  processor: (task: Task) => Promise<'error' | PullTask | TransformTask | PushTask | 'done'>,
   logger?: ReturnType<typeof createLogger>
 ) => {
   return new Promise(async (resolve) => {
