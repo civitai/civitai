@@ -261,8 +261,9 @@ export const CosmeticShopItem = ({
 
   const remaining =
     item.availableQuantity !== null
-      ? (item.availableQuantity ?? 0) - (itemMeta.purchases ?? 0)
+      ? Math.max(0, (item.availableQuantity ?? 0) - (itemMeta.purchases ?? 0))
       : null;
+  const available = item.availableQuantity !== null ? item.availableQuantity : null;
   const availableTo = item.availableTo ? formatDate(item.availableTo) : null;
   const isUpcoming = item.availableFrom && isFutureDate(item.availableFrom);
 
@@ -287,9 +288,9 @@ export const CosmeticShopItem = ({
               <Text>Out of Stock</Text>
             ) : (
               <>
-                {remaining && (
+                {remaining && available && (
                   <Text>
-                    {remaining}/{item.availableQuantity} remaining
+                    {remaining}/{available} remaining
                   </Text>
                 )}
                 {availableTo && remaining && <Divider orientation="vertical" color="grape.3" />}
