@@ -62,6 +62,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'generationTool',
     'aspectRatio',
     'nsfwLevel',
+    'type',
   ];
 
   if (JSON.stringify(searchableAttributes) !== JSON.stringify(settings.searchableAttributes)) {
