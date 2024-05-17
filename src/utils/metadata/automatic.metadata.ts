@@ -14,7 +14,7 @@ type CivitaiResource = {
 
 // #region [helpers]
 const hashesRegex = /, Hashes:\s*({[^}]+})/;
-const civitaiResources = /, Civitai resources:\s*(\[[^\]]+\])/;
+const civitaiResources = /, Civitai resources:\s*(.+)/;
 const badExtensionKeys = ['Resources: ', 'Hashed prompt: ', 'Hashed Negative prompt: '];
 const templateKeys = ['Template: ', 'Negative Template: '] as const;
 const automaticExtraNetsRegex = /<(lora|hypernet):([a-zA-Z0-9_\.\-]+):([0-9.]+)>/g;
@@ -45,12 +45,16 @@ const excludedKeys = [
   'other',
   'external',
 ];
+function isPartialDate(date: string) {
+  return date.length === 14 && date[11] === 'T';
+}
 function parseDetailsLine(line: string | undefined): Record<string, any> {
   const result: Record<string, any> = {};
   if (!line) return result;
   let currentKey = '';
   let currentValue = '';
   let insideQuotes = false;
+  let insideDate = false;
 
   for (let i = 0; i < line.length; i++) {
     const char = line[i];
@@ -61,10 +65,14 @@ function parseDetailsLine(line: string | undefined): Record<string, any> {
         currentKey = '';
       }
       insideQuotes = !insideQuotes;
-    } else if (char === ':' && !insideQuotes) {
-      currentKey = getSDKey(currentValue.trim());
-      currentValue = '';
+    } else if (char === ':' && !insideQuotes && !insideDate) {
+      if (isPartialDate(currentValue)) insideDate = true;
+      else {
+        currentKey = getSDKey(currentValue.trim());
+        currentValue = '';
+      }
     } else if (char === ',' && !insideQuotes) {
+      if (insideDate) insideDate = false;
       if (currentKey) result[currentKey] = currentValue.trim();
       currentKey = '';
       currentValue = '';
