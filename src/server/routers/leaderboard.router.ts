@@ -21,11 +21,7 @@ export const leaderboardRouter = router({
     .use(
       edgeCacheIt({
         ttl: CacheTTL.day,
-        tags: (input) => [
-          'leaderboard',
-          'leaderboard-positions',
-          `leaderboard-positions-${input.userId}`,
-        ],
+        tags: () => ['leaderboard'],
       })
     )
     .query(({ input, ctx }) =>
@@ -40,7 +36,7 @@ export const leaderboardRouter = router({
     .use(
       edgeCacheIt({
         ttl: CacheTTL.day,
-        tags: (input) => ['leaderboard', `leaderboard-${input.id}`],
+        tags: () => ['leaderboard'],
       })
     )
     .query(({ input, ctx }) =>
@@ -51,7 +47,7 @@ export const leaderboardRouter = router({
     .use(
       edgeCacheIt({
         ttl: CacheTTL.day,
-        tags: (input) => ['leaderboard', `leaderboard-${input.id}`, 'leaderboard-legends'],
+        tags: () => ['leaderboard'],
       })
     )
     .query(({ input, ctx }) =>

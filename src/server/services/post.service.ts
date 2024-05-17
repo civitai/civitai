@@ -163,7 +163,6 @@ export const getPostsInfinite = async ({
   const joins: string[] = [];
   if (!isOwnerRequest) {
     AND.push(Prisma.sql`p."publishedAt" < now()`);
-    AND.push(Prisma.sql`p.metadata->>'unpublishedAt' IS NULL`);
 
     if (period !== 'AllTime' && periodMode !== 'stats') {
       AND.push(Prisma.raw(`p."publishedAt" > now() - INTERVAL '1 ${period.toLowerCase()}'`));
@@ -181,7 +180,6 @@ export const getPostsInfinite = async ({
   } else {
     if (draftOnly) AND.push(Prisma.sql`p."publishedAt" IS NULL`);
     else AND.push(Prisma.sql`p."publishedAt" IS NOT NULL`);
-    AND.push(Prisma.sql`p.metadata->>'unpublishedAt' IS NULL`);
   }
 
   if (browsingLevel) {

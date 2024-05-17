@@ -414,6 +414,7 @@ export const autoTagHandler = async ({
 }) => {
   const { url: getUrl } = await getGetUrl(url);
   const { key, bucket } = parseKey(url);
+  if (!bucket) throw throwBadRequestError('Invalid URL');
 
   const payload: Orchestrator.Training.ImageAutoTagJobPayload = {
     mediaUrl: getUrl,

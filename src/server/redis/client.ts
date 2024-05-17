@@ -81,6 +81,7 @@ export const REDIS_KEYS = {
     COSMETICS: 'caches:cosmetics',
     PROFILE_PICTURES: 'caches:profile-pictures',
     IMAGES_FOR_MODEL_VERSION: 'caches:images-for-model-version',
+    EDGE_CACHED: 'caches:edge-cache',
   },
   QUEUES: {
     BUCKETS: 'queues:buckets',

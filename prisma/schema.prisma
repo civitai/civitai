@@ -2989,6 +2989,7 @@ enum ToolType {
   Audio
   Compute
   GameEngines
+  Editor
 }
 
 model Tool {

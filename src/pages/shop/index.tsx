@@ -64,7 +64,11 @@ import { CosmeticSample } from '~/pages/moderator/cosmetic-store/cosmetics';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { CosmeticShopItemPreviewModal } from '~/components/CosmeticShop/CosmeticShopItemPreviewModal';
-import { CosmeticShopSectionMeta, GetShopInput } from '~/server/schema/cosmetic-shop.schema';
+import {
+  CosmeticShopItemMeta,
+  CosmeticShopSectionMeta,
+  GetShopInput,
+} from '~/server/schema/cosmetic-shop.schema';
 import { openUserProfileEditModal } from '~/components/Modals/UserProfileEditModal';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { formatDate, formatDateMin, isFutureDate } from '~/utils/date-helpers';
@@ -252,8 +256,13 @@ export const CosmeticShopItem = ({
     (item.availableQuantity ?? null) === null || (item.availableQuantity ?? 0) > 0;
   const currentUser = useCurrentUser();
   const { lastViewed } = useShopLastViewed();
+  const itemMeta = item.meta as CosmeticShopItemMeta;
 
-  const remaining = item.availableQuantity;
+  const remaining =
+    item.availableQuantity !== null
+      ? Math.max(0, (item.availableQuantity ?? 0) - (itemMeta.purchases ?? 0))
+      : null;
+  const available = item.availableQuantity !== null ? item.availableQuantity : null;
   const availableTo = item.availableTo ? formatDate(item.availableTo) : null;
   const isUpcoming = item.availableFrom && isFutureDate(item.availableFrom);
 
@@ -271,14 +280,18 @@ export const CosmeticShopItem = ({
           New!
         </Badge>
       )}
-      {(remaining !== null || availableTo) && (
+      {(available !== null || availableTo) && (
         <Badge color="grape" className={classes.availability} px={6}>
           <Group position="apart" noWrap spacing={4}>
             {remaining === 0 ? (
               <Text>Out of Stock</Text>
             ) : (
               <>
-                {remaining && <Text>{remaining} remaining</Text>}
+                {remaining && available && (
+                  <Text>
+                    {remaining}/{available} remaining
+                  </Text>
+                )}
                 {availableTo && remaining && <Divider orientation="vertical" color="grape.3" />}
                 {availableTo && <Text>Available until {availableTo}</Text>}
               </>
