@@ -410,11 +410,28 @@ export const purchaseCosmeticShopItem = async ({
     },
   });
 
+  const shopItemMeta = (shopItem?.meta ?? {}) as CosmeticShopItemMeta;
+
   if (!shopItem) {
     throw new Error('Cosmetic not found');
   }
 
-  if (shopItem.availableQuantity !== null && shopItem.availableQuantity <= 0) {
+  if (
+    shopItem.availableQuantity !== null &&
+    shopItem._count.purchases >= shopItem.availableQuantity
+  ) {
+    if (shopItemMeta.purchases !== shopItem._count.purchases) {
+      // Update meta with new amount:
+      await dbWrite.cosmeticShopItem.update({
+        where: { id: shopItemId },
+        data: {
+          meta: {
+            ...shopItemMeta,
+            purchases: shopItem._count.purchases,
+          },
+        },
+      });
+    }
     throw new Error('Cosmetic is out of stock');
   }
 
@@ -476,8 +493,9 @@ export const purchaseCosmeticShopItem = async ({
       await dbWrite.cosmeticShopItem.update({
         where: { id: shopItemId },
         data: {
-          availableQuantity: {
-            decrement: 1,
+          meta: {
+            ...(shopItemMeta ?? {}),
+            purchases: (shopItemMeta?.purchases ?? 0) + 1,
           },
         },
       });
