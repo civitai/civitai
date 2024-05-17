@@ -141,7 +141,7 @@ export const articlesSearchIndex = createSearchIndexUpdateProcessor({
       ${
         lastUpdatedAt
           ? Prisma.sql`
-        WHERE "createdAt" >= ${lastUpdatedAt} OR "updatedAt" >= ${lastUpdatedAt}
+        WHERE "createdAt" >= ${lastUpdatedAt}
       `
           : Prisma.sql``
       };

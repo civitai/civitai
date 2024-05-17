@@ -182,9 +182,7 @@ export const usersSearchIndex = createSearchIndexUpdateProcessor({
   prepareBatches: async ({ db, logger }, lastUpdatedAt) => {
     const where = [
       ...WHERE,
-      lastUpdatedAt
-        ? Prisma.sql`u."createdAt" >= ${lastUpdatedAt} OR u."updatedAt" >= ${lastUpdatedAt}`
-        : undefined,
+      lastUpdatedAt ? Prisma.sql`u."createdAt" >= ${lastUpdatedAt}` : undefined,
     ].filter(isDefined);
 
     const data = await db.$queryRaw<{ startId: number; endId: number }[]>`

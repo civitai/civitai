@@ -212,9 +212,7 @@ export const collectionsSearchIndex = createSearchIndexUpdateProcessor({
   prepareBatches: async ({ db, logger }, lastUpdatedAt) => {
     const where = [
       ...WHERE,
-      lastUpdatedAt
-        ? Prisma.sql`c."createdAt" >= ${lastUpdatedAt} OR c."updatedAt" >= ${lastUpdatedAt}`
-        : undefined,
+      lastUpdatedAt ? Prisma.sql`c."createdAt" >= ${lastUpdatedAt}` : undefined,
     ].filter(isDefined);
 
     const data = await db.$queryRaw<{ startId: number; endId: number }[]>`

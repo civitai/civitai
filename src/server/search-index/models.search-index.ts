@@ -351,7 +351,7 @@ export const modelsSearchIndex = createSearchIndexUpdateProcessor({
   indexName: INDEX_ID,
   setup: onIndexSetup,
   maxQueueSize: 25, // Avoids hoggging too much memory.
-  prepareBatches: async ({ db }, lastUpdatedAt) => {
+  prepareBatches: async ({ db, logger }, lastUpdatedAt) => {
     const data = await db.$queryRaw<{ startId: number; endId: number }[]>`
       SELECT MIN(id) as "startId", MAX(id) as "endId" FROM "Model"
       WHERE status = ${ModelStatus.Published}::"ModelStatus"
@@ -359,13 +359,16 @@ export const modelsSearchIndex = createSearchIndexUpdateProcessor({
       ${
         lastUpdatedAt
           ? Prisma.sql`
-        AND "createdAt" >= ${lastUpdatedAt} OR "updatedAt" >= ${lastUpdatedAt}
+        AND "createdAt" >= ${lastUpdatedAt}
       `
           : Prisma.sql``
       };
     `;
 
     const { startId, endId } = data[0];
+    logger(
+      `PrepareBatches :: StartId: ${startId}, EndId: ${endId}. Last Updated at ${lastUpdatedAt}`
+    );
 
     return {
       batchSize: READ_BATCH_SIZE,

@@ -268,7 +268,7 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
       ${
         lastUpdatedAt
           ? Prisma.sql`
-        WHERE i."createdAt" >= ${lastUpdatedAt} OR i."updatedAt" >= ${lastUpdatedAt}
+        WHERE i."createdAt" >= ${lastUpdatedAt} 
       `
           : Prisma.sql``
       }

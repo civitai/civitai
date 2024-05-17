@@ -226,9 +226,7 @@ export const bountiesSearchIndex = createSearchIndexUpdateProcessor({
   prepareBatches: async ({ db, logger }, lastUpdatedAt) => {
     const where = [
       ...WHERE,
-      lastUpdatedAt
-        ? Prisma.sql`b."createdAt" >= ${lastUpdatedAt} OR b."updatedAt" >= ${lastUpdatedAt}`
-        : undefined,
+      lastUpdatedAt ? Prisma.sql`b."createdAt" >= ${lastUpdatedAt}` : undefined,
     ].filter(isDefined);
 
     const data = await db.$queryRaw<{ startId: number; endId: number }[]>`
