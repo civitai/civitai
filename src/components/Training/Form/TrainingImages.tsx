@@ -487,7 +487,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
       });
 
       try {
-        await upload(
+        const uploadResp = await upload(
           {
             file: blobFile,
             type: UploadType.TrainingImages,
@@ -526,7 +526,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                   icon: <IconX size={18} />,
                   color: 'red',
                   title: 'Failed to upload archive.',
-                  message: '',
+                  message: 'Please try again (or contact us if it continues)',
                 });
               }
             } else {
@@ -534,6 +534,16 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
             }
           }
         );
+        if (!uploadResp) {
+          setZipping(false);
+          updateNotification({
+            id: notificationId,
+            icon: <IconX size={18} />,
+            color: 'red',
+            title: 'Failed to upload archive.',
+            message: 'Please try again (or contact us if it continues)',
+          });
+        }
       } catch (e) {
         setZipping(false);
         updateNotification({

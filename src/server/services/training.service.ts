@@ -341,26 +341,28 @@ export const createTrainingRequest = async ({
   const data = response.data;
   const fileMetadata = modelVersion.fileMetadata || {};
 
-  await dbWrite.modelFile.update({
-    where: { id: modelVersion.fileId },
-    data: {
-      metadata: {
-        ...fileMetadata,
-        trainingResults: {
-          ...(fileMetadata.trainingResults || {}),
-          submittedAt: new Date().toISOString(),
-          jobId: data?.jobs?.[0]?.jobId,
-          transactionId,
-          history: (fileMetadata.trainingResults?.history || []).concat([
-            {
-              time: new Date().toISOString(),
-              status: TrainingStatus.Submitted,
-            },
-          ]),
+  await withRetries(() =>
+    dbWrite.modelFile.update({
+      where: { id: modelVersion.fileId },
+      data: {
+        metadata: {
+          ...fileMetadata,
+          trainingResults: {
+            ...(fileMetadata.trainingResults || {}),
+            submittedAt: new Date().toISOString(),
+            jobId: data?.jobs?.[0]?.jobId,
+            transactionId,
+            history: (fileMetadata.trainingResults?.history || []).concat([
+              {
+                time: new Date().toISOString(),
+                status: TrainingStatus.Submitted,
+              },
+            ]),
+          },
         },
       },
-    },
-  });
+    })
+  );
 
   // const [formatted] = await formatGenerationRequests([data]);
   return data;
