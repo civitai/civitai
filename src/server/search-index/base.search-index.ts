@@ -169,12 +169,7 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
       // Run update
       const now = new Date();
       const queue = new TaskQueue('pull', maxQueueSize);
-      const {
-        batchSize,
-        startId = 0,
-        endId,
-        updatedIds,
-      } = await prepareBatches(ctx, lastUpdatedAt);
+      const { batchSize, startId = 0, endId, updateIds } = await prepareBatches(ctx, lastUpdatedAt);
 
       logger(`createSearchIndexUpdateProcessor :: update :: Index last update at ${lastUpdatedAt}`);
 
@@ -205,12 +200,7 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
         });
       }
 
-      const updatedItems = [
-        ...new Set<number>([
-          ...(updatedIds ?? []),
-          ...queuedUpdates.content.filter((id) => !updatedIds.includes(id)),
-        ]),
-      ];
+      const updatedItems = [...new Set<number>([...(updateIds ?? []), ...queuedUpdates.content])];
 
       const updateItemsTasks = Math.ceil(updatedItems.length / batchSize);
 

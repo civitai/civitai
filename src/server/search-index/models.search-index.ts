@@ -370,7 +370,7 @@ export const modelsSearchIndex = createSearchIndexUpdateProcessor({
       `PrepareBatches :: StartId: ${startId}, EndId: ${endId}. Last Updated at ${lastUpdatedAt}`
     );
 
-    const updatedIds = [];
+    const updateIds = [];
 
     if (lastUpdatedAt) {
       let offset = 0;
@@ -389,7 +389,7 @@ export const modelsSearchIndex = createSearchIndexUpdateProcessor({
         }
 
         offset += READ_BATCH_SIZE;
-        updatedIds.push(...ids.map((x) => x.id));
+        updateIds.push(...ids.map((x) => x.id));
       }
     }
 
@@ -397,7 +397,7 @@ export const modelsSearchIndex = createSearchIndexUpdateProcessor({
       batchSize: READ_BATCH_SIZE,
       startId,
       endId,
-      updatedIds,
+      updateIds,
     };
   },
   pullData: async ({ db, logger }, batch) => {
