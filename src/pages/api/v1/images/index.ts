@@ -5,7 +5,7 @@ import {
   nsfwBrowsingLevelsFlag,
   publicBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
-import { MetricTimeframe } from '@prisma/client';
+import { MediaType, MetricTimeframe } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import { NextApiRequest, NextApiResponse } from 'next';
@@ -50,6 +50,7 @@ const imagesEndpointSchema = z.object({
   browsingLevel: z.coerce.number().optional(),
   tags: commaDelimitedNumberArray({ message: 'tags should be a number array' }).optional(),
   cursor: numericString().optional(),
+  type: z.nativeEnum(MediaType).optional(),
 });
 
 export default PublicEndpoint(async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -58,7 +59,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
     if (!reqParams.success) return res.status(400).json({ error: reqParams.error });
 
     // Handle pagination
-    const { limit, page, cursor, nsfw, browsingLevel, ...data } = reqParams.data;
+    const { limit, page, cursor, nsfw, browsingLevel, type, ...data } = reqParams.data;
     let skip: number | undefined;
     const usingPaging = page && !cursor;
     if (usingPaging) {
@@ -71,10 +72,10 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
     }
 
     const _browsingLevel = browsingLevel ?? nsfw ?? publicBrowsingLevelsFlag;
-    console.log({ _browsingLevel });
 
     const { items, nextCursor } = await getAllImages({
       ...data,
+      types: type ? [type] : undefined,
       limit,
       skip,
       cursor,
