@@ -1496,7 +1496,7 @@ export const unpublishModelById = async ({
           "metadata" = "metadata" || jsonb_build_object(
             'unpublishedAt', ${unpublishedAt},
             'unpublishedBy', ${user.id},
-            "prevPublishedAt", "publishedAt"
+            'prevPublishedAt', "publishedAt"
           ),
           "publishedAt" = NULL
         WHERE "publishedAt" IS NOT NULL
