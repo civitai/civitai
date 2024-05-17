@@ -137,7 +137,11 @@ export function createCachedArray<T extends object>({
     if (ids.length === 0) return;
 
     await Promise.all(
-      ids.map((id) => redis.set(`${key}:${id}`, JSON.stringify({ [idKey]: id, debounce: true })))
+      ids.map((id) =>
+        redis.set(`${key}:${id}`, JSON.stringify({ [idKey]: id, debounce: true }), {
+          EX: debounceTime,
+        })
+      )
     );
     log(`Busted ${ids.length} ${key} items: ${ids.join(', ')}`);
   }
@@ -146,8 +150,13 @@ export function createCachedArray<T extends object>({
     if (!Array.isArray(id)) id = [id];
 
     const results = await lookupFn(id, true);
+    const cachedAt = Date.now();
     await Promise.all(
-      Object.entries(results).map(([key, x]) => redis.set(`${key}:${key}`, JSON.stringify(x)))
+      Object.entries(results).map(([id, x]) =>
+        redis.set(`${key}:${id}`, JSON.stringify({ ...x, cachedAt }), {
+          EX: ttl,
+        })
+      )
     );
 
     const toRemove = id.filter((x) => !results[x]).map(String);
