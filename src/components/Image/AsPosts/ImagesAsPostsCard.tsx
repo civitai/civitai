@@ -226,61 +226,63 @@ export function ImagesAsPostsCard({
         ref={ref}
         className={cx(classes.card)}
       >
-        <Paper p="xs" radius={0}>
-          {inView && (
-            <Group spacing={8} align="flex-start" position="apart" noWrap>
-              <UserAvatar
-                user={data.user}
-                subText={
-                  <>
-                    {data.publishedAt ? <DaysFromNow date={data.publishedAt} /> : 'Not published'}
-                    {' - '}
-                    {modelVersionName ?? 'Cross-post'}
-                  </>
-                }
-                subTextForce
-                size="md"
-                spacing="xs"
-                badge={
-                  isOP ? (
-                    <Badge size="xs" color="violet" radius="xl">
-                      OP
-                    </Badge>
-                  ) : null
-                }
-                withUsername
-                linkToProfile
-              />
-              <Group spacing={8} position="right" noWrap>
-                {!data.publishedAt && (
-                  <Tooltip label="Post not Published" withArrow>
-                    <Link href={`/posts/${data.postId}/edit`}>
-                      <ActionIcon color="red" variant="outline">
-                        <IconExclamationMark />
-                      </ActionIcon>
-                    </Link>
-                  </Tooltip>
-                )}
-                {data.review ? (
-                  <RoutedDialogLink name="resourceReview" state={{ reviewId: data.review.id }}>
-                    <Badge
-                      variant="light"
-                      radius="md"
-                      size="lg"
-                      style={{ userSelect: 'none', padding: 4, height: 'auto' }}
-                      color={isThumbsUp ? 'success.5' : 'red'}
-                    >
-                      <Group spacing={4} noWrap>
-                        {isThumbsUp ? <ThumbsUpIcon filled /> : <ThumbsDownIcon filled />}
-                        {data.review.details && <IconMessage size={18} strokeWidth={2.5} />}
-                      </Group>
-                    </Badge>
-                  </RoutedDialogLink>
-                ) : null}
+        {data.user.id !== -1 && (
+          <Paper p="xs" radius={0}>
+            {inView && (
+              <Group spacing={8} align="flex-start" position="apart" noWrap>
+                <UserAvatar
+                  user={data.user}
+                  subText={
+                    <>
+                      {data.publishedAt ? <DaysFromNow date={data.publishedAt} /> : 'Not published'}
+                      {' - '}
+                      {modelVersionName ?? 'Cross-post'}
+                    </>
+                  }
+                  subTextForce
+                  size="md"
+                  spacing="xs"
+                  badge={
+                    isOP ? (
+                      <Badge size="xs" color="violet" radius="xl">
+                        OP
+                      </Badge>
+                    ) : null
+                  }
+                  withUsername
+                  linkToProfile
+                />
+                <Group spacing={8} position="right" noWrap>
+                  {!data.publishedAt && (
+                    <Tooltip label="Post not Published" withArrow>
+                      <Link href={`/posts/${data.postId}/edit`}>
+                        <ActionIcon color="red" variant="outline">
+                          <IconExclamationMark />
+                        </ActionIcon>
+                      </Link>
+                    </Tooltip>
+                  )}
+                  {data.review ? (
+                    <RoutedDialogLink name="resourceReview" state={{ reviewId: data.review.id }}>
+                      <Badge
+                        variant="light"
+                        radius="md"
+                        size="lg"
+                        style={{ userSelect: 'none', padding: 4, height: 'auto' }}
+                        color={isThumbsUp ? 'success.5' : 'red'}
+                      >
+                        <Group spacing={4} noWrap>
+                          {isThumbsUp ? <ThumbsUpIcon filled /> : <ThumbsDownIcon filled />}
+                          {data.review.details && <IconMessage size={18} strokeWidth={2.5} />}
+                        </Group>
+                      </Badge>
+                    </RoutedDialogLink>
+                  ) : null}
+                </Group>
               </Group>
-            </Group>
-          )}
-        </Paper>
+            )}
+          </Paper>
+        )}
         <div className={classes.container}>
           <div className={classes.blurHash}>
             <MediaHash {...image} />
@@ -558,7 +560,7 @@ function PinnedIndicator({
         </Text>
         <Text size="xs">
           The creator of this post has pinned this because it is an excellent showcase of the
-          resources&apos;s ability
+          resource&apos;s ability
         </Text>
       </HoverCard.Dropdown>
     </HoverCard>
@@ -677,7 +679,7 @@ const useStyles = createStyles((theme) => ({
       right: 0,
       bottom: 0,
       left: 0,
-      margin: -3,
+      margin: -2,
       borderRadius: 'inherit',
       background: theme.colors.orange[theme.fn.primaryShade()],
     },

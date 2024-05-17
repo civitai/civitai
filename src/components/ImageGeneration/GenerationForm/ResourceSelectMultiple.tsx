@@ -47,7 +47,7 @@ const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectMultiple
         resources: _values.filter((x) => x.modelType === type),
       }))
       .filter((x) => !!x.resources.length);
-    const canAdd = !limit || limit >= _values.length;
+    const canAdd = !limit || _values.length < limit;
 
     const handleAdd = (resource: Generation.Resource) => {
       if (!canAdd) return;

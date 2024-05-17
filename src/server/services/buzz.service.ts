@@ -356,7 +356,11 @@ export async function completeStripeBuzzTransaction({
       fromAccountId: 0,
       toAccountId: userId,
       type: TransactionType.Purchase,
-      description: `Purchase of ${amount} buzz. Multiplier applied due to membership. A total of ${buzzAmount} buzz was added to your account.`,
+      description: `Purchase of ${amount} buzz. ${
+        purchasesMultiplier && purchasesMultiplier > 1
+          ? 'Multiplier applied due to membership. '
+          : ''
+      }A total of ${buzzAmount} buzz was added to your account.`,
       details: { ...(details ?? {}), stripePaymentIntentId },
       externalTransactionId: paymentIntent.id,
     });

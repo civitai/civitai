@@ -27,7 +27,7 @@ const automaticSDKeyMap = new Map<string, string>([
   ['Clip skip', 'clipSkip'],
 ]);
 const getSDKey = (key: string) => automaticSDKeyMap.get(key.trim()) ?? key.trim();
-const decoder = new TextDecoder('utf-8');
+const decoder = new TextDecoder('utf-16le');
 const automaticSDEncodeMap = new Map<keyof ImageMetaProps, string>(
   Array.from(automaticSDKeyMap, (a) => a.reverse()) as Iterable<readonly [string, string]>
 );
@@ -76,6 +76,33 @@ function parseDetailsLine(line: string | undefined): Record<string, any> {
 
   return result;
 }
+
+/**
+ * Swap the byte order of a Uint8Array from big-endian to little-endian.
+ * @param buffer - The input Uint8Array with big-endian byte order.
+ * @returns A new Uint8Array with little-endian byte order.
+ */
+function swapByteOrder(buffer: Uint8Array): Uint8Array {
+  const swapped = new Uint8Array(buffer.length);
+  for (let i = 0; i < buffer.length; i += 2) {
+    swapped[i] = buffer[i + 1];
+    swapped[i + 1] = buffer[i];
+  }
+  return swapped;
+}
+
+/**
+ * Decode a big-endian UTF-16 (Unicode) encoded buffer to a string.
+ * @param buffer - The input Uint8Array with big-endian byte order.
+ * @returns The decoded string.
+ */
+function decodeBigEndianUTF16(buffer: Uint8Array): string {
+  // Swap the byte order from big-endian to little-endian
+  const littleEndianBuffer = swapByteOrder(buffer);
+  // Use TextDecoder to decode the little-endian buffer
+  return decoder.decode(littleEndianBuffer);
+}
+
 // #endregion
 
 export const automaticMetadataProcessor = createMetadataProcessor({
@@ -84,17 +111,10 @@ export const automaticMetadataProcessor = createMetadataProcessor({
     if (exif?.parameters) {
       generationDetails = exif.parameters;
     } else if (exif?.userComment) {
-      const p = document.createElement('p');
-      generationDetails = decoder.decode(exif.userComment);
-      // Any annoying hack to deal with weirdness in the meta
-      p.innerHTML = generationDetails;
-      p.remove();
-      generationDetails = p.innerHTML;
+      generationDetails = decodeBigEndianUTF16(exif.userComment);
     }
 
     if (generationDetails) {
-      generationDetails = generationDetails.replace('UNICODE', '').replace(/�/g, '');
-      generationDetails = unescape(generationDetails);
       exif.generationDetails = generationDetails;
       return generationDetails.includes('Steps: ');
     }

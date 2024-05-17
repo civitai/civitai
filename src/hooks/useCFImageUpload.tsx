@@ -136,7 +136,6 @@ export const useCFImageUpload: UseCFImageUpload = () => {
         resolve(false);
       });
       xhr.open('PUT', url);
-      xhr.setRequestHeader('Content-Type', 'application/octet-stream');
       xhr.send(file);
     });
 
