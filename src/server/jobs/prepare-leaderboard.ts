@@ -36,6 +36,8 @@ const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async 
   log('Leaderboards - Starting');
   const tasks = leaderboards.map(({ id, query }) => async () => {
     jobContext.checkIfCanceled();
+    if (id === 'images-rater') return; // Temporarily disable images-rater leaderboard
+
     const hasDataQuery = await pgDbWrite.query<{ count: number }>(`
       SELECT COUNT(*) as count FROM "LeaderboardResult"
       WHERE "leaderboardId" = '${id}' AND date = current_date + interval '${addDays} days'
