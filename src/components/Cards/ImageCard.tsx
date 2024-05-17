@@ -21,6 +21,7 @@ import { truncate } from 'lodash-es';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { ImagesInfiniteModel } from '~/server/services/image.service';
+import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
 
 function UnroutedImageCard({ data }: Props) {
   const { classes: sharedClasses, cx } = useCardStyles({
@@ -54,7 +55,7 @@ function UnroutedImageCard({ data }: Props) {
                   position="apart"
                   align="start"
                   spacing={4}
-                  className="absolute top-2 left-2 right-2 z-10"
+                  className="absolute inset-x-2 top-2 z-10"
                   style={{ pointerEvents: 'none' }}
                 >
                   <ImageGuard2.BlurToggle radius="xl" h={26} sx={{ pointerEvents: 'auto' }} />
@@ -149,17 +150,12 @@ function UnroutedImageCard({ data }: Props) {
                 }}
                 targetUserId={data.user.id}
               />
-              {!data.hideMeta && data.meta && (
-                <ImageMetaPopover
-                  meta={data.meta}
-                  generationProcess={data.generationProcess ?? undefined}
-                  imageId={data.id}
-                  mainResourceId={data.modelVersionId ?? undefined}
-                >
+              {data.hasMeta && (
+                <ImageMetaPopover2 imageId={data.id}>
                   <ActionIcon className={sharedClasses.infoChip} variant="light">
                     <IconInfoCircle color="white" strokeWidth={2.5} size={18} />
                   </ActionIcon>
-                </ImageMetaPopover>
+                </ImageMetaPopover2>
               )}
             </Group>
           </Stack>

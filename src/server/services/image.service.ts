@@ -31,7 +31,6 @@ import { pgDbRead } from '~/server/db/pgDb';
 import { postMetrics } from '~/server/metrics';
 import { leakingContentCounter } from '~/server/prom/client';
 import { imagesForModelVersionsCache, tagIdsForImagesCache } from '~/server/redis/caches';
-import { REDIS_KEYS } from '~/server/redis/client';
 import { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
 import {
   AddOrRemoveImageToolsOutput,
@@ -43,12 +42,11 @@ import {
   ImageReviewQueueInput,
   ImageUploadProps,
   ReportCsamImagesInput,
-  UpdateImageInput,
   UpdateImageNsfwLevelOutput,
   UpdateImageToolsOutput,
   AddOrRemoveImageTechniquesOutput,
   UpdateImageTechniqueOutput,
-  imageGenerationSchema,
+  imageMetaOutput,
 } from '~/server/schema/image.schema';
 import { articlesSearchIndex, imagesSearchIndex } from '~/server/search-index';
 import { ImageV2Model } from '~/server/selectors/imagev2.selector';
@@ -1008,8 +1006,9 @@ export const getAllImages = async ({
   const now = new Date();
   const images: Array<
     Omit<ImageV2Model, 'nsfwLevel'> & {
-      meta: ImageMetaProps | null;
-      hideMeta: boolean;
+      meta: ImageMetaProps | null; // TODO - don't fetch meta
+      hideMeta: boolean; // TODO - remove references to this. Instead, use `hasMeta`
+      hasMeta: boolean;
       tags?: VotableTagModel[] | undefined;
       tagIds?: number[];
       publishedAt?: Date | null;
@@ -2940,7 +2939,9 @@ export async function getImageGenerationData({ id }: { id: number }) {
     where: { id },
     select: {
       hideMeta: true,
+      generationProcess: true,
       meta: true,
+      type: true,
       tools: {
         select: {
           notes: true,
@@ -2994,12 +2995,13 @@ export async function getImageGenerationData({ id }: { id: number }) {
       WHERE ir."imageId" = ${id}
   `);
 
-  const parsedMeta = imageGenerationSchema.safeParse(image.meta);
+  const parsedMeta = imageMetaOutput.safeParse(image.meta);
   const data = parsedMeta.success ? parsedMeta.data : {};
-  const { 'Clip skip': legacyClipSkip, clipSkip = legacyClipSkip, comfy, external, ...meta } = data;
+  const { 'Clip skip': legacyClipSkip, clipSkip = legacyClipSkip, external, ...rest } = data;
+  const meta = parsedMeta.success && !image.hideMeta ? { ...rest, clipSkip } : undefined;
 
   return {
-    meta: parsedMeta.success && !image.hideMeta ? { ...meta, clipSkip } : undefined,
+    meta,
     resources: resources.map((resource) => ({
       ...resource,
       strength:
@@ -3010,5 +3012,7 @@ export async function getImageGenerationData({ id }: { id: number }) {
     tools,
     techniques,
     external,
+    canRemix: !image.hideMeta && !!meta?.prompt,
+    generationProcess: image.generationProcess,
   };
 }

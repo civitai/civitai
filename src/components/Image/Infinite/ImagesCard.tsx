@@ -37,6 +37,7 @@ import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { getIsPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
+import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
 
 export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height: number }) {
   const { ref, inView } = useInView({ rootMargin: '200% 0px' });
@@ -104,7 +105,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                         position="apart"
                         align="start"
                         spacing={4}
-                        className="absolute top-2 left-2 right-2 z-10"
+                        className="absolute inset-x-2 top-2 z-10"
                         style={{ pointerEvents: 'none' }}
                       >
                         <ImageGuard2.BlurToggle sx={{ pointerEvents: 'auto' }} />
@@ -205,13 +206,8 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                                 readonly={!safe}
                                 className={classes.reactions}
                               />
-                              {!image.hideMeta && image.meta && (
-                                <ImageMetaPopover
-                                  meta={image.meta}
-                                  generationProcess={image.generationProcess ?? undefined}
-                                  imageId={image.id}
-                                  mainResourceId={image.modelVersionId ?? undefined}
-                                >
+                              {image.hasMeta && (
+                                <ImageMetaPopover2 imageId={data.id}>
                                   <ActionIcon variant="transparent" size="lg">
                                     <IconInfoCircle
                                       color="white"
@@ -221,7 +217,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                                       size={26}
                                     />
                                   </ActionIcon>
-                                </ImageMetaPopover>
+                                </ImageMetaPopover2>
                               )}
                             </Group>
                           )

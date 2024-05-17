@@ -13,17 +13,17 @@ export function ImageGenerationData({ imageId }: { imageId: number }) {
   if (!meta && !resources) return null;
 
   return (
-    <Card className="rounded-xl flex flex-col gap-3">
+    <Card className="flex flex-col gap-3 rounded-xl">
       <div className="flex items-center gap-3">
-        <Text className="flex items-center gap-2 font-semibold text-xl">
+        <Text className="flex items-center gap-2 text-xl font-semibold">
           <IconForms />
           <span>Generation data</span>
         </Text>
         {meta && (
-          <CopyButton value={encodeMetadata(meta)}>
+          <CopyButton value={() => encodeMetadata(meta)}>
             {({ copy, copied, Icon, color }) => (
               <Text
-                className="flex items-center gap-1 text-xs cursor-pointer"
+                className="flex cursor-pointer items-center gap-1 text-xs"
                 color={color}
                 onClick={copy}
                 data-activity="copy:image-meta"

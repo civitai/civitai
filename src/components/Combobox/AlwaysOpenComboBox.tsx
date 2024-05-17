@@ -1,9 +1,9 @@
-import { Combobox } from '@headlessui/react';
+import { Combobox, ComboboxInput, ComboboxOptions, ComboboxOption } from '@headlessui/react';
 import { Divider, Input, ScrollArea, Text, createStyles } from '@mantine/core';
 import React, { Key, useState } from 'react';
-import { ComboboxOption } from '~/components/Combobox/combobox.types';
+import { ComboboxOption as ComboboxOptionProps } from '~/components/Combobox/combobox.types';
 
-type Props<T extends Key, TOption extends ComboboxOption> = {
+type Props<T extends Key, TOption extends ComboboxOptionProps> = {
   value?: T[];
   onChange?: (value: T[]) => void;
   maxScrollHeight?: number;
@@ -14,7 +14,7 @@ type Props<T extends Key, TOption extends ComboboxOption> = {
   footer?: React.ReactNode;
 };
 
-export function AlwaysOpenCombobox<T extends Key, TOption extends ComboboxOption>({
+export function AlwaysOpenCombobox<T extends Key, TOption extends ComboboxOptionProps>({
   value,
   onChange,
   maxScrollHeight = 250,
@@ -47,7 +47,7 @@ export function AlwaysOpenCombobox<T extends Key, TOption extends ComboboxOption
         // @ts-ignore eslint-disable-next-line
         multiple
       >
-        <Combobox.Input
+        <ComboboxInput
           as={Input}
           onChange={(e) => setSearch(e.target.value.toLowerCase())}
           displayValue={() => search}
@@ -70,7 +70,7 @@ export function AlwaysOpenCombobox<T extends Key, TOption extends ComboboxOption
             </Text>
           ) : (
             <div className="p-2 pr-0">
-              <Combobox.Options static>
+              <ComboboxOptions static>
                 {tupleOptions.map(([key, options]) => (
                   <React.Fragment key={key}>
                     {!!options.length && key !== 'undefined' && (
@@ -79,7 +79,7 @@ export function AlwaysOpenCombobox<T extends Key, TOption extends ComboboxOption
                           <Text
                             component="li"
                             color="dimmed"
-                            className="py-1 px-2 font-semibold text-sm"
+                            className="px-2 py-1 text-sm font-semibold"
                           >
                             {key}
                           </Text>
@@ -87,7 +87,7 @@ export function AlwaysOpenCombobox<T extends Key, TOption extends ComboboxOption
                       />
                     )}
                     {options.map((option) => (
-                      <Combobox.Option
+                      <ComboboxOption
                         key={option.value}
                         value={option.value}
                         className={({ active }) =>
@@ -97,11 +97,11 @@ export function AlwaysOpenCombobox<T extends Key, TOption extends ComboboxOption
                         }
                       >
                         {(props) => <>{renderOption?.({ ...props, ...option }) ?? option.label}</>}
-                      </Combobox.Option>
+                      </ComboboxOption>
                     ))}
                   </React.Fragment>
                 ))}
-              </Combobox.Options>
+              </ComboboxOptions>
             </div>
           )}
         </ScrollArea.Autosize>

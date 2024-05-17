@@ -92,6 +92,14 @@ export const imageGenerationSchema = z.object({
 });
 
 export const imageMetaSchema = imageGenerationSchema.partial().passthrough();
+export const imageMetaOutput = imageGenerationSchema.extend({
+  comfy: z.preprocess(
+    (value) => (typeof value === 'string' ? JSON.parse(value) : value),
+    comfyMetaSchema.optional()
+  ),
+  controlNets: z.string().array().optional(),
+  software: z.coerce.string().optional(),
+});
 
 export type FaceDetectionInput = z.infer<typeof faceDetectionSchema>;
 export const faceDetectionSchema = z.object({

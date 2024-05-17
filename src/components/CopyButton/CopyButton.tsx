@@ -1,24 +1,28 @@
-import { CopyButtonProps, MantineColor, CopyButton as MantineCopyButton } from '@mantine/core';
+import { CopyButtonProps, MantineColor } from '@mantine/core';
+import { useClipboard } from '@mantine/hooks';
 import { TablerIconsProps, IconCheck, IconCopy } from '@tabler/icons-react';
 
 export function CopyButton({
   children,
-  ...props
-}: Omit<CopyButtonProps, 'children'> & {
+  value,
+  timeout,
+}: Omit<CopyButtonProps, 'children' | 'value'> & {
   children(payload: {
     copied: boolean;
     copy(): void;
     Icon: (props: TablerIconsProps) => JSX.Element;
     color?: MantineColor;
-  }): React.ReactNode;
+  }): React.ReactElement;
+  value: string | (() => string);
+  timeout?: number;
 }) {
-  return (
-    <MantineCopyButton {...props}>
-      {({ copy, copied }) => {
-        const Icon = copied ? IconCheck : IconCopy;
-        const color = copied ? 'green' : undefined;
-        return children({ copy, copied, Icon, color });
-      }}
-    </MantineCopyButton>
-  );
+  const { copy, copied } = useClipboard({ timeout });
+
+  const handleCopy = () => {
+    copy(typeof value === 'string' ? value : value());
+  };
+
+  const Icon = copied ? IconCheck : IconCopy;
+  const color = copied ? 'teal' : undefined;
+  return children({ copy: handleCopy, copied, Icon, color });
 }
