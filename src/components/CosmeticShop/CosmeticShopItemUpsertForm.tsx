@@ -37,7 +37,10 @@ import { useMutateCosmeticShop } from '~/components/CosmeticShop/cosmetic-shop.u
 import { useQueryCosmetic, useQueryCosmeticsPaged } from '~/components/Cosmetics/cosmetics.util';
 import { GetPaginatedCosmeticsInput } from '~/server/schema/cosmetic.schema';
 import { useDebouncedValue } from '@mantine/hooks';
-import { upsertCosmeticShopItemInput } from '~/server/schema/cosmetic-shop.schema';
+import {
+  CosmeticShopItemMeta,
+  upsertCosmeticShopItemInput,
+} from '~/server/schema/cosmetic-shop.schema';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 import { CosmeticSample } from '~/pages/moderator/cosmetic-store/cosmetics';
@@ -115,6 +118,7 @@ const CosmeticSearch = ({
 };
 
 export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Props) => {
+  const shopItemMeta = (shopItem?.meta ?? {}) as CosmeticShopItemMeta;
   const currentUser = useCurrentUser();
   const form = useForm({
     schema: formSchema,
@@ -129,11 +133,12 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
     shouldUnregister: false,
   });
 
-  const [title, description, cosmeticId, paidToUserIds] = form.watch([
+  const [title, description, cosmeticId, paidToUserIds, availableQuantity] = form.watch([
     'title',
     'description',
     'cosmeticId',
     'meta.paidToUserIds',
+    'availableQuantity',
   ]);
   const { cosmetic, isLoading: isLoadingCosmetic } = useQueryCosmetic({ id: cosmeticId });
 
@@ -244,6 +249,13 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
               clearable
             />
           </Group>
+          {shopItemMeta?.purchases > 0 && availableQuantity && (
+            <Text color="red" size="sm">
+              This item has been purchased {shopItemMeta.purchases} times. Changing the price or
+              quantity will not affect existing purchases. And you cannot make the number of
+              available items less than the number of purchases.
+            </Text>
+          )}
           <Group spacing="md" grow>
             <InputDatePicker
               name="availableFrom"

@@ -320,7 +320,7 @@ const prepareBounties = createJob('prepare-bounties', '0 23 * * *', async () => 
       });
     }
     // Now
-    log(` Finished bounty ${id}`);
+    log(`Finished bounty ${id}`);
   }
 
   await setLastRun();

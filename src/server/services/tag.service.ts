@@ -15,7 +15,6 @@ import {
   GetVotableTagsSchema2,
   ModerateTagsSchema,
 } from '~/server/schema/tag.schema';
-import { tagsSearchIndex } from '~/server/search-index';
 import { imageTagCompositeSelect, modelTagCompositeSelect } from '~/server/selectors/tag.selector';
 import { clearImageTagIdsCache } from '~/server/services/image.service';
 import { getCategoryTags, getSystemTags } from '~/server/services/system-cache';
@@ -667,13 +666,6 @@ export const deleteTags = async ({ tags }: DeleteTagsSchema) => {
     FROM "Tag"
     WHERE ${tagSelector} IN (${tagIn})
   `);
-
-  // TODO.lrojas: Support tag names for deletion
-  if (isTagIds) {
-    await tagsSearchIndex.queueUpdate(
-      castedTags.map((id) => ({ id: id as number, action: SearchIndexUpdateQueueAction.Delete }))
-    );
-  }
 };
 
 export const getTypeCategories = async ({
