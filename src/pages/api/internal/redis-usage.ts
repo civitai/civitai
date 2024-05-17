@@ -16,14 +16,16 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
   for await (const key of stream) {
     stats.total++;
 
-    const keyType = await redis.type(key);
-    const memoryUsage = (await redis.memoryUsage(key)) || 0;
-    const ttl = await redis.ttl(key);
+    const [keyType, memoryUsage, ttl] = await Promise.all([
+      redis.type(key),
+      redis.memoryUsage(key),
+      redis.ttl(key),
+    ]);
     if (ttl === -1) stats.no_ttl++;
 
     // Accumulate memory usage by type
     if (!memoryByType[keyType]) memoryByType[keyType] = 0;
-    memoryByType[keyType] += memoryUsage;
+    memoryByType[keyType] += memoryUsage ?? 0;
   }
 
   return res.status(200).json({

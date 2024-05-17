@@ -164,7 +164,13 @@ type GetObjectOptions = {
 
 const s3Host = new URL(env.S3_UPLOAD_ENDPOINT).host;
 export function parseKey(fileUrl: string) {
-  const url = new URL(fileUrl);
+  let url: URL;
+  try {
+    url = new URL(fileUrl);
+  } catch {
+    return { key: fileUrl };
+  }
+
   const bucketInPath = url.hostname === s3Host;
   if (bucketInPath) {
     const pathParts = url.pathname.split('/');
@@ -231,4 +237,27 @@ export async function checkFileExists(key: string, s3: S3Client | null = null) {
   }
 
   return true;
+}
+
+export async function getFileMetadata(
+  key: string,
+  { bucket, s3 }: { bucket?: string; s3?: S3Client } = {}
+) {
+  s3 ??= getS3Client();
+  bucket ??= env.S3_UPLOAD_BUCKET;
+
+  const { key: parsedKey, bucket: parsedBucket } = parseKey(key);
+  const data = await s3.send(
+    new HeadObjectCommand({
+      Key: parsedKey,
+      Bucket: parsedBucket ?? bucket,
+    })
+  );
+
+  return {
+    metadata: data.Metadata,
+    size: data.ContentLength,
+    mimeType: data.ContentType,
+    lastModified: data.LastModified,
+  };
 }

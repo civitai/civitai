@@ -560,7 +560,7 @@ function PinnedIndicator({
         </Text>
         <Text size="xs">
           The creator of this post has pinned this because it is an excellent showcase of the
-          resources&apos;s ability
+          resource&apos;s ability
         </Text>
       </HoverCard.Dropdown>
     </HoverCard>
@@ -679,7 +679,7 @@ const useStyles = createStyles((theme) => ({
       right: 0,
       bottom: 0,
       left: 0,
-      margin: -3,
+      margin: -2,
       borderRadius: 'inherit',
       background: theme.colors.orange[theme.fn.primaryShade()],
     },
