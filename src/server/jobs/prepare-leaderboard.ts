@@ -8,6 +8,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { isLeaderboardPopulated } from '~/server/services/leaderboard.service';
 import { updateLeaderboardRank } from '~/server/services/user.service';
 import { limitConcurrency, Task } from '~/server/utils/concurrency-helpers';
+import { insertSorted } from '~/utils/array-helpers';
 import { createLogger } from '~/utils/logging';
 import { createJob, getJobDate, JobContext } from './job';
 
@@ -50,6 +51,10 @@ const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async 
 
     const start = Date.now();
     log(`Leaderboard ${id} - Starting`);
+    logToAxiom({
+      type: 'leaderboard-start',
+      id,
+    }).catch();
 
     if (includesCTE && query.includes('image_scores AS')) {
       if (!imageRange) imageRange = await getImageRange();
@@ -61,6 +66,11 @@ const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async 
     }
 
     log(`Leaderboard ${id} - Done - ${(Date.now() - start) / 1000}s`);
+    logToAxiom({
+      type: 'leaderboard-done',
+      id,
+      duration: Date.now() - start,
+    }).catch();
   });
   try {
     await limitConcurrency(tasks, 3);
@@ -169,8 +179,35 @@ async function getImageRange() {
   return [min, max] as [number, number];
 }
 
+function appendScore(userScores: Record<number, UserScoreKeeper>, toAdd: ImageScores[]) {
+  for (const score of toAdd) {
+    if (!userScores[score.userId])
+      userScores[score.userId] = { score: 0, scores: [], metrics: { imageCount: 0 } };
+
+    // Increment image count
+    userScores[score.userId].metrics.imageCount++;
+
+    // Append score
+    insertSorted(userScores[score.userId].scores!, score.score, 'desc');
+
+    // Remove lowest score if over limit
+    if (userScores[score.userId].scores!.length > IMAGE_SCORE_FALLOFF)
+      userScores[score.userId].scores!.pop();
+
+    // Add up metrics
+    for (const metric in score.metrics) {
+      if (!userScores[score.userId].metrics[metric]) userScores[score.userId].metrics[metric] = 0;
+      userScores[score.userId].metrics[metric] += score.metrics[metric];
+    }
+  }
+}
+
+type UserScoreKeeper = {
+  score: number;
+  scores?: number[];
+  metrics: Record<string, number>;
+};
 type ImageScores = {
-  imageId: number;
   userId: number;
   score: number;
   metrics: Record<string, number>;
@@ -180,7 +217,7 @@ const IMAGE_SCORE_FALLOFF = 120;
 const IMAGE_SCORE_MULTIPLIER = 100;
 async function imageLeaderboardPopulation(ctx: LeaderboardContext, [min, max]: [number, number]) {
   // Fetch Scores
-  let scores: ImageScores[] = [];
+  const userScores: Record<number, UserScoreKeeper> = {};
   const tasks: Task[] = [];
   const numTasks = Math.ceil((max - min) / IMAGE_SCORE_BATCH_SIZE);
   log(`Leaderboard ${ctx.id} - Fetching scores - ${numTasks} tasks`);
@@ -198,31 +235,20 @@ async function imageLeaderboardPopulation(ctx: LeaderboardContext, [min, max]: [
         [startIndex, endIndex]
       );
       // console.timeEnd(key);
-      scores.push(...batchScores.rows);
+      appendScore(userScores, batchScores.rows);
     });
   }
   await limitConcurrency(tasks, 5);
 
   // Add up scores
   log(`Leaderboard ${ctx.id} - Adding up scores`);
-  scores = scores.sort((a, b) => b.score - a.score);
-  const userScores: Record<number, { score: number; metrics: Record<string, number> }> = {};
-  for (const score of scores) {
-    // Build user score
-    if (!userScores[score.userId])
-      userScores[score.userId] = { score: 0, metrics: { imageCount: 0 } };
-
-    // Add score
-    userScores[score.userId].metrics.imageCount++;
-    const entryRank = userScores[score.userId].metrics.imageCount;
-    const quantityMultiplier = Math.max(0, 1 - Math.pow(entryRank / IMAGE_SCORE_FALLOFF, 0.5));
-    userScores[score.userId].score += score.score * quantityMultiplier;
-
-    // Add up metrics
-    for (const metric in score.metrics) {
-      if (!userScores[score.userId].metrics[metric]) userScores[score.userId].metrics[metric] = 0;
-      userScores[score.userId].metrics[metric] += score.metrics[metric];
-    }
+  for (const user of Object.values(userScores)) {
+    // Add up scores with quantity multipliers
+    user.scores!.forEach((score, rank) => {
+      const quantityMultiplier = Math.max(0, 1 - Math.pow(rank / IMAGE_SCORE_FALLOFF, 0.5));
+      user.score += score * quantityMultiplier;
+    });
+    delete user.scores;
   }
 
   // Apply multipliers and sqrt
@@ -239,7 +265,7 @@ async function imageLeaderboardPopulation(ctx: LeaderboardContext, [min, max]: [
       ...score,
     }))
     .sort((a, b) => b.score - a.score)
-    .slice(0, 1100);
+    .slice(0, 1100); // Overfetch to account for deleted users
 
   // Insert into leaderboard
   log(`Leaderboard ${ctx.id} - Inserting into leaderboard`);
