@@ -198,9 +198,10 @@ export default function CosmeticStoreProducts() {
                       <td>{shopItem.availableTo ? formatDate(shopItem.availableTo) : '-'}</td>
                       <td>
                         {(shopItem.availableQuantity ?? null) !== null
-                          ? `${Math.max(0, (shopItem.availableQuantity ?? 0) - meta.purchases)}/${
-                              shopItem.availableQuantity
-                            }`
+                          ? `${Math.max(
+                              0,
+                              (shopItem.availableQuantity ?? 0) - (meta.purchases ?? 0)
+                            )}/${shopItem.availableQuantity}`
                           : '-'}
                       </td>{' '}
                       <td>{shopItem.archivedAt ? formatDate(shopItem.archivedAt) : '-'}</td>
