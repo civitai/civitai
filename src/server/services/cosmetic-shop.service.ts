@@ -84,6 +84,15 @@ export const upsertCosmeticShopItem = async ({
     throw new Error('Available to date cannot be before available from date');
   }
 
+  if (
+    existingItem &&
+    availableQuantity &&
+    availableQuantity !== null &&
+    availableQuantity < existingItem?._count.purchases
+  ) {
+    throw new Error('Cannot set available quantity to less than the amount of purchases');
+  }
+
   if (id) {
     return dbWrite.cosmeticShopItem.update({
       where: { id },
@@ -104,6 +113,10 @@ export const upsertCosmeticShopItem = async ({
         addedById: userId,
         availableTo,
         availableFrom,
+        meta: {
+          ...(cosmeticShopItem.meta ?? {}),
+          purchases: 0,
+        },
       },
       select: cosmeticShopItemSelect,
     });

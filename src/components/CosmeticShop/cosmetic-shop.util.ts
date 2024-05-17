@@ -4,6 +4,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
+  CosmeticShopItemMeta,
   GetAllCosmeticShopSections,
   GetPaginatedCosmeticShopItemInput,
   GetShopInput,
@@ -184,14 +185,16 @@ export const useMutateCosmeticShop = () => {
 
         const sections = data.map((section) => {
           const updatedItems = section.items.map((item) => {
+            const meta = (item.shopItem.meta ?? {}) as CosmeticShopItemMeta;
             if (item.shopItem.id === shopItemId) {
               return {
                 ...item,
                 shopItem: {
                   ...item.shopItem,
-                  availableQuantity: item.shopItem.availableQuantity
-                    ? item.shopItem.availableQuantity - 1
-                    : null,
+                  meta: {
+                    ...meta,
+                    purchases: (meta.purchases ?? 0) + 1,
+                  },
                 },
               };
             }

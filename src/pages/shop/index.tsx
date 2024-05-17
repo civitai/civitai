@@ -281,7 +281,7 @@ export const CosmeticShopItem = ({
           New!
         </Badge>
       )}
-      {(remaining !== null || availableTo) && (
+      {(available !== null || availableTo) && (
         <Badge color="grape" className={classes.availability} px={6}>
           <Group position="apart" noWrap spacing={4}>
             {remaining === 0 ? (
