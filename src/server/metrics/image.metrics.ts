@@ -26,13 +26,14 @@ export const imageMetrics = createMetricProcessor({
 
     // Update the search index
     //---------------------------------------
-    log('update search index');
-    await imagesSearchIndex.queueUpdate(
-      [...ctx.affected].map((id) => ({
-        id,
-        action: SearchIndexUpdateQueueAction.Update,
-      }))
-    );
+    // log('update search index');
+    // await imagesSearchIndex.queueUpdate(
+    //   [...ctx.affected].map((id) => ({
+    //     id,
+    //     action: SearchIndexUpdateQueueAction.Update,
+    //   }))
+    // );
+    // get me all image metrics that have updated since last
 
     // Update the age group of the metrics
     //---------------------------------------
