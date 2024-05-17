@@ -43,6 +43,7 @@ type SearchIndexProcessor = {
     batchSize: number;
     startId: number;
     endId: number;
+    updateIds?: number[];
   }>;
   pullData: (
     context: SearchIndexContext,
@@ -168,7 +169,12 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
       // Run update
       const now = new Date();
       const queue = new TaskQueue('pull', maxQueueSize);
-      const { batchSize, startId = 0, endId } = await prepareBatches(ctx, lastUpdatedAt);
+      const {
+        batchSize,
+        startId = 0,
+        endId,
+        updatedIds,
+      } = await prepareBatches(ctx, lastUpdatedAt);
 
       logger(`createSearchIndexUpdateProcessor :: update :: Index last update at ${lastUpdatedAt}`);
 
@@ -199,10 +205,18 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
         });
       }
 
-      const updateItemsTasks = Math.ceil(queuedUpdates.content.length / batchSize);
+      const updatedItems = [
+        ...new Set<number>([
+          ...(updatedIds ?? []),
+          ...queuedUpdates.content.filter((id) => !updatedIds.includes(id)),
+        ]),
+      ];
+
+      const updateItemsTasks = Math.ceil(updatedItems.length / batchSize);
+
       for (let i = 0; i < updateItemsTasks; i++) {
         const batch = {
-          ids: queuedUpdates.content.slice(i * batchSize, (i + 1) * batchSize),
+          ids: updatedItems.slice(i * batchSize, (i + 1) * batchSize),
         };
 
         queue.addTask({
