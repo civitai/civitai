@@ -254,7 +254,7 @@ async function getImageTasks(ctx: ModelMetricContext) {
         JOIN "Model" m ON m.id = mv."modelId"
         JOIN "ImageResource" ir ON mv.id = ir."modelVersionId"
         JOIN "Image" i ON i.id = ir."imageId" AND m."userId" != i."userId"
-        JOIN "Post" p ON i."postId" = p.id AND p."publishedAt" IS NOT NULL AND metadata->>'unpublishedAt' IS NULL AND p."publishedAt" < now()
+        JOIN "Post" p ON i."postId" = p.id AND p."publishedAt" IS NOT NULL AND p."publishedAt" < now()
         WHERE
           mv.id IN (${ids})
       ) i

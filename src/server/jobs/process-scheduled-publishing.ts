@@ -40,7 +40,7 @@ export const processScheduledPublishing = createJob(
       JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
       JOIN "Model" m ON m.id = mv."modelId"
       WHERE
-        (p."publishedAt" IS NULL OR p.metadata->>'unpublishedAt' IS NOT NULL)
+        (p."publishedAt" IS NULL)
       AND mv.status = 'Scheduled' AND mv."publishedAt" <=  ${now};
     `;
 
@@ -76,7 +76,7 @@ export const processScheduledPublishing = createJob(
         FROM "ModelVersion" mv
         JOIN "Model" m ON m.id = mv."modelId"
         WHERE p.id IN (${Prisma.join(scheduledPostIds)})
-          AND (p."publishedAt" IS NULL OR p.metadata->>'unpublishedAt' IS NOT NULL)
+          AND (p."publishedAt" IS NULL)
           AND mv.id = p."modelVersionId" AND m."userId" = p."userId"
           AND mv.status = 'Scheduled' AND mv."publishedAt" <=  ${now};
       `);

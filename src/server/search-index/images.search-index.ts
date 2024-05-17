@@ -206,7 +206,6 @@ const onFetchItemsToIndex = async ({
         Prisma.sql`i."type" = 'image'`,
         Prisma.sql`i."needsReview" IS NULL`,
         Prisma.sql`p."publishedAt" IS NOT NULL`,
-        Prisma.sql`p.metadata->>'unpublishedAt' IS NULL`,
         Prisma.sql`p."availability" != 'Private'::"Availability"`,
         Prisma.sql`p."availability" != 'Unsearchable'::"Availability"`,
       ];
@@ -349,7 +348,7 @@ const onFetchItemsToIndex = async ({
           SELECT
             m.id "modelId"
           FROM "Image" i
-          JOIN "Post" p ON p.id = i."postId" AND p."modelVersionId" IS NOT NULL AND p."publishedAt" IS NOT NULL AND p.metadata->>'unpublishedAt' IS NULL
+          JOIN "Post" p ON p.id = i."postId" AND p."modelVersionId" IS NOT NULL AND p."publishedAt" IS NOT NULL
           JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
           JOIN "Model" m ON m.id = mv."modelId" AND i."userId" = m."userId"
           WHERE i.id IN (${Prisma.join(images.map(({ id }) => id))})
