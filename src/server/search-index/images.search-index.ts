@@ -177,7 +177,7 @@ type ImageTag = {
 };
 
 type User = {
-  id?: number;
+  id: number;
   username?: string | null;
   deletedAt?: Date | null;
   image?: string | null;
@@ -199,50 +199,57 @@ const transformData = async ({
   users: User[];
   userCosmetics: Awaited<ReturnType<typeof getCosmeticsForUsers>>;
 }) => {
-  const records = images.map(({ meta, userId, ...imageRecord }) => {
-    const user = userId ? users.find((u) => u.id === userId) ?? null : null;
-    const userCosmetic = userId ? userCosmetics[userId] ?? null : null;
+  const records = images
+    .map(({ meta, userId, ...imageRecord }) => {
+      const user = userId ? users.find((u) => u.id === userId) ?? null : null;
 
-    const parsed = imageGenerationSchema
-      .omit({ comfy: true, hashes: true })
-      .partial()
-      .safeParse(meta);
-    const tags = rawTags
-      .filter((rt) => rt.imageId === imageRecord.id)
-      .map((rt) => ({ id: rt.tagId, name: rt.tagName }));
-    const profilePicture = user
-      ? profilePictures.find((p) => p.id === user.profilePictureId) ?? null
-      : null;
+      if (!user) {
+        return null;
+      }
 
-    return {
-      ...imageRecord,
-      nsfwLevel: parseBitwiseBrowsingLevel(imageRecord.nsfwLevel),
-      createdAtUnix: imageRecord.createdAt.getTime(),
-      aspectRatio:
-        !imageRecord.width || !imageRecord.height
-          ? 'Unknown'
-          : imageRecord.width > imageRecord.height
-          ? 'Landscape'
-          : imageRecord.width < imageRecord.height
-          ? 'Portrait'
-          : 'Square',
-      generationTool: meta?.hasOwnProperty('comfy')
-        ? 'Comfy'
-        : meta?.hasOwnProperty('prompt')
-        ? 'Automatic1111'
-        : 'Unknown',
-      meta: parsed.success ? parsed.data : {},
-      user: {
-        ...user,
-        cosmetics: userCosmetic ?? [],
-        profilePicture,
-      },
-      tagNames: tags.map((t) => t.name),
-      tagIds: tags.map((t) => t.id),
-      reactions: [],
-      cosmetic: imageCosmetics[imageRecord.id] ?? null,
-    };
-  });
+      const userCosmetic = userId ? userCosmetics[userId] ?? null : null;
+
+      const parsed = imageGenerationSchema
+        .omit({ comfy: true, hashes: true })
+        .partial()
+        .safeParse(meta);
+      const tags = rawTags
+        .filter((rt) => rt.imageId === imageRecord.id)
+        .map((rt) => ({ id: rt.tagId, name: rt.tagName }));
+      const profilePicture = user
+        ? profilePictures.find((p) => p.id === user.profilePictureId) ?? null
+        : null;
+
+      return {
+        ...imageRecord,
+        nsfwLevel: parseBitwiseBrowsingLevel(imageRecord.nsfwLevel),
+        createdAtUnix: imageRecord.createdAt.getTime(),
+        aspectRatio:
+          !imageRecord.width || !imageRecord.height
+            ? 'Unknown'
+            : imageRecord.width > imageRecord.height
+            ? 'Landscape'
+            : imageRecord.width < imageRecord.height
+            ? 'Portrait'
+            : 'Square',
+        generationTool: meta?.hasOwnProperty('comfy')
+          ? 'Comfy'
+          : meta?.hasOwnProperty('prompt')
+          ? 'Automatic1111'
+          : 'Unknown',
+        meta: parsed.success ? parsed.data : {},
+        user: {
+          ...user,
+          cosmetics: userCosmetic ?? [],
+          profilePicture,
+        },
+        tagNames: tags.map((t) => t.name),
+        tagIds: tags.map((t) => t.id),
+        reactions: [],
+        cosmetic: imageCosmetics[imageRecord.id] ?? null,
+      };
+    })
+    .filter(isDefined);
 
   return records;
 };
