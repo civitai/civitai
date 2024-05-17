@@ -161,13 +161,14 @@ export const articleNotifications = createNotificationProcessor({
       )
       INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
-        REPLACE(gen_random_uuid()::text, '-', ''),
+        REPLACE('new-article-from-following:', details->>'articleId', ':', "ownerId"),
         "ownerId"    "userId",
         'new-article-from-following' "type",
         details,
         '${category}'::"NotificationCategory" "category"
       FROM new_article
-      WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-article-from-following');
+      WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-article-from-following')
+      ON CONFLICT (id) DO NOTHING;
     `,
   },
 });
