@@ -19,8 +19,10 @@ export type SystemModerationTag = {
   parentId?: number;
 };
 export async function getModeratedTags(): Promise<SystemModerationTag[]> {
-  const cachedTags = await redis.get(REDIS_KEYS.SYSTEM.MODERATED_TAGS);
-  if (cachedTags) return JSON.parse(cachedTags);
+  const cachedTags = await redis.packed.get<SystemModerationTag[]>(
+    REDIS_KEYS.SYSTEM.MODERATED_TAGS
+  );
+  if (cachedTags) return cachedTags;
 
   log('getting moderation tags');
   const tags = await dbRead.tag.findMany({
@@ -43,7 +45,7 @@ export async function getModeratedTags(): Promise<SystemModerationTag[]> {
 
   const combined: SystemModerationTag[] = [...tags, ...normalizedTagsOnTags];
 
-  await redis.set(REDIS_KEYS.SYSTEM.MODERATED_TAGS, JSON.stringify(combined), {
+  await redis.packed.set(REDIS_KEYS.SYSTEM.MODERATED_TAGS, combined, {
     EX: SYSTEM_CACHE_EXPIRY,
   });
 

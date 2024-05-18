@@ -1,7 +1,6 @@
 import { Prisma, PrismaClient } from '@prisma/client';
 import { CacheTTL } from '~/server/common/constants';
 import { redis } from '~/server/redis/client';
-import { fromJson, toJson } from '~/utils/json-helpers';
 import { createLogger } from '~/utils/logging';
 import { hashifyObject } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
@@ -17,11 +16,11 @@ export function queryCache(db: PrismaClient, key: string, version?: string) {
     if (options?.ttl === 0) return db.$queryRaw<T>(query);
 
     const cacheKey = [key, version, hashifyObject(query).toString()].filter(isDefined).join(':');
-    const cachedData = await redis.get(cacheKey);
-    if (cachedData && options?.ttl !== 0) return fromJson<T>(cachedData) ?? ([] as unknown as T);
+    const cachedData = await redis.packed.get<T>(cacheKey);
+    if (cachedData && options?.ttl !== 0) return cachedData ?? ([] as unknown as T);
 
     const result = await db.$queryRaw<T>(query);
-    await redis.set(cacheKey, toJson(result), { EX: options?.ttl });
+    await redis.packed.set(cacheKey, result, { EX: options?.ttl });
 
     if (options?.tag) await tagCacheKey(cacheKey, options?.tag);
     return result;
@@ -38,7 +37,7 @@ async function tagCacheKey(key: string, tag: string | string[]) {
 export async function bustCacheTag(tag: string | string[]) {
   const tags = Array.isArray(tag) ? tag : [tag];
   for (const tag of tags) {
-    const keys = await redis.sMembers(`tag:${tag}`);
+    const keys = await redis.packed.sMembers<string>(`tag:${tag}`);
     for (const key of keys) await redis.del(key);
     await redis.del(`tag:${tag}`);
   }
@@ -65,11 +64,11 @@ export function createCachedArray<T extends object>({
   async function fetch(ids: number[]) {
     if (!ids.length) return [];
     const results = new Set<T>();
-    const cacheJsons = await Promise.all(ids.map((id) => redis.get(`${key}:${id}`)));
-    const cacheArray = cacheJsons.filter((x) => x !== null).map((x) => JSON.parse(x ?? '{}'));
+    const cacheResults = await redis.packed.mGet<T>(ids.map((id) => `${key}:${id}`));
+    const cacheArray = cacheResults.filter((x) => x !== null) as T[];
     const cache = Object.fromEntries(cacheArray.map((x) => [x[idKey], x]));
 
-    const cacheDebounceCutoff = Date.now() - debounceTime * 1000;
+    const cacheDebounceCutoff = new Date(Date.now() - debounceTime * 1000);
     const cacheMisses = new Set<number>();
     const dontCache = new Set<number>();
     for (const id of [...new Set(ids)]) {
@@ -93,25 +92,24 @@ export function createCachedArray<T extends object>({
       log(`${key}: Cache miss - ${cacheMisses.size} items: ${[...cacheMisses].join(', ')}`);
       const dbResults = await lookupFn([...cacheMisses] as typeof ids);
 
-      const toCache: Record<string, string> = {};
-      const toCacheNotFound: Record<string, string> = {};
-      const cachedAt = Date.now();
+      const toCache: Record<string, MixedObject> = {};
+      const toCacheNotFound: Record<string, MixedObject> = {};
+      const cachedAt = new Date();
       for (const id of cacheMisses) {
         const result = dbResults[id];
         if (!result) {
-          if (cacheNotFound)
-            toCacheNotFound[id] = JSON.stringify({ [idKey]: id, notFound: true, cachedAt });
+          if (cacheNotFound) toCacheNotFound[id] = { [idKey]: id, notFound: true, cachedAt };
           continue;
         }
         results.add(result as T);
-        if (!dontCache.has(id)) toCache[id] = JSON.stringify({ ...result, cachedAt });
+        if (!dontCache.has(id)) toCache[id] = { ...result, cachedAt };
       }
 
       // then cache the results
       if (Object.keys(toCache).length > 0)
         await Promise.all(
           Object.entries(toCache).map(([id, cache]) =>
-            redis.set(`${key}:${id}`, cache, { EX: ttl })
+            redis.packed.set(`${key}:${id}`, cache, { EX: ttl })
           )
         );
 
@@ -120,7 +118,7 @@ export function createCachedArray<T extends object>({
         await Promise.all(
           Object.entries(toCacheNotFound).map(([id, cache]) => {
             return Promise.all([
-              redis.setNX(`${key}:${id}`, cache),
+              redis.packed.setNX(`${key}:${id}`, cache),
               redis.expire(`${key}:${id}`, ttl),
             ]);
           })
@@ -138,9 +136,13 @@ export function createCachedArray<T extends object>({
 
     await Promise.all(
       ids.map((id) =>
-        redis.set(`${key}:${id}`, JSON.stringify({ [idKey]: id, debounce: true }), {
-          EX: debounceTime,
-        })
+        redis.packed.set(
+          `${key}:${id}`,
+          { [idKey]: id, debounce: true },
+          {
+            EX: debounceTime,
+          }
+        )
       )
     );
     log(`Busted ${ids.length} ${key} items: ${ids.join(', ')}`);
@@ -150,12 +152,13 @@ export function createCachedArray<T extends object>({
     if (!Array.isArray(id)) id = [id];
 
     const results = await lookupFn(id, true);
-    const cachedAt = Date.now();
+    const cachedAt = new Date();
     await Promise.all(
-      Object.entries(results).map(([id, x]) =>
-        redis.set(`${key}:${id}`, JSON.stringify({ ...x, cachedAt }), {
+      Object.entries(results).map(
+        ([id, x]) => redis.packed.set(`${key}:${id}`, { ...x, cachedAt }),
+        {
           EX: ttl,
-        })
+        }
       )
     );
 

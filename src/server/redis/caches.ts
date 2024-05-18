@@ -167,6 +167,7 @@ export const cosmeticEntityCaches = Object.fromEntries(
     createCachedObject<WithClaimKey<ContentDecorationCosmetic>>({
       key: `${REDIS_KEYS.CACHES.COSMETICS}:${entity}`,
       idKey: 'equippedToId',
+      cacheNotFound: false,
       lookupFn: async (ids) => {
         const entityCosmetics = await dbRead.$queryRaw<WithClaimKey<ContentDecorationCosmetic>[]>`
           SELECT c.id, c.data, uc."equippedToId", uc."claimKey"
