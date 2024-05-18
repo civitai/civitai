@@ -7,15 +7,13 @@ import { isProd } from '~/env/other';
 declare global {
   // eslint-disable-next-line no-var, vars-on-top
   var globalRedis: RedisClientType | undefined;
-  // eslint-disable-next-line no-var, vars-on-top
-  var globalRedisLegacy: RedisClientType | undefined;
 }
 
 const log = createLogger('redis', 'green');
 
 function getCache(legacyMode = false) {
   log('Creating Redis client');
-  const redisInt: RedisClientType = createClient({
+  const client: RedisClientType = createClient({
     url: env.REDIS_URL,
     socket: {
       reconnectStrategy(retries) {
@@ -27,24 +25,21 @@ function getCache(legacyMode = false) {
     legacyMode,
     pingInterval: 4 * 60 * 1000,
   });
-  redisInt.on('error', (err) => log(`Redis Error: ${err}`));
-  redisInt.on('connect', () => log('Redis connected'));
-  redisInt.on('reconnecting', () => log('Redis reconnecting'));
-  redisInt.on('ready', () => log('Redis ready!'));
-  redisInt.connect();
-  return redisInt;
+  client.on('error', (err) => log(`Redis Error: ${err}`));
+  client.on('connect', () => log('Redis connected'));
+  client.on('reconnecting', () => log('Redis reconnecting'));
+  client.on('ready', () => log('Redis ready!'));
+  client.connect();
+
+  return client;
 }
 
 export let redis: RedisClientType;
-export let redisLegacy: RedisClientType;
 if (isProd) {
   redis = getCache();
-  redisLegacy = getCache(true);
 } else {
   if (!global.globalRedis) global.globalRedis = getCache();
-  if (!global.globalRedisLegacy) global.globalRedisLegacy = getCache(true);
   redis = global.globalRedis;
-  redisLegacy = global.globalRedisLegacy;
 }
 
 export const REDIS_KEYS = {
@@ -75,16 +70,16 @@ export const REDIS_KEYS = {
     NOTIFICATION_COUNTS: 'system:notification-counts',
   },
   CACHES: {
-    FILES_FOR_MODEL_VERSION: 'caches:files-for-model-version',
-    MULTIPLIERS_FOR_USER: 'caches:multipliers-for-user',
-    TAG_IDS_FOR_IMAGES: 'caches:tagIdsForImages',
-    COSMETICS: 'caches:cosmetics',
-    PROFILE_PICTURES: 'caches:profile-pictures',
-    IMAGES_FOR_MODEL_VERSION: 'caches:images-for-model-version',
-    EDGE_CACHED: 'caches:edge-cache',
+    FILES_FOR_MODEL_VERSION: 'packed:caches:files-for-model-version',
+    MULTIPLIERS_FOR_USER: 'packed:caches:multipliers-for-user',
+    TAG_IDS_FOR_IMAGES: 'packed:caches:tagIdsForImages',
+    COSMETICS: 'packed:caches:cosmetics',
+    PROFILE_PICTURES: 'packed:caches:profile-pictures',
+    IMAGES_FOR_MODEL_VERSION: 'packed:caches:images-for-model-version',
+    EDGE_CACHED: 'packed:caches:edge-cache',
   },
   QUEUES: {
-    BUCKETS: 'queues:buckets',
+    BUCKETS: 'packed:queues:buckets',
   },
   RESEARCH: {
     RATINGS_COUNT: 'research:ratings-count',
