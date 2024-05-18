@@ -247,6 +247,9 @@ function ReactionBadge({
           color: theme.fn.variant({ variant: 'light', color }).color,
           background: 'transparent !important',
         },
+        '&:hover': {
+          background: theme.fn.rgba(theme.fn.variant({ variant: 'light', color }).background!, 0.4),
+        },
       })}
       disabled={!canClick}
       pl={2}
@@ -262,7 +265,7 @@ function ReactionBadge({
         {!hideReactionCount && (
           <Text
             sx={(theme) => ({
-              color: !hasReacted && theme.colorScheme === 'dark' ? 'white' : undefined,
+              color: !hasReacted ? 'white' : undefined,
             })}
             inherit
           >
