@@ -22,6 +22,7 @@ import { useFiltersContext } from '~/providers/FiltersProvider';
 import { GetInfiniteImagesInput } from '~/server/schema/image.schema';
 import { getDisplayName } from '~/utils/string-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+import { ToolMultiSelect } from '~/components/Tool/ToolMultiSelect';
 
 // TODO: adjust filter as we begin to support more media types
 const availableMediaTypes = Object.values(MediaType).filter(
@@ -113,6 +114,10 @@ export function ImageFiltersDropdown({
     tt: 'capitalize',
   };
 
+  const handleChange: Props['onChange'] = (value) => {
+    onChange ? onChange(value) : setFilters(value);
+  };
+
   const target = (
     <Indicator
       offset={4}
@@ -162,9 +167,7 @@ export function ImageFiltersDropdown({
         <Chip.Group
           spacing={8}
           value={mergedFilters.types ?? []}
-          onChange={(types: MediaType[]) =>
-            onChange ? onChange({ types }) : setFilters({ types })
-          }
+          onChange={(types: MediaType[]) => handleChange({ types })}
           multiple
         >
           {availableMediaTypes.map((type, index) => (
@@ -178,9 +181,7 @@ export function ImageFiltersDropdown({
           <Chip
             {...chipProps}
             checked={mergedFilters.withMeta}
-            onChange={(checked) =>
-              onChange ? onChange({ withMeta: checked }) : setFilters({ withMeta: checked })
-            }
+            onChange={(checked) => handleChange({ withMeta: checked })}
           >
             Metadata only
           </Chip>
@@ -189,9 +190,7 @@ export function ImageFiltersDropdown({
               <Chip
                 {...chipProps}
                 checked={mergedFilters.hidden}
-                onChange={(checked) =>
-                  onChange ? onChange({ hidden: checked }) : setFilters({ hidden: checked })
-                }
+                onChange={(checked) => handleChange({ hidden: checked })}
               >
                 Hidden
               </Chip>
@@ -200,9 +199,7 @@ export function ImageFiltersDropdown({
           <Chip
             {...chipProps}
             checked={mergedFilters.fromPlatform}
-            onChange={(checked) =>
-              onChange ? onChange({ fromPlatform: checked }) : setFilters({ fromPlatform: checked })
-            }
+            onChange={(checked) => handleChange({ fromPlatform: checked })}
           >
             Made On-site
           </Chip>
@@ -210,16 +207,20 @@ export function ImageFiltersDropdown({
             <Chip
               {...chipProps}
               checked={mergedFilters.notPublished}
-              onChange={(checked) =>
-                onChange
-                  ? onChange({ notPublished: checked })
-                  : setFilters({ notPublished: checked })
-              }
+              onChange={(checked) => handleChange({ notPublished: checked })}
             >
               Not Published
             </Chip>
           )}
         </Group>
+
+        {/* <Divider label="Tools" labelProps={{ weight: 'bold', size: 'sm' }} />
+        <ToolMultiSelect
+          value={mergedFilters.tools ?? []}
+          onChange={(tools) => handleChange({ tools })}
+        />
+
+        <Divider label="Techniques" labelProps={{ weight: 'bold', size: 'sm' }} /> */}
       </Stack>
       {filterLength > 0 && (
         <Button

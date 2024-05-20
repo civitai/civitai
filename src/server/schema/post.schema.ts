@@ -101,18 +101,12 @@ export const addPostImageSchema = z.object({
 export type UpdatePostImageInput = z.infer<typeof updatePostImageSchema>;
 export const updatePostImageSchema = z.object({
   id: z.number(),
-  // meta: z.preprocess((value) => {
-  //   if (typeof value !== 'object') return null;
-  //   if (value && !Object.values(value).filter(isDefined).length) return null;
-  //   return value;
-  // }, imageMetaSchema.nullish()),
   meta: imageMetaSchema.nullish().transform((val) => {
     if (!val) return val;
     if (!Object.values(val).filter(isDefined).length) return null;
     return val;
   }),
   hideMeta: z.boolean().optional(),
-  // resources: z.array(imageResourceUpsertSchema),
 });
 
 export type ReorderPostImagesInput = z.infer<typeof reorderPostImagesSchema>;

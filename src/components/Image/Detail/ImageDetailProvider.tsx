@@ -1,12 +1,11 @@
 import { useDidUpdate, useHotkeys, useLocalStorage } from '@mantine/hooks';
-import { ImageGuardConnect } from '~/components/ImageGuard/ImageGuard2';
+import { ConnectProps } from '~/components/ImageGuard/ImageGuard2';
 import { useQueryImages } from '~/components/Image/image.utils';
 import { ReviewReactions } from '@prisma/client';
 import { useRouter } from 'next/router';
-import { createContext, useContext, useEffect, useMemo } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useIsMobile } from '~/hooks/useIsMobile';
 import { ImagesInfiniteModel } from '~/server/services/image.service';
 import { useHasClientHistory } from '~/store/ClientHistoryStore';
 import { ImageGetById, ImageGetInfinite } from '~/types/router';
@@ -20,11 +19,12 @@ type ImageDetailState = {
   image?: ImageGetInfinite[number] | ImageGetById;
   isLoading: boolean;
   active: boolean;
-  connect: ImageGuardConnect;
+  connect: ConnectProps;
   isMod?: boolean;
   isOwner?: boolean;
   shareUrl: string;
   canNavigate?: boolean;
+  index: number;
   toggleInfo: () => void;
   close: () => void;
   next: () => void;
@@ -62,17 +62,14 @@ export function ImageDetailProvider({
     collectionId?: number;
   } & Record<string, unknown>;
 }) {
-  const isMobile = useIsMobile();
-  const [active, setActive] = useLocalStorage({
-    key: `image-detail-open`,
-    defaultValue: true,
-  });
-
   const router = useRouter();
   const browserRouter = useBrowserRouter();
   const hasHistory = useHasClientHistory();
   const currentUser = useCurrentUser();
-  const { postId: queryPostId } = browserRouter.query;
+  const { postId: queryPostId, active = false } = browserRouter.query as {
+    postId?: number;
+    active?: boolean;
+  };
   const { modelId, modelVersionId, username, reactions, postId: filterPostId } = filters;
   const postId = queryPostId ?? filterPostId;
   // #region [data fetching]
@@ -89,10 +86,16 @@ export function ImageDetailProvider({
 
   const shouldFetchImage =
     !imagesLoading && (images.length === 0 || !images.find((x) => x.id === imageId));
+  // TODO - this needs to return the data as `ImagesInfiniteModel`
+  // alternatively, we always query multiple images, with the cursor starting at `imageId`
   const { data: prefetchedImage, isInitialLoading: imageLoading } = trpc.image.get.useQuery(
     { id: imageId },
     { enabled: shouldFetchImage }
   );
+
+  if (prefetchedImage && shouldFetchImage) {
+    images.unshift(prefetchedImage as any);
+  }
 
   useEffect(() => {
     if (prefetchedImage && shouldFetchImage) {
@@ -108,16 +111,13 @@ export function ImageDetailProvider({
     }
   }, [prefetchedImage]); // eslint-disable-line
 
-  useDidUpdate(() => {
-    if (isMobile && active) {
-      setActive(false);
-    } else if (!isMobile && !active) {
-      setActive(true);
-    }
-  }, [isMobile]);
+  function findCurrentImageIndex() {
+    const index = images.findIndex((x) => x.id === imageId);
+    return index > -1 ? index : 0;
+  }
 
-  // const images = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data]);
-  const image = images.find((x) => x.id === imageId) ?? prefetchedImage ?? undefined;
+  const index = findCurrentImageIndex();
+  const image = images[index];
   // #endregion
 
   // #region [back button functionality]
@@ -138,18 +138,16 @@ export function ImageDetailProvider({
 
   // #region [info toggle]
   const toggleInfo = () => {
-    setActive(!active);
+    if (!active)
+      browserRouter.push({ query: { ...browserRouter.query, active: true } }, browserRouter.asPath);
+    else if (active) browserRouter.back();
   };
   // #endregion
 
   // #region [navigation]
-  /**NOTES**
-  - when our current image is not found in the images array, we can navigate away from it, but we can't use the arrows to navigate back to it.
-*/
-  const index = images.findIndex((x) => x.id === imageId);
   const prevIndex = index - 1;
   const nextIndex = index + 1;
-  const canNavigate = index > -1 ? images.length > 1 : images.length > 0; // see notes
+  const canNavigate = images.length > 1;
 
   const navigate = (id: number) => {
     const query = browserRouter.query;
@@ -185,15 +183,15 @@ export function ImageDetailProvider({
   }, [browserRouter]);
 
   const isMod = currentUser?.isModerator ?? false;
-  const isOwner = currentUser?.id === image?.user.id;
+  const isOwner = currentUser?.id === images[index]?.user.id;
 
-  const connect: ImageGuardConnect = modelId
+  const connect: ConnectProps = modelId
     ? { connectType: 'model', connectId: modelId }
     : postId
     ? { connectType: 'post', connectId: postId }
     : username
     ? { connectType: 'user', connectId: username }
-    : ({} as any);
+    : {};
 
   return (
     <ImageDetailContext.Provider
@@ -212,6 +210,7 @@ export function ImageDetailProvider({
         shareUrl,
         canNavigate,
         navigate,
+        index,
       }}
     >
       {children}

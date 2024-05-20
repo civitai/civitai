@@ -4,7 +4,7 @@ import { createMetadataProcessor, SDResource } from '~/utils/metadata/base.metad
 import { parseAIR } from '~/utils/string-helpers';
 
 type CivitaiResource = {
-  weight: number;
+  weight?: number;
   air?: string;
   modelVersionId?: number;
   type?: string;

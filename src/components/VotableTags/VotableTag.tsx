@@ -100,11 +100,11 @@ export function VotableTag({
 
   const theme = useMantineTheme();
   const isNsfw = !getIsSafeBrowsingLevel(nsfwLevel);
-  const { color, shade } = votableTagColors[nsfwLevel];
+  const { color, shade } = votableTagColors[nsfwLevel][theme.colorScheme];
   const voteColor = isNsfw ? theme.colors[color][shade] : theme.colors.blue[5];
   const badgeColor = theme.fn.variant({
     color: color,
-    variant: isNsfw ? 'light' : 'filled',
+    variant: theme.colorScheme === 'dark' ? (isNsfw ? 'light' : 'filled') : 'light',
   });
   const badgeBorder = theme.fn.lighten(
     needsReview || !concrete
@@ -166,7 +166,7 @@ export function VotableTag({
   const canVote = tagId;
   let badge = (
     <Badge
-      radius="xs"
+      radius="sm"
       key={tagId}
       sx={{
         position: 'relative',
@@ -194,7 +194,13 @@ export function VotableTag({
             <UnstyledButton onClick={handleUpvote} className="z-10">
               <IconArrowBigUp
                 strokeWidth={0}
-                fill={vote === 1 ? voteColor : 'rgba(255, 255, 255, 0.3)'}
+                fill={
+                  vote === 1
+                    ? voteColor
+                    : theme.colorScheme === 'dark'
+                    ? 'rgba(255, 255, 255, 0.3)'
+                    : 'rgba(0, 0, 0, 0.3)'
+                }
                 size="1rem"
               />
             </UnstyledButton>
@@ -205,7 +211,13 @@ export function VotableTag({
             <UnstyledButton onClick={handleDownvote} className="z-10 mr-1">
               <IconArrowBigDown
                 strokeWidth={0}
-                fill={vote === -1 ? voteColor : 'rgba(255, 255, 255, 0.3)'}
+                fill={
+                  vote === -1
+                    ? voteColor
+                    : theme.colorScheme === 'dark'
+                    ? 'rgba(255, 255, 255, 0.3)'
+                    : 'rgba(0, 0, 0, 0.3)'
+                }
                 size="1rem"
               />
             </UnstyledButton>
@@ -220,7 +232,7 @@ export function VotableTag({
           <IconFlag
             size={12}
             strokeWidth={4}
-            color={theme.colors.yellow[4]}
+            color={theme.colorScheme === 'dark' ? theme.colors.orange[9] : theme.colors.yellow[4]}
             style={{ marginRight: 2 }}
           />
         )}
@@ -228,7 +240,7 @@ export function VotableTag({
           <IconHourglassEmpty
             size={12}
             strokeWidth={4}
-            color={theme.colors.yellow[4]}
+            color={theme.colorScheme === 'dark' ? theme.colors.orange[9] : theme.colors.yellow[4]}
             style={{ marginRight: 2 }}
           />
         )}

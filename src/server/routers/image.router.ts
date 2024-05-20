@@ -1,7 +1,6 @@
 import { cacheIt, edgeCacheIt } from './../middleware.trpc';
 import {
   getEntitiesCoverImageHandler,
-  getImageDetailHandler,
   getImageHandler,
   getImageResourcesHandler,
   getImagesAsPostsInfiniteHandler,
@@ -20,6 +19,8 @@ import {
   reportCsamImagesSchema,
   addOrRemoveImageToolsSchema,
   updateImageToolsSchema,
+  updateImageTechniqueSchema,
+  addOrRemoveImageTechniquesSchema,
 } from './../schema/image.schema';
 import {
   deleteImageHandler,
@@ -51,6 +52,11 @@ import {
   addImageTools,
   removeImageTools,
   updateImageTools,
+  updateImageTechniques,
+  removeImageTechniques,
+  addImageTechniques,
+  getImageDetail,
+  getImageGenerationData,
 } from '~/server/services/image.service';
 import { CacheTTL } from '~/server/common/constants';
 import { z } from 'zod';
@@ -96,12 +102,9 @@ export const imageRouter = router({
     .use(isOwnerOrModerator)
     .mutation(deleteImageHandler),
   setTosViolation: moderatorProcedure.input(getByIdSchema).mutation(setTosViolationHandler),
-  // Unused
-  // update: protectedProcedure
-  //   .input(updateImageSchema)
-  //   .use(isOwnerOrModerator)
-  //   .mutation(updateImageHandler),
-  getDetail: publicProcedure.input(getByIdSchema).query(getImageDetailHandler),
+  getDetail: publicProcedure
+    .input(getByIdSchema)
+    .query(({ input }) => getImageDetail({ ...input })),
   getInfinite: publicProcedure.input(getInfiniteImagesSchema).query(getInfiniteImagesHandler),
   getImagesForModelVersion: publicProcedure
     .input(getByIdSchema)
@@ -142,6 +145,17 @@ export const imageRouter = router({
   getImageRatingRequests: moderatorProcedure
     .input(imageRatingReviewInput)
     .query(({ input, ctx }) => getImageRatingRequests({ ...input, user: ctx.user })),
+  getGenerationData: publicProcedure
+    .input(getByIdSchema)
+    .use(
+      edgeCacheIt({
+        ttl: CacheTTL.day, // Cache is purged on remove resource
+        tags: (i) => ['image-generation-data', `image-generation-data-${i.id}`],
+      })
+    )
+    .query(({ input }) => getImageGenerationData(input)),
+
+  // #region [tools]
   addTools: protectedProcedure
     .input(addOrRemoveImageToolsSchema)
     .mutation(({ input, ctx }) => addImageTools({ ...input, user: ctx.user })),
@@ -151,4 +165,17 @@ export const imageRouter = router({
   updateTools: protectedProcedure
     .input(updateImageToolsSchema)
     .mutation(({ input, ctx }) => updateImageTools({ ...input, user: ctx.user })),
+  // #endregion
+
+  // #region [techniques]
+  addTechniques: protectedProcedure
+    .input(addOrRemoveImageTechniquesSchema)
+    .mutation(({ input, ctx }) => addImageTechniques({ ...input, user: ctx.user })),
+  removeTechniques: protectedProcedure
+    .input(addOrRemoveImageTechniquesSchema)
+    .mutation(({ input, ctx }) => removeImageTechniques({ ...input, user: ctx.user })),
+  updateTechniques: protectedProcedure
+    .input(updateImageTechniqueSchema)
+    .mutation(({ input, ctx }) => updateImageTechniques({ ...input, user: ctx.user })),
+  // #endregion
 });
