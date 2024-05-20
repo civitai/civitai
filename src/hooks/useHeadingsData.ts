@@ -80,14 +80,16 @@ const getNestedHeadings = (headingElements: Element[]) => {
   const headingLevels: { [level: string]: NestedHeading[] } = {};
 
   const addHeadingToLevel = (level: string, id: string, title: string | null) => {
-    const parentLevel = Number(level) - 1;
+    let parentLevel = Number(level) - 1;
+    let parentHeadings = headingLevels[parentLevel];
 
-    if (!headingLevels[parentLevel]) {
-      headingLevels[parentLevel] = [];
+    // Traverse up until a suitable parent is found
+    while (parentLevel > 1 && !parentHeadings) {
+      parentLevel -= 1;
+      parentHeadings = headingLevels[parentLevel];
     }
 
-    const parentHeadings = headingLevels[parentLevel];
-    const parentHeading = parentHeadings[parentHeadings.length - 1];
+    const parentHeading = parentHeadings && parentHeadings[parentHeadings.length - 1];
 
     const newHeading: NestedHeading = { id, title, level: Number(level), items: [] };
 

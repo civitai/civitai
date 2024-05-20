@@ -60,7 +60,7 @@ const addPublicCacheHeaders = (req: NextApiRequest, res: NextApiResponse) => {
 };
 
 export function PublicEndpoint(
-  handler: (req: AxiomAPIRequest, res: NextApiResponse) => Promise<void>,
+  handler: (req: AxiomAPIRequest, res: NextApiResponse) => Promise<void | NextApiResponse>,
   allowedMethods: string[] = ['GET']
 ) {
   return withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
@@ -72,7 +72,11 @@ export function PublicEndpoint(
 }
 
 export function AuthedEndpoint(
-  handler: (req: AxiomAPIRequest, res: NextApiResponse, user: SessionUser) => Promise<void>,
+  handler: (
+    req: AxiomAPIRequest,
+    res: NextApiResponse,
+    user: SessionUser
+  ) => Promise<void | NextApiResponse>,
   allowedMethods: string[] = ['GET']
 ) {
   return withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {

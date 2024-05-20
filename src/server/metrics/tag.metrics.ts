@@ -1,6 +1,5 @@
 import { createMetricProcessor, MetricProcessorRunContext } from '~/server/metrics/base.metrics';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
-import { tagsSearchIndex } from '~/server/search-index';
 import { createLogger } from '~/utils/logging';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { executeRefresh, getAffected, snippets } from '~/server/metrics/metric-helpers';
@@ -26,12 +25,6 @@ export const tagMetrics = createMetricProcessor({
     // Update the search index
     //---------------------------------------
     log('update search index');
-    await tagsSearchIndex.queueUpdate(
-      [...ctx.affected].map((id) => ({
-        id,
-        action: SearchIndexUpdateQueueAction.Update,
-      }))
-    );
   },
   async clearDay(ctx) {
     await executeRefresh(ctx)`

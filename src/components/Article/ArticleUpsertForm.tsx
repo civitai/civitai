@@ -133,7 +133,7 @@ export function ArticleUpsertForm({ article }: Props) {
           (x) => x !== 'userNsfwLevel'
         );
     }
-  }, [userNsfwLevel]);
+  }, [currentUser?.isModerator, userNsfwLevel]);
 
   const [publishing, setPublishing] = useState(false);
 

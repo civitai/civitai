@@ -25,7 +25,9 @@ export async function purgeCache({ urls, tags }: { urls?: string[]; tags?: strin
       await Promise.all(
         tags.map(async (tag) => redis.sMembers(REDIS_KEYS.CACHES.EDGE_CACHED + ':' + tag))
       )
-    ).flatMap((x) => getBaseUrl() + x);
+    )
+      .flat()
+      .map((x) => getBaseUrl() + x);
     urls = [...new Set([...(urls || []), ...taggedUrls])];
   }
 
@@ -39,5 +41,4 @@ export async function purgeCache({ urls, tags }: { urls?: string[]; tags?: strin
       tags.map(async (tag) => redis.del(REDIS_KEYS.CACHES.EDGE_CACHED + ':' + tag))
     );
   }
-  console.log('Purged cache', { urls, tags });
 }
