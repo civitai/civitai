@@ -17,7 +17,7 @@ declare module '@tiptap/core' {
 }
 
 export const STRAWPOLL_REGEX =
-  /(?:https?:\/\/)?(?:www\.)?strawpoll\.com\/(?:polls|embed)\/([a-zA-Z0-9_-]+)\/?/;
+  /(?:https?:\/\/)?(?:www\.)?strawpoll\.com\/(?:polls\/|embed\/)?([a-zA-Z0-9_-]+)\/?/;
 const isValidStrawPollUrl = (url: string) => {
   return STRAWPOLL_REGEX.test(url);
 };
