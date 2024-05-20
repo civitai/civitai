@@ -29,7 +29,7 @@ import {
   IconTrash,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { BackButton, NavigateBack } from '~/components/BackButton/BackButton';
@@ -49,6 +49,7 @@ import {
   InputText,
   useForm,
   InputFlag,
+  InputMultiSelect,
 } from '~/libs/form';
 import { upsertBountyInputSchema } from '~/server/schema/bounty.schema';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
@@ -76,6 +77,8 @@ import { containerQuery } from '~/utils/mantine-css-helpers';
 import { FeatureIntroductionHelpButton } from '~/components/FeatureIntroduction/FeatureIntroduction';
 import { ContentPolicyLink } from '../ContentPolicyLink/ContentPolicyLink';
 import { InfoPopover } from '../InfoPopover/InfoPopover';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { isDefined } from '~/utils/type-guards';
 
 const tooltipProps: Partial<TooltipProps> = {
   maw: 300,
@@ -177,7 +180,10 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
+const lockableProperties = ['nsfw', 'poi'];
+
 export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
+  const currentUser = useCurrentUser();
   const router = useRouter();
   const { classes } = useStyles();
 
@@ -319,6 +325,31 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
       performTransaction();
     }
   };
+
+  useEffect(() => {
+    const subscription = form.watch((value, { name, type }) => {
+      if (
+        currentUser?.isModerator &&
+        name &&
+        lockableProperties.includes(name) &&
+        !value.lockedProperties?.includes(name)
+      ) {
+        const locked = (value.lockedProperties ?? []).filter(isDefined);
+        form.setValue('lockedProperties', [...locked, name]);
+      }
+    });
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, []); // eslint-disable-line
+
+  function isLocked(key: string) {
+    return !currentUser?.isModerator ? bounty?.lockedProperties?.includes(key) : false;
+  }
+
+  function isLockedDescription(key: string, defaultDescription?: string) {
+    return bounty?.lockedProperties?.includes(key) ? 'Locked by moderator' : defaultDescription;
+  }
 
   return (
     <Form form={form} onSubmit={handleSubmit}>
@@ -796,6 +827,8 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
               />
               <InputSwitch
                 name="poi"
+                disabled={isLocked('poi')}
+                description={isLockedDescription('poi')}
                 label={
                   <Stack spacing={4}>
                     <Group spacing={4}>
@@ -807,8 +840,22 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                   </Stack>
                 }
               />
-              <InputSwitch name="nsfw" label="Is intended to produce sexual themes" />
+              <InputSwitch
+                disabled={isLocked('nsfw')}
+                description={isLockedDescription('nsfw')}
+                name="nsfw"
+                label="Is intended to produce sexual themes"
+              />
 
+              {currentUser?.isModerator && (
+                <Paper radius="md" p="xl" withBorder>
+                  <InputMultiSelect
+                    name="lockedProperties"
+                    label="Locked properties"
+                    data={lockableProperties}
+                  />
+                </Paper>
+              )}
               {hasPoiInNsfw && (
                 <AlertWithIcon color="red" pl={10} iconColor="red" icon={<IconExclamationMark />}>
                   <Text>

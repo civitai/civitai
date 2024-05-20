@@ -74,12 +74,13 @@ const commercialUseOptions: Array<{ value: CommercialUse; label: string }> = [
   { value: CommercialUse.Sell, label: 'Sell this model or merges' },
 ];
 
+const lockableProperties = ['nsfw', 'poi', 'category', 'tags'];
+
 export function ModelUpsertForm({ model, children, onSubmit }: Props) {
   const router = useRouter();
   const result = querySchema.safeParse(router.query);
   const currentUser = useCurrentUser();
 
-  const lockableProperties = ['nsfw', 'poi', 'category', 'tags'];
   const defaultCategory = result.success ? result.data.category : undefined;
   const defaultValues: z.infer<typeof schema> = {
     ...model,
