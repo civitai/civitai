@@ -153,19 +153,22 @@ function MyApp(props: CustomAppProps) {
                                     <PaypalProvider>
                                       <HiddenPreferencesProvider>
                                         <CivitaiLinkProvider>
-                                          <NotificationsProvider zIndex={9999}>
+                                          <NotificationsProvider
+                                            className="notifications-container"
+                                            zIndex={9999}
+                                          >
                                             <BrowserRouterProvider>
                                               <RecaptchaWidgetProvider>
-                                                <ChatContextProvider>
-                                                  <BaseLayout>
+                                                <BaseLayout>
+                                                  <ChatContextProvider>
                                                     <CustomModalsProvider>
                                                       {getLayout(<Component {...pageProps} />)}
                                                       <StripeSetupSuccessProvider />
                                                       <DialogProvider />
                                                       <RoutedDialogProvider />
                                                     </CustomModalsProvider>
-                                                  </BaseLayout>
-                                                </ChatContextProvider>
+                                                  </ChatContextProvider>
+                                                </BaseLayout>
                                               </RecaptchaWidgetProvider>
                                             </BrowserRouterProvider>
                                           </NotificationsProvider>

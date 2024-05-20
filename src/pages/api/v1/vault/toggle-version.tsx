@@ -3,6 +3,7 @@ import { SessionUser } from 'next-auth';
 import { z } from 'zod';
 import { toggleModelVersionOnVault } from '~/server/services/vault.service';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
+import { removeEmpty } from '~/utils/object-helpers';
 
 const schema = z.object({
   modelVersionId: z.coerce.number(),
@@ -15,13 +16,16 @@ export default AuthedEndpoint(
       return res.status(400).json({ error: `Could not parse provided model version` });
 
     try {
-      await toggleModelVersionOnVault({
+      const result = await toggleModelVersionOnVault({
         userId: user.id,
         modelVersionId: results.data.modelVersionId,
       });
-      return res.json({
-        success: true,
-      });
+      return res.json(
+        removeEmpty({
+          success: true,
+          vaultId: result?.id,
+        })
+      );
     } catch (error) {
       return res.status(500).json({ message: 'An unexpected error occurred', error });
     }

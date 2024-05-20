@@ -171,7 +171,7 @@ export const AccountSwitcher = ({
         {Object.entries(accounts).map(([k, v]) => (
           <Menu.Item
             key={k}
-            onClick={v.active ? undefined : () => swapAccount(v)}
+            onClick={v.active ? undefined : () => swapAccount(v.token)}
             sx={v.active ? { cursor: 'initial' } : {}}
           >
             <Group position="apart" w="100%">
@@ -195,7 +195,7 @@ export const AccountSwitcher = ({
       {Object.entries(accounts).map(([k, v]) => (
         <Group
           key={k}
-          onClick={v.active ? undefined : () => swapAccount(v)}
+          onClick={v.active ? undefined : () => swapAccount(v.token)}
           className={classes.link}
           sx={v.active ? { cursor: 'initial' } : {}}
           position="apart"

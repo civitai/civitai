@@ -83,7 +83,6 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   console.log('onIndexSetup :: all tasks completed');
 };
 
-export type UserSearchIndexRecord = Awaited<ReturnType<typeof onFetchItemsToIndex>>[number];
 type UserForSearchIndex = {
   id: number;
   username: string | null;
@@ -133,136 +132,16 @@ type UserForSearchIndex = {
   }[];
 };
 
-const onFetchItemsToIndex = async ({
-  db,
-  whereOr,
-  indexName,
-  ...queryProps
+const WHERE = [Prisma.sql`u.id != -1`, Prisma.sql`u."deletedAt" IS NULL`];
+
+const transformData = async ({
+  users,
+  profilePictures,
 }: {
-  db: PrismaClient;
-  indexName: string;
-  whereOr?: Prisma.Sql[];
-  skip?: number;
+  users: UserForSearchIndex[];
+  profilePictures: ProfileImage[];
 }) => {
-  const offset = queryProps.skip || 0;
-  console.log(
-    `onFetchItemsToIndex :: fetching starting for ${indexName} range:`,
-    offset,
-    offset + READ_BATCH_SIZE - 1,
-    ' filters:',
-    whereOr
-  );
-
-  const WHERE = [Prisma.sql`u.id != -1`, Prisma.sql`u."deletedAt" IS NULL`];
-
-  if (whereOr) {
-    WHERE.push(Prisma.sql`(${Prisma.join(whereOr, ' OR ')})`);
-  }
-
-  const users = await db.$queryRaw<UserForSearchIndex[]>`
-  WITH target AS MATERIALIZED (
-    SELECT
-      u.id,
-      u.username,
-      u."deletedAt",
-      u."createdAt",
-      u."profilePictureId",
-      u.image
-    FROM "User" u
-    WHERE ${Prisma.join(WHERE, ' AND ')}
-    OFFSET ${offset} LIMIT ${READ_BATCH_SIZE}
-  ), cosmetics AS MATERIALIZED (
-    SELECT
-      uc."userId",
-      jsonb_agg(
-        jsonb_build_object(
-          'data', uc.data,
-          'cosmetic', jsonb_build_object(
-            'id', c.id,
-            'data', c.data,
-            'type', c.type,
-            'source', c.source,
-            'name', c.name,
-            'leaderboardId', c."leaderboardId",
-            'leaderboardPosition', c."leaderboardPosition"
-          )
-        )
-      )  cosmetics
-    FROM "UserCosmetic" uc
-    JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
-    AND "equippedAt" IS NOT NULL
-    WHERE uc."userId" IN (SELECT id FROM target) AND uc."equippedToId" IS NULL
-    GROUP BY uc."userId"
-  ), ranks AS MATERIALIZED (
-    SELECT
-      ur."userId",
-      jsonb_build_object(
-        'leaderboardRank', ur."leaderboardRank",
-        'leaderboardId', ur."leaderboardId",
-        'leaderboardTitle', ur."leaderboardTitle",
-        'leaderboardCosmetic', ur."leaderboardCosmetic"
-      ) rank
-    FROM "UserRank" ur
-    WHERE ur."leaderboardRank" IS NOT NULL
-      AND ur."userId" IN (SELECT id FROM target)
-  ), stats AS MATERIALIZED (
-      SELECT
-        m."userId",
-        jsonb_build_object(
-          'ratingAllTime', IIF(sum("ratingCount") IS NULL OR sum("ratingCount") < 1, 0::double precision, sum("rating" * "ratingCount")/sum("ratingCount")),
-              'ratingCountAllTime', SUM("ratingCount"),
-              'downloadCountAllTime', SUM("downloadCount"),
-              'favoriteCountAllTime', SUM("favoriteCount"),
-              'thumbsUpCountAllTime', SUM("thumbsUpCount")
-        ) stats
-      FROM "ModelMetric" mm
-      JOIN "Model" m ON mm."modelId" = m.id AND timeframe = 'AllTime'
-      WHERE m."userId" IN (SELECT id FROM target)
-      GROUP BY m."userId"
-  ), metrics as MATERIALIZED (
-    SELECT
-      um."userId",
-      jsonb_build_object(
-        'followerCount', um."followerCount",
-        'uploadCount', um."uploadCount",
-        'followingCount', um."followingCount",
-        'reviewCount', um."reviewCount",
-        'answerAcceptCount', um."answerAcceptCount",
-        'hiddenCount', um."hiddenCount",
-        'answerCount', um."answerCount"
-      ) metrics
-    FROM "UserMetric" um
-    WHERE um.timeframe = 'AllTime'
-      AND um."userId" IN (SELECT id FROM target)
-  )
-  SELECT
-    t.*,
-    (SELECT cosmetics FROM cosmetics c WHERE c."userId" = t.id),
-    (SELECT rank FROM ranks r WHERE r."userId" = t.id),
-    (SELECT metrics FROM metrics m WHERE m."userId" = t.id),
-    (SELECT stats FROM stats s WHERE s."userId" = t.id)
-  FROM target t
-  `;
-
-  console.log(
-    `onFetchItemsToIndex :: fetching complete for ${indexName} range:`,
-    offset,
-    offset + READ_BATCH_SIZE - 1,
-    'filters:',
-    whereOr
-  );
-
-  // Avoids hitting the DB without data.
-  if (users.length === 0) {
-    return [];
-  }
-
-  const profilePictures = await db.image.findMany({
-    where: { id: { in: users.map((u) => u.profilePictureId).filter(isDefined) } },
-    select: profileImageSelect,
-  });
-
-  const indexReadyRecords = users.map((userRecord) => {
+  const records = users.map((userRecord) => {
     const stats = userRecord.stats;
     const cosmetics = userRecord.cosmetics ?? [];
     const profilePicture =
@@ -287,126 +166,166 @@ const onFetchItemsToIndex = async ({
     };
   });
 
-  return indexReadyRecords;
+  return records;
 };
 
-const onUpdateQueueProcess = async ({ db, indexName }: { db: PrismaClient; indexName: string }) => {
-  const queue = await SearchIndexUpdate.getQueue(indexName, SearchIndexUpdateQueueAction.Update);
+type ProfileImage = Prisma.ImageGetPayload<{
+  select: typeof profileImageSelect;
+}>;
 
-  console.log(
-    'onUpdateQueueProcess :: A total of ',
-    queue.content.length,
-    ' have been updated and will be re-indexed'
-  );
-
-  const batchCount = Math.ceil(queue.content.length / READ_BATCH_SIZE);
-
-  const itemsToIndex: UserSearchIndexRecord[] = [];
-
-  for (let batchNumber = 0; batchNumber < batchCount; batchNumber++) {
-    const batch = queue.content.slice(
-      batchNumber * READ_BATCH_SIZE,
-      batchNumber * READ_BATCH_SIZE + READ_BATCH_SIZE
-    );
-
-    const newItems = await onFetchItemsToIndex({
-      db,
-      indexName,
-      whereOr: [Prisma.sql`u.id IN (${Prisma.join(batch)})`],
-    });
-
-    itemsToIndex.push(...newItems);
-  }
-
-  await queue.commit();
-  return itemsToIndex;
-};
-const onIndexUpdate = async ({
-  db,
-  lastUpdatedAt,
-  indexName,
-  updateIds,
-  deleteIds,
-}: SearchIndexRunContext) => {
-  // Confirm index setup & working:
-  await onIndexSetup({ indexName });
-  // Cleanup documents that require deletion:
-  // Always pass INDEX_ID here, not index name, as pending to delete will
-  // always use this name.
-  await onSearchIndexDocumentsCleanup({ db, indexName: INDEX_ID });
-
-  if (deleteIds && deleteIds.length > 0) {
-    await onSearchIndexDocumentsCleanup({ db, indexName: INDEX_ID, ids: deleteIds });
-  }
-
-  let offset = 0;
-  const userTasks: EnqueuedTask[] = [];
-
-  if (lastUpdatedAt) {
-    // Only if this is an update (NOT a reset or first run) will we care for queued items:
-
-    // Update whatever items we have on the queue.
-    // Do it on batches, since it's possible that there are far more items than we expect:
-    const updateTasks = await onUpdateQueueProcess({
-      db,
-      indexName,
-    });
-
-    if (updateTasks.length > 0) {
-      const updateBaseTasks = await updateDocs({
-        indexName,
-        documents: updateTasks,
-        batchSize: MEILISEARCH_DOCUMENT_BATCH_SIZE,
-      });
-
-      console.log('onIndexUpdate :: base tasks for updated items have been added');
-      userTasks.push(...updateBaseTasks);
-    }
-  }
-
-  while (true) {
-    console.log(
-      `onIndexUpdate :: fetching starting for ${indexName} range:`,
-      offset,
-      offset + READ_BATCH_SIZE - 1
-    );
-
-    const whereOr: Prisma.Sql[] = [];
-
-    if (updateIds && updateIds.length > 0) {
-      whereOr.push(Prisma.sql`u.id IN (${Prisma.join(updateIds)})`);
-    }
-
-    if (lastUpdatedAt) {
-      whereOr.push(Prisma.sql`u."createdAt" > ${lastUpdatedAt}`);
-    }
-
-    const indexReadyRecords = await onFetchItemsToIndex({
-      db,
-      indexName,
-      skip: offset,
-      whereOr,
-    });
-
-    if (indexReadyRecords.length === 0) break;
-
-    const tasks = await updateDocs({
-      indexName,
-      documents: indexReadyRecords,
-      batchSize: MEILISEARCH_DOCUMENT_BATCH_SIZE,
-    });
-
-    userTasks.push(...tasks);
-
-    offset += indexReadyRecords.length;
-  }
-
-  console.log('onIndexUpdate :: index update complete');
-};
+export type UserSearchIndexRecord = Awaited<ReturnType<typeof transformData>>[number];
 
 export const usersSearchIndex = createSearchIndexUpdateProcessor({
   indexName: INDEX_ID,
-  swapIndexName: SWAP_INDEX_ID,
-  onIndexUpdate,
-  onIndexSetup,
+  setup: onIndexSetup,
+  workerCount: 25,
+  prepareBatches: async ({ db, logger }, lastUpdatedAt) => {
+    const where = [
+      ...WHERE,
+      lastUpdatedAt ? Prisma.sql`u."createdAt" >= ${lastUpdatedAt}` : undefined,
+    ].filter(isDefined);
+
+    const data = await db.$queryRaw<{ startId: number; endId: number }[]>`
+      SELECT MIN(id) as "startId", MAX(id) as "endId" FROM "User" u
+      WHERE ${Prisma.join(where, ' AND ')}
+    `;
+
+    const { startId, endId } = data[0];
+
+    logger(
+      `PrepareBatches :: Prepared batch: ${startId} - ${endId} ... Last updated: ${lastUpdatedAt}`
+    );
+
+    return {
+      batchSize: READ_BATCH_SIZE,
+      startId,
+      endId,
+    };
+  },
+  pullData: async ({ db, logger }, batch) => {
+    logger(`PullData :: Pulling data for batch: ${batch}`);
+    const where = [
+      ...WHERE,
+      batch.type === 'update' ? Prisma.sql`u.id IN (${Prisma.join(batch.ids)})` : undefined,
+      batch.type === 'new'
+        ? Prisma.sql`u.id >= ${batch.startId} AND u.id <= ${batch.endId}`
+        : undefined,
+    ].filter(isDefined);
+
+    const users = await db.$queryRaw<UserForSearchIndex[]>`
+    WITH target AS MATERIALIZED (
+      SELECT
+        u.id,
+        u.username,
+        u."deletedAt",
+        u."createdAt",
+        u."profilePictureId",
+        u.image
+      FROM "User" u
+      WHERE ${Prisma.join(where, ' AND ')}
+    ), cosmetics AS MATERIALIZED (
+      SELECT
+        uc."userId",
+        jsonb_agg(
+          jsonb_build_object(
+            'data', uc.data,
+            'cosmetic', jsonb_build_object(
+              'id', c.id,
+              'data', c.data,
+              'type', c.type,
+              'source', c.source,
+              'name', c.name,
+              'leaderboardId', c."leaderboardId",
+              'leaderboardPosition', c."leaderboardPosition"
+            )
+          )
+        )  cosmetics
+      FROM "UserCosmetic" uc
+      JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
+      AND "equippedAt" IS NOT NULL
+      WHERE uc."userId" IN (SELECT id FROM target) AND uc."equippedToId" IS NULL
+      GROUP BY uc."userId"
+    ), ranks AS MATERIALIZED (
+      SELECT
+        ur."userId",
+        jsonb_build_object(
+          'leaderboardRank', ur."leaderboardRank",
+          'leaderboardId', ur."leaderboardId",
+          'leaderboardTitle', ur."leaderboardTitle",
+          'leaderboardCosmetic', ur."leaderboardCosmetic"
+        ) rank
+      FROM "UserRank" ur
+      WHERE ur."leaderboardRank" IS NOT NULL
+        AND ur."userId" IN (SELECT id FROM target)
+    ), stats AS MATERIALIZED (
+        SELECT
+          m."userId",
+          jsonb_build_object(
+            'ratingAllTime', IIF(sum("ratingCount") IS NULL OR sum("ratingCount") < 1, 0::double precision, sum("rating" * "ratingCount")/sum("ratingCount")),
+                'ratingCountAllTime', SUM("ratingCount"),
+                'downloadCountAllTime', SUM("downloadCount"),
+                'favoriteCountAllTime', SUM("favoriteCount"),
+                'thumbsUpCountAllTime', SUM("thumbsUpCount")
+          ) stats
+        FROM "ModelMetric" mm
+        JOIN "Model" m ON mm."modelId" = m.id AND timeframe = 'AllTime'
+        WHERE m."userId" IN (SELECT id FROM target)
+        GROUP BY m."userId"
+    ), metrics as MATERIALIZED (
+      SELECT
+        um."userId",
+        jsonb_build_object(
+          'followerCount', um."followerCount",
+          'uploadCount', um."uploadCount",
+          'followingCount', um."followingCount",
+          'reviewCount', um."reviewCount",
+          'answerAcceptCount', um."answerAcceptCount",
+          'hiddenCount', um."hiddenCount",
+          'answerCount', um."answerCount"
+        ) metrics
+      FROM "UserMetric" um
+      WHERE um.timeframe = 'AllTime'
+        AND um."userId" IN (SELECT id FROM target)
+    )
+    SELECT
+      t.*,
+      (SELECT cosmetics FROM cosmetics c WHERE c."userId" = t.id),
+      (SELECT rank FROM ranks r WHERE r."userId" = t.id),
+      (SELECT metrics FROM metrics m WHERE m."userId" = t.id),
+      (SELECT stats FROM stats s WHERE s."userId" = t.id)
+    FROM target t
+    `;
+
+    // Avoids hitting the DB without data.
+    if (users.length === 0) {
+      return {
+        users: [],
+        profilePictures: [],
+      };
+    }
+
+    logger(`PullData :: Pulled users`);
+
+    const profilePictures = await db.image.findMany({
+      where: { id: { in: users.map((u) => u.profilePictureId).filter(isDefined) } },
+      select: profileImageSelect,
+    });
+
+    logger(`PullData :: Pulled tags & profile pics.`);
+
+    return {
+      users,
+      profilePictures,
+    };
+  },
+  transformData,
+  pushData: async ({ indexName, jobContext }, records) => {
+    await updateDocs({
+      indexName,
+      documents: records as any[],
+      batchSize: MEILISEARCH_DOCUMENT_BATCH_SIZE,
+    });
+
+    return;
+  },
 });

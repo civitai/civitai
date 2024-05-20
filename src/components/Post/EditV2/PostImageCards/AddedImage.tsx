@@ -10,9 +10,7 @@ import {
   Menu,
   Text,
 } from '@mantine/core';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import React, { createContext, useContext, useState } from 'react';
-import { VotableTags } from '~/components/VotableTags/VotableTags';
+import { ImageIngestionStatus } from '@prisma/client';
 import {
   IconArrowBackUp,
   IconChevronDown,
@@ -20,34 +18,36 @@ import {
   IconDotsVertical,
   IconEye,
   IconEyeOff,
-  IconInfoCircle,
   IconPencil,
   IconPlus,
   IconTrash,
 } from '@tabler/icons-react';
-import { dialogStore } from '~/components/Dialog/dialogStore';
+import React, { createContext, useContext, useState } from 'react';
 import { ConfirmDialog } from '~/components/Dialog/Common/ConfirmDialog';
-import { showErrorNotification } from '~/utils/notifications';
-import { trpc } from '~/utils/trpc';
+import { openSetBrowsingLevelModal } from '~/components/Dialog/dialog-registry';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { UnblockImage } from '~/components/Image/UnblockImage/UnblockImage';
+import { BrowsingLevelBadge } from '~/components/ImageGuard/ImageGuard2';
+import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { ImageMetaModal } from '~/components/Post/EditV2/ImageMetaModal';
 import {
   PostEditImageDetail,
   usePostEditStore,
   usePostPreviewContext,
 } from '~/components/Post/EditV2/PostEditProvider';
-import { ImageToolsPopover } from '~/components/Post/EditV2/PostImageToolsPopover';
-import { PostImageTool } from '~/components/Post/EditV2/PostImageTool';
+import { ImageToolsPopover } from '~/components/Post/EditV2/Tools/PostImageToolsPopover';
+import { PostImageTool } from '~/components/Post/EditV2/Tools/PostImageTool';
 import { sortAlphabeticallyBy } from '~/utils/array-helpers';
 import { useImageStore } from '~/store/image.store';
-import { ImageIngestionStatus } from '@prisma/client';
-import { UnblockImage } from '~/components/Image/UnblockImage/UnblockImage';
 import { useCurrentUserRequired } from '~/hooks/useCurrentUser';
-import { BrowsingLevelBadge } from '~/components/ImageGuard/ImageGuard2';
-import { openSetBrowsingLevelModal } from '~/components/Dialog/dialog-registry';
-import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { CustomCard } from './CustomCard';
-import { create } from 'zustand';
 import { createSelectStore } from '~/store/select.store';
+import { ImageTechniquesPopover } from '~/components/Post/EditV2/Techniques/PostImageTechniquesPopover';
+import { PostImageTechnique } from '~/components/Post/EditV2/Techniques/PostImageTechnique';
+import { VotableTags } from '~/components/VotableTags/VotableTags';
+import { showErrorNotification } from '~/utils/notifications';
+import { trpc } from '~/utils/trpc';
 
 // #region [types]
 type SimpleMetaPropsKey = keyof typeof simpleMetaProps;
@@ -56,6 +56,7 @@ const simpleMetaProps = {
   steps: 'Steps',
   sampler: 'Sampler',
   seed: 'Seed',
+  clipSkip: 'Clip skip',
 } as const;
 // #endregion
 
@@ -160,7 +161,7 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
         toggleHidePrompt,
       }}
     >
-      <div className="bg-gray-0 dark:bg-dark-8 border border-gray-1 dark:border-dark-6 rounded-lg overflow-hidden">
+      <div className="overflow-hidden rounded-lg border border-gray-1 bg-gray-0 dark:border-dark-6 dark:bg-dark-8">
         {showPreview ? <Preview /> : <EditDetail />}
       </div>
     </AddedImageContext.Provider>
@@ -215,8 +216,8 @@ function EditDetail() {
   const hasSimpleMeta = !!simpleMeta.length;
 
   return (
-    <div className="@container relative">
-      <div className={`p-3 flex flex-col gap-3  ${!showPreview ? '@sm:p-6 @sm:gap-4' : ''}`}>
+    <div className="relative @container">
+      <div className={`flex flex-col gap-3 p-3  ${!showPreview ? '@sm:gap-4 @sm:p-6' : ''}`}>
         <LoadingOverlay visible={isDeleting} />
         <div
           className={`flex flex-row-reverse flex-wrap gap-3 ${
@@ -227,11 +228,11 @@ function EditDetail() {
       // #region [image]
       */}
           {(!showPreview || hasSimpleMeta) && (
-            <div className={`flex flex-col gap-3 w-full ${!showPreview ? '@sm:w-4/12' : ''}`}>
+            <div className={`flex w-full flex-col gap-3 ${!showPreview ? '@sm:w-4/12' : ''}`}>
               {!showPreview && <PostImage />}
               {hasSimpleMeta && (
                 <>
-                  <div className="flex flex-col not-last:*:border-b *:border-gray-4 dark:*:border-dark-4">
+                  <div className="flex flex-col *:border-gray-4 not-last:*:border-b dark:*:border-dark-4">
                     {simpleMeta.map(([key, label]) => (
                       <div key={key} className="flex justify-between py-0.5">
                         <Text>{label}</Text>
@@ -261,7 +262,7 @@ function EditDetail() {
           )}
           {/* #endregion */}
 
-          <div className={`flex flex-col gap-3 w-full flex-1 ${!showPreview ? '@sm:gap-4' : ''}`}>
+          <div className={`flex w-full flex-1 flex-col gap-3 ${!showPreview ? '@sm:gap-4' : ''}`}>
             {/*
           // #region [TOS Violation]
           */}
@@ -273,7 +274,7 @@ function EditDetail() {
           */}
 
             <CustomCard className="flex flex-col gap-3">
-              <div className="flex justify-between items-center">
+              <div className="flex items-center justify-between">
                 <h3 className=" text-lg font-semibold leading-none text-dark-7 dark:text-gray-0">
                   Prompt
                 </h3>
@@ -307,7 +308,7 @@ function EditDetail() {
                 )}
               </div>
               {meta?.prompt && (
-                <Text className={`leading-5 line-clamp-3 ${hideMeta ? 'opacity-20' : ''}`}>
+                <Text className={`line-clamp-3 leading-5 ${hideMeta ? 'opacity-20' : ''}`}>
                   {meta.prompt}
                 </Text>
               )}
@@ -315,13 +316,13 @@ function EditDetail() {
                 <>
                   <Divider />
                   <h3
-                    className={`text-md leading-none text-dark-7 dark:text-gray-0 ${
+                    className={`leading-none text-dark-7 dark:text-gray-0 ${
                       hideMeta ? 'opacity-20' : ''
                     }`}
                   >
                     Negative Prompt
                   </h3>
-                  <Text className={`leading-5 line-clamp-3 ${hideMeta ? 'opacity-20' : ''}`}>
+                  <Text className={`line-clamp-3 leading-5 ${hideMeta ? 'opacity-20' : ''}`}>
                     {meta.negativePrompt}
                   </Text>
                 </>
@@ -354,7 +355,7 @@ function EditDetail() {
                   .filter((x) => !!x.modelName)
                   .slice(0, !showMoreResources ? 3 : resources.length)
                   .map((resource, i) => (
-                    <div key={i} className="flex justify-between items-center gap-3">
+                    <div key={i} className="flex items-center justify-between gap-3">
                       <Text>
                         {resource.modelName} - {resource.modelType}
                       </Text>
@@ -408,8 +409,8 @@ function EditDetail() {
                       position="right"
                       iconProps={{ size: 20 }}
                     >
-                      Traditional or generative AI programs, platformms or websites used to create
-                      this image.
+                      Models, LoRAs, embeddings or other Stable Diffusion specific resources used to
+                      create this image.
                     </InfoPopover>
                   </div>
                   <Text>
@@ -435,14 +436,21 @@ function EditDetail() {
           */}
 
             <CustomCard className="flex flex-col gap-2">
-              <div className="flex justify-between items-center">
+              <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <h3 className=" text-lg font-semibold leading-none text-dark-7 dark:text-gray-0 ">
                     Tools
                   </h3>
-                  <ActionIcon variant="transparent" size="sm">
-                    <IconInfoCircle />
-                  </ActionIcon>
+                  <InfoPopover
+                    type="hover"
+                    variant="transparent"
+                    size="sm"
+                    position="right"
+                    iconProps={{ size: 20 }}
+                  >
+                    Traditional or generative AI programs, platforms or websites used to create this
+                    image.
+                  </InfoPopover>
                 </div>
                 <ImageToolsPopover image={image}>
                   <Button
@@ -459,7 +467,7 @@ function EditDetail() {
                   </Button>
                 </ImageToolsPopover>
               </div>
-              {!!image.tools.length && (
+              {!!image.tools?.length && (
                 <ul className="flex flex-col">
                   {sortAlphabeticallyBy([...image.tools], (x) => x.name).map((tool, index) => (
                     <li key={tool.id} className="list-none">
@@ -471,12 +479,65 @@ function EditDetail() {
               )}
             </CustomCard>
             {/* #endregion */}
+
+            {/*
+          // #region [techniques]
+          */}
+
+            <CustomCard className="flex flex-col gap-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <h3 className=" text-lg font-semibold leading-none text-dark-7 dark:text-gray-0 ">
+                    Techniques
+                  </h3>
+                  {/* <ActionIcon variant="transparent" size="sm">
+                    <IconInfoCircle />
+                  </ActionIcon> */}
+                </div>
+                <ImageTechniquesPopover image={image}>
+                  <Button
+                    variant="light"
+                    color="blue"
+                    compact
+                    size="sm"
+                    classNames={{ label: 'flex gap-1' }}
+                    onClick={() => undefined}
+                    className="text-sm"
+                  >
+                    <IconPlus size={16} />
+                    <span>TOOL</span>
+                  </Button>
+                </ImageTechniquesPopover>
+              </div>
+              {!!image.techniques.length && (
+                <ul className="flex flex-col">
+                  {sortAlphabeticallyBy([...image.techniques], (x) => x.name).map(
+                    (technique, index) => (
+                      <li key={technique.id} className="list-none">
+                        {index !== 0 && <Divider />}
+                        <PostImageTechnique image={image} technique={technique} />
+                      </li>
+                    )
+                  )}
+                </ul>
+              )}
+            </CustomCard>
+            {/* #endregion */}
+
+            {meta?.external && Object.keys(meta?.external).length > 0 && (
+              <CustomCard className="flex flex-col gap-2">
+                <h3 className=" text-lg font-semibold leading-none text-dark-7 dark:text-gray-0 ">
+                  External Data
+                </h3>
+                <Text>Found external data - will apply after post is published.</Text>
+              </CustomCard>
+            )}
           </div>
         </div>
         {/*
  // #region [tags]
  */}
-        {(!!image.tags.length || isScanned) && (
+        {(!!image.tags?.length || isScanned) && (
           <>
             <Divider />
             <VotableTags
@@ -493,7 +554,7 @@ function EditDetail() {
             color="yellow"
             w="100%"
             radius={0}
-            className="p-2 rounded-lg"
+            className="rounded-lg p-2"
             classNames={{ message: 'flex items-center justify-center gap-2' }}
           >
             <Loader size="xs" />
@@ -513,7 +574,7 @@ function PostImage() {
   return (
     <div className={`relative`}>
       <div
-        className="flex-1 flex mx-auto"
+        className="mx-auto flex flex-1"
         style={{
           // TODO - db/code cleanup - ideally we only use metadata to get dimensions in future
           aspectRatio: `${metadata?.width ?? 1}/${metadata?.height ?? 1}`,
@@ -527,7 +588,7 @@ function PostImage() {
           className={showPreview ? 'rounded-none' : 'rounded-lg'}
         />
       </div>
-      <div className="absolute top-0 left-0 right-0 h-12 z-10 bg-gradient-to-b from-black opacity-25" />
+      <div className="absolute inset-x-0 top-0 z-10 h-12 bg-gradient-to-b from-black opacity-25" />
       {!!nsfwLevel && (
         <BrowsingLevelBadge
           browsingLevel={nsfwLevel}
@@ -535,10 +596,10 @@ function PostImage() {
           onClick={
             !isBlocked ? () => openSetBrowsingLevelModal({ imageId: id, nsfwLevel }) : undefined
           }
-          className={`absolute top-2 left-2 z-20 ${!isBlocked ? 'cursor-pointer' : ''}`}
+          className={`absolute left-2 top-2 z-20 ${!isBlocked ? 'cursor-pointer' : ''}`}
         />
       )}
-      <div className="absolute top-2 right-2 z-20 flex gap-1">
+      <div className="absolute right-2 top-2 z-20 flex gap-1">
         <Menu withArrow position="bottom-end">
           <Menu.Target>
             <ActionIcon>

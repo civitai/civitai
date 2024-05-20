@@ -1,21 +1,22 @@
 import {
   ActionIcon,
   Alert,
+  Box,
   createStyles,
+  Divider,
   Group,
-  TextInput,
-  Text,
+  Loader,
   Popover,
   Stack,
-  Box,
-  Divider,
-  Loader,
+  Text,
+  TextInput,
   useMantineTheme,
 } from '@mantine/core';
-import { useDebouncedValue, getHotkeyHandler, useClickOutside, usePrevious } from '@mantine/hooks';
+import { getHotkeyHandler, useClickOutside, useDebouncedValue, usePrevious } from '@mantine/hooks';
 import { IconPlus, IconStar, IconX } from '@tabler/icons-react';
-import { useEffect, useState, useMemo, createContext, useContext } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { POST_TAG_LIMIT } from '~/server/common/constants';
 import { PostDetailEditable } from '~/server/services/post.service';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -50,7 +51,7 @@ export function EditPostTags({ post }: { post: PostDetailEditable }) {
             canRemove={post.publishedAt ? post.tags.length > 1 : true}
           />
         ))}
-        {tags.length < 5 && <TagPicker />}
+        {tags.length < POST_TAG_LIMIT && <TagPicker />}
       </Group>
     </EditPostTagsContext.Provider>
   );

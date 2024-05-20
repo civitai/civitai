@@ -11,3 +11,17 @@ export async function getAllTools() {
     },
   });
 }
+
+export async function getToolByName(name: string) {
+  return dbRead.tool.findFirst({
+    where: { name },
+    select: { id: true },
+  });
+}
+
+export async function getToolByDomain(domain: string) {
+  return dbRead.tool.findFirst({
+    where: { domain },
+    select: { id: true },
+  });
+}

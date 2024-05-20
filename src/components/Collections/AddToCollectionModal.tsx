@@ -45,6 +45,7 @@ import {
 } from './collection.utils';
 import { getDisplayName } from '~/utils/string-helpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { isDefined } from '~/utils/type-guards';
 
 type Props = Partial<AddCollectionItemInput> & { createNew?: boolean };
 
@@ -380,10 +381,16 @@ function NewCollectionForm({
                 name="mode"
                 label="Mode"
                 data={[
-                  ...Object.values(CollectionMode).map((value) => ({
-                    value,
-                    label: getDisplayName(value),
-                  })),
+                  ...Object.values(CollectionMode)
+                    .map((value) =>
+                      [CollectionMode.Bookmark].some((v) => v === value)
+                        ? undefined
+                        : {
+                            value,
+                            label: getDisplayName(value),
+                          }
+                    )
+                    .filter(isDefined),
                 ]}
                 clearable
               />

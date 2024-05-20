@@ -1,16 +1,16 @@
+import { useDidUpdate, useLocalStorage } from '@mantine/hooks';
+import { uniqBy } from 'lodash-es';
+import Router from 'next/router';
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { createStore, useStore } from 'zustand';
+import { devtools } from 'zustand/middleware';
+import { immer } from 'zustand/middleware/immer';
+import { shallow } from 'zustand/shallow';
+import { FileUploadProvider } from '~/components/FileUpload/FileUploadProvider';
 import { MediaUploadOnCompleteProps } from '~/hooks/useMediaUpload';
 import { PostEditQuerySchema } from '~/server/schema/post.schema';
 import { PostDetailEditable } from '~/server/services/post.service';
-import { createStore, useStore } from 'zustand';
-import { useDidUpdate, useLocalStorage } from '@mantine/hooks';
-import { immer } from 'zustand/middleware/immer';
-import { devtools } from 'zustand/middleware';
-import { shallow } from 'zustand/shallow';
 import { trpc } from '~/utils/trpc';
-import Router from 'next/router';
-import { FileUploadProvider } from '~/components/FileUpload/FileUploadProvider';
-import { uniqBy } from 'lodash-es';
 import { isDefined } from '~/utils/type-guards';
 
 const replacerFunc = () => {
@@ -146,7 +146,7 @@ export function PostEditProvider({ post, params = {}, children, ...extendedParam
         .map((x) => (x.type === 'added' ? x.data : undefined))
         .filter(isDefined);
       const postImages = post?.images ?? [];
-      const images = isSamePost ? uniqBy([addedImages, ...postImages], 'id') : postImages;
+      const images = isSamePost ? uniqBy([...postImages, ...addedImages], 'id') : postImages;
 
       return {
         post,
@@ -161,11 +161,20 @@ export function PostEditProvider({ post, params = {}, children, ...extendedParam
   useEffect(() => {
     const handleBrowsingAway = async () => {
       if (postId) {
-        console.log('browse away');
+        // console.log('browse away');
         await queryUtils.post.get.invalidate({ id: postId });
-        await queryUtils.post.getEdit.invalidate({ id: postId });
+        // await queryUtils.post.getEdit.invalidate({ id: postId });
+        await queryUtils.post.getEdit.setData({ id: postId }, (old) => {
+          const { post, images } = store.getState();
+          if (!post) return old;
+          return {
+            ...post,
+            detail: post.detail ?? null,
+            images: images.map((x) => (x.type === 'added' ? x.data : undefined)).filter(isDefined),
+          };
+        });
         await queryUtils.post.getInfinite.invalidate();
-        await queryUtils.image.getInfinite.invalidate({ postId });
+        await queryUtils.image.invalidate();
         if (modelVersionId) {
           await queryUtils.modelVersion.getById.invalidate({ id: modelVersionId });
           await queryUtils.image.getImagesAsPostsInfinite.invalidate();
@@ -174,9 +183,9 @@ export function PostEditProvider({ post, params = {}, children, ...extendedParam
       }
     };
 
-    Router.events.on('routeChangeComplete', handleBrowsingAway);
+    Router.events.on('routeChangeStart', handleBrowsingAway);
     return () => {
-      Router.events.off('routeChangeComplete', handleBrowsingAway);
+      Router.events.off('routeChangeStart', handleBrowsingAway);
     };
   }, [modelVersionId, modelId, postId]); // eslint-disable-line
 

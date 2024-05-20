@@ -99,27 +99,6 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   });
 });
 
-const checkFilesExistence = middleware(async ({ input, ctx, next }) => {
-  if (!ctx.user) throw throwAuthorizationError();
-
-  const { modelVersions } = input as ModelInput;
-  const files = modelVersions.flatMap(({ files }) => files?.map(prepareFile) ?? []);
-  const s3 = getS3Client();
-
-  for (const file of files) {
-    if (!file.url || !file.url.includes(env.S3_UPLOAD_BUCKET)) continue;
-    const fileExists = await checkFileExists(file.url, s3);
-    if (!fileExists)
-      throw throwBadRequestError(`File ${file.name} could not be found. Please re-upload.`, {
-        file,
-      });
-  }
-
-  return next({
-    ctx: { user: ctx.user },
-  });
-});
-
 const skipEdgeCache = middleware(async ({ input, ctx, next }) => {
   const _input = input as GetAllModelsOutput;
 
@@ -133,7 +112,7 @@ export const modelRouter = router({
   getAll: publicProcedure
     .input(getAllModelsSchema.extend({ page: z.never().optional() }))
     .use(skipEdgeCache)
-    .use(edgeCacheIt({ ttl: 60, tags: () => ['models'] }))
+    .use(edgeCacheIt({ ttl: 60 }))
     .query(getModelsInfiniteHandler),
   getAllPagedSimple: publicProcedure
     .input(getAllModelsSchema.extend({ cursor: z.never().optional() }))

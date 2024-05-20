@@ -86,6 +86,7 @@ export function RoutedDialogProvider() {
         props: { ...browserRouter.query, ...state },
         options: { onClose: () => handleCloseRoutedDialog(name) },
         type: 'routed-dialog',
+        target: dialogs[name].target,
       });
     }
 
@@ -164,8 +165,8 @@ export function RoutedDialogLink<T extends DialogKey, TPassHref extends boolean 
     return cloneElement(children as React.ReactElement, {
       href: asPath,
       onClick: handleClick,
-      className,
-      style,
+      // className,
+      // style,
     });
   }
 

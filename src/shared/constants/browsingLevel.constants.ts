@@ -98,13 +98,13 @@ export const getNsfwLevelDeprecatedReverseMapping = (level: number) => {
 };
 
 export const votableTagColors = {
-  [0]: { color: 'gray', shade: 5 },
-  [NsfwLevel.PG]: { color: 'gray', shade: 5 },
-  [NsfwLevel.PG13]: { color: 'yellow', shade: 5 },
-  [NsfwLevel.R]: { color: 'red', shade: 9 },
-  [NsfwLevel.X]: { color: 'red', shade: 9 },
-  [NsfwLevel.XXX]: { color: 'red', shade: 9 },
-  [NsfwLevel.Blocked]: { color: 'red', shade: 9 },
+  [0]: { dark: { color: 'gray', shade: 5 }, light: { color: 'gray', shade: 3 } },
+  [NsfwLevel.PG]: { dark: { color: 'gray', shade: 5 }, light: { color: 'gray', shade: 3 } },
+  [NsfwLevel.PG13]: { dark: { color: 'yellow', shade: 5 }, light: { color: 'yellow', shade: 3 } },
+  [NsfwLevel.R]: { dark: { color: 'red', shade: 9 }, light: { color: 'red', shade: 6 } },
+  [NsfwLevel.X]: { dark: { color: 'red', shade: 9 }, light: { color: 'red', shade: 6 } },
+  [NsfwLevel.XXX]: { dark: { color: 'red', shade: 9 }, light: { color: 'red', shade: 6 } },
+  [NsfwLevel.Blocked]: { dark: { color: 'red', shade: 9 }, light: { color: 'red', shade: 6 } },
 } as const;
 
 export const toggleableBrowsingCategories = [

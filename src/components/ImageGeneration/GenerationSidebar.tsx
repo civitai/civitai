@@ -1,12 +1,8 @@
-import { Group, ActionIcon, CloseButton, Tooltip } from '@mantine/core';
 import { useWindowEvent } from '@mantine/hooks';
-import { IconArrowsDiagonal } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useCallback, useEffect, useState } from 'react';
 import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import { FeatureIntroductionHelpButton } from '~/components/FeatureIntroduction/FeatureIntroduction';
-import { GeneratedImageActions } from '~/components/ImageGeneration/GeneratedImageActions';
 import { GenerationDrawer } from '~/components/ImageGeneration/GenerationDrawer';
 import GenerationTabs from '~/components/ImageGeneration/GenerationTabs';
 import { ResizableSidebar } from '~/components/Resizable/ResizableSidebar';

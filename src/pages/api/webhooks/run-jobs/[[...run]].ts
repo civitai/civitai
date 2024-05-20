@@ -45,6 +45,7 @@ import { processVaultItems } from '~/server/jobs/process-vault-items';
 import { clearVaultItems } from '~/server/jobs/clear-vault-items';
 import { jobQueueJobs } from '~/server/jobs/job-queue';
 import { nextauthCleanup } from '~/server/jobs/next-auth-cleanup';
+import { countReviewImages } from '~/server/jobs/count-review-images';
 
 export const jobs: Job[] = [
   scanFilesJob,
@@ -88,6 +89,7 @@ export const jobs: Job[] = [
   processVaultItems,
   clearVaultItems,
   ...jobQueueJobs,
+  countReviewImages,
 ];
 
 const log = createLogger('jobs', 'green');

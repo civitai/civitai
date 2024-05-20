@@ -26,7 +26,6 @@ body {
 
 /* Don't zoom text input on iOS */
 @media only screen and (hover: none) and (pointer: coarse) {
-
   input:focus,
   select:focus,
   textarea:focus {
@@ -46,6 +45,13 @@ body {
 
   .show-mobile {
     display: block;
+  }
+
+  .notifications-container {
+    top: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    bottom: unset;
   }
 }
 
@@ -92,7 +98,7 @@ a {
   margin-bottom: 0.25em;
 }
 
-.markdown-content h2+p {
+.markdown-content h2 + p {
   margin-top: 0;
 }
 
@@ -242,7 +248,7 @@ iframe {
   padding-bottom: 36px !important;
 }
 
-.frame-decor .footer-abs>* {
+.frame-decor .footer-abs > * {
   bottom: 36px !important;
 }
 
@@ -302,6 +308,14 @@ ol {
 }
 
 @layer utilities {
+  .shadow-topper {
+    box-shadow: inset 0 2px theme('colors.gray.2');
+  }
+
+  .dark .shadow-topper {
+    box-shadow: inset 0 2px theme('colors.dark.4');
+  }
+
   .card {
     @apply rounded-md overflow-hidden relative;
     background-color: #dee2e6;

@@ -1251,21 +1251,19 @@ const prepareModelVersions = (versions: ModelInput['modelVersions']) => {
   });
 };
 
-export const upsertModel = async ({
-  id,
-  tagsOnModels,
-  userId,
-  templateId,
-  bountyId,
-  meta,
-  isModerator,
-  ...data
-}: // TODO.manuel: hardcoding meta type since it causes type issues in lots of places if we set it in the schema
-ModelUpsertInput & {
-  userId: number;
-  meta?: Prisma.ModelCreateInput['meta'];
-  isModerator?: boolean;
-}) => {
+export const upsertModel = async (
+  input: ModelUpsertInput & {
+    userId: number;
+    meta?: Prisma.ModelCreateInput['meta']; // TODO.manuel: hardcoding meta type since it causes type issues in lots of places if we set it in the schema
+    isModerator?: boolean;
+  }
+) => {
+  if (!input.isModerator) {
+    for (const key of input.lockedProperties ?? []) delete input[key as keyof typeof input];
+  }
+
+  const { id, tagsOnModels, userId, templateId, bountyId, meta, isModerator, ...data } = input;
+
   // don't allow updating of locked properties
   if (!isModerator) {
     const lockedProperties = data.lockedProperties ?? [];
@@ -1408,8 +1406,12 @@ export const publishModelById = async ({
         await tx.$executeRaw`
           UPDATE "Post"
           SET
-            "metadata" = "metadata" - 'unpublishedAt' - 'unpublishedBy',
-            "publishedAt" = ${publishedAt}
+            "publishedAt" = CASE 
+              WHEN "metadata"->>'prevPublishedAt' IS NOT NULL 
+              THEN to_timestamp("metadata"->>'prevPublishedAt', 'YYYY-MM-DD"T"HH24:MI:SS.MS')
+              ELSE ${publishedAt}
+            END,
+            "metadata" = "metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt'
           WHERE "userId" = ${model.userId}
           AND "modelVersionId" IN (${Prisma.join(versionIds, ',')})
         `;
@@ -1493,7 +1495,8 @@ export const unpublishModelById = async ({
         SET
           "metadata" = "metadata" || jsonb_build_object(
             'unpublishedAt', ${unpublishedAt},
-            'unpublishedBy', ${user.id}
+            'unpublishedBy', ${user.id},
+            'prevPublishedAt', "publishedAt"
           ),
           "publishedAt" = NULL
         WHERE "publishedAt" IS NOT NULL
@@ -1885,7 +1888,7 @@ export const getGalleryHiddenPreferences = async ({
 }: {
   settings: ModelGallerySettingsSchema;
 }) => {
-  const { tags, users, images, level } = settings;
+  const { tags, users, images, level, pinnedPosts } = settings;
   const hiddenTags =
     tags && tags.length
       ? await dbRead.tag.findMany({
@@ -1907,6 +1910,7 @@ export const getGalleryHiddenPreferences = async ({
     hiddenUsers,
     hiddenImages: images ?? [],
     level: level ?? allBrowsingLevelsFlag,
+    pinnedPosts: pinnedPosts ?? {},
   };
 };
 

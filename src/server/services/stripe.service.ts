@@ -164,6 +164,12 @@ export const createSubscribeSession = async ({
   const { data: subscriptions } = await stripe.subscriptions.list({
     customer: customerId,
   });
+  const customer = await stripe.customers.retrieve(customerId);
+
+  if (!customer || customer.deleted) {
+    throw throwBadRequestError(`Could not find customer with id: ${customerId}`);
+  }
+
   const price = await stripe.prices.retrieve(priceId);
 
   if (!price || !membershipProducts.find((x) => x.id === (price.product as string))) {
@@ -193,6 +199,29 @@ export const createSubscribeSession = async ({
 
     const isActivePrice = subscriptionItem.price.id === price.id;
     if (!isActivePrice) {
+      // Confirm user has a default credit card:
+      if (!customer.default_source) {
+        // Attempt to get and set outselves:
+        const paymentMethods = await stripe.paymentMethods.list({
+          customer: customerId,
+          type: 'card',
+        });
+
+        if (paymentMethods.data.length === 0) {
+          return {
+            sessionId: null,
+            url: `/user/account?missingPaymentMethod=true&tier=${newTier}#payment-methods`,
+          };
+        } else {
+          // Set the first card as the default:
+          await stripe.customers.update(customerId, {
+            invoice_settings: {
+              default_payment_method: paymentMethods.data[0].id,
+            },
+          });
+        }
+      }
+
       const isFounder =
         (activeProduct?.metadata as Schema.ProductMetadata)?.tier ===
         constants.memberships.founderDiscount.tier;

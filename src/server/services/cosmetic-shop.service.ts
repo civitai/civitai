@@ -84,6 +84,15 @@ export const upsertCosmeticShopItem = async ({
     throw new Error('Available to date cannot be before available from date');
   }
 
+  if (
+    existingItem &&
+    availableQuantity &&
+    availableQuantity !== null &&
+    availableQuantity < existingItem?._count.purchases
+  ) {
+    throw new Error('Cannot set available quantity to less than the amount of purchases');
+  }
+
   if (id) {
     return dbWrite.cosmeticShopItem.update({
       where: { id },
@@ -104,6 +113,10 @@ export const upsertCosmeticShopItem = async ({
         addedById: userId,
         availableTo,
         availableFrom,
+        meta: {
+          ...(cosmeticShopItem.meta ?? {}),
+          purchases: 0,
+        },
       },
       select: cosmeticShopItemSelect,
     });
@@ -237,6 +250,12 @@ export const upsertCosmeticShopSection = async ({
     await dbWrite.cosmeticShopSectionItem.deleteMany({
       where: {
         shopSectionId: id,
+        shopItemId: items.length
+          ? {
+              notIn: items.map((itemId) => itemId),
+            }
+          : // Undefined deletes 'em all
+            undefined,
       },
     });
 
@@ -248,9 +267,16 @@ export const upsertCosmeticShopSection = async ({
         index,
       }));
 
-      await dbWrite.cosmeticShopSectionItem.createMany({
-        data,
-      });
+      await dbWrite.$executeRaw`
+        INSERT INTO "CosmeticShopSectionItem" ("shopSectionId", "shopItemId", "index")
+        VALUES ${Prisma.join(
+          data.map(
+            ({ shopSectionId, shopItemId, index }) =>
+              Prisma.sql`(${shopSectionId}, ${shopItemId}, ${index})`
+          )
+        )}
+        ON CONFLICT ("shopSectionId", "shopItemId") DO UPDATE SET "index" = EXCLUDED."index"
+      `;
     }
   }
 
@@ -319,6 +345,7 @@ export const getShopSectionsWithItems = async ({
       },
       items: {
         select: {
+          createdAt: true,
           shopItem: {
             select: cosmeticShopItemSelect,
           },
@@ -331,10 +358,9 @@ export const getShopSectionsWithItems = async ({
               ? undefined
               : [
                   {
-                    availableFrom: { lte: new Date() },
                     availableTo: { gte: new Date() },
                   },
-                  { availableFrom: null, availableTo: null },
+                  { availableTo: null },
                 ],
           },
         },
@@ -397,11 +423,28 @@ export const purchaseCosmeticShopItem = async ({
     },
   });
 
+  const shopItemMeta = (shopItem?.meta ?? {}) as CosmeticShopItemMeta;
+
   if (!shopItem) {
     throw new Error('Cosmetic not found');
   }
 
-  if (shopItem.availableQuantity !== null && shopItem.availableQuantity <= 0) {
+  if (
+    shopItem.availableQuantity !== null &&
+    shopItem._count.purchases >= shopItem.availableQuantity
+  ) {
+    if (shopItemMeta.purchases !== shopItem._count.purchases) {
+      // Update meta with new amount:
+      await dbWrite.cosmeticShopItem.update({
+        where: { id: shopItemId },
+        data: {
+          meta: {
+            ...shopItemMeta,
+            purchases: shopItem._count.purchases,
+          },
+        },
+      });
+    }
     throw new Error('Cosmetic is out of stock');
   }
 
@@ -463,8 +506,9 @@ export const purchaseCosmeticShopItem = async ({
       await dbWrite.cosmeticShopItem.update({
         where: { id: shopItemId },
         data: {
-          availableQuantity: {
-            decrement: 1,
+          meta: {
+            ...(shopItemMeta ?? {}),
+            purchases: (shopItemMeta?.purchases ?? 0) + 1,
           },
         },
       });

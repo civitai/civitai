@@ -8,7 +8,7 @@ const encoding = 'base64';
 const key = env.NEXTAUTH_SECRET;
 const iv = randomBytes(16);
 
-function encrypt(data: string): EncryptedDataSchema {
+export function civTokenEncrypt(data: string): EncryptedDataSchema {
   const cipher = createCipheriv(algorithm, Buffer.from(key), iv);
   let encrypted = cipher.update(data);
   encrypted = Buffer.concat([encrypted, cipher.final()]);
@@ -32,7 +32,7 @@ export default AuthedEndpoint(async function handler(req, res, user) {
   if (req.method !== 'GET') return res.status(405).send('Method Not Allowed');
 
   try {
-    const token = encrypt(user.id.toString());
+    const token = civTokenEncrypt(user.id.toString());
     return res.status(200).json({ token });
   } catch (error: unknown) {
     return res.status(500).send(error);

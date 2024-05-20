@@ -9,12 +9,13 @@ import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { stringifyAIR } from '~/utils/string-helpers';
 import { BaseModel } from '~/server/common/constants';
-import { ModelType, Prisma } from '@prisma/client';
+import { Availability, ModelType, Prisma } from '@prisma/client';
 
 const schema = z.object({ id: z.coerce.number() });
 type VersionRow = {
   id: number;
   versionName: string;
+  availability: Availability;
   modelId: number;
   modelName: string;
   baseModel: BaseModel;
@@ -28,6 +29,7 @@ type FileRow = {
   url: string;
   metadata: FileMetadata;
   sizeKB: number;
+  hash: string;
 };
 
 export default MixedAuthEndpoint(async function handler(
@@ -52,6 +54,7 @@ export default MixedAuthEndpoint(async function handler(
       m.name as "modelName",
       mv."baseModel",
       mv.status,
+      mv.availability,
       m.type
     FROM "ModelVersion" mv
     JOIN "Model" m ON m.id = mv."modelId"
@@ -59,9 +62,10 @@ export default MixedAuthEndpoint(async function handler(
   `;
   if (!modelVersion) return res.status(404).json({ error: 'Model not found' });
   const files = await dbRead.$queryRaw<FileRow[]>`
-    SELECT id, type, visibility, url, metadata, "sizeKB"
-    FROM "ModelFile"
-    WHERE "modelVersionId" = ${id}
+    SELECT mf.id, mf.type, mf.visibility, mf.url, mf.metadata, mf."sizeKB", mfh.hash
+    FROM "ModelFile" mf
+    LEFT JOIN "ModelFileHash" mfh ON mfh."fileId" = mf.id AND mfh.type = 'AutoV2'
+    WHERE mf."modelVersionId" = ${id}
   `;
 
   const primaryFile = getPrimaryFile(files);
@@ -72,10 +76,14 @@ export default MixedAuthEndpoint(async function handler(
 
   const data = {
     air,
-    size: primaryFile.sizeKB,
     versionName: modelVersion.versionName,
     modelName: modelVersion.modelName,
-    hashes: {},
+    baseModel: modelVersion.baseModel,
+    availability: modelVersion.availability,
+    size: primaryFile.sizeKB,
+    hashes: {
+      AutoV2: primaryFile.hash,
+    },
     downloadUrls: [
       `${baseUrl.origin}${createModelFileDownloadUrl({
         versionId: modelVersion.id,

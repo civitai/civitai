@@ -100,13 +100,22 @@ export function NotificationsCard() {
                   {hasCategory[category] && (
                     <Card.Section inheritPadding py="md">
                       <Stack>
-                        {settings.map(({ type, displayName }) => (
+                        {settings.map(({ type, displayName, defaultDisabled }) => (
                           <Checkbox
                             key={type}
                             label={displayName}
-                            checked={notificationSettings[type]}
+                            checked={
+                              defaultDisabled
+                                ? !notificationSettings[type]
+                                : notificationSettings[type]
+                            }
                             disabled={isLoading}
-                            onChange={(e) => toggleType(type, e.target.checked)}
+                            onChange={(e) => {
+                              toggleType(
+                                type,
+                                defaultDisabled ? !e.target.checked : e.target.checked
+                              );
+                            }}
                           />
                         ))}
                       </Stack>

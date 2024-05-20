@@ -18,6 +18,7 @@ export const getPaginatedCosmeticShopItemInput = paginationSchema.merge(
 export type CosmeticShopItemMeta = z.infer<typeof cosmeticShopItemMeta>;
 export const cosmeticShopItemMeta = z.object({
   paidToUserIds: z.array(z.number()).optional(),
+  purchases: z.number().default(0),
 });
 
 export type UpsertCosmeticShopItemInput = z.infer<typeof upsertCosmeticShopItemInput>;
@@ -45,6 +46,7 @@ export const getAllCosmeticShopSections = z.object({
 export type CosmeticShopSectionMeta = z.infer<typeof cosmeticShopSectionMeta>;
 export const cosmeticShopSectionMeta = z.object({
   hideTitle: z.boolean().optional(),
+  availableItemsMax: z.number().optional(),
 });
 
 export type UpsertCosmeticShopSectionInput = z.infer<typeof upsertCosmeticShopSectionInput>;
