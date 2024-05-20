@@ -19,7 +19,6 @@ import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useImagesContext } from '~/components/Image/Providers/ImagesProvider';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { VotableTags } from '~/components/VotableTags/VotableTags';

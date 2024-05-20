@@ -15,6 +15,7 @@ export function ImageMetaPopover2({
 }: {
   imageId: number;
   children: React.ReactElement;
+  // TODO - accept meta props
 }) {
   return (
     <Popover className="relative">

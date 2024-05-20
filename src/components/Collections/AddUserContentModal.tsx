@@ -43,6 +43,7 @@ import { trpc } from '~/utils/trpc';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
 import { truncate } from 'lodash-es';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
+import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
 
 export function AddUserContentModal({ collectionId, opened, onClose, ...props }: Props) {
   const currentUser = useCurrentUser();
@@ -301,7 +302,7 @@ function SelectableImageCard({ data: image }: { data: ImageGetInfinite[number] }
         <ImageGuard2 image={image}>
           {(safe) => (
             <>
-              <ImageGuard2.BlurToggle className="absolute top-2 left-2 z-10" />
+              <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
               {!safe ? (
                 <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>
                   <MediaHash {...image} />
@@ -332,7 +333,7 @@ function SelectableImageCard({ data: image }: { data: ImageGetInfinite[number] }
           readOnly
         />
         {!image.hideMeta && image.meta && (
-          <ImageMetaPopover meta={image.meta} mainResourceId={image.modelVersionId ?? undefined}>
+          <ImageMetaPopover2 imageId={image.id}>
             <ActionIcon
               variant="light"
               color="dark"
@@ -341,7 +342,7 @@ function SelectableImageCard({ data: image }: { data: ImageGetInfinite[number] }
             >
               <IconInfoCircle color="white" strokeWidth={2.5} size={26} />
             </ActionIcon>
-          </ImageMetaPopover>
+          </ImageMetaPopover2>
         )}
       </div>
     </MasonryCard>

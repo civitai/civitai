@@ -22,6 +22,10 @@ declare global {
       }
     : T;
 
+  type Prettify<T> = {
+    [K in keyof T]: T[K];
+  } & NonNullable<unknown>;
+
   type MixedObject = Record<string, any>;
   type BaseEntity = { id: number | string } & MixedObject;
 

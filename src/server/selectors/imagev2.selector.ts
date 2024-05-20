@@ -37,7 +37,7 @@ export const getImageV2Select = ({ userId }: GetSelectArgs) =>
     width: true,
     height: true,
     hash: true,
-    meta: true,
+    // meta: true,
     hideMeta: true,
     generationProcess: true,
     createdAt: true,

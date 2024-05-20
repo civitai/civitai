@@ -478,7 +478,7 @@ type GetAllImagesRaw = {
   userId: number;
   index: number | null;
   postId: number | null;
-  postTitle: string | null;
+  // postTitle: string | null;
   modelVersionId: number | null;
   imageId: number | null;
   publishedAt: Date | null;
@@ -508,21 +508,21 @@ export const getAllImages = async ({
   skip,
   postId,
   postIds,
-  collectionId,
+  collectionId, // TODO - call this from separate method?
   modelId,
   modelVersionId,
-  imageId,
-  username,
+  imageId, // TODO - remove, not in use
+  username, // TODO - query by `userId` instead
   period,
   periodMode,
   sort,
   tags,
   generation,
-  reviewId,
+  reviewId, // TODO - remove, not in use
   prioritizedUserIds,
   include,
   excludeCrossPosts,
-  reactions,
+  reactions, // TODO - remove, not in use
   ids,
   includeBaseModel,
   types,
@@ -550,7 +550,7 @@ export const getAllImages = async ({
   const includeCosmetics = include?.includes('cosmetics'); // TODO: This must be done similar to user cosmetics.
 
   // Filter to specific user content
-  let targetUserId: number | undefined;
+  let targetUserId: number | undefined; // [x]
   if (username) {
     const targetUser = await dbRead.user.findUnique({ where: { username }, select: { id: true } });
     if (!targetUser) throw new Error('User not found');
@@ -578,23 +578,27 @@ export const getAllImages = async ({
     AND.push(Prisma.sql`p."modelVersionId" = ${modelVersionId}`);
   }
 
+  // [x]
   if (ids && ids.length > 0) {
     AND.push(Prisma.sql`i."id" IN (${Prisma.join(ids)})`);
   }
-
+  // [x]
   if (types && types.length > 0) {
     AND.push(Prisma.sql`i.type = ANY(ARRAY[${Prisma.join(types)}]::"MediaType"[])`);
   }
 
+  // [x]
   if (include.includes('meta')) {
     AND.push(
       Prisma.sql`NOT (i.meta IS NULL OR jsonb_typeof(i.meta) = 'null' OR i."hideMeta" = TRUE)`
     );
   }
 
+  // [x]
   if (fromPlatform) {
     AND.push(Prisma.sql`(i.meta IS NOT NULL AND i.meta ? 'civitaiResources')`);
   }
+  // [x]
   if (notPublished && isModerator) {
     AND.push(Prisma.sql`(p."publishedAt" IS NULL)`);
   }
@@ -602,7 +606,7 @@ export const getAllImages = async ({
   let from = 'FROM "Image" i';
   const joins: string[] = [];
   // Filter to specific model/review content
-  const prioritizeUser = !!prioritizedUserIds?.length;
+  const prioritizeUser = !!prioritizedUserIds?.length; // [x]
   if (!prioritizeUser && (modelId || modelVersionId || reviewId)) {
     from = `FROM "ImageResource" irr`;
     joins.push(`JOIN "Image" i ON i.id = irr."imageId"`);
@@ -622,6 +626,7 @@ export const getAllImages = async ({
     }
   }
 
+  // [x]
   if (targetUserId) {
     AND.push(Prisma.sql`u."id" = ${targetUserId}`);
     // Don't cache self queries
@@ -632,6 +637,7 @@ export const getAllImages = async ({
   }
 
   // Filter only followed users
+  // [x]
   if (userId && followed) {
     const followedUsers = await dbRead.userEngagement.findMany({
       where: { userId, type: 'Follow' },
@@ -654,15 +660,19 @@ export const getAllImages = async ({
   }
 
   // Filter to specific generation process
+  // [x]
   if (generation?.length) {
     AND.push(Prisma.sql`i."generationProcess" IN (${Prisma.join(generation)})`);
   }
 
   // Filter to a specific post
+  // [x]
   if (postId) AND.push(Prisma.sql`i."postId" = ${postId}`);
+  // [x]
   if (!!postIds?.length) AND.push(Prisma.sql`i."postId" IN (${Prisma.join(postIds)})`);
 
   // Filter to a specific image
+  // [x] not needed
   if (imageId) AND.push(Prisma.sql`i.id = ${imageId}`);
 
   if (sort === ImageSort.Random && !collectionId) {
@@ -717,7 +727,7 @@ export const getAllImages = async ({
     );
   }
 
-  const isGallery = modelId || modelVersionId || reviewId || username;
+  const isGallery = modelId || modelVersionId || reviewId || username; // [x]
   if (postId && !modelId) {
     // a post image query won't include modelId
     orderBy = `i."index"`;
@@ -755,7 +765,7 @@ export const getAllImages = async ({
   // }
 
   // Limit to images created since period start
-  const sortingByMetrics = orderBy.includes('im.');
+  const sortingByMetrics = orderBy.includes('im.'); // [x]
   if (sortingByMetrics && period !== 'AllTime' && periodMode !== 'stats') {
     const ageGroups = getPeriods(period);
     AND.push(
@@ -769,7 +779,7 @@ export const getAllImages = async ({
   }
 
   // Handle cursor & skip conflict
-  if (cursor && skip) throw new Error('Cannot use skip with cursor');
+  if (cursor && skip) throw new Error('Cannot use skip with cursor'); // [x]
 
   // Handle cursor prop
   let { where: cursorClause, prop: cursorProp } = getCursor(orderBy, cursor);
@@ -780,6 +790,7 @@ export const getAllImages = async ({
   if (cursorClause) AND.push(cursorClause);
 
   if (prioritizeUser) {
+    // [x]
     if (cursor) throw new Error('Cannot use cursor with prioritizedUserIds');
     if (modelVersionId) AND.push(Prisma.sql`p."modelVersionId" = ${modelVersionId}`);
 
@@ -821,6 +832,7 @@ export const getAllImages = async ({
   //   )`);
   // }
 
+  // [x]
   if (pending && (isModerator || userId)) {
     if (isModerator) {
       AND.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`);
@@ -1013,7 +1025,7 @@ export const getAllImages = async ({
       tagIds?: number[];
       publishedAt?: Date | null;
       modelVersionId?: number | null;
-      baseModel?: string | null;
+      baseModel?: string | null; // TODO - remove
       availability?: Availability;
       nsfwLevel: NsfwLevel;
       cosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
@@ -1163,6 +1175,13 @@ export const getImage = async ({
       i.type,
       i.metadata,
       i."nsfwLevel",
+      (
+        CASE
+          WHEN i.meta IS NOT NULL AND NOT i."hideMeta"
+          THEN TRUE
+          ELSE FALSE
+        END
+      ) AS "hasMeta",
       COALESCE(im."cryCount", 0) "cryCount",
       COALESCE(im."laughCount", 0) "laughCount",
       COALESCE(im."likeCount", 0) "likeCount",
@@ -1729,7 +1748,7 @@ type GetImageConnectionRaw = {
   width: number;
   height: number;
   hash: string;
-  meta: ImageMetaProps;
+  meta: ImageMetaProps; // TODO - remove
   hideMeta: boolean;
   generationProcess: ImageGenerationProcess;
   createdAt: Date;
@@ -1742,6 +1761,7 @@ type GetImageConnectionRaw = {
   type: MediaType;
   metadata: Prisma.JsonValue;
   entityId: number;
+  hasMeta: boolean;
 };
 
 export const getImagesByEntity = async ({
