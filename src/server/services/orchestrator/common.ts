@@ -1,12 +1,6 @@
-import { CacheTTL } from '~/server/common/constants';
-import { dbRead } from '~/server/db/client';
+import { resourceDataCache } from '~/server/redis/caches';
 import { REDIS_KEYS, redis } from '~/server/redis/client';
 import { GenerationStatus, generationStatusSchema } from '~/server/schema/generation.schema';
-import {
-  GenerationResourceSelect,
-  generationResourceSelect,
-} from '~/server/selectors/generation.selector';
-import { cachedArray } from '~/server/utils/cache-helpers';
 import {
   allInjectedIds,
   minorNegatives,
@@ -23,25 +17,11 @@ export async function getGenerationStatus() {
 }
 
 export type ResourceData = AsyncReturnType<typeof getResourceData>[number];
-export async function getResourceData(modelVersionIds: number[]) {
-  return await cachedArray<GenerationResourceSelect>({
-    key: REDIS_KEYS.GENERATION.RESOURCE_DATA,
-    ids: modelVersionIds,
-    idKey: 'id',
-    lookupFn: async (ids) => {
-      const dbResults = await dbRead.modelVersion.findMany({
-        where: { id: { in: ids as number[] } },
-        select: generationResourceSelect,
-      });
-
-      const results = dbResults.reduce((acc, result) => {
-        acc[result.id] = result;
-        return acc;
-      }, {} as Record<string, GenerationResourceSelect>);
-      return results;
-    },
-    ttl: CacheTTL.hour,
-  });
+function getResourceData(modelVersionIds: number[]) {
+  return resourceDataCache.fetch(modelVersionIds);
+}
+export function deleteResourceDataCache(modelVersionIds: number | number[]) {
+  return resourceDataCache.bust(modelVersionIds);
 }
 
 export async function getResourceDataWithInjects(modelVersionIds: number[]) {

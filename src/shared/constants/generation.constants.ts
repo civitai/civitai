@@ -89,10 +89,3 @@ export const getBaseModelSetKey = (baseModel?: string) => {
   )?.[0] as BaseModelSetType | undefined;
 };
 // #endregion
-
-// when removing a string from the `safeNegatives` array, add it to the `allSafeNegatives` array
-export const safeNegatives = [{ id: 106916, triggerWord: 'civit_nsfw' }];
-export const minorNegatives = [{ id: 250712, triggerWord: 'safe_neg' }];
-export const minorPositives = [{ id: 250708, triggerWord: 'safe_pos' }];
-export const allInjectedNegatives = [...safeNegatives, ...minorNegatives];
-export const allInjectedPositives = [...minorPositives];

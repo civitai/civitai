@@ -1,4 +1,4 @@
-import { CivitaiClient, TaintRequest } from '@civitai/client';
+import { CivitaiClient } from '@civitai/client';
 import { SessionUser } from 'next-auth';
 import { z } from 'zod';
 import { isDev } from '~/env/other';
@@ -14,12 +14,11 @@ export async function taintJob({
   user,
   ...taint
 }: z.output<typeof taintJobSchema> & { user: SessionUser }) {
-  const client = new CivitaiClient({
-    env: isDev ? 'dev' : 'prod',
-    auth: 'ff2ddeabd724b029112668447a9388f7', // TODO - use user api token
-  });
-
-  await client.jobs.updateJob({ jobId: id, requestBody: { taint } });
+  // const client = new CivitaiClient({
+  //   env: isDev ? 'dev' : 'prod',
+  //   auth: 'ff2ddeabd724b029112668447a9388f7', // TODO - use user api token
+  // });
+  // await client.jobs.updateJob({ jobId: id, requestBody: { taint } });
 }
 
 export async function deleteJob({ id, user }: { id: string; user: SessionUser }) {
@@ -31,11 +30,11 @@ export async function deleteJob({ id, user }: { id: string; user: SessionUser })
   // await client.jobs.deleteJob({ jobId: id }); // TODO - check if `requestId` can be removed from method params
 }
 
-export async function cancelJob({ id, user }: { id: string; user: SessionUser }) {
-  const client = new CivitaiClient({
-    env: isDev ? 'dev' : 'prod',
-    auth: 'ff2ddeabd724b029112668447a9388f7', // TODO - use user api token
-  });
+// export async function cancelJob({ id, user }: { id: string; user: SessionUser }) {
+//   const client = new CivitaiClient({
+//     env: isDev ? 'dev' : 'prod',
+//     auth: 'ff2ddeabd724b029112668447a9388f7', // TODO - use user api token
+//   });
 
-  await client.jobs.updateJob({ jobId: id, requestBody: { status: 'Canceled' } });
-}
+//   await client.jobs.updateJob({ jobId: id, requestBody: { status: 'Canceled' } });
+// }

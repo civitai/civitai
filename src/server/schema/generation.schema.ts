@@ -9,7 +9,7 @@ import {
   textToImageParamsSchema,
   textToImageParamsValidationSchema,
   textToImageResourceSchema,
-} from '~/server/services/orchestrator/textToImage';
+} from '~/server/schema/orchestrator/textToImage.schema';
 // export type GetGenerationResourceInput = z.infer<typeof getGenerationResourceSchema>;
 // export const getGenerationResourceSchema = z.object({
 //   type: z.nativeEnum(ModelType),

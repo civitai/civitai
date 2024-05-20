@@ -5,10 +5,8 @@ import {
   BaseModel,
   BaseModelSetType,
   Sampler,
-  baseModelSetTypes,
   baseModelSets,
   draftMode,
-  generation,
   getGenerationConfig,
 } from '~/server/common/constants';
 import { extModeration } from '~/server/integrations/moderation';
@@ -23,69 +21,17 @@ import { includesMinor, includesNsfw, includesPoi } from '~/utils/metadata/audit
 import { parseAIR, stringifyAIR } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import {
+  TextToImageStep,
+  Workflow,
   type ImageJobNetworkParams,
-  type Provider,
   type Scheduler,
-  type TextToImageJobTemplate,
 } from '@civitai/client';
-import { env } from '~/env/server.mjs';
 import { samplersToSchedulers } from '~/shared/constants/generation.constants';
-import { TextToImageResponse } from '~/server/services/orchestrator/types';
+import { CallbackSource, TextToImageResponse } from '~/server/services/orchestrator/types';
 import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
-import { createRequest, getRequests } from '~/server/services/orchestrator/requests';
-
-// #region [schemas]
-export const textToImageParamsSchema = z.object({
-  prompt: z.string(),
-  negativePrompt: z.string().optional(),
-  cfgScale: z.number(),
-  sampler: z.string(),
-  seed: z.number(),
-  clipSkip: z.number(),
-  steps: z.number(),
-  quantity: z.number(),
-  nsfw: z.boolean().optional(),
-  draft: z.boolean().optional(),
-  aspectRatio: z.number(),
-  baseModel: z.enum(baseModelSetTypes),
-});
-
-export const textToImageParamsValidationSchema = textToImageParamsSchema.extend({
-  prompt: z
-    .string()
-    .nonempty('Prompt cannot be empty')
-    .max(1500, 'Prompt cannot be longer than 1500 characters'),
-  negativePrompt: z.string().max(1000, 'Prompt cannot be longer than 1000 characters').optional(),
-  cfgScale: z.coerce.number().min(1).max(30),
-  sampler: z
-    .string()
-    .refine((val) => generation.samplers.includes(val as (typeof generation.samplers)[number]), {
-      message: 'invalid sampler',
-    }),
-  seed: z.coerce.number().min(-1).max(generation.maxValues.seed).default(-1),
-  clipSkip: z.coerce.number().default(1),
-  steps: z.coerce.number().min(1).max(100),
-  quantity: z.coerce.number().min(1).max(20),
-  aspectRatio: z.coerce.number(),
-});
-
-export const textToImageResourceSchema = z.object({
-  id: z.number(),
-  strength: z.number().default(1),
-  triggerWord: z.string().optional(),
-});
-
-export const textToImageResourcesValidatedSchema = textToImageResourceSchema
-  .array()
-  .min(1, 'You must select at least one resource')
-  .max(10);
-
-export const textToImageSchema = z.object({
-  whatIf: z.boolean().optional(),
-  params: textToImageParamsValidationSchema,
-  resources: textToImageResourcesValidatedSchema,
-});
-// #endregion
+import { SignalMessages } from '~/server/common/enums';
+import { queryWorkflows, submitWorkflow } from '~/server/services/orchestrator/workflows';
+import { textToImageSchema } from '~/server/schema/orchestrator/textToImage.schema';
 
 export async function textToImage({
   user,
@@ -252,15 +198,15 @@ export async function textToImage({
     batchSize = Math.ceil(params.quantity / 4) * 4;
   }
 
-  const requestBody: TextToImageJobTemplate = {
+  const step: TextToImageStep = {
     $type: 'textToImage',
-    model: checkpoint.air,
-    quantity,
-    batchSize,
-    additionalNetworks,
-    providers: params.draft ? (env.DRAFT_MODE_PROVIDERS as Provider[] | undefined) : undefined,
-    properties: { userId: user.id },
-    params: {
+    input: {
+      model: checkpoint.air,
+      quantity,
+      batchSize,
+      additionalNetworks,
+      // providers: params.draft ? (env.DRAFT_MODE_PROVIDERS as Provider[] | undefined) : undefined, // TODO - ??
+      // properties: { userId: user.id }, // todo
       prompt: positivePrompts.join(', '),
       negativePrompt: negativePrompts.join(', '),
       scheduler: samplersToSchedulers[params.sampler as Sampler] as Scheduler,
@@ -273,39 +219,50 @@ export async function textToImage({
     },
   };
 
-  const request = (await createRequest({
-    data: {
-      include: 'Details',
-      whatif: whatIf,
-      requestBody,
-    },
+  const requestBody: Workflow = {
+    properties: { userId: user.id },
+    steps: [step],
+    callbacks: [
+      {
+        url: `https://signals-dev.civitai.com/users/${user.id}/${SignalMessages.OrchestratorUpdate}`,
+        type: [`${CallbackSource.job}:*`],
+      },
+      // {
+      //   // TODO - callback to ingestion
+      //   url: `https://signals-dev.civitai.com/users/${user.id}/${SignalMessages.OrchestratorUpdate}`,
+      //   type: [`${CallbackSource.workflow}:${WorkflowStatus.succeeded}`],
+      // },
+    ],
+  };
+
+  const workflow = (await submitWorkflow({
+    whatif: whatIf,
+    requestBody,
     user,
   })) as TextToImageResponse;
 
-  console.dir(request, { depth: null });
-
-  return await formatTextToImageResponses([request], resourceDataWithInjects);
+  return await formatTextToImageResponses([workflow], resourceDataWithInjects);
 }
 
 export async function getTextToImageRequests(
-  props: Omit<Parameters<typeof getRequests>[0], 'jobType'>
+  props: Omit<Parameters<typeof queryWorkflows>[0], 'jobType'>
 ) {
-  const { nextCursor, items } = await getRequests({
+  const { nextCursor, items } = await queryWorkflows({
     ...props,
     jobType: ['textToImage'],
   });
   console.dir(items, { depth: null });
 
   return {
-    items: items ? formatTextToImageResponses(items as TextToImageResponse[]) : [],
+    items: formatTextToImageResponses(items as TextToImageResponse[]),
     nextCursor,
   };
-  // civitai-5_20240506213236617
 }
 
 // #region [helper methods]
+const baseModelSetsEntries = Object.entries(baseModelSets);
 export async function formatTextToImageResponses(
-  requests: TextToImageResponse[],
+  workflows: TextToImageResponse[],
   resources?: AsyncReturnType<typeof getResourceDataWithInjects>
 ) {
   const {
@@ -313,95 +270,102 @@ export async function formatTextToImageResponses(
     safeNegatives,
     minorNegatives,
     minorPositives,
-  } = resources ?? (await getResourceDataWithInjects(getAirs(requests).map((x) => x.version)));
+  } = resources ?? (await getResourceDataWithInjects(getAirs(workflows).map((x) => x.version)));
 
-  const baseModelSetsEntries = Object.entries(baseModelSets);
+  return workflows
+    .map((workflow) => {
+      const steps = workflow.steps;
+      if (!steps) throw new Error(`no steps in workflow: ${workflow.id}`);
 
-  return requests.map((request) => {
-    const jobs = request.jobs;
-    if (!jobs) throw new Error(`no jobs in request: ${request.id}`);
-    const details = jobs[0].details;
-    if (!details) throw new Error('details not included in request response');
+      const airs = getAirs([workflow]);
+      const versionIds = airs.map((x) => x.version);
+      const requestResources = resourcesData.filter((x) => versionIds.includes(x.id));
+      const checkpoint = requestResources.find((x) => x.model.type === 'Checkpoint');
+      const baseModel = checkpoint
+        ? (baseModelSetsEntries.find(([, v]) =>
+            v.includes(checkpoint.baseModel as BaseModel)
+          )?.[0] as BaseModelSetType)
+        : undefined;
 
-    const airs = getAirs([request]);
-    const versionIds = airs.map((x) => x.version);
-    const requestResources = resourcesData.filter((x) => versionIds.includes(x.id));
-    const checkpoint = requestResources.find((x) => x.model.type === 'Checkpoint');
-    const baseModel = checkpoint
-      ? (baseModelSetsEntries.find(([, v]) =>
-          v.includes(checkpoint.baseModel as BaseModel)
-        )?.[0] as BaseModelSetType)
-      : undefined;
+      const resources = requestResources.map((resource) => {
+        const settings = resource.settings as RecommendedSettingsSchema;
+        return {
+          id: resource.id,
+          name: resource.name,
+          trainedWords: resource.trainedWords,
+          modelId: resource.model.id,
+          modelName: resource.model.name,
+          modelType: resource.model.type,
+          baseModel: resource.baseModel,
+          strength: settings?.strength ?? 1,
+          minStrength: settings?.minStrength ?? -1,
+          maxStrength: settings?.maxStrength ?? 2,
+          covered: resource.generationCoverage?.covered,
+        };
+      });
 
-    const resources = requestResources.map((resource) => {
-      const settings = resource.settings as RecommendedSettingsSchema;
-      return {
-        id: resource.id,
-        name: resource.name,
-        trainedWords: resource.trainedWords,
-        modelId: resource.model.id,
-        modelName: resource.model.name,
-        modelType: resource.model.type,
-        baseModel: resource.baseModel,
-        strength: settings?.strength ?? 1,
-        minStrength: settings?.minStrength ?? -1,
-        maxStrength: settings?.maxStrength ?? 2,
-        covered: resource.generationCoverage?.covered,
-      };
-    });
+      return steps.map((step) => {
+        const { input, output, jobs, status } = step;
+        const images =
+          output?.images?.map((image, i) => {
+            const seed = step.input.seed;
+            return {
+              requestId: workflow.id,
+              jobId: '', // TODO - get from job?
+              blobKey: image.blobKey,
+              available: image.available,
+              status: step.status, // TODO - get from job?
+              seed: seed ? seed + i : undefined,
+              duration: 0, // TODO - get from job?
+            };
+          }) ?? [];
 
-    const images =
-      request.jobs?.flatMap((job) =>
-        job.result.map((result, i) => {
-          const seed = job.details?.params?.seed;
-          return {
-            requestId: request.id,
-            jobId: job.jobId,
-            blobKey: result.blobKey,
-            available: result.available,
-            status: job.status,
-            seed: seed ? seed + i : undefined,
-            duration: job.details?.claimDuration, // TODO - change this to `jobDuration`
-          };
-        })
-      ) ?? [];
+        let negativePrompt = input.negativePrompt ?? '';
+        for (const { triggerWord } of [...safeNegatives, ...minorNegatives]) {
+          negativePrompt = negativePrompt.replace(`${triggerWord}, `, '');
+        }
 
-    let negativePrompt = details.params?.negativePrompt ?? '';
-    for (const { triggerWord } of [...safeNegatives, ...minorNegatives]) {
-      negativePrompt = negativePrompt.replace(`${triggerWord}, `, '');
-    }
+        let prompt = input.prompt ?? '';
+        for (const { triggerWord } of [...minorPositives]) {
+          prompt = prompt.replace(`${triggerWord}, `, '');
+        }
 
-    let prompt = details.params?.prompt ?? '';
-    for (const { triggerWord } of [...minorPositives]) {
-      prompt = prompt.replace(`${triggerWord}, `, '');
-    }
-
-    return {
-      id: request.id,
-      status: request.status,
-      createdAt: request.dateTime,
-      params: {
-        ...details.params,
-        baseModel,
-        prompt,
-        negativePrompt,
-      },
-      resources,
-      images,
-      cost: request.transactionAmount,
-    };
-  });
+        return {
+          id: workflow.id,
+          status: workflow.status,
+          // createdAt: workflow.dateTime, // TODO - do I need this?
+          params: {
+            baseModel,
+            prompt,
+            negativePrompt,
+            quantity: input.quantity,
+            controlNets: input.controlNets,
+            scheduler: input.scheduler,
+            steps: input.steps,
+            cfgScale: input.cfgScale,
+            width: input.width,
+            height: input.height,
+            seed: input.seed,
+            clipSkip: input.clipSkip,
+          },
+          resources,
+          images,
+          cost: workflow.transactions?.reduce((acc, value) => acc + (value.amount ?? 0), 0),
+        };
+      });
+    })
+    .flat();
 }
 
-function getAirs(requests: TextToImageResponse[]) {
+// TODO - do I need to support keys not in an air format? probably yes
+// force return air from orchestrator?
+function getAirs(workflows: TextToImageResponse[]) {
   return Object.keys(
-    requests.reduce<Record<string, boolean>>((acc, response) => {
-      for (const job of response.jobs ?? []) {
-        const details = job.details;
-        if (details) {
-          acc[details.model ?? ''] = true; // TODO - remove null coleasce
-          for (const key in details.additionalNetworks ?? {}) acc[key] = true;
-        }
+    workflows.reduce<Record<string, boolean>>((acc, workflow) => {
+      for (const step of workflow.steps.flat() ?? []) {
+        const { input } = step;
+        acc[input.model] = true;
+        for (const key in input.additionalNetworks ?? {}) acc[key] = true;
       }
       return acc;
     }, {})
