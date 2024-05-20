@@ -1,11 +1,11 @@
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { PageModal } from '~/components/Dialog/Templates/PageModal';
-import { ImageDetail } from '~/components/Image/Detail/ImageDetail';
 import { ImageDetailProvider } from '~/components/Image/Detail/ImageDetailProvider';
 import { ImagesContextState } from '~/components/Image/Providers/ImagesProvider';
 import { imagesQueryParamSchema } from '~/components/Image/image.utils';
 import { removeEmpty } from '../../../utils/object-helpers';
+import { ImageDetail2 } from '~/components/Image/DetailV2/ImageDetail2';
 
 export default function ImageDetailModal({
   imageId,
@@ -30,7 +30,7 @@ export default function ImageDetailModal({
         images={images}
         hideReactionCount={hideReactionCount}
       >
-        <ImageDetail />
+        <ImageDetail2 />
       </ImageDetailProvider>
     </PageModal>
   );

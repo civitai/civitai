@@ -586,6 +586,8 @@ export const createGenerationRequest = async ({
   userTier?: UserTier;
   isModerator?: boolean;
 }) => {
+  if (resources.length === 0) throw throwBadRequestError('No resources provided');
+
   // Handle generator disabled
   const status = await getGenerationStatus();
   if (!status.available && !isModerator)
@@ -604,7 +606,8 @@ export const createGenerationRequest = async ({
   const limits = status.limits[userTier ?? 'free'];
   if (params.quantity > limits.quantity) params.quantity = limits.quantity;
   if (params.steps > limits.steps) params.steps = limits.steps;
-  if (resources.length > limits.resources)
+  // +1 for the checkpoint
+  if (resources.length > limits.resources + 1)
     throw throwBadRequestError('You have exceeded the resources limit.');
 
   // This is disabled for now, because it performs so poorly...
@@ -617,9 +620,6 @@ export const createGenerationRequest = async ({
   //   throw throwRateLimitError(
   //     'You have too many pending generation requests. Try again when some are completed.'
   //   );
-
-  if (!resources || resources.length === 0) throw throwBadRequestError('No resources provided');
-  if (resources.length > 10) throw throwBadRequestError('Too many resources provided');
 
   // Handle Draft Mode
   const isSDXL =

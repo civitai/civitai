@@ -174,7 +174,7 @@ export function PostEditProvider({ post, params = {}, children, ...extendedParam
           };
         });
         await queryUtils.post.getInfinite.invalidate();
-        await queryUtils.image.getInfinite.invalidate({ postId });
+        await queryUtils.image.invalidate();
         if (modelVersionId) {
           await queryUtils.modelVersion.getById.invalidate({ id: modelVersionId });
           await queryUtils.image.getImagesAsPostsInfinite.invalidate();
@@ -187,7 +187,7 @@ export function PostEditProvider({ post, params = {}, children, ...extendedParam
     return () => {
       Router.events.off('routeChangeStart', handleBrowsingAway);
     };
-  }, [modelVersionId, modelId, postId, post]); // eslint-disable-line
+  }, [modelVersionId, modelId, postId]); // eslint-disable-line
 
   return (
     <StoreContext.Provider value={store}>

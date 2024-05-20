@@ -1,5 +1,5 @@
 import { ImageMetaProps } from '~/server/schema/image.schema';
-import { simpleTagSelect, imageTagCompositeSelect } from './tag.selector';
+import { simpleTagSelect } from './tag.selector';
 import { Prisma } from '@prisma/client';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 
@@ -30,6 +30,17 @@ export const editPostImageSelect = Prisma.validator<Prisma.ImageSelect>()({
           id: true,
           name: true,
           icon: true,
+        },
+      },
+    },
+  },
+  techniques: {
+    select: {
+      notes: true,
+      technique: {
+        select: {
+          id: true,
+          name: true,
         },
       },
     },

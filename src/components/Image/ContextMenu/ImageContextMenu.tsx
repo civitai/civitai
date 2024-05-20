@@ -61,6 +61,7 @@ type ImageContextMenuProps = {
   image: Omit<ImageProps, 'tags'> & { ingestion?: ImageIngestionStatus };
   context?: 'image' | 'post';
   additionalMenuItems?: React.ReactNode;
+  children?: React.ReactElement;
 };
 
 export function ImageContextMenu({
@@ -69,6 +70,7 @@ export function ImageContextMenu({
   additionalMenuItems,
   image,
   className,
+  children,
   ...actionIconProps
 }: ImageContextMenuProps & ActionIconProps & { iconSize?: number }) {
   const router = useRouter();
@@ -85,21 +87,23 @@ export function ImageContextMenu({
   const ContextMenu = (
     <Menu withinPortal withArrow>
       <Menu.Target>
-        <ActionIcon
-          className={!image.needsReview ? className : undefined}
-          variant="transparent"
-          onClick={(e: React.MouseEvent) => {
-            e.preventDefault();
-            e.stopPropagation();
-          }}
-          {...actionIconProps}
-        >
-          <IconDotsVertical
-            size={iconSize}
-            color="#fff"
-            filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-          />
-        </ActionIcon>
+        {children ?? (
+          <ActionIcon
+            className={!image.needsReview ? className : undefined}
+            variant="transparent"
+            onClick={(e: React.MouseEvent) => {
+              e.preventDefault();
+              e.stopPropagation();
+            }}
+            {...actionIconProps}
+          >
+            <IconDotsVertical
+              size={iconSize}
+              color="#fff"
+              filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+            />
+          </ActionIcon>
+        )}
       </Menu.Target>
       <Menu.Dropdown
         onClick={(e) => {

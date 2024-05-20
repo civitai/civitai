@@ -43,7 +43,6 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageProps } from '~/components/ImageViewer/ImageViewer';
 import React from 'react';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { truncate } from 'lodash-es';
 import { constants } from '~/server/common/constants';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';

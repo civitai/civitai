@@ -29,6 +29,7 @@ import {
   deleteImagesForModelVersionCache,
   getImagesForPosts,
   ingestImage,
+  purgeImageGenerationDataCache,
 } from '~/server/services/image.service';
 import { findOrCreateTagsByName, getVotableImageTags } from '~/server/services/tag.service';
 import { getToolByDomain, getToolByName } from '~/server/services/tool.service';
@@ -471,6 +472,7 @@ async function combinePostEditImageData(images: PostImageEditSelect[], user: Ses
       metadata: image.metadata as PreprocessFileReturnType['metadata'],
       tags: tags.filter((x) => x.imageId === image.id),
       tools: image.tools.map(({ notes, tool }) => ({ ...tool, notes })),
+      techniques: image.techniques.map(({ notes, technique }) => ({ ...technique, notes })),
     }))
     .sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
 }
@@ -781,6 +783,7 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
     },
     select: { id: true },
   });
+  purgeImageGenerationDataCache(image.id);
 };
 
 export const reorderPostImages = async ({ id: postId, imageIds }: ReorderPostImagesInput) => {

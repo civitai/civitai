@@ -43,7 +43,7 @@ export const DialogProvider = () => {
   return (
     <>
       {dialogs.map((dialog, i) => (
-        <div key={dialog.id.toString()}>{createRenderElement(dialog, i)}</div>
+        <React.Fragment key={dialog.id.toString()}>{createRenderElement(dialog, i)}</React.Fragment>
       ))}
     </>
   );

@@ -98,7 +98,7 @@ const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectMultiple
 
     return (
       <Input.Wrapper {...inputWrapperProps} ref={ref}>
-        <Stack spacing="md">
+        <Stack spacing="md" mb={inputWrapperProps.error ? 5 : undefined}>
           {sortedGroups.map((group, index) => {
             return (
               <React.Fragment key={group.type}>
