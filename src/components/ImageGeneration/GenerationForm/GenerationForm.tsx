@@ -37,7 +37,6 @@ import {
   Anchor,
   Button,
   Card,
-  CardProps,
   Center,
   NumberInputProps,
   Paper,
@@ -84,6 +83,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
 import { useGenerationContext } from '~/components/ImageGeneration/GenerationProvider';
 import InputQuantity from '~/components/ImageGeneration/GenerationForm/InputQuantity';
+import Link from 'next/link';
 
 const BUZZ_CHARGE_NOTICE_END = new Date('2024-04-14T00:00:00Z');
 
@@ -282,6 +282,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
 
   // Manually handle error display for prompt box
   const { errors } = form.formState;
+  const atLimit = additionalResourcesCount >= limits.resources;
 
   return (
     <Form
@@ -346,37 +347,55 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
               >
                 <Accordion.Item value="resources" sx={{ borderBottom: 0 }}>
                   <Accordion.Control className={cx(errors.resources && classes.formError)}>
-                    <Group spacing={4}>
-                      <Text size="sm" weight={590}>
-                        Additional Resources
-                      </Text>
-                      {additionalResourcesCount > 0 && (
-                        <Badge style={{ fontWeight: 590 }}>
-                          {additionalResourcesCount}/{limits.resources}
-                        </Badge>
-                      )}
+                    <Stack spacing={4}>
+                      <Group spacing={4}>
+                        <Text size="sm" weight={590}>
+                          Additional Resources
+                        </Text>
+                        {additionalResourcesCount > 0 && (
+                          <Badge style={{ fontWeight: 590 }}>
+                            {additionalResourcesCount}/{limits.resources}
+                          </Badge>
+                        )}
 
-                      <Button
-                        component="span"
-                        compact
-                        variant="light"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          setOpened(true);
-                        }}
-                        radius="xl"
-                        ml="auto"
-                        disabled={additionalResourcesCount >= limits.resources}
-                      >
-                        <Group spacing={4} noWrap>
-                          <IconPlus size={16} />
-                          <Text size="sm" weight={500}>
-                            Add
+                        <Button
+                          component="span"
+                          compact
+                          variant="light"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setOpened(true);
+                          }}
+                          radius="xl"
+                          ml="auto"
+                          disabled={atLimit}
+                        >
+                          <Group spacing={4} noWrap>
+                            <IconPlus size={16} />
+                            <Text size="sm" weight={500}>
+                              Add
+                            </Text>
+                          </Group>
+                        </Button>
+                      </Group>
+                      {atLimit && (!currentUser || currentUser.tier === 'free') && (
+                        <Text size="xs">
+                          <Link href="/pricing" passHref>
+                            <Anchor
+                              color="yellow"
+                              rel="nofollow"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              Become a member
+                            </Anchor>
+                          </Link>{' '}
+                          <Text inherit span>
+                            to use more resources at once
                           </Text>
-                        </Group>
-                      </Button>
-                    </Group>
+                        </Text>
+                      )}
+                    </Stack>
                   </Accordion.Control>
                   <Accordion.Panel>
                     <InputResourceSelectMultiple
@@ -1015,11 +1034,6 @@ const useStyles = createStyles((theme) => ({
     color: theme.colors.red[theme.fn.primaryShade()],
   },
 }));
-
-const sharedCardProps: Omit<CardProps, 'children'> = {
-  withBorder: true,
-  radius: 'md',
-};
 
 const sharedSliderProps: SliderProps = {
   size: 'sm',
