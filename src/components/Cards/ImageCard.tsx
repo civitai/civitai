@@ -150,12 +150,12 @@ function UnroutedImageCard({ data }: Props) {
                 }}
                 targetUserId={data.user.id}
               />
-              {data.hasMeta && (
-                <ImageMetaPopover2 imageId={data.id}>
+              {data.hasMeta && data.meta && (
+                <ImageMetaPopover meta={data.meta}>
                   <ActionIcon className={sharedClasses.infoChip} variant="light">
                     <IconInfoCircle color="white" strokeWidth={2.5} size={18} />
                   </ActionIcon>
-                </ImageMetaPopover2>
+                </ImageMetaPopover>
               )}
             </Group>
           </Stack>

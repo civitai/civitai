@@ -206,8 +206,8 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                                 readonly={!safe}
                                 className={classes.reactions}
                               />
-                              {image.hasMeta && (
-                                <ImageMetaPopover2 imageId={data.id}>
+                              {image.hasMeta && data.meta && (
+                                <ImageMetaPopover meta={data.meta}>
                                   <ActionIcon variant="transparent" size="lg">
                                     <IconInfoCircle
                                       color="white"
@@ -217,7 +217,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                                       size={26}
                                     />
                                   </ActionIcon>
-                                </ImageMetaPopover2>
+                                </ImageMetaPopover>
                               )}
                             </Group>
                           )
