@@ -98,6 +98,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
     'TextualInversion',
     'LORA',
     'LoCon',
+    'DoRA',
     'Wildcards',
   ].includes(model?.type ?? '');
   const isTextualInversion = model?.type === 'TextualInversion';
