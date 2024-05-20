@@ -1,4 +1,3 @@
-import dayjs from 'dayjs';
 import { NextApiRequest, NextApiResponse } from 'next';
 import { dbRead } from '~/server/db/client';
 import { eventEngine } from '~/server/events';

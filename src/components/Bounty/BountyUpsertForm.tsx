@@ -209,7 +209,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
       entryLimit: bounty?.entryLimit ?? 1,
       files: (bounty?.files as BaseFileSchema[]) ?? [],
       expiresAt: bounty
-        ? dayjs(stripTime(bounty.expiresAt)).toDate()
+        ? dayjs(stripTime(bounty.expiresAt)).utc().toDate()
         : dayjs().add(7, 'day').endOf('day').toDate(),
       startsAt: bounty ? dayjs(stripTime(bounty.startsAt)).toDate() : new Date(),
       details: bounty?.details ?? { baseModel: 'SD 1.5' },

@@ -37,7 +37,7 @@ const getOrCreateIndex = async (indexName: string, options?: IndexOptions) => {
       }
     },
     3,
-    1500
+    60000 // 60 seconds - This can take a while to create an index
   );
 };
 
@@ -70,11 +70,9 @@ const swapIndex = async ({
 };
 
 const onSearchIndexDocumentsCleanup = async ({
-  db,
   indexName,
   ids,
 }: {
-  db: PrismaClient;
   indexName: string;
   ids?: number[];
 }) => {

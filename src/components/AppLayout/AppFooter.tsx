@@ -115,7 +115,7 @@ export function AppFooter({ fixed = true }: { fixed?: boolean }) {
             Privacy
           </Button>
           {features.safety && (
-            <Button component={NextLink} href="/safety" {...buttonProps}>
+            <Button component={NextLink} href="/safety" prefetch={false} {...buttonProps}>
               Safety
             </Button>
           )}

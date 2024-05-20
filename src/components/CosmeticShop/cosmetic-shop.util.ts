@@ -4,6 +4,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
+  CosmeticShopItemMeta,
   GetAllCosmeticShopSections,
   GetPaginatedCosmeticShopItemInput,
   GetShopInput,
@@ -93,7 +94,7 @@ export const useQueryCosmeticShopSection = ({ id }: { id: number }) => {
 };
 
 export const useMutateCosmeticShop = () => {
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const currentUser = useCurrentUser();
 
   const onError = (error: any, message = 'There was an error while performing your request') => {
@@ -151,7 +152,7 @@ export const useMutateCosmeticShop = () => {
 
   const updateShopSectionsOrderMutation = trpc.cosmeticShop.updateSectionsOrder.useMutation({
     async onSuccess(_, { sortedSectionIds }) {
-      await queryUtils.cosmeticShop.getAllSections.setData({}, (data) => {
+      queryUtils.cosmeticShop.getAllSections.setData({}, (data) => {
         if (!data) return [];
 
         const updated = [...data].sort((a, b) => {
@@ -172,6 +173,7 @@ export const useMutateCosmeticShop = () => {
   const purchaseShopItemMutation = trpc.cosmeticShop.purchaseShopItem.useMutation({
     async onSuccess(_, { shopItemId }) {
       await queryUtils.userProfile.get.invalidate();
+      await queryUtils.user.getCosmetics.invalidate();
       if (currentUser?.id) {
         await queryUtils.user.getCreator.invalidate({
           id: currentUser.id,
@@ -183,14 +185,16 @@ export const useMutateCosmeticShop = () => {
 
         const sections = data.map((section) => {
           const updatedItems = section.items.map((item) => {
+            const meta = (item.shopItem.meta ?? {}) as CosmeticShopItemMeta;
             if (item.shopItem.id === shopItemId) {
               return {
                 ...item,
                 shopItem: {
                   ...item.shopItem,
-                  availableQuantity: item.shopItem.availableQuantity
-                    ? item.shopItem.availableQuantity - 1
-                    : null,
+                  meta: {
+                    ...meta,
+                    purchases: (meta.purchases ?? 0) + 1,
+                  },
                 },
               };
             }
@@ -266,6 +270,41 @@ export const useQueryShop = (
   }
 
   return { cosmeticShopSections: [], ...rest };
+};
+
+export const useShopLastViewed = () => {
+  const currentUser = useCurrentUser();
+  const { data, isLoading, isFetched, ...rest } = trpc.user.getSettings.useQuery(undefined, {
+    enabled: !!currentUser,
+  });
+
+  const { cosmeticStoreLastViewed: lastViewed } = data ?? {
+    cosmeticStoreLastViewed: null,
+  };
+
+  const updateUserSettings = trpc.user.setSettings.useMutation({
+    onError(_error, _payload, context) {
+      // Simply ignore really. We don't want to show an error notification for this.
+    },
+  });
+
+  const updateLastViewed = async () => {
+    if (!currentUser || updateUserSettings.isLoading || updateUserSettings.isSuccess) {
+      return;
+    }
+
+    updateUserSettings.mutate({
+      cosmeticStoreLastViewed: new Date(),
+    });
+  };
+
+  return {
+    lastViewed,
+    isLoading,
+    isFetched,
+    updateLastViewed,
+    updatedLastViewed: updateUserSettings.isSuccess,
+  };
 };
 
 const cosmeticShopQueryParams = z

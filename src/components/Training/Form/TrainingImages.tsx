@@ -252,6 +252,8 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     const zData = await zipReader.loadAsync(f);
     await Promise.all(
       Object.entries(zData.files).map(async ([zname, zf]) => {
+        if (zf.dir) return;
+        if (zname.startsWith('__MACOSX/') || zname.endsWith('.DS_STORE')) return;
         // - we could read the type here with some crazy blob/hex inspecting
         const fileSplit = zname.split('.');
         const fileExt = (fileSplit.pop() || '').toLowerCase();

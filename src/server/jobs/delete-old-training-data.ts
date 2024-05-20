@@ -131,21 +131,23 @@ export const deleteOldTrainingData = createJob(
 
       if (visibility !== ModelFileVisibility.Public) {
         const { key, bucket } = parseKey(url);
-        try {
-          await deleteObject(bucket, key);
-        } catch (e) {
-          hasError = true;
-          logJob({
-            message: `Delete object error`,
-            data: {
-              error: (e as Error)?.message,
-              cause: (e as Error)?.cause,
-              jobId: job_id,
-              modelFileId: mf_id,
-              key,
-              bucket,
-            },
-          });
+        if (bucket) {
+          try {
+            await deleteObject(bucket, key);
+          } catch (e) {
+            hasError = true;
+            logJob({
+              message: `Delete object error`,
+              data: {
+                error: (e as Error)?.message,
+                cause: (e as Error)?.cause,
+                jobId: job_id,
+                modelFileId: mf_id,
+                key,
+                bucket,
+              },
+            });
+          }
         }
       }
 

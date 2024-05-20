@@ -58,7 +58,7 @@ BEGIN
     PERFORM create_job_queue_record(OLD.id, 'Post', 'CleanUp');
 
   -- On post publish, create a job to update the nsfw level of the related entities (modelVersions, collectionItems)
-  ELSIF (NEW."publishedAt" IS NOT NULL AND OLD."publishedAt" IS NULL AND OLD."nsfwLevel" != 0) THEN
+  ELSIF (NEW."publishedAt" IS NOT NULL AND OLD."publishedAt" IS NULL) THEN
     PERFORM create_job_queue_record(NEW.id, 'Post', 'UpdateNsfwLevel');
   END IF;
   RETURN NULL;
@@ -79,7 +79,7 @@ BEGIN
     -- When a model version is deleted, schedule nsfw level update for the model
     PERFORM create_job_queue_record(OLD."modelId", 'Model', 'UpdateNsfwLevel');
   -- On model version publish, create a job to update the nsfw level of the related entities (model)
-  ELSIF (NEW.status = 'Published' AND OLD.status != 'Published' AND OLD."nsfwLevel" != 0) THEN
+  ELSIF (NEW.status = 'Published' AND OLD.status != 'Published') THEN
     PERFORM create_job_queue_record(NEW.id, 'ModelVersion', 'UpdateNsfwLevel');
   END IF;
   RETURN NULL;
@@ -100,7 +100,7 @@ BEGIN
     -- When a model is deleted, schedule removal of FKs (collectionItems)
     PERFORM create_job_queue_record(OLD.id, 'Model', 'CleanUp');
   -- On model publish, create a job to update the nsfw level of the related entities (collectionItems)
-  ELSIF ((NEW.status = 'Published' AND OLD.status != 'Published' AND OLD."nsfwLevel" != 0) OR (NEW."nsfw" != OLD."nsfw" AND NEW.status = 'Published')) THEN
+  ELSIF ((NEW.status = 'Published' AND OLD.status != 'Published') OR (NEW."nsfw" != OLD."nsfw" AND NEW.status = 'Published')) THEN
     PERFORM create_job_queue_record(OLD."id", 'Model', 'UpdateNsfwLevel');
   END IF;
   RETURN NULL;
@@ -121,7 +121,7 @@ BEGIN
     -- When an article is deleted, schedule removal of FKs (collectionItems)
     PERFORM create_job_queue_record(OLD.id, 'Article', 'CleanUp');
   -- On article publish, create a job to update the nsfw level of the related entities (collectionItems)
-  ELSIF ((NEW."publishedAt" IS NOT NULL AND OLD."publishedAt" IS NULL AND OLD."nsfwLevel" != 0) OR (NEW."userNsfwLevel" != OLD."userNsfwLevel" AND NEW."publishedAt" IS NOT NULL)) THEN
+  ELSIF ((NEW."publishedAt" IS NOT NULL AND OLD."publishedAt" IS NULL) OR (NEW."userNsfwLevel" != OLD."userNsfwLevel" AND NEW."publishedAt" IS NOT NULL)) THEN
     PERFORM create_job_queue_record(OLD."id", 'Article', 'UpdateNsfwLevel');
   END IF;
   RETURN NULL;
@@ -142,7 +142,7 @@ BEGIN
     -- When a collection item is deleted, schedule update of collection nsfw level
     PERFORM create_job_queue_record(OLD."collectionId", 'Collection', 'UpdateNsfwLevel');
   -- On collection item publish, schedule update of collection nsfw level
-  ELSIF ((TG_OP = 'UPDATE' AND OLD.status != 'ACCEPTED' AND NEW.status = 'ACCEPTED') OR (NEW."nsfw" != OLD."nsfw" AND NEW.status = 'ACCEPTED')) THEN
+  ELSIF ((TG_OP = 'UPDATE' AND OLD.status != 'ACCEPTED' AND NEW.status = 'ACCEPTED')) THEN
     PERFORM create_job_queue_record(OLD."collectionId", 'Collection', 'UpdateNsfwLevel');
   -- When a collection item is added, schedule update of collection nsfw level
   ELSIF (TG_OP = 'INSERT' AND NEW.status = 'ACCEPTED') THEN
@@ -157,6 +157,7 @@ AFTER INSERT OR UPDATE OF "status" OR DELETE ON "CollectionItem"
 FOR EACH ROW
 EXECUTE FUNCTION update_collection_nsfw_level();
 
+-- TODO ??? - create trigger for collection update nsfw? (NEW."nsfw" != OLD."nsfw" AND NEW.status = 'ACCEPTED')
 
 -- BOUNTY TRIGGER
 CREATE OR REPLACE FUNCTION update_bounty_nsfw_level()

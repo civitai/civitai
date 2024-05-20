@@ -32,6 +32,7 @@ import {
   ToggleUserBountyEngagementsInput,
   UserByReferralCodeSchema,
   UserOnboardingSchema,
+  UserSettingsSchema,
   UserUpdateInput,
 } from '~/server/schema/user.schema';
 import {
@@ -110,7 +111,10 @@ import {
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
 import { Flags } from '~/shared/utils';
-import { getResourceReviewsByUserId } from '~/server/services/resourceReview.service';
+import {
+  getResourceReviewsByUserId,
+  getUserResourceReview,
+} from '~/server/services/resourceReview.service';
 import { usersSearchIndex } from '~/server/search-index';
 import { onboardingCompletedCounter, onboardingErrorCounter } from '~/server/prom/client';
 
@@ -306,7 +310,8 @@ export const completeOnboardingHandler = async ({
     const isComplete = onboarding === OnboardingComplete;
     if (isComplete && changed) onboardingCompletedCounter.inc();
   } catch (e) {
-    onboardingErrorCounter.inc();
+    const err = e as Error;
+    if (!err.message.includes('constraint failed')) onboardingErrorCounter.inc();
     if (e instanceof TRPCError) throw e;
     throw throwDbError(e);
   }
@@ -748,7 +753,17 @@ export async function toggleFavoriteHandler({
   input: ToggleFavoriteInput;
   ctx: DeepNonNullable<Context>;
 }) {
-  const { id: userId } = ctx.user;
+  const { id: userId, muted } = ctx.user;
+  if (muted) return false;
+
+  // Toggle review (on/off)
+  const reviewResult = await toggleReview({
+    modelId,
+    modelVersionId,
+    userId,
+    setTo,
+  });
+
   // If favoriting, also bookmark and notify
   if (setTo) {
     // Toggle notifications
@@ -766,18 +781,22 @@ export async function toggleFavoriteHandler({
       userId,
       setTo,
     });
+  } else {
+    const userModelReviews = await getUserResourceReview({ userId, modelId });
+
+    // Remove it from bookmark collection if no reviews
+    if (!userModelReviews?.length)
+      // Toggle to bookmark collection
+      await toggleBookmarked({
+        type: 'Model',
+        entityId: modelId,
+        userId,
+        setTo,
+      });
   }
 
-  if (ctx.user.muted) return false;
-
-  // Toggle review (on/off)
-  const reviewResult = await toggleReview({
-    modelId,
-    modelVersionId,
-    userId,
-    setTo,
-  });
   await redis.del(`user:${userId}:model-engagements`);
+
   return reviewResult;
 }
 
@@ -1249,7 +1268,7 @@ export const getUserSettingsHandler = async ({ ctx }: { ctx: DeepNonNullable<Con
     const settings = await getUserSettings(id);
 
     // Limits it to the input type
-    return settings as SetUserSettingsInput;
+    return settings as UserSettingsSchema;
   } catch (error) {
     throw throwDbError(error);
   }

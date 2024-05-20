@@ -55,6 +55,7 @@ import {
 } from '~/components/Search/search.types';
 import { paired } from '~/utils/type-guards';
 import { BrowsingLevelFilter } from '../Search/CustomSearchComponents';
+import { QS } from '~/utils/qs';
 
 const meilisearch = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -290,13 +291,8 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
 
   const handleSubmit = () => {
     if (search) {
-      router.push(
-        `/search/${indexName}?query=${encodeURIComponent(search)}&${
-          searchPageQuery.length ? `${searchPageQuery}` : ''
-        }`,
-        undefined,
-        { shallow: false }
-      );
+      const queryString = QS.stringify({ query: query.trim(), ...QS.parse(searchPageQuery) });
+      router.push(`/search/${indexName}?${queryString}`, undefined, { shallow: false });
 
       blurInput();
     }
@@ -394,6 +390,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
           sx={{ flexShrink: 1 }}
           onChange={onTargetChange}
           autoComplete="off"
+          withinPortal
         />
         <ClearableAutoComplete
           ref={inputRef}

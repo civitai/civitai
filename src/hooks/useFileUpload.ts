@@ -106,7 +106,6 @@ export function useFileUpload() {
           resolve(false);
         });
         xhr.open('PUT', uploadURL);
-        xhr.setRequestHeader('Content-Type', 'application/octet-stream');
         xhr.send(file);
       });
 

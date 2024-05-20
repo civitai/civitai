@@ -28,7 +28,6 @@ import {
   useEditor,
 } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
-import { uniqueId } from 'lodash-es';
 import { useEffect, useImperativeHandle, useRef } from 'react';
 
 import { InsertInstagramEmbedControl } from '~/components/RichTextEditor/InsertInstagramEmbedControl';
@@ -38,11 +37,12 @@ import { CustomImage } from '~/libs/tiptap/extensions/CustomImage';
 import { Instagram } from '~/libs/tiptap/extensions/Instagram';
 import { StrawPoll } from '~/libs/tiptap/extensions/StrawPoll';
 import { constants } from '~/server/common/constants';
-import { validateThirdPartyUrl } from '~/utils/string-helpers';
+import { getRandomId, validateThirdPartyUrl } from '~/utils/string-helpers';
 import { InsertImageControl } from './InsertImageControl';
 import { InsertYoutubeVideoControl } from './InsertYoutubeVideoControl';
 import { getSuggestions } from './suggestion';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+import slugify from 'slugify';
 
 // const mapEditorSizeHeight: Omit<Record<MantineSize, string>, 'xs'> = {
 //   sm: '30px',
@@ -214,7 +214,7 @@ export function RichTextEditor({
             renderHTML({ node }) {
               const hasLevel = this.options.levels.includes(node.attrs.level);
               const level = hasLevel ? node.attrs.level : this.options.levels[0];
-              const id = node.attrs.id || uniqueId('heading-');
+              const id = `${slugify(node.textContent.toLowerCase())}-${getRandomId()}`;
 
               return [`h${level}`, mergeAttributes(this.options.HTMLAttributes, { id }), 0];
             },

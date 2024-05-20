@@ -101,9 +101,9 @@ export function CardDecorationModal({ entityType, entityId, image, currentCosmet
 
     if (selectedItem && selectedItem.inUse) {
       return openConfirmModal({
-        title: 'Reassign Art Frame',
+        title: 'Reassign Content Decoration',
         children:
-          'This art frame is being used on another post. Are you sure you want to reassign it?',
+          'This content decoration is being used on another post. Are you sure you want to reassign it?',
         labels: { confirm: 'Continue', cancel: 'No, go back' },
         onConfirm: completeSubmission,
       });
@@ -134,8 +134,8 @@ export function CardDecorationModal({ entityType, entityId, image, currentCosmet
     <Modal
       {...dialog}
       onClose={handleClose}
-      title="Card Decoration"
-      closeButtonLabel="Close card decoration modal"
+      title="Content Decorations"
+      closeButtonLabel="Close content decorations modal"
       size="lg"
       closeOnClickOutside={!isLoading}
       closeOnEscape={!isLoading}
@@ -174,8 +174,8 @@ export function CardDecorationModal({ entityType, entityId, image, currentCosmet
             <Stack align="center" spacing="xl">
               {selectedItem &&
                 selectedItem.entityImage &&
-                selectedItem.entityImage.entityId !== entityId &&
-                selectedItem.entityImage.entityType !== entityType && (
+                (selectedItem.entityImage.entityId !== entityId ||
+                  selectedItem.entityImage.entityType !== entityType) && (
                   <Group noWrap>
                     <Image
                       src={getEdgeUrl(selectedItem.entityImage.url, {
@@ -251,7 +251,7 @@ export const PreviewCard = ({
       ? DEFAULT_EDGE_IMAGE_WIDTH * originalAspectRatio
       : DEFAULT_EDGE_IMAGE_WIDTH;
 
-  const { classes, cx } = useCardStyles({ aspectRatio: originalAspectRatio });
+  const { classes } = useCardStyles({ aspectRatio: originalAspectRatio });
 
   if (!image) return null;
 
@@ -259,13 +259,12 @@ export const PreviewCard = ({
   const cardHeight = heightRatio * constants.cardSizes.image;
 
   return (
-    <MasonryCard height={cardHeight} frameDecoration={decoration}>
-      <EdgeMedia
-        src={image.url}
-        className={cx(classes.image, decoration && classes.frameAdjustment)}
-        width={imageWidth}
-        anim={true}
-      />
+    <MasonryCard
+      height={cardHeight}
+      frameDecoration={decoration}
+      className={decoration && classes.frameAdjustment}
+    >
+      <EdgeMedia src={image.url} className={classes.image} width={imageWidth} anim={true} />
     </MasonryCard>
   );
 };

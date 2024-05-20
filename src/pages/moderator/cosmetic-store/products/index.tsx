@@ -39,7 +39,10 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { CosmeticSample } from '~/pages/moderator/cosmetic-store/cosmetics';
 import { PurchasableRewardModeratorViewMode } from '~/server/common/enums';
-import { GetPaginatedCosmeticShopItemInput } from '~/server/schema/cosmetic-shop.schema';
+import {
+  CosmeticShopItemMeta,
+  GetPaginatedCosmeticShopItemInput,
+} from '~/server/schema/cosmetic-shop.schema';
 import { GetPaginatedCosmeticsInput } from '~/server/schema/cosmetic.schema';
 import { GetPaginatedPurchasableRewardsModeratorSchema } from '~/server/schema/purchasable-reward.schema';
 import { NamePlateCosmetic } from '~/server/selectors/cosmetic.selector';
@@ -153,6 +156,7 @@ export default function CosmeticStoreProducts() {
                     <Text align="center">Sample</Text>
                   </th>
                   <th>Price</th>
+                  <th>Purchases</th>
                   <th>Available From</th>
                   <th>Available To</th>
                   <th>Remaining Quantity</th>
@@ -162,6 +166,7 @@ export default function CosmeticStoreProducts() {
               </thead>
               <tbody>
                 {cosmeticShopItems.map((shopItem) => {
+                  const meta = (shopItem.meta ?? {}) as CosmeticShopItemMeta;
                   return (
                     <tr key={shopItem.id}>
                       <td>
@@ -188,11 +193,15 @@ export default function CosmeticStoreProducts() {
                       <td>
                         <CurrencyBadge unitAmount={shopItem.unitAmount} currency={Currency.BUZZ} />
                       </td>
+                      <td>{meta.purchases ?? 0}</td>
                       <td>{shopItem.availableFrom ? formatDate(shopItem.availableFrom) : '-'}</td>
                       <td>{shopItem.availableTo ? formatDate(shopItem.availableTo) : '-'}</td>
                       <td>
                         {(shopItem.availableQuantity ?? null) !== null
-                          ? shopItem.availableQuantity
+                          ? `${Math.max(
+                              0,
+                              (shopItem.availableQuantity ?? 0) - (meta.purchases ?? 0)
+                            )}/${shopItem.availableQuantity}`
                           : '-'}
                       </td>{' '}
                       <td>{shopItem.archivedAt ? formatDate(shopItem.archivedAt) : '-'}</td>

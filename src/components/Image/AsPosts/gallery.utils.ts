@@ -3,9 +3,9 @@ import produce from 'immer';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
-export const useToggleGallerySettings = ({ modelId }: { modelId: number }) => {
+export const useGallerySettings = ({ modelId }: { modelId: number }) => {
   const queryUtils = trpc.useUtils();
-  const { data } = trpc.model.getGallerySettings.useQuery({ id: modelId });
+  const { data, isLoading } = trpc.model.getGallerySettings.useQuery({ id: modelId });
 
   const updateGallerySettingsMutation = trpc.model.updateGallerySettings.useMutation({
     onMutate: async (payload) => {
@@ -29,20 +29,21 @@ export const useToggleGallerySettings = ({ modelId }: { modelId: number }) => {
       queryUtils.model.getGallerySettings.setData({ id }, context?.previousSettings);
     },
   });
-
-  return async function ({
+  const handleToggleSettings = async ({
     modelId,
     images,
     tags,
     users,
     level,
+    pinnedPosts,
   }: {
     modelId: number;
     images?: Array<{ id: number }>;
     tags?: Array<{ id: number; name: string }>;
     users?: Array<{ id: number; username: string | null }>;
     level?: number;
-  }) {
+    pinnedPosts?: { modelVersionId: number; postIds: number[] };
+  }) => {
     if (!data) return;
     const updatedSettings = {
       hiddenImages: images
@@ -61,11 +62,38 @@ export const useToggleGallerySettings = ({ modelId }: { modelId: number }) => {
           : [...data.hiddenUsers, ...users]
         : data?.hiddenUsers ?? [],
       level: level ?? data?.level,
+      pinnedPosts: pinnedPosts
+        ? pinnedPosts.postIds.some((id) => {
+            const versionPinnedPosts = data.pinnedPosts?.[pinnedPosts.modelVersionId] ?? [];
+            return versionPinnedPosts.includes(id);
+          })
+          ? {
+              ...data.pinnedPosts,
+              [pinnedPosts.modelVersionId]:
+                data.pinnedPosts?.[pinnedPosts.modelVersionId]?.filter(
+                  (id) => !pinnedPosts.postIds.includes(id)
+                ) ?? [],
+            }
+          : {
+              ...data.pinnedPosts,
+              [pinnedPosts.modelVersionId]: [
+                ...(data.pinnedPosts?.[pinnedPosts.modelVersionId] ?? []),
+                ...pinnedPosts.postIds,
+              ],
+            }
+        : data?.pinnedPosts ?? {},
     };
 
     return updateGallerySettingsMutation.mutateAsync({
       id: modelId,
       gallerySettings: updatedSettings,
     });
+  };
+
+  return {
+    gallerySettings: data,
+    loading: isLoading,
+    toggle: handleToggleSettings,
+    updating: updateGallerySettingsMutation.isLoading,
   };
 };

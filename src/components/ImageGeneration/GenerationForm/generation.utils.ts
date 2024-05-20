@@ -26,6 +26,7 @@ import { findClosest } from '~/utils/number-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { getBaseModelSetKey } from '~/shared/constants/generation.constants';
 
 export const useGenerationFormStore = create<Partial<GenerateFormModel>>()(
   persist(() => ({}), { name: 'generation-form-2', version: 0 })
@@ -345,13 +346,6 @@ export const getClosestAspectRatio = (width?: number, height?: number, baseModel
 };
 
 // TODO - move these somewhere that makes more sense
-export const getBaseModelSetKey = (baseModel?: string) => {
-  if (!baseModel) return undefined;
-  return Object.entries(baseModelSets).find(
-    ([key, baseModels]) => key === baseModel || baseModels.includes(baseModel as BaseModel)
-  )?.[0] as BaseModelSetType | undefined;
-};
-
 export const getBaseModelSet = (baseModel?: string) => {
   if (!baseModel) return undefined;
   return Object.entries(baseModelSets).find(

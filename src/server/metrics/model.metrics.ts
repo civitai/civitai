@@ -7,6 +7,10 @@ import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { createLogger } from '~/utils/logging';
 import { templateHandler } from '~/server/db/pgDb';
 import { executeRefresh, snippets } from '~/server/metrics/metric-helpers';
+import {
+  allInjectedNegatives,
+  allInjectedPositives,
+} from '~/shared/constants/generation.constants';
 
 const log = createLogger('metrics:model');
 const BATCH_SIZE = 1000;
@@ -153,6 +157,7 @@ async function getDownloadTasks(ctx: ModelMetricContext) {
   return tasks;
 }
 
+const injectedVersionIds = [...allInjectedNegatives, ...allInjectedPositives].map((x) => x.id);
 async function getGenerationTasks(ctx: ModelMetricContext) {
   const generated = await ctx.ch.$query<{ modelVersionId: number }>`
     SELECT DISTINCT modelVersionId
@@ -163,20 +168,22 @@ async function getGenerationTasks(ctx: ModelMetricContext) {
       WHERE createdAt >= parseDateTimeBestEffortOrNull('${ctx.lastUpdate}')
     )
   `;
-  const affected = generated.map((x) => x.modelVersionId);
+  const affected = generated
+    .map((x) => x.modelVersionId)
+    .filter((x) => !injectedVersionIds.includes(x));
 
   const tasks = chunk(affected, BATCH_SIZE).map((ids, i) => async () => {
     ctx.jobContext.checkIfCanceled();
     log('getGenerationTasks', i + 1, 'of', tasks.length);
     const generations = await ctx.ch.$query<VersionTimeframeRow>`
       SELECT
-          modelVersionId,
-          sumIf(count, createdDate = current_date()) day,
-          sumIf(count, createdDate >= subtractDays(current_date(), 7)) week,
-          sumIf(count, createdDate >= subtractMonths(current_date(), 1)) month,
-          sumIf(count, createdDate >= subtractYears(current_date(), 1)) year,
-          sum(count) all_time
-      FROM daily_resource_generation_counts
+        modelVersionId,
+        countIf(date = current_date()) day,
+        countIf(date >= subtractDays(current_date(), 7)) week,
+        countIf(date >= subtractMonths(current_date(), 1)) month,
+        countIf(date >= subtractYears(current_date(), 1)) year,
+        count(*) all_time
+      FROM daily_user_resource
       WHERE modelVersionId IN (${ids})
       GROUP BY modelVersionId;
     `;
@@ -247,7 +254,7 @@ async function getImageTasks(ctx: ModelMetricContext) {
         JOIN "Model" m ON m.id = mv."modelId"
         JOIN "ImageResource" ir ON mv.id = ir."modelVersionId"
         JOIN "Image" i ON i.id = ir."imageId" AND m."userId" != i."userId"
-        JOIN "Post" p ON i."postId" = p.id AND p."publishedAt" IS NOT NULL AND metadata->>'unpublishedAt' IS NULL AND p."publishedAt" < now()
+        JOIN "Post" p ON i."postId" = p.id AND p."publishedAt" IS NOT NULL AND p."publishedAt" < now()
         WHERE
           mv.id IN (${ids})
       ) i

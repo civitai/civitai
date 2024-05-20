@@ -150,6 +150,9 @@ export const modelGallerySettingsSchema = z.object({
   tags: z.number().array().optional(),
   images: z.number().array().optional(),
   level: z.number().optional(),
+  pinnedPosts: z
+    .record(z.string(), z.number().array().max(constants.modelGallery.maxPinnedPosts))
+    .optional(),
 });
 
 export type ModelGallerySettingsInput = z.infer<typeof modelGallerySettingsInput>;
@@ -158,6 +161,9 @@ export const modelGallerySettingsInput = z.object({
   hiddenTags: z.object({ id: z.number(), name: z.string() }).array(),
   hiddenImages: z.number().array(),
   level: z.number().optional(),
+  pinnedPosts: z
+    .record(z.string(), z.number().array().max(constants.modelGallery.maxPinnedPosts))
+    .optional(),
 });
 
 export type ModelUpsertInput = z.infer<typeof modelUpsertSchema>;

@@ -1,6 +1,6 @@
-import { ImageMetaProps } from '~/server/schema/image.schema';
-import { SDResource, createMetadataProcessor } from '~/utils/metadata/base.metadata';
 import { unescape } from 'lodash-es';
+import { ImageMetaProps } from '~/server/schema/image.schema';
+import { createMetadataProcessor, SDResource } from '~/utils/metadata/base.metadata';
 import { parseAIR } from '~/utils/string-helpers';
 
 type CivitaiResource = {
@@ -14,7 +14,7 @@ type CivitaiResource = {
 
 // #region [helpers]
 const hashesRegex = /, Hashes:\s*({[^}]+})/;
-const civitaiResources = /, Civitai resources:\s*(\[[^\]]+\])/;
+const civitaiResources = /, Civitai resources:\s*(.+)/;
 const badExtensionKeys = ['Resources: ', 'Hashed prompt: ', 'Hashed Negative prompt: '];
 const templateKeys = ['Template: ', 'Negative Template: '] as const;
 const automaticExtraNetsRegex = /<(lora|hypernet):([a-zA-Z0-9_\.\-]+):([0-9.]+)>/g;
@@ -27,7 +27,7 @@ const automaticSDKeyMap = new Map<string, string>([
   ['Clip skip', 'clipSkip'],
 ]);
 const getSDKey = (key: string) => automaticSDKeyMap.get(key.trim()) ?? key.trim();
-const decoder = new TextDecoder('utf-8');
+const decoder = new TextDecoder('utf-16le');
 const automaticSDEncodeMap = new Map<keyof ImageMetaProps, string>(
   Array.from(automaticSDKeyMap, (a) => a.reverse()) as Iterable<readonly [string, string]>
 );
@@ -43,13 +43,18 @@ const excludedKeys = [
   'controlNets',
   'denoise',
   'other',
+  'external',
 ];
+function isPartialDate(date: string) {
+  return date.length === 14 && date[11] === 'T';
+}
 function parseDetailsLine(line: string | undefined): Record<string, any> {
   const result: Record<string, any> = {};
   if (!line) return result;
   let currentKey = '';
   let currentValue = '';
   let insideQuotes = false;
+  let insideDate = false;
 
   for (let i = 0; i < line.length; i++) {
     const char = line[i];
@@ -60,10 +65,14 @@ function parseDetailsLine(line: string | undefined): Record<string, any> {
         currentKey = '';
       }
       insideQuotes = !insideQuotes;
-    } else if (char === ':' && !insideQuotes) {
-      currentKey = getSDKey(currentValue.trim());
-      currentValue = '';
+    } else if (char === ':' && !insideQuotes && !insideDate) {
+      if (isPartialDate(currentValue)) insideDate = true;
+      else {
+        currentKey = getSDKey(currentValue.trim());
+        currentValue = '';
+      }
     } else if (char === ',' && !insideQuotes) {
+      if (insideDate) insideDate = false;
       if (currentKey) result[currentKey] = currentValue.trim();
       currentKey = '';
       currentValue = '';
@@ -75,6 +84,51 @@ function parseDetailsLine(line: string | undefined): Record<string, any> {
 
   return result;
 }
+
+/**
+ * Swap the byte order of a Uint8Array from big-endian to little-endian.
+ * @param buffer - The input Uint8Array with big-endian byte order.
+ * @returns A new Uint8Array with little-endian byte order.
+ */
+function swapByteOrder(buffer: Uint8Array): Uint8Array {
+  const swapped = new Uint8Array(buffer.length);
+  for (let i = 0; i < buffer.length; i += 2) {
+    swapped[i] = buffer[i + 1];
+    swapped[i + 1] = buffer[i];
+  }
+  return swapped;
+}
+
+/**
+ * Remove Unicode header bytes if present.
+ * @param buffer - The input Uint8Array.
+ * @returns A new Uint8Array without BOM or header bytes.
+ */
+const unicodeHeader = new Uint8Array([85, 78, 73, 67, 79, 68, 69, 0]);
+function removeUnicodeHeader(buffer: Uint8Array): Uint8Array {
+  if (buffer.length < unicodeHeader.length) return buffer;
+
+  // Check for BOM (Byte Order Mark) for big-endian UTF-16 (0xFEFF) and remove it if present
+  for (let i = 0; i < unicodeHeader.length; i++) {
+    if (buffer[i] !== unicodeHeader[i]) return buffer;
+  }
+  return buffer.slice(unicodeHeader.length);
+}
+
+/**
+ * Decode a big-endian UTF-16 (Unicode) encoded buffer to a string.
+ * @param buffer - The input Uint8Array with big-endian byte order.
+ * @returns The decoded string.
+ */
+function decodeBigEndianUTF16(buffer: Uint8Array): string {
+  // Remove BOM or unwanted header bytes if present
+  const bufferWithoutBOM = removeUnicodeHeader(buffer);
+  // Swap the byte order from big-endian to little-endian
+  const littleEndianBuffer = swapByteOrder(bufferWithoutBOM);
+  // Use TextDecoder to decode the little-endian buffer
+  return decoder.decode(littleEndianBuffer);
+}
+
 // #endregion
 
 export const automaticMetadataProcessor = createMetadataProcessor({
@@ -83,17 +137,10 @@ export const automaticMetadataProcessor = createMetadataProcessor({
     if (exif?.parameters) {
       generationDetails = exif.parameters;
     } else if (exif?.userComment) {
-      const p = document.createElement('p');
-      generationDetails = decoder.decode(exif.userComment);
-      // Any annoying hack to deal with weirdness in the meta
-      p.innerHTML = generationDetails;
-      p.remove();
-      generationDetails = p.innerHTML;
+      generationDetails = decodeBigEndianUTF16(exif.userComment);
     }
 
     if (generationDetails) {
-      generationDetails = generationDetails.replace('UNICODE', '').replace(/�/g, '');
-      generationDetails = unescape(generationDetails);
       exif.generationDetails = generationDetails;
       return generationDetails.includes('Steps: ');
     }

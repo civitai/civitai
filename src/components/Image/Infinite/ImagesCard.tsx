@@ -91,7 +91,13 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                   </AspectRatio>
                 )}
 
-                <div className={classes.content} style={{ opacity: inView ? 1 : 0 }}>
+                <div
+                  className={cx(
+                    classes.content,
+                    data.cosmetic && safe && sharedClasses.frameAdjustment
+                  )}
+                  style={{ opacity: inView ? 1 : 0 }}
+                >
                   {inView && (
                     <>
                       <Group
@@ -144,10 +150,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                       {safe && (
                         <EdgeMedia
                           src={image.url}
-                          className={cx({
-                            [classes.blocked]: isBlocked,
-                            [sharedClasses.frameAdjustment]: !!data.cosmetic,
-                          })}
+                          className={cx(sharedClasses.image, { [classes.blocked]: isBlocked })}
                           name={image.name ?? image.id.toString()}
                           alt={
                             image.meta
@@ -317,7 +320,6 @@ const useStyles = createStyles((theme, _, getRef) => {
       width: '100%',
       height: '100%',
       zIndex: 1,
-      opacity: 0.7,
     },
     content: {
       position: 'absolute',

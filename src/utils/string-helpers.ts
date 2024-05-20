@@ -245,3 +245,7 @@ export function safeDecodeURIComponent(str: string) {
     return str;
   }
 }
+
+export function getRandomId() {
+  return Math.random().toString(36).substring(2, 11);
+}

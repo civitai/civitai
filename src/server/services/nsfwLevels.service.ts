@@ -56,7 +56,6 @@ async function getPostConnectedEntities(postIds: number[]) {
       where: { postId: { in: postIds } },
       select: { collectionId: true },
     }),
-    ,
   ]);
 
   return {
@@ -184,10 +183,13 @@ export async function getNsfwLevelRelatedEntities(source: {
 const batchSize = 1000;
 function batcher(ids: number[], fn: (ids: number[]) => Promise<void>) {
   return chunk(ids, batchSize).map((chunk) => async () => {
-    console.log('processing chunk', chunk.length, fn.name);
-    if (chunk.length > 0) {
-      // console.log('processing chunk', chunk.length, fn.name);
-      await fn(chunk);
+    try {
+      if (chunk.length > 0) {
+        // console.log('processing chunk', chunk.length, fn.name);
+        await fn(chunk);
+      }
+    } catch (e) {
+      console.log('processing chunk', chunk.length, fn.name);
     }
   });
 }
@@ -357,6 +359,7 @@ export async function updateModelNsfwLevels(modelIds: number[]) {
         bit_or(mv."nsfwLevel") "nsfwLevel"
       FROM "ModelVersion" mv
       WHERE mv."modelId" IN (${Prisma.join(modelIds)})
+      AND mv.status = 'Published'
       GROUP BY mv."modelId"
     )
     UPDATE "Model" m

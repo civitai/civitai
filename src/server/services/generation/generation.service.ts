@@ -48,7 +48,6 @@ import orchestratorCaller from '~/server/http/orchestrator/orchestrator.caller';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { includesNsfw, includesPoi, includesMinor } from '~/utils/metadata/audit';
-import { bustCachedArray, cachedArray } from '~/server/utils/cache-helpers';
 import { fromJson, toJson } from '~/utils/json-helpers';
 import { extModeration } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
@@ -60,6 +59,16 @@ import dayjs from 'dayjs';
 import { SearchIndexUpdateQueueAction, GenerationRequestStatus } from '~/server/common/enums';
 import { UserTier } from '~/server/schema/user.schema';
 import { generatorFeedbackReward } from '~/server/rewards';
+import { resourceDataCache } from '~/server/redis/caches';
+import {
+  allInjectedNegatives,
+  allInjectedPositives,
+  defaultCheckpoints,
+  getBaseModelSetKey,
+  minorNegatives,
+  minorPositives,
+  safeNegatives,
+} from '~/shared/constants/generation.constants';
 
 export function parseModelVersionId(assetId: string) {
   const pattern = /^@civitai\/(\d+)$/;
@@ -71,13 +80,6 @@ export function parseModelVersionId(assetId: string) {
 
   return null;
 }
-
-// when removing a string from the `safeNegatives` array, add it to the `allSafeNegatives` array
-const safeNegatives = [{ id: 106916, triggerWord: 'civit_nsfw' }];
-const minorNegatives = [{ id: 250712, triggerWord: 'safe_neg' }];
-const minorPositives = [{ id: 250708, triggerWord: 'safe_pos' }];
-const allInjectedNegatives = [...safeNegatives, ...minorNegatives];
-const allInjectedPositives = [...minorPositives];
 
 function mapRequestStatus(label: string): GenerationRequestStatus {
   switch (label) {
@@ -237,29 +239,11 @@ export const getGenerationResources = async (
   );
 };
 
-const getResourceData = async (modelVersionIds: number[]) => {
-  return await cachedArray<GenerationResourceSelect>({
-    key: REDIS_KEYS.GENERATION.RESOURCE_DATA,
-    ids: modelVersionIds,
-    idKey: 'id',
-    lookupFn: async (ids) => {
-      const dbResults = await dbRead.modelVersion.findMany({
-        where: { id: { in: ids as number[] } },
-        select: generationResourceSelect,
-      });
-
-      const results = dbResults.reduce((acc, result) => {
-        acc[result.id] = result;
-        return acc;
-      }, {} as Record<string, GenerationResourceSelect>);
-      return results;
-    },
-    ttl: CacheTTL.hour,
-  });
-};
-
-export async function deleteResourceDataCache(modelVersionIds: number | number[]) {
-  await bustCachedArray(REDIS_KEYS.GENERATION.RESOURCE_DATA, 'id', modelVersionIds);
+function getResourceData(modelVersionIds: number[]) {
+  return resourceDataCache.fetch(modelVersionIds);
+}
+export function deleteResourceDataCache(modelVersionIds: number | number[]) {
+  return resourceDataCache.bust(modelVersionIds);
 }
 
 const baseModelSetsEntries = Object.entries(baseModelSets);
@@ -317,6 +301,9 @@ const formatGenerationRequests = async (requests: Generation.Api.RequestProps[])
         baseModel,
         negativePrompt,
         seed: params.seed === -1 ? undefined : params.seed,
+        sampler: Object.entries(samplersToSchedulers).find(
+          ([sampler, scheduler]) => scheduler === params.scheduler
+        )?.[0],
       },
       resources: assets
         .map((assetId): Generation.Resource | undefined => {
@@ -559,9 +546,9 @@ export const createGenerationRequest = async ({
   const isPromptNsfw = includesNsfw(params.prompt);
   nsfw ??= isPromptNsfw !== false;
 
-  // Disable nsfw if the prompt contains poi/minor words
-  const hasPoi = includesPoi(params.prompt) || resourceData.some((x) => x.model.poi);
-  if (hasPoi || includesMinor(params.prompt)) nsfw = false;
+  // Disable nsfw if the prompt contains minor words
+  // POI is handled via SPMs within the worker
+  if (includesMinor(params.prompt)) nsfw = false;
 
   const negativePrompts = [negativePrompt ?? ''];
   if (!nsfw && status.sfwEmbed) {
@@ -776,6 +763,8 @@ export const getResourceGenerationData = async ({
   };
 };
 
+type ResourceUsedRow = Generation.Resource & { covered: boolean; hash?: string; strength?: number };
+const defaultCheckpointData: Partial<Record<BaseModelSetType, ResourceUsedRow>> = {};
 const getImageGenerationData = async (id: number): Promise<Generation.Data> => {
   const image = await dbRead.image.findUnique({
     where: { id },
@@ -793,9 +782,7 @@ const getImageGenerationData = async (id: number): Promise<Generation.Data> => {
     ...meta
   } = imageGenerationSchema.parse(image.meta);
 
-  const resources = await dbRead.$queryRaw<
-    Array<Generation.Resource & { covered: boolean; hash?: string; strength?: number }>
-  >`
+  const resources = await dbRead.$queryRaw<ResourceUsedRow[]>`
     SELECT
       mv.id,
       mv.name,
@@ -810,11 +797,30 @@ const getImageGenerationData = async (id: number): Promise<Generation.Data> => {
     FROM "ImageResource" ir
     JOIN "ModelVersion" mv on mv.id = ir."modelVersionId"
     JOIN "Model" m on m.id = mv."modelId"
-    JOIN "GenerationCoverage" gc on gc."modelVersionId" = mv.id
-    WHERE ir."imageId" = ${id}
+    LEFT JOIN "GenerationCoverage" gc on gc."modelVersionId" = mv.id
+    WHERE ir."imageId" = ${id};
   `;
 
-  const deduped = uniqBy(resources, 'id');
+  // if the checkpoint exists but isn't covered, add a default based off checkpoint `modelType`
+  const checkpoint = resources.find((x) => x.modelType === 'Checkpoint');
+  if (!checkpoint?.covered && checkpoint?.modelType) {
+    const baseModel = getBaseModelSetKey(checkpoint.baseModel);
+    const defaultCheckpoint = baseModel ? defaultCheckpoints[baseModel as any] : undefined;
+    if (baseModel && defaultCheckpoint) {
+      if (!defaultCheckpointData[baseModel]) {
+        const resource = await dbRead.modelVersion.findFirst({
+          where: { id: defaultCheckpoint.version },
+          select: generationResourceSelect,
+        });
+        if (resource) {
+          defaultCheckpointData[baseModel] = { ...mapGenerationResource(resource), covered: true };
+        }
+      }
+      if (defaultCheckpointData[baseModel])
+        resources.unshift(defaultCheckpointData[baseModel] as ResourceUsedRow);
+    }
+  }
+  const deduped = uniqBy(resources, 'id').filter((x) => x.covered);
   for (const resource of deduped) {
     if (resource.strength) resource.strength /= 100;
   }
@@ -849,10 +855,13 @@ const getImageGenerationData = async (id: number): Promise<Generation.Data> => {
   if (meta.seed == 0) meta.seed = undefined;
 
   return {
-    resources: deduped.map((resource) => ({
-      ...resource,
-      strength: resource.strength ?? 1,
-    })),
+    // only send back resources if we have a checkpoint resource
+    resources: !model
+      ? []
+      : deduped.map((resource) => ({
+          ...resource,
+          strength: resource.strength ?? 1,
+        })),
     params: {
       ...meta,
       clipSkip,
@@ -1002,10 +1011,10 @@ export const textToImageTestRun = async ({
     sampler = draftData.sampler;
   }
 
+  const isSd1 = baseModel === 'SD1';
   const response = await orchestratorCaller.textToImage({
     payload: {
-      // Civitai SDXL - Irrelevant, not used for cost calculation.
-      model: '@civitai/128078',
+      model: isSd1 ? `@civitai/128713` : '@civitai/128078',
       baseModel: baseModelToOrchestration[baseModel as BaseModelSetType],
       properties: {},
       quantity: quantity,

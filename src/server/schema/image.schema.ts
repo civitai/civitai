@@ -6,11 +6,11 @@ import {
   ReviewReactions,
 } from '@prisma/client';
 import { z } from 'zod';
+import { SearchIndexEntityTypes } from '~/components/Search/parsers/base';
 import { constants } from '~/server/common/constants';
 import { baseQuerySchema, paginationSchema, periodModeSchema } from '~/server/schema/base.schema';
-import { ImageSort, NsfwLevel } from './../common/enums';
-import { SearchIndexEntityTypes } from '~/components/Search/parsers/base';
 import { zc } from '~/utils/schema-helpers';
+import { ImageSort, NsfwLevel } from './../common/enums';
 
 const stringToNumber = z.coerce.number().optional();
 
@@ -33,6 +33,40 @@ export const comfyMetaSchema = z
   })
   .partial();
 
+// TODO do we need mediaUrl in here to confirm?
+export const externalMetaSchema = z.object({
+  /**
+   * Name and/or homepage for your service
+   */
+  source: z
+    .object({
+      /**
+       * Name of your service
+       */
+      name: z.string().optional(),
+      /**
+       * Your service's home URL
+       */
+      homepage: z.string().url().optional(),
+    })
+    .optional(),
+  /**
+   * Key-value object for custom parameters specific to your service.
+   * Limited to 10 props
+   */
+  details: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional(),
+  // details: z.record(z.string(), z.coerce.string()).optional(),
+  /**
+   * Link back to the URL used to create the media
+   */
+  createUrl: z.string().url().optional(),
+  /**
+   * URL to link back to the source of the media
+   */
+  referenceUrl: z.string().url().optional(),
+});
+export type ExternalMetaSchema = z.infer<typeof externalMetaSchema>;
+
 export const baseImageMetaSchema = z.object({
   prompt: z.string().optional(),
   negativePrompt: z.string().optional(),
@@ -54,6 +88,7 @@ export const imageGenerationSchema = z.object({
   clipSkip: z.coerce.number().optional(),
   'Clip skip': z.coerce.number().optional(),
   comfy: z.union([z.string().optional(), comfyMetaSchema.optional()]).optional(), // stored as stringified JSON
+  external: externalMetaSchema.optional(),
 });
 
 export const imageMetaSchema = imageGenerationSchema.partial().passthrough();
