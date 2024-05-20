@@ -2,13 +2,14 @@ import {
   Availability,
   CollectionContributorPermission,
   CollectionReadConfiguration,
+  ImageIngestionStatus,
   Prisma,
   TagTarget,
   TagType,
 } from '@prisma/client';
 import { SessionUser } from 'next-auth';
 import { env } from '~/env/server.mjs';
-import { PostSort } from '~/server/common/enums';
+import { NsfwLevel, PostSort } from '~/server/common/enums';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
@@ -681,7 +682,7 @@ const parseExternalMetadata = async (src: string | undefined, user: number) => {
   return detailData;
 };
 
-export const addPostImage = async ({
+export const addPostMedia = async ({
   modelVersionId,
   meta,
   user,
@@ -693,8 +694,10 @@ export const addPostImage = async ({
     meta = { ...meta, external: externalData };
   }
 
+  const isAudio = props.type === 'audio';
   let toolId: number | undefined;
   const { name: sourceName, homepage: sourceHomepage } = meta?.external?.source ?? {};
+
   if (sourceName || sourceHomepage) {
     if (sourceName) {
       toolId = (await getToolByName(sourceName))?.id;
@@ -708,27 +711,32 @@ export const addPostImage = async ({
     data: {
       ...props,
       userId: user.id,
+      nsfwLevel: isAudio ? NsfwLevel.Unknown : undefined, // TODO.audio: hard set nsfwLevel to unknown for now
+      ingestion: isAudio ? ImageIngestionStatus.Scanned : undefined, // TODO.audio: hard set ingestion to scanned for now
       meta: meta !== null ? (meta as Prisma.JsonObject) : Prisma.JsonNull,
-      generationProcess: meta ? getImageGenerationProcess(meta as Prisma.JsonObject) : null,
+      generationProcess:
+        meta && !isAudio ? getImageGenerationProcess(meta as Prisma.JsonObject) : null,
       tools: toolId ? { create: { toolId } } : undefined,
     },
     select: { id: true },
   });
 
-  try {
-    await dbWrite.$executeRaw`SELECT insert_image_resource(${partialResult.id}::int)`;
-  } catch (e) {
-    console.error(e);
+  if (!isAudio) {
+    try {
+      await dbWrite.$executeRaw`SELECT insert_image_resource(${partialResult.id}::int)`;
+    } catch (e) {
+      console.error(e);
+    }
+    await ingestImage({
+      image: {
+        id: partialResult.id,
+        url: props.url,
+        type: props.type,
+        height: props.height,
+        width: props.width,
+      },
+    });
   }
-  await ingestImage({
-    image: {
-      id: partialResult.id,
-      url: props.url,
-      type: props.type,
-      height: props.height,
-      width: props.width,
-    },
-  });
 
   const result = await dbWrite.image.findUnique({
     where: { id: partialResult.id },

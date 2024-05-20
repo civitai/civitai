@@ -60,7 +60,7 @@ export const getDataFromFile = async (file: File) => {
     processed.type === MediaType.image ? processed.meta : undefined,
     false
   );
-  if (processed.type === 'video') {
+  if (processed.type === MediaType.video) {
     const { metadata } = processed;
     try {
       if (metadata.duration && metadata.duration > constants.mediaUpload.maxVideoDurationSeconds)
@@ -80,7 +80,7 @@ export const getDataFromFile = async (file: File) => {
     }
   }
 
-  if (processed.type === 'image' && processed.meta.comfy) {
+  if (processed.type === MediaType.image && processed.meta.comfy) {
     const { comfy } = processed.meta;
     // if comfy metadata is larger than 1MB, we don't want to store it
     const tooLarge = calculateSizeInMegabytes(comfy) > 1;
@@ -94,19 +94,29 @@ export const getDataFromFile = async (file: File) => {
     }
   }
 
-  const { height, width, hash } = processed.metadata;
+  if (processed.type !== MediaType.audio) {
+    const { height, width, hash } = processed.metadata;
 
-  return {
-    file,
-    uuid: uuidv4(),
-    status: blockedFor
-      ? ('blocked' as TrackedFile['status'])
-      : ('uploading' as TrackedFile['status']),
-    message: blockedFor?.filter(isDefined).join(', '),
-    height,
-    width,
-    hash,
-    ...processed,
-    url: processed.objectUrl,
-  };
+    return {
+      file,
+      uuid: uuidv4(),
+      status: blockedFor
+        ? ('blocked' as TrackedFile['status'])
+        : ('uploading' as TrackedFile['status']),
+      message: blockedFor?.filter(isDefined).join(', '),
+      height,
+      width,
+      hash,
+      ...processed,
+      url: processed.objectUrl,
+    };
+  } else {
+    return {
+      file,
+      uuid: uuidv4(),
+      status: 'uploading' as TrackedFile['status'],
+      ...processed,
+      url: processed.objectUrl,
+    };
+  }
 };

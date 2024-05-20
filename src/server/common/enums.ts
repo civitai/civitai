@@ -200,6 +200,7 @@ export enum NsfwLevel {
   X = 8,
   XXX = 16,
   Blocked = 32,
+  Unknown = 64,
 }
 
 export enum OnboardingSteps {

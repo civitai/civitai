@@ -3,10 +3,19 @@ import { Dropzone, DropzoneProps } from '@mantine/dropzone';
 import { IconPhoto, IconUpload, IconX } from '@tabler/icons-react';
 import { DragEvent } from 'react';
 import { constants } from '~/server/common/constants';
-import { IMAGE_MIME_TYPE, MIME_TYPES, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
+import {
+  IMAGE_MIME_TYPE,
+  MIME_TYPES,
+  VIDEO_MIME_TYPE,
+  AUDIO_MIME_TYPE,
+} from '~/server/common/mime-types';
 import { fetchBlob } from '~/utils/file-utils';
 
 const MAX_IMAGE_SIZE = constants.mediaUpload.maxImageFileSize;
+const EXTENSION_BY_MIME_TYPE = Object.entries(MIME_TYPES).reduce(
+  (acc, [key, value]) => ({ ...acc, [value]: key }),
+  {} as Record<string, string>
+);
 
 export function MediaDropzone({
   label,
@@ -29,8 +38,9 @@ export function MediaDropzone({
   // zips do not show up correctly without these extra 2 "zip" files, but we don't want to show them
   const fileExtensions = accept
     .filter((t) => t !== MIME_TYPES.xZipCompressed && t !== MIME_TYPES.xZipMultipart)
-    .map((type) => type.replace(/.*\//, '.'));
+    .map((type) => '.' + EXTENSION_BY_MIME_TYPE[type]);
   const allowsVideo = VIDEO_MIME_TYPE.some((a) => accept.includes(a));
+  const allowsAudio = AUDIO_MIME_TYPE.some((a) => accept.includes(a));
   // #endregion
 
   // #region [handle drop]
@@ -79,7 +89,7 @@ export function MediaDropzone({
           </Dropzone.Idle>
           <div className="flex flex-col gap-1 items-center">
             <Text size="xl" inline>
-              {label ?? 'Drag images here or click to select files'}
+              {label ?? 'Drop media files here or click to select'}
             </Text>
             {description}
             <Text size="sm" color="dimmed" mt={7} inline>

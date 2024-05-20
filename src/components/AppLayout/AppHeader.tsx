@@ -42,6 +42,7 @@ import {
   IconMoonStars,
   IconPalette,
   IconPhotoUp,
+  IconPhotoVideo,
   IconPlayerPlayFilled,
   IconPlus,
   IconProgressBolt,
@@ -292,8 +293,8 @@ export function AppHeader({
         redirectReason: 'post-images',
         label: (
           <Group align="center" spacing="xs">
-            <IconPhotoUp stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
-            Post images
+            <IconPhotoVideo stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
+            Post media
           </Group>
         ),
         rel: 'nofollow',

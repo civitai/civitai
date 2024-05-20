@@ -86,10 +86,14 @@ export default createPage(
     return (
       <Container size="xs" className="flex flex-col gap-3">
         <div className="flex justify-between items-center">
-          <BackButton url={backButtonUrl} />
-          <Title>
-            {displayReview ? 'Create a Review' : `Create ${postingVideo ? 'Video' : 'Image'} Post`}
-          </Title>
+          <div className="flex gap-2">
+            <BackButton url={backButtonUrl} />
+            <Title>
+              {displayReview
+                ? 'Create a Review'
+                : `Create ${postingVideo ? 'Video' : 'Media'} Post`}
+            </Title>
+          </div>
           <FeatureIntroductionHelpButton
             feature="post-create"
             contentSlug={['feature-introduction', 'post-images']}

@@ -18,3 +18,9 @@ export const videoMetadataSchema = z.object({
   size: z.number().optional(),
   // hasSound: z.boolean().default(false), not accessible from HTMLVideoElement
 });
+
+export type AudioMetadata = z.infer<typeof audioMetadataSchema>;
+export const audioMetadataSchema = z.object({
+  duration: z.number(),
+  size: z.number().optional(),
+});

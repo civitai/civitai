@@ -13,7 +13,7 @@ import {
   createPost,
   getPostDetail,
   updatePost,
-  addPostImage,
+  addPostMedia,
   reorderPostImages,
   deletePost,
   addPostTag,
@@ -238,7 +238,7 @@ export const addPostImageHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
-    return await addPostImage({ ...input, user: ctx.user });
+    return await addPostMedia({ ...input, user: ctx.user });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

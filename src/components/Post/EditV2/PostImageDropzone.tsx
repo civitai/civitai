@@ -6,7 +6,7 @@ import { usePostEditParams, usePostEditStore } from '~/components/Post/EditV2/Po
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useMediaUpload } from '~/hooks/useMediaUpload';
 import { constants, POST_IMAGE_LIMIT } from '~/server/common/constants';
-import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
+import { AUDIO_MIME_TYPE, IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
 import { addPostImageSchema } from '~/server/schema/post.schema';
 import { PostDetailEditable } from '~/server/services/post.service';
 import {
@@ -57,6 +57,7 @@ export function PostImageDropzone({
     count: images.length,
     max,
     maxSize: [
+      { type: 'audio', maxSize: constants.mediaUpload.maxImageFileSize }, // TODO.audio: put correct file size limit
       { type: 'image', maxSize: constants.mediaUpload.maxImageFileSize },
       { type: 'video', maxSize: constants.mediaUpload.maxVideoFileSize },
     ],
@@ -134,7 +135,7 @@ export function PostImageDropzone({
       <div className="w-full">
         <MediaDropzone
           onDrop={handleDrop}
-          accept={[...IMAGE_MIME_TYPE, ...VIDEO_MIME_TYPE]}
+          accept={[...IMAGE_MIME_TYPE, ...VIDEO_MIME_TYPE, ...AUDIO_MIME_TYPE]}
           disabled={!canAdd}
           error={error}
           max={max}
@@ -145,7 +146,7 @@ export function PostImageDropzone({
       {!!files.length && showProgress && <Progress value={progress} animate size="lg" />}
       {!files.length && (
         <Text size="xs" align="center">
-          By uploading images to our site you agree to our{' '}
+          By uploading files to our site you agree to our{' '}
           <Anchor href="/content/tos" target="_blank" rel="nofollow" span>
             Terms of service
           </Anchor>

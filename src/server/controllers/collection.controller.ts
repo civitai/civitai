@@ -40,7 +40,7 @@ import {
 import { TRPCError } from '@trpc/server';
 import { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
-import { addPostImage, createPost } from '~/server/services/post.service';
+import { addPostMedia, createPost } from '~/server/services/post.service';
 import { CollectionItemStatus, CollectionReadConfiguration } from '@prisma/client';
 import { constants } from '~/server/common/constants';
 import { imageSelect } from '~/server/selectors/image.selector';
@@ -448,7 +448,7 @@ export const addSimpleImagePostHandler = async ({
     });
     const postImages = await Promise.all(
       images.map((image, index) =>
-        addPostImage({
+        addPostMedia({
           ...image,
           postId: post.id,
           index,
