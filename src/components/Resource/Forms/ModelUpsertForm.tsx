@@ -79,7 +79,7 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
   const result = querySchema.safeParse(router.query);
   const currentUser = useCurrentUser();
 
-  const lockableProperties = ['nsfw', 'poi', 'category'];
+  const lockableProperties = ['nsfw', 'poi', 'category', 'tags'];
   const defaultCategory = result.success ? result.data.category : undefined;
   const defaultValues: z.infer<typeof schema> = {
     ...model,

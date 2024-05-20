@@ -89,7 +89,7 @@ function ImageContent({ image }: { image: ImagesInfiniteModel } & ConnectProps) 
               }
               type={image.type}
               className={`max-w-full max-h-full w-auto ${!safe ? 'invisible' : ''}`}
-              width="original"
+              width={image?.width ?? 'original'}
               anim
               controls
               fadeIn
