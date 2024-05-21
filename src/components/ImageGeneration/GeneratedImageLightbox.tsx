@@ -69,6 +69,7 @@ export function GeneratedImageLightbox({
                 src={item.url}
                 alt={truncate(request.params.prompt, { length: constants.altTruncateLength })}
                 width={request.params.width}
+                className="max-h-full w-auto"
               />
             </Carousel.Slide>
           ))}
