@@ -99,6 +99,7 @@ export const imageMetaOutput = imageGenerationSchema.extend({
   ),
   controlNets: z.string().array().optional(),
   software: z.coerce.string().optional(),
+  civitaiResources: z.any().optional(),
 });
 
 export type FaceDetectionInput = z.infer<typeof faceDetectionSchema>;
