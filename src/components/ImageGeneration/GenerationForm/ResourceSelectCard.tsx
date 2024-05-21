@@ -70,10 +70,12 @@ function CheckpointInfo({ resource, isTraining, onRemove, onSwap }: Props) {
         <Stack spacing={2}>
           <Text
             component={NextLink}
-            sx={{ cursor: 'pointer' }}
+            sx={(theme) => ({
+              cursor: 'pointer',
+              color: theme.colorScheme === 'dark' ? theme.white : theme.black,
+            })}
             href={`/models/${resource.modelId}?modelVersionId=${resource.id}`}
             rel="nofollow noindex"
-            color="initial"
             lineClamp={1}
             weight={590}
           >

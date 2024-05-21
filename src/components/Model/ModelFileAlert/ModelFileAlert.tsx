@@ -6,7 +6,13 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { BaseModel } from '~/server/common/constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 
-export const ModelFileAlert = ({ files, modelType, versionId, baseModel }: ModelFileAlertProps) => {
+export const ModelFileAlert = ({
+  files,
+  modelType,
+  versionId,
+  baseModel,
+  primaryFile,
+}: ModelFileAlertProps) => {
   let hasNegativeEmbed = false;
   let hasConfig = false;
   let hasVAE = false;
@@ -16,13 +22,15 @@ export const ModelFileAlert = ({ files, modelType, versionId, baseModel }: Model
   const isPony = baseModel === 'Pony';
   if (files) {
     for (const file of files) {
-      if (file.metadata.format !== 'PickleTensor' && file.type === 'Model') onlyPickle = false;
+      if (file.metadata.format !== 'PickleTensor') onlyPickle = false;
       if (modelType === ModelType.TextualInversion && file.type === 'Negative')
         hasNegativeEmbed = true;
       else if (file.type === 'Config') hasConfig = true;
       else if (modelType === ModelType.Checkpoint && file.type === 'VAE') hasVAE = true;
     }
   }
+
+  const primaryPickled = primaryFile?.metadata.format === 'PickleTensor';
 
   return (
     <>
@@ -43,11 +51,21 @@ export const ModelFileAlert = ({ files, modelType, versionId, baseModel }: Model
           </Text>
         </AlertWithIcon>
       )}
-      {onlyPickle && modelType !== 'TextualInversion' && (
+      {(onlyPickle || primaryPickled) && modelType !== 'TextualInversion' && (
         <AlertWithIcon icon={<IconAlertCircle />} iconColor="yellow" color="yellow">
-          <Text>
-            This asset is only available as a PickleTensor which is a deprecated and insecure format. We caution against using this asset until it can be converted to the modern SafeTensor format.
-          </Text>
+          {onlyPickle ? (
+            <Text>
+              This asset is only available as a PickleTensor which is a deprecated and insecure
+              format. We caution against using this asset until it can be converted to the modern
+              SafeTensor format.
+            </Text>
+          ) : (
+            <Text>
+              This asset is a PickleTensor which is a deprecated and insecure format. We caution
+              against using this asset until it can be converted to the modern SafeTensor format.
+              The creator might have provided a SafeTensor version, please check the files section.
+            </Text>
+          )}
         </AlertWithIcon>
       )}
       {isWildcards && (
@@ -127,8 +145,9 @@ export const ModelFileAlert = ({ files, modelType, versionId, baseModel }: Model
 };
 
 type ModelFileAlertProps = {
-  files: { type: string; metadata: { format?: ModelFileFormat; } }[];
+  files: { type: string; metadata: { format?: ModelFileFormat } }[];
   baseModel: BaseModel;
   modelType: ModelType;
   versionId: number;
+  primaryFile?: { type: string; metadata: { format?: ModelFileFormat } } | null;
 };
