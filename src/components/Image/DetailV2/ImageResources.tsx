@@ -52,30 +52,42 @@ export function ImageResources({ imageId }: { imageId: number }) {
       ) : !resources.length ? (
         <Alert>There are no resources associated with this image</Alert>
       ) : (
-        <ul className="list-none flex flex-col gap-0.5">
+        <ul className="flex list-none flex-col gap-0.5">
           {(showAll ? resources : resources.slice(0, LIMIT)).map((resource) => (
-            <li key={resource.id} className="flex justify-between items-center gap-3">
-              <Wrapper resource={resource}>
-                <Text
-                  lineClamp={1}
-                  color="dimmed"
-                  className={`${resource.modelId ? 'underline cursor-pointer' : ''}`}
-                >
-                  {resource.modelName}
-                </Text>
-              </Wrapper>
-              {resource.modelType && (
-                <div className="flex gap-1">
-                  <Badge color="blue">{getDisplayName(resource.modelType)}</Badge>
-                  {!!resource.strength && (
-                    <Badge color="gray" variant="filled">
-                      {resource.strength}
-                    </Badge>
-                  )}
-                  {currentUser?.isModerator && (
-                    <RemoveResource imageId={imageId} resourceId={resource.id} />
-                  )}
-                </div>
+            <li key={resource.id} className="flex flex-col">
+              <div className="flex items-center justify-between gap-3">
+                <Wrapper resource={resource}>
+                  <Text
+                    lineClamp={1}
+                    className={`${resource.modelId ? 'cursor-pointer underline' : ''}`}
+                  >
+                    {resource.modelName}
+                  </Text>
+                </Wrapper>
+                {resource.modelType && (
+                  <div className="flex gap-1">
+                    <Badge color="blue">{getDisplayName(resource.modelType)}</Badge>
+                    {!!resource.strength && (
+                      <Badge color="gray" variant="filled">
+                        {resource.strength}
+                      </Badge>
+                    )}
+                    {currentUser?.isModerator && (
+                      <RemoveResource imageId={imageId} resourceId={resource.id} />
+                    )}
+                  </div>
+                )}
+              </div>
+              {resource.versionName && (
+                <Wrapper resource={resource}>
+                  <Text
+                    lineClamp={1}
+                    color="dimmed"
+                    className={`text-xs ${resource.modelId ? 'cursor-pointer' : ''}`}
+                  >
+                    {resource.versionName}
+                  </Text>
+                </Wrapper>
               )}
             </li>
           ))}

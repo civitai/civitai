@@ -70,7 +70,7 @@ const useStyles = createStyles((theme, { resizeFrom }: { resizeFrom: 'left' | 'r
 
       '&:hover, &:active': {
         // background: '#007fd4',
-        background: theme.colors[theme.primaryColor][theme.colorScheme === 'dark' ? 8 : 8],
+        background: theme.colors[theme.primaryColor][theme.colorScheme === 'dark' ? 8 : 6],
       },
     },
     content: {
