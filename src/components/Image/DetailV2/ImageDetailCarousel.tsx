@@ -1,5 +1,5 @@
 import { Carousel, Embla } from '@mantine/carousel';
-import { useOs } from '@mantine/hooks';
+import { useHotkeys, useOs } from '@mantine/hooks';
 
 import { truncate } from 'lodash-es';
 import { useState, useEffect, useRef } from 'react';
@@ -37,6 +37,19 @@ export function ImageDetailCarousel() {
     };
   }, [embla]);
 
+  function next() {
+    embla?.scrollNext();
+  }
+
+  function prev() {
+    embla?.scrollPrev();
+  }
+
+  useHotkeys([
+    ['ArrowLeft', prev],
+    ['ArrowRight', next],
+  ]);
+
   const ref = useResizeObserver<HTMLDivElement>(() => {
     embla?.reInit();
   });
@@ -56,6 +69,8 @@ export function ImageDetailCarousel() {
         height="100%"
         initialSlide={slidesInView[0]}
         draggable={!isDesktop && canNavigate}
+        loop
+        withKeyboardEvents={false}
       >
         {images.map((image, index) => (
           <Carousel.Slide key={image.id}>
