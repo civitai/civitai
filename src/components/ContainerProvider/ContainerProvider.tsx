@@ -21,6 +21,7 @@ type ContainerProviderProps = React.HTMLProps<HTMLDivElement> & {
 export const ContainerProvider = ({
   children,
   containerName,
+  className,
   ...props
 }: ContainerProviderProps) => {
   const innerRef = useResizeObserver<HTMLDivElement>((entry) => {
@@ -36,12 +37,13 @@ export const ContainerProvider = ({
     }
   }, []);
 
-  let className = `@container flex flex-col h-full relative`;
-  if (props.className) className += ` ${props.className}`;
-
   return (
     <ContainerContext.Provider value={{ nodeRef: innerRef, containerName }}>
-      <div ref={innerRef} {...props} className={className}>
+      <div
+        ref={innerRef}
+        {...props}
+        className={`relative flex h-full flex-col @container ${className ? className : ''}`}
+      >
         {children}
       </div>
     </ContainerContext.Provider>
