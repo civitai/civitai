@@ -158,7 +158,7 @@ const modelSelect = {
   },
   modelVersions: {
     select: getModelVersionsForSearchIndex,
-    // orderBy: { index: 'asc' },
+    orderBy: { index: 'asc' as const },
     where: {
       status: ModelStatus.Published,
       availability: {

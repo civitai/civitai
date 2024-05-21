@@ -1,4 +1,5 @@
 import cloudflare from 'cloudflare';
+import { chunk } from 'lodash-es';
 import { env } from '~/env/server.mjs';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { getBaseUrl } from '~/server/utils/url-helpers';
@@ -27,13 +28,11 @@ export async function purgeCache({ urls, tags }: { urls?: string[]; tags?: strin
       )
     )
       .flat()
-      .map((x) => getBaseUrl() + x);
+      .map((x) => 'https://civitai.com' + x);
     urls = [...new Set([...(urls || []), ...taggedUrls])];
   }
 
-  await client.zones.purgeCache(env.CF_ZONE_ID, {
-    files: urls,
-  });
+  await Promise.all(chunk(urls, 30).map((files) => client.zones.purgeCache(env.CF_ZONE_ID!, { files })));
 
   // Clean-up tag cache
   if (tags) {

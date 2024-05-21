@@ -151,7 +151,6 @@ export const getAllUserCollectionsHandler = async ({
         description: true,
         image: true,
         read: true,
-        items: { select: { modelId: true, imageId: true, articleId: true, postId: true } },
         userId: true,
       },
     });

@@ -4,7 +4,9 @@ import { createBuzzEvent } from '../base.reward';
 export const encouragementReward = createBuzzEvent({
   type: 'encouragement',
   description: 'For encouraging others to post content',
-  triggerDescription: 'For each reaction you give',
+  triggerDescription: 'For each unique reaction you give',
+  tooltip:
+    "If you react to the same thing multiple times, you will not get more rewards.",
   awardAmount: 5,
   cap: 100,
   onDemand: true,
