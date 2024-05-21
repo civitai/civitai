@@ -350,9 +350,14 @@ export const updateBountyById = async ({
 export const upsertBounty = async ({
   id,
   userId,
+  isModerator,
   ...data
-}: UpsertBountyInput & { userId: number }) => {
+}: UpsertBountyInput & { userId: number; isModerator: boolean }) => {
   if (id) {
+    if (!isModerator) {
+      for (const key of data.lockedProperties ?? []) delete data[key as keyof typeof data];
+    }
+
     const updateInput = await updateBountyInputSchema.parseAsync({ id, ...data });
     return updateBountyById({
       ...updateInput,

@@ -39,6 +39,7 @@ export function GeneratedImageLightbox({
 
   const filteredFeed = useMemo(() => feed.filter((item) => item.available), [feed]);
   const initialSlide = filteredFeed.findIndex((item) => item.id === image.id);
+  console.log({ filteredFeed });
 
   return (
     <Modal {...dialog} closeButtonLabel="Close lightbox" fullScreen>
@@ -62,14 +63,13 @@ export function GeneratedImageLightbox({
                 alignItems: 'center',
                 justifyContent: 'center',
               }}
+              className="w-full"
             >
-              <Center h={height} w={width}>
-                <EdgeMedia
-                  src={item.url}
-                  alt={truncate(request.params.prompt, { length: constants.altTruncateLength })}
-                  width={request.params.width}
-                />
-              </Center>
+              <EdgeMedia
+                src={item.url}
+                alt={truncate(request.params.prompt, { length: constants.altTruncateLength })}
+                width={request.params.width}
+              />
             </Carousel.Slide>
           ))}
         </Carousel>

@@ -103,8 +103,7 @@ function CheckpointInfo({ resource, isTraining, onRemove, onSwap }: Props) {
 }
 
 function ResourceInfo({ resource, onRemove, onUpdate }: Props) {
-  const hasStrength =
-    resource.modelType === ModelType.LORA || resource.modelType === ModelType.LoCon;
+  const hasStrength = ['LORA', 'LoCon', 'DoRA'].includes(resource.modelType);
   const isSameMinMaxStrength = resource.minStrength === resource.maxStrength;
   const unavailable = resource.covered === false;
 
