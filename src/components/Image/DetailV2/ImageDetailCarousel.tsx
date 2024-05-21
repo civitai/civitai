@@ -12,6 +12,7 @@ import { useResizeObserver } from '~/hooks/useResizeObserver';
 import { constants } from '~/server/common/constants';
 import { ImagesInfiniteModel } from '~/server/services/image.service';
 
+const maxIndicators = 20;
 export function ImageDetailCarousel() {
   const { images, index, canNavigate, connect, navigate } = useImageDetailContext();
   const navigateRef = useRef(navigate);
@@ -57,6 +58,13 @@ export function ImageDetailCarousel() {
   const os = useOs();
   const isDesktop = os === 'windows' || os === 'linux' || os === 'macos';
 
+  useEffect(() => {
+    if (!slidesInView.includes(index)) {
+      embla?.scrollTo(index, true);
+      // setSlidesInView([...embla.slidesInView(true)]);
+    }
+  }, [index, slidesInView]); // eslint-disable-line
+
   if (!images.length) return null;
 
   return (
@@ -71,6 +79,7 @@ export function ImageDetailCarousel() {
         draggable={!isDesktop && canNavigate}
         loop
         withKeyboardEvents={false}
+        // withIndicators={images.length <= maxIndicators && images.length > 1}
       >
         {images.map((image, index) => (
           <Carousel.Slide key={image.id}>

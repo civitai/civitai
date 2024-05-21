@@ -1,5 +1,6 @@
 import { MediaType } from '@prisma/client';
 import { env } from '~/env/client.mjs';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 // from options available in CF Flexible variants:
 // https://developers.cloudflare.com/images/cloudflare-images/transform/flexible-variants/
@@ -51,4 +52,41 @@ export function getEdgeUrl(
   else name = name + extension;
 
   return [env.NEXT_PUBLIC_IMAGE_LOCATION, src, params.toString(), name].filter(Boolean).join('/');
+}
+
+const videoTypeExtensions = ['.gif', '.mp4', '.webm'];
+export function useGetEdgeUrl(src: string, options: Omit<EdgeUrlProps, 'src'> | undefined) {
+  const currentUser = useCurrentUser();
+  if (!src || src.startsWith('http') || src.startsWith('blob')) return src;
+
+  let { anim, transcode } = options ?? {};
+  const inferredType = videoTypeExtensions.some((ext) => options?.name?.endsWith(ext))
+    ? 'video'
+    : 'image';
+  let type = options?.type ?? inferredType;
+
+  if (inferredType === 'video' && type === 'image') {
+    transcode = true;
+    anim = false;
+  } else if (type === 'video') {
+    transcode = true;
+    anim = anim ?? currentUser?.autoplayGifs ?? true;
+  }
+
+  if (!anim) type = 'image';
+
+  const optimized = currentUser?.filePreferences?.imageFormat === 'optimized';
+
+  return getEdgeUrl(src, {
+    anim,
+    transcode,
+    type,
+    optimized: optimized ? true : undefined,
+    width: options?.width,
+    fit: options?.fit,
+    blur: options?.blur,
+    quality: options?.quality,
+    gravity: options?.gravity,
+    name: options?.name,
+  });
 }
