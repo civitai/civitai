@@ -291,7 +291,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
       showWarningNotification({
         title: 'Some images resized',
         message: `Max allowed image dimensions are ${maxWidth}x${maxHeight}.`,
-        autoClose: false,
+        autoClose: 5000,
       });
       showImgResize.current = false;
     }
@@ -336,7 +336,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
       showWarningNotification({
         title: 'Some images resized',
         message: `Max allowed image dimensions are ${maxWidth}x${maxHeight}.`,
-        autoClose: false,
+        autoClose: 5000,
       });
       showImgResize.current = false;
     }
