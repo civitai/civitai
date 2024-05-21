@@ -35,7 +35,7 @@ const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async 
   let imageRange: [number, number] | undefined;
   log('Leaderboards - Starting');
   const tasks = leaderboards.map(({ id, query }) => async () => {
-    jobContext.checkIfCanceled();
+    // jobContext.checkIfCanceled();
     if (id === 'images-rater') return; // Temporarily disable images-rater leaderboard
 
     const hasDataQuery = await pgDbWrite.query<{ count: number }>(`
@@ -163,7 +163,7 @@ async function defaultLeadboardPopulation(ctx: LeaderboardContext) {
     ORDER BY score DESC
     LIMIT 1000
   `);
-  ctx.jobContext.on('cancel', leaderboardUpdateQuery.cancel);
+  // ctx.jobContext.on('cancel', leaderboardUpdateQuery.cancel);
   await leaderboardUpdateQuery.result();
 }
 
@@ -228,7 +228,7 @@ async function imageLeaderboardPopulation(ctx: LeaderboardContext, [min, max]: [
     const endIndex = Math.min(startIndex + IMAGE_SCORE_BATCH_SIZE - 1, max);
 
     tasks.push(async () => {
-      ctx.jobContext.checkIfCanceled();
+      // ctx.jobContext.checkIfCanceled();
       const key = `Leaderboard ${ctx.id} - Fetching scores - ${startIndex} to ${endIndex}`;
       log(key);
       // console.time(key);
@@ -288,7 +288,7 @@ async function imageLeaderboardPopulation(ctx: LeaderboardContext, [min, max]: [
     ORDER BY (s->>'score')::int DESC
     LIMIT 1000
   `);
-  ctx.jobContext.on('cancel', leaderboardUpdateQuery.cancel);
+  // ctx.jobContext.on('cancel', leaderboardUpdateQuery.cancel);
   await leaderboardUpdateQuery.result();
   // console.timeEnd(`Leaderboard ${ctx.id} - Inserting into leaderboard`);
 }

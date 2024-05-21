@@ -191,9 +191,9 @@ export function Dropdown({
               )}
             </ScrollArea.Autosize>
             {contributingCollections.length > 0 && (
-              <Stack>
-                <Text size="sm" weight="bold">
-                  Collections you contribute in
+              <>
+                <Text size="sm" weight="bold" mt="md">
+                  Collections you contribute to
                 </Text>
                 <ScrollArea.Autosize maxHeight={200}>
                   <Stack>
@@ -230,7 +230,7 @@ export function Dropdown({
                   </Stack>
                 </ScrollArea.Autosize>
                 {addCollectionItemMutation.isLoading && <Text>Saving&hellip;</Text>}
-              </Stack>
+              </>
             )}
           </>
         )}
