@@ -887,7 +887,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                   className={classes.generateButtonReset}
                   px="xs"
                 >
-                  Clear All
+                  Reset
                 </Button>
               </Group>
             </>
@@ -996,7 +996,7 @@ const useStyles = createStyles((theme) => ({
     alignItems: 'center',
   },
   accordionItem: {
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : 'transparent',
+    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : '#fff',
 
     '&:first-of-type': {
       borderTopLeftRadius: '8px',
@@ -1009,7 +1009,7 @@ const useStyles = createStyles((theme) => ({
     },
 
     '&[data-active]': {
-      backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : 'transparent',
+      backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : `#fff`,
     },
   },
   accordionControl: {

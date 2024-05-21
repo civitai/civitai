@@ -3,9 +3,9 @@ import { useDidUpdate } from '@mantine/hooks';
 import { useRouter } from 'next/router';
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
-import { GeneratedImageActions } from '~/components/ImageGeneration/GeneratedImageActions';
 import GenerationTabs from '~/components/ImageGeneration/GenerationTabs';
 
+// TODO - remove this component
 export function GenerationDrawer() {
   const dialog = useDialogContext();
   const router = useRouter();
@@ -26,7 +26,7 @@ export function GenerationDrawer() {
       withCloseButton={false}
       transitionDuration={isGeneratePage ? 0 : 300}
     >
-      <GenerationTabs alwaysShowMaximize={false} isDrawer />
+      <GenerationTabs fullScreen />
     </Drawer>
   );
 }
