@@ -1,4 +1,5 @@
 import { Carousel, Embla } from '@mantine/carousel';
+import { useOs } from '@mantine/hooks';
 
 import { truncate } from 'lodash-es';
 import { useState, useEffect, useRef } from 'react';
@@ -40,19 +41,21 @@ export function ImageDetailCarousel() {
     embla?.reInit();
   });
 
+  const os = useOs();
+  const isDesktop = os === 'windows' || os === 'linux' || os === 'macos';
+
   if (!images.length) return null;
 
   return (
     <div ref={ref} className="flex min-h-0 flex-1 items-stretch justify-stretch">
       <Carousel
         withControls={canNavigate}
-        draggable={canNavigate}
         className="flex-1"
         onSlideChange={handleSlideChange}
         getEmblaApi={setEmbla}
         height="100%"
         initialSlide={slidesInView[0]}
-        loop
+        draggable={!isDesktop && canNavigate}
       >
         {images.map((image, index) => (
           <Carousel.Slide key={image.id}>
