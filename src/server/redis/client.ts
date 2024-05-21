@@ -160,7 +160,7 @@ export const REDIS_KEYS = {
     EDGE_CACHED: 'packed:caches:edge-cache',
   },
   QUEUES: {
-    BUCKETS: 'packed:queues:buckets',
+    BUCKETS: 'queues:buckets',
   },
   RESEARCH: {
     RATINGS_COUNT: 'research:ratings-count',
