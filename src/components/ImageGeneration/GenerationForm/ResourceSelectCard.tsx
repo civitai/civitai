@@ -73,6 +73,7 @@ function CheckpointInfo({ resource, isTraining, onRemove, onSwap }: Props) {
             sx={{ cursor: 'pointer' }}
             href={`/models/${resource.modelId}?modelVersionId=${resource.id}`}
             rel="nofollow noindex"
+            color="initial"
             lineClamp={1}
             weight={590}
           >
@@ -102,37 +103,38 @@ function CheckpointInfo({ resource, isTraining, onRemove, onSwap }: Props) {
 }
 
 function ResourceInfo({ resource, onRemove, onUpdate }: Props) {
-  const hasStrength =
-    resource.modelType === ModelType.LORA || resource.modelType === ModelType.LoCon;
+  const hasStrength = ['LORA', 'LoCon', 'DoRA'].includes(resource.modelType);
   const isSameMinMaxStrength = resource.minStrength === resource.maxStrength;
   const unavailable = resource.covered === false;
 
   return (
     <Group spacing="xs" position="apart" noWrap>
       <Stack spacing={4} w="100%">
-        <Group spacing={4} noWrap>
-          {unavailable && (
-            <ThemeIcon color="red" w="auto" size="sm" px={4} mr={8}>
-              <Group spacing={4}>
-                <IconAlertTriangle size={16} strokeWidth={3} />
-                <Text size="xs" weight={500}>
-                  Unavailable
-                </Text>
-              </Group>
-            </ThemeIcon>
-          )}
-          <Text
-            component={NextLink}
-            sx={{ cursor: 'pointer' }}
-            href={`/models/${resource.modelId}?modelVersionId=${resource.id}`}
-            onClick={() => generationPanel.close()}
-            rel="nofollow noindex"
-            size="sm"
-            lineClamp={1}
-            weight={590}
-          >
-            {resource.modelName}
-          </Text>
+        <Group spacing={4} position="apart" noWrap>
+          <Group spacing={4} noWrap>
+            {unavailable && (
+              <ThemeIcon color="red" w="auto" size="sm" px={4} mr={8}>
+                <Group spacing={4}>
+                  <IconAlertTriangle size={16} strokeWidth={3} />
+                  <Text size="xs" weight={500}>
+                    Unavailable
+                  </Text>
+                </Group>
+              </ThemeIcon>
+            )}
+            <Text
+              component={NextLink}
+              sx={{ cursor: 'pointer' }}
+              href={`/models/${resource.modelId}?modelVersionId=${resource.id}`}
+              onClick={() => generationPanel.close()}
+              rel="nofollow noindex"
+              size="sm"
+              lineClamp={1}
+              weight={590}
+            >
+              {resource.modelName}
+            </Text>
+          </Group>
           {resource.modelName.toLowerCase() !== resource.name.toLowerCase() && (
             <Badge size="sm" color="dark.5" variant="filled" miw="42px">
               {resource.name}

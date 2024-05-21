@@ -201,7 +201,7 @@ function CollectionListForm({
             <>
               <ScrollArea.Autosize maxHeight={200}>
                 {ownedCollections.length > 0 ? (
-                  <InputCheckboxGroup name="collectionIds" orientation="vertical" spacing={8}>
+                  <InputCheckboxGroup name="collectionIds" orientation="vertical" spacing={4}>
                     {ownedCollections.map((collection) => {
                       const Icon = collectionReadPrivacyData[collection.read].icon;
 
@@ -231,12 +231,12 @@ function CollectionListForm({
                 )}
               </ScrollArea.Autosize>
               {contributingCollections.length > 0 && (
-                <Stack>
-                  <Text size="sm" weight="bold">
-                    Collections you contribute in
+                <>
+                  <Text size="sm" weight="bold" mt="md">
+                    Collections you contribute to
                   </Text>
                   <ScrollArea.Autosize maxHeight={200}>
-                    <InputCheckboxGroup name="collectionIds" orientation="vertical" spacing={8}>
+                    <InputCheckboxGroup name="collectionIds" orientation="vertical" spacing={4}>
                       {contributingCollections.map((collection) => {
                         const collectionItem = collectionItems.find(
                           (item) => item.collectionId === collection.id
@@ -262,7 +262,7 @@ function CollectionListForm({
                       })}
                     </InputCheckboxGroup>
                   </ScrollArea.Autosize>
-                </Stack>
+                </>
               )}
             </>
           )}

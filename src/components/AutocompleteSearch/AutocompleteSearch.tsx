@@ -291,7 +291,15 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
 
   const handleSubmit = () => {
     if (search) {
-      const queryString = QS.stringify({ query: query.trim(), ...QS.parse(searchPageQuery) });
+      const { query: cleanedSearch, searchPageQuery: currSearchPageQuery } = parseQuery(
+        indexName,
+        search
+      );
+      const queryString = QS.stringify({
+        query: cleanedSearch.trim(), // Search should be more accurate than query as it was the latest written.
+        ...QS.parse(currSearchPageQuery),
+      });
+
       router.push(`/search/${indexName}?${queryString}`, undefined, { shallow: false });
 
       blurInput();
@@ -306,6 +314,8 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   };
 
   const handleItemClick = (item: AutocompleteItem) => {
+    console.log(search, query, searchPageQuery);
+
     if (item.hit) {
       // when an item is clicked
       router.push(processHitUrl(item.hit));

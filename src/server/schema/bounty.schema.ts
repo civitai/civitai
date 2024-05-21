@@ -79,7 +79,6 @@ export const updateBountyInputSchema = createBountyInputSchema
     ownRights: true,
     images: true,
     entryLimit: true,
-    lockedProperties: z.string().array().optional(),
   })
   .extend({
     id: z.number(),
@@ -87,6 +86,7 @@ export const updateBountyInputSchema = createBountyInputSchema
     expiresAt: z
       .date()
       .min(dayjs().add(1, 'day').startOf('day').toDate(), 'Expiration date must be in the future'),
+    lockedProperties: z.string().array().optional(),
   });
 
 export type UpsertBountyInput = z.infer<typeof upsertBountyInputSchema>;
@@ -94,6 +94,7 @@ export const upsertBountyInputSchema = createBountyInputSchema.extend({
   id: z.number().optional(),
   startsAt: z.date(),
   expiresAt: z.date(),
+  lockedProperties: z.string().array().optional()
 });
 
 export type AddBenefactorUnitAmountInputSchema = z.infer<typeof addBenefactorUnitAmountInputSchema>;

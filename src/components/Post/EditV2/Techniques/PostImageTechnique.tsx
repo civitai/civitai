@@ -1,7 +1,7 @@
 import { ActionIcon, Text, Collapse, Textarea } from '@mantine/core';
 import { IconTrash } from '@tabler/icons-react';
 import { IconMessagePlus } from '@tabler/icons-react';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { ConfirmDialog } from '~/components/Dialog/Common/ConfirmDialog';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { PostEditImageDetail, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
@@ -10,73 +10,76 @@ import { showErrorNotification } from '~/utils/notifications';
 import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
-export function PostImageTool({
+export function PostImageTechnique({
   image,
-  tool,
+  technique,
 }: {
   image: PostEditImageDetail;
-  tool: PostEditImageDetail['tools'][number];
+  technique: PostEditImageDetail['techniques'][number];
 }) {
   const debouncer = useDebouncer(1000);
-  const [opened, setOpened] = useState(!!tool.notes?.length);
-  const [notes, setNotes] = useState(tool.notes ?? '');
+  const [opened, setOpened] = useState(!!technique.notes?.length);
+  const [notes, setNotes] = useState(technique.notes ?? '');
   const updateImage = usePostEditStore((state) => state.updateImage);
-  const removeToolMutation = trpc.image.removeTools.useMutation({
+  const removeTechniqueMutation = trpc.image.removeTechniques.useMutation({
     onSuccess: (response, { data }) => {
-      for (const { imageId, toolId } of data) {
+      for (const { imageId, techniqueId } of data) {
         updateImage(imageId, (image) => {
-          image.tools = image.tools.filter((x) => x.id !== toolId);
+          image.techniques = image.techniques.filter((x) => x.id !== techniqueId);
         });
       }
     },
     onError: (error: any) => showErrorNotification({ error: new Error(error.message) }),
   });
 
-  const handleRemoveTool = () => {
-    if (!tool.notes) removeToolMutation.mutate({ data: [{ imageId: image.id, toolId: tool.id }] });
-    // trigger confirm dialog when tool has notes
+  const handleRemoveTechnique = () => {
+    if (!technique.notes)
+      removeTechniqueMutation.mutate({ data: [{ imageId: image.id, techniqueId: technique.id }] });
+    // trigger confirm dialog when technique has notes
     else
       dialogStore.trigger({
         component: ConfirmDialog,
         props: {
-          title: 'Remove tool',
-          message: 'Are you sure you want to remove this tool?',
+          title: 'Remove technique',
+          message: 'Are you sure you want to remove this technique?',
           labels: { cancel: `Cancel`, confirm: `Yes, I am sure` },
-          confirmProps: { color: 'red', loading: removeToolMutation.isLoading },
+          confirmProps: { color: 'red', loading: removeTechniqueMutation.isLoading },
           onConfirm: async () =>
-            await removeToolMutation.mutateAsync({
-              data: [{ imageId: image.id, toolId: tool.id }],
+            await removeTechniqueMutation.mutateAsync({
+              data: [{ imageId: image.id, techniqueId: technique.id }],
             }),
         },
       });
   };
 
-  const updateToolMutation = trpc.image.updateTools.useMutation({
+  const updateTechniqueMutation = trpc.image.updateTechniques.useMutation({
     onSuccess: (_, { data }) => {
-      for (const { imageId, toolId, notes } of data) {
+      for (const { imageId, techniqueId, notes } of data) {
         updateImage(imageId, (image) => {
-          const tool = image.tools.find((x) => x.id === toolId);
-          if (tool) tool.notes = notes?.length ? notes : null;
+          const technique = image.techniques.find((x) => x.id === techniqueId);
+          if (technique) technique.notes = notes?.length ? notes : null;
         });
       }
     },
     onError: (error: any) => showErrorNotification({ error: new Error(error.message) }),
   });
-  const handleUpdateTool = (notes: string) => {
+  const handleUpdateTechnique = (notes: string) => {
     debouncer(() => {
-      updateToolMutation.mutate({ data: [{ imageId: image.id, toolId: tool.id, notes }] });
+      updateTechniqueMutation.mutate({
+        data: [{ imageId: image.id, techniqueId: technique.id, notes }],
+      });
     });
   };
 
-  const dirty = notes.length && notes !== tool.notes;
-  const saving = updateToolMutation.isLoading;
+  const dirty = notes.length && notes !== technique.notes;
+  const saving = updateTechniqueMutation.isLoading;
 
   return (
     <div className="flex flex-col py-1">
       <div className="flex justify-between items-center gap-3">
         <div className="flex items-center gap-1">
-          <span>{tool.name}</span>
-          {!tool.notes && (
+          <span>{technique.name}</span>
+          {!technique.notes && (
             <Text
               inline
               color="blue"
@@ -88,7 +91,11 @@ export function PostImageTool({
           )}
         </div>
 
-        <ActionIcon color="red" onClick={handleRemoveTool} loading={removeToolMutation.isLoading}>
+        <ActionIcon
+          color="red"
+          onClick={handleRemoveTechnique}
+          loading={removeTechniqueMutation.isLoading}
+        >
           <IconTrash size={16} />
         </ActionIcon>
       </div>
@@ -96,11 +103,11 @@ export function PostImageTool({
         <Textarea
           autosize
           size="sm"
-          placeholder={`How was ${getDisplayName(tool.name)} used?`}
+          placeholder={`How was ${technique.name} used?`}
           value={notes}
           onChange={(e) => {
-            setNotes(e.target.value);
-            handleUpdateTool(e.target.value);
+            setNotes(e.target.value.slice(0, 1000));
+            handleUpdateTechnique(e.target.value);
           }}
           classNames={{
             input: `px-2 py-1 min-h-8 mb-2 ${

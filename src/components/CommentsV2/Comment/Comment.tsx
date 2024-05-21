@@ -42,6 +42,7 @@ import { CommentBadge } from '~/components/CommentsV2/Comment/CommentBadge';
 import { useMutateComment } from '../commentv2.utils';
 import { CommentReplies } from '../CommentReplies';
 import { constants } from '../../../server/common/constants';
+import { LineClamp } from '~/components/LineClamp/LineClamp';
 
 type Store = {
   id?: number;
@@ -108,6 +109,13 @@ export function CommentContent({
       toggleExpanded(comment.id);
     }
   };
+
+  const trimmableEnds = ['<p></p>'];
+  for (const end of trimmableEnds) {
+    if (comment.content.endsWith(end)) {
+      comment.content = comment.content.slice(0, comment.content.lastIndexOf(end));
+    }
+  }
 
   return (
     <Group
@@ -214,10 +222,12 @@ export function CommentContent({
           {!editing ? (
             <>
               <Box my={5}>
-                <RenderHtml
-                  html={comment.content}
-                  sx={(theme) => ({ fontSize: theme.fontSizes.sm })}
-                />
+                <LineClamp lineClamp={3}>
+                  <RenderHtml
+                    html={comment.content}
+                    sx={(theme) => ({ fontSize: theme.fontSizes.sm })}
+                  />
+                </LineClamp>
               </Box>
               {/* COMMENT INTERACTION */}
               <Group spacing={4}>

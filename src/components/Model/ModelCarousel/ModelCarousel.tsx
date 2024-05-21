@@ -175,8 +175,8 @@ function ModelCarouselContent({
                 <ImageGuard2 image={image} connectType="model" connectId={modelId}>
                   {(safe) => (
                     <>
-                      <ImageGuard2.BlurToggle className="absolute top-2 left-2 z-10" />
-                      <Stack spacing="xs" align="flex-end" className="absolute top-2 right-2 z-10">
+                      <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
+                      <Stack spacing="xs" align="flex-end" className="absolute right-2 top-2 z-10">
                         <ImageContextMenu image={image} />
                         {features.imageGeneration && image.meta && (
                           <HoverActionButton

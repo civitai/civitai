@@ -16,18 +16,16 @@ import {
 import React, { useEffect, useState } from 'react';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { numberWithCommas } from '~/utils/number-helpers';
-import { constants, generation, getGenerationConfig } from '~/server/common/constants';
+import { generation, getGenerationConfig } from '~/server/common/constants';
 import { generationPanel, generationStore, useGenerationStore } from '~/store/generation.store';
 import { useCreateGenerationRequest } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { isDefined } from '~/utils/type-guards';
 import {
   Form,
-  InputNumber,
   InputNumberSlider,
   InputSegmentedControl,
   InputSelect,
   InputSwitch,
-  InputCheckbox,
   InputTextArea,
 } from '~/libs/form';
 import { trpc } from '~/utils/trpc';
@@ -39,7 +37,6 @@ import {
   Anchor,
   Button,
   Card,
-  CardProps,
   Center,
   NumberInputProps,
   Paper,
@@ -56,17 +53,15 @@ import {
   Alert,
   ThemeIcon,
   List,
-  Overlay,
   LoadingOverlay,
 } from '@mantine/core';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
-import { LoginRedirect, useLoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
+import { useLoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import InputResourceSelect from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
 import { PersistentAccordion } from '~/components/PersistentAccordion/PersistantAccordion';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import {
   IconAlertTriangle,
-  IconAlertTriangleFilled,
   IconArrowAutofitDown,
   IconCheck,
   IconCopy,
@@ -79,7 +74,6 @@ import { ModelType } from '@prisma/client';
 import { getDisplayName } from '~/utils/string-helpers';
 import { getHotkeyHandler, useLocalStorage } from '@mantine/hooks';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
-import Router from 'next/router';
 import { NextLink } from '@mantine/next';
 import { IconLock } from '@tabler/icons-react';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
@@ -89,6 +83,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
 import { useGenerationContext } from '~/components/ImageGeneration/GenerationProvider';
 import InputQuantity from '~/components/ImageGeneration/GenerationForm/InputQuantity';
+import Link from 'next/link';
 
 const BUZZ_CHARGE_NOTICE_END = new Date('2024-04-14T00:00:00Z');
 
@@ -108,6 +103,8 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
     // nsfw: nsfw ?? currentUser?.showNsfw,
     nsfw: nsfw ?? false,
     quantity: quantity ?? generation.defaultValues.quantity,
+    // Use solely to to update the resource oimits based on tier
+    tier: currentUser?.tier ?? 'free',
   };
   const features = useFeatureFlags();
 
@@ -133,12 +130,14 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
       ...defaultValues,
       ...storedState,
       steps,
+      // Use solely to to update the resource oimits based on tier
+      tier: currentUser?.tier ?? 'free',
     });
     const subscription = form.watch((value) => {
       useGenerationFormStore.setState({ ...(value as GenerateFormModel) }, true);
     });
     return () => subscription.unsubscribe();
-  }, []); // eslint-disable-line
+  }, [currentUser]); // eslint-disable-line
 
   const {
     totalCost,
@@ -283,6 +282,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
 
   // Manually handle error display for prompt box
   const { errors } = form.formState;
+  const atLimit = additionalResourcesCount >= limits.resources;
 
   return (
     <Form
@@ -315,7 +315,13 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
               </Text>
             </InfoPopover>
           </Group>
-          <Card p="sm" radius="md" withBorder sx={{ overflow: 'visible' }}>
+          <Card
+            className={cx(errors.resources && classes.formError)}
+            p="sm"
+            radius="md"
+            withBorder
+            sx={{ overflow: 'visible' }}
+          >
             <InputResourceSelect
               name="model"
               buttonLabel="Add Model"
@@ -330,7 +336,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
               }}
               allowRemove={false}
             />
-            <Card.Section withBorder mt="sm">
+            <Card.Section className={cx(errors.resources && classes.formError)} mt="sm" withBorder>
               <PersistentAccordion
                 storeKey="generation-form-resources"
                 classNames={{
@@ -340,38 +346,56 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                 }}
               >
                 <Accordion.Item value="resources" sx={{ borderBottom: 0 }}>
-                  <Accordion.Control>
-                    <Group spacing={4}>
-                      <Text size="sm" weight={590}>
-                        Additional Resources
-                      </Text>
-                      {additionalResourcesCount > 0 && (
-                        <Badge style={{ fontWeight: 590 }}>
-                          {additionalResourcesCount}/{limits.resources}
-                        </Badge>
-                      )}
+                  <Accordion.Control className={cx(errors.resources && classes.formError)}>
+                    <Stack spacing={4}>
+                      <Group spacing={4}>
+                        <Text size="sm" weight={590}>
+                          Additional Resources
+                        </Text>
+                        {additionalResourcesCount > 0 && (
+                          <Badge style={{ fontWeight: 590 }}>
+                            {additionalResourcesCount}/{limits.resources}
+                          </Badge>
+                        )}
 
-                      <Button
-                        component="span"
-                        compact
-                        variant="light"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          setOpened(true);
-                        }}
-                        radius="xl"
-                        ml="auto"
-                        disabled={additionalResourcesCount >= limits.resources}
-                      >
-                        <Group spacing={4} noWrap>
-                          <IconPlus size={16} />
-                          <Text size="sm" weight={500}>
-                            Add
+                        <Button
+                          component="span"
+                          compact
+                          variant="light"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setOpened(true);
+                          }}
+                          radius="xl"
+                          ml="auto"
+                          disabled={atLimit}
+                        >
+                          <Group spacing={4} noWrap>
+                            <IconPlus size={16} />
+                            <Text size="sm" weight={500}>
+                              Add
+                            </Text>
+                          </Group>
+                        </Button>
+                      </Group>
+                      {atLimit && (!currentUser || currentUser.tier === 'free') && (
+                        <Text size="xs">
+                          <Link href="/pricing" passHref>
+                            <Anchor
+                              color="yellow"
+                              rel="nofollow"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              Become a member
+                            </Anchor>
+                          </Link>{' '}
+                          <Text inherit span>
+                            to use more resources at once
                           </Text>
-                        </Group>
-                      </Button>
-                    </Group>
+                        </Text>
+                      )}
+                    </Stack>
                   </Accordion.Control>
                   <Accordion.Panel>
                     <InputResourceSelectMultiple
@@ -863,7 +887,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                   className={classes.generateButtonReset}
                   px="xs"
                 >
-                  Clear All
+                  Reset
                 </Button>
               </Group>
             </>
@@ -972,7 +996,7 @@ const useStyles = createStyles((theme) => ({
     alignItems: 'center',
   },
   accordionItem: {
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : 'transparent',
+    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : '#fff',
 
     '&:first-of-type': {
       borderTopLeftRadius: '8px',
@@ -985,7 +1009,7 @@ const useStyles = createStyles((theme) => ({
     },
 
     '&[data-active]': {
-      backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : 'transparent',
+      backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : `#fff`,
     },
   },
   accordionControl: {
@@ -1005,12 +1029,11 @@ const useStyles = createStyles((theme) => ({
   accordionContent: {
     padding: '8px 12px 12px 12px',
   },
+  formError: {
+    borderColor: theme.colors.red[theme.fn.primaryShade()],
+    color: theme.colors.red[theme.fn.primaryShade()],
+  },
 }));
-
-const sharedCardProps: Omit<CardProps, 'children'> = {
-  withBorder: true,
-  radius: 'md',
-};
 
 const sharedSliderProps: SliderProps = {
   size: 'sm',

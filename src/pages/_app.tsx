@@ -159,16 +159,16 @@ function MyApp(props: CustomAppProps) {
                                           >
                                             <BrowserRouterProvider>
                                               <RecaptchaWidgetProvider>
-                                                <ChatContextProvider>
-                                                  <BaseLayout>
+                                                <BaseLayout>
+                                                  <ChatContextProvider>
                                                     <CustomModalsProvider>
                                                       {getLayout(<Component {...pageProps} />)}
                                                       <StripeSetupSuccessProvider />
                                                       <DialogProvider />
                                                       <RoutedDialogProvider />
                                                     </CustomModalsProvider>
-                                                  </BaseLayout>
-                                                </ChatContextProvider>
+                                                  </ChatContextProvider>
+                                                </BaseLayout>
                                               </RecaptchaWidgetProvider>
                                             </BrowserRouterProvider>
                                           </NotificationsProvider>

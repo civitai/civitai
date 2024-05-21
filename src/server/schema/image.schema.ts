@@ -92,6 +92,14 @@ export const imageGenerationSchema = z.object({
 });
 
 export const imageMetaSchema = imageGenerationSchema.partial().passthrough();
+export const imageMetaOutput = imageGenerationSchema.extend({
+  comfy: z.preprocess(
+    (value) => (typeof value === 'string' ? JSON.parse(value) : value),
+    comfyMetaSchema.optional()
+  ),
+  controlNets: z.string().array().optional(),
+  software: z.coerce.string().optional(),
+});
 
 export type FaceDetectionInput = z.infer<typeof faceDetectionSchema>;
 export const faceDetectionSchema = z.object({
@@ -169,11 +177,11 @@ export const imageSchema = z.object({
   width: z.number().nullish(),
   // analysis: imageAnalysisSchema.optional(),
   // tags: z.array(tagSchema).optional(),
-  needsReview: z.string().nullish(),
+  // needsReview: z.string().nullish(),
   mimeType: z.string().optional(),
   sizeKB: z.number().optional(),
   postId: z.number().nullish(),
-  resources: z.array(imageResourceUpsertSchema).optional(),
+  // resources: z.array(imageResourceUpsertSchema).optional(),
   type: z.nativeEnum(MediaType).default(MediaType.image),
   metadata: z.object({}).passthrough().optional(),
 });
@@ -236,7 +244,6 @@ export const ingestImageSchema = z.object({
   width: z.coerce.number().nullish(),
 });
 
-// #region [new schemas]
 const imageInclude = z.enum([
   'tags',
   'count',
@@ -285,6 +292,8 @@ export const getInfiniteImagesSchema = baseQuerySchema
     fromPlatform: z.coerce.boolean().optional(),
     notPublished: z.coerce.boolean().optional(),
     pending: z.boolean().optional(),
+    tools: z.number().array().optional(),
+    techniques: z.number().array().optional(),
   })
   .transform((value) => {
     if (value.withTags) {
@@ -305,7 +314,6 @@ export const getImageSchema = z.object({
   // excludedTagIds: z.array(z.number()).optional(),
   // excludedUserIds: z.array(z.number()).optional(),
 });
-// #endregion
 
 export type RemoveImageResourceSchema = z.infer<typeof removeImageResourceSchema>;
 export const removeImageResourceSchema = z.object({
@@ -375,5 +383,21 @@ export const addOrRemoveImageToolsSchema = z.object({ data: baseImageToolSchema.
 export type UpdateImageToolsOutput = z.output<typeof updateImageToolsSchema>;
 export const updateImageToolsSchema = z.object({
   data: baseImageToolSchema.extend({ notes: z.string().nullish() }).array(),
+});
+// #endregion
+
+// #region [image tools]
+const baseImageTechniqueSchema = z.object({
+  imageId: z.number(),
+  techniqueId: z.number(),
+});
+export type AddOrRemoveImageTechniquesOutput = z.output<typeof addOrRemoveImageTechniquesSchema>;
+export const addOrRemoveImageTechniquesSchema = z.object({
+  data: baseImageTechniqueSchema.array(),
+});
+
+export type UpdateImageTechniqueOutput = z.output<typeof updateImageTechniqueSchema>;
+export const updateImageTechniqueSchema = z.object({
+  data: baseImageTechniqueSchema.extend({ notes: z.string().nullish() }).array(),
 });
 // #endregion

@@ -203,9 +203,20 @@ export const generateFormSchema = generationFormShapeSchema
   .merge(sharedGenerationParamsSchema)
   .extend({
     model: generationResourceSchema,
-    resources: generationResourceSchema.array().max(9).default([]),
+    resources: generationResourceSchema.array().default([]),
     vae: generationResourceSchema.optional(),
-  });
+    tier: userTierSchema.optional().default('free'),
+  })
+  .refine(
+    (data) => {
+      // Check if resources are at limit based on tier
+      const { resources, tier } = data;
+      const limit = defaultsByTier[tier].resources;
+      
+      return resources.length <= limit;
+    },
+    { message: `You have exceed the number of allowed resources`, path: ['resources'] }
+  );
 
 export type CreateGenerationRequestInput = z.infer<typeof createGenerationRequestSchema>;
 export const createGenerationRequestSchema = z.object({
@@ -217,8 +228,7 @@ export const createGenerationRequestSchema = z.object({
       triggerWord: z.string().optional(),
     })
     .array()
-    .min(1, 'You must select at least one resource')
-    .max(10),
+    .min(1, 'You must select at least one resource'),
   params: sharedGenerationParamsSchema,
 });
 

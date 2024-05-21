@@ -206,7 +206,7 @@ export const constants = {
     maxImageFileSize: 50 * 1024 ** 2, // 50MB
     maxVideoFileSize: 500 * 1024 ** 2, // 500MB
     maxVideoDimension: 3840,
-    maxVideoDurationSeconds: 120,
+    maxVideoDurationSeconds: 200,
   },
   bounties: {
     engagementTypes: ['active', 'favorite', 'tracking', 'supporter', 'awarded'],
