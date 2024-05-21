@@ -2,7 +2,11 @@ import { $OpenApiTs, ApiError, CivitaiClient } from '@civitai/client';
 import { SessionUser } from 'next-auth';
 import { z } from 'zod';
 import { isDev } from '~/env/other';
-import { throwBadRequestError, throwInsufficientFundsError } from '~/server/utils/errorHandling';
+import {
+  throwAuthorizationError,
+  throwBadRequestError,
+  throwInsufficientFundsError,
+} from '~/server/utils/errorHandling';
 
 export const workflowIdSchema = z.object({
   workflowId: z.string(),
@@ -56,6 +60,8 @@ export async function submitWorkflow({
       switch (error.status) {
         case 400:
           throw throwBadRequestError(); // TODO - better error handling
+        case 401:
+          throw throwAuthorizationError();
         case 403:
           throw throwInsufficientFundsError();
       }

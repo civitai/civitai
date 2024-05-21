@@ -73,7 +73,6 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
   //     negativePrompt: 'EasyNegative,watermark, center opening,bad_prompt,bad-hands-5,',
   //     cfgScale: 5.5,
   //     sampler: 'DPM++ 2M Karras',
-  //     seed: -1,
   //     steps: 20,
   //     clipSkip: 2,
   //     quantity: 1,

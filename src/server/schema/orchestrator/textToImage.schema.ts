@@ -6,7 +6,7 @@ export const textToImageParamsSchema = z.object({
   negativePrompt: z.string().optional(),
   cfgScale: z.number(),
   sampler: z.string(),
-  seed: z.number(),
+  seed: z.number().optional(),
   clipSkip: z.number(),
   steps: z.number(),
   quantity: z.number(),
@@ -28,7 +28,10 @@ export const textToImageParamsValidationSchema = textToImageParamsSchema.extend(
     .refine((val) => generation.samplers.includes(val as (typeof generation.samplers)[number]), {
       message: 'invalid sampler',
     }),
-  seed: z.coerce.number().min(-1).max(generation.maxValues.seed).default(-1),
+  seed: z.coerce
+    .number()
+    // .min(0).max(generation.maxValues.seed)
+    .optional(),
   clipSkip: z.coerce.number().default(1),
   steps: z.coerce.number().min(1).max(100),
   quantity: z.coerce.number().min(1).max(20),

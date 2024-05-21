@@ -206,7 +206,6 @@ export async function textToImage({
       batchSize,
       additionalNetworks,
       // providers: params.draft ? (env.DRAFT_MODE_PROVIDERS as Provider[] | undefined) : undefined, // TODO - ??
-      // properties: { userId: user.id }, // todo
       prompt: positivePrompts.join(', '),
       negativePrompt: negativePrompts.join(', '),
       scheduler: samplersToSchedulers[params.sampler as Sampler] as Scheduler,
@@ -220,18 +219,12 @@ export async function textToImage({
   };
 
   const requestBody: Workflow = {
-    properties: { userId: user.id },
     steps: [step],
     callbacks: [
       {
         url: `https://signals-dev.civitai.com/users/${user.id}/${SignalMessages.OrchestratorUpdate}`,
         type: [`${CallbackSource.job}:*`],
       },
-      // {
-      //   // TODO - callback to ingestion
-      //   url: `https://signals-dev.civitai.com/users/${user.id}/${SignalMessages.OrchestratorUpdate}`,
-      //   type: [`${CallbackSource.workflow}:${WorkflowStatus.succeeded}`],
-      // },
     ],
   };
 
@@ -251,10 +244,9 @@ export async function getTextToImageRequests(
     ...props,
     jobType: ['textToImage'],
   });
-  console.dir(items, { depth: null });
 
   return {
-    items: formatTextToImageResponses(items as TextToImageResponse[]),
+    items: await formatTextToImageResponses(items as TextToImageResponse[]),
     nextCursor,
   };
 }
@@ -307,18 +299,23 @@ export async function formatTextToImageResponses(
       return steps.map((step) => {
         const { input, output, jobs, status } = step;
         const images =
-          output?.images?.map((image, i) => {
-            const seed = step.input.seed;
-            return {
-              requestId: workflow.id,
-              jobId: '', // TODO - get from job?
-              blobKey: image.blobKey,
-              available: image.available,
-              status: step.status, // TODO - get from job?
-              seed: seed ? seed + i : undefined,
-              duration: 0, // TODO - get from job?
-            };
-          }) ?? [];
+          output?.images
+            ?.map((image, i) => {
+              const seed = step.input.seed;
+              const job = jobs?.find((x) => x.id === ''); // TODO - match with image jobId
+              if (!job) return null;
+              return {
+                // requestId: workflow.id,
+                jobId: job.id,
+                id: image.blobKey,
+                available: image.available,
+                status: job.status,
+                seed: seed ? seed + i : undefined,
+                completed: new Date() as Date | undefined, // TODO - get from job?
+                url: '', // TODO - update after sdk update
+              };
+            })
+            .filter(isDefined) ?? [];
 
         let negativePrompt = input.negativePrompt ?? '';
         for (const { triggerWord } of [...safeNegatives, ...minorNegatives]) {
