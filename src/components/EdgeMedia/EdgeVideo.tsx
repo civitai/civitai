@@ -20,7 +20,7 @@ export function EdgeVideo({
   const ref = useRef<HTMLVideoElement | null>(null);
   const [muted, setMuted] = useState(initialMuted);
   const [showAudioControl, setShowAudioControl] = useState(false);
-  const { classes } = useStyles();
+  const { classes, cx } = useStyles();
 
   useEffect(() => {
     // Hard set the src for Safari because it doesn't support autoplay webm
@@ -33,7 +33,7 @@ export function EdgeVideo({
 
   return (
     // extra div wrapper to prevent positioning errors of parent components that make their child absolute
-    <div {...wrapperProps} className={classes.iosScroll}>
+    <div {...wrapperProps} className={cx(classes.iosScroll, wrapperProps?.className)}>
       <div
         style={{
           position: 'relative',

@@ -43,7 +43,7 @@ export function ImageDetailCarousel() {
   if (!images.length) return null;
 
   return (
-    <div ref={ref} className="flex justify-stretch items-stretch flex-1 min-h-0">
+    <div ref={ref} className="flex min-h-0 flex-1 items-stretch justify-stretch">
       <Carousel
         withControls={canNavigate}
         draggable={canNavigate}
@@ -73,9 +73,9 @@ function ImageContent({ image }: { image: ImagesInfiniteModel } & ConnectProps) 
   return (
     <ImageGuardContent image={image}>
       {(safe) => (
-        <div ref={setRef} className="h-full w-full flex justify-center items-center">
+        <div ref={setRef} className="relative flex size-full items-center justify-center">
           {!safe ? (
-            <div className="relative h-full w-full" style={{ maxHeight: height, maxWidth: width }}>
+            <div className="relative size-full" style={{ maxHeight: height, maxWidth: width }}>
               <MediaHash {...image} />
             </div>
           ) : (
@@ -88,7 +88,11 @@ function ImageContent({ image }: { image: ImagesInfiniteModel } & ConnectProps) 
                   : image.name ?? undefined
               }
               type={image.type}
-              className={`max-w-full max-h-full w-auto ${!safe ? 'invisible' : ''}`}
+              className={`max-h-full w-auto max-w-full ${!safe ? 'invisible' : ''}`}
+              wrapperProps={{
+                className: `max-h-full w-auto max-w-full ${!safe ? 'invisible' : ''}`,
+                style: { aspectRatio: (image?.width ?? 0) / (image?.height ?? 0) },
+              }}
               width={image?.width ?? 'original'}
               anim
               controls
