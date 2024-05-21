@@ -2,6 +2,7 @@ import { redis, REDIS_KEYS } from '~/server/redis/client';
 
 async function getBucketNames(key: string) {
   const currentBucket = await redis.packed.hGet<string[]>(REDIS_KEYS.QUEUES.BUCKETS, key);
+  if (currentBucket && !Array.isArray(currentBucket)) return [currentBucket];
   return currentBucket ?? [];
 }
 
