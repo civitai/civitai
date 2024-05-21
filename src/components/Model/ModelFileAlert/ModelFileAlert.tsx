@@ -127,7 +127,7 @@ export const ModelFileAlert = ({ files, modelType, versionId, baseModel }: Model
 };
 
 type ModelFileAlertProps = {
-  files: { type: string; metadata: { format: string } }[];
+  files: { type: string; metadata: { format?: ModelFileFormat; } }[];
   baseModel: BaseModel;
   modelType: ModelType;
   versionId: number;
