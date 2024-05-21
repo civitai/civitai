@@ -66,7 +66,7 @@ import {
   getPagination,
   getPagingData,
 } from '~/server/utils/pagination-helpers';
-import { decreaseDate } from '~/utils/date-helpers';
+import { decreaseDate, isFutureDate } from '~/utils/date-helpers';
 import { prepareFile } from '~/utils/file-helpers';
 import { fromJson, toJson } from '~/utils/json-helpers';
 import { getS3Client } from '~/utils/s3-utils';
@@ -1104,19 +1104,15 @@ export const getModelVersionsMicro = async ({
       id: true,
       name: true,
       index: true,
-      earlyAccessTimeFrame: true,
+      earlyAccessEndsAt: true,
       createdAt: true,
       publishedAt: true,
     },
   });
 
-  return versions.map(({ earlyAccessTimeFrame, createdAt, publishedAt, ...v }) => ({
+  return versions.map(({ earlyAccessEndsAt,  ...v }) => ({
     ...v,
-    isEarlyAccess: isEarlyAccess({
-      earlyAccessTimeframe: earlyAccessTimeFrame,
-      publishedAt,
-      versionCreatedAt: createdAt,
-    }),
+    isEarlyAccess: earlyAccessEndsAt && isFutureDate(earlyAccessEndsAt),
   }));
 };
 

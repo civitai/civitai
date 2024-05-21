@@ -16,7 +16,8 @@ export const getModelVersionDetailsSelect = Prisma.validator<Prisma.ModelVersion
   trainingDetails: true,
   baseModel: true,
   baseModelType: true,
-  earlyAccessTimeFrame: true,
+  earlyAccessEndsAt: true,
+  earlyAccessConfig: true,
   description: true,
   vaeId: true,
   metrics: {
@@ -48,7 +49,7 @@ export type ModelVersionApiReturn = Prisma.ModelVersionGetPayload<typeof modelVe
 export const getModelVersionsForSearchIndex = Prisma.validator<Prisma.ModelVersionSelect>()({
   id: true,
   name: true,
-  earlyAccessTimeFrame: true,
+  earlyAccessEndsAt: true,
   createdAt: true,
   generationCoverage: { select: { covered: true } },
   trainedWords: true,

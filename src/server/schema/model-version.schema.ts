@@ -196,10 +196,20 @@ export const deleteExplorationPromptSchema = z.object({
   name: z.string().trim().min(1, 'Name cannot be empty.'),
 });
 
+export type ModelVersionEarlyAccessConfig = z.infer<typeof modelVersionEarlyAccessConfigSchema>;
+export const modelVersionEarlyAccessConfigSchema = z.object({
+  timeframe: z.number(),
+  buzzTransactionId: z.string(),
+  generationPrice: z.number().optional(),
+  generationTrialLimit: z.number().optional(),
+  downloadPrice: z.number(),
+});
+
 export type ModelVersionMeta = ModelMeta & {
   picFinderModelId?: number;
   earlyAccessDownloadData?: { date: string; downloads: number }[];
   generationImagesCount?: { date: string; generations: number }[];
+  // Early access related:   
 };
 
 export type PublishVersionInput = z.infer<typeof publishVersionSchema>;
