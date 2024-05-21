@@ -291,10 +291,15 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
 
   const handleSubmit = () => {
     if (search) {
+      const { query: cleanedSearch, searchPageQuery: currSearchPageQuery } = parseQuery(
+        indexName,
+        search
+      );
       const queryString = QS.stringify({
-        query: search.trim(), // Search should be more accurate than query as it was the latest written.
-        ...QS.parse(searchPageQuery),
+        query: cleanedSearch.trim(), // Search should be more accurate than query as it was the latest written.
+        ...QS.parse(currSearchPageQuery),
       });
+
       router.push(`/search/${indexName}?${queryString}`, undefined, { shallow: false });
 
       blurInput();
