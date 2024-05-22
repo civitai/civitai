@@ -609,6 +609,7 @@ type VersionInput = Omit<ModelVersionUpsertInput, 'recommendedResources'> & {
   > &
     RecommendedSettingsSchema)[];
   clubs?: ClubResourceSchema[];
+  earlyAccessEndsAt: Date | null;
 };
 type Props = {
   onSubmit: (version?: ModelVersionUpsertInput) => void;

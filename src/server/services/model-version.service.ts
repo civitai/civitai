@@ -140,7 +140,7 @@ export const upsertModelVersion = async ({
     let earlyAccessConfig: ModelVersionEarlyAccessConfig | null = null;
     if (earlyAccessTimeFrame) {
       earlyAccessConfig = {
-        timeFrame: earlyAccessTimeFrame, 
+        timeframe: earlyAccessTimeFrame, 
         buzzTransactionId: 'free-for-time-being',
         downloadPrice: 100,
       };
