@@ -8,8 +8,10 @@ import {
   Card,
   CloseButton,
   Group,
+  RingProgress,
   ScrollArea,
   Text,
+  UnstyledButton,
   useMantineTheme,
 } from '@mantine/core';
 import { Availability, CollectionType } from '@prisma/client';
@@ -21,6 +23,7 @@ import {
   IconChevronDown,
   IconChevronUp,
   IconDotsVertical,
+  IconDownload,
   IconEye,
   IconFlag,
   IconLayoutSidebarRightCollapse,
@@ -60,6 +63,7 @@ import { ImageProcess } from '~/components/Image/DetailV2/ImageProcess';
 import { ImageExternalMeta } from '~/components/Image/DetailV2/ImageExternalMeta';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { InteractiveTipBuzzButton } from '~/components/Buzz/InteractiveTipBuzzButton';
+import { DownloadImage } from '~/components/Image/DownloadImage';
 
 const sharedBadgeProps: Partial<Omit<BadgeProps, 'children'>> = {
   variant: 'filled',
@@ -88,9 +92,20 @@ const sharedIconProps: TablerIconsProps = {
   color: 'white',
 };
 
+const maxIndicators = 20;
+
 export function ImageDetail2() {
   const theme = useMantineTheme();
-  const { image: image, isLoading, active, close, toggleInfo, shareUrl } = useImageDetailContext();
+  const {
+    images,
+    image: image,
+    isLoading,
+    active,
+    close,
+    toggleInfo,
+    shareUrl,
+    navigate,
+  } = useImageDetailContext();
   const [sidebarOpen, setSidebarOpen] = useLocalStorage({
     key: `image-detail-open`,
     defaultValue: true,
@@ -189,7 +204,7 @@ export function ImageDetail2() {
                     {/* Placeholder */}
                     <div className="@md:hidden" />
                     <div className="flex gap-1 @max-md:hidden">
-                      <ImageGuard2.BlurToggle {...sharedBadgeProps} alwaysVisible />
+                      <ImageGuard2.BlurToggle {...sharedBadgeProps} />
                       {LeftImageControls}
                     </div>
 
@@ -197,7 +212,6 @@ export function ImageDetail2() {
                       <ImageGuard2.BlurToggle
                         {...sharedBadgeProps}
                         className={`${sharedBadgeProps.className} @md:hidden`}
-                        alwaysVisible
                       />
                       <Badge {...sharedBadgeProps}>
                         <IconEye {...sharedIconProps} />
@@ -205,6 +219,24 @@ export function ImageDetail2() {
                           {abbreviateNumber(image.stats?.viewCountAllTime ?? 0)}
                         </Text>
                       </Badge>
+                      <DownloadImage src={image.url} type={image.type} name={image.name}>
+                        {({ onClick, isLoading, progress }) => (
+                          <ActionIcon
+                            {...sharedActionIconProps}
+                            onClick={onClick}
+                            loading={isLoading && progress === 0}
+                          >
+                            {isLoading && progress > 0 && (
+                              <RingProgress
+                                size={36}
+                                sections={[{ value: progress, color: 'blue' }]}
+                                thickness={4}
+                              />
+                            )}
+                            {!isLoading && <IconDownload {...sharedIconProps} />}
+                          </ActionIcon>
+                        )}
+                      </DownloadImage>
                       <ShareButton
                         url={shareUrl}
                         title={`Image by ${image.user.username}`}
@@ -235,42 +267,59 @@ export function ImageDetail2() {
                 {/* IMAGE CAROUSEL */}
                 <ImageDetailCarousel />
                 {/* FOOTER */}
-                <div className="flex justify-center p-3">
-                  <ReactionSettingsProvider
-                    settings={{
-                      hideReactionCount: false,
-                      buttonStyling: (reaction, hasReacted) => ({
-                        radius: 'xl',
-                        variant: 'light',
-                        px: undefined,
-                        pl: 4,
-                        pr: 8,
-                        h: 30,
-                        style: {
-                          color: 'white',
-                          background: hasReacted
-                            ? theme.fn.rgba(theme.colors.blue[4], 0.4)
-                            : theme.fn.rgba(theme.colors.gray[8], 0.4),
-                          // backdropFilter: 'blur(7px)',
-                        },
-                      }),
-                    }}
-                  >
-                    <Reactions
-                      entityId={image.id}
-                      entityType="image"
-                      reactions={image.reactions}
-                      metrics={{
-                        likeCount: image.stats?.likeCountAllTime,
-                        dislikeCount: image.stats?.dislikeCountAllTime,
-                        heartCount: image.stats?.heartCountAllTime,
-                        laughCount: image.stats?.laughCountAllTime,
-                        cryCount: image.stats?.cryCountAllTime,
-                        tippedAmountCount: image.stats?.tippedAmountCountAllTime,
+                <div className="flex flex-col gap-3 p-3">
+                  <div className="flex justify-center">
+                    <ReactionSettingsProvider
+                      settings={{
+                        hideReactionCount: false,
+                        buttonStyling: (reaction, hasReacted) => ({
+                          radius: 'xl',
+                          variant: 'light',
+                          px: undefined,
+                          pl: 4,
+                          pr: 8,
+                          h: 30,
+                          style: {
+                            color: 'white',
+                            background: hasReacted
+                              ? theme.fn.rgba(theme.colors.blue[4], 0.4)
+                              : theme.fn.rgba(theme.colors.gray[8], 0.4),
+                            // backdropFilter: 'blur(7px)',
+                          },
+                        }),
                       }}
-                      targetUserId={image.user.id}
-                    />
-                  </ReactionSettingsProvider>
+                    >
+                      <Reactions
+                        entityId={image.id}
+                        entityType="image"
+                        reactions={image.reactions}
+                        metrics={{
+                          likeCount: image.stats?.likeCountAllTime,
+                          dislikeCount: image.stats?.dislikeCountAllTime,
+                          heartCount: image.stats?.heartCountAllTime,
+                          laughCount: image.stats?.laughCountAllTime,
+                          cryCount: image.stats?.cryCountAllTime,
+                          tippedAmountCount: image.stats?.tippedAmountCountAllTime,
+                        }}
+                        targetUserId={image.user.id}
+                      />
+                    </ReactionSettingsProvider>
+                  </div>
+                  {images.length <= maxIndicators && images.length > 1 && (
+                    <div className="flex justify-center gap-1">
+                      {images.map(({ id }) => (
+                        <UnstyledButton
+                          key={id}
+                          data-active={image.id === id || undefined}
+                          aria-hidden
+                          tabIndex={-1}
+                          onClick={() => navigate(id)}
+                          className={`h-1 max-w-6 flex-1 rounded border border-solid border-gray-4 bg-white shadow-2xl
+                        ${image.id !== id ? 'dark:opacity-50' : 'bg-blue-6 dark:bg-white'}`}
+                        />
+                      ))}
+                    </div>
+                  )}
                 </div>
               </>
             )}

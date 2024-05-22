@@ -1,8 +1,7 @@
 import { createStyles, Text } from '@mantine/core';
 import React, { useEffect, useRef } from 'react';
-import { EdgeUrlProps, getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { EdgeUrlProps, useEdgeUrl } from '~/client-utils/cf-images-utils';
 import { EdgeVideo } from '~/components/EdgeMedia/EdgeVideo';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export type EdgeMediaProps = EdgeUrlProps &
   Omit<JSX.IntrinsicElements['img'], 'src' | 'srcSet' | 'ref' | 'width' | 'height' | 'metadata'> & {
@@ -15,6 +14,7 @@ export type EdgeMediaProps = EdgeUrlProps &
 
 export function EdgeMedia({
   src,
+  height,
   width,
   fit,
   anim,
@@ -29,13 +29,14 @@ export function EdgeMedia({
   controls,
   wrapperProps,
   contain,
-  fadeIn = false,
+  fadeIn,
   mediaRef,
-  transcode: initialTranscode = false,
+  transcode,
+  original,
   ...imgProps
 }: EdgeMediaProps) {
-  const { classes, cx } = useStyles({ maxWidth: width === 'original' ? undefined : width });
-  const currentUser = useCurrentUser();
+  const { classes, cx } = useStyles({ maxWidth: width ?? undefined });
+  // const currentUser = useCurrentUser();
 
   const imgRef = useRef<HTMLImageElement>(null);
   if (fadeIn && imgRef.current?.complete) imgRef?.current?.style?.setProperty('opacity', '1');
@@ -44,44 +45,21 @@ export function EdgeMedia({
   }, [mediaRef]);
 
   if (width && typeof width === 'number') width = Math.min(width, 4096);
-  let transcode = initialTranscode;
-  const _name = name ?? imgProps.alt;
-  const _inferredType =
-    _name?.endsWith('.gif') || _name?.endsWith('.mp4') || _name?.endsWith('.webm')
-      ? 'video'
-      : 'image';
-
-  let _type = type ?? _inferredType;
-
-  // videos are always transcoded
-  // if (!anim) console.log(_name, _inferredType);
-  if (_inferredType === 'video' && _type === 'image') {
-    transcode = true;
-    anim = false;
-  } else if (_type === 'video') {
-    transcode = true;
-    anim = anim ?? currentUser?.autoplayGifs ?? true;
-  }
-
-  // anim false makes a video url return the first frame as an image
-  if (!anim) _type = 'image';
-
-  const optimized = currentUser?.filePreferences?.imageFormat === 'optimized';
-
-  const _src = getEdgeUrl(src, {
+  const { url, type: inferredType } = useEdgeUrl(src, {
     width,
+    height,
     fit,
     anim,
     transcode,
     blur,
     quality,
     gravity,
-    optimized: optimized ? true : undefined,
     name,
-    type: _type,
+    type,
+    original,
   });
 
-  switch (_type) {
+  switch (inferredType) {
     case 'image':
       return (
         // eslint-disable-next-line jsx-a11y/alt-text, @next/next/no-img-element
@@ -90,7 +68,7 @@ export function EdgeMedia({
           className={cx(classes.responsive, className, { [classes.fadeIn]: fadeIn })}
           onLoad={(e) => (e.currentTarget.style.opacity = '1')}
           onError={(e) => e.currentTarget.classList.add('load-error')}
-          src={_src}
+          src={url}
           style={style}
           {...imgProps}
         />
@@ -98,7 +76,7 @@ export function EdgeMedia({
     case 'video':
       return (
         <EdgeVideo
-          src={_src}
+          src={url}
           className={cx(classes.responsive, className, { [classes.fadeIn]: fadeIn })}
           style={style}
           controls={controls}

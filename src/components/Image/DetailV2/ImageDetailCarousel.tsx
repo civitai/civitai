@@ -1,4 +1,5 @@
 import { Carousel, Embla } from '@mantine/carousel';
+import { useHotkeys, useOs } from '@mantine/hooks';
 
 import { truncate } from 'lodash-es';
 import { useState, useEffect, useRef } from 'react';
@@ -36,23 +37,48 @@ export function ImageDetailCarousel() {
     };
   }, [embla]);
 
+  function next() {
+    embla?.scrollNext();
+  }
+
+  function prev() {
+    embla?.scrollPrev();
+  }
+
+  useHotkeys([
+    ['ArrowLeft', prev],
+    ['ArrowRight', next],
+  ]);
+
   const ref = useResizeObserver<HTMLDivElement>(() => {
     embla?.reInit();
   });
 
+  const os = useOs();
+  const isDesktop = os === 'windows' || os === 'linux' || os === 'macos';
+
+  useEffect(() => {
+    if (!slidesInView.includes(index)) {
+      embla?.scrollTo(index, true);
+      // setSlidesInView([...embla.slidesInView(true)]);
+    }
+  }, [index, slidesInView]); // eslint-disable-line
+
   if (!images.length) return null;
 
   return (
-    <div ref={ref} className="flex justify-stretch items-stretch flex-1 min-h-0">
+    <div ref={ref} className="flex min-h-0 flex-1 items-stretch justify-stretch">
       <Carousel
         withControls={canNavigate}
-        draggable={canNavigate}
         className="flex-1"
         onSlideChange={handleSlideChange}
         getEmblaApi={setEmbla}
         height="100%"
         initialSlide={slidesInView[0]}
+        draggable={!isDesktop && canNavigate}
         loop
+        withKeyboardEvents={false}
+        // withIndicators={images.length <= maxIndicators && images.length > 1}
       >
         {images.map((image, index) => (
           <Carousel.Slide key={image.id}>
@@ -73,9 +99,9 @@ function ImageContent({ image }: { image: ImagesInfiniteModel } & ConnectProps) 
   return (
     <ImageGuardContent image={image}>
       {(safe) => (
-        <div ref={setRef} className="h-full w-full flex justify-center items-center">
+        <div ref={setRef} className="relative flex size-full items-center justify-center">
           {!safe ? (
-            <div className="relative h-full w-full" style={{ maxHeight: height, maxWidth: width }}>
+            <div className="relative size-full" style={{ maxHeight: height, maxWidth: width }}>
               <MediaHash {...image} />
             </div>
           ) : (
@@ -88,11 +114,17 @@ function ImageContent({ image }: { image: ImagesInfiniteModel } & ConnectProps) 
                   : image.name ?? undefined
               }
               type={image.type}
-              className={`max-w-full max-h-full w-auto ${!safe ? 'invisible' : ''}`}
-              width={image?.width ?? 'original'}
+              className={`max-h-full w-auto max-w-full ${!safe ? 'invisible' : ''}`}
+              wrapperProps={{
+                className: `max-h-full w-auto max-w-full ${!safe ? 'invisible' : ''}`,
+                style: { aspectRatio: (image?.width ?? 0) / (image?.height ?? 0) },
+              }}
+              width={image.width}
               anim
               controls
-              fadeIn
+              quality={90}
+              original={image.type === 'video' ? true : undefined}
+              // fadeIn
             />
           )}
         </div>

@@ -308,11 +308,11 @@ export function ProfileSidebar({ username, className }: { username: string; clas
                   <Popover.Target>
                     {data.animated ? (
                       <Box style={style}>
-                        <EdgeMedia src={url} alt={award.name} width="original" />
+                        <EdgeMedia src={url} alt={award.name} />
                       </Box>
                     ) : (
                       <Box style={style}>
-                        <EdgeMedia src={url} alt={award.name} width="original" />
+                        <EdgeMedia src={url} alt={award.name} />
                       </Box>
                     )}
                   </Popover.Target>

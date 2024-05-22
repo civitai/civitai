@@ -5,7 +5,6 @@ import { createStore } from 'zustand/vanilla';
 
 // Debugging
 const logs: Record<string, boolean> = {};
-const logFn = (args: unknown) => console.log(args);
 
 type State = { available: boolean };
 type Store = State & { update: (fn: (args: State) => State) => void };
@@ -91,7 +90,13 @@ export const createSignalWorker = async ({
   await deferred.promise;
 
   if (typeof window !== 'undefined') {
-    window.logSignal = (target) => {
+    window.logSignal = (target, selector) => {
+      function logFn(args: unknown) {
+        if (selector) {
+          const result = [args].find(selector);
+          if (result) console.log(result);
+        } else console.log(args);
+      }
       if (!logs[target]) {
         logs[target] = true;
         on(target, logFn);

@@ -14,7 +14,7 @@ const schema = z.object({
 export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
   try {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
-    const { imageIds } = schema.parse(req.body);
+    const { imageIds, userId } = schema.parse(req.body);
 
     const images = await dbRead.image.findMany({
       where: { id: { in: imageIds } },
@@ -49,6 +49,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
         imageId: image.id,
         ownerId: image.userId,
         nsfw: getNsfwLevelDeprecatedReverseMapping(image.nsfwLevel),
+        userId,
         tags,
       });
     }

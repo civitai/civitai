@@ -49,7 +49,7 @@ export function SubscriptionCard() {
               {image && (
                 <Center>
                   <Box w={40}>
-                    <EdgeMedia src={image} width="original" />
+                    <EdgeMedia src={image} />
                   </Box>
                 </Center>
               )}

@@ -23,6 +23,7 @@ import { GetInfiniteImagesInput } from '~/server/schema/image.schema';
 import { getDisplayName } from '~/utils/string-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { ToolMultiSelect } from '~/components/Tool/ToolMultiSelect';
+import { TechniqueMultiSelect } from '~/components/Technique/TechniqueMultiSelect';
 
 // TODO: adjust filter as we begin to support more media types
 const availableMediaTypes = Object.values(MediaType).filter(
@@ -220,7 +221,11 @@ export function ImageFiltersDropdown({
           onChange={(tools) => handleChange({ tools })}
         />
 
-        <Divider label="Techniques" labelProps={{ weight: 'bold', size: 'sm' }} /> */}
+        <Divider label="Techniques" labelProps={{ weight: 'bold', size: 'sm' }} />
+        <TechniqueMultiSelect
+          value={mergedFilters.techniques ?? []}
+          onChange={(techniques) => handleChange({ techniques })}
+        /> */}
       </Stack>
       {filterLength > 0 && (
         <Button
