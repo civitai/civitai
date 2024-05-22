@@ -245,11 +245,11 @@ export const updateImageReportStatusByReason = ({
   status: ReportStatus;
 }) => {
   return dbWrite.$queryRaw<{ id: number; userId: number }[]>`
-    UPDATE "Report" r SET status = ${status}
+    UPDATE "Report" r SET status = ${status}::"ReportStatus"
     FROM "ImageReport" i
     WHERE i."reportId" = r.id
       AND i."imageId" = ${id}
-      AND r.reason = ${reason}
+      AND r.reason = ${reason}::"ReportReason"
     RETURNING id, "userId"
   `;
 };
