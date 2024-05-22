@@ -170,8 +170,7 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
       const now = new Date();
       const queue = new TaskQueue('pull', maxQueueSize);
       const { batchSize, startId = 0, endId, updateIds } = await prepareBatches(ctx, lastUpdatedAt);
-
-      logger(`createSearchIndexUpdateProcessor :: update :: Index last update at ${lastUpdatedAt}`);
+      logger(`createSearchIndexUpdateProcessor :: update :: Index last update at ${lastUpdatedAt}`, {batchSize, startId, endId, updateIds});
 
       const queuedUpdates = await SearchIndexUpdate.getQueue(
         indexName,
