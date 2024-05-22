@@ -27,14 +27,14 @@ export const cosmeticShopNotifications = createNotificationProcessor({
           ni.last_item as "createdAt"
         FROM new_items ni
         JOIN "UserNotificationSettings" uns ON uns."type" = 'cosmetic-shop-item-added-to-section'
+        WHERE ni.last_item IS NOT NULL
         ON CONFLICT("id") DO UPDATE SET "createdAt" = excluded."createdAt"
         RETURNING "id", "category", "userId"
-      ), deleted AS (
-        DELETE FROM "NotificationViewed"
-          WHERE "id" IN (SELECT "id" FROM created_notifications)
-        RETURNING "id"
       )
-      SELECT "id" FROM deleted;
+      DELETE FROM "NotificationViewed" nv
+      USING created_notifications cn
+      WHERE nv."id" = cn."id"
+      RETURNING cn."category", cn."userId";
     `,
   },
   'cosmetic-shop-item-sold': {
