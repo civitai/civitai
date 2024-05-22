@@ -2933,7 +2933,7 @@ export async function updateImageTechniques({
 export function purgeImageGenerationDataCache(id: number) {
   purgeCache({ tags: [`image-generation-data-${id}`] });
 }
-const strengthTypes: ModelType[] = ['TextualInversion', 'LORA'];
+const strengthTypes: ModelType[] = ['TextualInversion', 'LORA', 'DoRA', 'LoCon'];
 export async function getImageGenerationData({ id }: { id: number }) {
   const image = await dbRead.image.findUnique({
     where: { id },
