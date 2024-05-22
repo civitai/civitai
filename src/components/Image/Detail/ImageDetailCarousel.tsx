@@ -261,7 +261,6 @@ export function ImageDetailCarousel({ className }: GalleryCarouselProps) {
           </>
         )}
       </ImageGuard2>
-
       {images.length <= maxIndicators && hasMultipleImages && (
         <div className={classes.indicators}>{indicators}</div>
       )}
