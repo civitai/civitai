@@ -59,8 +59,6 @@ export function EdgeMedia({
     original,
   });
 
-  console.log({ inferredType });
-
   switch (inferredType) {
     case 'image':
       return (

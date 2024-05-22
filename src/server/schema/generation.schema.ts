@@ -212,7 +212,7 @@ export const generateFormSchema = generationFormShapeSchema
       // Check if resources are at limit based on tier
       const { resources, tier } = data;
       const limit = defaultsByTier[tier].resources;
-      
+
       return resources.length <= limit;
     },
     { message: `You have exceed the number of allowed resources`, path: ['resources'] }

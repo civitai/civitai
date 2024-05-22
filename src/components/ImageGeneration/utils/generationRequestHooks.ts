@@ -13,11 +13,21 @@ import {
 } from '~/libs/orchestrator/jobs';
 import { GenerationRequestStatus, SignalMessages } from '~/server/common/enums';
 import { GetGenerationRequestsInput } from '~/server/schema/generation.schema';
+import { workflowQuerySchema } from '~/server/schema/orchestrator/workflows.schema';
 import { GetGenerationRequestsReturn } from '~/server/services/generation/generation.service';
 import { Generation } from '~/server/services/generation/generation.types';
 import { createDebouncer } from '~/utils/debouncer';
 import { showErrorNotification } from '~/utils/notifications';
 import { queryClient, trpc } from '~/utils/trpc';
+
+export function useGetTextToImageRequests(input?: z.input<typeof workflowQuerySchema>) {
+  const currentUser = useCurrentUser();
+  const result = trpc.orchestrator.getTextToImageRequests.useInfiniteQuery(input ?? {}, {
+    getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
+    enabled: !!currentUser,
+  });
+  return result;
+}
 
 export const useGetGenerationRequests = (
   input?: GetGenerationRequestsInput,

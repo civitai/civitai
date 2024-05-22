@@ -3,25 +3,19 @@ import { SessionUser } from 'next-auth';
 import { z } from 'zod';
 import { isDev } from '~/env/other';
 import {
+  workflowQuerySchema,
+  workflowIdSchema,
+} from '~/server/schema/orchestrator/workflows.schema';
+import {
   throwAuthorizationError,
   throwBadRequestError,
   throwInsufficientFundsError,
 } from '~/server/utils/errorHandling';
 
-export const workflowIdSchema = z.object({
-  workflowId: z.string(),
-});
-
-export const queryWorkflowsSchema = z.object({
-  take: z.number().default(10),
-  cursor: z.string().optional(),
-  jobType: z.string().array().optional(),
-});
-
 export async function queryWorkflows({
   user,
   ...params
-}: z.output<typeof queryWorkflowsSchema> & { user: SessionUser }) {
+}: z.output<typeof workflowQuerySchema> & { user: SessionUser }) {
   const client = new CivitaiClient({
     env: isDev ? 'dev' : 'prod',
     auth: 'ff2ddeabd724b029112668447a9388f7', // TODO - use user api token

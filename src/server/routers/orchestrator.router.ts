@@ -1,15 +1,11 @@
+import { workflowQuerySchema, workflowIdSchema } from './../schema/orchestrator/workflows.schema';
 import { textToImageSchema } from '~/server/schema/orchestrator/textToImage.schema';
 import { deleteJob, taintJob, taintJobSchema } from '~/server/services/orchestrator/jobs';
 import { getTextToImageRequests, textToImage } from '~/server/services/orchestrator/textToImage';
-import {
-  cancelWorkflow,
-  deleteWorkflow,
-  queryWorkflowsSchema,
-  workflowIdSchema,
-} from '~/server/services/orchestrator/workflows';
+import { cancelWorkflow, deleteWorkflow } from '~/server/services/orchestrator/workflows';
 import { protectedProcedure, router } from '~/server/trpc';
 
-export const orchestrationRouter = router({
+export const orchestratorRouter = router({
   // #region [requests]
   deleteWorkflow: protectedProcedure
     .input(workflowIdSchema)
@@ -30,7 +26,7 @@ export const orchestrationRouter = router({
 
   // #region [textToImage]
   getTextToImageRequests: protectedProcedure
-    .input(queryWorkflowsSchema)
+    .input(workflowQuerySchema)
     .query(({ ctx, input }) => getTextToImageRequests({ ...input, user: ctx.user })),
   createTextToImage: protectedProcedure
     .input(textToImageSchema)

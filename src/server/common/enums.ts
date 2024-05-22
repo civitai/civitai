@@ -140,6 +140,7 @@ export enum SignalMessages {
   ChatNewRoom = 'chat:new-room',
   ChatTypingStatus = 'chat:typing-status',
   OrchestratorUpdate = 'orchestrator-job:status-update',
+  TextToImageUpdate = 'orchestrator:text-to-image-update',
 }
 
 export enum BountySort {

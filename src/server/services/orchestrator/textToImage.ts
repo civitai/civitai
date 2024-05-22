@@ -222,11 +222,16 @@ export async function textToImage({
     steps: [step],
     callbacks: [
       {
-        url: `https://signals-dev.civitai.com/users/${user.id}/${SignalMessages.OrchestratorUpdate}`,
+        url: `https://signals-dev.civitai.com/users/${user.id}/${SignalMessages.TextToImageUpdate}`,
         type: [`${CallbackSource.job}:*`],
       },
     ],
   };
+
+  console.log({
+    url: `https://signals-dev.civitai.com/users/${user.id}/${SignalMessages.TextToImageUpdate}`,
+    type: [`${CallbackSource.job}:*`],
+  });
 
   const workflow = (await submitWorkflow({
     whatif: whatIf,
@@ -244,6 +249,8 @@ export async function getTextToImageRequests(
     ...props,
     jobType: ['textToImage'],
   });
+
+  // return items;
 
   return {
     items: await formatTextToImageResponses(items as TextToImageResponse[]),
@@ -302,17 +309,17 @@ export async function formatTextToImageResponses(
           output?.images
             ?.map((image, i) => {
               const seed = step.input.seed;
-              const job = jobs?.find((x) => x.id === ''); // TODO - match with image jobId
+              const job = jobs?.find((x) => x.id === image.jobId);
               if (!job) return null;
               return {
                 // requestId: workflow.id,
                 jobId: job.id,
-                id: image.blobKey,
+                id: image.id,
                 available: image.available,
                 status: job.status,
                 seed: seed ? seed + i : undefined,
-                completed: new Date() as Date | undefined, // TODO - get from job?
-                url: '', // TODO - update after sdk update
+                completed: job.completedAt,
+                url: image.url,
               };
             })
             .filter(isDefined) ?? [];
