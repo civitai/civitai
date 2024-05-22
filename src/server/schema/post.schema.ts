@@ -99,15 +99,26 @@ export const addPostImageSchema = z.object({
 });
 
 export type UpdatePostImageInput = z.infer<typeof updatePostImageSchema>;
-export const updatePostImageSchema = z.object({
-  id: z.number(),
-  meta: imageMetaSchema.nullish().transform((val) => {
-    if (!val) return val;
-    if (!Object.values(val).filter(isDefined).length) return null;
-    return val;
-  }),
-  hideMeta: z.boolean().optional(),
-});
+export const updatePostImageSchema = z
+  .object({
+    id: z.number(),
+    meta: imageMetaSchema.nullish().transform((val) => {
+      if (!val) return val;
+      if (!Object.values(val).filter(isDefined).length) return null;
+      return val;
+    }),
+    hideMeta: z.boolean().optional(),
+    name: z.string().trim().nullish(),
+    type: z.nativeEnum(MediaType).default(MediaType.image),
+  })
+  .refine(
+    (data) => {
+      if (data.type !== MediaType.audio) return true;
+
+      return data.name && data.name.length > 0;
+    },
+    { message: 'Title cannot be empty', path: ['name'] }
+  );
 
 export type ReorderPostImagesInput = z.infer<typeof reorderPostImagesSchema>;
 export const reorderPostImagesSchema = z.object({

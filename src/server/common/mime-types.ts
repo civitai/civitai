@@ -13,13 +13,18 @@ export const MIME_TYPES = {
 
   // Audio
   mp3: 'audio/mpeg',
-  wav: 'audio/vnd.wave',
+  wav: 'audio/wav',
 
   // Zip
   zip: 'application/zip',
   xZipCompressed: 'application/x-zip-compressed',
   xZipMultipart: 'multipart/x-zip',
 } as const;
+
+export const EXTENSION_BY_MIME_TYPE = Object.entries(MIME_TYPES).reduce(
+  (acc, [key, value]) => ({ ...acc, [value]: key as keyof typeof MIME_TYPES }),
+  {} as { [key: string]: keyof typeof MIME_TYPES }
+);
 
 export const MEDIA_TYPE: Record<string, MediaType> = {
   [MIME_TYPES.png]: MediaType.image,

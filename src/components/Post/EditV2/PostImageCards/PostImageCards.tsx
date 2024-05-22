@@ -55,7 +55,7 @@ export function PostImageCards() {
 function PostImageCard({ image }: { image: ControlledImage }) {
   switch (image.type) {
     case 'added':
-      return <AddedImage image={image.data} />;
+      return <AddedImage media={image.data} />;
     case 'blocked':
       return <BlockedImage image={image.data} />;
     case 'resolving':

@@ -2,13 +2,18 @@ import {
   Accordion,
   ActionIcon,
   Alert,
+  AspectRatio,
   Badge,
   Button,
   Divider,
+  Group,
   Loader,
   LoadingOverlay,
   Menu,
+  Paper,
+  Stack,
   Text,
+  TextInput,
 } from '@mantine/core';
 import { ImageIngestionStatus } from '@prisma/client';
 import {
@@ -30,7 +35,7 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { UnblockImage } from '~/components/Image/UnblockImage/UnblockImage';
 import { BrowsingLevelBadge } from '~/components/ImageGuard/ImageGuard2';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
-import { ImageMetaModal } from '~/components/Post/EditV2/ImageMetaModal';
+import { AudioMetaModal, ImageMetaModal } from '~/components/Post/EditV2/ImageMetaModal';
 import {
   PostEditImageDetail,
   usePostEditStore,
@@ -48,6 +53,11 @@ import { PostImageTechnique } from '~/components/Post/EditV2/Techniques/PostImag
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { AudioMetadata, ImageMetadata } from '~/server/schema/media.schema';
+import { formatBytes, formatDuration } from '~/utils/number-helpers';
+import { useDebouncer } from '~/utils/debouncer';
+import { EXTENSION_BY_MIME_TYPE } from '~/server/common/mime-types';
+import { SimpleImageUpload } from '~/libs/form/components/SimpleImageUpload';
 
 // #region [types]
 type SimpleMetaPropsKey = keyof typeof simpleMetaProps;
@@ -62,7 +72,7 @@ const simpleMetaProps = {
 
 // #region [AddedImage context]
 type State = {
-  image: PostEditImageDetail;
+  media: PostEditImageDetail;
   isBlocked: boolean;
   isScanned: boolean;
   isPending: boolean;
@@ -71,6 +81,7 @@ type State = {
   onEditMetaClick: () => void;
   isUpdating: boolean;
   toggleHidePrompt: () => void;
+  updateTitle: (title: string) => void;
 };
 const AddedImageContext = createContext<State | null>(null);
 const useAddedImageContext = () => {
@@ -81,16 +92,17 @@ const useAddedImageContext = () => {
 // #endregion
 
 // #region [AddedImage Provider]
-export function AddedImage({ image }: { image: PostEditImageDetail }) {
+export function AddedImage({ media }: { media: PostEditImageDetail }) {
   // #region [state]
   const { showPreview } = usePostPreviewContext();
-  const storedImage = useImageStore(image);
+  const storedImage = useImageStore(media);
   const [updateImage, setImages] = usePostEditStore((state) => [
     state.updateImage,
     state.setImages,
   ]);
+  const debouncer = useDebouncer(1000);
 
-  const { id, meta, blockedFor, ingestion, nsfwLevel, hideMeta } = storedImage;
+  const { id, meta, blockedFor, ingestion, nsfwLevel, hideMeta, type } = storedImage;
 
   const isPending = ingestion === ImageIngestionStatus.Pending;
   // const isBlocked = ingestion === ImageIngestionStatus.Blocked;
@@ -102,7 +114,7 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
   const deleteImageMutation = trpc.image.delete.useMutation({
     onSuccess: (_, { id }) =>
       setImages((state) => state.filter((x) => x.type !== 'added' || x.data.id !== id)),
-    onError: (error: any) => showErrorNotification({ error: new Error(error.message) }),
+    onError: (error) => showErrorNotification({ error: new Error(error.message) }),
   });
 
   const handleDelete = () => {
@@ -114,17 +126,17 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
           message: 'Are you sure you want to delete this image?',
           labels: { cancel: `Cancel`, confirm: `Yes, I am sure` },
           confirmProps: { color: 'red', loading: deleteImageMutation.isLoading },
-          onConfirm: async () => await deleteImageMutation.mutateAsync({ id: image.id }),
+          onConfirm: async () => await deleteImageMutation.mutateAsync({ id: media.id }),
         },
       });
-    else deleteImageMutation.mutate({ id: image.id });
+    else deleteImageMutation.mutate({ id: media.id });
   };
   // #endregion
 
   // #region [image meta]
   const handleEditMetaClick = () => {
     dialogStore.trigger({
-      component: ImageMetaModal,
+      component: type === 'audio' ? AudioMetaModal : ImageMetaModal,
       props: {
         id,
         meta: meta ?? undefined,
@@ -136,9 +148,10 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
   };
 
   const updateImageMutation = trpc.post.updateImage.useMutation({
-    onSuccess: (_, { id, hideMeta }) => {
+    onSuccess: (_, { id, hideMeta, name }) => {
       updateImage(id, (image) => {
         image.hideMeta = hideMeta ?? false;
+        image.name = name ?? image.name;
       });
     },
   });
@@ -147,10 +160,18 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
   };
   // #endregion
 
+  // #region [audio title]
+  const handleUpdateTitle = (title: string) => {
+    debouncer(() => {
+      updateImageMutation.mutate({ id, name: title });
+    });
+  };
+  // #endregion
+
   return (
     <AddedImageContext.Provider
       value={{
-        image,
+        media: media,
         isBlocked,
         isPending,
         isScanned,
@@ -159,6 +180,7 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
         onEditMetaClick: handleEditMetaClick,
         isUpdating: updateImageMutation.isLoading,
         toggleHidePrompt,
+        updateTitle: handleUpdateTitle,
       }}
     >
       <div className="overflow-hidden rounded-lg border border-gray-1 bg-gray-0 dark:border-dark-6 dark:bg-dark-8">
@@ -171,18 +193,18 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
 
 const store = createSelectStore();
 function Preview() {
-  const { image } = useAddedImageContext();
+  const { media } = useAddedImageContext();
   const { isBlocked } = useAddedImageContext();
-  const opened = store.useIsSelected(image.id);
+  const opened = store.useIsSelected(media.id);
   const value = opened ? 'edit-detail' : null;
 
   return (
     <div className="flex flex-col">
-      <PostImage />
+      {media.type === 'audio' ? <PostAudio /> : <PostImage />}
       {isBlocked && <TosViolationBanner />}
       <Accordion
         value={value}
-        onChange={(value) => store.toggle(image.id, !!value)}
+        onChange={(value) => store.toggle(media.id, !!value)}
         variant="separated"
         classNames={{ content: 'p-0' }}
       >
@@ -201,7 +223,7 @@ function EditDetail() {
   const [showMoreResources, setShowMoreResources] = useState(false);
   const { showPreview } = usePostPreviewContext();
   const {
-    image,
+    media,
     isBlocked,
     isPending,
     isScanned,
@@ -209,9 +231,11 @@ function EditDetail() {
     onEditMetaClick,
     isUpdating,
     toggleHidePrompt,
+    updateTitle,
   } = useAddedImageContext();
 
-  const { meta, hideMeta, resourceHelper: resources } = image;
+  const { meta, hideMeta, resourceHelper: resources } = media;
+  const isAudio = media.type === 'audio';
   const simpleMeta = Object.entries(simpleMetaProps).filter(([key]) => meta?.[key]);
   const hasSimpleMeta = !!simpleMeta.length;
 
@@ -224,19 +248,21 @@ function EditDetail() {
             !showPreview ? '@sm:flex-nowrap @sm:gap-6' : ''
           }`}
         >
-          {/*
-      // #region [image]
-      */}
+          {/* #region [image] */}
           {(!showPreview || hasSimpleMeta) && (
             <div className={`flex w-full flex-col gap-3 ${!showPreview ? '@sm:w-4/12' : ''}`}>
-              {!showPreview && <PostImage />}
+              {!showPreview && (isAudio ? <PostAudio /> : <PostImage />)}
               {hasSimpleMeta && (
                 <>
                   <div className="flex flex-col *:border-gray-4 not-last:*:border-b dark:*:border-dark-4">
                     {simpleMeta.map(([key, label]) => (
                       <div key={key} className="flex justify-between py-0.5">
-                        <Text>{label}</Text>
-                        <Text>{meta?.[key as SimpleMetaPropsKey]}</Text>
+                        <Text size="sm" weight={500}>
+                          {label}
+                        </Text>
+                        <Text size="sm" weight={700}>
+                          {meta?.[key as SimpleMetaPropsKey]}
+                        </Text>
                       </div>
                     ))}
                   </div>
@@ -263,16 +289,26 @@ function EditDetail() {
           {/* #endregion */}
 
           <div className={`flex w-full flex-1 flex-col gap-3 ${!showPreview ? '@sm:gap-4' : ''}`}>
-            {/*
-          // #region [TOS Violation]
-          */}
+            {/* #region [TOS Violation] */}
             {isBlocked && !showPreview && <TosViolationBanner />}
             {/* #endregion */}
 
-            {/*
-          // #region [prompt]
-          */}
+            {/* #region [title] */}
+            {isAudio && (
+              <TextInput
+                label="Title"
+                placeholder="Wind in the willows"
+                size="md"
+                radius="md"
+                defaultValue={media.name ?? undefined}
+                onChange={(e) => updateTitle(e.currentTarget.value)}
+                withAsterisk
+                required
+              />
+            )}
+            {/* #endregion */}
 
+            {/* #region [prompt] */}
             <CustomCard className="flex flex-col gap-3">
               <div className="flex items-center justify-between">
                 <h3 className=" text-lg font-semibold leading-none text-dark-7 dark:text-gray-0">
@@ -328,13 +364,10 @@ function EditDetail() {
                 </>
               )}
             </CustomCard>
-
             {/* #endregion */}
 
-            {/*
-          // #region [resources]
-          */}
-            {!!resources?.length && (
+            {/* #region [resources] */}
+            {!isAudio && !!resources?.length && (
               <CustomCard className="flex flex-col gap-2">
                 <div className="flex items-center gap-2">
                   <h3 className=" text-lg font-semibold leading-none text-dark-7 dark:text-gray-0 ">
@@ -392,10 +425,8 @@ function EditDetail() {
             )}
             {/* #endregion */}
 
-            {/*
-          // #region [missing resources]
-          */}
-            {!resources?.length && (
+            {/* #region [missing resources] */}
+            {!isAudio && !resources?.length && (
               <Alert className="rounded-lg" color="yellow">
                 <div className="flex flex-col gap-3">
                   <div className="flex items-center gap-2">
@@ -431,10 +462,7 @@ function EditDetail() {
             )}
             {/* #endregion */}
 
-            {/*
-          // #region [tools]
-          */}
-
+            {/* #region [tools] */}
             <CustomCard className="flex flex-col gap-2">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
@@ -452,7 +480,7 @@ function EditDetail() {
                     image.
                   </InfoPopover>
                 </div>
-                <ImageToolsPopover image={image}>
+                <ImageToolsPopover image={media}>
                   <Button
                     variant="light"
                     color="blue"
@@ -467,12 +495,12 @@ function EditDetail() {
                   </Button>
                 </ImageToolsPopover>
               </div>
-              {!!image.tools?.length && (
+              {!!media.tools?.length && (
                 <ul className="flex flex-col">
-                  {sortAlphabeticallyBy([...image.tools], (x) => x.name).map((tool, index) => (
+                  {sortAlphabeticallyBy([...media.tools], (x) => x.name).map((tool, index) => (
                     <li key={tool.id} className="list-none">
                       {index !== 0 && <Divider />}
-                      <PostImageTool image={image} tool={tool} />
+                      <PostImageTool image={media} tool={tool} />
                     </li>
                   ))}
                 </ul>
@@ -480,10 +508,7 @@ function EditDetail() {
             </CustomCard>
             {/* #endregion */}
 
-            {/*
-          // #region [techniques]
-          */}
-
+            {/* #region [techniques] */}
             <CustomCard className="flex flex-col gap-2">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
@@ -494,7 +519,7 @@ function EditDetail() {
                     <IconInfoCircle />
                   </ActionIcon> */}
                 </div>
-                <ImageTechniquesPopover image={image}>
+                <ImageTechniquesPopover image={media}>
                   <Button
                     variant="light"
                     color="blue"
@@ -509,13 +534,13 @@ function EditDetail() {
                   </Button>
                 </ImageTechniquesPopover>
               </div>
-              {!!image.techniques.length && (
+              {!!media.techniques.length && (
                 <ul className="flex flex-col">
-                  {sortAlphabeticallyBy([...image.techniques], (x) => x.name).map(
+                  {sortAlphabeticallyBy([...media.techniques], (x) => x.name).map(
                     (technique, index) => (
                       <li key={technique.id} className="list-none">
                         {index !== 0 && <Divider />}
-                        <PostImageTechnique image={image} technique={technique} />
+                        <PostImageTechnique image={media} technique={technique} />
                       </li>
                     )
                   )}
@@ -534,16 +559,15 @@ function EditDetail() {
             )}
           </div>
         </div>
-        {/*
- // #region [tags]
- */}
-        {(!!image.tags?.length || isScanned) && (
+
+        {/* #region [tags] */}
+        {(!!media.tags?.length || isScanned) && (
           <>
             <Divider />
             <VotableTags
-              entityId={image.id}
+              entityId={media.id}
               entityType="image"
-              tags={!!image.tags.length ? image.tags : undefined}
+              tags={!!media.tags.length ? media.tags : undefined}
               collapsible
               canAdd
             />
@@ -569,10 +593,12 @@ function EditDetail() {
 
 function PostImage() {
   const { showPreview } = usePostPreviewContext();
-  const { image, isBlocked, onDelete, isDeleting, onEditMetaClick } = useAddedImageContext();
-  const { metadata, url, type, id, nsfwLevel } = image;
+  const { media, isBlocked, onDelete, isDeleting, onEditMetaClick } = useAddedImageContext();
+  const { url, type, id, nsfwLevel } = media;
+  const metadata = media.metadata as ImageMetadata | null | undefined;
+
   return (
-    <div className={`relative`}>
+    <div className="relative">
       <div
         className="mx-auto flex flex-1"
         style={{
@@ -630,10 +656,94 @@ function PostImage() {
   );
 }
 
+function PostAudio() {
+  const { showPreview } = usePostPreviewContext();
+  const { media, onDelete, isDeleting } = useAddedImageContext();
+  const metadata = media.metadata as AudioMetadata | null | undefined;
+
+  return (
+    <Stack spacing="sm" p={showPreview ? 'md' : undefined}>
+      <Paper
+        p={8}
+        radius="md"
+        sx={(theme) => ({
+          position: 'relative',
+          backgroundColor: theme.fn.rgba(theme.colors.blue[7], 0.2),
+          borderColor: theme.colors.blue[7],
+        })}
+        withBorder
+      >
+        <Stack spacing={8}>
+          <Group position="right">
+            <Menu withArrow position="bottom-end">
+              <Menu.Target>
+                <ActionIcon>
+                  <IconDotsVertical
+                    color="#fff"
+                    filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                  />
+                </ActionIcon>
+              </Menu.Target>
+              <Menu.Dropdown>
+                <Menu.Item
+                  color="red"
+                  icon={<IconTrash size={16} />}
+                  onClick={onDelete}
+                  disabled={isDeleting}
+                >
+                  Delete audio
+                </Menu.Item>
+              </Menu.Dropdown>
+            </Menu>
+          </Group>
+          {/* <SimpleImageUpload w="100%" h="100%" /> */}
+          <EdgeMedia src={media.url} type={media.type} duration={metadata?.duration} />
+        </Stack>
+      </Paper>
+      <Stack spacing={4}>
+        {metadata && (
+          <>
+            <Group position="apart" noWrap>
+              <Text weight={500} color="dimmed" size="sm">
+                Duration
+              </Text>
+              <Text weight={700} size="sm">
+                {formatDuration(metadata.duration)}
+              </Text>
+            </Group>
+            <Divider />
+            <Group position="apart" noWrap>
+              <Text weight={500} color="dimmed" size="sm">
+                Size
+              </Text>
+              <Text weight={700} size="sm">
+                {formatBytes(metadata.size ?? 0)}
+              </Text>
+            </Group>
+          </>
+        )}
+        {media.mimeType && (
+          <>
+            <Divider />
+            <Group position="apart" noWrap>
+              <Text weight={500} color="dimmed" size="sm">
+                Format
+              </Text>
+              <Text weight={700} size="sm" tt="uppercase">
+                {EXTENSION_BY_MIME_TYPE[media.mimeType]}
+              </Text>
+            </Group>
+          </>
+        )}
+      </Stack>
+    </Stack>
+  );
+}
+
 function TosViolationBanner() {
   const currentUser = useCurrentUserRequired();
-  const { image, onDelete, isDeleting } = useAddedImageContext();
-  const { blockedFor, id } = image;
+  const { media, onDelete, isDeleting } = useAddedImageContext();
+  const { blockedFor, id } = media;
   const { showPreview } = usePostPreviewContext();
   return (
     <Alert

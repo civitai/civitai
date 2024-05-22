@@ -107,7 +107,12 @@ export function SimpleImageUpload({
     <Input.Wrapper {...props} error={props.error ?? error}>
       {showLoading ? (
         <Paper
-          style={{ position: 'relative', marginTop: 5, width: '100%', height: 200 }}
+          style={{
+            position: 'relative',
+            marginTop: props.label ? 5 : undefined,
+            width: '100%',
+            height: 200,
+          }}
           withBorder
         >
           <LoadingOverlay visible />
@@ -169,7 +174,7 @@ export function SimpleImageUpload({
             {!!value && typeof value !== 'string' && (
               <BrowsingLevelBadge
                 browsingLevel={value.nsfwLevel}
-                className="absolute top-2 left-2 z-10"
+                className="absolute left-2 top-2 z-10"
               />
             )}
             <EdgeMedia
@@ -187,7 +192,7 @@ export function SimpleImageUpload({
           accept={IMAGE_MIME_TYPE}
           maxFiles={1}
           // maxSize={maxSize}
-          mt={5}
+          mt={props.label ? 5 : undefined}
           styles={(theme) => ({
             root:
               !!props.error || !!error

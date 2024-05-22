@@ -1,7 +1,11 @@
 import { createStyles, Text } from '@mantine/core';
 import React, { useEffect, useRef } from 'react';
+<<<<<<< Updated upstream
 import { EdgeUrlProps, useEdgeUrl } from '~/client-utils/cf-images-utils';
+=======
+import { EdgeUrlProps, getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { EdgeAudio } from '~/components/EdgeMedia/EdgeAudio';
+>>>>>>> Stashed changes
 import { EdgeVideo } from '~/components/EdgeMedia/EdgeVideo';
 
 export type EdgeMediaProps = EdgeUrlProps &
@@ -33,9 +37,13 @@ export function EdgeMedia({
   contain,
   fadeIn,
   mediaRef,
+<<<<<<< Updated upstream
   transcode,
   original,
+=======
+  transcode: initialTranscode = false,
   duration,
+>>>>>>> Stashed changes
   ...imgProps
 }: EdgeMediaProps) {
   const { classes, cx } = useStyles({ maxWidth: width ?? undefined });
@@ -48,7 +56,35 @@ export function EdgeMedia({
   }, [mediaRef]);
 
   if (width && typeof width === 'number') width = Math.min(width, 4096);
+<<<<<<< Updated upstream
   const { url, type: inferredType } = useEdgeUrl(src, {
+=======
+  let transcode = initialTranscode;
+  const _name = name ?? imgProps.alt;
+  const _inferredType =
+    _name?.endsWith('.gif') || _name?.endsWith('.mp4') || _name?.endsWith('.webm')
+      ? 'video'
+      : 'image';
+
+  let _type = type ?? _inferredType;
+
+  // videos are always transcoded
+  // if (!anim) console.log(_name, _inferredType);
+  if (_inferredType === 'video' && _type === 'image') {
+    transcode = true;
+    anim = false;
+  } else if (_type === 'video') {
+    transcode = true;
+    anim = anim ?? currentUser?.autoplayGifs ?? true;
+  }
+
+  // anim false makes a video url return the first frame as an image
+  if (!anim && _type !== 'audio') _type = 'image';
+
+  const optimized = currentUser?.filePreferences?.imageFormat === 'optimized';
+
+  const _src = getEdgeUrl(src, {
+>>>>>>> Stashed changes
     width,
     height,
     fit,

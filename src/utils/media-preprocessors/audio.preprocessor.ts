@@ -1,7 +1,8 @@
+import { EXTENSION_BY_MIME_TYPE } from '~/server/common/mime-types';
 import { AudioMetadata } from '~/server/schema/media.schema';
 
 function getAudioData(src: string) {
-  return new Promise<AudioMetadata>((resolve, reject) => {
+  return new Promise<AudioMetadata>((resolve) => {
     const audio = new Audio(src);
     audio.onloadedmetadata = () => {
       audio.duration;
@@ -20,6 +21,7 @@ export async function preprocessAudio(file: File) {
     objectUrl,
     metadata: {
       size: file.size,
+      format: EXTENSION_BY_MIME_TYPE[file.type],
       ...metadata,
     },
   };

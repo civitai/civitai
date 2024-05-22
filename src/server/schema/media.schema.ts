@@ -23,4 +23,5 @@ export type AudioMetadata = z.infer<typeof audioMetadataSchema>;
 export const audioMetadataSchema = z.object({
   duration: z.number(),
   size: z.number().optional(),
+  format: z.string().optional(),
 });

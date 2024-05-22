@@ -41,7 +41,7 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { PreprocessFileReturnType } from '~/utils/media-preprocessors';
+import { PreprocessFileReturnType, ProcessedAudio } from '~/utils/media-preprocessors';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { CacheTTL } from '../common/constants';
@@ -470,7 +470,10 @@ async function combinePostEditImageData(images: PostImageEditSelect[], user: Ses
   return _images
     .map((image) => ({
       ...image,
-      metadata: image.metadata as PreprocessFileReturnType['metadata'],
+      metadata:
+        image.type === 'audio'
+          ? (image.metadata as ProcessedAudio['metadata'])
+          : (image.metadata as PreprocessFileReturnType['metadata']),
       tags: tags.filter((x) => x.imageId === image.id),
       tools: image.tools.map(({ notes, tool }) => ({ ...tool, notes })),
       techniques: image.techniques.map(({ notes, technique }) => ({ ...technique, notes })),
@@ -782,7 +785,7 @@ export async function bustCachesForPost(postId: number) {
   }
 }
 
-export const updatePostImage = async (image: UpdatePostImageInput) => {
+export const updatePostImage = async ({ type, ...image }: UpdatePostImageInput) => {
   await dbWrite.image.update({
     where: { id: image.id },
     data: {

@@ -9,7 +9,7 @@ export * from './video.preprocessor';
 type SharedProps = { name: string; mimeType: string };
 type ProcessedImage = { type: 'image' } & AsyncReturnType<typeof preprocessImage>;
 type ProcessedVideo = { type: 'video' } & AsyncReturnType<typeof preprocessVideo>;
-type ProcessedAudio = { type: 'audio' } & AsyncReturnType<typeof preprocessAudio>;
+export type ProcessedAudio = { type: 'audio' } & AsyncReturnType<typeof preprocessAudio>;
 
 export type PreprocessFileReturnType = SharedProps &
   (ProcessedImage | ProcessedVideo | ProcessedAudio);

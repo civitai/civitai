@@ -10,13 +10,7 @@ import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constan
 import { auditImageMeta } from '~/utils/media-preprocessors';
 import { trpc } from '~/utils/trpc';
 
-export function ImageMetaModal({
-  id,
-  meta,
-  nsfwLevel = NsfwLevel.PG,
-  updateImage,
-  ...props
-}: {
+type Props = {
   id: number;
   meta?: z.infer<typeof baseImageMetaSchema>;
   blockedFor?: string;
@@ -25,7 +19,15 @@ export function ImageMetaModal({
     id: number,
     cb: (props: { meta?: z.infer<typeof baseImageMetaSchema> | null }) => void
   ) => void;
-}) {
+};
+
+export function ImageMetaModal({
+  id,
+  meta,
+  nsfwLevel = NsfwLevel.PG,
+  updateImage,
+  ...props
+}: Props) {
   const dialog = useDialogContext();
   const [blockedFor, setBlockedFor] = useState(props.blockedFor);
 
@@ -73,7 +75,52 @@ export function ImageMetaModal({
           />
           <InputNumber name="seed" label="Seed" format="default" />
         </div>
-        <div className="flex justify-end mt-4">
+        <div className="mt-4 flex justify-end">
+          <Button type="submit" loading={isLoading}>
+            Save
+          </Button>
+        </div>
+      </Form>
+    </Modal>
+  );
+}
+
+export function AudioMetaModal({ id, meta, updateImage, ...props }: Omit<Props, 'nsfwLevel'>) {
+  const dialog = useDialogContext();
+  const [blockedFor, setBlockedFor] = useState(props.blockedFor);
+
+  const { mutate, isLoading } = trpc.post.updateImage.useMutation();
+  const form = useForm({ schema: baseImageMetaSchema, defaultValues: meta });
+
+  const handleSubmit = async (data: z.infer<typeof baseImageMetaSchema>) => {
+    const { blockedFor } = await auditImageMeta(data, false);
+    setBlockedFor(blockedFor?.join(', '));
+    if (!blockedFor)
+      mutate(
+        { id, meta: { ...meta, ...data } },
+        {
+          onSuccess: () => {
+            updateImage(id, (image) => {
+              image.meta = { ...image.meta, ...data };
+            });
+            dialog.onClose();
+          },
+        }
+      );
+  };
+
+  return (
+    <Modal {...dialog} title={<Text className="font-semibold">Audio details</Text>} centered>
+      <Form form={form} onSubmit={handleSubmit}>
+        <div className="flex flex-col gap-3">
+          <InputTextArea
+            name="prompt"
+            label="Prompt"
+            autosize
+            error={!!blockedFor?.length ? `blocked for: ${blockedFor}` : undefined}
+          />
+        </div>
+        <div className="mt-4 flex justify-end">
           <Button type="submit" loading={isLoading}>
             Save
           </Button>

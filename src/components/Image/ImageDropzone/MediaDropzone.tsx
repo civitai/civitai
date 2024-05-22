@@ -4,18 +4,14 @@ import { IconPhoto, IconUpload, IconX } from '@tabler/icons-react';
 import { DragEvent } from 'react';
 import { constants } from '~/server/common/constants';
 import {
+  EXTENSION_BY_MIME_TYPE,
   IMAGE_MIME_TYPE,
   MIME_TYPES,
   VIDEO_MIME_TYPE,
-  AUDIO_MIME_TYPE,
 } from '~/server/common/mime-types';
 import { fetchBlob } from '~/utils/file-utils';
 
 const MAX_IMAGE_SIZE = constants.mediaUpload.maxImageFileSize;
-const EXTENSION_BY_MIME_TYPE = Object.entries(MIME_TYPES).reduce(
-  (acc, [key, value]) => ({ ...acc, [value]: key }),
-  {} as Record<string, string>
-);
 
 export function MediaDropzone({
   label,
@@ -40,7 +36,6 @@ export function MediaDropzone({
     .filter((t) => t !== MIME_TYPES.xZipCompressed && t !== MIME_TYPES.xZipMultipart)
     .map((type) => '.' + EXTENSION_BY_MIME_TYPE[type]);
   const allowsVideo = VIDEO_MIME_TYPE.some((a) => accept.includes(a));
-  const allowsAudio = AUDIO_MIME_TYPE.some((a) => accept.includes(a));
   // #endregion
 
   // #region [handle drop]
@@ -62,14 +57,14 @@ export function MediaDropzone({
 
   // #region [render]
   return (
-    <div className="flex flex-col w-full gap-1">
+    <div className="flex w-full flex-col gap-1">
       <Dropzone
         {...dropzoneProps}
         onDrop={onDrop}
         onDropCapture={handleDropCapture}
         accept={accept}
       >
-        <div className="flex flex-col justify-center items-center gap-2">
+        <div className="flex flex-col items-center justify-center gap-2">
           <Dropzone.Accept>
             <IconUpload
               size={50}
@@ -87,7 +82,7 @@ export function MediaDropzone({
           <Dropzone.Idle>
             <IconPhoto size={50} stroke={1.5} />
           </Dropzone.Idle>
-          <div className="flex flex-col gap-1 items-center">
+          <div className="flex flex-col items-center gap-1">
             <Text size="xl" inline>
               {label ?? 'Drop media files here or click to select'}
             </Text>

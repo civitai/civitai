@@ -155,3 +155,17 @@ export const getBuzzWithdrawalDetails = (buzzAmount: number, platformFeeRate?: n
     payoutAmount,
   };
 };
+
+const ONE_MINUTE = 60;
+const ONE_HOUR = 60 * ONE_MINUTE;
+export const formatDuration = (seconds: number) => {
+  const hours = Math.floor(seconds / ONE_HOUR);
+  const minutes = Math.floor((seconds % ONE_HOUR) / ONE_MINUTE);
+  const remainingSeconds = Math.round(seconds % ONE_MINUTE);
+
+  const hourString = hours > 0 ? String(hours).padStart(2, '0') : '';
+  const minuteString = String(minutes).padStart(2, '0');
+  const secondString = String(remainingSeconds).padStart(2, '0');
+
+  return [hourString, minuteString, secondString].filter(Boolean).join(':');
+};
