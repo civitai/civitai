@@ -89,6 +89,7 @@ export function ImageFiltersDropdown({
     (mergedFilters.hidden ? 1 : 0) +
     (mergedFilters.fromPlatform ? 1 : 0) +
     (mergedFilters.notPublished ? 1 : 0) +
+    (!!mergedFilters.tools?.length ? 1 : 0) +
     (mergedFilters.period && mergedFilters.period !== MetricTimeframe.AllTime ? 1 : 0);
 
   const clearFilters = useCallback(() => {
@@ -99,6 +100,7 @@ export function ImageFiltersDropdown({
       followed: false,
       fromPlatform: false,
       notPublished: false,
+      tools: [],
       period: MetricTimeframe.AllTime,
     };
 
@@ -214,13 +216,13 @@ export function ImageFiltersDropdown({
           )}
         </Group>
 
-        {/* <Divider label="Tools" labelProps={{ weight: 'bold', size: 'sm' }} />
+        <Divider label="Tools" labelProps={{ weight: 'bold', size: 'sm' }} />
         <ToolMultiSelect
           value={mergedFilters.tools ?? []}
           onChange={(tools) => handleChange({ tools })}
         />
 
-        <Divider label="Techniques" labelProps={{ weight: 'bold', size: 'sm' }} /> */}
+        {/*<Divider label="Techniques" labelProps={{ weight: 'bold', size: 'sm' }} /> */}
       </Stack>
       {filterLength > 0 && (
         <Button

@@ -806,20 +806,20 @@ export const getAllImages = async ({
     );
   }
 
-  // if (!!tools?.length) {
-  //   AND.push(Prisma.sql`i.id IN (
-  //     SELECT "imageId"
-  //     FROM "ImageTool"
-  //     WHERE "imageId" = i.id AND "toolId" IN (${Prisma.join(tools)})
-  //   )`);
-  // }
-  // if (!!techniques?.length) {
-  //   AND.push(Prisma.sql`i.id IN (
-  //     SELECT "imageId"
-  //     FROM "ImageTechnique"
-  //     WHERE "imageId" = i.id AND "techniqueId" IN (${Prisma.join(techniques)})
-  //   )`);
-  // }
+  if (!!tools?.length) {
+    AND.push(Prisma.sql`EXISTS (
+      SELECT 1
+      FROM "ImageTool" it
+      WHERE it."imageId" = i.id AND it."toolId" IN (${Prisma.join(tools)})
+    )`);
+  }
+  if (!!techniques?.length) {
+    AND.push(Prisma.sql`EXISTS (
+      SELECT 1
+      FROM "ImageTechnique" it
+      WHERE it."imageId" = i.id AND it."toolId" IN (${Prisma.join(techniques)})
+    )`);
+  }
 
   if (pending && (isModerator || userId)) {
     if (isModerator) {
