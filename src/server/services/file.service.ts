@@ -161,7 +161,7 @@ export const getFileForModelVersion = async ({
       },
       name: true,
       trainedWords: true,
-      earlyAccessTimeFrame: true,
+      earlyAccessEndsAt: true,
       createdAt: true,
       vaeId: true,
       requireAuth: true,
@@ -196,11 +196,7 @@ export const getFileForModelVersion = async ({
   const requireAuth = modelVersion.requireAuth || !env.UNAUTHENTICATED_DOWNLOAD;
   if (requireAuth && !userId) return { status: 'unauthorized' };
 
-  const deadline = getEarlyAccessDeadline({
-    versionCreatedAt: modelVersion.createdAt,
-    publishedAt: modelVersion.model.publishedAt,
-    earlyAccessTimeframe: modelVersion.earlyAccessTimeFrame,
-  });
+  const deadline = modelVersion.earlyAccessEndsAt ?? undefined;
   const inEarlyAccess = deadline !== undefined && new Date() < deadline;
   if (!noAuth && !user?.tier && !isMod && !isOwner && inEarlyAccess) {
     return { status: 'early-access', details: { deadline } };

@@ -10,6 +10,7 @@ import {
   DeleteExplorationPromptInput,
   EarlyAccessModelVersionsOnTimeframeSchema,
   GetModelVersionByModelTypeProps,
+  ModelVersionEarlyAccessConfig,
   ModelVersionMeta,
   ModelVersionUpsertInput,
   ModelVersionsGeneratedImagesOnTimeframeSchema,
@@ -185,8 +186,9 @@ export const upsertModelVersion = async ({
       select: {
         id: true,
         status: true,
-
-        earlyAccessTimeFrame: true,
+        earlyAccessEndsAt: true,
+        earlyAccessConfig: true,       
+        publishedAt: true, 
         monetization: {
           select: {
             id: true,
@@ -202,10 +204,12 @@ export const upsertModelVersion = async ({
       },
     });
 
+    const earlyAccessConfig =  existingVersion.earlyAccessConfig ? existingVersion.earlyAccessConfig as ModelVersionEarlyAccessConfig : null;
+
     if (
       existingVersion.status === ModelStatus.Published &&
       data.earlyAccessTimeFrame &&
-      existingVersion.earlyAccessTimeFrame === 0
+      !existingVersion.earlyAccessEndsAt
     ) {
       throw throwBadRequestError(
         'You cannot add early access on a model after it has been published.'
@@ -215,8 +219,8 @@ export const upsertModelVersion = async ({
     if (
       existingVersion.status === ModelStatus.Published &&
       data.earlyAccessTimeFrame &&
-      existingVersion.earlyAccessTimeFrame > 0 &&
-      data.earlyAccessTimeFrame > existingVersion.earlyAccessTimeFrame
+      existingVersion.earlyAccessEndsAt &&
+      dayjs(existingVersion.publishedAt).add(data.earlyAccessTimeFrame, 'days').isAfter(existingVersion.earlyAccessEndsAt)
     ) {
       throw throwBadRequestError(
         'You cannot increase the early access time frame for a published early access model version.'

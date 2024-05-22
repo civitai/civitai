@@ -782,7 +782,7 @@ export function ModelVersionDetails({
             modelId={model.id}
             versionId={version.id}
             modelType={model.type}
-            deadline={version.earlyAccessDeadline}
+            deadline={version.earlyAccessEndsAt ?? undefined}
           />
           <ModelFileAlert
             versionId={version.id}

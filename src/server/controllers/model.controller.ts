@@ -177,11 +177,7 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
         })),
       modelVersions: filteredVersions.map((version) => {
         let earlyAccessDeadline = features.earlyAccessModel
-          ? getEarlyAccessDeadline({
-              versionCreatedAt: version.createdAt,
-              publishedAt: model.publishedAt,
-              earlyAccessTimeframe: version.earlyAccessTimeFrame,
-            })
+          ? version.earlyAccessEndsAt
           : undefined;
         if (earlyAccessDeadline && new Date() > earlyAccessDeadline)
           earlyAccessDeadline = undefined;

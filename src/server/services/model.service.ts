@@ -1110,7 +1110,7 @@ export const getModelVersionsMicro = async ({
     },
   });
 
-  return versions.map(({ earlyAccessEndsAt,  ...v }) => ({
+  return versions.map(({ earlyAccessEndsAt, ...v }) => ({
     ...v,
     isEarlyAccess: earlyAccessEndsAt && isFutureDate(earlyAccessEndsAt),
   }));
@@ -1632,7 +1632,7 @@ export const updateModelEarlyAccessDeadline = async ({ id }: GetByIdInput) => {
       publishedAt: true,
       modelVersions: {
         where: { status: ModelStatus.Published },
-        select: { id: true, earlyAccessTimeFrame: true, createdAt: true },
+        select: { id: true, earlyAccessEndsAt: true, createdAt: true },
       },
     },
   });
@@ -1641,23 +1641,14 @@ export const updateModelEarlyAccessDeadline = async ({ id }: GetByIdInput) => {
   const { modelVersions } = model;
   const nextEarlyAccess = modelVersions.find(
     (v) =>
-      v.earlyAccessTimeFrame > 0 &&
-      isEarlyAccess({
-        earlyAccessTimeframe: v.earlyAccessTimeFrame,
-        versionCreatedAt: v.createdAt,
-        publishedAt: model.publishedAt,
-      })
+      !!v.earlyAccessEndsAt
   );
 
   if (nextEarlyAccess) {
     await updateModelById({
       id,
       data: {
-        earlyAccessDeadline: getEarlyAccessDeadline({
-          earlyAccessTimeframe: nextEarlyAccess.earlyAccessTimeFrame,
-          versionCreatedAt: nextEarlyAccess.createdAt,
-          publishedAt: model.publishedAt,
-        }),
+        earlyAccessDeadline: nextEarlyAccess.earlyAccessEndsAt,
       },
     });
   } else {
