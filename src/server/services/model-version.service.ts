@@ -122,6 +122,7 @@ export const upsertModelVersion = async ({
   settings,
   recommendedResources,
   templateId,
+  earlyAccessTimeFrame,
   ...data
 }: Omit<ModelVersionUpsertInput, 'trainingDetails'> & {
   meta?: Prisma.ModelVersionCreateInput['meta'];
@@ -136,10 +137,20 @@ export const upsertModelVersion = async ({
       orderBy: { index: 'asc' },
     });
 
+    let earlyAccessConfig: ModelVersionEarlyAccessConfig | null = null;
+    if (earlyAccessTimeFrame) {
+      earlyAccessConfig = {
+        timeFrame: earlyAccessTimeFrame, 
+        buzzTransactionId: 'free-for-time-being',
+        downloadPrice: 100,
+      };
+    }
+
     const [version] = await dbWrite.$transaction([
       dbWrite.modelVersion.create({
         data: {
           ...data,
+          earlyAccessConfig: earlyAccessConfig !== null ? earlyAccessConfig : undefined,
           settings: settings !== null ? settings : Prisma.JsonNull,
           monetization:
             monetization && monetization.type
@@ -208,7 +219,7 @@ export const upsertModelVersion = async ({
 
     if (
       existingVersion.status === ModelStatus.Published &&
-      data.earlyAccessTimeFrame &&
+      earlyAccessTimeFrame &&
       !existingVersion.earlyAccessEndsAt
     ) {
       throw throwBadRequestError(
@@ -218,9 +229,9 @@ export const upsertModelVersion = async ({
 
     if (
       existingVersion.status === ModelStatus.Published &&
-      data.earlyAccessTimeFrame &&
+      earlyAccessTimeFrame &&
       existingVersion.earlyAccessEndsAt &&
-      dayjs(existingVersion.publishedAt).add(data.earlyAccessTimeFrame, 'days').isAfter(existingVersion.earlyAccessEndsAt)
+      dayjs(existingVersion.publishedAt).add(earlyAccessTimeFrame, 'days').isAfter(existingVersion.earlyAccessEndsAt)
     ) {
       throw throwBadRequestError(
         'You cannot increase the early access time frame for a published early access model version.'

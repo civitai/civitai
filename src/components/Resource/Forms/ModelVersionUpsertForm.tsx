@@ -106,6 +106,8 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
   const hasVAE = ['Checkpoint'].includes(model?.type ?? '');
   const showStrengthInput = ['LORA', 'Hypernetwork', 'LoCon'].includes(model?.type ?? '');
 
+  const MAX_EARLY_ACCCESS = 15;
+
   // Get VAE options
   const { data: vaes } = trpc.modelVersion.getModelVersionsByModelType.useQuery(
     { type: 'VAE' },
@@ -228,14 +230,12 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [acceptsTrainedWords, isTextualInversion, model?.id, version]);
 
-  const atEarlyAccess = isEarlyAccess({
-    publishedAt: model?.publishedAt ?? new Date(),
-    earlyAccessTimeframe: version?.earlyAccessTimeFrame ?? 0,
-    versionCreatedAt: version?.createdAt ?? new Date(),
-  });
+  const atEarlyAccess = !!version?.earlyAccessEndsAt;
   const showEarlyAccessInput = version?.status !== 'Published' || atEarlyAccess;
   const canIncreaseEarlyAccess = version?.status !== 'Published';
-  const maxEarlyAccessValue = canIncreaseEarlyAccess ? 14 : version?.earlyAccessTimeFrame ?? 0;
+  const maxEarlyAccessValue = canIncreaseEarlyAccess
+    ? MAX_EARLY_ACCCESS
+    : version?.earlyAccessTimeFrame ?? 0;
 
   return (
     <>
@@ -277,10 +277,11 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                 name="earlyAccessTimeFrame"
                 data={[
                   { label: 'None', value: '0', disabled: maxEarlyAccessValue < 0 },
-                  { label: '1 day', value: '1', disabled: maxEarlyAccessValue < 1 },
-                  { label: '3 days', value: '3', disabled: maxEarlyAccessValue < 3 },
-                  { label: '1 week', value: '7', disabled: maxEarlyAccessValue < 7 },
-                  { label: '2 weeks', value: '14', disabled: maxEarlyAccessValue < 14 },
+                  { label: '5 days', value: '5', disabled: maxEarlyAccessValue < 5 },
+                  { label: '7 days', value: '7', disabled: maxEarlyAccessValue < 7 },
+                  { label: '10 days', value: '10', disabled: maxEarlyAccessValue < 10 },
+                  { label: '12 days', value: '12', disabled: maxEarlyAccessValue < 12 },
+                  { label: '15 days', value: '15', disabled: maxEarlyAccessValue < 15 },
                 ]}
                 color="blue"
                 size="xs"

@@ -93,11 +93,7 @@ export const processCreatorProgramEarlyAccessRewards = createJob(
     await Promise.all(
       modelVersions.map(async (version) => {
         // First, check that it's still early access:
-        const isEarlyAccessBool = isEarlyAccess({
-          versionCreatedAt: version.createdAt,
-          earlyAccessTimeframe: version.earlyAccessTimeFrame,
-          publishedAt: version.publishedAt,
-        });
+        const isEarlyAccessBool = !!version.earlyAccessEndsAt;  
 
         const downloadData = modelVersionData
           .filter(
