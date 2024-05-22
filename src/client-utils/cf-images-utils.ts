@@ -55,7 +55,7 @@ export function getEdgeUrl(
 }
 
 const videoTypeExtensions = ['.gif', '.mp4', '.webm'];
-export function useGetEdgeUrl(src: string, options: Omit<EdgeUrlProps, 'src'> | undefined) {
+export function useEdgeUrl(src: string, options: Omit<EdgeUrlProps, 'src'> | undefined) {
   const currentUser = useCurrentUser();
   if (!src || src.startsWith('http') || src.startsWith('blob')) return src;
 

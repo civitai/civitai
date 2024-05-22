@@ -8,6 +8,8 @@ import {
   Card,
   CloseButton,
   Group,
+  Loader,
+  RingProgress,
   ScrollArea,
   Text,
   UnstyledButton,
@@ -224,13 +226,20 @@ export function ImageDetail2() {
                         type={image.type}
                         name={image.name}
                       >
-                        {({ onClick, isLoading }) => (
+                        {({ onClick, isLoading, progress }) => (
                           <ActionIcon
                             {...sharedActionIconProps}
                             onClick={onClick}
-                            loading={isLoading}
+                            loading={isLoading && progress === 0}
                           >
-                            <IconDownload {...sharedIconProps} />
+                            {isLoading && progress > 0 && (
+                              <RingProgress
+                                size={36}
+                                sections={[{ value: progress, color: 'blue' }]}
+                                thickness={4}
+                              />
+                            )}
+                            {!isLoading && <IconDownload {...sharedIconProps} />}
                           </ActionIcon>
                         )}
                       </DownloadImage>
