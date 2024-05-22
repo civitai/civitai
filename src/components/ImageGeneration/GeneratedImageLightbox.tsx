@@ -1,5 +1,5 @@
 import { Carousel, Embla, useAnimationOffsetEffect } from '@mantine/carousel';
-import { Center, Modal } from '@mantine/core';
+import { Modal } from '@mantine/core';
 import { useHotkeys } from '@mantine/hooks';
 import { truncate } from 'lodash-es';
 import { useMemo, useState } from 'react';
@@ -8,7 +8,6 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { GenerationDetails } from '~/components/ImageGeneration/GenerationDetails';
 import { useGetGenerationRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
-import { useAspectRatioFit } from '~/hooks/useAspectRatioFit';
 import { constants } from '~/server/common/constants';
 import { Generation } from '~/server/services/generation/generation.types';
 
@@ -23,11 +22,6 @@ export function GeneratedImageLightbox({
 }) {
   const dialog = useDialogContext();
   const { images: feed } = useGetGenerationRequests();
-
-  // const { setRef, height, width } = useAspectRatioFit({
-  //   width: request.params.width ?? 1200,
-  //   height: request.params.height ?? 1200,
-  // });
 
   const [embla, setEmbla] = useState<Embla | null>(null);
   useAnimationOffsetEffect(embla, TRANSITION_DURATION);
