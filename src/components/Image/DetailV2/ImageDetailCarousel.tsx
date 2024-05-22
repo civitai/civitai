@@ -12,7 +12,6 @@ import { useResizeObserver } from '~/hooks/useResizeObserver';
 import { constants } from '~/server/common/constants';
 import { ImagesInfiniteModel } from '~/server/services/image.service';
 
-const maxIndicators = 20;
 export function ImageDetailCarousel() {
   const { images, index, canNavigate, connect, navigate } = useImageDetailContext();
   const navigateRef = useRef(navigate);
@@ -120,9 +119,11 @@ function ImageContent({ image }: { image: ImagesInfiniteModel } & ConnectProps) 
                 className: `max-h-full w-auto max-w-full ${!safe ? 'invisible' : ''}`,
                 style: { aspectRatio: (image?.width ?? 0) / (image?.height ?? 0) },
               }}
-              width={image.width ?? 'original'}
+              width={image.width ?? undefined}
               anim
               controls
+              // quality={90}
+              original={image.type === 'video' ? true : undefined}
               // fadeIn
             />
           )}

@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import { EdgeUrlProps, useEdgeUrl } from '~/client-utils/cf-images-utils';
-import { fetchBlob } from '~/utils/file-utils';
 
 export function DownloadImage({
   children,
@@ -13,7 +12,7 @@ export function DownloadImage({
     progress: number;
   }) => React.ReactElement;
 }) {
-  const url = useEdgeUrl(src, options);
+  const { url } = useEdgeUrl(src, options);
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState(0);
 
