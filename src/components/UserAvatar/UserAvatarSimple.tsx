@@ -71,7 +71,6 @@ export function UserAvatarSimple({
                 height: decoration.data.offset ? `calc(100% + ${decoration.data.offset})` : '100%',
                 zIndex: 2,
               }}
-              width="original"
             />
           )}
         </div>
@@ -94,7 +93,7 @@ export function UserAvatarSimple({
             <Tooltip color="dark" label={badge.name} withArrow withinPortal>
               {badge.data.animated ? (
                 <div style={{ display: 'flex', width: 28 }}>
-                  <EdgeMedia src={badge.data.url} alt={badge.name} width="original" />
+                  <EdgeMedia src={badge.data.url} alt={badge.name} />
                 </div>
               ) : (
                 <div style={{ display: 'flex' }}>

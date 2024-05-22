@@ -211,10 +211,14 @@ export const updateCommentReportStatusByReason = ({
   reason: ReportReason;
   status: ReportStatus;
 }) => {
-  return dbWrite.report.updateMany({
-    where: { reason, comment: { commentId: id } },
-    data: { status },
-  });
+  return dbWrite.$queryRaw<{ id: number; userId: number }[]>`
+    UPDATE "Report" r SET status = ${status}
+    FROM "CommentReport" c
+    WHERE c."reportId" = r.id
+      AND c."commentId" = ${id}
+      AND r.reason = ${reason}
+    RETURNING id, "userId"
+  `;
 };
 
 export const getCommentCountByModel = ({

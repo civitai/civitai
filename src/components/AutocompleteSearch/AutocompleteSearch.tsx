@@ -314,8 +314,6 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   };
 
   const handleItemClick = (item: AutocompleteItem) => {
-    console.log(search, query, searchPageQuery);
-
     if (item.hit) {
       // when an item is clicked
       router.push(processHitUrl(item.hit));
@@ -430,8 +428,8 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
           value={search}
           data={items}
           onChange={setSearch}
-          onClear={handleClear}
           onBlur={handleClear}
+          onClear={handleClear}
           onKeyDown={getHotkeyHandler([
             ['Escape', blurInput],
             ['Enter', handleSubmit],
@@ -481,7 +479,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
           className={classes.searchButton}
           variant="filled"
           size={36}
-          onClick={handleSubmit}
+          onMouseDown={handleSubmit}
         >
           <IconSearch size={18} />
         </ActionIcon>

@@ -2,6 +2,7 @@ import { ModelStatus, Prisma, ReportReason, ReportStatus } from '@prisma/client'
 import { TRPCError } from '@trpc/server';
 
 import { Context } from '~/server/createContext';
+import { reportAcceptedReward } from '~/server/rewards';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   CommentUpsertInput,
@@ -305,11 +306,16 @@ export const setTosViolationHandler = async ({
     const updatedComment = await updateCommentById({ id, data: { tosViolation: true } });
     if (!updatedComment) throw throwNotFoundError(`No comment with id ${id}`);
 
-    await updateCommentReportStatusByReason({
+    // Update all reports with this comment id to actioned
+    const affectedReports = await updateCommentReportStatusByReason({
       id: updatedComment.id,
       reason: ReportReason.TOSViolation,
       status: ReportStatus.Actioned,
     });
+    // Reward users for accepted reports
+    for (const report of affectedReports) {
+      reportAcceptedReward.apply({ userId: report.userId, reportId: report.id }, '');
+    }
 
     // Create notifications in the background
     createNotification({

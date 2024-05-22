@@ -157,7 +157,7 @@ export default function UserMembership() {
                       {image && (
                         <Center>
                           <Box w={100}>
-                            <EdgeMedia src={image} width="original" />
+                            <EdgeMedia src={image} />
                           </Box>
                         </Center>
                       )}

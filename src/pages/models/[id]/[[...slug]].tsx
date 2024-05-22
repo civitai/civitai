@@ -428,15 +428,16 @@ export default function ModelDetailsV2({
 
   useEffect(() => {
     // Change the selected modelVersion based on querystring param
+    if (loadingModel) return;
     const queryVersion = publishedVersions.find((v) => v.id === modelVersionId);
     const hasSelected = publishedVersions.some((v) => v.id === selectedVersion?.id);
-    if (!hasSelected) setSelectedVersion(publishedVersions[0] ?? null);
+    if (!hasSelected) setSelectedVersion(queryVersion ?? publishedVersions[0] ?? null);
     if (selectedVersion && queryVersion !== selectedVersion) {
       router.replace(`/models/${id}?modelVersionId=${selectedVersion.id}`, undefined, {
         shallow: true,
       });
     }
-  }, [id, publishedVersions, selectedVersion, modelVersionId]);
+  }, [id, publishedVersions, selectedVersion, modelVersionId, loadingModel]);
 
   if (loadingModel) return <PageLoader />;
 
