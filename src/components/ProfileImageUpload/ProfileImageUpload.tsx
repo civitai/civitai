@@ -92,7 +92,6 @@ export function ProfileImageUpload({
             <div style={{ width: '100%', height: '100%' }}>
               <EdgeMedia
                 src={image.objectUrl ?? image.url}
-                width="original"
                 style={{ minHeight: '100%', objectFit: 'cover' }}
               />
             </div>

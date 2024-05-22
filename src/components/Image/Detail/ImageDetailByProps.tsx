@@ -461,7 +461,6 @@ export function ImageDetailCarousel({
                       }
                       type={image.type}
                       style={{ maxHeight: '100%', maxWidth: '100%' }}
-                      width="original"
                       anim
                     />
                   )}

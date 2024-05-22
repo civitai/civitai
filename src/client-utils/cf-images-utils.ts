@@ -7,8 +7,8 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 export type EdgeUrlProps = {
   src: string;
   name?: string | null;
-  width?: number | undefined | 'original';
-  height?: number | undefined;
+  width?: number | null;
+  height?: number | null;
   fit?: 'scale-down' | 'contain' | 'cover' | 'crop' | 'pad';
   anim?: boolean;
   blur?: number; // 0-250
@@ -56,13 +56,16 @@ export function getEdgeUrl(
     width = undefined;
     height = undefined;
   }
+  // if(width && height) // TODO
+  if (width && width > 1800) width = 1800;
+  if (height && height > 1000) height = 1000;
 
   const modifiedParams = {
     anim: anim ? undefined : anim,
     transcode: transcode ? true : undefined,
-    width: width === 'original' ? undefined : width,
-    original: width === 'original' ? true : original,
-    height,
+    width: width ?? undefined,
+    height: height ?? undefined,
+    original,
     fit,
     blur,
     quality,

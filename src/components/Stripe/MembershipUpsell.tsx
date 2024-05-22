@@ -115,7 +115,7 @@ export const MembershipUpsell = ({ buzzAmount }: { buzzAmount: number }) => {
         </Badge>
         {image && (
           <Box w={80}>
-            <EdgeMedia src={image} width="original" />
+            <EdgeMedia src={image} />
           </Box>
         )}
         <Stack spacing={0}>

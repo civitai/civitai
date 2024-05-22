@@ -1,8 +1,7 @@
 import { createStyles, Text } from '@mantine/core';
 import React, { useEffect, useRef } from 'react';
-import { EdgeUrlProps, getEdgeUrl, useEdgeUrl } from '~/client-utils/cf-images-utils';
+import { EdgeUrlProps, useEdgeUrl } from '~/client-utils/cf-images-utils';
 import { EdgeVideo } from '~/components/EdgeMedia/EdgeVideo';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export type EdgeMediaProps = EdgeUrlProps &
   Omit<JSX.IntrinsicElements['img'], 'src' | 'srcSet' | 'ref' | 'width' | 'height' | 'metadata'> & {
@@ -15,6 +14,7 @@ export type EdgeMediaProps = EdgeUrlProps &
 
 export function EdgeMedia({
   src,
+  height,
   width,
   fit,
   anim,
@@ -35,7 +35,7 @@ export function EdgeMedia({
   original,
   ...imgProps
 }: EdgeMediaProps) {
-  const { classes, cx } = useStyles({ maxWidth: width === 'original' ? undefined : width });
+  const { classes, cx } = useStyles({ maxWidth: width ?? undefined });
   // const currentUser = useCurrentUser();
 
   const imgRef = useRef<HTMLImageElement>(null);
@@ -47,6 +47,7 @@ export function EdgeMedia({
   if (width && typeof width === 'number') width = Math.min(width, 4096);
   const { url, type: inferredType } = useEdgeUrl(src, {
     width,
+    height,
     fit,
     anim,
     transcode,

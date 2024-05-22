@@ -8,7 +8,6 @@ import {
   Card,
   CloseButton,
   Group,
-  Loader,
   RingProgress,
   ScrollArea,
   Text,
@@ -220,12 +219,7 @@ export function ImageDetail2() {
                           {abbreviateNumber(image.stats?.viewCountAllTime ?? 0)}
                         </Text>
                       </Badge>
-                      <DownloadImage
-                        src={image.url}
-                        width="original"
-                        type={image.type}
-                        name={image.name}
-                      >
+                      <DownloadImage src={image.url} type={image.type} name={image.name}>
                         {({ onClick, isLoading, progress }) => (
                           <ActionIcon
                             {...sharedActionIconProps}
