@@ -203,7 +203,7 @@ export function ImageDetail2() {
                     {/* Placeholder */}
                     <div className="@md:hidden" />
                     <div className="flex gap-1 @max-md:hidden">
-                      <ImageGuard2.BlurToggle {...sharedBadgeProps} alwaysVisible />
+                      <ImageGuard2.BlurToggle {...sharedBadgeProps} />
                       {LeftImageControls}
                     </div>
 
@@ -211,7 +211,6 @@ export function ImageDetail2() {
                       <ImageGuard2.BlurToggle
                         {...sharedBadgeProps}
                         className={`${sharedBadgeProps.className} @md:hidden`}
-                        alwaysVisible
                       />
                       <Badge {...sharedBadgeProps}>
                         <IconEye {...sharedIconProps} />
@@ -219,18 +218,22 @@ export function ImageDetail2() {
                           {abbreviateNumber(image.stats?.viewCountAllTime ?? 0)}
                         </Text>
                       </Badge>
-                      {/* <DownloadImage
+                      <DownloadImage
                         src={image.url}
                         width="original"
                         type={image.type}
                         name={image.name}
                       >
-                        {({ onClick }) => (
-                          <ActionIcon {...sharedActionIconProps} onClick={onClick}>
+                        {({ onClick, isLoading }) => (
+                          <ActionIcon
+                            {...sharedActionIconProps}
+                            onClick={onClick}
+                            loading={isLoading}
+                          >
                             <IconDownload {...sharedIconProps} />
                           </ActionIcon>
                         )}
-                      </DownloadImage> */}
+                      </DownloadImage>
                       <ShareButton
                         url={shareUrl}
                         title={`Image by ${image.user.username}`}

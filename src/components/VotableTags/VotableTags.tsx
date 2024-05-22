@@ -2,6 +2,8 @@ import { ActionIcon, Center, Group, GroupProps, Loader, createStyles } from '@ma
 import { useLocalStorage } from '@mantine/hooks';
 import { IconChevronDown, IconChevronUp } from '@tabler/icons-react';
 import { useMemo } from 'react';
+import { openSetBrowsingLevelModal } from '~/components/Dialog/dialog-registry';
+import { BrowsingLevelBadge } from '~/components/ImageGuard/ImageGuard2';
 import { VotableTag } from '~/components/VotableTags/VotableTag';
 import { VotableTagAdd } from '~/components/VotableTags/VotableTagAdd';
 import { VotableTagMature } from '~/components/VotableTags/VotableTagMature';
@@ -61,6 +63,17 @@ export function VotableTags({
   const showAddibles = !collapsible || showAll;
   return (
     <Group spacing={4} {...props}>
+      {nsfwLevel && type === 'image' && (
+        <BrowsingLevelBadge
+          radius="xs"
+          browsingLevel={nsfwLevel}
+          className="cursor-pointer"
+          onClick={() =>
+            currentUser ? openSetBrowsingLevelModal({ imageId: id, nsfwLevel }) : undefined
+          }
+          sfwClassName={classes.nsfwBadge}
+        />
+      )}
       {canAdd && (
         <VotableTagAdd
           addTag={(tag) => {
