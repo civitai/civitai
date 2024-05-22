@@ -9,32 +9,32 @@ export const cosmeticShopNotifications = createNotificationProcessor({
       message: `New items have been added to the shop! Check 'em out now!`,
       url: `/shop`,
     }),
-    prepareQuery: ({ lastSent, category }) =>
-      `WITH created_notifications AS (
-        INSERT INTO "Notification"("id", "userId", "type", "details", "category")
+    prepareQuery: ({ lastSent, category }) => `
+      WITH new_items AS (
+        SELECT MAX(COALESCE(si."availableFrom", ssi."createdAt")) as last_item
+        FROM "CosmeticShopSectionItem" ssi
+        JOIN "CosmeticShopItem" si ON si.id = ssi."shopItemId"
+        WHERE (ssi."createdAt" > '${lastSent}'::timestamp OR si."availableFrom" >= '${lastSent}'::timestamp)
+          AND (si."availableFrom" >= NOW() OR si."availableFrom" IS NULL)
+      ), created_notifications AS (
+        INSERT INTO "Notification"("id", "userId", "type", "details", "category", "createdAt")
         SELECT
           CONCAT(uns."userId",':','cosmetic-shop-item-added-to-section') "id",
           uns."userId" "userId",
           'cosmetic-shop-item-added-to-section' "type",
           '{}'::jsonb "details",
-          '${category}'::"NotificationCategory" "category"
-        FROM "UserNotificationSettings" uns
-        WHERE uns."type" = 'cosmetic-shop-item-added-to-section'
-          AND EXISTS (
-            SELECT 1 FROM "CosmeticShopSectionItem" ssi
-            JOIN "CosmeticShopItem" si ON si.id = ssi."shopItemId"
-            WHERE (ssi."createdAt" > '${lastSent}'::timestamp OR si."availableFrom" >= '${lastSent}'::timestamp)
-              AND (si."availableFrom" >= NOW() OR si."availableFrom" IS NULL)
-          )
-        ON CONFLICT("id") DO UPDATE SET "createdAt" = NOW()
+          '${category}'::"NotificationCategory" "category",
+          ni.last_item as "createdAt"
+        FROM new_items ni
+        JOIN "UserNotificationSettings" uns ON uns."type" = 'cosmetic-shop-item-added-to-section'
+        WHERE ni.last_item IS NOT NULL
+        ON CONFLICT("id") DO UPDATE SET "createdAt" = excluded."createdAt"
         RETURNING "id", "category", "userId"
-      ),
-      deleted AS (
-        DELETE FROM "NotificationViewed" 
-          WHERE "id" IN (SELECT "id" FROM created_notifications)
-        RETURNING "id"
       )
-      SELECT "category", "userId" FROM created_notifications; 
+      DELETE FROM "NotificationViewed" nv
+      USING created_notifications cn
+      WHERE nv."id" = cn."id"
+      RETURNING cn."category", cn."userId";
     `,
   },
   'cosmetic-shop-item-sold': {
@@ -50,11 +50,11 @@ export const cosmeticShopNotifications = createNotificationProcessor({
           cp."buzzTransactionId",
           CAST(jsonb_array_elements(si.meta->'paidToUserIds') as INT) "ownerId",
           JSONB_BUILD_OBJECT(
-            'shopItemTitle', si."title", 
+            'shopItemTitle', si."title",
             'buzzAmount', FLOOR(si."unitAmount" / jsonb_array_length(si.meta->'paidToUserIds'))
           ) "details"
         FROM "UserCosmeticShopPurchases" cp
-        JOIN "CosmeticShopItem" si ON si.id = cp."shopItemId" 
+        JOIN "CosmeticShopItem" si ON si.id = cp."shopItemId"
         WHERE cp."purchasedAt" > '${lastSent}'::timestamp - INTERVAL '5 minutes' AND
         cp."purchasedAt" <= NOW() - INTERVAL '5 minutes'
       )

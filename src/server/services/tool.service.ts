@@ -9,6 +9,7 @@ export async function getAllTools() {
       icon: true,
       type: true,
     },
+    where: { enabled: true },
   });
 }
 

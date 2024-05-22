@@ -40,6 +40,7 @@ import { getGallerySettingsByModelId } from '~/server/services/model.service';
 import { Flags } from '~/shared/utils';
 import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
 import { imagesSearchIndex } from '~/server/search-index';
+import { reportAcceptedReward } from '~/server/rewards';
 
 export const moderateImageHandler = async ({
   input,
@@ -145,12 +146,16 @@ export const setTosViolationHandler = async ({
     });
     if (!image) throw throwNotFoundError(`No image with id ${id}`);
 
-    // Update any TOS Violation reports
-    await updateImageReportStatusByReason({
+    // Update all reports with this comment id to actioned
+    const affectedReports = await updateImageReportStatusByReason({
       id,
       reason: ReportReason.TOSViolation,
       status: ReportStatus.Actioned,
     });
+    // Reward users for accepted reports
+    for (const report of affectedReports) {
+      reportAcceptedReward.apply({ userId: report.userId, reportId: report.id }, '');
+    }
 
     // Create notifications in the background
     createNotification({

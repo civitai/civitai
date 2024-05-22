@@ -161,7 +161,7 @@ export const articleNotifications = createNotificationProcessor({
       )
       INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
-        REPLACE('new-article-from-following:', details->>'articleId', ':', "ownerId"),
+        CONCAT('new-article-from-following:', details->>'articleId', ':', "ownerId"),
         "ownerId"    "userId",
         'new-article-from-following' "type",
         details,
