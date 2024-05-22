@@ -120,7 +120,7 @@ function ImageContent({ image }: { image: ImagesInfiniteModel } & ConnectProps) 
                 className: `max-h-full w-auto max-w-full ${!safe ? 'invisible' : ''}`,
                 style: { aspectRatio: (image?.width ?? 0) / (image?.height ?? 0) },
               }}
-              width={image?.width ?? 'original'}
+              width={'original'}
               anim
               controls
               fadeIn

@@ -17,7 +17,7 @@ import { imageNotifications } from '~/server/notifications/image.notifications';
 import { clubNotifications } from '~/server/notifications/club.notifications';
 import { creatorsProgramNotifications } from '~/server/notifications/creators-program.notifications';
 import { followNotifications } from '~/server/notifications/follow.notifications';
-import { cosmeticShopNotifications } from '~/server/notifications/cosmetic-shop';
+import { cosmeticShopNotifications } from '~/server/notifications/cosmetic-shop.notifications';
 
 const notificationProcessors = {
   ...mentionNotifications,

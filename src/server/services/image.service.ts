@@ -244,10 +244,14 @@ export const updateImageReportStatusByReason = ({
   reason: ReportReason;
   status: ReportStatus;
 }) => {
-  return dbWrite.report.updateMany({
-    where: { reason, image: { imageId: id } },
-    data: { status },
-  });
+  return dbWrite.$queryRaw<{ id: number; userId: number }[]>`
+    UPDATE "Report" r SET status = ${status}
+    FROM "ImageReport" i
+    WHERE i."reportId" = r.id
+      AND i."imageId" = ${id}
+      AND r.reason = ${reason}
+    RETURNING id, "userId"
+  `;
 };
 
 export const getImageDetail = async ({ id }: GetByIdInput) => {
