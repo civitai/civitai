@@ -88,6 +88,9 @@ const useStyles = createStyles((theme) => ({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     pointerEvents: 'auto !important' as any,
   },
+  bubbleTooltip: {
+    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.white,
+  },
 }));
 
 function openLinkWhitelistRequestModal() {
@@ -443,6 +446,7 @@ export function RichTextEditor({
           <BubbleMenu
             editor={editor}
             shouldShow={({ editor }) => !editor.state.selection.empty && !editor.isActive('image')}
+            className={classes.bubbleTooltip}
           >
             <RTE.ControlsGroup>
               {addHeading ? (
