@@ -56,6 +56,8 @@ export namespace Orchestrator {
     export type ClearAssetsJobResponse = Orchestrator.JobResponse<ClearAssetsJob>;
 
     const imageResourceTrainingJobInputDryRunSchema = z.object({
+      priority: z.union([z.number(), z.enum(['high', 'normal', 'low'])]),
+      // interruptible: z.boolean(),
       model: z.string(),
       cost: z.number(),
       trainingData: z.string(),

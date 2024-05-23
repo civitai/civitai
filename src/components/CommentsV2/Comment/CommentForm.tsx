@@ -37,7 +37,7 @@ export const CommentForm = ({
   replyTo?: SimpleUser;
   replyToCommentId?: number;
 }) => {
-  const { classes } = useStyles();
+  const { classes, cx } = useStyles();
   const { expanded, toggleExpanded } = useRootThreadContext();
   const {
     entityId: contextEntityId,
@@ -168,8 +168,8 @@ export const CommentForm = ({
           onFocus={!autoFocus ? () => setFocused(true) : undefined}
           onSuperEnter={() => form.handleSubmit(handleSubmit)()}
           classNames={{
-            root: 'rounded-3xl border-none overflow-hidden',
-            content: classes.content,
+            root: 'border-none',
+            content: cx(classes.content, 'rounded-3xl'),
           }}
         />
         {focused && (
@@ -191,6 +191,7 @@ const useStyles = createStyles((theme) => ({
   content: {
     padding: 0,
     fontSize: 14,
+    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
 
     '.ProseMirror': {
       padding: `8px 12px`,
