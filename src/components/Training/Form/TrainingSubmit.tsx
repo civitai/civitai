@@ -39,6 +39,7 @@ import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import InputResourceSelect from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
+import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import {
   blockedCustomModels,
   goBack,
@@ -521,6 +522,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     samplePrompt2: z.string(),
     samplePrompt3: z.string(),
     staging: z.boolean().optional(),
+    highPriority: z.boolean().optional(),
   });
 
   // @ts-ignore ignoring because the reducer will use default functions in the next step in place of actual values
@@ -529,6 +531,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     samplePrompt2: thisTrainingDetails?.samplePrompts?.[1] ?? '',
     samplePrompt3: thisTrainingDetails?.samplePrompts?.[2] ?? '',
     staging: false,
+    highPriority: false,
     ...(thisTrainingDetails?.params
       ? thisTrainingDetails.params
       : trainingSettings.reduce((a, v) => ({ ...a, [v.name]: v.default }), {})),
@@ -560,7 +563,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   });
 
   const watchFields = form.watch(['maxTrainEpochs', 'numRepeats', 'trainBatchSize']);
-  const watchFieldsBuzz = form.watch(['targetSteps']);
+  const watchFieldsBuzz = form.watch(['targetSteps', 'highPriority']);
   const watchFieldOptimizer = form.watch('optimizerType');
 
   // apply default overrides for base model upon selection
@@ -603,7 +606,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   }, [watchFields]);
 
   useEffect(() => {
-    const [targetSteps] = watchFieldsBuzz;
+    const [targetSteps, highPriority] = watchFieldsBuzz;
     const eta = calcEta({
       cost: status.cost,
       baseModel: formBaseModelType,
@@ -614,6 +617,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
       cost: status.cost,
       eta,
       isCustom,
+      isPriority: highPriority ?? false,
     });
     setEtaMins(eta);
     setBuzzCost(price);
@@ -636,6 +640,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     trpc.training.createRequestDryRun.useQuery(
       {
         baseModel: formBaseModel,
+        isPriority: watchFieldsBuzz[1],
         // cost: debouncedEtaMins,
       },
       {
@@ -773,6 +778,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
       samplePrompt2,
       samplePrompt3,
       staging,
+      highPriority,
       customModelSelect, //unsent
       optimizerArgs, //unsent
       ...paramData
@@ -810,6 +816,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         samplePrompts: [samplePrompt1, samplePrompt2, samplePrompt3],
         params: paramData,
         staging,
+        highPriority,
       },
     };
 
@@ -1295,10 +1302,28 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                 </Accordion.Panel>
               </Accordion.Item>
             </Accordion>
+            <Group mt="lg">
+              <InputSwitch
+                name="highPriority"
+                label={
+                  <Group spacing={4} noWrap>
+                    <InfoPopover size="xs" iconProps={{ size: 16 }}>
+                      Jump to the front of the training queue and ensure that your training run is
+                      uninterrupted.
+                    </InfoPopover>
+                    <Text>High Priority</Text>
+                  </Group>
+                }
+                labelPosition="left"
+              />
+              {currentUser?.isModerator && (
+                <InputSwitch name="staging" label="Test Mode" labelPosition="left" />
+              )}
+            </Group>
             <Paper
               shadow="xs"
               radius="sm"
-              mt="lg"
+              mt="md"
               w="fit-content"
               px="md"
               py="xs"
@@ -1339,11 +1364,6 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           </>
         )}
       </Stack>
-      {currentUser?.isModerator && (
-        <Group position="right" my="xs">
-          <InputSwitch name="staging" label="Test Mode" labelPosition="left" />
-        </Group>
-      )}
       <Group mt="xl" position="right">
         <Button variant="default" onClick={() => goBack(model.id, thisStep)}>
           Back

@@ -32,6 +32,11 @@ type ReportModActivity = {
   activity: 'review';
 };
 
+type ImpersonateModActivity = {
+  entityType: 'impersonate';
+  activity: 'on' | 'off'; // off is currently not used
+};
+
 type ModActivity = {
   entityId?: number | number[];
 } & (
@@ -41,6 +46,7 @@ type ModActivity = {
   | ImageModActivity
   | ReportModActivity
   | ArticleModActivity
+  | ImpersonateModActivity
 );
 
 export async function trackModActivity(userId: number, input: ModActivity) {

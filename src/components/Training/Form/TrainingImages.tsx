@@ -36,7 +36,7 @@ import {
 import { saveAs } from 'file-saver';
 import JSZip from 'jszip';
 import { isEqual } from 'lodash-es';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
@@ -57,7 +57,11 @@ import {
   useTrainingImageStore,
 } from '~/store/training.store';
 import { TrainingModelData } from '~/types/router';
-import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import {
+  showErrorNotification,
+  showSuccessNotification,
+  showWarningNotification,
+} from '~/utils/notifications';
 import { bytesToKB } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
@@ -95,8 +99,8 @@ const imageExts: { [key: string]: string } = {
   webp: 'image/webp',
 };
 
-const maxWidth = 1024;
-const maxHeight = 1024;
+const maxWidth = 2048;
+const maxHeight = 2048;
 
 const createImage = (url: string): Promise<HTMLImageElement> =>
   new Promise((resolve, reject) => {
@@ -140,6 +144,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
   const [loadingZip, setLoadingZip] = useState<boolean>(false);
   const [modelFileId, setModelFileId] = useState<number | undefined>(undefined);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const showImgResize = useRef(false);
 
   const theme = useMantineTheme();
   const { classes, cx } = useStyles();
@@ -221,11 +226,13 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
       if (width > maxWidth) {
         height = height * (maxWidth / width);
         width = maxWidth;
+        showImgResize.current = true;
       }
     } else {
       if (height > maxHeight) {
         width = width * (maxHeight / height);
         height = maxHeight;
+        showImgResize.current = true;
       }
     }
 
@@ -280,6 +287,15 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
       })
     );
 
+    if (showImgResize.current) {
+      showWarningNotification({
+        title: 'Some images resized',
+        message: `Max allowed image dimensions are ${maxWidth}x${maxHeight}.`,
+        autoClose: 5000,
+      });
+      showImgResize.current = false;
+    }
+
     if (showNotif) {
       if (parsedFiles.length > 0) {
         showSuccessNotification({
@@ -315,6 +331,15 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         }
       })
     );
+
+    if (showImgResize.current) {
+      showWarningNotification({
+        title: 'Some images resized',
+        message: `Max allowed image dimensions are ${maxWidth}x${maxHeight}.`,
+        autoClose: 5000,
+      });
+      showImgResize.current = false;
+    }
 
     const filteredFiles = newFiles.flat().filter(isDefined);
     if (filteredFiles.length > MAX_FILES_ALLOWED - imageList.length) {
@@ -487,7 +512,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
       });
 
       try {
-        await upload(
+        const uploadResp = await upload(
           {
             file: blobFile,
             type: UploadType.TrainingImages,
@@ -526,7 +551,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                   icon: <IconX size={18} />,
                   color: 'red',
                   title: 'Failed to upload archive.',
-                  message: '',
+                  message: 'Please try again (or contact us if it continues)',
                 });
               }
             } else {
@@ -534,6 +559,16 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
             }
           }
         );
+        if (!uploadResp) {
+          setZipping(false);
+          updateNotification({
+            id: notificationId,
+            icon: <IconX size={18} />,
+            color: 'red',
+            title: 'Failed to upload archive.',
+            message: 'Please try again (or contact us if it continues)',
+          });
+        }
       } catch (e) {
         setZipping(false);
         updateNotification({
