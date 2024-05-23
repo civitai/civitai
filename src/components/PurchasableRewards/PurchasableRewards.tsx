@@ -131,7 +131,7 @@ const RewardDetailsModal = ({
                   {(safe) => (
                     <>
                       <ImageGuard2.BlurToggle
-                        className="absolute top-2 left-2 z-10"
+                        className="absolute left-2 top-2 z-10"
                         sfwClassName="hidden"
                       />
                       {!safe ? (
@@ -276,7 +276,7 @@ const PurchasableRewardListItem = ({
               {(safe) => (
                 <>
                   <ImageGuard2.BlurToggle
-                    className="absolute top-2 left-2 z-10"
+                    className="absolute left-2 top-2 z-10"
                     sfwClassName="hidden"
                   />
                   {!safe ? (
@@ -361,7 +361,7 @@ const PurchasableRewardCard = ({
                 {(safe) => (
                   <>
                     <ImageGuard2.BlurToggle
-                      className="absolute top-2 left-2 z-10"
+                      className="absolute left-2 top-2 z-10"
                       sfwClassName="hidden"
                     />
                     {!safe ? (
@@ -442,8 +442,8 @@ export function PurchasableRewards() {
   return (
     <Stack>
       <Stack spacing={4}>
-        <Title order={2}>Deals</Title>
-        <Text>{`Spend some Buzz to get special deals`}</Text>
+        <Title order={2}>Deals &amp; Coupons</Title>
+        <Text>{`Spend some Buzz to get special deals and coupons`}</Text>
       </Stack>
       <Chip.Group
         spacing={8}
