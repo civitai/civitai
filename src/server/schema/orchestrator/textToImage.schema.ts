@@ -12,7 +12,7 @@ export const textToImageParamsSchema = z.object({
   quantity: z.number(),
   nsfw: z.boolean().optional(),
   draft: z.boolean().optional(),
-  aspectRatio: z.number(),
+  aspectRatio: z.coerce.number(),
   baseModel: z.enum(baseModelSetTypes),
 });
 
@@ -28,10 +28,7 @@ export const textToImageParamsValidationSchema = textToImageParamsSchema.extend(
     .refine((val) => generation.samplers.includes(val as (typeof generation.samplers)[number]), {
       message: 'invalid sampler',
     }),
-  seed: z.coerce
-    .number()
-    // .min(0).max(generation.maxValues.seed)
-    .optional(),
+  seed: z.coerce.number().min(0).max(generation.maxValues.seed).optional(),
   clipSkip: z.coerce.number().default(1),
   steps: z.coerce.number().min(1).max(100),
   quantity: z.coerce.number().min(1).max(20),
@@ -42,6 +39,7 @@ export const textToImageResourceSchema = z.object({
   id: z.number(),
   strength: z.number().default(1),
   triggerWord: z.string().optional(),
+  // baseModel: z.enum(constants.baseModels),
 });
 
 export const textToImageResourcesValidatedSchema = textToImageResourceSchema

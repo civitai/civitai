@@ -21,17 +21,19 @@ import { includesMinor, includesNsfw, includesPoi } from '~/utils/metadata/audit
 import { parseAIR, stringifyAIR } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import {
-  TextToImageStep,
-  Workflow,
+  TextToImageStepTemplate,
+  WorkflowStatus,
+  WorkflowTemplate,
   type ImageJobNetworkParams,
   type Scheduler,
 } from '@civitai/client';
 import { samplersToSchedulers } from '~/shared/constants/generation.constants';
-import { CallbackSource, TextToImageResponse } from '~/server/services/orchestrator/types';
+import { TextToImageResponse } from '~/server/services/orchestrator/types';
 import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import { SignalMessages } from '~/server/common/enums';
 import { queryWorkflows, submitWorkflow } from '~/server/services/orchestrator/workflows';
 import { textToImageSchema } from '~/server/schema/orchestrator/textToImage.schema';
+import { removeNulls } from '~/utils/object-helpers';
 
 export async function textToImage({
   user,
@@ -49,15 +51,10 @@ export async function textToImage({
   if (params.quantity > limits.quantity) params.quantity = limits.quantity;
   if (params.steps > limits.steps) params.steps = limits.steps;
   if (parsedInput.resources.length > limits.resources)
-    throw throwBadRequestError('You have exceeded the resources limit.');
+    throw throwBadRequestError('You have exceed the number of allowed resources.');
 
   // handle draft mode
-  const isSDXL =
-    params.baseModel === 'SDXL' ||
-    params.baseModel === 'Pony' ||
-    params.baseModel === 'SDXLDistilled';
-
-  const draftModeSettings = draftMode[isSDXL ? 'sdxl' : 'sd1'];
+  const draftModeSettings = getDraftModeSettings(params.baseModel);
   if (params.draft) {
     // Fix quantity
     if (params.quantity % 4 !== 0) params.quantity = Math.ceil(params.quantity / 4) * 4;
@@ -69,6 +66,7 @@ export async function textToImage({
     parsedInput.resources.push({
       strength: 1,
       id: draftModeSettings.resourceId,
+      // baseModel: draftModeSettings.baseModel,
     });
   }
 
@@ -107,6 +105,10 @@ export async function textToImage({
   const checkpoint = resources.find((x) => x.model.type === ModelType.Checkpoint);
   if (!checkpoint)
     throw throwBadRequestError('A checkpoint is required to make a generation request');
+  if (params.baseModel !== getBaseModelSetType(checkpoint.baseModel))
+    throw throwBadRequestError(
+      `Invalid base model. Checkpoint with baseModel: ${checkpoint.baseModel} does not match the input baseModel: ${params.baseModel}`
+    );
 
   // handle missing draft resource
   if (params.draft && !resources.map((x) => x.id).includes(draftModeSettings.resourceId))
@@ -188,7 +190,7 @@ export async function textToImage({
   // I was made aware that SDXL only works with clipSkip 2
   // if that's not the case anymore, we can rollback to just setting
   // this for Pony resources -Manuel
-  if (isSDXL) params.clipSkip = 2;
+  if (getIsSdxl(params.baseModel)) params.clipSkip = 2;
 
   // adjust quantity/batchSize for draft mode
   let quantity = params.quantity;
@@ -198,7 +200,7 @@ export async function textToImage({
     batchSize = Math.ceil(params.quantity / 4) * 4;
   }
 
-  const step: TextToImageStep = {
+  const step: TextToImageStepTemplate = {
     $type: 'textToImage',
     input: {
       model: checkpoint.air,
@@ -218,20 +220,15 @@ export async function textToImage({
     },
   };
 
-  const requestBody: Workflow = {
+  const requestBody: WorkflowTemplate = {
     steps: [step],
     callbacks: [
       {
-        url: `https://signals-dev.civitai.com/users/${user.id}/${SignalMessages.TextToImageUpdate}`,
-        type: [`${CallbackSource.job}:*`],
+        url: `https://signals-dev.civitai.com/users/${user.id}/signals/${SignalMessages.TextToImageUpdate}`, // TODO - env var?
+        type: ['job:*', 'workflow:*'],
       },
     ],
   };
-
-  console.log({
-    url: `https://signals-dev.civitai.com/users/${user.id}/${SignalMessages.TextToImageUpdate}`,
-    type: [`${CallbackSource.job}:*`],
-  });
 
   const workflow = (await submitWorkflow({
     whatif: whatIf,
@@ -239,7 +236,8 @@ export async function textToImage({
     user,
   })) as TextToImageResponse;
 
-  return await formatTextToImageResponses([workflow], resourceDataWithInjects);
+  const [formatted] = await formatTextToImageResponses([workflow], resourceDataWithInjects);
+  return formatted;
 }
 
 export async function getTextToImageRequests(
@@ -259,6 +257,23 @@ export async function getTextToImageRequests(
 }
 
 // #region [helper methods]
+function getBaseModelSetType(baseModel: string) {
+  return baseModelSetsEntries.find(([, v]) =>
+    v.includes(baseModel as BaseModel)
+  )?.[0] as BaseModelSetType;
+}
+function getIsSdxl(baseModelSetType: BaseModelSetType) {
+  return (
+    baseModelSetType === 'SDXL' ||
+    baseModelSetType === 'Pony' ||
+    baseModelSetType === 'SDXLDistilled'
+  );
+}
+function getDraftModeSettings(baseModelSetType: BaseModelSetType) {
+  const isSDXL = getIsSdxl(baseModelSetType);
+  return draftMode[isSDXL ? 'sdxl' : 'sd1'];
+}
+
 const baseModelSetsEntries = Object.entries(baseModelSets);
 export async function formatTextToImageResponses(
   workflows: TextToImageResponse[],
@@ -280,11 +295,7 @@ export async function formatTextToImageResponses(
       const versionIds = airs.map((x) => x.version);
       const requestResources = resourcesData.filter((x) => versionIds.includes(x.id));
       const checkpoint = requestResources.find((x) => x.model.type === 'Checkpoint');
-      const baseModel = checkpoint
-        ? (baseModelSetsEntries.find(([, v]) =>
-            v.includes(checkpoint.baseModel as BaseModel)
-          )?.[0] as BaseModelSetType)
-        : undefined;
+      const baseModel = checkpoint ? getBaseModelSetType(checkpoint.baseModel) : undefined;
 
       const resources = requestResources.map((resource) => {
         const settings = resource.settings as RecommendedSettingsSchema;
@@ -304,7 +315,7 @@ export async function formatTextToImageResponses(
       });
 
       return steps.map((step) => {
-        const { input, output, jobs, status } = step;
+        const { input, output, jobs } = step;
         const images =
           output?.images
             ?.map((image, i) => {
@@ -315,10 +326,9 @@ export async function formatTextToImageResponses(
                 // requestId: workflow.id,
                 jobId: job.id,
                 id: image.id,
-                available: image.available,
-                status: job.status,
+                status: job.status ?? ('unassignend' as WorkflowStatus),
                 seed: seed ? seed + i : undefined,
-                completed: job.completedAt,
+                completed: job.completedAt ? new Date(job.completedAt) : undefined,
                 url: image.url,
               };
             })
@@ -334,15 +344,20 @@ export async function formatTextToImageResponses(
           prompt = prompt.replace(`${triggerWord}, `, '');
         }
 
-        return {
-          id: workflow.id,
-          status: workflow.status,
-          // createdAt: workflow.dateTime, // TODO - do I need this?
+        const draftModeSettings = baseModel ? getDraftModeSettings(baseModel) : undefined;
+        const isDraft = draftModeSettings
+          ? !!resources.find((x) => x.id === draftModeSettings.resourceId)
+          : false;
+
+        return removeNulls({
+          id: workflow.id as string,
+          status: workflow.status ?? ('unassignend' as WorkflowStatus),
+          createdAt: workflow.createdAt ? new Date(workflow.createdAt) : new Date(),
           params: {
             baseModel,
             prompt,
             negativePrompt,
-            quantity: input.quantity,
+            quantity: input.quantity ?? 1,
             controlNets: input.controlNets,
             scheduler: input.scheduler,
             steps: input.steps,
@@ -351,11 +366,12 @@ export async function formatTextToImageResponses(
             height: input.height,
             seed: input.seed,
             clipSkip: input.clipSkip,
+            isDraft,
           },
           resources,
           images,
           cost: workflow.transactions?.reduce((acc, value) => acc + (value.amount ?? 0), 0),
-        };
+        });
       });
     })
     .flat();

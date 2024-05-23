@@ -7,9 +7,12 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { GenerationDetails } from '~/components/ImageGeneration/GenerationDetails';
-import { useGetGenerationRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
+import { useGetTextToImageRequestsImages } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { constants } from '~/server/common/constants';
-import { Generation } from '~/server/services/generation/generation.types';
+import {
+  NormalizedTextToImageImage,
+  NormalizedTextToImageResponse,
+} from '~/server/services/orchestrator';
 
 const TRANSITION_DURATION = 200;
 
@@ -17,11 +20,11 @@ export function GeneratedImageLightbox({
   image,
   request,
 }: {
-  image: Generation.Image;
-  request: Generation.Request;
+  image: NormalizedTextToImageImage;
+  request: NormalizedTextToImageResponse;
 }) {
   const dialog = useDialogContext();
-  const { images: feed } = useGetGenerationRequests();
+  const { images: feed } = useGetTextToImageRequestsImages();
 
   const [embla, setEmbla] = useState<Embla | null>(null);
   useAnimationOffsetEffect(embla, TRANSITION_DURATION);
@@ -31,7 +34,7 @@ export function GeneratedImageLightbox({
     ['ArrowRight', () => embla?.scrollNext()],
   ]);
 
-  const filteredFeed = useMemo(() => feed.filter((item) => item.available), [feed]);
+  const filteredFeed = useMemo(() => feed.filter((item) => item.status === 'succeeded'), [feed]);
   const initialSlide = filteredFeed.findIndex((item) => item.id === image.id);
 
   return (

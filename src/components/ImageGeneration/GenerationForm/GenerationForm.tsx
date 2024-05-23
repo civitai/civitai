@@ -1,11 +1,7 @@
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { IsClient } from '~/components/IsClient/IsClient';
-import {
-  GenerateFormModel,
-  blockedRequest,
-  generateFormSchema,
-} from '~/server/schema/generation.schema';
+import { GenerateFormModel, blockedRequest } from '~/server/schema/generation.schema';
 import {
   getFormData,
   useDerivedGenerationState,
@@ -18,7 +14,7 @@ import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { generation, getGenerationConfig } from '~/server/common/constants';
 import { generationPanel, generationStore, useGenerationStore } from '~/store/generation.store';
-import { useCreateGenerationRequest } from '~/components/ImageGeneration/utils/generationRequestHooks';
+import { useSubmitTextToImageRequest } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { isDefined } from '~/utils/type-guards';
 import {
   Form,
@@ -84,8 +80,18 @@ import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
 import { useGenerationContext } from '~/components/ImageGeneration/GenerationProvider';
 import InputQuantity from '~/components/ImageGeneration/GenerationForm/InputQuantity';
 import Link from 'next/link';
+import {
+  textToImageParamsValidationSchema,
+  textToImageResourceSchema,
+} from '~/server/schema/orchestrator/textToImage.schema';
 
 const BUZZ_CHARGE_NOTICE_END = new Date('2024-04-14T00:00:00Z');
+
+const schema = textToImageParamsValidationSchema.extend({
+  model: textToImageResourceSchema,
+  resources: textToImageResourceSchema.array().min(0).max(9),
+  vae: textToImageResourceSchema.optional(),
+});
 
 const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
   const { classes, cx, theme } = useStyles();
@@ -108,8 +114,8 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
   };
   const features = useFeatureFlags();
 
-  const form = useForm<GenerateFormModel>({
-    resolver: zodResolver(generateFormSchema),
+  const form = useForm<z.infer<typeof schema>>({
+    resolver: zodResolver(schema),
     reValidateMode: 'onSubmit',
     mode: 'onSubmit',
     shouldUnregister: false,
@@ -134,7 +140,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
       tier: currentUser?.tier ?? 'free',
     });
     const subscription = form.watch((value) => {
-      useGenerationFormStore.setState({ ...(value as GenerateFormModel) }, true);
+      useGenerationFormStore.setState({ ...(value as z.infer<typeof schema>) }, true);
     });
     return () => subscription.unsubscribe();
   }, [currentUser]); // eslint-disable-line
@@ -189,8 +195,11 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
   }, [createData]); // eslint-disable-line
 
   // #region [mutations]
-  const { mutateAsync, isLoading } = useCreateGenerationRequest();
-  const handleSubmit = async (data: GenerateFormModel) => {
+  const { mutateAsync, isLoading } = useSubmitTextToImageRequest();
+  const handleSubmit = async (data: z.infer<typeof schema>) => {
+    // TODO - throw error if resource limit exceeded - look at `refine` of `generateFormSchema`
+    // not sure if we can target the path without putting the tier in the schema
+
     if (!currentUser) {
       requireLogin();
       generationPanel.close();
@@ -204,10 +213,11 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
     });
 
     const performTransaction = async () => {
+      if (!baseModel) throw new Error('could not find base model');
       try {
         await mutateAsync({
           resources: _resources.filter((x) => x.covered !== false),
-          params: { ...params, baseModel },
+          params: { ...params, baseModel: baseModel },
         });
         onSuccess?.();
         // if (!Router.pathname.includes('/generate')) generationPanel.setView('queue');

@@ -1,15 +1,20 @@
+import { WorkflowStatus } from '@civitai/client';
 import { MantineColor } from '@mantine/core';
 import { Sampler } from '~/server/common/constants';
 import { BaseModel, BaseModelSetType, baseModelSets } from '~/server/common/constants';
-import { GenerationRequestStatus } from '~/server/common/enums';
 
-export const generationStatusColors: Record<GenerationRequestStatus, MantineColor> = {
-  [GenerationRequestStatus.Pending]: 'yellow',
-  [GenerationRequestStatus.Cancelled]: 'gray',
-  [GenerationRequestStatus.Processing]: 'yellow',
-  [GenerationRequestStatus.Succeeded]: 'green',
-  [GenerationRequestStatus.Error]: 'red',
+export const generationStatusColors: Record<WorkflowStatus, MantineColor> = {
+  unassigned: 'yellow',
+  preparing: 'yellow',
+  scheduled: 'yellow',
+  processing: 'yellow',
+  succeeded: 'green',
+  failed: 'red',
+  expired: 'gray',
+  canceled: 'gray',
 };
+
+export const workflowPendingStatuses: WorkflowStatus[] = ['unassigned', 'preparing', 'scheduled'];
 
 export const safeNegatives = [{ id: 106916, triggerWord: 'civit_nsfw' }];
 export const minorNegatives = [{ id: 250712, triggerWord: 'safe_neg' }];

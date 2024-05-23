@@ -35,23 +35,25 @@ import { useRef, useState } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { GeneratedImageLightbox } from '~/components/ImageGeneration/GeneratedImageLightbox';
 import { generationImageSelect } from '~/components/ImageGeneration/utils/generationImage.select';
-import { useDeleteGenerationRequestImages } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { useInView } from '~/hooks/useInView';
 import { constants } from '~/server/common/constants';
-import { Generation } from '~/server/services/generation/generation.types';
 import { generationStore } from '~/store/generation.store';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useGenerationQualityFeedback } from './GenerationForm/generation.utils';
 import { GENERATION_QUALITY } from '~/server/schema/generation.schema';
 import { openGenQualityFeedbackModal } from '../Modals/GenerationQualityFeedbackModal';
+import {
+  NormalizedTextToImageImage,
+  NormalizedTextToImageResponse,
+} from '~/server/services/orchestrator';
 
 export function GeneratedImage({
   image,
   request,
 }: {
-  image: Generation.Image;
-  request: Generation.Request;
+  image: NormalizedTextToImageImage;
+  request: NormalizedTextToImageResponse;
 }) {
   const { classes } = useStyles();
   const { ref, inView } = useInView({ rootMargin: '600px' });
@@ -61,11 +63,11 @@ export function GeneratedImage({
 
   const [selectedFeedback, setSelectedFeedback] = useState<GENERATION_QUALITY | null>(null);
 
-  const bulkDeleteImagesMutation = useDeleteGenerationRequestImages();
+  // const bulkDeleteImagesMutation = useDeleteGenerationRequestImages();
   const { sendFeedback, sending } = useGenerationQualityFeedback();
 
   const handleImageClick = () => {
-    if (!image || !image.available) return;
+    if (!image || !available) return;
     dialogStore.trigger({
       component: GeneratedImageLightbox,
       props: { image, request },
@@ -88,16 +90,17 @@ export function GeneratedImage({
   };
 
   const handleDeleteImage = () => {
-    openConfirmModal({
-      title: 'Delete image',
-      children:
-        'Are you sure that you want to delete this image? This is a destructive action and cannot be undone.',
-      labels: { cancel: 'Cancel', confirm: 'Yes, delete it' },
-      confirmProps: { color: 'red' },
-      onConfirm: () => bulkDeleteImagesMutation.mutate({ ids: [image.id] }),
-      zIndex: constants.imageGeneration.drawerZIndex + 2,
-      centered: true,
-    });
+    // TODO - handle delete image
+    // openConfirmModal({
+    //   title: 'Delete image',
+    //   children:
+    //     'Are you sure that you want to delete this image? This is a destructive action and cannot be undone.',
+    //   labels: { cancel: 'Cancel', confirm: 'Yes, delete it' },
+    //   confirmProps: { color: 'red' },
+    //   onConfirm: () => bulkDeleteImagesMutation.mutate({ ids: [image.id] }),
+    //   zIndex: constants.imageGeneration.drawerZIndex + 2,
+    //   centered: true,
+    // });
   };
 
   const handleSendFeedback = async ({
@@ -107,30 +110,31 @@ export function GeneratedImage({
     quality: GENERATION_QUALITY;
     message?: string;
   }) => {
-    if (sending) return;
+    if (sending || !image.jobId) return;
 
     setSelectedFeedback(quality);
-    await sendFeedback({ jobId: image.hash, reason: quality, message })
+    await sendFeedback({ jobId: image.jobId, reason: quality, message })
       // Error handled in hook
       .catch(() => setSelectedFeedback(null));
   };
 
+  // TODO - how will we address generation feedback
   const handleThumbsDownClick = () => {
+    if (!image.jobId) return;
     openGenQualityFeedbackModal({
-      jobId: image.hash,
+      jobId: image.jobId,
       onSubmit: () => setSelectedFeedback(GENERATION_QUALITY.BAD),
       onFailed: () => setSelectedFeedback(null),
     });
   };
 
   const imageRef = useRef<HTMLImageElement>(null);
-  const isLandscape = request.params.width > request.params.height;
-  const removedForSafety = image.removedForSafety && image.available;
 
   const badFeedbackSelected = selectedFeedback === GENERATION_QUALITY.BAD;
   const goodFeedbackSelected = selectedFeedback === GENERATION_QUALITY.GOOD;
+  const available = image.status === 'succeeded';
 
-  if (!image.available) return <></>;
+  if (!available) return <></>;
 
   return (
     <AspectRatio ratio={request.params.width / request.params.height} ref={ref}>
@@ -146,20 +150,20 @@ export function GeneratedImage({
           <Card
             p={0}
             className={classes.imageWrapper}
-            style={image.available ? { cursor: 'pointer' } : undefined}
+            style={available ? { cursor: 'pointer' } : undefined}
           >
             <Box onClick={handleImageClick}>
               <Box className={classes.innerGlow} />
-              {!image.available ? (
+              {!available ? (
                 <Center className={classes.centeredAbsolute} p="xs">
-                  {image.status === 'Started' ? (
+                  {image.status === 'processing' ? (
                     <Stack align="center">
                       <Loader size={24} />
                       <Text color="dimmed" size="xs" align="center">
                         Generating
                       </Text>
                     </Stack>
-                  ) : image.status === 'Error' ? (
+                  ) : image.status === 'failed' ? (
                     <Text color="dimmed" size="xs" align="center">
                       Could not load image
                     </Text>
@@ -171,52 +175,6 @@ export function GeneratedImage({
                       </Text>
                     </Stack>
                   )}
-                </Center>
-              ) : removedForSafety ? (
-                <Center className={classes.centeredAbsolute} p="xs">
-                  <Stack align="center" spacing={0}>
-                    <Box
-                      className={classes.blockedMessage}
-                      sx={{
-                        flexDirection: isLandscape ? 'row' : 'column',
-                      }}
-                    >
-                      <ThemeIcon
-                        color="red"
-                        size={isLandscape ? 36 : 48}
-                        className={classes.iconBlocked}
-                        radius="xl"
-                        variant="light"
-                        sx={(theme) => ({
-                          marginBottom: isLandscape ? 0 : theme.spacing.sm,
-                          marginRight: isLandscape ? theme.spacing.sm : 0,
-                        })}
-                      >
-                        <IconBan size={isLandscape ? 24 : 36} />
-                      </ThemeIcon>
-                      <Stack spacing={0} align={isLandscape ? undefined : 'center'}>
-                        <Text
-                          color="red.5"
-                          weight={500}
-                          size="sm"
-                          align="center"
-                          sx={{ overflow: 'hidden', whiteSpace: 'nowrap' }}
-                        >
-                          Blocked by Provider
-                        </Text>
-                        <Text
-                          size="xs"
-                          component="a"
-                          td="underline"
-                          color="dimmed"
-                          href="/blocked-by-provider"
-                          target="_blank"
-                        >
-                          Why?
-                        </Text>
-                      </Stack>
-                    </Box>
-                  </Stack>
                 </Center>
               ) : (
                 // eslint-disable-next-line jsx-a11y/alt-text, @next/next/no-img-element
@@ -288,13 +246,13 @@ export function GeneratedImage({
                       <IconInfoHexagon size={14} stroke={1.5} />
                     )
                   }
-                  onClick={() => copy(image.hash)}
+                  onClick={() => copy(image.jobId)}
                 >
                   Copy Job ID
                 </Menu.Item>
               </Menu.Dropdown>
             </Menu>
-            {image.available && (
+            {available && (
               <Group className={classes.info} w="100%" position="apart">
                 <Group spacing={4} className={classes.actionsWrapper}>
                   {(!selectedFeedback || goodFeedbackSelected) && (
@@ -326,7 +284,6 @@ export function GeneratedImage({
                   meta={request.params}
                   zIndex={constants.imageGeneration.drawerZIndex + 1}
                   hideSoftware
-                  // generationProcess={image.generationProcess ?? undefined} // TODO.generation - determine if we will be returning the image generation process
                 >
                   <ActionIcon variant="transparent" size="md">
                     <IconInfoCircle
@@ -347,7 +304,7 @@ export function GeneratedImage({
   );
 }
 
-export function GenerationPlaceholder({ request }: { request: Generation.Request }) {
+export function GenerationPlaceholder({ request }: { request: NormalizedTextToImageResponse }) {
   const { classes } = useStyles();
 
   return (

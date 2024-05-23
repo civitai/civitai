@@ -3,11 +3,7 @@ import { openConfirmModal } from '@mantine/modals';
 import { IconInfoCircle, IconQuestionMark, IconSquareOff, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { generationImageSelect } from '~/components/ImageGeneration/utils/generationImage.select';
-import {
-  useDeleteGenerationRequestImages,
-  useGetGenerationRequests,
-} from '~/components/ImageGeneration/utils/generationRequestHooks';
-import { constants } from '~/server/common/constants';
+import { useGetTextToImageRequestsImages } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { generationPanel } from '~/store/generation.store';
 import { orchestratorMediaTransmitter } from '~/store/post-image-transmitter.store';
 import { trpc } from '~/utils/trpc';
@@ -26,7 +22,7 @@ export function GeneratedImageActions({
   const hasSelected = !!selected.length;
   if (!hasSelected) return null;
   return (
-    <div className="flex justify-between items-center gap-2">
+    <div className="flex items-center justify-between gap-2">
       <div className="flex items-center">
         <Text color="dimmed" weight={500} inline>
           {selected.length} Selected
@@ -90,30 +86,32 @@ export function GeneratedImagesBuzzPrompt() {
 
 export const useGeneratedImageActions = () => {
   const router = useRouter();
-  const { images } = useGetGenerationRequests();
+  const { images } = useGetTextToImageRequestsImages();
 
   const selected = generationImageSelect.useSelection();
   const deselect = () => generationImageSelect.setSelected([]);
 
   const createPostMutation = trpc.post.create.useMutation();
-  const bulkDeleteImagesMutation = useDeleteGenerationRequestImages({
-    onSuccess: () => deselect(),
-  });
+  // const bulkDeleteImagesMutation = useDeleteGenerationRequestImages({
+  //   onSuccess: () => deselect(),
+  // });
 
   const deleteSelectedImages = () => {
-    openConfirmModal({
-      title: 'Delete images',
-      children:
-        'Are you sure that you want to delete the selected images? This is a destructive action and cannot be undone.',
-      labels: { cancel: 'Cancel', confirm: 'Yes, delete them' },
-      confirmProps: { color: 'red' },
-      onConfirm: () => bulkDeleteImagesMutation.mutate({ ids: selected }),
-      zIndex: constants.imageGeneration.drawerZIndex + 2,
-      centered: true,
-    });
+    // TODO
+    // openConfirmModal({
+    //   title: 'Delete images',
+    //   children:
+    //     'Are you sure that you want to delete the selected images? This is a destructive action and cannot be undone.',
+    //   labels: { cancel: 'Cancel', confirm: 'Yes, delete them' },
+    //   confirmProps: { color: 'red' },
+    //   onConfirm: () => bulkDeleteImagesMutation.mutate({ ids: selected }),
+    //   zIndex: constants.imageGeneration.drawerZIndex + 2,
+    //   centered: true,
+    // });
   };
 
-  const isMutating = bulkDeleteImagesMutation.isLoading || createPostMutation.isLoading;
+  const isMutating = createPostMutation.isLoading; // TODO - check commented out code below
+  // const isMutating = bulkDeleteImagesMutation.isLoading || createPostMutation.isLoading;
 
   const postSelectedImages = async () => {
     const urls = images.filter((x) => selected.includes(x.id)).map((x) => x.url);

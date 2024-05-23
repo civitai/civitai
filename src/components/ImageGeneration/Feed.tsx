@@ -1,7 +1,7 @@
 import { Center, Loader, createStyles, Stack, Alert, Text } from '@mantine/core';
 import { IconInbox } from '@tabler/icons-react';
 import { GeneratedImage } from '~/components/ImageGeneration/GeneratedImage';
-import { useGetGenerationRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
+import { useGetTextToImageRequestsImages } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { generationPanel } from '~/store/generation.store';
 import { isDefined } from '~/utils/type-guards';
@@ -10,7 +10,7 @@ import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 export function Feed() {
   const { classes } = useStyles();
   const { requests, images, isLoading, fetchNextPage, hasNextPage, isRefetching, isError } =
-    useGetGenerationRequests();
+    useGetTextToImageRequestsImages();
 
   if (isError)
     return (

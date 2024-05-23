@@ -4,14 +4,14 @@ import { Alert, Center, Loader, Stack, Text } from '@mantine/core';
 import { IconInbox } from '@tabler/icons-react';
 
 import { QueueItem } from '~/components/ImageGeneration/QueueItem';
-import { useGetGenerationRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
+import { useGetTextToImageRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { generationPanel } from '~/store/generation.store';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 
 export function Queue() {
-  const { requests, isLoading, fetchNextPage, hasNextPage, isRefetching, isError } =
-    useGetGenerationRequests();
+  const { data, isLoading, fetchNextPage, hasNextPage, isRefetching, isError } =
+    useGetTextToImageRequests();
 
   if (isError)
     return (
@@ -27,7 +27,7 @@ export function Queue() {
       </Center>
     );
 
-  if (!requests.length)
+  if (!data.length)
     return (
       <Center h="100%">
         <Stack spacing="xs" align="center" py="16">
@@ -56,7 +56,7 @@ export function Queue() {
   return (
     <ScrollArea scrollRestore={{ key: 'queue' }} className="flex flex-col gap-2 px-3">
       <Stack>
-        {requests.map((request) => (
+        {data.map((request) => (
           <div key={request.id} id={request.id.toString()}>
             {createRenderElement(QueueItem, request.id, request)}
           </div>

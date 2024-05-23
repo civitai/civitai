@@ -11,10 +11,12 @@ import {
 } from '@tabler/icons-react';
 import { GeneratedImage } from '~/components/ImageGeneration/GeneratedImage';
 import { generationImageSelect } from '~/components/ImageGeneration/utils/generationImage.select';
-import { useDeleteGenerationRequestImages } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { constants } from '~/server/common/constants';
-import { Generation } from '~/server/services/generation/generation.types';
+import {
+  NormalizedTextToImageImage,
+  NormalizedTextToImageResponse,
+} from '~/server/services/orchestrator';
 import { generationStore } from '~/store/generation.store';
 
 const tooltipProps: Omit<TooltipProps, 'children' | 'label'> = {
@@ -30,7 +32,13 @@ export function FeedItem({
   // selected,
   // onCheckboxClick,
   onCreateVariantClick,
-}: Props) {
+}: {
+  image: NormalizedTextToImageImage;
+  request: NormalizedTextToImageResponse;
+  // selected: boolean;
+  // onCheckboxClick: (data: { image: Generation.Image; checked: boolean }) => void;
+  onCreateVariantClick?: (image: NormalizedTextToImageImage) => void;
+}) {
   const selected = generationImageSelect.useIsSelected(image.id);
   const toggleSelect = (checked?: boolean) => generationImageSelect.toggle(image.id, checked);
   const [showActions, setShowActions] = useSessionStorage<boolean>({
@@ -40,7 +48,7 @@ export function FeedItem({
   });
 
   const toggle = () => setShowActions((prev) => !prev);
-  const bulkDeleteImagesMutation = useDeleteGenerationRequestImages();
+  // const bulkDeleteImagesMutation = useDeleteGenerationRequestImages();
 
   const handleGenerate = () => {
     generationStore.setData({
@@ -49,17 +57,18 @@ export function FeedItem({
     });
   };
 
+  // TODO
   const handleDeleteImage = () => {
-    openConfirmModal({
-      title: 'Delete image',
-      children:
-        'Are you sure that you want to delete this image? This is a destructive action and cannot be undone.',
-      labels: { cancel: 'Cancel', confirm: 'Yes, delete it' },
-      confirmProps: { color: 'red' },
-      onConfirm: () => bulkDeleteImagesMutation.mutate({ ids: [image.id] }),
-      zIndex: constants.imageGeneration.drawerZIndex + 2,
-      centered: true,
-    });
+    // openConfirmModal({
+    //   title: 'Delete image',
+    //   children:
+    //     'Are you sure that you want to delete this image? This is a destructive action and cannot be undone.',
+    //   labels: { cancel: 'Cancel', confirm: 'Yes, delete it' },
+    //   confirmProps: { color: 'red' },
+    //   onConfirm: () => bulkDeleteImagesMutation.mutate({ ids: [image.id] }),
+    //   zIndex: constants.imageGeneration.drawerZIndex + 2,
+    //   centered: true,
+    // });
   };
 
   return (
@@ -140,7 +149,7 @@ export function FeedItem({
                     color="red"
                     radius={0}
                     onClick={handleDeleteImage}
-                    loading={bulkDeleteImagesMutation.isLoading}
+                    // loading={bulkDeleteImagesMutation.isLoading} // TODO
                   >
                     <IconTrash />
                   </ActionIcon>
@@ -197,11 +206,3 @@ export function FeedItem({
     </Paper>
   );
 }
-
-type Props = {
-  image: Generation.Image;
-  request: Generation.Request;
-  // selected: boolean;
-  // onCheckboxClick: (data: { image: Generation.Image; checked: boolean }) => void;
-  onCreateVariantClick?: (image: Generation.Image) => void;
-};

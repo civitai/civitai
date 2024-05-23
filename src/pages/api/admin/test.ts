@@ -4,7 +4,6 @@ import { dbRead } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
 import ncmecCaller from '~/server/http/ncmec/ncmec.caller';
 import { REDIS_KEYS } from '~/server/redis/client';
-import { generateFormSchema, textToImageFormSchema } from '~/server/schema/generation.schema';
 import { getTopContributors } from '~/server/services/buzz.service';
 import { deleteImagesForModelVersionCache } from '~/server/services/image.service';
 import {
@@ -34,8 +33,8 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
         quantity: 4,
         nsfw: false,
         aspectRatio: 2,
-        // draft: true,
-        baseModel: 'SDXL',
+        draft: true,
+        baseModel: 'SD1',
       },
       resources: [
         {

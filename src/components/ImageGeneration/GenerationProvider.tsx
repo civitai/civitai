@@ -1,11 +1,7 @@
 import { createContext, useContext, useState, useEffect, useMemo, useRef } from 'react';
-import { GenerationRequestStatus } from '~/server/common/enums';
-import { Generation } from '~/server/services/generation/generation.types';
+
 import { produce } from 'immer';
-import {
-  updateGenerationRequest,
-  useGetGenerationRequests,
-} from '~/components/ImageGeneration/utils/generationRequestHooks';
+import { useGetTextToImageRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { createStore, useStore } from 'zustand';
 import { devtools } from 'zustand/middleware';
@@ -13,19 +9,25 @@ import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import { useDebouncer } from '~/utils/debouncer';
 import { GenerationLimits } from '~/server/schema/generation.schema';
 import { UserTier } from '~/server/schema/user.schema';
+import {
+  NormalizedTextToImageImage,
+  NormalizedTextToImageResponse,
+} from '~/server/services/orchestrator';
+import { WorkflowStatus } from '@civitai/client';
+import { isDefined } from '~/utils/type-guards';
 
-const POLLABLE_STATUSES = [GenerationRequestStatus.Pending, GenerationRequestStatus.Processing];
+const POLLABLE_STATUSES: WorkflowStatus[] = ['unassigned', 'preparing', 'scheduled', 'processing'];
 
 type GenerationState = {
   queued: {
-    id: number;
+    id: string;
     complete: number;
     processing: number;
     quantity: number;
-    status: GenerationRequestStatus;
+    status: WorkflowStatus;
   }[];
-  latestImage?: Generation.Image & { createdAt: number };
-  queueStatus?: GenerationRequestStatus;
+  latestImage?: NormalizedTextToImageImage;
+  queueStatus?: WorkflowStatus;
   requestLimit: number;
   requestsRemaining: number;
   requestsLoading: boolean;
@@ -60,26 +62,27 @@ export function useGenerationContext<T>(selector: (state: GenerationState) => T)
 export function GenerationProvider({ children }: { children: React.ReactNode }) {
   const storeRef = useRef<GenerationStore>();
   const { connected } = useSignalContext();
-  const { requests, isLoading } = useGetGenerationRequests();
+  const { data: requests, isLoading } = useGetTextToImageRequests();
   const generationStatus = useGenerationStatus();
 
   // #region [queue state]
-  const [queued, setQueued] = useState<Generation.Request[]>([]);
+  const [queued, setQueued] = useState<NormalizedTextToImageResponse[]>([]);
   const pendingProcessingQueued = requests.filter(
     (request) =>
       POLLABLE_STATUSES.includes(request.status) || queued.some((x) => x.id === request.id)
   );
 
-  const handleSetQueued = (cb: (draft: Generation.Request[]) => void) => setQueued(produce(cb));
+  const handleSetQueued = (cb: (draft: NormalizedTextToImageResponse[]) => void) =>
+    setQueued(produce(cb));
 
-  const deleteQueueItem = (id: number) => {
+  const deleteQueueItem = (id: string) => {
     handleSetQueued((draft) => {
       const index = draft.findIndex((x) => x.id === id);
       if (index > -1) draft.splice(index, 1);
     });
   };
 
-  const setQueueItem = (request: Generation.Request) => {
+  const setQueueItem = (request: NormalizedTextToImageResponse) => {
     handleSetQueued((draft) => {
       const index = draft.findIndex((x) => x.id === request.id);
       if (index > -1) draft[index] = request;
@@ -105,31 +108,28 @@ export function GenerationProvider({ children }: { children: React.ReactNode }) 
     const { limits, available } = generationStatus;
     const queuedRequests = queued.map((request) => ({
       id: request.id,
-      count: request.images?.filter((x) => x.available).length ?? 0,
-      complete: request.images?.filter((x) => x.available).length ?? 0,
-      processing: request.images?.filter((x) => x.status === 'Started').length ?? 0,
-      quantity: request.quantity,
+      complete: request.images.filter((x) => x.status === 'succeeded').length,
+      processing: request.images.filter((x) => x.status === 'processing').length,
+      quantity: request.params.quantity,
       status: request.status,
     }));
 
-    const queueStatus = queuedRequests.some((x) => x.status === GenerationRequestStatus.Processing)
-      ? GenerationRequestStatus.Processing
+    const queueStatus = queuedRequests.some((x) => x.status === 'processing')
+      ? 'processing'
       : queuedRequests[0]?.status;
 
     const requestsRemaining = limits.queue - queuedRequests.length;
     const images = queued
-      .flatMap(
-        (x) =>
-          x.images?.map((image) => ({
-            ...image,
-            createdAt: new Date(x.createdAt).getTime() + (image.duration ?? 0),
-          })) ?? []
+      .flatMap((x) =>
+        x.images.map((image) => (image.completed ? { ...image, completed: image.completed } : null))
       )
-      .filter((x) => x.available)
-      .sort((a, b) => (b?.createdAt ?? 0) - (a?.createdAt ?? 0));
+      .filter(isDefined)
+      .sort((a, b) => b.completed.getTime() - a.completed.getTime());
 
     store.setState((state) => {
-      const latestImage = images.find((x) => x.createdAt > (state.latestImage?.createdAt ?? 0));
+      const latestImage = images.find(
+        (x) => x.completed.getTime() > (state.latestImage?.completed?.getTime() ?? 0)
+      );
 
       return {
         queued: queuedRequests,
@@ -160,47 +160,47 @@ export function GenerationProvider({ children }: { children: React.ReactNode }) 
   // #endregion
 
   // #region [polling]
-  const pollableIdsRef = useRef<number[]>([]);
-  pollableIdsRef.current = pendingProcessingQueued.map((x) => x.id);
-  const hasPollableIds = pollableIdsRef.current.length > 0;
-  const debouncer = useDebouncer(1000 * 5);
-  const pollable = useGetGenerationRequests(
-    {
-      requestId: pollableIdsRef.current,
-      take: 100,
-      detailed: true,
-    },
-    {
-      enabled: false,
-    }
-  );
+  // const pollableIdsRef = useRef<number[]>([]);
+  // pollableIdsRef.current = pendingProcessingQueued.map((x) => x.id);
+  // const hasPollableIds = pollableIdsRef.current.length > 0;
+  // const debouncer = useDebouncer(1000 * 5);
+  // const pollable = useGetGenerationRequests(
+  //   {
+  //     requestId: pollableIdsRef.current,
+  //     take: 100,
+  //     detailed: true,
+  //   },
+  //   {
+  //     enabled: false,
+  //   }
+  // );
 
-  useEffect(() => {
-    if (!connected)
-      debouncer(() => {
-        pollableIdsRef.current.length ? pollable.refetch() : undefined;
-      });
-  }, [connected, hasPollableIds]); // eslint-disable-line
+  // useEffect(() => {
+  //   if (!connected)
+  //     debouncer(() => {
+  //       pollableIdsRef.current.length ? pollable.refetch() : undefined;
+  //     });
+  // }, [connected, hasPollableIds]); // eslint-disable-line
 
-  useEffect(() => {
-    updateGenerationRequest((old) => {
-      for (const request of requests) {
-        for (const page of old.pages) {
-          const index = page.items.findIndex((x) => x.id === request.id);
-          if (index > -1) {
-            const item = page.items[index];
-            item.status = request.status;
-            item.images = item.images?.map((image) => {
-              const match = request.images?.find((x) => x.hash === image.hash);
-              if (!match) return image;
-              const available = image.available ? image.available : match.available;
-              return { ...image, ...match, available };
-            });
-          }
-        }
-      }
-    });
-  }, [pollable.requests]);
+  // useEffect(() => {
+  //   updateGenerationRequest((old) => {
+  //     for (const request of requests) {
+  //       for (const page of old.pages) {
+  //         const index = page.items.findIndex((x) => x.id === request.id);
+  //         if (index > -1) {
+  //           const item = page.items[index];
+  //           item.status = request.status;
+  //           item.images = item.images?.map((image) => {
+  //             const match = request.images?.find((x) => x.hash === image.hash);
+  //             if (!match) return image;
+  //             const available = image.available ? image.available : match.available;
+  //             return { ...image, ...match, available };
+  //           });
+  //         }
+  //       }
+  //     }
+  //   });
+  // }, [pollable.requests]);
   // #endregion
 
   if (!storeRef.current) storeRef.current = createGenerationStore();

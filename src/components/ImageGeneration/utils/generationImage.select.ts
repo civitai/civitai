@@ -1,3 +1,3 @@
 import { createSelectStore } from '~/store/select.store';
 
-export const generationImageSelect = createSelectStore<number>();
+export const generationImageSelect = createSelectStore<string>();
