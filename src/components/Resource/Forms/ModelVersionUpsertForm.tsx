@@ -34,6 +34,8 @@ import {
   generationResourceSchema,
 } from '~/server/schema/generation.schema';
 import {
+  earlyAccessConfigInput,
+  ModelVersionEarlyAccessConfig,
   ModelVersionUpsertInput,
   modelVersionUpsertSchema2,
   RecommendedSettingsSchema,
@@ -44,12 +46,19 @@ import { isEarlyAccess } from '~/server/utils/early-access-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
+const earlyAccessTimeframeValues = [0, 5, 7, 10, 12, 15];
+
 const schema = modelVersionUpsertSchema2
   .extend({
     skipTrainedWords: z.boolean().default(false),
-    earlyAccessTimeFrame: z.string().refine((value) => ['0', '1', '3', '7', '14'].includes(value), {
-      message: 'Invalid value',
-    }),
+    earlyAccessConfig: earlyAccessConfigInput
+      .extend({
+        timeframe: z.string().default('0'),
+      })
+      .refine((value) => earlyAccessTimeframeValues.some((v) => v === value.timeframe), {
+        message: 'Invalid value',
+      })
+      .nullish(),
     useMonetization: z.boolean().default(false),
     recommendedResources: generationResourceSchema
       .merge(recommendedSettingsSchema)
@@ -133,10 +142,14 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
         ? !version.trainedWords.length
         : false
       : true,
-    earlyAccessTimeFrame:
-      version?.earlyAccessTimeFrame && features.earlyAccessModel
-        ? String(version.earlyAccessTimeFrame)
-        : '0',
+    earlyAccessConfig:
+      version?.earlyAccessConfig && features.earlyAccessModel
+        ? {
+            generationTrialLimit: 10,
+            ...(version?.earlyAccessConfig ?? {}),
+            timeframe: version.earlyAccessConfig?.timeframe?.toString() ?? '0',
+          }
+        : null,
     modelId: model?.id ?? -1,
     description: version?.description ?? null,
     epochs: version?.epochs ?? null,
@@ -160,6 +173,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
   ]) as number[];
   const { isDirty } = form.formState;
   const canMonetize = !model?.poi;
+  const earlyAccessConfig = form.watch('earlyAccessConfig');
 
   const upsertVersionMutation = trpc.modelVersion.upsert.useMutation({
     onError(error) {
@@ -190,7 +204,13 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
         epochs: data.epochs ?? null,
         steps: data.steps ?? null,
         modelId: model?.id ?? -1,
-        earlyAccessTimeFrame: Number(data.earlyAccessTimeFrame),
+        earlyAccessConfig:
+          data.earlyAccessConfig?.timeframe === '0'
+            ? null
+            : {
+                ...data.earlyAccessConfig,
+                timeframe: parseInt(data.earlyAccessConfig?.timeframe ?? '0', 10),
+              },
         trainedWords: skipTrainedWords ? [] : trainedWords,
         baseModelType: hasBaseModelType ? data.baseModelType : undefined,
         vaeId: hasVAE ? data.vaeId : undefined,
@@ -221,10 +241,14 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
             ? !version.trainedWords.length
             : false
           : true,
-        earlyAccessTimeFrame:
-          version.earlyAccessTimeFrame && features.earlyAccessModel
-            ? String(version.earlyAccessTimeFrame)
-            : '0',
+        earlyAccessConfig:
+          version?.earlyAccessConfig && features.earlyAccessModel
+            ? {
+                generationTrialLimit: 10,
+                ...(version?.earlyAccessConfig ?? {}),
+                timeframe: version.earlyAccessConfig?.timeframe?.toString() ?? '0',
+              }
+            : null,
         recommendedResources: version.recommendedResources ?? [],
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -235,7 +259,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
   const canIncreaseEarlyAccess = version?.status !== 'Published';
   const maxEarlyAccessValue = canIncreaseEarlyAccess
     ? MAX_EARLY_ACCCESS
-    : version?.earlyAccessTimeFrame ?? 0;
+    : version?.earlyAccessConfig?.timeframe ?? 0;
 
   return (
     <>
@@ -249,59 +273,114 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
             maxLength={25}
           />
           {showEarlyAccessInput && (
-            <Input.Wrapper
-              label="Early Access"
-              description={
-                <DismissibleAlert
-                  id="ea-info"
-                  size="sm"
-                  title="Get feedback on your model before full release"
-                  content={
-                    <>
-                      {`This puts your model in the "Early Access" list of models
-                  available to `}
-                      <Text component={NextLink} href="/pricing" variant="link" target="_blank">
-                        Civitai members
-                      </Text>
-                      {
-                        ' of the community. This can be a great way to get feedback from an engaged community before your model is available to the general public. If you choose to enable Early Access, your model will be released to the public after the selected time frame.'
-                      }
-                    </>
-                  }
-                  mb="xs"
+            <Stack spacing={0}>
+              <Divider label="Early Access Set Up" mb="md" />
+              <Input.Wrapper
+                label="Early Access"
+                description={
+                  <DismissibleAlert
+                    id="ea-info"
+                    size="sm"
+                    color="yellow"
+                    title="Earn Buzz with early access!"
+                    content={
+                      <>
+                        <Text size="xs">
+                          Early access allows you to charge a fee for early access to your model.
+                          This fee is paid by users who want to access your model before it is
+                          available to the public. Once the early access period ends, your model
+                          will be available to the public for free.
+                        </Text>
+                      </>
+                    }
+                    mb="xs"
+                  />
+                }
+                error={form.formState.errors.earlyAccessConfig?.message}
+              >
+                <InputSegmentedControl
+                  name="earlyAccessConfig.timeframe"
+                  data={earlyAccessTimeframeValues.map((v) => ({
+                    label: v === 0 ? 'None' : `${v} days`,
+                    value: v.toString(),
+                    disabled: maxEarlyAccessValue < v,
+                  }))}
+                  color="blue"
+                  size="xs"
+                  styles={(theme) => ({
+                    root: {
+                      border: `1px solid ${
+                        theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[4]
+                      }`,
+                      background: 'none',
+                      marginTop: theme.spacing.xs * 0.5, // 5px
+                    },
+                  })}
+                  fullWidth
                 />
-              }
-              error={form.formState.errors.earlyAccessTimeFrame?.message}
-            >
-              <InputSegmentedControl
-                name="earlyAccessTimeFrame"
-                data={[
-                  { label: 'None', value: '0', disabled: maxEarlyAccessValue < 0 },
-                  { label: '5 days', value: '5', disabled: maxEarlyAccessValue < 5 },
-                  { label: '7 days', value: '7', disabled: maxEarlyAccessValue < 7 },
-                  { label: '10 days', value: '10', disabled: maxEarlyAccessValue < 10 },
-                  { label: '12 days', value: '12', disabled: maxEarlyAccessValue < 12 },
-                  { label: '15 days', value: '15', disabled: maxEarlyAccessValue < 15 },
-                ]}
-                color="blue"
-                size="xs"
-                styles={(theme) => ({
-                  root: {
-                    border: `1px solid ${
-                      theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[4]
-                    }`,
-                    background: 'none',
-                    marginTop: theme.spacing.xs * 0.5, // 5px
-                  },
-                })}
-                fullWidth
-              />
-              {!canIncreaseEarlyAccess && (
-                <Text size="xs" color="dimmed" mt="sm">
-                  You cannot increase early access value after a model has been published
-                </Text>
+                {earlyAccessConfig?.timeframe !== 0 && (
+                  <Group noWrap>
+                    <CurrencyIcon currency={Currency.BUZZ} size={16} />
+                    <Text size="xs" color="dimmed" mt="sm">
+                      You will be charged a non-refundable fee of{' '}
+                      {constants.earlyAccess.buzzChargedPerDay} BUZZ per day of early access once
+                      your model is published. Your current total is{' '}
+                      <Text component="span" color="yellow.6">
+                        {constants.earlyAccess.buzzChargedPerDay *
+                          parseInt(earlyAccessConfig?.timeframe ?? '0', 10)}{' '}
+                        BUZZ.
+                      </Text>
+                    </Text>
+                  </Group>
+                )}
+                {!canIncreaseEarlyAccess && (
+                  <Text size="xs" color="dimmed" mt="sm">
+                    You cannot increase early access value after a model has been published
+                  </Text>
+                )}
+              </Input.Wrapper>
+              {earlyAccessConfig?.timeframe !== '0' && (
+                // Now get the other pieces:
+                <Stack mt="sm">
+                  <InputNumber
+                    name="earlyAccessConfig.downloadPrice"
+                    label="Download price"
+                    description="How much would you like to charge for your version download?"
+                    min={500}
+                    step={100}
+                    icon={<CurrencyIcon currency="BUZZ" size={16} />}
+                    withAsterisk
+                  />
+                  <InputSwitch
+                    name="earlyAccessConfig.chargeForGeneration"
+                    label="Allow users to pay for generation only - no download."
+                    description={
+                      'This will allow users to pay for generation only, but will not grant the ability to download. Payments for download already cover generation.'
+                    }
+                  />
+                  {earlyAccessConfig?.chargeForGeneration && (
+                    <Stack>
+                      <InputNumber
+                        name="earlyAccessConfig.generationPrice"
+                        label="Generation price"
+                        description="How much would you like to charge for your version download?"
+                        min={100}
+                        max={earlyAccessConfig?.downloadPrice}
+                        step={100}
+                        icon={<CurrencyIcon currency="BUZZ" size={16} />}
+                      />
+                      <InputNumber
+                        name="earlyAccessConfig.generationTrialLimit"
+                        label="Free Trial Limit"
+                        description="How many free generations would you like to offer to users who have not paid for generation or download?"
+                        min={10}
+                      />
+                    </Stack>
+                  )}
+                </Stack>
               )}
-            </Input.Wrapper>
+              <Divider my="md" />
+            </Stack>
           )}
           <Group spacing="xs" grow>
             <InputSelect
@@ -610,6 +689,7 @@ type VersionInput = Omit<ModelVersionUpsertInput, 'recommendedResources'> & {
     RecommendedSettingsSchema)[];
   clubs?: ClubResourceSchema[];
   earlyAccessEndsAt: Date | null;
+  earlyAccessConfig: ModelVersionEarlyAccessConfig | null;
 };
 type Props = {
   onSubmit: (version?: ModelVersionUpsertInput) => void;

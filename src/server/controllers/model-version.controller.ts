@@ -8,6 +8,7 @@ import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   EarlyAccessModelVersionsOnTimeframeSchema,
   GetModelVersionSchema,
+  ModelVersionEarlyAccessConfig,
   ModelVersionMeta,
   ModelVersionUpsertInput,
   ModelVersionsGeneratedImagesOnTimeframeSchema,
@@ -64,7 +65,8 @@ export const getModelVersionHandler = async ({ input }: { input: GetModelVersion
         description: true,
         baseModel: true,
         baseModelType: true,
-        earlyAccessTimeFrame: true,
+        earlyAccessConfig: true,
+        earlyAccessEndsAt: true,
         trainedWords: true,
         epochs: true,
         steps: true,
@@ -125,6 +127,7 @@ export const getModelVersionHandler = async ({ input }: { input: GetModelVersion
 
     return {
       ...version,
+      earlyAccessConfig: version.earlyAccessConfig as ModelVersionEarlyAccessConfig | null,
       baseModel: version.baseModel as BaseModel,
       baseModelType: version.baseModelType as BaseModelType,
       files: version.files as unknown as Array<

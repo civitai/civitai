@@ -332,6 +332,9 @@ export const constants = {
   modelGallery: {
     maxPinnedPosts: 6,
   },
+  earlyAccess: {
+    buzzChargedPerDay: 100,
+  },
 } as const;
 export const activeBaseModels = constants.baseModels.filter(
   (model) => !constants.hiddenBaseModels.includes(model)

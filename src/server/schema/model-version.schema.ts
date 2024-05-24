@@ -111,7 +111,6 @@ export const modelVersionUpsertSchema = z.object({
   trainingStatus: z.nativeEnum(TrainingStatus).optional(),
   trainingDetails: trainingDetailsObj.optional(),
   files: z.array(modelFileSchema),
-  earlyAccessTimeFrame: z.number().min(0).max(14).optional(),
   // recipe: z.array(recipeSchema).optional(),
 });
 
@@ -130,6 +129,21 @@ const recommendedResourceSchema = z.object({
 });
 
 export type ModelVersionUpsertInput = z.infer<typeof modelVersionUpsertSchema2>;
+
+export type ModelVersionEarlyAccessConfig = z.infer<typeof modelVersionEarlyAccessConfigSchema>;
+export const modelVersionEarlyAccessConfigSchema = z.object({
+  timeframe: z.number(),
+  downloadPrice: z.number(),
+  buzzTransactionId: z.string().optional(),
+  chargeForGeneration: z.boolean().default(false),
+  generationPrice: z.number().optional(),
+  generationTrialLimit: z.number().default(10),
+});
+
+export const earlyAccessConfigInput = modelVersionEarlyAccessConfigSchema.omit({
+  buzzTransactionId: true,
+});
+
 export const modelVersionUpsertSchema2 = z.object({
   modelId: z.number(),
   id: z.number().optional(),
@@ -147,10 +161,6 @@ export const modelVersionUpsertSchema2 = z.object({
   trainedWords: z.array(z.string()).default([]),
   trainingStatus: z.nativeEnum(TrainingStatus).nullish(),
   trainingDetails: trainingDetailsObj.nullish(),
-  earlyAccessTimeFrame: z.preprocess(
-    (value) => (value ? Number(value) : 0),
-    z.number().min(0).max(14).optional()
-  ),
   status: z.nativeEnum(ModelStatus).optional(),
   requireAuth: z.boolean().optional(),
   monetization: z
@@ -170,6 +180,12 @@ export const modelVersionUpsertSchema2 = z.object({
   recommendedResources: z.array(recommendedResourceSchema).optional(),
   templateId: z.number().optional(),
   bountyId: z.number().optional(),
+  earlyAccessConfig: earlyAccessConfigInput.nullish(),
+  earlyAccessGoalConfig: z
+    .object({
+      unitAmount: z.number(),
+    })
+    .nullish(),
 });
 
 export type GetModelVersionSchema = z.infer<typeof getModelVersionSchema>;
@@ -196,20 +212,11 @@ export const deleteExplorationPromptSchema = z.object({
   name: z.string().trim().min(1, 'Name cannot be empty.'),
 });
 
-export type ModelVersionEarlyAccessConfig = z.infer<typeof modelVersionEarlyAccessConfigSchema>;
-export const modelVersionEarlyAccessConfigSchema = z.object({
-  timeframe: z.number(),
-  buzzTransactionId: z.string(),
-  generationPrice: z.number().optional(),
-  generationTrialLimit: z.number().optional(),
-  downloadPrice: z.number(),
-});
-
 export type ModelVersionMeta = ModelMeta & {
   picFinderModelId?: number;
   earlyAccessDownloadData?: { date: string; downloads: number }[];
   generationImagesCount?: { date: string; generations: number }[];
-  // Early access related:   
+  // Early access related:
 };
 
 export type PublishVersionInput = z.infer<typeof publishVersionSchema>;

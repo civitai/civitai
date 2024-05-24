@@ -95,6 +95,10 @@ export const processCreatorProgramEarlyAccessRewards = createJob(
         // First, check that it's still early access:
         const isEarlyAccessBool = !!version.earlyAccessEndsAt;  
 
+        if (!isEarlyAccessBool) {
+          return;
+        }
+
         const downloadData = modelVersionData
           .filter(
             (x) =>

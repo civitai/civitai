@@ -140,8 +140,7 @@ export const upsertModelVersion = async ({
     let earlyAccessConfig: ModelVersionEarlyAccessConfig | null = null;
     if (earlyAccessTimeFrame) {
       earlyAccessConfig = {
-        timeframe: earlyAccessTimeFrame, 
-        buzzTransactionId: 'free-for-time-being',
+        timeframe: earlyAccessTimeFrame,
         downloadPrice: 100,
       };
     }
@@ -192,6 +191,15 @@ export const upsertModelVersion = async ({
 
     return version;
   } else {
+    
+    let updatedConfig: ModelVersionEarlyAccessConfig | null = null;
+    if (earlyAccessTimeFrame) {
+      updatedConfig = {
+        timeframe: earlyAccessTimeFrame,
+        downloadPrice: 100,
+      };
+    }
+
     const existingVersion = await dbRead.modelVersion.findUniqueOrThrow({
       where: { id },
       select: {
@@ -242,6 +250,7 @@ export const upsertModelVersion = async ({
       where: { id },
       data: {
         ...data,
+        earlyAccessConfig: updatedConfig !== null ? updatedConfig : undefined,
         settings: settings !== null ? settings : Prisma.JsonNull,
         monetization:
           existingVersion.monetization?.id && !monetization

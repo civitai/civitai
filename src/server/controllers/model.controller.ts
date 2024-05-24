@@ -19,6 +19,7 @@ import { eventEngine } from '~/server/events';
 import { getInfiniteArticlesSchema } from '~/server/schema/article.schema';
 import { GetAllSchema, GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
 import {
+  ModelVersionEarlyAccessConfig,
   ModelVersionMeta,
   RecommendedSettingsSchema,
   TrainingDetailsObj,
@@ -227,6 +228,7 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
           posts: posts.filter((x) => x.modelVersionId === version.id).map((x) => ({ id: x.id })),
           hashes,
           earlyAccessDeadline,
+          earlyAccessConfig: version.earlyAccessConfig as ModelVersionEarlyAccessConfig | null,
           canDownload,
           canGenerate,
           files: files as Array<
