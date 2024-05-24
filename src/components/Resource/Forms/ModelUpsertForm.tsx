@@ -18,9 +18,11 @@ import {
 } from '@prisma/client';
 import { IconExclamationMark } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import { useEffect, useRef } from 'react';
+import { useEffect } from 'react';
 import { z } from 'zod';
-
+import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
+import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
   Form,
   InputCheckbox,
@@ -35,21 +37,17 @@ import {
 } from '~/libs/form';
 import { TagSort } from '~/server/common/enums';
 import { ModelUpsertInput, modelUpsertSchema } from '~/server/schema/model.schema';
+import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
+import { ModelById } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { parseNumericString } from '~/utils/query-string-helpers';
 import { getDisplayName, splitUppercase, titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
-import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
-import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
-
-import { ModelById } from '~/types/router';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { isDefined } from '~/utils/type-guards';
 
 const schema = modelUpsertSchema
   .extend({
-    category: z.number().optional(),
+    category: z.number().gt(0, 'Required'),
     description: getSanitizedStringSchema().refine((data) => {
       return data && data.length > 0 && data !== '<p></p>';
     }, 'Cannot be empty'),
@@ -81,7 +79,7 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
   const result = querySchema.safeParse(router.query);
   const currentUser = useCurrentUser();
 
-  const defaultCategory = result.success ? result.data.category : undefined;
+  const defaultCategory = result.success ? result.data.category ?? 0 : 0;
   const defaultValues: z.infer<typeof schema> = {
     ...model,
     name: model?.name ?? '',
@@ -251,20 +249,13 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
             </Stack>
             <InputSelect
               name="category"
+              label="Category"
               disabled={isLocked('category')}
-              description={isLockedDescription('category')}
-              label={
-                <Group spacing={4} noWrap>
-                  <Input.Label>Category</Input.Label>
-                  <InfoPopover type="hover" size="xs" iconProps={{ size: 14 }}>
-                    <Text>
-                      Categories determine what kind of resource you&apos;re making. Selecting a
-                      category that&apos;s the closest match to your subject helps users find your
-                      resource
-                    </Text>
-                  </InfoPopover>
-                </Group>
-              }
+              description={isLockedDescription(
+                'category',
+                `Selecting the closest match helps users find your resource.`
+              )}
+              withAsterisk
               placeholder="Select a Category"
               nothingFound="Nothing found"
               data={categories}
