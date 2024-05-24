@@ -2,7 +2,7 @@ import { ActionIcon, Alert, Badge, Skeleton, Stack, Text } from '@mantine/core';
 import { useSessionStorage } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import { IconX } from '@tabler/icons-react';
-import { uniqBy } from 'lodash';
+import { uniqBy } from 'lodash-es';
 import Link from 'next/link';
 import { cloneElement, useMemo } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';

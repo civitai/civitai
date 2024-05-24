@@ -40,7 +40,6 @@ import { ScrollAreaMain } from '~/components/ScrollArea/ScrollAreaMain';
 import { SignalProvider } from '~/components/Signals/SignalsProvider';
 import { UpdateRequiredWatcher } from '~/components/UpdateRequiredWatcher/UpdateRequiredWatcher';
 import { isDev } from '~/env/other';
-import { CivitaiPosthogProvider } from '~/hooks/usePostHog';
 import { ActivityReportingProvider } from '~/providers/ActivityReportingProvider';
 import { CookiesProvider } from '~/providers/CookiesProvider';
 import { CustomModalsProvider } from '~/providers/CustomModalsProvider';
@@ -146,39 +145,37 @@ function MyApp(props: CustomAppProps) {
                       <CivitaiSessionProvider>
                         <SignalProvider>
                           <ActivityReportingProvider>
-                            <CivitaiPosthogProvider>
-                              <ReferralsProvider>
-                                <FiltersProvider>
-                                  <AdsProvider>
-                                    <PaypalProvider>
-                                      <HiddenPreferencesProvider>
-                                        <CivitaiLinkProvider>
-                                          <NotificationsProvider
-                                            className="notifications-container"
-                                            zIndex={9999}
-                                          >
-                                            <BrowserRouterProvider>
-                                              <RecaptchaWidgetProvider>
-                                                <BaseLayout>
-                                                  <ChatContextProvider>
-                                                    <CustomModalsProvider>
-                                                      {getLayout(<Component {...pageProps} />)}
-                                                      <StripeSetupSuccessProvider />
-                                                      <DialogProvider />
-                                                      <RoutedDialogProvider />
-                                                    </CustomModalsProvider>
-                                                  </ChatContextProvider>
-                                                </BaseLayout>
-                                              </RecaptchaWidgetProvider>
-                                            </BrowserRouterProvider>
-                                          </NotificationsProvider>
-                                        </CivitaiLinkProvider>
-                                      </HiddenPreferencesProvider>
-                                    </PaypalProvider>
-                                  </AdsProvider>
-                                </FiltersProvider>
-                              </ReferralsProvider>
-                            </CivitaiPosthogProvider>
+                            <ReferralsProvider>
+                              <FiltersProvider>
+                                <AdsProvider>
+                                  <PaypalProvider>
+                                    <HiddenPreferencesProvider>
+                                      <CivitaiLinkProvider>
+                                        <NotificationsProvider
+                                          className="notifications-container"
+                                          zIndex={9999}
+                                        >
+                                          <BrowserRouterProvider>
+                                            <RecaptchaWidgetProvider>
+                                              <BaseLayout>
+                                                <ChatContextProvider>
+                                                  <CustomModalsProvider>
+                                                    {getLayout(<Component {...pageProps} />)}
+                                                    <StripeSetupSuccessProvider />
+                                                    <DialogProvider />
+                                                    <RoutedDialogProvider />
+                                                  </CustomModalsProvider>
+                                                </ChatContextProvider>
+                                              </BaseLayout>
+                                            </RecaptchaWidgetProvider>
+                                          </BrowserRouterProvider>
+                                        </NotificationsProvider>
+                                      </CivitaiLinkProvider>
+                                    </HiddenPreferencesProvider>
+                                  </PaypalProvider>
+                                </AdsProvider>
+                              </FiltersProvider>
+                            </ReferralsProvider>
                           </ActivityReportingProvider>
                         </SignalProvider>
                       </CivitaiSessionProvider>

@@ -65,7 +65,8 @@ import {
 import { bytesToKB } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
-import { AutoTagModal } from './TrainingAutoTagModal';
+import dynamic from 'next/dynamic';
+const AutoTagModal = dynamic(() => import('./TrainingAutoTagModal').then((m) => m.AutoTagModal));
 
 const MAX_FILES_ALLOWED = 1000;
 

@@ -40,7 +40,6 @@ import {
   IconHelpCircle,
 } from '@tabler/icons-react';
 import { useEffect, useMemo, useState } from 'react';
-import JSZip from 'jszip';
 import {
   getVaultItemDownloadUrls,
   useMutateVault,

@@ -12,7 +12,7 @@ import {
 import { openConfirmModal } from '@mantine/modals';
 import { CosmeticEntity } from '@prisma/client';
 import { IconArrowRight } from '@tabler/icons-react';
-import { truncate } from 'lodash';
+import { truncate } from 'lodash-es';
 import { z } from 'zod';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 
