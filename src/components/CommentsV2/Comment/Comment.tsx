@@ -103,7 +103,8 @@ export function CommentContent({
       `${entityType}MaxDepth` in constants.comments
         ? constants.comments[`${entityType}MaxDepth` as keyof typeof constants.comments]
         : constants.comments.maxDepth;
-    if ((level ?? 0) > maxDepth && !isExpanded) {
+
+    if ((level ?? 0) >= maxDepth && !isExpanded) {
       setRootThread('comment', comment.id);
     } else {
       toggleExpanded(comment.id);
@@ -263,6 +264,19 @@ export function CommentContent({
               className={classes.replyInset}
             />
           </Box>
+        )}
+        {replyCount > 0 && !viewOnly && !isExpanded && (
+          <Divider
+            label={
+              <Group spacing="xs" align="center">
+                <Text variant="link" sx={{ cursor: 'pointer' }} onClick={onToggleReplies}>
+                  Show {replyCount} More
+                </Text>
+              </Group>
+            }
+            labelPosition="center"
+            variant="dashed"
+          />
         )}
       </Stack>
       {replyCount > 0 && !viewOnly && (
