@@ -1406,8 +1406,8 @@ export const publishModelById = async ({
         await tx.$executeRaw`
           UPDATE "Post"
           SET
-            "publishedAt" = CASE 
-              WHEN "metadata"->>'prevPublishedAt' IS NOT NULL 
+            "publishedAt" = CASE
+              WHEN "metadata"->>'prevPublishedAt' IS NOT NULL
               THEN to_timestamp("metadata"->>'prevPublishedAt', 'YYYY-MM-DD"T"HH24:MI:SS.MS')
               ELSE ${publishedAt}
             END,

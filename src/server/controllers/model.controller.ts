@@ -274,7 +274,7 @@ export const getModelsInfiniteHandler = async ({
     let isPrivate = false;
     let nextCursor: string | bigint | undefined;
     const results: Awaited<ReturnType<typeof getModelsWithImagesAndModelVersions>>['items'] = [];
-    while (results.length <= (input.limit ?? 100) && loopCount < 3) {
+    while (results.length < (input.limit ?? 100) && loopCount < 3) {
       const result = await getModelsWithImagesAndModelVersions({
         input,
         user: ctx.user,
