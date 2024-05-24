@@ -101,6 +101,7 @@ import {
   getIsSafeBrowsingLevel,
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils';
+import { dataForModelsCache } from '~/server/redis/caches';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
@@ -387,6 +388,8 @@ export const upsertModelHandler = async ({
       nsfw: !getIsSafeBrowsingLevel(model.nsfwLevel),
     });
 
+    if (input.id) await dataForModelsCache.bust(input.id);
+
     return model;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -444,6 +447,8 @@ export const publishModelHandler = async ({
       });
     }
 
+    await dataForModelsCache.bust(input.id);
+
     return updatedModel;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -475,6 +480,8 @@ export const unpublishModelHandler = async ({
       nsfw: model.nsfw,
     });
 
+    await dataForModelsCache.bust(input.id);
+
     return updatedModel;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -502,6 +509,8 @@ export const deleteModelHandler = async ({
       modelId: model.id,
       nsfw: !getIsSafeBrowsingLevel(model.nsfwLevel),
     });
+
+    await dataForModelsCache.bust(id);
 
     return model;
   } catch (error) {
@@ -930,6 +939,8 @@ export const reorderModelVersionsHandler = async ({
     ]);
 
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
+
+    await dataForModelsCache.bust(input.id);
 
     return model;
   } catch (error) {
@@ -1519,6 +1530,7 @@ export async function toggleCheckpointCoverageHandler({
     await modelsSearchIndex.queueUpdate([
       { id: input.id, action: SearchIndexUpdateQueueAction.Update },
     ]);
+    await dataForModelsCache.bust(input.id);
 
     return affectedVersionIds;
   } catch (error) {
