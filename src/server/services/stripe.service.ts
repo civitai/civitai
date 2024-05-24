@@ -789,6 +789,8 @@ export const getBuzzPackages = async () => {
   });
 };
 
+const futureUsageNotSupportedPaymentMethods = ['customer_balance', 'wechat_pay'];
+
 export const getPaymentIntent = async ({
   unitAmount,
   currency = Currency.USD,
@@ -796,6 +798,7 @@ export const getPaymentIntent = async ({
   paymentMethodTypes,
   customerId,
   user,
+  setupFuturePayment = true,
 }: Schema.PaymentIntentCreationSchema & {
   user: { id: number; email: string };
   customerId?: string;
@@ -820,15 +823,18 @@ export const getPaymentIntent = async ({
   const paymentIntent = await stripe.paymentIntents.create({
     amount: unitAmount,
     currency,
-    automatic_payment_methods: !paymentMethodTypes
-      ? {
-          enabled: true,
-        }
-      : undefined,
+    automatic_payment_methods:
+      !paymentMethodTypes && setupFuturePayment
+        ? {
+            enabled: true,
+          }
+        : undefined,
     customer: customerId,
     metadata: metadata as MetadataParam,
-    payment_method_types: paymentMethodTypes || undefined,
-    setup_future_usage: 'off_session',
+    payment_method_types: setupFuturePayment
+      ? paymentMethodTypes || undefined
+      : futureUsageNotSupportedPaymentMethods,
+    setup_future_usage: setupFuturePayment ? 'off_session' : undefined,
   });
 
   return {
