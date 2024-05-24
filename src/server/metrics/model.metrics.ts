@@ -385,6 +385,8 @@ async function getCollectionTasks(ctx: ModelMetricContext) {
     SELECT "modelId" as id
     FROM "CollectionItem"
     WHERE "modelId" IS NOT NULL AND "createdAt" > '${ctx.lastUpdate}'
+    -- Safeguard against deleted models. Might make the query somewhat slower
+    JOIN "Model" m ON m.id = "modelId" 
   `;
 
   const tasks = chunk(affected, BATCH_SIZE).map((ids, i) => async () => {
