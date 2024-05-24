@@ -43,9 +43,6 @@ RUN \
 FROM node:20-alpine3.16 AS runner
 WORKDIR /app
 
-# Install PM2 to manage node processes
-RUN npm install pm2 --location=global
-
 ENV NODE_ENV production
 
 # ENV NEXT_TELEMETRY_DISABLED 1
@@ -68,4 +65,4 @@ EXPOSE 3000
 ENV PORT 3000
 ENV NEXT_TELEMETRY_DISABLED 1
 
-CMD ["pm2-runtime", "node", "--", "server.js", "--", "--expose-gc"]
+CMD ["node", "--", "server.js", "--", "--expose-gc"]
