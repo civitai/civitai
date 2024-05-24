@@ -308,7 +308,7 @@ export const completeOnboardingHandler = async ({
         break;
     }
     const isComplete = onboarding === OnboardingComplete;
-    if (isComplete && changed) onboardingCompletedCounter.inc();
+    if (isComplete && changed && onboardingCompletedCounter) onboardingCompletedCounter.inc();
   } catch (e) {
     const err = e as Error;
     if (!err.message.includes('constraint failed')) onboardingErrorCounter.inc();
