@@ -29,6 +29,7 @@ const filtersBySection = {
   models: <ModelFeedFilters ml="auto" />,
   images: <ImageFeedFilters ml="auto" />,
   videos: <VideoFeedFilters ml="auto" />,
+  audios: <VideoFeedFilters ml="auto" />,
   posts: <PostFeedFilters ml="auto" />,
   articles: <ArticleFeedFilters ml="auto" />,
   bounties: <BountyFeedFilters ml="auto" />,

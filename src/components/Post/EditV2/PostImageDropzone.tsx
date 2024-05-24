@@ -69,14 +69,20 @@ export function PostImageDropzone({
         switch (props.status) {
           case 'added':
             const externalDetailsUrl = useExternalMetaStore.getState().getUrl();
+            const imageMetadata =
+              props.type !== 'audio'
+                ? {
+                    width: props.metadata.width,
+                    height: props.metadata.height,
+                    hash: props.metadata.hash,
+                  }
+                : {};
 
             const payload = addPostImageSchema.parse({
               ...props,
+              ...imageMetadata,
               postId,
               modelVersionId,
-              width: props.metadata.width,
-              height: props.metadata.height,
-              hash: props.metadata.hash,
               externalDetailsUrl,
             });
 

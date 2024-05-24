@@ -51,7 +51,7 @@ export function AppLayout({
   return (
     <>
       <AppHeader fixed={false} renderSearchComponent={renderSearchComponent} />
-      <main className="flex flex-col flex-1 w-full h-full relative overflow-hidden">
+      <main className="relative flex size-full flex-1 flex-col overflow-hidden">
         {children}
         {/* {flags.assistant && (
               <div className={classes.assistant}>

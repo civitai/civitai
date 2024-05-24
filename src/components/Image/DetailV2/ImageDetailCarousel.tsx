@@ -1,4 +1,5 @@
 import { Carousel, Embla } from '@mantine/carousel';
+import { Stack, Text } from '@mantine/core';
 import { useHotkeys, useOs } from '@mantine/hooks';
 
 import { truncate } from 'lodash-es';
@@ -96,6 +97,8 @@ function ImageContent({ image }: { image: ImagesInfiniteModel } & ConnectProps) 
     width: image?.width ?? 1200,
   });
 
+  const isAudio = image.type === 'audio';
+
   return (
     <ImageGuardContent image={image}>
       {(safe) => (
@@ -105,27 +108,39 @@ function ImageContent({ image }: { image: ImagesInfiniteModel } & ConnectProps) 
               <MediaHash {...image} />
             </div>
           ) : (
-            <EdgeMedia
-              src={image.url}
-              name={image.name ?? image.id.toString()}
-              alt={
-                image.meta
-                  ? truncate(image.meta.prompt, { length: constants.altTruncateLength })
-                  : image.name ?? undefined
-              }
-              type={image.type}
-              className={`max-h-full w-auto max-w-full ${!safe ? 'invisible' : ''}`}
-              wrapperProps={{
-                className: `max-h-full w-auto max-w-full ${!safe ? 'invisible' : ''}`,
-                style: { aspectRatio: (image?.width ?? 0) / (image?.height ?? 0) },
-              }}
-              width={image.width}
-              anim
-              controls
-              quality={90}
-              original={image.type === 'video' ? true : undefined}
-              // fadeIn
-            />
+            <Stack spacing="xl" p={isAudio ? 'md' : undefined}>
+              {image.type === 'audio' && (
+                <Text size={32} weight={600} lineClamp={3} lh={1.2}>
+                  {image.name}
+                </Text>
+              )}
+              <EdgeMedia
+                src={image.url}
+                name={image.name ?? image.id.toString()}
+                alt={
+                  image.meta
+                    ? truncate(image.meta.prompt, { length: constants.altTruncateLength })
+                    : image.name ?? undefined
+                }
+                type={image.type}
+                className={`max-h-full w-auto max-w-full ${!safe ? 'invisible' : ''}`}
+                wrapperProps={{
+                  className: `max-h-full w-auto max-w-full ${!safe ? 'invisible' : ''}`,
+                  style: {
+                    aspectRatio:
+                      image.width && image.height ? image?.width / image?.height : undefined,
+                    maxWidth: isAudio ? 560 : undefined,
+                    width: isAudio ? '100%' : undefined,
+                  },
+                }}
+                width={image.width}
+                anim
+                controls
+                quality={90}
+                original={image.type === 'video' ? true : undefined}
+                // fadeIn
+              />
+            </Stack>
           )}
         </div>
       )}

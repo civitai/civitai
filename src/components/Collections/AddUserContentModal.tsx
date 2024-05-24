@@ -208,7 +208,7 @@ export function AddUserContentModal({ collectionId, opened, onClose, ...props }:
                         </>
                       ) : (
                         <>
-                          <MediaHash {...file} />
+                          {file.type !== 'audio' && <MediaHash {...file} />}
                           <Progress
                             size="xl"
                             value={file.progress}
@@ -301,7 +301,7 @@ function SelectableImageCard({ data: image }: { data: ImageGetInfinite[number] }
         <ImageGuard2 image={image}>
           {(safe) => (
             <>
-              <ImageGuard2.BlurToggle className="absolute top-2 left-2 z-10" />
+              <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
               {!safe ? (
                 <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>
                   <MediaHash {...image} />

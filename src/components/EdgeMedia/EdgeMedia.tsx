@@ -89,7 +89,7 @@ export function EdgeMedia({
         />
       );
     case 'audio':
-      return <EdgeAudio src={_src} duration={duration} />;
+      return <EdgeAudio src={url} duration={duration} wrapperProps={wrapperProps} />;
     default:
       return <Text align="center">Unsupported media type</Text>;
   }

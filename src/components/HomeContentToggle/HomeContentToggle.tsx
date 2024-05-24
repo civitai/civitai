@@ -29,6 +29,7 @@ import {
   IconFlower,
   IconVideo,
   TablerIconsProps,
+  IconMusic,
 } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
@@ -59,6 +60,10 @@ const homeOptions: Record<string, HomeOption> = {
   videos: {
     url: '/videos',
     icon: (props: TablerIconsProps) => <IconVideo {...props} />,
+  },
+  audios: {
+    url: '/audios',
+    icon: (props: TablerIconsProps) => <IconMusic {...props} />,
   },
   posts: {
     url: '/posts',

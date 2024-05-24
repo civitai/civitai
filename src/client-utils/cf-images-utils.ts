@@ -109,7 +109,7 @@ export function useEdgeUrl(src: string, options: Omit<EdgeUrlProps, 'src'> | und
     anim = anim ?? currentUser?.autoplayGifs ?? true;
   }
 
-  if (!anim) type = 'image';
+  if (!anim && type !== 'audio') type = 'image';
 
   const optimized = currentUser?.filePreferences?.imageFormat === 'optimized';
 

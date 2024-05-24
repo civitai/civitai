@@ -75,8 +75,15 @@ export function ImagesInfiniteContent({
   const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
 
   const browsingLevel = useBrowsingLevelDebounced();
-  const { images, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching } =
-    useQueryImages({ ...debouncedFilters, browsingLevel }, { keepPreviousData: true });
+  const {
+    images,
+    flatData = [],
+    isLoading,
+    fetchNextPage,
+    hasNextPage,
+    isRefetching,
+    isFetching,
+  } = useQueryImages({ ...debouncedFilters, browsingLevel }, { keepPreviousData: true });
 
   //#region [useEffect] cancel debounced filters
   useEffect(() => {
@@ -90,13 +97,13 @@ export function ImagesInfiniteContent({
         <Center p="xl">
           <Loader />
         </Center>
-      ) : !!images.length || hasNextPage ? (
+      ) : !!flatData.length || hasNextPage ? (
         <div style={{ position: 'relative' }}>
           <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
 
-          <ImagesProvider images={images}>
+          <ImagesProvider images={flatData}>
             <MasonryColumns
-              data={images}
+              data={flatData}
               imageDimensions={(data) => {
                 const width = data?.width ?? 450;
                 const height = data?.height ?? 450;

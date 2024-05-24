@@ -59,7 +59,7 @@ import { ImageProps } from '~/components/ImageViewer/ImageViewer';
 
 type ImageContextMenuProps = {
   image: Omit<ImageProps, 'tags'> & { ingestion?: ImageIngestionStatus };
-  context?: 'image' | 'post';
+  context?: 'image' | 'post' | 'audio';
   additionalMenuItems?: React.ReactNode;
   children?: React.ReactElement;
 };
@@ -189,7 +189,7 @@ function ImageMenuItems(
       )}
       <LoginRedirect reason="add-to-collection">
         <Menu.Item icon={<IconBookmark size={14} stroke={1.5} />} onClick={handleSaveClick}>
-          Save {context} to collection
+          Save to collection
         </Menu.Item>
       </LoginRedirect>
       {postId && !Router.query.postId && (
@@ -204,10 +204,10 @@ function ImageMenuItems(
         <>
           <LoginRedirect reason="report-content">
             <Menu.Item icon={<IconFlag size={14} stroke={1.5} />} onClick={handleReportClick}>
-              Report image
+              Report
             </Menu.Item>
           </LoginRedirect>
-          <HideImageButton as="menu-item" imageId={imageId} />
+          {context !== 'audio' && <HideImageButton as="menu-item" imageId={imageId} />}
           {_userId && <HideUserButton as="menu-item" userId={_userId} />}
         </>
       )}
@@ -243,12 +243,14 @@ function ImageMenuItems(
           >
             Remove as TOS Violation
           </Menu.Item>
-          <Menu.Item
-            icon={<IconRadar2 size={14} stroke={1.5} />}
-            onClick={() => rescanImage({ imageId })}
-          >
-            Rescan Image
-          </Menu.Item>
+          {isImage && (
+            <Menu.Item
+              icon={<IconRadar2 size={14} stroke={1.5} />}
+              onClick={() => rescanImage({ imageId })}
+            >
+              Rescan Image
+            </Menu.Item>
+          )}
           <Menu.Item icon={<IconAlertTriangle size={14} stroke={1.5} />} onClick={handleReportCsam}>
             Report CSAM
           </Menu.Item>
