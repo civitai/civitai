@@ -265,6 +265,10 @@ export const constants = {
     coverImageHeight: 400,
     coverImageWidth: 1600,
   },
+  article: {
+    coverImageHeight: 400,
+    coverImageWidth: 850,
+  },
   comments: {
     imageMaxDepth: 3,
     bountyEntryMaxDepth: 3,
