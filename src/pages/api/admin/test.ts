@@ -1,17 +1,6 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import { SessionUser } from 'next-auth';
-import { dbRead } from '~/server/db/client';
-import { eventEngine } from '~/server/events';
-import ncmecCaller from '~/server/http/ncmec/ncmec.caller';
-import { REDIS_KEYS } from '~/server/redis/client';
-import { getTopContributors } from '~/server/services/buzz.service';
-import { deleteImagesForModelVersionCache } from '~/server/services/image.service';
-import {
-  formatTextToImageResponses,
-  getTextToImageRequests,
-  textToImage,
-} from '~/server/services/orchestrator/textToImage';
-import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
+import { getTextToImageRequests, textToImage } from '~/server/services/orchestrator/textToImage';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 

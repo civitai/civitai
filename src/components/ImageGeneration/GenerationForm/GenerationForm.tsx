@@ -1,7 +1,7 @@
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { IsClient } from '~/components/IsClient/IsClient';
-import { GenerateFormModel, blockedRequest } from '~/server/schema/generation.schema';
+import { blockedRequest } from '~/server/schema/generation.schema';
 import {
   getFormData,
   useDerivedGenerationState,
