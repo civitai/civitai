@@ -296,10 +296,8 @@ const VaultItemsDownload = ({ vaultItems }: { vaultItems: VaultItemGetPaged[] })
   ];
 
   return (
-    <Modal {...dialog} size="md" withCloseButton title={`Deleting ${vaultItems.length} models`}>
+    <Modal {...dialog} size="md" withCloseButton title={`Downloading ${vaultItems.length} models`}>
       <Stack>
-        <Text size="sm">Models deleted from your Vault cannot be retrieved.</Text>
-
         <ScrollArea.Autosize maxHeight={500}>
           <Stack>
             {vaultItems.map((item) => (
