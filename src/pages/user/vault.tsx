@@ -249,6 +249,15 @@ const VaultItemsRemove = ({ vaultItems }: { vaultItems: VaultItemGetPaged[] }) =
   );
 };
 
+function downloadFile(url: string) {
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = ''; // use the filename from the url
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
 const VaultItemsDownload = ({ vaultItems }: { vaultItems: VaultItemGetPaged[] }) => {
   const dialog = useDialogContext();
   const handleClose = dialog.onClose;
@@ -274,10 +283,8 @@ const VaultItemsDownload = ({ vaultItems }: { vaultItems: VaultItemGetPaged[] })
         .flat();
 
       for (const file of files) {
-        window.open(file, '_blank');
-        // Some delay between window open to avoid popup blockers
-        // And also to avoid the myriad of tabs being opened at once.
-        await sleep(1500);
+        downloadFile(file);
+        await sleep(500);
       }
 
       setDownloading(false);
