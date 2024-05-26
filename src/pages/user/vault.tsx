@@ -284,7 +284,7 @@ const VaultItemsDownload = ({ vaultItems }: { vaultItems: VaultItemGetPaged[] })
 
       for (const file of files) {
         downloadFile(file);
-        await sleep(500);
+        await sleep(1500); // Keep sleep high to avoid missing downloads for some reason...
       }
 
       setDownloading(false);
