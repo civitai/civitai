@@ -7,6 +7,7 @@ export const trainingResultsSchema = z.object({
   start_time: z.string().nullish(),
   submittedAt: z.string().nullish(),
   end_time: z.string().nullish(),
+  // error_type: z.enum(['user', 'system']).nullish(),
   attempts: z.number().nullish(),
   jobId: z.string().nullish(),
   transactionId: z.string().nullish(),

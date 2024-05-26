@@ -171,9 +171,11 @@ export const createTrainingRequest = async ({
   userId,
   modelVersionId,
   isModerator,
+  skipModeration,
 }: CreateTrainingRequestInput & {
   userId?: number;
   isModerator?: boolean;
+  skipModeration?: boolean;
 }) => {
   const status = await getTrainingServiceStatus();
   if (!status.available && !isModerator)
@@ -234,6 +236,8 @@ export const createTrainingRequest = async ({
     baseModel: baseModelType,
     targetSteps: trainingParams.targetSteps,
   });
+
+  // TODO charge for skipModeration?
 
   // Determine if we still need to charge them for this training
   let transactionId = modelVersion.fileMetadata?.trainingResults?.transactionId;
@@ -298,7 +302,7 @@ export const createTrainingRequest = async ({
     priority: isPriority ? 'high' : 'normal',
     // interruptible: !isPriority,
     callbackUrl: `${env.WEBHOOK_URL}/resource-training?token=${env.WEBHOOK_TOKEN}`,
-    properties: { userId, transactionId, modelFileId: modelVersion.fileId },
+    properties: { userId, transactionId, skipModeration, modelFileId: modelVersion.fileId },
     model: baseModel in modelMap ? modelMap[baseModel] : baseModel,
     trainingData: trainingUrl,
     cost: Math.round((eta ?? 0) * 100) / 100,

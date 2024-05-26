@@ -289,7 +289,12 @@ export default function TrainingSelectFile({
 
   const epochs = [...mfEpochs].sort((a, b) => b.epoch_number - a.epoch_number);
 
-  const inError = modelVersion.trainingStatus === TrainingStatus.Failed;
+  const errorMessage =
+    modelVersion.trainingStatus === TrainingStatus.Failed
+      ? 'The training job failed. Please recreate this model and try again, or contact us for help.'
+      : modelVersion.trainingStatus === TrainingStatus.Denied
+      ? 'The training job was denied for violating the TOS. Please contact us with any questions.'
+      : undefined;
   const noEpochs = !epochs || !epochs.length;
   const resultsLoading =
     (modelVersion.trainingStatus !== TrainingStatus.InReview &&
@@ -313,9 +318,9 @@ export default function TrainingSelectFile({
 
   return (
     <Stack>
-      {inError ? (
+      {!!errorMessage ? (
         <Center py="md">
-          <NoContent message="The training job failed. Please recreate this model and try again, or contact us for help." />
+          <NoContent message={errorMessage} />
         </Center>
       ) : noEpochs ? (
         <Stack p="xl" align="center">
@@ -332,22 +337,23 @@ export default function TrainingSelectFile({
         </Stack>
       ) : (
         <>
-          {modelVersion.trainingStatus === TrainingStatus.Processing && (
-            <Stack p="xl" align="center">
-              <Loader />
-              <Stack spacing="sm" align="center">
-                <Text>
-                  Models are currently training{' '}
-                  {modelVersion.trainingDetails?.params?.maxTrainEpochs
-                    ? `(${epochs[0]?.epoch_number ?? 0}/${
-                        modelVersion.trainingDetails.params.maxTrainEpochs
-                      })`
-                    : '...'}
-                </Text>
-                <Text>Results will stream in as they complete.</Text>
+          {modelVersion.trainingStatus === TrainingStatus.Processing ||
+            (modelVersion.trainingStatus === TrainingStatus.Paused && (
+              <Stack p="xl" align="center">
+                <Loader />
+                <Stack spacing="sm" align="center">
+                  <Text>
+                    Models are currently training{' '}
+                    {modelVersion.trainingDetails?.params?.maxTrainEpochs
+                      ? `(${epochs[0]?.epoch_number ?? 0}/${
+                          modelVersion.trainingDetails.params.maxTrainEpochs
+                        })`
+                      : '...'}
+                  </Text>
+                  <Text>Results will stream in as they complete.</Text>
+                </Stack>
               </Stack>
-            </Stack>
-          )}
+            ))}
           <Flex justify="flex-end">
             <Button
               color="cyan"
