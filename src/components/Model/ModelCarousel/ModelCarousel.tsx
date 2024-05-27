@@ -178,7 +178,7 @@ function ModelCarouselContent({
                       <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
                       <Stack spacing="xs" align="flex-end" className="absolute right-2 top-2 z-10">
                         <ImageContextMenu image={image} />
-                        {features.imageGeneration && image.meta && (
+                        {features.imageGeneration && image.meta && !image.hideMeta && (
                           <HoverActionButton
                             label="Remix"
                             size={30}

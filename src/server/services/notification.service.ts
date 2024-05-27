@@ -120,6 +120,7 @@ export const markNotificationsRead = async ({
       SELECT "id", ${userId}
       FROM "Notification"
       WHERE ${Prisma.join(AND, ' AND ')}
+      ON CONFLICT ("id") DO NOTHING
     `;
 
     // Update cache

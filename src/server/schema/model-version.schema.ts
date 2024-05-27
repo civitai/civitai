@@ -90,6 +90,7 @@ export const trainingDetailsObj = z.object({
   params: trainingDetailsParams.optional(),
   samplePrompts: z.array(z.string()).optional(),
   staging: z.boolean().optional(),
+  highPriority: z.boolean().optional(),
 });
 
 export const modelVersionUpsertSchema = z.object({

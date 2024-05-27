@@ -228,6 +228,7 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
       </Box>
       {isLoading || loadingPreferences ? (
         <div className={classes.grid}>
+          {useGrid && <div className={classes.gridMeta}>{MetaDataGrid}</div>}
           {Array.from({ length: ITEMS_PER_ROW * rows }).map((_, index) => (
             <AspectRatio ratio={7 / 9} key={index}>
               <Skeleton width="100%" />

@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { highlightInappropriate, includesInappropriate } from '~/utils/metadata/audit';
-import { normalizeText } from '~/utils/string-helpers';
+import { normalizeText } from '~/utils/normalize-text';
 
 export default function PromptHighlight({
   prompt,

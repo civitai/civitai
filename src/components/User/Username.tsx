@@ -80,7 +80,7 @@ export const BadgeDisplay = ({
             filter,
           }}
         >
-          <EdgeMedia src={badge.data.url} alt={badge.name} width="original" />
+          <EdgeMedia src={badge.data.url} alt={badge.name}  />
         </div>
       ) : (
         <div style={{ display: 'flex', zIndex, filter }}>

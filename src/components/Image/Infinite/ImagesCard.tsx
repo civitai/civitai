@@ -112,7 +112,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                         {safe && (
                           <Stack spacing="xs" ml="auto" sx={{ pointerEvents: 'auto' }}>
                             {!isBlocked && <ImageContextMenu image={image} />}
-                            {features.imageGeneration && image.meta && (
+                            {features.imageGeneration && image.meta && !image.hideMeta && (
                               <HoverActionButton
                                 label="Remix"
                                 size={30}
@@ -206,7 +206,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                                 readonly={!safe}
                                 className={classes.reactions}
                               />
-                              {image.hasMeta && data.meta && (
+                              {(data.hasMeta || !image.hideMeta) && data.meta && (
                                 <ImageMetaPopover meta={data.meta}>
                                   <ActionIcon variant="transparent" size="lg">
                                     <IconInfoCircle

@@ -8,6 +8,7 @@ import {
   Card,
   CloseButton,
   Group,
+  RingProgress,
   ScrollArea,
   Text,
   UnstyledButton,
@@ -203,7 +204,7 @@ export function ImageDetail2() {
                     {/* Placeholder */}
                     <div className="@md:hidden" />
                     <div className="flex gap-1 @max-md:hidden">
-                      <ImageGuard2.BlurToggle {...sharedBadgeProps} alwaysVisible />
+                      <ImageGuard2.BlurToggle {...sharedBadgeProps} />
                       {LeftImageControls}
                     </div>
 
@@ -211,7 +212,6 @@ export function ImageDetail2() {
                       <ImageGuard2.BlurToggle
                         {...sharedBadgeProps}
                         className={`${sharedBadgeProps.className} @md:hidden`}
-                        alwaysVisible
                       />
                       <Badge {...sharedBadgeProps}>
                         <IconEye {...sharedIconProps} />
@@ -219,18 +219,24 @@ export function ImageDetail2() {
                           {abbreviateNumber(image.stats?.viewCountAllTime ?? 0)}
                         </Text>
                       </Badge>
-                      {/* <DownloadImage
-                        src={image.url}
-                        width="original"
-                        type={image.type}
-                        name={image.name}
-                      >
-                        {({ onClick }) => (
-                          <ActionIcon {...sharedActionIconProps} onClick={onClick}>
-                            <IconDownload {...sharedIconProps} />
+                      <DownloadImage src={image.url} type={image.type} name={image.name}>
+                        {({ onClick, isLoading, progress }) => (
+                          <ActionIcon
+                            {...sharedActionIconProps}
+                            onClick={onClick}
+                            loading={isLoading && progress === 0}
+                          >
+                            {isLoading && progress > 0 && (
+                              <RingProgress
+                                size={36}
+                                sections={[{ value: progress, color: 'blue' }]}
+                                thickness={4}
+                              />
+                            )}
+                            {!isLoading && <IconDownload {...sharedIconProps} />}
                           </ActionIcon>
                         )}
-                      </DownloadImage> */}
+                      </DownloadImage>
                       <ShareButton
                         url={shareUrl}
                         title={`Image by ${image.user.username}`}

@@ -269,7 +269,9 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
         WHERE i."createdAt" >= ${lastUpdatedAt} 
       `);
     const data = await db.$queryRaw<{ startId: number; endId: number }[]>`
-      SELECT MIN(i.id) as "startId", MAX(i.id) as "endId" FROM "Image" i
+    SELECT (	
+      SELECT
+      i.id FROM "Image" i 
       ${
         lastUpdatedAt
           ? Prisma.sql`
@@ -277,6 +279,10 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
       `
           : Prisma.sql``
       }
+      ORDER BY "createdAt" LIMIT 1
+    ) as "startId", (	
+      SELECT MAX (id) FROM "Image"
+    ) as "endId";      
     `;
 
     const { startId, endId } = data[0];

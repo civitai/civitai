@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { civTokenEncrypt } from '~/pages/api/auth/civ-token';
 import { dbRead } from '~/server/db/client';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
+import { trackModActivity } from '~/server/services/moderator.service';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
 
 const schema = z.object({
@@ -30,6 +31,13 @@ export default AuthedEndpoint(async function handler(req, res, user) {
 
   try {
     const token = civTokenEncrypt(userId.toString());
+
+    await trackModActivity(user.id, {
+      entityType: 'impersonate',
+      entityId: userId,
+      activity: 'on',
+    });
+
     return res.status(200).json({ token });
   } catch (error: unknown) {
     return res.status(500).send((error as Error).message);

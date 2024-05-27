@@ -24,7 +24,7 @@ import { getTagRules } from '~/server/services/system-cache';
 import { uniqBy } from 'lodash-es';
 import { NsfwLevel } from '~/server/common/enums';
 import { logToAxiom } from '~/server/logging/client';
-import { normalizeText } from '~/utils/string-helpers';
+import { normalizeText } from '~/utils/normalize-text';
 
 const REQUIRED_SCANS = [TagSource.WD14, TagSource.Rekognition];
 

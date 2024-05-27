@@ -245,11 +245,11 @@ export const updateImageReportStatusByReason = ({
   status: ReportStatus;
 }) => {
   return dbWrite.$queryRaw<{ id: number; userId: number }[]>`
-    UPDATE "Report" r SET status = ${status}
+    UPDATE "Report" r SET status = ${status}::"ReportStatus"
     FROM "ImageReport" i
     WHERE i."reportId" = r.id
       AND i."imageId" = ${id}
-      AND r.reason = ${reason}
+      AND r.reason = ${reason}::"ReportReason"
     RETURNING id, "userId"
   `;
 };
@@ -2937,7 +2937,7 @@ export async function updateImageTechniques({
 export function purgeImageGenerationDataCache(id: number) {
   purgeCache({ tags: [`image-generation-data-${id}`] });
 }
-const strengthTypes: ModelType[] = ['TextualInversion', 'LORA'];
+const strengthTypes: ModelType[] = ['TextualInversion', 'LORA', 'DoRA', 'LoCon'];
 export async function getImageGenerationData({ id }: { id: number }) {
   const image = await dbRead.image.findUnique({
     where: { id },

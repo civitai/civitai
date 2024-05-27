@@ -68,6 +68,7 @@ export const dialogs = createDialogDictionary({
   },
   resourceReview: {
     component: ResourceReviewModal,
+    target: '#main',
     resolve: (query, { reviewId }) => ({
       query: { ...query, reviewId },
     }),

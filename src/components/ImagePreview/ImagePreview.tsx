@@ -60,7 +60,7 @@ export function ImagePreview({
   // };
 
   aspectRatio ??= Math.max((width ?? 16) / (height ?? 9), 9 / 16);
-  if (edgeImageProps.width === 'original') edgeImageProps.width = width ?? undefined;
+  edgeImageProps.width ??= width ?? undefined;
 
   if (!edgeImageProps.width && !edgeImageProps.height) {
     if (!edgeImageProps.height && width) edgeImageProps.width = width;
@@ -134,7 +134,7 @@ export function ImagePreview({
   // if (onClick) edgeImageStyle.cursor = 'pointer'; // !important - this line was causing hydration errors
   if (style?.height || style?.maxHeight) edgeImageStyle.maxHeight = '100%';
   const Image = nsfw ? (
-    <div className="relative h-full w-full">
+    <div className="relative size-full">
       <MediaHash hash={hash} width={width} height={height} />
     </div>
   ) : (
