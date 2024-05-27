@@ -114,8 +114,8 @@ export const useQueryVaultItems = (
 
 export const getVaultItemDownloadUrls = (vaultItem: VaultItemGetPaged) => {
   return {
-    models: `${env.NEXT_PUBLIC_BASE_URL}/api/download/vault/${vaultItem.id}?type=model`,
-    images: `${env.NEXT_PUBLIC_BASE_URL}/api/download/vault/${vaultItem.id}?type=images`,
-    details: `${env.NEXT_PUBLIC_BASE_URL}/api/download/vault/${vaultItem.id}?type=details`,
+    models: `/api/download/vault/${vaultItem.id}?type=model`,
+    images: `/api/download/vault/${vaultItem.id}?type=images`,
+    details: `/api/download/vault/${vaultItem.id}?type=details`,
   };
 };

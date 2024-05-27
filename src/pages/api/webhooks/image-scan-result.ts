@@ -23,7 +23,7 @@ import {
   includesPoi,
 } from '~/utils/metadata/audit';
 import { signalClient } from '~/utils/signal-client';
-import { normalizeText } from '~/utils/string-helpers';
+import { normalizeText } from '~/utils/normalize-text';
 
 const REQUIRED_SCANS = [TagSource.WD14, TagSource.Rekognition];
 

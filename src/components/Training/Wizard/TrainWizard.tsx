@@ -7,7 +7,6 @@ import { TrainingFormBasic } from '~/components/Training/Form/TrainingBasicInfo'
 import { basePath } from '~/components/Training/Form/TrainingCommon';
 import { TrainingFormImages } from '~/components/Training/Form/TrainingImages';
 import { TrainingFormSubmit } from '~/components/Training/Form/TrainingSubmit';
-import { usePostHog } from '~/hooks/usePostHog';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
 import { FeatureIntroductionHelpButton } from '~/components/FeatureIntroduction/FeatureIntroduction';
@@ -18,12 +17,6 @@ type WizardState = {
 
 export default function TrainWizard() {
   const router = useRouter();
-
-  const posthog = usePostHog();
-  useEffect(() => {
-    posthog?.startSessionRecording();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   const { modelId } = router.query;
   const pathWithId = `${basePath}?modelId=${modelId}`;

@@ -385,8 +385,6 @@ async function getCollectionTasks(ctx: ModelMetricContext) {
     SELECT "modelId" as id
     FROM "CollectionItem"
     WHERE "modelId" IS NOT NULL AND "createdAt" > '${ctx.lastUpdate}'
-    -- Safeguard against deleted models. Might make the query somewhat slower
-    JOIN "Model" m ON m.id = "modelId" 
   `;
 
   const tasks = chunk(affected, BATCH_SIZE).map((ids, i) => async () => {
@@ -401,6 +399,7 @@ async function getCollectionTasks(ctx: ModelMetricContext) {
         ${snippets.timeframeCount('c."createdAt"', 'c."addedById"')} "collectedCount"
       FROM "CollectionItem" c
       CROSS JOIN ( SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe ) tf
+      JOIN "Model" m ON m.id = c."modelId" -- ensure model exists
       WHERE c."modelId" IN (${ids})
       GROUP BY "modelId", timeframe
       ON CONFLICT ("modelId", timeframe) DO UPDATE

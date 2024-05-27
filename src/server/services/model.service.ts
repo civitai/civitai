@@ -85,6 +85,7 @@ import {
   WithClaimKey,
 } from '~/server/selectors/cosmetic.selector';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
+import { dataForModelsCache } from '~/server/redis/caches';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
@@ -360,7 +361,7 @@ export const getModelsRaw = async ({
 
   if (period && period !== MetricTimeframe.AllTime && periodMode !== 'stats') {
     AND.push(
-      Prisma.sql`(COALESCE(m."lastVersionAt", lmv."createdAt") >= ${decreaseDate(
+      Prisma.sql`(m."lastVersionAt" >= ${decreaseDate(
         new Date(),
         1,
         period.toLowerCase() as ManipulateType
@@ -495,38 +496,18 @@ export const getModelsRaw = async ({
     )`);
   }
 
-  const modelVersionWhere: Prisma.Sql[] = [];
-
-  if (!sessionUser?.isModerator || !status?.length) {
-    modelVersionWhere.push(Prisma.sql`mv."status" = ${ModelStatus.Published}::"ModelStatus"`);
-  }
-
-  if (baseModels) {
-    modelVersionWhere.push(Prisma.sql`mv."baseModel" IN (${Prisma.join(baseModels, ',')})`);
-  }
-
-  if (!!modelVersionIds?.length) {
-    modelVersionWhere.push(Prisma.sql`mv."id" IN (${Prisma.join(modelVersionIds, ',')})`);
-  }
-
-  if (hidePrivateModels) {
-    modelVersionWhere.push(Prisma.sql`mv."availability" = 'Public'::"Availability"`);
-  }
-
-  // if (!includeDetails) {
-  const browsingLevelQuery = Prisma.sql`(lmv."nsfwLevel" & ${browsingLevel}) != 0`;
+  const browsingLevelQuery = Prisma.sql`(m."nsfwLevel" & ${browsingLevel}) != 0`;
   if (pending && (isModerator || userId)) {
     if (isModerator) {
-      AND.push(Prisma.sql`(${browsingLevelQuery} OR lmv."nsfwLevel" = 0)`);
+      AND.push(Prisma.sql`(${browsingLevelQuery} OR m."nsfwLevel" = 0)`);
     } else if (userId) {
       AND.push(
-        Prisma.sql`(${browsingLevelQuery} OR (lmv."nsfwLevel" = 0 AND m."userId" = ${userId}))`
+        Prisma.sql`(${browsingLevelQuery} OR (m."nsfwLevel" = 0 AND m."userId" = ${userId}))`
       );
     }
   } else {
     AND.push(browsingLevelQuery);
   }
-  // }
 
   const WITH: Prisma.Sql[] = [];
   if (clubId) {
@@ -550,42 +531,7 @@ export const getModelsRaw = async ({
         GROUP BY mv."modelId"
       )
     `);
-
-    modelVersionWhere.push(Prisma.sql`cm."modelVersionId" = mv."id"`);
   }
-  WITH.push(Prisma.sql`"CTE_ModelVersionDetails" AS NOT MATERIALIZED (
-    SELECT
-      mv."id",
-      mv.index,
-      mv."modelId",
-      mv."name",
-      mv."earlyAccessTimeFrame",
-      mv."baseModel",
-      mv."baseModelType",
-      mv."createdAt",
-      mv."trainingStatus",
-      mv."publishedAt",
-      mv."status",
-      mv.availability,
-      mv."nsfwLevel",
-      ${ifDetails`
-        mv."description",
-        mv."trainedWords",
-        mv."vaeId",
-      `}
-      COALESCE((
-        SELECT gc.covered
-        FROM "GenerationCoverage" gc
-        WHERE gc."modelVersionId" = mv.id
-      ), false) AS covered
-    FROM "ModelVersion" mv
-    WHERE
-      ${
-        modelVersionWhere.length > 0
-          ? Prisma.sql`${Prisma.join(modelVersionWhere, ' AND ')}`
-          : Prisma.sql`1 = 1`
-      }
-  )`);
 
   const queryWith = WITH.length > 0 ? Prisma.sql`WITH ${Prisma.join(WITH, ', ')}` : Prisma.sql``;
 
@@ -622,40 +568,6 @@ export const getModelsRaw = async ({
         'collectedCount', mm."collectedCount",
         'tippedAmountCount', mm."tippedAmountCount"
       ) as "rank",
-      (
-        SELECT COALESCE(jsonb_agg(jsonb_build_object(
-          'tagId', "tagId",
-          'name', t."name"
-          )
-        ), '[]'::jsonb) FROM "TagsOnModels"
-            JOIN "Tag" t ON "tagId" = t."id"
-            WHERE "modelId" = m."id"
-            AND "tagId" IS NOT NULL
-      ) as "tagsOnModels",
-      (
-        SELECT COALESCE(jsonb_agg(jsonb_build_object('hash', "hash")), '[]'::jsonb) FROM "ModelHash"
-            WHERE "modelId" = m."id"
-            AND "modelId" IS NOT NULL
-            AND "hashType" = 'SHA256'
-            AND "fileType" IN ('Model', 'Pruned Model')
-        AND "hash" IS NOT NULL
-      ) as "hashes",
-      ${
-        includeDetails
-          ? Prisma.sql`(
-            SELECT jsonb_agg(data)
-              FROM (
-                SELECT row_to_json(mvd) as data
-                FROM "CTE_ModelVersionDetails" mvd
-                WHERE mvd."modelId" = m.id
-                ORDER BY index
-              ) as t
-            ) as "modelVersions",`
-          : Prisma.sql`(
-            SELECT jsonb_agg(data)
-            FROM (SELECT row_to_json(lmv) AS data) as t
-            ) as "modelVersions",`
-      }
       jsonb_build_object(
         'id', u."id",
         'username', u."username",
@@ -667,13 +579,6 @@ export const getModelsRaw = async ({
     JOIN "ModelMetric" mm ON mm."modelId" = m."id" AND mm."timeframe" = ${period}::"MetricTimeframe"
     JOIN "User" u ON m."userId" = u.id
     ${clubId ? Prisma.sql`JOIN "clubModels" cm ON cm."modelId" = m."id"` : Prisma.sql``}
-    CROSS JOIN LATERAL (
-        SELECT *
-        FROM "CTE_ModelVersionDetails" mv
-        WHERE mv."modelId" = m.id
-        ORDER BY mv.index ASC
-        LIMIT 1
-    ) lmv -- LatestModelVersion
     WHERE ${Prisma.join(AND, ' AND ')}
     ORDER BY ${Prisma.raw(orderBy)}
     LIMIT ${(take ?? 100) + 1}
@@ -686,6 +591,11 @@ export const getModelsRaw = async ({
   const userIds = models.map((m) => m.user.id);
   const profilePictures = await getProfilePicturesForUsers(userIds);
   const userCosmetics = await getCosmeticsForUsers(userIds);
+
+  // Get versions, hash, and tags from cache
+  const modelIds = models.map((m) => m.id);
+  const modelData = await dataForModelsCache.fetch(modelIds);
+
   const cosmetics = includeCosmetics
     ? await getCosmeticsForEntity({ ids: models.map((m) => m.id), entity: 'Model' })
     : {};
@@ -697,26 +607,60 @@ export const getModelsRaw = async ({
   }
 
   return {
-    items: models.map(({ rank, modelVersions, cursorId, ...model }) => ({
-      ...model,
-      rank: {
-        [`downloadCount${input.period}`]: rank.downloadCount,
-        [`thumbsUpCount${input.period}`]: rank.thumbsUpCount,
-        [`thumbsDownCount${input.period}`]: rank.thumbsDownCount,
-        [`commentCount${input.period}`]: rank.commentCount,
-        [`ratingCount${input.period}`]: rank.ratingCount,
-        [`rating${input.period}`]: rank.rating,
-        [`collectedCount${input.period}`]: rank.collectedCount,
-        [`tippedAmountCount${input.period}`]: rank.tippedAmountCount,
-      },
-      modelVersions: (modelVersions ?? []).filter(isDefined),
-      user: {
-        ...model.user,
-        profilePicture: profilePictures?.[model.user.id] ?? null,
-        cosmetics: userCosmetics[model.user.id] ?? [],
-      },
-      cosmetic: cosmetics[model.id] ?? null,
-    })),
+    items: models
+      .map(({ rank, cursorId, ...model }) => {
+        const data = modelData[model.id.toString()];
+        if (!data) return null;
+
+        let modelVersions = data.versions;
+
+        // Apply version filters
+        if (!sessionUser?.isModerator || !status?.length) {
+          modelVersions = modelVersions.filter((mv) => mv.status === ModelStatus.Published);
+        }
+
+        if (baseModels) {
+          modelVersions = modelVersions.filter((mv) => baseModels.includes(mv.baseModel));
+        }
+
+        if (!!modelVersionIds?.length) {
+          modelVersions = modelVersions.filter((mv) => modelVersionIds.includes(mv.id));
+        }
+
+        if (hidePrivateModels) {
+          modelVersions = modelVersions.filter((mv) => mv.availability === 'Public');
+        }
+
+        // eject if no versions
+        if (modelVersions.length === 0) return null;
+
+        // If not getting full details, only return the latest version
+        if (!includeDetails) modelVersions = modelVersions.slice(0, 1);
+
+        return {
+          ...model,
+          rank: {
+            [`downloadCount${input.period}`]: rank.downloadCount,
+            [`thumbsUpCount${input.period}`]: rank.thumbsUpCount,
+            [`thumbsDownCount${input.period}`]: rank.thumbsDownCount,
+            [`commentCount${input.period}`]: rank.commentCount,
+            [`ratingCount${input.period}`]: rank.ratingCount,
+            [`rating${input.period}`]: rank.rating,
+            [`collectedCount${input.period}`]: rank.collectedCount,
+            [`tippedAmountCount${input.period}`]: rank.tippedAmountCount,
+          },
+          modelVersions,
+          hashes: data.hashes,
+          tagsOnModels: data.tags,
+          user: {
+            ...model.user,
+            profilePicture: profilePictures?.[model.user.id] ?? null,
+            cosmetics: userCosmetics[model.user.id] ?? [],
+          },
+          cosmetic: cosmetics[model.id] ?? null,
+        };
+      })
+      .filter(isDefined),
     nextCursor,
     isPrivate,
   };
@@ -1064,7 +1008,7 @@ export const getModelsWithImagesAndModelVersions = async ({
         return {
           ...model,
           tags: tagsOnModels.map((x) => x.tagId), // not sure why we even use scoring here...
-          hashes: hashes.map((hash) => hash.hash.toLowerCase()),
+          hashes: hashes.map((hash) => hash.toLowerCase()),
           rank: {
             downloadCount: rank?.[`downloadCount${input.period}`] ?? 0,
             thumbsUpCount: rank?.[`thumbsUpCount${input.period}`] ?? 0,
@@ -1406,8 +1350,8 @@ export const publishModelById = async ({
         await tx.$executeRaw`
           UPDATE "Post"
           SET
-            "publishedAt" = CASE 
-              WHEN "metadata"->>'prevPublishedAt' IS NOT NULL 
+            "publishedAt" = CASE
+              WHEN "metadata"->>'prevPublishedAt' IS NOT NULL
               THEN to_timestamp("metadata"->>'prevPublishedAt', 'YYYY-MM-DD"T"HH24:MI:SS.MS')
               ELSE ${publishedAt}
             END,

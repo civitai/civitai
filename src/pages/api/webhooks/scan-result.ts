@@ -4,6 +4,7 @@ import { env } from '~/env/server.mjs';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { ScannerTasks } from '~/server/jobs/scan-files';
+import { dataForModelsCache } from '~/server/redis/caches';
 import { modelsSearchIndex } from '~/server/search-index';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
@@ -96,13 +97,15 @@ export default WebhookEndpoint(async (req, res) => {
       where: { id: file.modelVersionId },
       select: { modelId: true },
     });
-    if (version?.modelId)
+    if (version?.modelId) {
       await modelsSearchIndex.queueUpdate([
         {
           id: version.modelId,
           action: SearchIndexUpdateQueueAction.Update,
         },
       ]);
+      await dataForModelsCache.bust(version.modelId);
+    }
   }
 
   res.status(200).json({ ok: true });

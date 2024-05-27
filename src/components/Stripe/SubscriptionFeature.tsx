@@ -1,6 +1,6 @@
 import { Paper, createStyles, Text, Stack, Group } from '@mantine/core';
 import { IconBolt } from '@tabler/icons-react';
-import { capitalize } from 'lodash';
+import { capitalize } from 'lodash-es';
 import { useUserMultipliers } from '~/components/Buzz/useBuzz';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';

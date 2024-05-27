@@ -1,5 +1,5 @@
 import { ModelType } from '@prisma/client';
-import _ from 'lodash';
+import _ from 'lodash-es';
 import { z } from 'zod';
 import { VaultSort } from '~/server/common/enums';
 import { paginationSchema } from '~/server/schema/base.schema';

@@ -62,7 +62,7 @@ function UnroutedImageCard({ data }: Props) {
                   {safe && (
                     <Stack spacing="xs" ml="auto" style={{ pointerEvents: 'auto' }}>
                       <ImageContextMenu image={data} />
-                      {features.imageGeneration && data.meta && (
+                      {features.imageGeneration && data.meta && !data.hideMeta && (
                         <HoverActionButton
                           label="Remix"
                           size={30}

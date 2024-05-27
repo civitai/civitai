@@ -44,7 +44,7 @@ import { useActiveSubscription, useCanUpgrade } from '~/components/Stripe/member
 import { useRouter } from 'next/router';
 import { userTierSchema } from '~/server/schema/user.schema';
 import { z } from 'zod';
-import { capitalize } from 'lodash';
+import { capitalize } from 'lodash-es';
 import { booleanString } from '~/utils/zod-helpers';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 
