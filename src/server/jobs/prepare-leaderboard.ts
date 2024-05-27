@@ -75,7 +75,7 @@ const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async 
     }).catch();
   });
   try {
-    await limitConcurrency(tasks, 3);
+    await limitConcurrency(tasks, 1);
     log('Leaderboards - Done');
     await updateLegendsBoardResults();
     await setLastRun();

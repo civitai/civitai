@@ -12,7 +12,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { isDefined } from '~/utils/type-guards';
 import { RunType } from '~/store/generation.store';
-import { uniqBy } from 'lodash';
+import { uniqBy } from 'lodash-es';
 import {
   GenerateFormModel,
   GenerationRequestTestRunSchema,

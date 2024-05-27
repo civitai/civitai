@@ -1,5 +1,6 @@
 import { ImageMetaProps } from '~/server/schema/image.schema';
-import { normalizeText, trimNonAlphanumeric } from '~/utils/string-helpers';
+import { trimNonAlphanumeric } from '~/utils/string-helpers';
+import { normalizeText } from '~/utils/normalize-text';
 import blockedNSFW from './lists/blocklist-nsfw.json';
 import blocked from './lists/blocklist.json';
 import nsfwWords from './lists/words-nsfw.json';

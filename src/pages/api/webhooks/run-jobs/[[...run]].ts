@@ -141,16 +141,16 @@ const querySchema = z.object({
 });
 
 async function isLocked(name: string) {
-  if (!isProd) return false;
+  if (!isProd || name === 'prepare-leaderboard') return false;
   return (await redis?.get(`job:${name}`)) === 'true';
 }
 
 async function lock(name: string, lockExpiration: number) {
-  if (!isProd) return;
+  if (!isProd || name === 'prepare-leaderboard') return;
   await redis?.set(`job:${name}`, 'true', { EX: lockExpiration });
 }
 
 async function unlock(name: string) {
-  if (!isProd) return;
+  if (!isProd || name === 'prepare-leaderboard') return;
   await redis?.del(`job:${name}`);
 }

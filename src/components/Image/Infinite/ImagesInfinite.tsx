@@ -1,25 +1,25 @@
-import { LoadingOverlay, Center, Loader, Group, Button } from '@mantine/core';
+import { Button, Center, Group, Loader, LoadingOverlay } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
+import { MediaType, MetricTimeframe, ReviewReactions } from '@prisma/client';
 import { isEqual } from 'lodash-es';
+import Link from 'next/link';
 import { useEffect } from 'react';
+import { IntersectionOptions } from 'react-intersection-observer';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
+import { FeedWrapper } from '~/components/Feed/FeedWrapper';
+import { useImageFilters, useQueryImages } from '~/components/Image/image.utils';
 
 import { ImagesCard } from '~/components/Image/Infinite/ImagesCard';
-import { removeEmpty } from '~/utils/object-helpers';
-import { ImageSort } from '~/server/common/enums';
-import { useImageFilters, useQueryImages } from '~/components/Image/image.utils';
-import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
-import { MediaType, MetricTimeframe, ReviewReactions } from '@prisma/client';
-import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
-import { IsClient } from '~/components/IsClient/IsClient';
-import { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
-import { ImageGetInfinite } from '~/types/router';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { InViewLoader } from '~/components/InView/InViewLoader';
+import { IsClient } from '~/components/IsClient/IsClient';
+import { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
+import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
 import { NoContent } from '~/components/NoContent/NoContent';
-import Link from 'next/link';
-import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
-import { FeedWrapper } from '~/components/Feed/FeedWrapper';
-import { IntersectionOptions } from 'react-intersection-observer';
+import { ImageSort } from '~/server/common/enums';
+import { ImageGetInfinite } from '~/types/router';
+import { removeEmpty } from '~/utils/object-helpers';
 
 type ImageFilters = {
   modelId?: number;
@@ -75,15 +75,11 @@ export function ImagesInfiniteContent({
   const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
 
   const browsingLevel = useBrowsingLevelDebounced();
-  const {
-    images,
-    flatData = [],
-    isLoading,
-    fetchNextPage,
-    hasNextPage,
-    isRefetching,
-    isFetching,
-  } = useQueryImages({ ...debouncedFilters, browsingLevel }, { keepPreviousData: true });
+  const { images, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching } =
+    useQueryImages(
+      { ...debouncedFilters, browsingLevel, include: ['cosmetics'] },
+      { keepPreviousData: true }
+    );
 
   //#region [useEffect] cancel debounced filters
   useEffect(() => {
@@ -97,13 +93,13 @@ export function ImagesInfiniteContent({
         <Center p="xl">
           <Loader />
         </Center>
-      ) : !!flatData.length || hasNextPage ? (
+      ) : !!images.length || hasNextPage ? (
         <div style={{ position: 'relative' }}>
           <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
 
-          <ImagesProvider images={flatData}>
+          <ImagesProvider images={images}>
             <MasonryColumns
-              data={flatData}
+              data={images}
               imageDimensions={(data) => {
                 const width = data?.width ?? 450;
                 const height = data?.height ?? 450;

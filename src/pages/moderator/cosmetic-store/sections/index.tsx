@@ -28,7 +28,7 @@ import {
 import { openConfirmModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
 import { IconCloudOff, IconEdit, IconPlus, IconTrash } from '@tabler/icons-react';
-import { indexOf, isEqual } from 'lodash';
+import { indexOf, isEqual } from 'lodash-es';
 import { useEffect, useState } from 'react';
 import { BackButton } from '~/components/BackButton/BackButton';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
@@ -207,7 +207,7 @@ export default function CosmeticStoreSections() {
                               {(safe) => (
                                 <>
                                   <ImageGuard2.BlurToggle
-                                    className="absolute top-2 left-2 z-10"
+                                    className="absolute left-2 top-2 z-10"
                                     sfwClassName="hidden"
                                   />
                                   {!safe ? (

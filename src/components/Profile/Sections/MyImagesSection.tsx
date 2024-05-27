@@ -1,3 +1,12 @@
+import { Button, Loader, Text } from '@mantine/core';
+import { MetricTimeframe } from '@prisma/client';
+import { IconArrowRight, IconPhoto } from '@tabler/icons-react';
+import Link from 'next/link';
+import React, { useMemo } from 'react';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { ImageCard } from '~/components/Cards/ImageCard';
+import { useDumbImageFilters, useQueryImages } from '~/components/Image/image.utils';
+import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import {
   ProfileSection,
   ProfileSectionNoResults,
@@ -5,18 +14,9 @@ import {
   ProfileSectionProps,
   useProfileSectionStyles,
 } from '~/components/Profile/ProfileSection';
-import { useInView } from '~/hooks/useInView';
-import { IconArrowRight, IconPhoto } from '@tabler/icons-react';
-import React, { useMemo } from 'react';
-import { ImageSort } from '~/server/common/enums';
-import { Anchor, Button, Group, Loader, Text } from '@mantine/core';
-import { MetricTimeframe } from '@prisma/client';
-import { useDumbImageFilters, useQueryImages } from '~/components/Image/image.utils';
-import { ImageCard } from '~/components/Cards/ImageCard';
-import Link from 'next/link';
-import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { ShowcaseGrid } from '~/components/Profile/Sections/ShowcaseGrid';
-import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { useInView } from '~/hooks/useInView';
+import { ImageSort } from '~/server/common/enums';
 
 const MAX_IMAGES_DISPLAY = 32; // 2 rows of 7
 
@@ -43,7 +43,7 @@ export const MyImagesSection = ({ user }: ProfileSectionProps) => {
       username: user.username,
       withMeta: false,
       types: undefined,
-      include: ['profilePictures'],
+      include: ['profilePictures', 'cosmetics'],
       browsingLevel,
     },
     { keepPreviousData: true, enabled: inView }

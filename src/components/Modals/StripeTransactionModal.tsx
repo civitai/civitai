@@ -60,6 +60,8 @@ const StripeTransactionModal = ({
   clientSecret,
   successMessage,
   paymentMethodTypes = [],
+  setupFuturePayment,
+  setupFuturePaymentToggle,
 }: Props & { clientSecret: string; onClose: () => void; paymentMethodTypes?: string[] }) => {
   const { userPaymentMethods, isLoading: isLoadingPaymentMethods } = useUserPaymentMethods();
   const [success, setSuccess] = useState<boolean>(false);
@@ -157,6 +159,21 @@ const StripeTransactionModal = ({
             <Text weight="bold">Add new payment method</Text>
           </Stack>
         )}
+        {setupFuturePayment && (
+          <Text size="sm">
+            Don&rsquo;t see your payment method?{' '}
+            <Text color="blue.4" component="button" onClick={setupFuturePaymentToggle}>
+              Click here
+            </Text>
+          </Text>
+        )}
+        {!setupFuturePayment && (
+          <Text size="sm">
+            <Text color="blue.4" component="button" onClick={setupFuturePaymentToggle}>
+              Back to default payment methods
+            </Text>
+          </Text>
+        )}
         <PaymentElement id="payment-element" options={paymentElementOptions} />
         {errorMessage && (
           <Text color="red" size="sm">
@@ -204,6 +221,8 @@ type Props = {
   onSuccess?: (stripePaymentIntentId: string) => Promise<void>;
   metadata: PaymentIntentMetadataSchema;
   paymentMethodTypes?: string[];
+  setupFuturePayment?: boolean;
+  setupFuturePaymentToggle?: () => void;
 };
 
 const { openModal, Modal } = createContextModal<Props>({
@@ -231,6 +250,7 @@ const { openModal, Modal } = createContextModal<Props>({
       loading: isLoadingRecaptcha,
       error: recaptchaError,
     } = useRecaptchaToken(RECAPTCHA_ACTIONS.STRIPE_TRANSACTION);
+    const [setupFuturePayment, setSetupFuturePayment] = useState(true);
 
     const { data, isLoading, isFetching, error } = trpc.stripe.getPaymentIntent.useQuery(
       {
@@ -239,6 +259,7 @@ const { openModal, Modal } = createContextModal<Props>({
         metadata,
         paymentMethodTypes: desiredPaymentMethodTypes,
         recaptchaToken: recaptchaToken as string,
+        setupFuturePayment,
       },
       {
         enabled: !!unitAmount && !!currency && !!recaptchaToken,
@@ -303,6 +324,8 @@ const { openModal, Modal } = createContextModal<Props>({
           // This is the payment methods we will end up supporting based off of
           // the payment intent instead of the ones we "wish" to support.
           paymentMethodTypes={paymentMethodTypes}
+          setupFuturePayment={setupFuturePayment}
+          setupFuturePaymentToggle={() => setSetupFuturePayment(!setupFuturePayment)}
           {...props}
         />
       </Elements>

@@ -187,11 +187,13 @@ function ImageMenuItems(
           )}
         </>
       )}
-      <LoginRedirect reason="add-to-collection">
-        <Menu.Item icon={<IconBookmark size={14} stroke={1.5} />} onClick={handleSaveClick}>
-          Save to collection
-        </Menu.Item>
-      </LoginRedirect>
+      {(context === 'post' || postId) && (
+        <LoginRedirect reason="add-to-collection">
+          <Menu.Item icon={<IconBookmark size={14} stroke={1.5} />} onClick={handleSaveClick}>
+            Save to collection
+          </Menu.Item>
+        </LoginRedirect>
+      )}
       {postId && !Router.query.postId && (
         <Menu.Item
           icon={<IconEye size={14} stroke={1.5} />}

@@ -262,7 +262,7 @@ export function ArticleUpsertForm({ article }: Props) {
             <InputSimpleImageUpload
               name="coverImage"
               label="Cover Image"
-              description={`Suggested resolution: ${constants.profile.coverImageWidth} x ${constants.profile.coverImageHeight}`}
+              description={`Suggested resolution: ${constants.article.coverImageWidth} x ${constants.article.coverImageHeight}`}
               withAsterisk
             />
             <InputSelect

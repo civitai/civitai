@@ -90,16 +90,19 @@ export function getEdgeUrl(
 }
 
 const videoTypeExtensions = ['.gif', '.mp4', '.webm'];
+
 export function useEdgeUrl(src: string, options: Omit<EdgeUrlProps, 'src'> | undefined) {
   const currentUser = useCurrentUser();
-  if (!src || src.startsWith('http') || src.startsWith('blob'))
-    return { url: src, type: options?.type };
 
-  let { anim, transcode } = options ?? {};
-  const inferredType = videoTypeExtensions.some((ext) => options?.name?.endsWith(ext))
+  const inferredType = videoTypeExtensions.some((ext) => (options?.name || src)?.endsWith(ext))
     ? 'video'
     : 'image';
   let type = options?.type ?? inferredType;
+
+  if (!src || src.startsWith('http') || src.startsWith('blob'))
+    return { url: src, type: inferredType };
+
+  let { anim, transcode } = options ?? {};
 
   if (inferredType === 'video' && type === 'image') {
     transcode = true;

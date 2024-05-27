@@ -297,14 +297,14 @@ export function ImagesAsPostsCard({
                         {image.meta && 'civitaiResources' in (image.meta as object) && (
                           <OnsiteIndicator />
                         )}
-                        <ImageGuard2.BlurToggle className="absolute top-2 left-2 z-10" />
+                        <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
                         {safe && (
-                          <Stack spacing="xs" className="absolute top-2 right-2 z-10">
+                          <Stack spacing="xs" className="absolute right-2 top-2 z-10">
                             <ImageContextMenu
                               image={image}
                               additionalMenuItems={moderationOptions(image)}
                             />
-                            {features.imageGeneration && image.meta && (
+                            {features.imageGeneration && image.meta && !image.hideMeta && (
                               <HoverActionButton
                                 label="Remix"
                                 size={30}
@@ -427,14 +427,14 @@ export function ImagesAsPostsCard({
                                 {image.meta && 'civitaiResources' in (image.meta as object) && (
                                   <OnsiteIndicator />
                                 )}
-                                <ImageGuard2.BlurToggle className="absolute top-2 left-2 z-10" />
+                                <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
                                 {safe && (
-                                  <Stack spacing="xs" className="absolute top-2 right-2 z-10">
+                                  <Stack spacing="xs" className="absolute right-2 top-2 z-10">
                                     <ImageContextMenu
                                       image={image}
                                       additionalMenuItems={moderationOptions(image)}
                                     />
-                                    {features.imageGeneration && image.meta && (
+                                    {features.imageGeneration && image.meta && !image.hideMeta && (
                                       <HoverActionButton
                                         label="Remix"
                                         size={30}

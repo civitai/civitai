@@ -275,13 +275,13 @@ export const UserContextMenu = ({ username }: { username: string }) => {
               >
                 Remove all content
               </Menu.Item>
-              <Menu.Item
+              {/* <Menu.Item
                 color="red"
                 icon={<IconUserMinus size={14} stroke={1.5} />}
                 onClick={handleDeleteAccount}
               >
                 Delete Account
-              </Menu.Item>
+              </Menu.Item> */}
               <Menu.Item
                 icon={
                   user.muted ? (
