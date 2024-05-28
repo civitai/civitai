@@ -1,4 +1,7 @@
+import { TrainingStatus } from '@prisma/client';
 import { z } from 'zod';
+import { updateRecords } from '~/pages/api/webhooks/resource-training';
+import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { createTrainingRequest } from '~/server/services/training.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
@@ -21,14 +24,17 @@ const logWebhook = (data: MixedObject) => {
 
 export default WebhookEndpoint(async (req, res) => {
   if (req.method !== 'POST') {
-    logWebhook({ message: 'Wrong method', data: { method: req.method } });
+    logWebhook({ message: 'Wrong method', data: { method: req.method, important: true } });
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
   const bodyResults = schema.safeParse(req.body);
   if (!bodyResults.success) {
-    logWebhook({ message: 'Could not parse body', data: { error: bodyResults.error } });
-    return res.status(400).json({ ok: false, errors: bodyResults.error });
+    logWebhook({
+      message: 'Could not parse body',
+      data: { error: bodyResults.error, important: true },
+    });
+    return res.status(400).json({ ok: false, error: bodyResults.error });
   }
 
   const { approve, modelVersionId } = bodyResults.data;
@@ -37,17 +43,17 @@ export default WebhookEndpoint(async (req, res) => {
     logWebhook({ message: 'Approved training dataset', type: 'info', data: { modelVersionId } });
 
     try {
-      logWebhook({
-        message: 'Resubmitting training request',
-        type: 'info',
-        data: { modelVersionId },
-      });
       // TODO need userId here?
       await createTrainingRequest({ modelVersionId, skipModeration: true });
     } catch (e) {
       logWebhook({
         message: 'Failed to resubmit training request',
-        data: { modelVersionId, important: true },
+        data: {
+          modelVersionId,
+          important: true,
+          error: (e as Error)?.message,
+          cause: (e as Error)?.cause,
+        },
       });
     }
   } else {
@@ -57,7 +63,35 @@ export default WebhookEndpoint(async (req, res) => {
       data: { modelVersionId, important: true },
     });
 
-    // TODO refund, email, set job status to failed
+    let jobId = '(unk jobId)';
+    try {
+      const modelFile = await dbWrite.modelFile.findFirst({
+        where: { modelVersionId },
+        select: {
+          id: true,
+          metadata: true,
+        },
+      });
+
+      if (!modelFile) {
+        logWebhook({
+          message: 'Could not find modelFile',
+          data: { modelVersionId, important: true },
+        });
+        return res.status(400).json({ ok: false, error: 'Could not find modelFile' });
+      }
+
+      const metadata = modelFile.metadata as FileMetadata;
+      jobId = metadata.trainingResults?.jobId ?? '(unk jobId)';
+
+      await updateRecords({ modelFileId: modelFile.id }, TrainingStatus.Denied, 'Failed', jobId);
+    } catch (e: unknown) {
+      logWebhook({
+        message: 'Failed to update record',
+        data: { error: (e as Error)?.message, cause: (e as Error)?.cause, modelVersionId, jobId },
+      });
+      return res.status(500).json({ ok: false, error: (e as Error)?.message });
+    }
   }
 
   return res.status(200).json({ ok: true });

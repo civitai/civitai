@@ -178,7 +178,7 @@ export default WebhookEndpoint(async (req, res) => {
   return res.status(200).json({ ok: true });
 });
 
-async function updateRecords(
+export async function updateRecords(
   {
     modelFileId,
     message,
@@ -279,12 +279,15 @@ async function updateRecords(
     });
   }
 
-  if (status === 'InReview') {
+  if (status === TrainingStatus.InReview) {
     await trainingCompleteEmail.send({
       model,
       user: model.user,
     });
-  } else if (status === 'Failed' && !needsReview) {
+  } else if (
+    (status === TrainingStatus.Failed || status === TrainingStatus.Denied) &&
+    !needsReview
+  ) {
     await trainingFailEmail.send({
       model,
       user: model.user,
