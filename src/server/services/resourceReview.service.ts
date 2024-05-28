@@ -39,9 +39,11 @@ export const getUserResourceReview = async ({
   modelId,
   modelVersionId,
   userId,
-}: GetUserResourceReviewInput & { userId: number }) => {
+  tx,
+}: GetUserResourceReviewInput & { userId: number; tx?: Prisma.TransactionClient }) => {
   if (!userId) throw throwAuthorizationError();
-  const results = await dbRead.resourceReview.findMany({
+  const dbClient = tx ?? dbRead;
+  const results = await dbClient.resourceReview.findMany({
     where: { modelId, modelVersionId, userId },
     select: resourceReviewSimpleSelect,
   });

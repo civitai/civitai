@@ -782,7 +782,8 @@ export async function toggleFavoriteHandler({
       setTo,
     });
   } else {
-    const userModelReviews = await getUserResourceReview({ userId, modelId });
+    // Need dbWrite to avoid propagation lag
+    const userModelReviews = await getUserResourceReview({ userId, modelId, tx: dbWrite });
 
     // Remove it from bookmark collection if no reviews
     if (!userModelReviews?.length)
