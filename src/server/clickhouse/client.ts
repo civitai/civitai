@@ -155,7 +155,7 @@ export type CommentType =
   | 'Bounty'
   | 'BountyEntry';
 export type CommentActivity = 'Create' | 'Delete' | 'Update' | 'Hide' | 'Unhide';
-export type PostActivityType = 'Create' | 'Publish' | 'Tags';
+export type PostActivityType = 'Create' | 'Publish' | 'Tags' | 'Delete';
 export type ImageActivityType =
   | 'Create'
   | 'Delete'
