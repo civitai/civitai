@@ -1296,8 +1296,8 @@ export const getUserBookmarkCollections = async ({ userId }: { userId: number })
         userId,
         type: CollectionType.Model,
         mode: CollectionMode.Bookmark,
-        name: 'Bookmarked Models',
-        description: 'Your bookmarked models will appear in this collection.',
+        name: 'Liked Models',
+        description: 'Your liked models will appear in this collection.',
       },
     });
 
