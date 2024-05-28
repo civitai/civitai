@@ -97,7 +97,7 @@ export default WebhookEndpoint(async (req, res) => {
   const bodyResults = schema.safeParse(req.body);
   if (!bodyResults.success) {
     logWebhook({ message: 'Could not parse body', data: { error: bodyResults.error } });
-    return res.status(400).json({ ok: false, errors: bodyResults.error });
+    return res.status(400).json({ ok: false, error: bodyResults.error });
   }
 
   const data = bodyResults.data;
@@ -145,7 +145,7 @@ export default WebhookEndpoint(async (req, res) => {
     case 'Canceled':
     case 'Expired':
       let status = mapTrainingStatus[jobStatus];
-      if (jobStatus === 'Rejected' && needsReview) status = TrainingStatus.Paused;
+      if (jobStatus === 'Failed' && needsReview) status = TrainingStatus.Paused;
 
       try {
         await updateRecords(
@@ -215,7 +215,7 @@ export async function updateRecords(
   }
 
   let attempts = trainingResults.attempts || 0;
-  if (['Rejected', 'LateRejected'].includes(orchStatus) && !needsReview) {
+  if (['Rejected', 'LateRejected'].includes(orchStatus)) {
     attempts += 1;
   }
 

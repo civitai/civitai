@@ -3,8 +3,10 @@ import { z } from 'zod';
 import { updateRecords } from '~/pages/api/webhooks/resource-training';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import { refundTransaction } from '~/server/services/buzz.service';
 import { createTrainingRequest } from '~/server/services/training.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
+import { withRetries } from '~/server/utils/errorHandling';
 
 const schema = z.object({
   modelVersionId: z.number(),
@@ -83,6 +85,39 @@ export default WebhookEndpoint(async (req, res) => {
 
       const metadata = modelFile.metadata as FileMetadata;
       jobId = metadata.trainingResults?.jobId ?? '(unk jobId)';
+      const transactionId = metadata.trainingResults?.transactionId;
+      if (!transactionId) {
+        logWebhook({
+          message: 'Could not refund user, missing transaction ID',
+          data: {
+            important: true,
+            modelVersionId,
+            jobId,
+          },
+        });
+      } else {
+        logWebhook({
+          type: 'info',
+          message: `Attempting to refund user`,
+          data: { modelVersionId, jobId },
+        });
+        try {
+          await withRetries(async () =>
+            refundTransaction(transactionId, 'Refund for failed training job.')
+          );
+        } catch (e: unknown) {
+          logWebhook({
+            message: 'Could not refund user',
+            data: {
+              error: (e as Error)?.message,
+              cause: (e as Error)?.cause,
+              jobId,
+              transactionId,
+              important: true,
+            },
+          });
+        }
+      }
 
       await updateRecords({ modelFileId: modelFile.id }, TrainingStatus.Denied, 'Failed', jobId);
     } catch (e: unknown) {

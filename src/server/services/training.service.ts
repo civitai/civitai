@@ -237,11 +237,9 @@ export const createTrainingRequest = async ({
     targetSteps: trainingParams.targetSteps,
   });
 
-  // TODO charge for skipModeration?
-
   // Determine if we still need to charge them for this training
   let transactionId = modelVersion.fileMetadata?.trainingResults?.transactionId;
-  if (!transactionId) {
+  if (!transactionId && !skipModeration) {
     // And if so, charge them
     if (eta === undefined) {
       throw throwBadRequestError(
