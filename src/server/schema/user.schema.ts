@@ -232,3 +232,4 @@ export const setLeaderboardEligbilitySchema = z.object({
   id: z.number(),
   setTo: z.boolean(),
 });
+export type SetLeaderboardEligibilitySchema = z.infer<typeof setLeaderboardEligbilitySchema>;

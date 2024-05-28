@@ -30,6 +30,7 @@ import {
   getUserBookmarkCollectionsHandler,
   getUserPurchasedRewardsHandler,
   toggleFavoriteHandler,
+  setLeaderboardEligibilityHandler,
 } from '~/server/controllers/user.controller';
 import {
   deleteUserHandler,
@@ -72,7 +73,6 @@ import {
   getUserBookmarkedArticles,
   toggleBookmarkedArticle,
   updateUserById,
-  setLeaderboardEligibility,
 } from '~/server/services/user.service';
 import {
   guardedProcedure,
@@ -181,5 +181,5 @@ export const userRouter = router({
   getUserPurchasedRewards: protectedProcedure.query(getUserPurchasedRewardsHandler),
   setLeaderboardEligibility: moderatorProcedure
     .input(setLeaderboardEligbilitySchema)
-    .mutation(async ({ input }) => setLeaderboardEligibility(input)),
+    .mutation(setLeaderboardEligibilityHandler),
 });

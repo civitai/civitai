@@ -115,7 +115,9 @@ export type UserActivityType =
   | 'Unbanned'
   | 'Muted'
   | 'Unmuted'
-  | 'RemoveContent';
+  | 'RemoveContent'
+  | 'ExcludedFromLeaderboard'
+  | 'UnexcludedFromLeaderboard';
 export type ModelVersionActivty = 'Create' | 'Publish' | 'Download' | 'Unpublish';
 export type ModelActivty =
   | 'Create'

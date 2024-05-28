@@ -22,6 +22,7 @@ import {
   GetUserCosmeticsSchema,
   GetUserTagsSchema,
   ReportProhibitedRequestInput,
+  SetLeaderboardEligibilitySchema,
   SetUserSettingsInput,
   ToggleBlockedTagSchema,
   ToggleFavoriteInput,
@@ -77,6 +78,7 @@ import {
   toggleBookmarked,
   toggleReview,
   getUserDownloads,
+  setLeaderboardEligibility,
 } from '~/server/services/user.service';
 import {
   handleLogError,
@@ -1338,3 +1340,17 @@ export const getUserPurchasedRewardsHandler = async ({
     throw throwDbError(error);
   }
 };
+
+export async function setLeaderboardEligibilityHandler({
+  ctx,
+  input,
+}: {
+  ctx: DeepNonNullable<Context>;
+  input: SetLeaderboardEligibilitySchema;
+}) {
+  await setLeaderboardEligibility(input);
+  await ctx.track.userActivity({
+    type: input.setTo ? 'ExcludedFromLeaderboard' : 'UnexcludedFromLeaderboard',
+    targetUserId: input.id,
+  });
+}
