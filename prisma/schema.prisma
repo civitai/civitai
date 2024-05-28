@@ -162,6 +162,7 @@ model User {
   subscription        CustomerSubscription?
   mutedAt             DateTime? /// Updated via trigger
   muted               Boolean               @default(false)
+  muteConfirmedAt     DateTime?
   bannedAt            DateTime?
   autoplayGifs        Boolean?              @default(true)
   filePreferences     Json                  @default("{\"size\": \"pruned\", \"fp\": \"fp16\", \"format\": \"SafeTensor\"}")

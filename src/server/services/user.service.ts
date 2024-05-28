@@ -493,10 +493,9 @@ export const deleteUser = async ({ id, username, removeModels }: DeleteUserInput
 
   await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
 
-  await invalidateSession(id);
-
   // Cancel their subscription
   await cancelSubscription({ userId: user.id });
+  await invalidateSession(id);
 
   return result;
 };
