@@ -1261,9 +1261,41 @@ export async function unequipCosmeticByType({
 }
 
 export const getUserBookmarkCollections = async ({ userId }: { userId: number }) => {
-  return dbRead.collection.findMany({
+  const collections = await dbRead.collection.findMany({
     where: { userId, mode: CollectionMode.Bookmark },
   });
+
+  if (!collections.find((x) => x.type === CollectionType.Article)) {
+    // Create the collection if it doesn't exist
+    const articles = await dbWrite.collection.create({
+      data: {
+        userId,
+        type: CollectionType.Article,
+        mode: CollectionMode.Bookmark,
+        name: 'Bookmarked Articles',
+        description: 'Your bookmarked articles will appear in this collection.',
+      },
+    });
+
+    collections.push(articles);
+  }
+
+  if (!collections.find((x) => x.type === CollectionType.Model)) {
+    // Create the collection if it doesn't exist
+    const models = await dbWrite.collection.create({
+      data: {
+        userId,
+        type: CollectionType.Model,
+        mode: CollectionMode.Bookmark,
+        name: 'Liked Models',
+        description: 'Your liked models will appear in this collection.',
+      },
+    });
+
+    collections.push(models);
+  }
+
+  return collections;
 };
 
 export const getUserPurchasedRewards = async ({ userId }: { userId: number }) => {
