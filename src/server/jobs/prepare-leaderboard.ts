@@ -158,10 +158,10 @@ async function defaultLeadboardPopulation(ctx: LeaderboardContext) {
     SELECT
       '${ctx.id}' as "leaderboardId",
       current_date + interval '${ctx.addDays} days' as date,
-      *,
+      s.*,
       row_number() OVER (ORDER BY score DESC) as position
-    FROM scores
-    JOIN "User" u ON u.id = scores."userId"
+    FROM scores s
+    JOIN "User" u ON u.id = s."userId"
     WHERE NOT u."excludeFromLeaderboards"
     ORDER BY score DESC
     LIMIT 1000
