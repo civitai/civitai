@@ -91,6 +91,7 @@ export const getUserCreator = async ({
       deletedAt: true,
       createdAt: true,
       publicSettings: true,
+      excludeFromLeaderboards: true,
       links: {
         select: {
           url: true,
@@ -255,7 +256,7 @@ export async function setUserSetting(userId: number, settings: UserSettingsSchem
   if (toRemove.length) {
     await dbWrite.$executeRawUnsafe(`
       UPDATE "User"
-      SET settings = settings - ${toRemove.join(' - ')}}'
+      SET settings = settings - ${toRemove.join(' - ')}}
       WHERE id = ${userId}
     `);
   }
@@ -499,6 +500,14 @@ export const deleteUser = async ({ id, username, removeModels }: DeleteUserInput
 
   return result;
 };
+
+export async function setLeaderboardEligibility({ id, setTo }: { id: number; setTo: boolean }) {
+  await dbWrite.$executeRawUnsafe(`
+    UPDATE "User"
+    SET "excludeFromLeaderboards" = ${setTo}
+    WHERE id = ${id}
+  `);
+}
 
 /** Soft delete will ban the user, unsubscribe the user, and restrict access to the user's models/images  */
 export async function softDeleteUser({ id }: { id: number }) {

@@ -112,6 +112,7 @@ async function updateLegendsBoardResults() {
         JOIN "User" u ON u.id = lr."userId"
         WHERE date <= now()
           AND position < 100
+          AND NOT u."excludeFromLeaderboards"
           AND u."deletedAt" IS NULL
         GROUP BY "userId", "leaderboardId"
       )
@@ -160,6 +161,8 @@ async function defaultLeadboardPopulation(ctx: LeaderboardContext) {
       *,
       row_number() OVER (ORDER BY score DESC) as position
     FROM scores
+    JOIN "User" u ON u.id = scores."userId"
+    WHERE NOT u."excludeFromLeaderboards"
     ORDER BY score DESC
     LIMIT 1000
   `);
@@ -285,6 +288,7 @@ async function imageLeaderboardPopulation(ctx: LeaderboardContext, [min, max]: [
     FROM jsonb_array_elements('${userScoresJson}'::jsonb) s
     JOIN "User" u ON u.id = (s->>'userId')::int
     WHERE u."deletedAt" IS NULL AND u.id > 0
+      AND NOT u."excludeFromLeaderboards"
     ORDER BY (s->>'score')::int DESC
     LIMIT 1000
   `);

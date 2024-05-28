@@ -61,6 +61,7 @@ import {
   userOnboardingSchema,
   toggleFavoriteInput,
   updateBrowsingModeSchema,
+  setLeaderboardEligbilitySchema,
 } from '~/server/schema/user.schema';
 import {
   equipCosmetic,
@@ -71,6 +72,7 @@ import {
   getUserBookmarkedArticles,
   toggleBookmarkedArticle,
   updateUserById,
+  setLeaderboardEligibility,
 } from '~/server/services/user.service';
 import {
   guardedProcedure,
@@ -177,4 +179,7 @@ export const userRouter = router({
   dismissAlert: protectedProcedure.input(dismissAlertSchema).mutation(dismissAlertHandler),
   getBookmarkCollections: protectedProcedure.query(getUserBookmarkCollectionsHandler),
   getUserPurchasedRewards: protectedProcedure.query(getUserPurchasedRewardsHandler),
+  setLeaderboardEligibility: moderatorProcedure
+    .input(setLeaderboardEligbilitySchema)
+    .mutation(async ({ input }) => setLeaderboardEligibility(input)),
 });

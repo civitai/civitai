@@ -139,8 +139,10 @@ export const getAllUsersHandler = async ({
 
 export const getUserCreatorHandler = async ({
   input: { username, id, leaderboardId },
+  ctx,
 }: {
   input: GetUserByUsernameSchema;
+  ctx: Context;
 }) => {
   if (!username && !id) throw throwBadRequestError('Must provide username or id');
   if (id === constants.system.user.id || username === constants.system.user.username) return null;
@@ -148,6 +150,7 @@ export const getUserCreatorHandler = async ({
   try {
     const user = await getUserCreator({ username, id, leaderboardId });
     if (!user) throw throwNotFoundError('Could not find user');
+    if (!ctx.user?.isModerator) user.excludeFromLeaderboards = false; // Mask from non-moderators
 
     return user;
   } catch (error) {
