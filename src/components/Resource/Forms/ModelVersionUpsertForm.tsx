@@ -1,4 +1,4 @@
-import { Card, Divider, Group, Input, Stack, Text, ThemeIcon } from '@mantine/core';
+import { Card, Divider, Group, Input, Stack, Switch, Text, ThemeIcon } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { Currency, ModelType, ModelVersionMonetizationType } from '@prisma/client';
 import { IconInfoCircle, IconQuestionMark } from '@tabler/icons-react';
@@ -46,17 +46,14 @@ import { isEarlyAccess } from '~/server/utils/early-access-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
-const earlyAccessTimeframeValues = [0, 5, 7, 10, 12, 15];
+const earlyAccessTimeframeValues = [5, 7, 10, 12, 15];
 
 const schema = modelVersionUpsertSchema2
   .extend({
     skipTrainedWords: z.boolean().default(false),
     earlyAccessConfig: earlyAccessConfigInput
-      .extend({
-        timeframe: z.string().default('0'),
-      })
-      .refine((value) => earlyAccessTimeframeValues.some((v) => v === value.timeframe), {
-        message: 'Invalid value',
+      .refine((value) => earlyAccessTimeframeValues.some((v) => v.toString() === value.timeframe), {
+        message: 'Invalid value the heck u did',
       })
       .nullish(),
     useMonetization: z.boolean().default(false),
@@ -145,9 +142,10 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
     earlyAccessConfig:
       version?.earlyAccessConfig && features.earlyAccessModel
         ? {
-            generationTrialLimit: 10,
             ...(version?.earlyAccessConfig ?? {}),
-            timeframe: version.earlyAccessConfig?.timeframe?.toString() ?? '0',
+            timeframe:
+              version.earlyAccessConfig?.timeframe?.toString() ??
+              earlyAccessTimeframeValues[0].toString(),
           }
         : null,
     modelId: model?.id ?? -1,
@@ -204,13 +202,15 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
         epochs: data.epochs ?? null,
         steps: data.steps ?? null,
         modelId: model?.id ?? -1,
-        earlyAccessConfig:
-          data.earlyAccessConfig?.timeframe === '0'
-            ? null
-            : {
-                ...data.earlyAccessConfig,
-                timeframe: parseInt(data.earlyAccessConfig?.timeframe ?? '0', 10),
-              },
+        earlyAccessConfig: !data.earlyAccessConfig
+          ? null
+          : {
+              ...data.earlyAccessConfig,
+              timeframe: parseInt(
+                data.earlyAccessConfig?.timeframe ?? earlyAccessTimeframeValues[0].toString(),
+                10
+              ),
+            },
         trainedWords: skipTrainedWords ? [] : trainedWords,
         baseModelType: hasBaseModelType ? data.baseModelType : undefined,
         vaeId: hasVAE ? data.vaeId : undefined,
@@ -246,7 +246,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
             ? {
                 generationTrialLimit: 10,
                 ...(version?.earlyAccessConfig ?? {}),
-                timeframe: version.earlyAccessConfig?.timeframe?.toString() ?? '0',
+                timeframe: version.earlyAccessConfig?.timeframe?.toString(),
               }
             : null,
         recommendedResources: version.recommendedResources ?? [],
@@ -261,6 +261,8 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
     ? MAX_EARLY_ACCCESS
     : version?.earlyAccessConfig?.timeframe ?? 0;
 
+  console.log(version?.earlyAccessConfig);
+
   return (
     <>
       <Form form={form} onSubmit={handleSubmit}>
@@ -272,113 +274,134 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
             withAsterisk
             maxLength={25}
           />
+
           {showEarlyAccessInput && (
             <Stack spacing={0}>
               <Divider label="Early Access Set Up" mb="md" />
-              <Input.Wrapper
-                label="Early Access"
-                description={
-                  <DismissibleAlert
-                    id="ea-info"
-                    size="sm"
-                    color="yellow"
-                    title="Earn Buzz with early access!"
-                    content={
-                      <>
-                        <Text size="xs">
-                          Early access allows you to charge a fee for early access to your model.
-                          This fee is paid by users who want to access your model before it is
-                          available to the public. Once the early access period ends, your model
-                          will be available to the public for free.
-                        </Text>
-                      </>
-                    }
-                    mb="xs"
-                  />
-                }
-                error={form.formState.errors.earlyAccessConfig?.message}
-              >
-                <InputSegmentedControl
-                  name="earlyAccessConfig.timeframe"
-                  data={earlyAccessTimeframeValues.map((v) => ({
-                    label: v === 0 ? 'None' : `${v} days`,
-                    value: v.toString(),
-                    disabled: maxEarlyAccessValue < v,
-                  }))}
-                  color="blue"
-                  size="xs"
-                  styles={(theme) => ({
-                    root: {
-                      border: `1px solid ${
-                        theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[4]
-                      }`,
-                      background: 'none',
-                      marginTop: theme.spacing.xs * 0.5, // 5px
-                    },
-                  })}
-                  fullWidth
-                />
-                {earlyAccessConfig?.timeframe !== 0 && (
-                  <Group noWrap>
-                    <CurrencyIcon currency={Currency.BUZZ} size={16} />
-                    <Text size="xs" color="dimmed" mt="sm">
-                      You will be charged a non-refundable fee of{' '}
-                      {constants.earlyAccess.buzzChargedPerDay} BUZZ per day of early access once
-                      your model is published. Your current total is{' '}
-                      <Text component="span" color="yellow.6">
-                        {constants.earlyAccess.buzzChargedPerDay *
-                          parseInt(earlyAccessConfig?.timeframe ?? '0', 10)}{' '}
-                        BUZZ.
-                      </Text>
+              <DismissibleAlert
+                id="ea-info"
+                size="sm"
+                color="yellow"
+                title="Earn Buzz with early access!"
+                content={
+                  <>
+                    <Text size="xs">
+                      Early access allows you to charge a fee for early access to your model. This
+                      fee is paid by users who want to access your model before it is available to
+                      the public. Once the early access period ends, your model will be available to
+                      the public for free.
                     </Text>
-                  </Group>
-                )}
-                {!canIncreaseEarlyAccess && (
-                  <Text size="xs" color="dimmed" mt="sm">
-                    You cannot increase early access value after a model has been published
-                  </Text>
-                )}
-              </Input.Wrapper>
-              {earlyAccessConfig?.timeframe !== '0' && (
-                // Now get the other pieces:
-                <Stack mt="sm">
-                  <InputNumber
-                    name="earlyAccessConfig.downloadPrice"
-                    label="Download price"
-                    description="How much would you like to charge for your version download?"
-                    min={500}
-                    step={100}
-                    icon={<CurrencyIcon currency="BUZZ" size={16} />}
-                    withAsterisk
-                  />
-                  <InputSwitch
-                    name="earlyAccessConfig.chargeForGeneration"
-                    label="Allow users to pay for generation only - no download."
-                    description={
-                      'This will allow users to pay for generation only, but will not grant the ability to download. Payments for download already cover generation.'
-                    }
-                  />
-                  {earlyAccessConfig?.chargeForGeneration && (
-                    <Stack>
-                      <InputNumber
-                        name="earlyAccessConfig.generationPrice"
-                        label="Generation price"
-                        description="How much would you like to charge for your version download?"
-                        min={100}
-                        max={earlyAccessConfig?.downloadPrice}
-                        step={100}
-                        icon={<CurrencyIcon currency="BUZZ" size={16} />}
-                      />
-                      <InputNumber
-                        name="earlyAccessConfig.generationTrialLimit"
-                        label="Free Trial Limit"
-                        description="How many free generations would you like to offer to users who have not paid for generation or download?"
-                        min={10}
-                      />
-                    </Stack>
-                  )}
+                  </>
+                }
+                mb="xs"
+              />
+              <Switch
+                my="sm"
+                label="I want to make this version part of the Early Access Program"
+                checked={earlyAccessConfig !== null}
+                onChange={(e) =>
+                  form.setValue(
+                    'earlyAccessConfig',
+                    e.target.checked
+                      ? {
+                          timeframe: earlyAccessTimeframeValues[0].toString(),
+                          downloadPrice: 500,
+                          chargeForGeneration: false,
+                          generationPrice: 100,
+                          generationTrialLimit: 10,
+                        }
+                      : null
+                  )
+                }
+              />
+              {earlyAccessConfig && (
+                <Stack>
+                  <Input.Wrapper
+                    label="Early Access Time Frame"
+                    description="How long would you like to offer early access to your version from the date of publishing?"
+                    error={form.formState.errors.earlyAccessConfig?.message}
+                  >
+                    <InputSegmentedControl
+                      name="earlyAccessConfig.timeframe"
+                      data={earlyAccessTimeframeValues.map((v) => ({
+                        label: v === 0 ? 'None' : `${v} days`,
+                        value: v.toString(),
+                        disabled: maxEarlyAccessValue < v,
+                      }))}
+                      color="blue"
+                      size="xs"
+                      styles={(theme) => ({
+                        root: {
+                          border: `1px solid ${
+                            theme.colorScheme === 'dark'
+                              ? theme.colors.dark[4]
+                              : theme.colors.gray[4]
+                          }`,
+                          background: 'none',
+                          marginTop: theme.spacing.xs * 0.5, // 5px
+                        },
+                      })}
+                      fullWidth
+                    />
+                    <Group noWrap>
+                      <CurrencyIcon currency={Currency.BUZZ} size={16} />
+                      <Text size="xs" color="dimmed" mt="sm">
+                        You will be charged a non-refundable fee of{' '}
+                        {constants.earlyAccess.buzzChargedPerDay} BUZZ per day of early access once
+                        your model is published. Your current total is{' '}
+                        <Text component="span" color="yellow.6">
+                          {constants.earlyAccess.buzzChargedPerDay *
+                            parseInt(earlyAccessConfig?.timeframe ?? '0', 10)}{' '}
+                          BUZZ.
+                        </Text>
+                      </Text>
+                    </Group>
+                    {!canIncreaseEarlyAccess && (
+                      <Text size="xs" color="dimmed" mt="sm">
+                        You cannot increase early access value after a model has been published
+                      </Text>
+                    )}
+                  </Input.Wrapper>
+                  <Stack mt="sm">
+                    <InputNumber
+                      name="earlyAccessConfig.downloadPrice"
+                      label="Download price"
+                      description="How much would you like to charge for your version download?"
+                      min={500}
+                      step={100}
+                      icon={<CurrencyIcon currency="BUZZ" size={16} />}
+                      withAsterisk
+                    />
+                    <InputSwitch
+                      name="earlyAccessConfig.chargeForGeneration"
+                      label="Allow users to pay for generation only - no download."
+                      description={
+                        'This will allow users to pay for generation only, but will not grant the ability to download. Payments for download already cover generation.'
+                      }
+                    />
+                    {earlyAccessConfig?.chargeForGeneration && (
+                      <Stack>
+                        <InputNumber
+                          name="earlyAccessConfig.generationPrice"
+                          label="Generation price"
+                          description="How much would you like to charge for your version download?"
+                          min={100}
+                          max={earlyAccessConfig?.downloadPrice}
+                          step={100}
+                          icon={<CurrencyIcon currency="BUZZ" size={16} />}
+                        />
+                        <InputNumber
+                          name="earlyAccessConfig.generationTrialLimit"
+                          label="Free Trial Limit"
+                          description="How many free generations would you like to offer to users who have not paid for generation or download?"
+                          min={10}
+                        />
+                      </Stack>
+                    )}
+                  </Stack>
                 </Stack>
               )}
+
               <Divider my="md" />
             </Stack>
           )}
