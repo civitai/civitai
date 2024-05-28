@@ -1,6 +1,5 @@
 import { Stack } from '@mantine/core';
 import { Announcements } from '~/components/Announcements/Announcements';
-import { ImageCategories } from '~/components/Image/Filters/ImageCategories';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { Meta } from '~/components/Meta/Meta';
@@ -8,8 +7,21 @@ import { env } from '~/env/client.mjs';
 import { setPageOptions } from '~/components/AppLayout/AppLayout';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { AudioCard } from '~/components/Cards/AudioCard';
+import { useImageFilters } from '~/components/Image/image.utils';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
+
+export const getServerSideProps = createServerSideProps({
+  useSession: true,
+  resolver: async ({ features }) => {
+    if (!features || !features.audio) return { notFound: true };
+
+    return { props: {} };
+  },
+});
 
 export default function AudioFeedPage() {
+  const { hidden, ...filters } = useImageFilters('audio');
+
   return (
     <>
       <Meta
@@ -27,7 +39,12 @@ export default function AudioFeedPage() {
           })}
         />
         <IsClient>
-          <ImagesInfinite filters={{ types: ['audio'] }} renderItem={AudioCard} showEof showAds />
+          <ImagesInfinite
+            filters={{ ...filters, types: ['audio'] }}
+            renderItem={AudioCard}
+            showEof
+            showAds
+          />
         </IsClient>
       </Stack>
     </>

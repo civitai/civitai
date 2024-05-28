@@ -838,7 +838,8 @@ export const getAllImages = async ({
     AND.push(Prisma.sql`i."needsReview" IS NULL`);
     AND.push(
       browsingLevel
-        ? Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0 AND i."nsfwLevel" != 0`
+        ? // TODO.audio: revert this back
+          Prisma.sql`i."nsfwLevel" != 0`
         : Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`
     );
   }
@@ -932,7 +933,7 @@ export const getAllImages = async ({
   // const cacheable = queryCache(dbRead, 'getAllImages', 'v1');
   // const rawImages = await cacheable<GetAllImagesRaw[]>(query, { ttl: cacheTime, tag: cacheTags });
 
-  const { rows: rawImages } = await pgDbRead.query<GetAllImagesRaw>(query);
+  const rawImages = await dbRead.$queryRaw<GetAllImagesRaw[]>(query);
 
   const imageIds = rawImages.map((i) => i.id);
   let userReactions: Record<number, ReviewReactions[]> | undefined;

@@ -2,6 +2,7 @@ import { Group, Paper, createStyles } from '@mantine/core';
 import { useRouter } from 'next/router';
 import { useRef } from 'react';
 import { ArticleFeedFilters } from '~/components/Filters/FeedFilters/ArticleFeedFilters';
+import { AudioFeedFilters } from '~/components/Filters/FeedFilters/AudioFeedFilters';
 import { BountyFeedFilters } from '~/components/Filters/FeedFilters/BountyFeedFilters';
 import { ImageFeedFilters } from '~/components/Filters/FeedFilters/ImageFeedFilters';
 import { ModelFeedFilters } from '~/components/Filters/FeedFilters/ModelFeedFilters';
@@ -29,7 +30,7 @@ const filtersBySection = {
   models: <ModelFeedFilters ml="auto" />,
   images: <ImageFeedFilters ml="auto" />,
   videos: <VideoFeedFilters ml="auto" />,
-  audios: <VideoFeedFilters ml="auto" />,
+  audio: <AudioFeedFilters ml="auto" />,
   posts: <PostFeedFilters ml="auto" />,
   articles: <ArticleFeedFilters ml="auto" />,
   bounties: <BountyFeedFilters ml="auto" />,

@@ -164,7 +164,8 @@ export const formatDuration = (seconds: number) => {
   const remainingSeconds = Math.round(seconds % ONE_MINUTE);
 
   const hourString = hours > 0 ? String(hours).padStart(2, '0') : '';
-  const minuteString = String(minutes).padStart(2, '0');
+  const minuteString =
+    hourString || minutes === 0 ? String(minutes).padStart(2, '0') : String(minutes);
   const secondString = String(remainingSeconds).padStart(2, '0');
 
   return [hourString, minuteString, secondString].filter(Boolean).join(':');

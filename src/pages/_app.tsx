@@ -57,6 +57,7 @@ import { RegisterCatchNavigation } from '~/store/catch-navigation.store';
 import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 import { trpc } from '~/utils/trpc';
 import '~/styles/globals.css';
+import { UniversalPlayerProvider } from '~/components/Player/Player';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -133,6 +134,7 @@ function MyApp(props: CustomAppProps) {
             <RouterTransition />
             <UpdateRequiredWatcher />
             <ChadGPT isAuthed={!!session} />
+            <UniversalPlayerProvider />
             <SessionProvider
               session={session}
               refetchOnWindowFocus={false}

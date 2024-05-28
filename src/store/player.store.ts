@@ -2,14 +2,16 @@ import { useCallback } from 'react';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 
-export type Player = {
+export type Track = {
+  duration: number;
   media: HTMLMediaElement;
   peaks: number[][];
+  name?: string | null;
 };
 
 type PlayerStore = {
-  currentTrack: Player | null;
-  setCurrentTrack: (track: Player) => void;
+  currentTrack: Track | null;
+  setCurrentTrack: (track: Track | null) => void;
   play: () => void;
   pause: () => void;
   isPlaying: boolean;

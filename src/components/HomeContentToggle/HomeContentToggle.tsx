@@ -9,7 +9,6 @@ import {
   Text,
   ThemeIcon,
   createStyles,
-  Badge,
   Menu,
   Button,
 } from '@mantine/core';
@@ -18,14 +17,11 @@ import {
   IconCalendar,
   IconCaretDown,
   IconCategory,
-  IconClubs,
-  IconCpu,
   IconFileText,
   IconHome,
   IconLayoutList,
   IconMoneybag,
   IconPhoto,
-  IconShoppingBag,
   IconFlower,
   IconVideo,
   TablerIconsProps,
@@ -61,8 +57,8 @@ const homeOptions: Record<string, HomeOption> = {
     url: '/videos',
     icon: (props: TablerIconsProps) => <IconVideo {...props} />,
   },
-  audios: {
-    url: '/audios',
+  audio: {
+    url: '/audio',
     icon: (props: TablerIconsProps) => <IconMusic {...props} />,
   },
   posts: {

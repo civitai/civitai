@@ -16,7 +16,7 @@ type FollowFilterMenuProps = {
 type FollowFilterComponentProps = FollowFilterButtonProps | FollowFilterMenuProps;
 
 type FollowFilterProps = StatefulProps | DumbProps;
-type FollowFilterableTypes = 'images' | 'models' | 'posts' | 'articles' | 'videos';
+type FollowFilterableTypes = 'images' | 'models' | 'posts' | 'articles' | 'videos' | 'audio';
 
 export function FollowedFilter(props: FollowFilterProps) {
   // Explicit type assertion because ts is dumb -Manuel

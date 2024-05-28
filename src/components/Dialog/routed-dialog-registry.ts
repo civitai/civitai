@@ -46,6 +46,15 @@ export const dialogs = createDialogDictionary({
       state,
     }),
   },
+  mediaDetail: {
+    component: ImageDetailModal,
+    target: '#main',
+    resolve: (query, { imageId, ...state }) => ({
+      query: { ...query, imageId },
+      asPath: `/media/${imageId}`,
+      state,
+    }),
+  },
   postDetail: {
     component: PostDetailModal,
     target: '#main',

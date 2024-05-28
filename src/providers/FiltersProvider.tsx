@@ -127,7 +127,6 @@ const clubFilterSchema = z
   })
   .merge(
     getInfiniteClubSchema.omit({
-      query: true,
       period: true,
       sort: true,
       limit: true,
@@ -147,6 +146,15 @@ const threadFilterSchema = z.object({
   sort: z.nativeEnum(ThreadSort).default(ThreadSort.Newest),
 });
 
+type AudioFilterSchema = z.infer<typeof audioFilterSchema>;
+const audioFilterSchema = z.object({
+  period: z.nativeEnum(MetricTimeframe).default(MetricTimeframe.Week),
+  sort: z.nativeEnum(ImageSort).default(ImageSort.Newest),
+  notPublished: z.boolean().optional(),
+  followed: z.boolean().optional(),
+  withMeta: z.boolean().optional(),
+});
+
 type StorageState = {
   models: ModelFilterSchema;
   questions: QuestionFilterSchema;
@@ -159,6 +167,7 @@ type StorageState = {
   clubs: ClubFilterSchema;
   videos: VideoFilterSchema;
   threads: ThreadFilterSchema;
+  audio: AudioFilterSchema;
 };
 export type FilterSubTypes = keyof StorageState;
 
@@ -181,6 +190,7 @@ type StoreState = FilterState & {
   setClubFilters: (filters: Partial<ClubFilterSchema>) => void;
   setVideoFilters: (filters: Partial<VideoFilterSchema>) => void;
   setThreadFilters: (filters: Partial<ThreadFilterSchema>) => void;
+  setAudioFilters: (filters: Partial<AudioFilterSchema>) => void;
 };
 
 type LocalStorageSchema = Record<keyof StorageState, { key: string; schema: z.AnyZodObject }>;
@@ -196,6 +206,7 @@ const localStorageSchemas: LocalStorageSchema = {
   clubs: { key: 'clubs-filters', schema: clubFilterSchema },
   videos: { key: 'videos-filters', schema: videoFilterSchema },
   threads: { key: 'thread-filters', schema: threadFilterSchema },
+  audio: { key: 'audio-filters', schema: audioFilterSchema },
 };
 
 const getInitialValues = <TSchema extends z.AnyZodObject>({
@@ -268,6 +279,8 @@ const createFilterStore = () =>
         set((state) => handleLocalStorageChange({ key: 'videos', data, state })),
       setThreadFilters: (data) =>
         set((state) => handleLocalStorageChange({ key: 'threads', data, state })),
+      setAudioFilters: (data) =>
+        set((state) => handleLocalStorageChange({ key: 'audio', data, state })),
     }))
   );
 
@@ -317,6 +330,7 @@ export function useSetFilters(type: FilterSubTypes) {
           clubs: state.setClubFilters,
           videos: state.setVideoFilters,
           threads: state.setThreadFilters,
+          audio: state.setAudioFilters,
         }[type]),
       [type]
     )

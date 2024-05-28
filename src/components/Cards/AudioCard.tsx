@@ -4,7 +4,6 @@ import { useRouter } from 'next/router';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
-import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
 import { useImagesContext } from '~/components/Image/Providers/ImagesProvider';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
@@ -21,11 +20,11 @@ export function AudioCard({ data }: Props) {
   const metadata = data.metadata as AudioMetadata;
 
   return (
-    <RoutedDialogLink name="imageDetail" state={{ imageId: data.id, ...context }}>
+    <RoutedDialogLink name="mediaDetail" state={{ imageId: data.id, ...context }}>
       <MasonryCard shadow="sm" bg="dark.6" style={{ borderRadius: 12 }} withBorder>
         <Stack spacing="lg" p="md">
           <Group spacing="sm" mr="-sm" noWrap>
-            <EdgeMedia src={data.url} type="audio" duration={metadata.duration} />
+            <EdgeMedia type="audio" src={data.url} name={data.name} duration={metadata.duration} />
             <Group spacing={4} noWrap>
               <Badge
                 size="md"

@@ -40,6 +40,7 @@ const sortOptions = {
   clubs: Object.values(ClubSort),
   videos: Object.values(ImageSort).filter((x) => !Object.values(ImageSortHidden).includes(x)),
   threads: Object.values(ThreadSort),
+  audio: Object.values(ImageSort).filter((x) => !Object.values(ImageSortHidden).includes(x)),
 };
 
 export function SortFilter(props: SortFilterProps) {
