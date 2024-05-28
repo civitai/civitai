@@ -1267,15 +1267,6 @@ export const getUserBookmarkCollections = async ({ userId }: { userId: number })
 
   if (!collections.find((x) => x.type === CollectionType.Article)) {
     // Create the collection if it doesn't exist
-    await dbWrite.collection.create({
-      data: {
-        userId,
-        type,
-        mode: CollectionMode.Bookmark,
-        name: `Bookmarked ${type}`,
-        description: `Your bookmarked ${type.toLowerCase()} will appear in this collection.`,
-      },
-    });
     const articles = await dbWrite.collection.create({
       data: {
         userId,
