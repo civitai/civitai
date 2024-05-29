@@ -541,7 +541,12 @@ export const deletePost = async ({ id }: GetByIdInput) => {
   }
 
   await bustCachesForPost(id);
-  await dbWrite.post.delete({ where: { id } });
+  const [result] = await dbWrite.$queryRaw<{ id: number; nsfwLevel: number }[]>`
+    DELETE FROM "Post"
+    WHERE id = ${id}
+    RETURNING id, "nsfwLevel"
+  `;
+  return result;
 };
 
 type PostQueryResult = { id: number; name: string; isCategory: boolean; postCount: number }[];

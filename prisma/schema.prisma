@@ -144,29 +144,31 @@ model BuzzWithdrawalRequest {
 }
 
 model User {
-  id                  Int                   @id @default(autoincrement())
-  name                String?
-  username            String?               @unique @db.Citext
-  email               String?               @unique @db.Citext
-  emailVerified       DateTime?
-  image               String?
-  showNsfw            Boolean               @default(false)
-  blurNsfw            Boolean               @default(true)
-  browsingLevel       Int                   @default(1)
-  onboarding          Int                   @default(0)
-  isModerator         Boolean?              @default(false)
-  createdAt           DateTime              @default(now())
-  deletedAt           DateTime?
-  customerId          String?               @unique
-  subscriptionId      String?
-  subscription        CustomerSubscription?
-  mutedAt             DateTime? /// Updated via trigger
-  muted               Boolean               @default(false)
-  bannedAt            DateTime?
-  autoplayGifs        Boolean?              @default(true)
-  filePreferences     Json                  @default("{\"size\": \"pruned\", \"fp\": \"fp16\", \"format\": \"SafeTensor\"}")
-  leaderboardShowcase String?
-  referral            UserReferral?
+  id                      Int                   @id @default(autoincrement())
+  name                    String?
+  username                String?               @unique @db.Citext
+  email                   String?               @unique @db.Citext
+  emailVerified           DateTime?
+  image                   String?
+  showNsfw                Boolean               @default(false)
+  blurNsfw                Boolean               @default(true)
+  browsingLevel           Int                   @default(1)
+  onboarding              Int                   @default(0)
+  isModerator             Boolean?              @default(false)
+  createdAt               DateTime              @default(now())
+  deletedAt               DateTime?
+  customerId              String?               @unique
+  subscriptionId          String?
+  subscription            CustomerSubscription?
+  mutedAt                 DateTime? /// Updated via trigger
+  muted                   Boolean               @default(false)
+  muteConfirmedAt         DateTime?
+  bannedAt                DateTime?
+  autoplayGifs            Boolean?              @default(true)
+  filePreferences         Json                  @default("{\"size\": \"pruned\", \"fp\": \"fp16\", \"format\": \"SafeTensor\"}")
+  leaderboardShowcase     String?
+  referral                UserReferral?
+  excludeFromLeaderboards Boolean               @default(false)
 
   profile          UserProfile?
   profilePictureId Int?               @unique
