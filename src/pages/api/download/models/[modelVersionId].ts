@@ -100,7 +100,7 @@ export default PublicEndpoint(
       ...input,
       user: session?.user,
     });
-
+    console.log(fileResult);
     if (fileResult.status === 'not-found') return errorResponse(404, 'File not found');
     if (fileResult.status === 'archived')
       return errorResponse(410, 'Model archived, not available for download');
@@ -109,12 +109,9 @@ export default PublicEndpoint(
         return res.status(403).json({
           error: 'Early Access',
           deadline: fileResult.details.deadline,
-          message: 'This asset is in Early Access and you need to be a member to download it',
+          message: 'This asset is in Early Access. You can use Buzz access it now!',
         });
-      else
-        return res.redirect(
-          getJoinLink({ reason: 'early-access', returnUrl: `/model-versions/${modelVersionId}` })
-        );
+      else return res.redirect(`/model-versions/${modelVersionId}`);
     }
     if (fileResult.status === 'unauthorized') {
       if (!isBrowser)

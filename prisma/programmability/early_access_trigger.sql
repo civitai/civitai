@@ -2,12 +2,15 @@ CREATE OR REPLACE FUNCTION early_access_ends_at()
 RETURNS TRIGGER AS $$
 BEGIN
     IF NEW."publishedAt" IS NOT NULL AND NEW."earlyAccessConfig" IS NOT NULL AND NEW."earlyAccessConfig"->>'timeframe' IS NOT NULL THEN
-        UPDATE "ModelVersion" SET 
-            "earlyAccessEndsAt" = COALESCE(NEW."publishedAt", now()) + CONCAT(NEW."earlyAccessConfig"->>'timeframe', ' days')::interval WHERE id = NEW.id,
-            "availability" = 'EarlyAccess';
+        UPDATE "ModelVersion" 
+        SET "earlyAccessEndsAt" = COALESCE(NEW."publishedAt", now()) + CONCAT(NEW."earlyAccessConfig"->>'timeframe', ' days')::interval,
+            "availability" = 'EarlyAccess'
+        WHERE id = NEW.id;
     ELSE
-    	UPDATE "ModelVersion" SET "earlyAccessEndsAt" = NULL WHERE id = NEW.id
-        "availability" = 'Public';
+    	UPDATE "ModelVersion"
+		SET "earlyAccessEndsAt" = NULL,
+    		"availability" = 'Public'
+    	WHERE id = NEW.id;
     END IF;
 
     RETURN NEW;
