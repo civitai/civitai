@@ -63,6 +63,7 @@ import {
   UserSettingsSchema,
   UserTier,
 } from './../schema/user.schema';
+import { preventReplicationLag } from '~/server/db/db-helpers';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
 export const getUserCreator = async ({
@@ -1040,6 +1041,8 @@ export async function toggleReview({
       });
     }
   }
+
+  await preventReplicationLag('resourceReview', userId);
 
   return setTo;
 }
