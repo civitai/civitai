@@ -186,8 +186,19 @@ export const usersSearchIndex = createSearchIndexUpdateProcessor({
     ].filter(isDefined);
 
     const data = await db.$queryRaw<{ startId: number; endId: number }[]>`
-      SELECT MIN(id) as "startId", MAX(id) as "endId" FROM "User" u
-      WHERE ${Prisma.join(where, ' AND ')}
+      SELECT 
+        (
+          SELECT u.id 
+          FROM "User" u
+          WHERE ${Prisma.join(where, ' AND ')}
+          ORDER BY u.id ASC
+          LIMIT 1
+        ) as "startId",
+        (
+          SELECT MAX(u.id) FROM "User" u
+          WHERE ${Prisma.join(where, ' AND ')}
+          
+        ) as "endId"
     `;
 
     const { startId, endId } = data[0];

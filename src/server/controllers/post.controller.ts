@@ -222,7 +222,17 @@ export const deletePostHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
-    return await deletePost({ ...input });
+    const result = await deletePost({ ...input });
+    if (result) {
+      await ctx.track.post({
+        type: 'Delete',
+        nsfw: !getIsSafeBrowsingLevel(result.nsfwLevel),
+        postId: result.id,
+        tags: [],
+      });
+    }
+
+    return result;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

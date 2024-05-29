@@ -63,6 +63,7 @@ import {
   UserSettingsSchema,
   UserTier,
 } from './../schema/user.schema';
+import { preventReplicationLag } from '~/server/db/db-helpers';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
 export const getUserCreator = async ({
@@ -91,6 +92,7 @@ export const getUserCreator = async ({
       deletedAt: true,
       createdAt: true,
       publicSettings: true,
+      excludeFromLeaderboards: true,
       links: {
         select: {
           url: true,
@@ -255,7 +257,7 @@ export async function setUserSetting(userId: number, settings: UserSettingsSchem
   if (toRemove.length) {
     await dbWrite.$executeRawUnsafe(`
       UPDATE "User"
-      SET settings = settings - ${toRemove.join(' - ')}}'
+      SET settings = settings - ${toRemove.join(' - ')}}
       WHERE id = ${userId}
     `);
   }
@@ -493,13 +495,20 @@ export const deleteUser = async ({ id, username, removeModels }: DeleteUserInput
 
   await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
 
-  await invalidateSession(id);
-
   // Cancel their subscription
   await cancelSubscription({ userId: user.id });
+  await invalidateSession(id);
 
   return result;
 };
+
+export async function setLeaderboardEligibility({ id, setTo }: { id: number; setTo: boolean }) {
+  await dbWrite.$executeRawUnsafe(`
+    UPDATE "User"
+    SET "excludeFromLeaderboards" = ${setTo}
+    WHERE id = ${id}
+  `);
+}
 
 /** Soft delete will ban the user, unsubscribe the user, and restrict access to the user's models/images  */
 export async function softDeleteUser({ id }: { id: number }) {
@@ -1033,6 +1042,8 @@ export async function toggleReview({
     }
   }
 
+  await preventReplicationLag('resourceReview', userId);
+
   return setTo;
 }
 
@@ -1261,9 +1272,41 @@ export async function unequipCosmeticByType({
 }
 
 export const getUserBookmarkCollections = async ({ userId }: { userId: number }) => {
-  return dbRead.collection.findMany({
+  const collections = await dbRead.collection.findMany({
     where: { userId, mode: CollectionMode.Bookmark },
   });
+
+  if (!collections.find((x) => x.type === CollectionType.Article)) {
+    // Create the collection if it doesn't exist
+    const articles = await dbWrite.collection.create({
+      data: {
+        userId,
+        type: CollectionType.Article,
+        mode: CollectionMode.Bookmark,
+        name: 'Bookmarked Articles',
+        description: 'Your bookmarked articles will appear in this collection.',
+      },
+    });
+
+    collections.push(articles);
+  }
+
+  if (!collections.find((x) => x.type === CollectionType.Model)) {
+    // Create the collection if it doesn't exist
+    const models = await dbWrite.collection.create({
+      data: {
+        userId,
+        type: CollectionType.Model,
+        mode: CollectionMode.Bookmark,
+        name: 'Liked Models',
+        description: 'Your liked models will appear in this collection.',
+      },
+    });
+
+    collections.push(models);
+  }
+
+  return collections;
 };
 
 export const getUserPurchasedRewards = async ({ userId }: { userId: number }) => {
