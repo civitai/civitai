@@ -341,6 +341,7 @@ export const createTrainingRequest = async ({
   }
 
   const data = response.data;
+  const jobId = data?.jobs?.[0]?.jobId;
   const fileMetadata = modelVersion.fileMetadata || {};
 
   await withRetries(() =>
@@ -352,12 +353,13 @@ export const createTrainingRequest = async ({
           trainingResults: {
             ...(fileMetadata.trainingResults || {}),
             submittedAt: new Date().toISOString(),
-            jobId: data?.jobs?.[0]?.jobId,
+            jobId,
             transactionId,
             history: (fileMetadata.trainingResults?.history || []).concat([
               {
                 time: new Date().toISOString(),
                 status: TrainingStatus.Submitted,
+                jobId,
               },
             ]),
           },

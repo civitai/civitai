@@ -13,13 +13,12 @@ import {
   Title,
 } from '@mantine/core';
 import { TrainingStatus } from '@prisma/client';
-import { IconFileDownload, IconSend } from '@tabler/icons-react';
+import { IconAlertCircle, IconFileDownload, IconSend } from '@tabler/icons-react';
 import { saveAs } from 'file-saver';
 import { useRouter } from 'next/router';
 import React, { useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { DownloadButton } from '~/components/Model/ModelVersions/DownloadButton';
-import { NoContent } from '~/components/NoContent/NoContent';
 import { ModelWithTags } from '~/components/Resource/Wizard/ModelWizard';
 import { EpochSchema } from '~/pages/api/webhooks/resource-training';
 import { orchestratorMediaTransmitter } from '~/store/post-image-transmitter.store';
@@ -290,7 +289,9 @@ export default function TrainingSelectFile({
   const epochs = [...mfEpochs].sort((a, b) => b.epoch_number - a.epoch_number);
 
   const errorMessage =
-    modelVersion.trainingStatus === TrainingStatus.Failed
+    modelVersion.trainingStatus === TrainingStatus.Paused
+      ? 'The training job is currently under review. No action is required on your part at this time.'
+      : modelVersion.trainingStatus === TrainingStatus.Failed
       ? 'The training job failed. Please recreate this model and try again, or contact us for help.'
       : modelVersion.trainingStatus === TrainingStatus.Denied
       ? 'The training job was denied for violating the TOS. Please contact us with any questions.'
@@ -319,9 +320,10 @@ export default function TrainingSelectFile({
   return (
     <Stack>
       {!!errorMessage ? (
-        <Center py="md">
-          <NoContent message={errorMessage} />
-        </Center>
+        <Stack p="xl" align="center">
+          <IconAlertCircle size={52} />
+          <Text>{errorMessage}</Text>
+        </Stack>
       ) : noEpochs ? (
         <Stack p="xl" align="center">
           <Loader />
@@ -337,23 +339,22 @@ export default function TrainingSelectFile({
         </Stack>
       ) : (
         <>
-          {modelVersion.trainingStatus === TrainingStatus.Processing ||
-            (modelVersion.trainingStatus === TrainingStatus.Paused && (
-              <Stack p="xl" align="center">
-                <Loader />
-                <Stack spacing="sm" align="center">
-                  <Text>
-                    Models are currently training{' '}
-                    {modelVersion.trainingDetails?.params?.maxTrainEpochs
-                      ? `(${epochs[0]?.epoch_number ?? 0}/${
-                          modelVersion.trainingDetails.params.maxTrainEpochs
-                        })`
-                      : '...'}
-                  </Text>
-                  <Text>Results will stream in as they complete.</Text>
-                </Stack>
+          {modelVersion.trainingStatus === TrainingStatus.Processing && (
+            <Stack p="xl" align="center">
+              <Loader />
+              <Stack spacing="sm" align="center">
+                <Text>
+                  Models are currently training{' '}
+                  {modelVersion.trainingDetails?.params?.maxTrainEpochs
+                    ? `(${epochs[0]?.epoch_number ?? 0}/${
+                        modelVersion.trainingDetails.params.maxTrainEpochs
+                      })`
+                    : '...'}
+                </Text>
+                <Text>Results will stream in as they complete.</Text>
               </Stack>
-            ))}
+            </Stack>
+          )}
           <Flex justify="flex-end">
             <Button
               color="cyan"

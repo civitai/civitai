@@ -103,7 +103,7 @@ export default WebhookEndpoint(async (req, res) => {
         });
         try {
           await withRetries(async () =>
-            refundTransaction(transactionId, 'Refund for failed training job.')
+            refundTransaction(transactionId, 'Refund for denied training job.')
           );
         } catch (e: unknown) {
           logWebhook({
