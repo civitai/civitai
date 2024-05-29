@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { TypeOf, ZodAny, ZodArray, ZodEffects, ZodObject, ZodString, ZodTypeAny, z } from 'zod';
 import { Adunit } from '~/components/Ads/AdUnit';
 import { GenerationForm2 } from '~/components/ImageGeneration/GenerationForm/GenerationForm2';
+import { GenerationFormProvider } from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
 import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvider';
 import { IsClient } from '~/components/IsClient/IsClient';
 import OnboardingWizard from '~/components/Onboarding/OnboardingWizard';
@@ -21,7 +22,9 @@ export default function Test() {
     <IsClient>
       <GenerationProvider>
         <div className="container max-w-xs">
-          <GenerationForm2 />
+          <GenerationFormProvider>
+            <GenerationForm2 />
+          </GenerationFormProvider>
         </div>
       </GenerationProvider>
       {/* <InnerContent /> */}

@@ -1,4 +1,4 @@
-import { TypeOf, z, AnyZodObject } from 'zod';
+import { TypeOf, z, AnyZodObject, ZodEffects } from 'zod';
 import {
   Path,
   useForm,
@@ -11,10 +11,9 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useEffect, useRef } from 'react';
 import { getDeepPartialWithoutChecks } from '~/utils/zod-helpers';
 
-type UsePersistFormReturn<TFieldValues extends FieldValues = FieldValues> =
+export type UsePersistFormReturn<TFieldValues extends FieldValues = FieldValues> =
   UseFormReturn<TFieldValues> & {
     clear: () => void;
-    defaultValues?: DeepPartial<TFieldValues>;
   };
 
 export function usePersistForm<

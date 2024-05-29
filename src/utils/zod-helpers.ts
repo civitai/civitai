@@ -97,14 +97,14 @@ export function zodEnumFromObjKeys<K extends string>(
   return z.enum([firstKey, ...otherKeys]);
 }
 
-export function stripChecksAndRefinements<TSchema extends ZodTypeAny>(schema: TSchema): TSchema {
-  if (schema instanceof ZodEffects) return stripChecksAndRefinements(schema._def.schema);
+export function stripChecksAndEffects<TSchema extends ZodTypeAny>(schema: TSchema): TSchema {
+  if (schema instanceof ZodEffects) return stripChecksAndEffects(schema._def.schema);
   if (schema instanceof ZodArray)
-    return z.array(stripChecksAndRefinements(schema.element)) as unknown as TSchema;
+    return z.array(stripChecksAndEffects(schema.element)) as unknown as TSchema;
   if (schema instanceof ZodObject) {
     let dictionary = z.object({});
     for (const [key, value] of Object.entries(schema.shape)) {
-      dictionary = dictionary.extend({ [key]: stripChecksAndRefinements(value as any) });
+      dictionary = dictionary.extend({ [key]: stripChecksAndEffects(value as any) });
     }
     return dictionary as unknown as TSchema;
   }
@@ -113,5 +113,5 @@ export function stripChecksAndRefinements<TSchema extends ZodTypeAny>(schema: TS
 }
 
 export function getDeepPartialWithoutChecks<TSchema extends AnyZodObject>(schema: TSchema) {
-  return stripChecksAndRefinements(schema).deepPartial();
+  return stripChecksAndEffects(schema).deepPartial();
 }

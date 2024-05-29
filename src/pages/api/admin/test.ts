@@ -1,6 +1,11 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import { SessionUser } from 'next-auth';
-import { getTextToImageRequests, textToImage } from '~/server/services/orchestrator/textToImage';
+import {
+  createTextToImage,
+  getTextToImageRequests,
+  textToImage,
+  whatIfTextToImage,
+} from '~/server/services/orchestrator/textToImage';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 
@@ -9,8 +14,27 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
   const user = session?.user;
   if (!user) return;
 
+  async function submitWhatIf({ user }: { user: SessionUser }) {
+    return await whatIfTextToImage({
+      prompt:
+        'vvi(artstyle), 2girl, solo, keqing (opulent splendor) (genshin impact), keqing (genshin impact), official alternate costume, dress, cone hair bun,jewelry, parted lips, looking at viewer, portrait,earrings, red orange hair, hair between eyes, upper body,very long hair, low twintails, bangs,  smile, street background,floating hair,hair ornament,night light, latent, ruins, bridge, river, hair flower, facing viewer, arms behind back, close-up, <lora:yoneyamaMaiStyle:0.7>,<lora:keqingGenshinImpact:0.9>,cloudy,gradient  cloud  color,splash art',
+      negativePrompt: 'EasyNegative,watermark, center opening,bad_prompt,bad-hands-5,',
+      cfgScale: 5.5,
+      sampler: 'DPM++ 2M Karras',
+      steps: 20,
+      clipSkip: 2,
+      quantity: 4,
+      nsfw: false,
+      aspectRatio: '2',
+      // draft: true,
+      baseModel: 'SD1',
+      resources: [93208, 18521, 28569],
+      user,
+    });
+  }
+
   async function submitRequest({ user }: { user: SessionUser }) {
-    return await textToImage({
+    return await createTextToImage({
       params: {
         prompt:
           'vvi(artstyle), 2girl, solo, keqing (opulent splendor) (genshin impact), keqing (genshin impact), official alternate costume, dress, cone hair bun,jewelry, parted lips, looking at viewer, portrait,earrings, red orange hair, hair between eyes, upper body,very long hair, low twintails, bangs,  smile, street background,floating hair,hair ornament,night light, latent, ruins, bridge, river, hair flower, facing viewer, arms behind back, close-up, <lora:yoneyamaMaiStyle:0.7>,<lora:keqingGenshinImpact:0.9>,cloudy,gradient  cloud  color,splash art',
@@ -21,7 +45,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
         clipSkip: 2,
         quantity: 4,
         nsfw: false,
-        aspectRatio: 2,
+        aspectRatio: '2',
         draft: true,
         baseModel: 'SD1',
       },
@@ -44,7 +68,8 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
   }
 
   // const response = await getTextToImageRequests({ user, take: 10 });
-  const response = await submitRequest({ user });
+  // const response = await submitRequest({ user });
+  const response = await submitWhatIf({ user });
 
   // console.dir(response, { depth: null });
 

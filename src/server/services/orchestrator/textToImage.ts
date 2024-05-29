@@ -29,9 +29,13 @@ import {
 import { TextToImageResponse } from '~/server/services/orchestrator/types';
 import { SignalMessages } from '~/server/common/enums';
 import { queryWorkflows, submitWorkflow } from '~/server/services/orchestrator/workflows';
-import { textToImageSchema } from '~/server/schema/orchestrator/textToImage.schema';
+import {
+  textToImageSchema,
+  textToImageWhatIfSchema,
+} from '~/server/schema/orchestrator/textToImage.schema';
 import { removeNulls } from '~/utils/object-helpers';
 import { ResourceData } from '~/server/redis/caches';
+import dayjs from 'dayjs';
 
 export async function textToImage({
   user,
@@ -95,7 +99,7 @@ export async function textToImage({
           ...resource,
           ...parsedInput.resources.find((x) => x.id === resource.id),
           air,
-          triggerWord: resource.trainedWords[0],
+          triggerWord: resource.trainedWords?.[0],
         };
       })
       .filter(isDefined);
@@ -141,7 +145,7 @@ export async function textToImage({
   // #endregion
 
   const config = getGenerationConfig(params.baseModel);
-  const { height, width } = config.aspectRatios[params.aspectRatio];
+  const { height, width } = config.aspectRatios[Number(params.aspectRatio)];
   const availableResourceTypes = config.additionalResourceTypes.map((x) => x.type);
   const additionalNetworks: { [key: string]: ImageJobNetworkParams } = {};
   function addAdditionalNetwork(resource: AirResourceData) {
@@ -221,12 +225,14 @@ export async function textToImage({
 
   const requestBody: WorkflowTemplate = {
     steps: [step],
-    callbacks: [
-      {
-        url: `https://signals-dev.civitai.com/users/${user.id}/signals/${SignalMessages.TextToImageUpdate}`, // TODO - env var?
-        type: ['job:*', 'workflow:*'],
-      },
-    ],
+    callbacks: !whatIf
+      ? [
+          {
+            url: `https://signals-dev.civitai.com/users/${user.id}/signals/${SignalMessages.TextToImageUpdate}`, // TODO - env var?
+            type: ['job:*', 'workflow:*'],
+          },
+        ]
+      : undefined,
   };
 
   const workflow = (await submitWorkflow({
@@ -235,8 +241,56 @@ export async function textToImage({
     user,
   })) as TextToImageResponse;
 
+  return { workflow, resourceDataWithInjects };
+}
+
+export async function createTextToImage(
+  args: z.input<typeof textToImageSchema> & { user: SessionUser }
+) {
+  const { workflow, resourceDataWithInjects } = await textToImage(args);
   const [formatted] = await formatTextToImageResponses([workflow], resourceDataWithInjects);
   return formatted;
+}
+
+export async function whatIfTextToImage({
+  resources,
+  user,
+  ...params
+}: z.input<typeof textToImageWhatIfSchema> & { user: SessionUser }) {
+  const { workflow } = await textToImage({
+    params,
+    resources: resources.map((id) => ({ id })),
+    whatIf: true,
+    user,
+  });
+
+  let cost = 0,
+    ready = false,
+    eta = dayjs().add(10, 'minutes').toDate(),
+    position = 0;
+
+  for (const step of workflow.steps) {
+    for (const job of step.jobs ?? []) {
+      cost += job.cost;
+
+      const { queuePosition } = job;
+      if (!queuePosition) continue;
+
+      const { precedingJobs, startAt, support } = queuePosition;
+      if (support === 'available' && !ready) ready = true;
+      if (precedingJobs && precedingJobs < position) {
+        position = precedingJobs;
+        if (startAt && new Date(startAt).getTime() < eta.getTime()) eta = new Date(startAt);
+      }
+    }
+  }
+
+  return {
+    cost: Math.ceil(cost),
+    ready,
+    eta,
+    position,
+  };
 }
 
 export async function getTextToImageRequests(

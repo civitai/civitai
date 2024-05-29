@@ -515,10 +515,11 @@ export const generation = {
     seed: undefined,
     clipSkip: 2,
     quantity: 4,
-    aspectRatio: 0,
+    aspectRatio: '0',
     prompt: '',
     negativePrompt: '',
     nsfw: false,
+    baseModel: 'SD1',
     model: {
       id: 128713,
       name: '8',

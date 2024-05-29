@@ -147,7 +147,7 @@ const generationLimitsSchema = z.object({
   resources: z.number(),
 });
 export type GenerationLimits = z.infer<typeof generationLimitsSchema>;
-const defaultsByTier: Record<string, GenerationLimits> = {
+export const defaultsByTier: Record<string, GenerationLimits> = {
   free: {
     quantity: 4,
     queue: 4,

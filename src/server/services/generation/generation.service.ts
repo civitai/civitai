@@ -644,7 +644,7 @@ export type GenerationData = {
   resources: GenerationResource[];
   params: {
     clipSkip?: number;
-    aspectRatio?: number;
+    aspectRatio?: string;
     baseModel?: BaseModelSetType;
     prompt?: string;
     negativePrompt?: string;
@@ -776,12 +776,12 @@ const getImageGenerationData = async (id: number) => {
   if (meta.steps == 0) meta.steps = 30;
   if (meta.seed == 0) meta.seed = undefined;
 
-  let aspectRatio = 0;
+  let aspectRatio = '0';
   if (image.width && image.height) {
     const config = getGenerationConfig(baseModel);
     const ratios = config.aspectRatios.map((x) => x.width / x.height);
     const closest = findClosest(ratios, image.width / image.height);
-    aspectRatio = ratios.indexOf(closest);
+    aspectRatio = `${ratios.indexOf(closest)}`;
   }
 
   return {

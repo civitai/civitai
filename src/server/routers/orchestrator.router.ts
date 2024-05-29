@@ -1,7 +1,15 @@
 import { workflowQuerySchema, workflowIdSchema } from './../schema/orchestrator/workflows.schema';
-import { textToImageSchema } from '~/server/schema/orchestrator/textToImage.schema';
+import {
+  textToImageSchema,
+  textToImageWhatIfSchema,
+} from '~/server/schema/orchestrator/textToImage.schema';
 import { deleteJob, taintJob, taintJobSchema } from '~/server/services/orchestrator/jobs';
-import { getTextToImageRequests, textToImage } from '~/server/services/orchestrator/textToImage';
+import {
+  createTextToImage,
+  whatIfTextToImage,
+  getTextToImageRequests,
+  textToImage,
+} from '~/server/services/orchestrator/textToImage';
 import { cancelWorkflow, deleteWorkflow } from '~/server/services/orchestrator/workflows';
 import { protectedProcedure, router } from '~/server/trpc';
 
@@ -28,9 +36,12 @@ export const orchestratorRouter = router({
   getTextToImageRequests: protectedProcedure
     .input(workflowQuerySchema)
     .query(({ ctx, input }) => getTextToImageRequests({ ...input, user: ctx.user })),
+  textToImageWhatIf: protectedProcedure
+    .input(textToImageWhatIfSchema)
+    .query(({ input, ctx }) => whatIfTextToImage({ ...input, user: ctx.user })),
   createTextToImage: protectedProcedure
     .input(textToImageSchema)
-    .mutation(({ ctx, input }) => textToImage({ ...input, user: ctx.user })),
+    .mutation(({ ctx, input }) => createTextToImage({ ...input, user: ctx.user })),
   // #endregion
 
   // #region [image training]

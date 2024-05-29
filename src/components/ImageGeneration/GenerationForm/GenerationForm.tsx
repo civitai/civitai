@@ -86,8 +86,6 @@ import {
 } from '~/server/schema/orchestrator/textToImage.schema';
 import { z } from 'zod';
 
-const BUZZ_CHARGE_NOTICE_END = new Date('2024-04-14T00:00:00Z');
-
 const schema = textToImageParamsSchema.extend({
   model: textToImageResourceSchema.passthrough(),
   resources: textToImageResourceSchema.passthrough().array().min(0).max(9),
@@ -770,11 +768,6 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
               </Accordion.Panel>
             </Accordion.Item>
           </PersistentAccordion>
-          {/* <Card {...sharedCardProps}>
-          <Stack>
-            <Text>TODO.hires</Text>
-          </Stack>
-          </Card> */}
         </ScrollArea>
         <div className={cx('rounded-xl shadow-topper px-2 py-2 flex flex-col gap-2')}>
           <DailyBoostRewardClaim />
@@ -833,17 +826,6 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
             </Alert>
           ) : status.available && !promptWarning ? (
             <>
-              {/* {status.charge && new Date() < BUZZ_CHARGE_NOTICE_END && (
-                <DismissibleAlert id="generator-charge-buzz">
-                  <Text>
-                    Generating images now costs Buzz.{' '}
-                    <Text component={NextLink} href="/articles/4797" td="underline">
-                      Learn why
-                    </Text>
-                  </Text>
-                </DismissibleAlert>
-              )} */}
-
               <QueueSnackbar />
               <Group spacing="xs" className={classes.generateButtonContainer} noWrap>
                 <Card withBorder className={classes.generateButtonQuantity} p={0}>
