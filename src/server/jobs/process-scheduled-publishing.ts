@@ -3,10 +3,12 @@ import { createJob, getJobDate } from './job';
 import { dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
 import orchestratorCaller from '~/server/http/orchestrator/orchestrator.caller';
+import { dataForModelsCache } from '~/server/redis/caches';
 
 type ScheduledEntity = {
   id: number;
   userId: number;
+  extras?: Record<string, any>;
 };
 
 export const processScheduledPublishing = createJob(
@@ -27,7 +29,10 @@ export const processScheduledPublishing = createJob(
     const scheduledModelVersions = await dbWrite.$queryRaw<ScheduledEntity[]>`
       SELECT
         mv.id,
-        m."userId"
+        m."userId",
+        JSON_BUILD_OBJECT(
+          'modelId', m.id
+        ) as "extras"
       FROM "ModelVersion" mv
       JOIN "Model" m ON m.id = mv."modelId"
       WHERE mv.status = 'Scheduled' AND mv."publishedAt" <= ${now};
@@ -111,6 +116,9 @@ export const processScheduledPublishing = createJob(
         entityId: modelVersion.id,
       });
       await orchestratorCaller.bustModelCache({ modelVersionId: modelVersion.id });
+      if (modelVersion.extras && modelVersion.extras.hasOwnProperty('modelId')) {
+        await dataForModelsCache.bust(modelVersion.extras.modelId);
+      }
     }
     for (const post of scheduledPosts) {
       await eventEngine.processEngagement({
