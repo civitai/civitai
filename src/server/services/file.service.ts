@@ -12,6 +12,7 @@ import { filenamize, replaceInsensitive } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { dbRead } from '../db/client';
 import { hasEntityAccess } from './common.service';
+import { EntityAccessPermission } from '~/server/common/enums';
 
 export const getFilesByEntity = async ({ id, ids, type }: GetFilesByEntitySchema) => {
   if (!id && (!ids || ids.length === 0)) {
@@ -162,11 +163,13 @@ export const getFileForModelVersion = async ({
       name: true,
       trainedWords: true,
       earlyAccessEndsAt: true,
+      earlyAccessConfig: true,
       createdAt: true,
       vaeId: true,
       requireAuth: true,
     },
   });
+
   if (!modelVersion) return { status: 'not-found' };
 
   const [entityAccess] = await hasEntityAccess({
@@ -198,7 +201,14 @@ export const getFileForModelVersion = async ({
 
   const deadline = modelVersion.earlyAccessEndsAt ?? undefined;
   const inEarlyAccess = deadline !== undefined && new Date() < deadline;
-  if (!noAuth && !user?.tier && !isMod && !isOwner && inEarlyAccess) {
+
+  if (
+    !noAuth &&
+    (entityAccess.permissions & EntityAccessPermission.EarlyAccessDownload) != 0 &&
+    !isMod &&
+    !isOwner &&
+    inEarlyAccess
+  ) {
     return { status: 'early-access', details: { deadline } };
   }
 

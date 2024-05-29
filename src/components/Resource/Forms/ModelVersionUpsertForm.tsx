@@ -1,7 +1,18 @@
-import { Card, Divider, Group, Input, Stack, Switch, Text, ThemeIcon } from '@mantine/core';
+import {
+  Card,
+  Divider,
+  Group,
+  Input,
+  SegmentedControl,
+  Stack,
+  Switch,
+  Text,
+  ThemeIcon,
+} from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { Currency, ModelType, ModelVersionMonetizationType } from '@prisma/client';
 import { IconInfoCircle, IconQuestionMark } from '@tabler/icons-react';
+import { isEqual } from 'lodash';
 import { useRouter } from 'next/router';
 import React, { useEffect, useMemo } from 'react';
 import { z } from 'zod';
@@ -45,6 +56,7 @@ import { ModelUpsertInput } from '~/server/schema/model.schema';
 import { isEarlyAccess } from '~/server/utils/early-access-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { numericString } from '~/utils/zod-helpers';
 
 const earlyAccessTimeframeValues = [5, 7, 10, 12, 15];
 
@@ -52,8 +64,10 @@ const schema = modelVersionUpsertSchema2
   .extend({
     skipTrainedWords: z.boolean().default(false),
     earlyAccessConfig: earlyAccessConfigInput
-      .refine((value) => earlyAccessTimeframeValues.some((v) => v.toString() === value.timeframe), {
-        message: 'Invalid value the heck u did',
+      .extend({
+        timeframe: z.number().refine((v) => earlyAccessTimeframeValues.includes(v), {
+          message: 'Invalid value',
+        }),
       })
       .nullish(),
     useMonetization: z.boolean().default(false),
@@ -143,9 +157,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
       version?.earlyAccessConfig && features.earlyAccessModel
         ? {
             ...(version?.earlyAccessConfig ?? {}),
-            timeframe:
-              version.earlyAccessConfig?.timeframe?.toString() ??
-              earlyAccessTimeframeValues[0].toString(),
+            timeframe: version.earlyAccessConfig?.timeframe ?? earlyAccessTimeframeValues[0],
           }
         : null,
     modelId: model?.id ?? -1,
@@ -189,7 +201,13 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
     const templateId = schemaResult.success ? schemaResult.data.templateId : undefined;
     const bountyId = schemaResult.success ? schemaResult.data.bountyId : undefined;
 
-    if (isDirty || !version?.id || templateId || bountyId) {
+    if (
+      isDirty ||
+      !version?.id ||
+      templateId ||
+      bountyId ||
+      !isEqual(data.earlyAccessConfig, version.earlyAccessConfig)
+    ) {
       const recommendedResources =
         rawRecommendedResources?.map(({ id, strength }) => ({
           resourceId: id,
@@ -202,15 +220,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
         epochs: data.epochs ?? null,
         steps: data.steps ?? null,
         modelId: model?.id ?? -1,
-        earlyAccessConfig: !data.earlyAccessConfig
-          ? null
-          : {
-              ...data.earlyAccessConfig,
-              timeframe: parseInt(
-                data.earlyAccessConfig?.timeframe ?? earlyAccessTimeframeValues[0].toString(),
-                10
-              ),
-            },
+        earlyAccessConfig: !data.earlyAccessConfig ? null : data.earlyAccessConfig,
         trainedWords: skipTrainedWords ? [] : trainedWords,
         baseModelType: hasBaseModelType ? data.baseModelType : undefined,
         vaeId: hasVAE ? data.vaeId : undefined,
@@ -243,11 +253,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
           : true,
         earlyAccessConfig:
           version?.earlyAccessConfig && features.earlyAccessModel
-            ? {
-                generationTrialLimit: 10,
-                ...(version?.earlyAccessConfig ?? {}),
-                timeframe: version.earlyAccessConfig?.timeframe?.toString(),
-              }
+            ? version?.earlyAccessConfig
             : null,
         recommendedResources: version.recommendedResources ?? [],
       });
@@ -260,8 +266,6 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
   const maxEarlyAccessValue = canIncreaseEarlyAccess
     ? MAX_EARLY_ACCCESS
     : version?.earlyAccessConfig?.timeframe ?? 0;
-
-  console.log(version?.earlyAccessConfig);
 
   return (
     <>
@@ -304,7 +308,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                     'earlyAccessConfig',
                     e.target.checked
                       ? {
-                          timeframe: earlyAccessTimeframeValues[0].toString(),
+                          timeframe: earlyAccessTimeframeValues[0],
                           downloadPrice: 500,
                           chargeForGeneration: false,
                           generationPrice: 100,
@@ -321,8 +325,13 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                     description="How long would you like to offer early access to your version from the date of publishing?"
                     error={form.formState.errors.earlyAccessConfig?.message}
                   >
-                    <InputSegmentedControl
-                      name="earlyAccessConfig.timeframe"
+                    <SegmentedControl
+                      onChange={(value) =>
+                        form.setValue('earlyAccessConfig.timeframe', parseInt(value, 10))
+                      }
+                      value={
+                        earlyAccessConfig?.timeframe?.toString() ?? earlyAccessTimeframeValues[0]
+                      }
                       data={earlyAccessTimeframeValues.map((v) => ({
                         label: v === 0 ? 'None' : `${v} days`,
                         value: v.toString(),
@@ -350,8 +359,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                         {constants.earlyAccess.buzzChargedPerDay} BUZZ per day of early access once
                         your model is published. Your current total is{' '}
                         <Text component="span" color="yellow.6">
-                          {constants.earlyAccess.buzzChargedPerDay *
-                            parseInt(earlyAccessConfig?.timeframe ?? '0', 10)}{' '}
+                          {constants.earlyAccess.buzzChargedPerDay * earlyAccessConfig?.timeframe}{' '}
                           BUZZ.
                         </Text>
                       </Text>
@@ -402,6 +410,13 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                 </Stack>
               )}
 
+              {version?.earlyAccessConfig && !earlyAccessConfig && (
+                <Text size="xs" color="red">
+                  You will not be able to add this model to early access again after removing it.
+                  Also, your payment for early access will be lost. Please consider this before
+                  removing early access.
+                </Text>
+              )}
               <Divider my="md" />
             </Stack>
           )}

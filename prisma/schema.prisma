@@ -633,7 +633,7 @@ model ModelVersion {
   availability      Availability    @default(Public)
   nsfwLevel         Int             @default(0)
   earlyAccessEndsAt DateTime?
-  earlyAccessConfig Json            @default("{}")
+  earlyAccessConfig Json?
 
   monetization            ModelVersionMonetization?
   metrics                 ModelVersionMetric[]
@@ -2594,7 +2594,7 @@ model EntityAccess {
   addedById    Int
   addedBy      User     @relation(fields: [addedById], references: [id])
   addedAt      DateTime @default(now())
-  permissions  Int      @default(0)
+  permissions  Int      @default(1024)
   meta         Json?    @default("{}")
 
   @@id([accessToId, accessToType, accessorId, accessorType])

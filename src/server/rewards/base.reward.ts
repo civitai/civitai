@@ -193,20 +193,20 @@ export function createBuzzEvent<T>({
       await addBuzzEvent(event);
     } catch (error) {
       log(event, { message: 'Failed to record buzz event', error });
-      rewardFailedCounter.inc();
+      rewardFailedCounter?.inc();
       throw new Error(`Failed to record buzz event: ${error}`);
     }
 
     if (event.status === 'awarded') {
       try {
         await sendAward([event]);
-        rewardGivenCounter.inc();
+        rewardGivenCounter?.inc();
       } catch (error) {
         log(event, {
           message: 'Failed to send award for buzz event',
           error,
         });
-        rewardFailedCounter.inc();
+        rewardFailedCounter?.inc();
         throw new Error(
           `Failed to send award for buzz event: ${error}.\n\nTransaction: ${JSON.stringify(event)}`
         );

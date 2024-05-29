@@ -1,5 +1,5 @@
 import { ModelStatus, ModelVersionEngagementType, Prisma, CommercialUse } from '@prisma/client';
-import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { EntityAccessPermission, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { TRPCError } from '@trpc/server';
 import { SessionUser } from 'next-auth';
 import { BaseModel, baseModelSets, constants } from '~/server/common/constants';
@@ -32,6 +32,9 @@ import dayjs from 'dayjs';
 import { clickhouse } from '~/server/clickhouse/client';
 import { maxDate } from '~/utils/date-helpers';
 import { env } from '~/env/server.mjs';
+import { createBuzzTransaction } from '~/server/services/buzz.service';
+import { TransactionType } from '~/server/schema/buzz.schema';
+import { hasEntityAccess } from '~/server/services/common.service';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
@@ -122,7 +125,7 @@ export const upsertModelVersion = async ({
   settings,
   recommendedResources,
   templateId,
-  earlyAccessTimeFrame,
+  earlyAccessConfig: updatedEarlyAccessConfig,
   ...data
 }: Omit<ModelVersionUpsertInput, 'trainingDetails'> & {
   meta?: Prisma.ModelVersionCreateInput['meta'];
@@ -137,19 +140,11 @@ export const upsertModelVersion = async ({
       orderBy: { index: 'asc' },
     });
 
-    let earlyAccessConfig: ModelVersionEarlyAccessConfig | null = null;
-    if (earlyAccessTimeFrame) {
-      earlyAccessConfig = {
-        timeframe: earlyAccessTimeFrame,
-        downloadPrice: 100,
-      };
-    }
-
     const [version] = await dbWrite.$transaction([
       dbWrite.modelVersion.create({
         data: {
           ...data,
-          earlyAccessConfig: earlyAccessConfig !== null ? earlyAccessConfig : undefined,
+          earlyAccessConfig: updatedEarlyAccessConfig,
           settings: settings !== null ? settings : Prisma.JsonNull,
           monetization:
             monetization && monetization.type
@@ -191,23 +186,14 @@ export const upsertModelVersion = async ({
 
     return version;
   } else {
-    
-    let updatedConfig: ModelVersionEarlyAccessConfig | null = null;
-    if (earlyAccessTimeFrame) {
-      updatedConfig = {
-        timeframe: earlyAccessTimeFrame,
-        downloadPrice: 100,
-      };
-    }
-
     const existingVersion = await dbRead.modelVersion.findUniqueOrThrow({
       where: { id },
       select: {
         id: true,
         status: true,
         earlyAccessEndsAt: true,
-        earlyAccessConfig: true,       
-        publishedAt: true, 
+        earlyAccessConfig: true,
+        publishedAt: true,
         monetization: {
           select: {
             id: true,
@@ -223,12 +209,14 @@ export const upsertModelVersion = async ({
       },
     });
 
-    const earlyAccessConfig =  existingVersion.earlyAccessConfig ? existingVersion.earlyAccessConfig as ModelVersionEarlyAccessConfig : null;
+    const earlyAccessConfig = existingVersion.earlyAccessConfig
+      ? (existingVersion.earlyAccessConfig as ModelVersionEarlyAccessConfig)
+      : null;
 
     if (
       existingVersion.status === ModelStatus.Published &&
-      earlyAccessTimeFrame &&
-      !existingVersion.earlyAccessEndsAt
+      !!updatedEarlyAccessConfig &&
+      !earlyAccessConfig
     ) {
       throw throwBadRequestError(
         'You cannot add early access on a model after it has been published.'
@@ -237,9 +225,22 @@ export const upsertModelVersion = async ({
 
     if (
       existingVersion.status === ModelStatus.Published &&
-      earlyAccessTimeFrame &&
-      existingVersion.earlyAccessEndsAt &&
-      dayjs(existingVersion.publishedAt).add(earlyAccessTimeFrame, 'days').isAfter(existingVersion.earlyAccessEndsAt)
+      updatedEarlyAccessConfig &&
+      earlyAccessConfig &&
+      updatedEarlyAccessConfig.downloadPrice > earlyAccessConfig.downloadPrice
+    ) {
+      throw throwBadRequestError(
+        'You cannot increase the download price on a model after it has been published.'
+      );
+    }
+
+    console.log({ updatedEarlyAccessConfig, earlyAccessConfig });
+
+    if (
+      existingVersion.status === ModelStatus.Published &&
+      updatedEarlyAccessConfig &&
+      earlyAccessConfig &&
+      updatedEarlyAccessConfig.timeframe > earlyAccessConfig?.timeframe
     ) {
       throw throwBadRequestError(
         'You cannot increase the early access time frame for a published early access model version.'
@@ -250,7 +251,8 @@ export const upsertModelVersion = async ({
       where: { id },
       data: {
         ...data,
-        earlyAccessConfig: updatedConfig !== null ? updatedConfig : undefined,
+        earlyAccessConfig:
+          updatedEarlyAccessConfig !== undefined ? updatedEarlyAccessConfig : undefined,
         settings: settings !== null ? settings : Prisma.JsonNull,
         monetization:
           existingVersion.monetization?.id && !monetization
@@ -359,19 +361,53 @@ export const publishModelVersionById = async ({
   publishedAt,
   meta,
   republishing,
-}: PublishVersionInput & { meta?: ModelVersionMeta; republishing?: boolean }) => {
+}: PublishVersionInput & {
+  meta?: ModelVersionMeta;
+  republishing?: boolean;
+}) => {
   let status: ModelStatus = ModelStatus.Published;
   if (publishedAt && publishedAt > new Date()) status = ModelStatus.Scheduled;
   else publishedAt = new Date();
 
+  const currentVersion = await dbRead.modelVersion.findUniqueOrThrow({
+    where: { id },
+    select: {
+      id: true,
+      name: true,
+      earlyAccessConfig: true,
+      model: { select: { userId: true, name: true } },
+    },
+  });
+
+  const earlyAccessConfig =
+    currentVersion.earlyAccessConfig as ModelVersionEarlyAccessConfig | null;
+
   const version = await dbWrite.$transaction(
     async (tx) => {
+      if (
+        status === ModelStatus.Published &&
+        earlyAccessConfig &&
+        !earlyAccessConfig.buzzTransactionId
+      ) {
+        // We should charge for thisL
+        const buzzTransaction = await createBuzzTransaction({
+          fromAccountId: currentVersion.model.userId,
+          toAccountId: 0,
+          amount: earlyAccessConfig.timeframe * constants.earlyAccess.buzzChargedPerDay,
+          type: TransactionType.Purchase,
+          description: `Early access for model: ${currentVersion.model.name} - ${currentVersion.name}`,
+        });
+
+        earlyAccessConfig.buzzTransactionId = buzzTransaction.transactionId;
+      }
+
       const updatedVersion = await dbWrite.modelVersion.update({
         where: { id },
         data: {
           status,
           publishedAt: !republishing ? publishedAt : undefined,
           meta,
+          earlyAccessConfig: earlyAccessConfig ?? undefined,
         },
         select: {
           id: true,
@@ -786,3 +822,138 @@ You agree to the following with respect to the Model (each a “Permission”):
 
   return license;
 }
+
+export const purchaseEarlyAccess = async ({
+  userId,
+  modelVersionId,
+  type = 'download',
+}: {
+  userId: number;
+  modelVersionId: number;
+  type: 'generation' | 'download';
+}) => {
+  const permission =
+    type === 'generation'
+      ? EntityAccessPermission.EarlyAccessGeneration
+      : EntityAccessPermission.EarlyAccessDownload;
+  const buzzTransactionKey = `${type}-buzzTransactionId`;
+
+  const modelVersion = await getVersionById({
+    id: modelVersionId,
+    select: {
+      id: true,
+      earlyAccessEndsAt: true,
+      earlyAccessConfig: true,
+      status: true,
+      name: true,
+      model: {
+        select: {
+          name: true,
+          userId: true,
+        },
+      },
+    },
+  });
+
+  if (!modelVersion) {
+    throw throwNotFoundError('Model version not found.');
+  }
+
+  if (userId === modelVersion.model.userId) {
+    throw throwBadRequestError('You cannot purchase early access for your own model.');
+  }
+
+  const earlyAccesConfig = modelVersion.earlyAccessConfig as ModelVersionEarlyAccessConfig;
+
+  if (!earlyAccesConfig || !modelVersion.earlyAccessEndsAt) {
+    throw throwBadRequestError('This model version does not have early access enabled.');
+  }
+
+  if (modelVersion.status !== ModelStatus.Published) {
+    throw throwBadRequestError('You can only purchase early access for published models.');
+  }
+
+  if (modelVersion.earlyAccessEndsAt < new Date()) {
+    throw throwBadRequestError('This model is public and does not require purchase.');
+  }
+
+  if (
+    type === 'generation' &&
+    (!earlyAccesConfig.chargeForGeneration || !earlyAccesConfig.generationPrice)
+  ) {
+    throw throwBadRequestError('This model version does not support purchasing generation only.');
+  }
+
+  // Confirm this user does not have early access:
+  const [access] = await hasEntityAccess({
+    entityIds: [modelVersionId],
+    entityType: 'ModelVersion',
+  });
+
+  if (access.hasAccess && access.meta?.[buzzTransactionKey] && access.permissions >= permission) {
+    // This user has already purchased early access.
+    throw throwBadRequestError('You have already purchased early access for this model.');
+  }
+
+  let buzzTransactionId;
+
+  try {
+    const buzzTransaction = await createBuzzTransaction({
+      fromAccountId: userId,
+      toAccountId: modelVersion.model.userId,
+      amount:
+        type === 'download'
+          ? earlyAccesConfig.downloadPrice
+          : (earlyAccesConfig.generationPrice as number),
+      type: TransactionType.Purchase,
+      description: `Gain early access on model: ${modelVersion.model.name} - ${modelVersion.name}`,
+    });
+
+    buzzTransactionId = buzzTransaction.transactionId;
+
+    if (access.hasAccess) {
+      // Update entity access:
+      await dbWrite.entityAccess.update({
+        where: {
+          accessToId_accessToType_accessorId_accessorType: {
+            accessToId: modelVersionId,
+            accessToType: 'ModelVersion',
+            accessorId: userId,
+            accessorType: 'User',
+          },
+        },
+        data: {
+          permissions: Math.max(permission, access.permissions ?? 0),
+          meta: { ...(access.meta ?? {}), [`${type}-buzzTransactionId`]: buzzTransactionId },
+        },
+      });
+    } else {
+      // Grant entity access:
+      await dbWrite.entityAccess.create({
+        data: {
+          accessToId: modelVersionId,
+          accessToType: 'ModelVersion',
+          accessorId: userId,
+          accessorType: 'User',
+          permissions: EntityAccessPermission.EarlyAccessDownload,
+          meta: { [`${type}-buzzTransactionId`]: buzzTransactionId },
+          addedById: userId, // Since it's a purchase
+        },
+      });
+    }
+
+    return true;
+  } catch (error) {
+    if (buzzTransactionId) {
+      // Refund:
+      await createBuzzTransaction({
+        fromAccountId: modelVersion.model.userId,
+        toAccountId: userId,
+        amount: earlyAccesConfig.downloadPrice,
+        type: TransactionType.Refund,
+        description: `Refund early access on model: ${modelVersion.model.name} - ${modelVersion.name}`,
+      });
+    }
+    throw throwDbError(error);
+  }
+};

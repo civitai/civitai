@@ -11,7 +11,11 @@ import {
 import { TRPCError } from '@trpc/server';
 import { CommandResourcesAdd, ResourceType } from '~/components/CivitaiLink/shared-types';
 import { BaseModel, BaseModelType, ModelFileType, constants } from '~/server/common/constants';
-import { ModelSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import {
+  EntityAccessPermission,
+  ModelSort,
+  SearchIndexUpdateQueueAction,
+} from '~/server/common/enums';
 import { Context } from '~/server/createContext';
 
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -78,7 +82,7 @@ import {
 } from '~/server/services/model.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { getCategoryTags } from '~/server/services/system-cache';
-import { getEarlyAccessDeadline } from '~/server/utils/early-access-helpers';
+import { getEarlyAccessDeadline, isEarlyAccess } from '~/server/utils/early-access-helpers';
 import {
   handleLogError,
   throwAuthorizationError,
@@ -103,6 +107,7 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils';
 import { dataForModelsCache } from '~/server/redis/caches';
+import { hasEntityAccess } from '~/server/services/common.service';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
@@ -144,6 +149,12 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
 
     const metrics = model.metrics[0];
     const canManage = ctx.user?.id === model.user.id || ctx.user?.isModerator;
+    const entityAccess = await hasEntityAccess({
+      entityIds: filteredVersions.map((x) => x.id),
+      entityType: 'ModelVersion',
+      isModerator: ctx.user?.isModerator,
+      userId: ctx.user?.id,
+    });
 
     return {
       ...model,
@@ -178,14 +189,17 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
           },
         })),
       modelVersions: filteredVersions.map((version) => {
-        let earlyAccessDeadline = features.earlyAccessModel
-          ? version.earlyAccessEndsAt
-          : undefined;
+        let earlyAccessDeadline = features.earlyAccessModel ? version.earlyAccessEndsAt : undefined;
         if (earlyAccessDeadline && new Date() > earlyAccessDeadline)
           earlyAccessDeadline = undefined;
+
+        const entityAccessForVersion = entityAccess.find((x) => x.entityId === version.id);
+
         const canDownload =
           model.mode !== ModelModifier.Archived &&
-          (!earlyAccessDeadline || !!ctx.user?.tier || !!ctx.user?.isModerator);
+          entityAccessForVersion.hasAccess &&
+          (!isEarlyAccess ||
+            entityAccessForVersion.permissions >= EntityAccessPermission.EarlyAccessDownload);
         const canGenerate =
           !!version.generationCoverage?.covered &&
           unavailableGenResources.indexOf(version.id) === -1;
