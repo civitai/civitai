@@ -31,7 +31,6 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
         },
         {
           id: 18521,
-          triggerWord: 'keqing (genshin impact)',
           strength: 1,
         },
         {

@@ -1,18 +1,10 @@
 import { ModelType } from '@prisma/client';
 import { SessionUser } from 'next-auth';
 import { z } from 'zod';
-import {
-  BaseModel,
-  BaseModelSetType,
-  Sampler,
-  baseModelSets,
-  draftMode,
-  getGenerationConfig,
-} from '~/server/common/constants';
+import { Sampler, getGenerationConfig } from '~/server/common/constants';
 import { extModeration } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
 import {
-  ResourceData,
   getGenerationStatus,
   getResourceDataWithInjects,
 } from '~/server/services/orchestrator/common';
@@ -27,13 +19,19 @@ import {
   type ImageJobNetworkParams,
   type Scheduler,
 } from '@civitai/client';
-import { samplersToSchedulers } from '~/shared/constants/generation.constants';
+import {
+  formatGenerationResources,
+  getBaseModelSetType,
+  getDraftModeSettings,
+  getIsSdxl,
+  samplersToSchedulers,
+} from '~/shared/constants/generation.constants';
 import { TextToImageResponse } from '~/server/services/orchestrator/types';
-import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import { SignalMessages } from '~/server/common/enums';
 import { queryWorkflows, submitWorkflow } from '~/server/services/orchestrator/workflows';
 import { textToImageSchema } from '~/server/schema/orchestrator/textToImage.schema';
 import { removeNulls } from '~/utils/object-helpers';
+import { ResourceData } from '~/server/redis/caches';
 
 export async function textToImage({
   user,
@@ -93,7 +91,12 @@ export async function textToImage({
           id: resource.id,
         });
         if (!air) return null;
-        return { ...resource, ...parsedInput.resources.find((x) => x.id === resource.id), air };
+        return {
+          ...resource,
+          ...parsedInput.resources.find((x) => x.id === resource.id),
+          air,
+          triggerWord: resource.trainedWords[0],
+        };
       })
       .filter(isDefined);
   }
@@ -116,14 +119,10 @@ export async function textToImage({
 
   // TODO - ensure that draft mode models are included in the `GenerationCoverage` view
   // handle missing coverage
-  if (
-    !resources.every(
-      (x) => !!x.generationCoverage?.covered || x.id === draftModeSettings.resourceId
-    )
-  )
+  if (!resources.every((x) => !!x.covered || x.id === draftModeSettings.resourceId))
     throw throwBadRequestError(
       `Some of your resources are not available for generation: ${resources
-        .filter((x) => !(!!x.generationCoverage?.covered || x.id === draftModeSettings.resourceId))
+        .filter((x) => !(!!x.covered || x.id === draftModeSettings.resourceId))
         .map((x) => x.air)
         .join(', ')}`
     );
@@ -257,24 +256,6 @@ export async function getTextToImageRequests(
 }
 
 // #region [helper methods]
-function getBaseModelSetType(baseModel: string) {
-  return baseModelSetsEntries.find(([, v]) =>
-    v.includes(baseModel as BaseModel)
-  )?.[0] as BaseModelSetType;
-}
-function getIsSdxl(baseModelSetType: BaseModelSetType) {
-  return (
-    baseModelSetType === 'SDXL' ||
-    baseModelSetType === 'Pony' ||
-    baseModelSetType === 'SDXLDistilled'
-  );
-}
-function getDraftModeSettings(baseModelSetType: BaseModelSetType) {
-  const isSDXL = getIsSdxl(baseModelSetType);
-  return draftMode[isSDXL ? 'sdxl' : 'sd1'];
-}
-
-const baseModelSetsEntries = Object.entries(baseModelSets);
 export async function formatTextToImageResponses(
   workflows: TextToImageResponse[],
   resources?: AsyncReturnType<typeof getResourceDataWithInjects>
@@ -295,24 +276,9 @@ export async function formatTextToImageResponses(
       const versionIds = airs.map((x) => x.version);
       const requestResources = resourcesData.filter((x) => versionIds.includes(x.id));
       const checkpoint = requestResources.find((x) => x.model.type === 'Checkpoint');
-      const baseModel = checkpoint ? getBaseModelSetType(checkpoint.baseModel) : undefined;
+      const baseModel = getBaseModelSetType(checkpoint?.baseModel);
 
-      const resources = requestResources.map((resource) => {
-        const settings = resource.settings as RecommendedSettingsSchema;
-        return {
-          id: resource.id,
-          name: resource.name,
-          trainedWords: resource.trainedWords,
-          modelId: resource.model.id,
-          modelName: resource.model.name,
-          modelType: resource.model.type,
-          baseModel: resource.baseModel,
-          strength: settings?.strength ?? 1,
-          minStrength: settings?.minStrength ?? -1,
-          maxStrength: settings?.maxStrength ?? 2,
-          covered: resource.generationCoverage?.covered,
-        };
-      });
+      const resources = formatGenerationResources(requestResources);
 
       return steps.map((step) => {
         const { input, output, jobs } = step;

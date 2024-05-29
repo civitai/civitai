@@ -7,7 +7,7 @@ import { Generation } from '~/server/services/generation/generation.types';
 import { showErrorNotification } from '~/utils/notifications';
 import { QS } from '~/utils/qs';
 
-export type RunType = 'run' | 'remix' | 'random' | 'params';
+export type RunType = 'run' | 'remix' | 'params';
 export type GenerationPanelView = 'queue' | 'generate' | 'feed';
 type GenerationState = {
   opened: boolean;
@@ -17,7 +17,6 @@ type GenerationState = {
   open: (input?: GetGenerationDataInput) => Promise<void>;
   close: () => void;
   setView: (view: GenerationPanelView) => void;
-  randomize: (includeResources?: boolean) => Promise<void>;
   setParams: (data: Generation.Data['params']) => void;
   setData: (args: { data: Partial<Generation.Data>; type: RunType }) => void;
   clearData: () => void;
@@ -36,12 +35,7 @@ export const useGenerationStore = create<GenerationState>()(
 
         if (!input) return;
         const data = await getGenerationData(input);
-        const type =
-          input.type === 'model' || input.type === 'modelVersion'
-            ? 'run'
-            : input.type === 'image'
-            ? 'remix'
-            : 'random';
+        const type = input.type === 'modelVersion' ? 'run' : 'remix';
         if (data) get().setData({ type, data: { ...data } });
       },
       close: () =>
@@ -70,10 +64,7 @@ export const useGenerationStore = create<GenerationState>()(
             data.params.sampler = generation.defaultValues.sampler;
           state.data = { type, data };
         }),
-      randomize: async (includeResources) => {
-        const data = await getGenerationData({ type: 'random', includeResources });
-        if (data) get().setData({ type: 'random', data });
-      },
+
       clearData: () =>
         set((state) => {
           state.data = undefined;
@@ -94,13 +85,12 @@ export const generationStore = {
   setData: store.setData,
   setParams: store.setParams,
   clearData: store.clearData,
-  randomize: store.randomize,
 };
 
 const dictionary: Record<string, Generation.Data> = {};
 const getGenerationData = async (input: GetGenerationDataInput) => {
   try {
-    const key = input.type !== 'random' ? `${input.type}_${input.id}` : undefined;
+    const key = `${input.type}_${input.id}`;
     if (key && dictionary[key]) return dictionary[key];
     else {
       const response = await fetch(`/api/generation/data?${QS.stringify(input)}`);

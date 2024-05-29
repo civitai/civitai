@@ -20,55 +20,41 @@ import {
   throwBadRequestError,
   throwInsufficientFundsError,
   throwNotFoundError,
-  throwRateLimitError,
 } from '~/server/utils/errorHandling';
-import { Availability, ModelType, Prisma } from '@prisma/client';
-import {
-  GenerationResourceSelect,
-  generationResourceSelect,
-} from '~/server/selectors/generation.selector';
-import { Generation } from '~/server/services/generation/generation.types';
+import { Prisma } from '@prisma/client';
+
 import { isDefined } from '~/utils/type-guards';
-import { QS } from '~/utils/qs';
-import { env } from '~/env/server.mjs';
 
 import {
   BaseModel,
   baseModelSets,
   BaseModelSetType,
-  CacheTTL,
   draftMode,
   getGenerationConfig,
   Sampler,
 } from '~/server/common/constants';
 import { imageGenerationSchema } from '~/server/schema/image.schema';
 import { uniqBy } from 'lodash-es';
-import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import orchestratorCaller from '~/server/http/orchestrator/orchestrator.caller';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
-import { hasEntityAccess } from '~/server/services/common.service';
-import { includesNsfw, includesPoi, includesMinor } from '~/utils/metadata/audit';
+
 import { fromJson, toJson } from '~/utils/json-helpers';
-import { extModeration } from '~/server/integrations/moderation';
-import { logToAxiom } from '~/server/logging/client';
+
 import { getPagedData } from '~/server/utils/pagination-helpers';
 import { modelsSearchIndex } from '~/server/search-index';
-import { createLimiter } from '~/server/utils/rate-limiting';
-import { clickhouse } from '~/server/clickhouse/client';
-import dayjs from 'dayjs';
-import { SearchIndexUpdateQueueAction, GenerationRequestStatus } from '~/server/common/enums';
+
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { UserTier } from '~/server/schema/user.schema';
 import { generatorFeedbackReward } from '~/server/rewards';
-import { resourceDataCache } from '~/server/redis/caches';
+import { ResourceData, resourceDataCache } from '~/server/redis/caches';
 import {
-  allInjectedNegatives,
-  allInjectedPositives,
   defaultCheckpoints,
-  getBaseModelSetKey,
-  minorNegatives,
-  minorPositives,
-  safeNegatives,
+  formatGenerationResources,
+  GenerationResource,
+  getBaseModelSetType,
+  samplersToSchedulers,
 } from '~/shared/constants/generation.constants';
+import { findClosest } from '~/utils/number-helpers';
 
 export function parseModelVersionId(assetId: string) {
   const pattern = /^@civitai\/(\d+)$/;
@@ -81,47 +67,29 @@ export function parseModelVersionId(assetId: string) {
   return null;
 }
 
-function mapRequestStatus(label: string): GenerationRequestStatus {
-  switch (label) {
-    case 'Pending':
-      return GenerationRequestStatus.Pending;
-    case 'Processing':
-      return GenerationRequestStatus.Processing;
-    case 'Cancelled':
-      return GenerationRequestStatus.Cancelled;
-    case 'Error':
-      return GenerationRequestStatus.Error;
-    case 'Succeeded':
-      return GenerationRequestStatus.Succeeded;
-    default:
-      throw new Error(`Invalid status label: ${label}`);
-  }
-}
-
-function mapGenerationResource(
-  resource: GenerationResourceSelect & { settings?: RecommendedSettingsSchema | null }
-): Generation.Resource {
-  const { model, settings, ...x } = resource;
-  return {
-    id: x.id,
-    name: x.name,
-    trainedWords: x.trainedWords,
-    modelId: model.id,
-    modelName: model.name,
-    modelType: model.type,
-    baseModel: x.baseModel,
-    strength: settings?.strength ?? 1,
-    minStrength: settings?.minStrength ?? -1,
-    maxStrength: settings?.maxStrength ?? 2,
-  };
-}
+// function mapRequestStatus(label: string): GenerationRequestStatus {
+//   switch (label) {
+//     case 'Pending':
+//       return GenerationRequestStatus.Pending;
+//     case 'Processing':
+//       return GenerationRequestStatus.Processing;
+//     case 'Cancelled':
+//       return GenerationRequestStatus.Cancelled;
+//     case 'Error':
+//       return GenerationRequestStatus.Error;
+//     case 'Succeeded':
+//       return GenerationRequestStatus.Succeeded;
+//     default:
+//       throw new Error(`Invalid status label: ${label}`);
+//   }
+// }
 
 const baseModelSetsArray = Object.values(baseModelSets);
 /** @deprecated using search index instead... */
 export const getGenerationResources = async (
   input: GetGenerationResourcesInput & { user?: SessionUser }
 ) => {
-  return await getPagedData<GetGenerationResourcesInput, Generation.Resource[]>(
+  return await getPagedData<GetGenerationResourcesInput, GenerationResource[]>(
     input,
     async ({
       take,
@@ -188,7 +156,7 @@ export const getGenerationResources = async (
       let orderBy = 'mv.index';
       if (!query) orderBy = `mm."thumbsUpCount", ${orderBy}`;
 
-      const results = await dbRead.$queryRaw<Array<Generation.Resource & { index: number }>>`
+      const results = await dbRead.$queryRaw<Array<GenerationResource & { index: number }>>`
         SELECT
           mv.id,
           mv.index,
@@ -197,7 +165,10 @@ export const getGenerationResources = async (
           m.id "modelId",
           m.name "modelName",
           m.type "modelType",
-          mv."baseModel"
+          mv."baseModel",
+          mv.settings->>'strength' strength,
+          mv.settings->>'minStrength' "minStrength",
+          mv.settings->>'maxStrength' "maxStrength"
         FROM "ModelVersion" mv
         JOIN "Model" m ON m.id = mv."modelId"
         ${Prisma.raw(
@@ -239,148 +210,106 @@ export const getGenerationResources = async (
   );
 };
 
-function getResourceData(modelVersionIds: number[]) {
-  return resourceDataCache.fetch(modelVersionIds);
-}
-export function deleteResourceDataCache(modelVersionIds: number | number[]) {
-  return resourceDataCache.bust(modelVersionIds);
-}
+// const formatGenerationRequests = async (requests: Generation.Api.RequestProps[]) => {
+//   const modelVersionIds = requests
+//     .map((x) => parseModelVersionId(x.job.model))
+//     .concat(
+//       requests.flatMap((x) => Object.keys(x.job.additionalNetworks ?? {}).map(parseModelVersionId))
+//     )
+//     .filter((x) => x !== null) as number[];
 
-const baseModelSetsEntries = Object.entries(baseModelSets);
+//   const modelVersions = await resourceDataCache.fetch(modelVersionIds);
 
-const formatGenerationRequests = async (requests: Generation.Api.RequestProps[]) => {
-  const modelVersionIds = requests
-    .map((x) => parseModelVersionId(x.job.model))
-    .concat(
-      requests.flatMap((x) => Object.keys(x.job.additionalNetworks ?? {}).map(parseModelVersionId))
-    )
-    .filter((x) => x !== null) as number[];
+//   const checkpoint = modelVersions.find((x) => x.model.type === 'Checkpoint');
+//   const baseModel = getBaseModelSetType(checkpoint?.baseModel);
 
-  const modelVersions = await getResourceData(modelVersionIds);
+//   // const alternativesAvailable =
+//   //   ((await redis.hGet(REDIS_KEYS.SYSTEM.FEATURES, 'generation:alternatives')) ?? 'false') ===
+//   //   'true';
 
-  const checkpoint = modelVersions.find((x) => x.model.type === 'Checkpoint');
-  const baseModel = checkpoint
-    ? (baseModelSetsEntries.find(([, v]) =>
-        v.includes(checkpoint.baseModel as BaseModel)
-      )?.[0] as BaseModelSetType)
-    : undefined;
+//   return requests.map((x): Generation.Request => {
+//     const { additionalNetworks = {}, params, ...job } = x.job;
 
-  // const alternativesAvailable =
-  //   ((await redis.hGet(REDIS_KEYS.SYSTEM.FEATURES, 'generation:alternatives')) ?? 'false') ===
-  //   'true';
+//     let assets = [x.job.model, ...Object.keys(x.job.additionalNetworks ?? {})];
 
-  return requests.map((x): Generation.Request => {
-    const { additionalNetworks = {}, params, ...job } = x.job;
+//     // scrub negative prompt
+//     let negativePrompt = params.negativePrompt ?? '';
+//     for (const { triggerWord, id } of allInjectedNegatives) {
+//       negativePrompt = negativePrompt.replace(`${triggerWord}, `, '');
+//       assets = assets.filter((x) => x !== `@civitai/${id}`);
+//     }
 
-    let assets = [x.job.model, ...Object.keys(x.job.additionalNetworks ?? {})];
+//     let prompt = params.prompt ?? '';
+//     for (const { triggerWord, id } of allInjectedPositives) {
+//       prompt = prompt.replace(`${triggerWord}, `, '');
+//       assets = assets.filter((x) => x !== `@civitai/${id}`);
+//     }
 
-    // scrub negative prompt
-    let negativePrompt = params.negativePrompt ?? '';
-    for (const { triggerWord, id } of allInjectedNegatives) {
-      negativePrompt = negativePrompt.replace(`${triggerWord}, `, '');
-      assets = assets.filter((x) => x !== `@civitai/${id}`);
-    }
+//     const request = {
+//       id: x.id,
+//       // alternativesAvailable,
+//       createdAt: x.createdAt,
+//       // estimatedCompletionDate: x.estimatedCompletedAt,
+//       status: mapRequestStatus(x.status),
+//       // queuePosition: x.queuePosition,
+//       cost: x.cost,
+//       params: {
+//         ...params,
+//         prompt,
+//         baseModel,
+//         negativePrompt,
+//         seed: params.seed === -1 ? undefined : params.seed,
+//         sampler: Object.entries(samplersToSchedulers).find(
+//           ([sampler, scheduler]) => scheduler === params.scheduler
+//         )?.[0],
+//       },
+//       resources: assets
+//         .map((assetId): Generation.Resource | undefined => {
+//           const modelVersionId = parseModelVersionId(assetId);
+//           const modelVersion = modelVersions.find((x) => x.id === modelVersionId);
+//           const network = x.job.additionalNetworks?.[assetId] ?? {};
+//           if (!modelVersion) return undefined;
+//           const { model } = modelVersion;
+//           return {
+//             id: modelVersion.id,
+//             name: modelVersion.name,
+//             trainedWords: modelVersion.trainedWords,
+//             modelId: model.id,
+//             modelName: model.name,
+//             modelType: model.type,
+//             baseModel: modelVersion.baseModel,
+//             ...network,
+//           };
+//         })
+//         .filter(isDefined),
+//       ...job,
+//       images: x.images
+//         ?.map(({ jobToken, ...image }) => image)
+//         .sort((a, b) => (b.duration ?? 1) - (a.duration ?? 1)),
+//     };
 
-    let prompt = params.prompt ?? '';
-    for (const { triggerWord, id } of allInjectedPositives) {
-      prompt = prompt.replace(`${triggerWord}, `, '');
-      assets = assets.filter((x) => x !== `@civitai/${id}`);
-    }
+//     // if (alternativesAvailable) request.alternativesAvailable = true;
 
-    const request = {
-      id: x.id,
-      // alternativesAvailable,
-      createdAt: x.createdAt,
-      // estimatedCompletionDate: x.estimatedCompletedAt,
-      status: mapRequestStatus(x.status),
-      // queuePosition: x.queuePosition,
-      cost: x.cost,
-      params: {
-        ...params,
-        prompt,
-        baseModel,
-        negativePrompt,
-        seed: params.seed === -1 ? undefined : params.seed,
-        sampler: Object.entries(samplersToSchedulers).find(
-          ([sampler, scheduler]) => scheduler === params.scheduler
-        )?.[0],
-      },
-      resources: assets
-        .map((assetId): Generation.Resource | undefined => {
-          const modelVersionId = parseModelVersionId(assetId);
-          const modelVersion = modelVersions.find((x) => x.id === modelVersionId);
-          const network = x.job.additionalNetworks?.[assetId] ?? {};
-          if (!modelVersion) return undefined;
-          const { model } = modelVersion;
-          return {
-            id: modelVersion.id,
-            name: modelVersion.name,
-            trainedWords: modelVersion.trainedWords,
-            modelId: model.id,
-            modelName: model.name,
-            modelType: model.type,
-            baseModel: modelVersion.baseModel,
-            ...network,
-          };
-        })
-        .filter(isDefined),
-      ...job,
-      images: x.images
-        ?.map(({ jobToken, ...image }) => image)
-        .sort((a, b) => (b.duration ?? 1) - (a.duration ?? 1)),
-    };
+//     return request;
+//   });
+// };
 
-    // if (alternativesAvailable) request.alternativesAvailable = true;
+// export type GetGenerationRequestsReturn = AsyncReturnType<typeof getGenerationRequests>;
+// export const getGenerationRequests = async (
+//   props: GetGenerationRequestsOutput & { userId: number }
+// ) => {
+//   const params = QS.stringify(props);
+//   const response = await fetch(`${env.SCHEDULER_ENDPOINT}/requests?${params}`);
+//   if (!response.ok) throw new Error(response.statusText);
+//   const { cursor, requests }: Generation.Api.Request = await response.json();
 
-    return request;
-  });
-};
+//   const items = await formatGenerationRequests(requests);
 
-export type GetGenerationRequestsReturn = AsyncReturnType<typeof getGenerationRequests>;
-export const getGenerationRequests = async (
-  props: GetGenerationRequestsOutput & { userId: number }
-) => {
-  const params = QS.stringify(props);
-  const response = await fetch(`${env.SCHEDULER_ENDPOINT}/requests?${params}`);
-  if (!response.ok) throw new Error(response.statusText);
-  const { cursor, requests }: Generation.Api.Request = await response.json();
-
-  const items = await formatGenerationRequests(requests);
-
-  return {
-    items: items.filter((x) => !!x.images?.length),
-    nextCursor: cursor === 0 ? undefined : cursor ?? undefined,
-  };
-};
-
-const samplersToSchedulers: Record<Sampler, string> = {
-  'Euler a': 'EulerA',
-  Euler: 'Euler',
-  LMS: 'LMS',
-  Heun: 'Heun',
-  DPM2: 'DPM2',
-  'DPM2 a': 'DPM2A',
-  'DPM++ 2S a': 'DPM2SA',
-  'DPM++ 2M': 'DPM2M',
-  'DPM++ 2M SDE': 'DPM2MSDE',
-  'DPM++ SDE': 'DPMSDE',
-  'DPM fast': 'DPMFast',
-  'DPM adaptive': 'DPMAdaptive',
-  'LMS Karras': 'LMSKarras',
-  'DPM2 Karras': 'DPM2Karras',
-  'DPM2 a Karras': 'DPM2AKarras',
-  'DPM++ 2S a Karras': 'DPM2SAKarras',
-  'DPM++ 2M Karras': 'DPM2MKarras',
-  'DPM++ 2M SDE Karras': 'DPM2MSDEKarras',
-  'DPM++ SDE Karras': 'DPMSDEKarras',
-  'DPM++ 3M SDE': 'DPM3MSDE',
-  'DPM++ 3M SDE Karras': 'DPM3MSDEKarras',
-  'DPM++ 3M SDE Exponential': 'DPM3MSDEExponential',
-  DDIM: 'DDIM',
-  PLMS: 'PLMS',
-  UniPC: 'UniPC',
-  LCM: 'LCM',
-};
+//   return {
+//     items: items.filter((x) => !!x.images?.length),
+//     nextCursor: cursor === 0 ? undefined : cursor ?? undefined,
+//   };
+// };
 
 const baseModelToOrchestration: Record<BaseModelSetType, string | undefined> = {
   SD1: 'SD_1_5',
@@ -439,259 +368,259 @@ const getDraftStateFromInputForOrchestrator = ({
   return { quantity, steps, cfgScale, sampler };
 };
 
-export const createGenerationRequest = async ({
-  userId,
-  userTier,
-  isModerator,
-  resources,
-  params: { nsfw, negativePrompt, draft, ...params },
-}: CreateGenerationRequestInput & {
-  userId: number;
-  userTier?: UserTier;
-  isModerator?: boolean;
-}) => {
-  if (resources.length === 0) throw throwBadRequestError('No resources provided');
+// export const createGenerationRequest = async ({
+//   userId,
+//   userTier,
+//   isModerator,
+//   resources,
+//   params: { nsfw, negativePrompt, draft, ...params },
+// }: CreateGenerationRequestInput & {
+//   userId: number;
+//   userTier?: UserTier;
+//   isModerator?: boolean;
+// }) => {
+//   if (resources.length === 0) throw throwBadRequestError('No resources provided');
 
-  // Handle generator disabled
-  const status = await getGenerationStatus();
-  if (!status.available && !isModerator)
-    throw throwBadRequestError('Generation is currently disabled');
+//   // Handle generator disabled
+//   const status = await getGenerationStatus();
+//   if (!status.available && !isModerator)
+//     throw throwBadRequestError('Generation is currently disabled');
 
-  // Handle the request limits
-  const limits = status.limits[userTier ?? 'free'];
-  if (params.quantity > limits.quantity) params.quantity = limits.quantity;
-  if (params.steps > limits.steps) params.steps = limits.steps;
-  // +1 for the checkpoint
-  if (resources.length > limits.resources + 1)
-    throw throwBadRequestError('You have exceeded the resources limit.');
+//   // Handle the request limits
+//   const limits = status.limits[userTier ?? 'free'];
+//   if (params.quantity > limits.quantity) params.quantity = limits.quantity;
+//   if (params.steps > limits.steps) params.steps = limits.steps;
+//   // +1 for the checkpoint
+//   if (resources.length > limits.resources + 1)
+//     throw throwBadRequestError('You have exceeded the resources limit.');
 
-  // This is disabled for now, because it performs so poorly...
-  // const requests = await getGenerationRequests({
-  //   userId,
-  //   status: [GenerationRequestStatus.Pending, GenerationRequestStatus.Processing],
-  //   take: limits.queue + 1,
-  // });
-  // if (requests.items.length >= limits.queue)
-  //   throw throwRateLimitError(
-  //     'You have too many pending generation requests. Try again when some are completed.'
-  //   );
+//   // This is disabled for now, because it performs so poorly...
+//   // const requests = await getGenerationRequests({
+//   //   userId,
+//   //   status: [GenerationRequestStatus.Pending, GenerationRequestStatus.Processing],
+//   //   take: limits.queue + 1,
+//   // });
+//   // if (requests.items.length >= limits.queue)
+//   //   throw throwRateLimitError(
+//   //     'You have too many pending generation requests. Try again when some are completed.'
+//   //   );
 
-  // Handle Draft Mode
-  const isSDXL =
-    params.baseModel === 'SDXL' ||
-    params.baseModel === 'Pony' ||
-    params.baseModel === 'SDXLDistilled';
-  const draftModeSettings = draftMode[isSDXL ? 'sdxl' : 'sd1'];
-  if (draft) {
-    // Fix quantity
-    if (params.quantity % 4 !== 0) params.quantity = Math.ceil(params.quantity / 4) * 4;
-    // Fix other params
-    params.steps = draftModeSettings.steps;
-    params.cfgScale = draftModeSettings.cfgScale;
-    params.sampler = draftModeSettings.sampler;
-    // Add speed up resources
-    resources.push({
-      modelType: ModelType.LORA,
-      strength: 1,
-      id: draftModeSettings.resourceId,
-    });
-  }
+//   // Handle Draft Mode
+//   const isSDXL =
+//     params.baseModel === 'SDXL' ||
+//     params.baseModel === 'Pony' ||
+//     params.baseModel === 'SDXLDistilled';
+//   const draftModeSettings = draftMode[isSDXL ? 'sdxl' : 'sd1'];
+//   if (draft) {
+//     // Fix quantity
+//     if (params.quantity % 4 !== 0) params.quantity = Math.ceil(params.quantity / 4) * 4;
+//     // Fix other params
+//     params.steps = draftModeSettings.steps;
+//     params.cfgScale = draftModeSettings.cfgScale;
+//     params.sampler = draftModeSettings.sampler;
+//     // Add speed up resources
+//     resources.push({
+//       modelType: ModelType.LORA,
+//       strength: 1,
+//       id: draftModeSettings.resourceId,
+//     });
+//   }
 
-  const resourceData = await getResourceData(resources.map((x) => x.id));
-  const allResourcesAvailable = resourceData.every(
-    (x) => !!x.generationCoverage?.covered || x.id === draftModeSettings.resourceId
-  );
-  if (!allResourcesAvailable)
-    throw throwBadRequestError('Some of your resources are not available for generation');
+//   const resourceData = await resourceDataCache.fetch(resources.map((x) => x.id));
+//   const allResourcesAvailable = resourceData.every(
+//     (x) => !!x.covered || x.id === draftModeSettings.resourceId
+//   );
+//   if (!allResourcesAvailable)
+//     throw throwBadRequestError('Some of your resources are not available for generation');
 
-  // const access = await checkResourcesAccess(resources, userId).catch(() => false);
-  // if (!access)
-  //   throw throwAuthorizationError('You do not have access to some of the selected resources');
+//   // const access = await checkResourcesAccess(resources, userId).catch(() => false);
+//   // if (!access)
+//   //   throw throwAuthorizationError('You do not have access to some of the selected resources');
 
-  const checkpoint = resources.find((x) => x.modelType === ModelType.Checkpoint);
-  if (!checkpoint)
-    throw throwBadRequestError('A checkpoint is required to make a generation request');
+//   const checkpoint = resources.find((x) => x.modelType === ModelType.Checkpoint);
+//   if (!checkpoint)
+//     throw throwBadRequestError('A checkpoint is required to make a generation request');
 
-  const { additionalResourceTypes, aspectRatios } = getGenerationConfig(params.baseModel);
-  if (params.aspectRatio.includes('x'))
-    throw throwBadRequestError('Invalid size. Please select your size and try again');
-  const { height, width } = aspectRatios[Number(params.aspectRatio)];
+//   const { additionalResourceTypes, aspectRatios } = getGenerationConfig(params.baseModel);
+//   if (params.aspectRatio.includes('x'))
+//     throw throwBadRequestError('Invalid size. Please select your size and try again');
+//   const { height, width } = aspectRatios[Number(params.aspectRatio)];
 
-  // External prompt moderation
-  let moderationResult = { flagged: false, categories: [] } as AsyncReturnType<
-    typeof extModeration.moderatePrompt
-  >;
-  try {
-    moderationResult = await extModeration.moderatePrompt(params.prompt);
-  } catch (e) {
-    const error = e as Error;
-    logToAxiom({ name: 'external-moderation-error', type: 'error', message: error.message });
-  }
-  if (moderationResult.flagged) {
-    throw throwBadRequestError(
-      `Your prompt was flagged for: ${moderationResult.categories.join(', ')}`
-    );
-  }
+//   // External prompt moderation
+//   let moderationResult = { flagged: false, categories: [] } as AsyncReturnType<
+//     typeof extModeration.moderatePrompt
+//   >;
+//   try {
+//     moderationResult = await extModeration.moderatePrompt(params.prompt);
+//   } catch (e) {
+//     const error = e as Error;
+//     logToAxiom({ name: 'external-moderation-error', type: 'error', message: error.message });
+//   }
+//   if (moderationResult.flagged) {
+//     throw throwBadRequestError(
+//       `Your prompt was flagged for: ${moderationResult.categories.join(', ')}`
+//     );
+//   }
 
-  // const additionalResourceTypes = getGenerationConfig(params.baseModel).additionalResourceTypes;
+//   // const additionalResourceTypes = getGenerationConfig(params.baseModel).additionalResourceTypes;
 
-  const additionalNetworks = resources
-    .filter((x) => additionalResourceTypes.map((x) => x.type).includes(x.modelType as any))
-    .reduce((acc, { id, modelType, ...rest }) => {
-      acc[`@civitai/${id}`] = { type: modelType, ...rest };
-      return acc;
-    }, {} as { [key: string]: object });
+//   const additionalNetworks = resources
+//     .filter((x) => additionalResourceTypes.map((x) => x.type).includes(x.modelType as any))
+//     .reduce((acc, { id, modelType, ...rest }) => {
+//       acc[`@civitai/${id}`] = { type: modelType, ...rest };
+//       return acc;
+//     }, {} as { [key: string]: object });
 
-  // Set nsfw to true if the prompt contains nsfw words
-  const isPromptNsfw = includesNsfw(params.prompt);
-  nsfw ??= isPromptNsfw !== false;
+//   // Set nsfw to true if the prompt contains nsfw words
+//   const isPromptNsfw = includesNsfw(params.prompt);
+//   nsfw ??= isPromptNsfw !== false;
 
-  // Disable nsfw if the prompt contains minor words
-  // POI is handled via SPMs within the worker
-  if (includesMinor(params.prompt)) nsfw = false;
+//   // Disable nsfw if the prompt contains minor words
+//   // POI is handled via SPMs within the worker
+//   if (includesMinor(params.prompt)) nsfw = false;
 
-  const negativePrompts = [negativePrompt ?? ''];
-  if (!nsfw && status.sfwEmbed) {
-    for (const { id, triggerWord } of safeNegatives) {
-      additionalNetworks[`@civitai/${id}`] = {
-        triggerWord,
-        type: ModelType.TextualInversion,
-      };
-      negativePrompts.unshift(triggerWord);
-    }
-  }
+//   const negativePrompts = [negativePrompt ?? ''];
+//   if (!nsfw && status.sfwEmbed) {
+//     for (const { id, triggerWord } of safeNegatives) {
+//       additionalNetworks[`@civitai/${id}`] = {
+//         triggerWord,
+//         type: ModelType.TextualInversion,
+//       };
+//       negativePrompts.unshift(triggerWord);
+//     }
+//   }
 
-  // Inject fallback minor safety nets
-  const positivePrompts = [params.prompt];
-  if (isPromptNsfw && status.minorFallback) {
-    for (const { id, triggerWord } of minorPositives) {
-      additionalNetworks[`@civitai/${id}`] = {
-        triggerWord,
-        type: ModelType.TextualInversion,
-      };
-      positivePrompts.unshift(triggerWord);
-    }
-    for (const { id, triggerWord } of minorNegatives) {
-      additionalNetworks[`@civitai/${id}`] = {
-        triggerWord,
-        type: ModelType.TextualInversion,
-      };
-      negativePrompts.unshift(triggerWord);
-    }
-  }
+//   // Inject fallback minor safety nets
+//   const positivePrompts = [params.prompt];
+//   if (isPromptNsfw && status.minorFallback) {
+//     for (const { id, triggerWord } of minorPositives) {
+//       additionalNetworks[`@civitai/${id}`] = {
+//         triggerWord,
+//         type: ModelType.TextualInversion,
+//       };
+//       positivePrompts.unshift(triggerWord);
+//     }
+//     for (const { id, triggerWord } of minorNegatives) {
+//       additionalNetworks[`@civitai/${id}`] = {
+//         triggerWord,
+//         type: ModelType.TextualInversion,
+//       };
+//       negativePrompts.unshift(triggerWord);
+//     }
+//   }
 
-  const vae = resources.find((x) => x.modelType === ModelType.VAE);
-  if (vae && !isSDXL) {
-    additionalNetworks[`@civitai/${vae.id}`] = {
-      type: ModelType.VAE,
-    };
-  }
+//   const vae = resources.find((x) => x.modelType === ModelType.VAE);
+//   if (vae && !isSDXL) {
+//     additionalNetworks[`@civitai/${vae.id}`] = {
+//       type: ModelType.VAE,
+//     };
+//   }
 
-  // handle SDXL ClipSkip
-  // I was made aware that SDXL only works with clipSkip 2
-  // if that's not the case anymore, we can rollback to just setting
-  // this for Pony resources -Manuel
-  if (isSDXL) params.clipSkip = 2;
+//   // handle SDXL ClipSkip
+//   // I was made aware that SDXL only works with clipSkip 2
+//   // if that's not the case anymore, we can rollback to just setting
+//   // this for Pony resources -Manuel
+//   if (isSDXL) params.clipSkip = 2;
 
-  const generationRequest = {
-    userId,
-    nsfw,
-    priority: draft ? env.DRAFT_MODE_PRIORITY : undefined,
-    job: {
-      model: `@civitai/${checkpoint.id}`,
-      baseModel: baseModelToOrchestration[params.baseModel as BaseModelSetType],
-      quantity: params.quantity,
-      sequential: draft ? true : false,
-      providers: draft ? env.DRAFT_MODE_PROVIDERS : undefined,
-      additionalNetworks,
-      params: {
-        prompt: positivePrompts.join(', '),
-        negativePrompt: negativePrompts.join(', '),
-        scheduler: samplersToSchedulers[params.sampler as Sampler],
-        steps: params.steps,
-        cfgScale: params.cfgScale,
-        height,
-        width,
-        seed: params.seed,
-        clipSkip: params.clipSkip,
-      },
-    },
-  };
+//   const generationRequest = {
+//     userId,
+//     nsfw,
+//     priority: draft ? env.DRAFT_MODE_PRIORITY : undefined,
+//     job: {
+//       model: `@civitai/${checkpoint.id}`,
+//       baseModel: baseModelToOrchestration[params.baseModel as BaseModelSetType],
+//       quantity: params.quantity,
+//       sequential: draft ? true : false,
+//       providers: draft ? env.DRAFT_MODE_PROVIDERS : undefined,
+//       additionalNetworks,
+//       params: {
+//         prompt: positivePrompts.join(', '),
+//         negativePrompt: negativePrompts.join(', '),
+//         scheduler: samplersToSchedulers[params.sampler as Sampler],
+//         steps: params.steps,
+//         cfgScale: params.cfgScale,
+//         height,
+//         width,
+//         seed: params.seed,
+//         clipSkip: params.clipSkip,
+//       },
+//     },
+//   };
 
-  // console.log('________');
-  // console.log(JSON.stringify(generationRequest));
-  // console.log('________');
+//   // console.log('________');
+//   // console.log(JSON.stringify(generationRequest));
+//   // console.log('________');
 
-  const schedulerUrl = new URL(`${env.SCHEDULER_ENDPOINT}/requests`);
-  if (status.charge) schedulerUrl.searchParams.set('charge', 'true');
-  if (params.staging) schedulerUrl.searchParams.set('staging', 'true');
-  // if (draft) schedulerUrl.searchParams.set('batch', 'true'); // Disable batching for now
+//   const schedulerUrl = new URL(`${env.SCHEDULER_ENDPOINT}/requests`);
+//   if (status.charge) schedulerUrl.searchParams.set('charge', 'true');
+//   if (params.staging) schedulerUrl.searchParams.set('staging', 'true');
+//   // if (draft) schedulerUrl.searchParams.set('batch', 'true'); // Disable batching for now
 
-  const response = await fetch(schedulerUrl.toString(), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(generationRequest),
-  });
+//   const response = await fetch(schedulerUrl.toString(), {
+//     method: 'POST',
+//     headers: { 'Content-Type': 'application/json' },
+//     body: JSON.stringify(generationRequest),
+//   });
 
-  // console.log('________');
-  // console.log(response);
-  // console.log('________');
+//   // console.log('________');
+//   // console.log(response);
+//   // console.log('________');
 
-  if (response.status === 429) {
-    // too many requests
-    throw throwRateLimitError();
-  }
+//   if (response.status === 429) {
+//     // too many requests
+//     throw throwRateLimitError();
+//   }
 
-  if (response.status === 403) {
-    throw throwInsufficientFundsError();
-  }
+//   if (response.status === 403) {
+//     throw throwInsufficientFundsError();
+//   }
 
-  if (!response.ok) {
-    const message = await response.json();
-    throw throwBadRequestError(message);
-  }
+//   if (!response.ok) {
+//     const message = await response.json();
+//     throw throwBadRequestError(message);
+//   }
 
-  const data: Generation.Api.RequestProps = await response.json();
-  const [formatted] = await formatGenerationRequests([data]);
-  return formatted;
-};
+//   const data: Generation.Api.RequestProps = await response.json();
+//   const [formatted] = await formatGenerationRequests([data]);
+//   return formatted;
+// };
 
-export async function getGenerationRequestById({ id }: GetByIdInput) {
-  const response = await fetch(`${env.SCHEDULER_ENDPOINT}/requests/${id}`);
-  if (!response) throw throwNotFoundError();
+// export async function getGenerationRequestById({ id }: GetByIdInput) {
+//   const response = await fetch(`${env.SCHEDULER_ENDPOINT}/requests/${id}`);
+//   if (!response) throw throwNotFoundError();
 
-  const data: Generation.Api.RequestProps = await response.json();
-  const [request] = await formatGenerationRequests([data]);
-  return request;
-}
+//   const data: Generation.Api.RequestProps = await response.json();
+//   const [request] = await formatGenerationRequests([data]);
+//   return request;
+// }
 
-export async function deleteGenerationRequest({ id, userId }: GetByIdInput & { userId: number }) {
-  const getResponse = await fetch(`${env.SCHEDULER_ENDPOINT}/requests/${id}`);
-  if (!getResponse) throw throwNotFoundError();
+// export async function deleteGenerationRequest({ id, userId }: GetByIdInput & { userId: number }) {
+//   const getResponse = await fetch(`${env.SCHEDULER_ENDPOINT}/requests/${id}`);
+//   if (!getResponse) throw throwNotFoundError();
 
-  const request: Generation.Api.RequestProps = await getResponse.json();
-  if (request.userId !== userId) throw throwAuthorizationError();
+//   const request: Generation.Api.RequestProps = await getResponse.json();
+//   if (request.userId !== userId) throw throwAuthorizationError();
 
-  const deleteResponse = await fetch(`${env.SCHEDULER_ENDPOINT}/requests/${id}`, {
-    method: 'DELETE',
-  });
+//   const deleteResponse = await fetch(`${env.SCHEDULER_ENDPOINT}/requests/${id}`, {
+//     method: 'DELETE',
+//   });
 
-  if (!deleteResponse.ok) throw throwNotFoundError();
-}
+//   if (!deleteResponse.ok) throw throwNotFoundError();
+// }
 
-export async function bulkDeleteGeneratedImages({
-  ids,
-  userId,
-  cancelled,
-}: BulkDeleteGeneratedImagesInput & { userId: number }) {
-  const queryString = QS.stringify({ imageId: ids, userId, cancelled });
-  const deleteResponse = await fetch(`${env.SCHEDULER_ENDPOINT}/images?${queryString}`, {
-    method: 'DELETE',
-  });
-  if (!deleteResponse.ok) throw throwNotFoundError();
+// export async function bulkDeleteGeneratedImages({
+//   ids,
+//   userId,
+//   cancelled,
+// }: BulkDeleteGeneratedImagesInput & { userId: number }) {
+//   const queryString = QS.stringify({ imageId: ids, userId, cancelled });
+//   const deleteResponse = await fetch(`${env.SCHEDULER_ENDPOINT}/images?${queryString}`, {
+//     method: 'DELETE',
+//   });
+//   if (!deleteResponse.ok) throw throwNotFoundError();
 
-  return deleteResponse.ok;
-}
+//   return deleteResponse.ok;
+// }
 
 export async function checkResourcesCoverage({ id }: CheckResourcesCoverageSchema) {
   const unavailableGenResources = await getUnavailableResources();
@@ -711,51 +640,45 @@ export async function getGenerationStatus() {
   return status as GenerationStatus;
 }
 
-export const getGenerationData = async (
-  props: GetGenerationDataInput
-): Promise<Generation.Data> => {
+export type GenerationData = {
+  resources: GenerationResource[];
+  params: {
+    clipSkip?: number;
+    aspectRatio?: number;
+    baseModel?: BaseModelSetType;
+    prompt?: string;
+    negativePrompt?: string;
+    cfgScale?: number;
+    steps?: number;
+    sampler?: string;
+    seed?: number;
+  };
+};
+
+export const getGenerationData = async (props: GetGenerationDataInput): Promise<GenerationData> => {
   switch (props.type) {
     case 'image':
       return await getImageGenerationData(props.id);
-    case 'model':
-      return await getResourceGenerationData({ modelId: props.id });
     case 'modelVersion':
       return await getResourceGenerationData({ modelVersionId: props.id });
-    case 'random':
-      return await getRandomGenerationData(props.includeResources);
+    default:
+      throw new Error('unsupported generation data type');
   }
 };
 
-export const getResourceGenerationData = async ({
-  modelId,
-  modelVersionId,
-}: {
-  modelId?: number;
-  modelVersionId?: number;
-}): Promise<Generation.Data> => {
-  if (!modelId && !modelVersionId) throw new Error('modelId or modelVersionId required');
-  const resource = await dbRead.modelVersion.findFirst({
-    where: { id: modelVersionId, modelId },
-    select: {
-      ...generationResourceSelect,
-      clipSkip: true,
-      vaeId: true,
-    },
-  });
-  if (!resource) throw throwNotFoundError();
-  const resources = [resource];
+export const getResourceGenerationData = async ({ modelVersionId }: { modelVersionId: number }) => {
+  if (!modelVersionId) throw new Error('modelVersionId required');
+  const resources = await resourceDataCache.fetch([modelVersionId]);
+  if (!resources.length) throw throwNotFoundError();
+
+  const [resource] = resources;
   if (resource.vaeId) {
-    const vae = await dbRead.modelVersion.findFirst({
-      where: { id: modelVersionId, modelId },
-      select: { ...generationResourceSelect, clipSkip: true },
-    });
+    const [vae] = await resourceDataCache.fetch([resource.vaeId]);
     if (vae) resources.push({ ...vae, vaeId: null });
   }
-  const baseModel = baseModelSetsEntries.find(([, v]) =>
-    v.includes(resource.baseModel as BaseModel)
-  )?.[0] as BaseModelSetType;
+  const baseModel = getBaseModelSetType(resource.baseModel);
   return {
-    resources: resources.map(mapGenerationResource),
+    resources: uniqBy(formatGenerationResources(resources), 'id'),
     params: {
       baseModel,
       clipSkip: resource.clipSkip ?? undefined,
@@ -763,67 +686,70 @@ export const getResourceGenerationData = async ({
   };
 };
 
-type ResourceUsedRow = Generation.Resource & { covered: boolean; hash?: string; strength?: number };
-const defaultCheckpointData: Partial<Record<BaseModelSetType, ResourceUsedRow>> = {};
-const getImageGenerationData = async (id: number): Promise<Generation.Data> => {
-  const image = await dbRead.image.findUnique({
-    where: { id },
-    select: {
-      meta: true,
-      height: true,
-      width: true,
-    },
-  });
+const defaultCheckpointData: Partial<Record<BaseModelSetType, ResourceData>> = {};
+const getImageGenerationData = async (id: number) => {
+  const [image, imageResources] = await dbRead.$transaction([
+    dbRead.image.findUnique({
+      where: { id },
+      select: {
+        meta: true,
+        height: true,
+        width: true,
+      },
+    }),
+    dbRead.imageResource.findMany({
+      where: { imageId: id },
+      select: { imageId: true, modelVersionId: true, hash: true, strength: true },
+    }),
+  ]);
   if (!image) throw throwNotFoundError();
 
   const {
     'Clip skip': legacyClipSkip,
     clipSkip = legacyClipSkip,
+    comfy, // don't return to client
+    external, // don't return to client
     ...meta
   } = imageGenerationSchema.parse(image.meta);
 
-  const resources = await dbRead.$queryRaw<ResourceUsedRow[]>`
-    SELECT
-      mv.id,
-      mv.name,
-      mv."trainedWords",
-      mv."baseModel",
-      m.id "modelId",
-      m.name "modelName",
-      m.type "modelType",
-      ir."hash",
-      ir.strength,
-      gc.covered
-    FROM "ImageResource" ir
-    JOIN "ModelVersion" mv on mv.id = ir."modelVersionId"
-    JOIN "Model" m on m.id = mv."modelId"
-    LEFT JOIN "GenerationCoverage" gc on gc."modelVersionId" = mv.id
-    WHERE ir."imageId" = ${id};
-  `;
+  const versionIds = imageResources.map((x) => x.modelVersionId).filter(isDefined);
+  const resourceData = await resourceDataCache.fetch(versionIds);
+  const resources = formatGenerationResources(resourceData);
 
   // if the checkpoint exists but isn't covered, add a default based off checkpoint `modelType`
-  const checkpoint = resources.find((x) => x.modelType === 'Checkpoint');
+  let checkpoint = resources.find((x) => x.modelType === 'Checkpoint');
   if (!checkpoint?.covered && checkpoint?.modelType) {
-    const baseModel = getBaseModelSetKey(checkpoint.baseModel);
-    const defaultCheckpoint = baseModel ? defaultCheckpoints[baseModel as any] : undefined;
+    const baseModel = getBaseModelSetType(checkpoint.baseModel);
+    const defaultCheckpoint = baseModel ? defaultCheckpoints[baseModel] : undefined;
     if (baseModel && defaultCheckpoint) {
+      // fetch default base model data
       if (!defaultCheckpointData[baseModel]) {
-        const resource = await dbRead.modelVersion.findFirst({
-          where: { id: defaultCheckpoint.version },
-          select: generationResourceSelect,
-        });
+        const [resource] = await resourceDataCache.fetch([defaultCheckpoint.version]);
         if (resource) {
-          defaultCheckpointData[baseModel] = { ...mapGenerationResource(resource), covered: true };
+          defaultCheckpointData[baseModel] = { ...resource, covered: true };
         }
       }
-      if (defaultCheckpointData[baseModel])
-        resources.unshift(defaultCheckpointData[baseModel] as ResourceUsedRow);
+
+      // add default base model data to front of resources
+      const defaultBaseModel = defaultCheckpointData[baseModel];
+      if (defaultBaseModel) {
+        const [formattedResource] = formatGenerationResources([defaultBaseModel]);
+        resources.unshift(formattedResource);
+      }
     }
   }
-  const deduped = uniqBy(resources, 'id').filter((x) => x.covered);
-  for (const resource of deduped) {
-    if (resource.strength) resource.strength /= 100;
-  }
+
+  // dedupe resources and add image resource strength/hashes
+  const deduped = uniqBy(resources, 'id')
+    .filter((x) => x.covered)
+    .map((resource) => {
+      const imageResource = imageResources.find((x) => x.modelVersionId === resource.id);
+      return {
+        ...resource,
+        strength: imageResource?.strength ? imageResource.strength / 100 : 1,
+        hash: imageResource?.hash ?? undefined,
+      };
+    });
 
   if (meta.hashes && meta.prompt) {
     for (const [key, hash] of Object.entries(meta.hashes)) {
@@ -842,62 +768,35 @@ const getImageGenerationData = async (id: number): Promise<Generation.Data> => {
     }
   }
 
-  const model = deduped.find((x) => x.modelType === 'Checkpoint');
-  const baseModel = model
-    ? (baseModelSetsEntries.find(([, v]) =>
-        v.includes(model.baseModel as BaseModel)
-      )?.[0] as BaseModelSetType)
-    : undefined;
+  checkpoint = deduped.find((x) => x.modelType === 'Checkpoint');
+  const baseModel = getBaseModelSetType(checkpoint?.baseModel);
 
   // Clean-up bad values
   if (meta.cfgScale == 0) meta.cfgScale = 7;
   if (meta.steps == 0) meta.steps = 30;
   if (meta.seed == 0) meta.seed = undefined;
 
+  let aspectRatio = 0;
+  if (image.width && image.height) {
+    const config = getGenerationConfig(baseModel);
+    const ratios = config.aspectRatios.map((x) => x.width / x.height);
+    const closest = findClosest(ratios, image.width / image.height);
+    aspectRatio = ratios.indexOf(closest);
+  }
+
   return {
     // only send back resources if we have a checkpoint resource
-    resources: !model
-      ? []
-      : deduped.map((resource) => ({
-          ...resource,
-          strength: resource.strength ?? 1,
-        })),
+    resources: checkpoint ? deduped : [],
     params: {
       ...meta,
       clipSkip,
-      height: image.height ?? undefined,
-      width: image.width ?? undefined,
+      aspectRatio,
       baseModel,
     },
   };
 };
 
-export const getRandomGenerationData = async (includeResources?: boolean) => {
-  const imageReaction = await dbRead.imageReaction.findFirst({
-    where: {
-      reaction: { in: ['Like', 'Heart', 'Laugh'] },
-      user: { isModerator: true },
-      image: { nsfw: 'None', meta: { not: Prisma.JsonNull } },
-    },
-    select: { imageId: true },
-    orderBy: { createdAt: 'desc' },
-    skip: Math.floor(Math.random() * 1000),
-  });
-  if (!imageReaction) throw throwNotFoundError();
-
-  const { resources, params = {} } = await getImageGenerationData(imageReaction.imageId);
-  params.seed = undefined;
-  return { resources: includeResources ? resources : [], params };
-};
-
-export const deleteAllGenerationRequests = async ({ userId }: { userId: number }) => {
-  const deleteResponse = await fetch(`${env.SCHEDULER_ENDPOINT}/requests?userId=${userId}`, {
-    method: 'DELETE',
-  });
-
-  if (!deleteResponse.ok) throw throwNotFoundError();
-};
-
+// TODO.orchestrator
 export async function prepareModelInOrchestrator({ id }: PrepareModelInput) {
   await orchestratorCaller.bustModelCache({ modelVersionId: id });
 }
@@ -954,6 +853,7 @@ export async function toggleUnavailableResource({
   return unavailableResources;
 }
 
+// TODO.orchestrator - double check if there is a v2 api for this
 export const sendGenerationFeedback = async ({
   jobId,
   reason,

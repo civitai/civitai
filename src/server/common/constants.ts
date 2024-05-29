@@ -12,8 +12,8 @@ import {
 import { IconBolt, IconCurrencyDollar, TablerIconsProps } from '@tabler/icons-react';
 import { ModelSort } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
-import { Generation } from '~/server/services/generation/generation.types';
 import { ArticleSort, CollectionSort, ImageSort, PostSort, QuestionSort } from './enums';
+import { GenerationResource } from '~/shared/constants/generation.constants';
 
 export const constants = {
   modelFilterDefaults: {
@@ -515,7 +515,7 @@ export const generation = {
     seed: undefined,
     clipSkip: 2,
     quantity: 4,
-    aspectRatio: '0',
+    aspectRatio: 0,
     prompt: '',
     negativePrompt: '',
     nsfw: false,
@@ -528,7 +528,11 @@ export const generation = {
       baseModel: 'SD 1.5',
       strength: 1,
       trainedWords: [],
-    } as Generation.Resource,
+      minStrength: -1,
+      maxStrength: 2,
+      covered: true,
+      image: { url: 'dd9b038c-bd15-43ab-86ab-66e145ad7ff2' },
+    } as GenerationResource,
   },
   maxValues: {
     seed: 4294967295,
@@ -565,7 +569,10 @@ export const generationConfig = {
       modelType: 'Checkpoint',
       baseModel: 'SD 1.5',
       strength: 1,
-    } as Generation.Resource,
+      minStrength: -1,
+      maxStrength: 2,
+      covered: true,
+    } as GenerationResource,
   },
   SDXL: {
     additionalResourceTypes: [
@@ -589,7 +596,10 @@ export const generationConfig = {
       modelType: 'Checkpoint',
       baseModel: 'SDXL 1.0',
       strength: 1,
-    } as Generation.Resource,
+      minStrength: -1,
+      maxStrength: 2,
+      covered: true,
+    } as GenerationResource,
   },
   Pony: {
     additionalResourceTypes: [
@@ -624,7 +634,10 @@ export const generationConfig = {
       modelType: 'Checkpoint',
       baseModel: 'Pony',
       strength: 1,
-    } as Generation.Resource,
+      minStrength: -1,
+      maxStrength: 2,
+      covered: true,
+    } as GenerationResource,
   },
 };
 

@@ -1,7 +1,9 @@
 import { WorkflowStatus } from '@civitai/client';
 import { MantineColor } from '@mantine/core';
-import { Sampler } from '~/server/common/constants';
+import { Sampler, draftMode } from '~/server/common/constants';
 import { BaseModel, BaseModelSetType, baseModelSets } from '~/server/common/constants';
+import { ResourceData } from '~/server/redis/caches';
+import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 
 export const generationStatusColors: Record<WorkflowStatus, MantineColor> = {
   unassigned: 'yellow',
@@ -87,10 +89,43 @@ export const defaultCheckpoints: Record<
 };
 
 // #region [utils]
-export const getBaseModelSetKey = (baseModel?: string) => {
-  if (!baseModel) return undefined;
-  return Object.entries(baseModelSets).find(
+export function getBaseModelSetType(baseModel?: string, defaultType?: BaseModelSetType) {
+  defaultType ??= 'SD1';
+  if (!baseModel) return defaultType;
+  return (Object.entries(baseModelSets).find(
     ([key, baseModels]) => key === baseModel || baseModels.includes(baseModel as BaseModel)
-  )?.[0] as BaseModelSetType | undefined;
-};
+  )?.[0] ?? defaultType) as BaseModelSetType;
+}
+
+export function getIsSdxl(baseModelSetType: BaseModelSetType) {
+  return (
+    baseModelSetType === 'SDXL' ||
+    baseModelSetType === 'Pony' ||
+    baseModelSetType === 'SDXLDistilled'
+  );
+}
+export function getDraftModeSettings(baseModelSetType: BaseModelSetType) {
+  const isSDXL = getIsSdxl(baseModelSetType);
+  return draftMode[isSDXL ? 'sdxl' : 'sd1'];
+}
+
+export type GenerationResource = ReturnType<typeof formatGenerationResources>[number];
+export function formatGenerationResources(resources: ResourceData[]) {
+  return resources.map((resource) => {
+    const settings = resource.settings as RecommendedSettingsSchema;
+    return {
+      id: resource.id,
+      name: resource.name,
+      trainedWords: resource.trainedWords,
+      modelId: resource.model.id,
+      modelName: resource.model.name,
+      modelType: resource.model.type,
+      baseModel: resource.baseModel,
+      strength: settings?.strength ?? 1,
+      minStrength: settings?.minStrength ?? -1,
+      maxStrength: settings?.maxStrength ?? 2,
+      covered: resource.covered,
+    };
+  });
+}
 // #endregion

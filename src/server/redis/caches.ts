@@ -16,6 +16,7 @@ import {
 } from '~/server/services/image.service';
 import { reduceToBasicFileMetadata } from '~/server/services/model-file.service';
 import { CachedObject, createCachedArray, createCachedObject } from '~/server/utils/cache-helpers';
+import { removeEmpty } from '~/utils/object-helpers';
 
 export const tagIdsForImagesCache = createCachedObject<{ imageId: number; tags: number[] }>({
   key: REDIS_KEYS.CACHES.TAG_IDS_FOR_IMAGES,
@@ -219,19 +220,27 @@ export const userMultipliersCache = createCachedObject<CachedUserMultiplier>({
   },
 });
 
-export const resourceDataCache = createCachedArray<GenerationResourceSelect>({
+export type ResourceData = AsyncReturnType<typeof resourceDataCache.fetch>[number];
+export const resourceDataCache = createCachedArray({
   key: REDIS_KEYS.GENERATION.RESOURCE_DATA,
   idKey: 'id',
   lookupFn: async (ids) => {
-    const dbResults = await dbRead.modelVersion.findMany({
-      where: { id: { in: ids as number[] } },
-      select: generationResourceSelect,
-    });
+    const dbResults = (
+      await dbRead.modelVersion.findMany({
+        where: { id: { in: ids as number[] } },
+        select: generationResourceSelect,
+      })
+    ).map(({ generationCoverage, ...result }) =>
+      removeEmpty({
+        ...result,
+        covered: generationCoverage?.covered,
+      })
+    );
 
-    const results = dbResults.reduce((acc, result) => {
+    const results = dbResults.reduce<Record<number, (typeof dbResults)[number]>>((acc, result) => {
       acc[result.id] = result;
       return acc;
-    }, {} as Record<string, GenerationResourceSelect>);
+    }, {});
     return results;
   },
   ttl: CacheTTL.hour,

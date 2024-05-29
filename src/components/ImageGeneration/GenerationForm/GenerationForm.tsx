@@ -81,16 +81,17 @@ import { useGenerationContext } from '~/components/ImageGeneration/GenerationPro
 import InputQuantity from '~/components/ImageGeneration/GenerationForm/InputQuantity';
 import Link from 'next/link';
 import {
-  textToImageParamsValidationSchema,
+  textToImageParamsSchema,
   textToImageResourceSchema,
 } from '~/server/schema/orchestrator/textToImage.schema';
+import { z } from 'zod';
 
 const BUZZ_CHARGE_NOTICE_END = new Date('2024-04-14T00:00:00Z');
 
-const schema = textToImageParamsValidationSchema.extend({
-  model: textToImageResourceSchema,
-  resources: textToImageResourceSchema.array().min(0).max(9),
-  vae: textToImageResourceSchema.optional(),
+const schema = textToImageParamsSchema.extend({
+  model: textToImageResourceSchema.passthrough(),
+  resources: textToImageResourceSchema.passthrough().array().min(0).max(9),
+  vae: textToImageResourceSchema.passthrough().optional(),
 });
 
 const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
@@ -106,7 +107,6 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
   const { nsfw, quantity, prompt } = useGenerationFormStore.getState();
   const defaultValues = {
     ...generation.defaultValues,
-    // nsfw: nsfw ?? currentUser?.showNsfw,
     nsfw: nsfw ?? false,
     quantity: quantity ?? generation.defaultValues.quantity,
     // Use solely to to update the resource oimits based on tier
@@ -207,8 +207,8 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
     }
     const { model, resources = [], vae, ...params } = data;
     const _resources = [model, ...resources, vae].filter(isDefined).map((resource) => {
-      if (resource.modelType === 'TextualInversion')
-        return { ...resource, triggerWord: resource.trainedWords[0] };
+      // if (resource.modelType === 'TextualInversion')
+      //   return { ...resource };
       return resource;
     });
 
@@ -776,7 +776,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
           </Stack>
           </Card> */}
         </ScrollArea>
-        <div className={cx(classes.generationArea, 'px-2 py-2 flex flex-col gap-2')}>
+        <div className={cx('rounded-xl shadow-topper px-2 py-2 flex flex-col gap-2')}>
           <DailyBoostRewardClaim />
           {promptWarning && (
             <div>
@@ -833,7 +833,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
             </Alert>
           ) : status.available && !promptWarning ? (
             <>
-              {status.charge && new Date() < BUZZ_CHARGE_NOTICE_END && (
+              {/* {status.charge && new Date() < BUZZ_CHARGE_NOTICE_END && (
                 <DismissibleAlert id="generator-charge-buzz">
                   <Text>
                     Generating images now costs Buzz.{' '}
@@ -842,7 +842,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                     </Text>
                   </Text>
                 </DismissibleAlert>
-              )}
+              )} */}
 
               <QueueSnackbar />
               <Group spacing="xs" className={classes.generateButtonContainer} noWrap>

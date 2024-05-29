@@ -16,18 +16,9 @@ export async function getGenerationStatus() {
 
   return status as GenerationStatus;
 }
-
-export type ResourceData = AsyncReturnType<typeof getResourceData>[number];
-function getResourceData(modelVersionIds: number[]) {
-  return resourceDataCache.fetch(modelVersionIds);
-}
-export function deleteResourceDataCache(modelVersionIds: number | number[]) {
-  return resourceDataCache.bust(modelVersionIds);
-}
-
 export async function getResourceDataWithInjects(modelVersionIds: number[]) {
   const ids = [...modelVersionIds, ...allInjectedIds];
-  const allResources = await getResourceData(ids);
+  const allResources = await resourceDataCache.fetch(ids);
 
   function getInjected(injected: Array<{ id: number; triggerWord: string }>) {
     return allResources

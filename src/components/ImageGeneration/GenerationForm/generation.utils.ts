@@ -26,7 +26,7 @@ import { findClosest } from '~/utils/number-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { getBaseModelSetKey } from '~/shared/constants/generation.constants';
+import { getBaseModelSetType } from '~/shared/constants/generation.constants';
 
 export const useGenerationFormStore = create<Partial<GenerateFormModel>>()(
   persist(() => ({}), { name: 'generation-form-2', version: 0 })
@@ -44,7 +44,7 @@ export const useDerivedGenerationState = () => {
   const { baseModel } = useGenerationFormStore(
     useCallback(
       ({ model }) => {
-        const baseModel = model?.baseModel ? getBaseModelSetKey(model.baseModel) : undefined;
+        const baseModel = model?.baseModel ? getBaseModelSetType(model.baseModel) : undefined;
         return {
           baseModel,
         };
@@ -117,13 +117,13 @@ export const useGenerationStatus = () => {
     const limits = status.limits[tier];
 
     return { ...status, tier, limits };
-  }, [data]);
+  }, [data, currentUser]);
 };
 
 export const useEstimateTextToImageJobCost = () => {
   const status = useGenerationStatus();
   const model = useGenerationFormStore((state) => state.model);
-  const baseModel = model?.baseModel ? getBaseModelSetKey(model.baseModel) : undefined;
+  const baseModel = model?.baseModel ? getBaseModelSetType(model.baseModel) : undefined;
 
   const input = useGenerationFormStore(
     useCallback(
@@ -228,10 +228,10 @@ export const getFormData = (
   /* baseModel needs to be determined as soon as possible
     if(type === 'run') selected resource determines the baseModel
     else baseModel is based off checkpoint model */
-  let baseModel = getBaseModelSetKey(formData.model?.baseModel) ?? 'SD1';
+  let baseModel = getBaseModelSetType(formData.model?.baseModel) ?? 'SD1';
   if (type === 'run') {
     const resource = resources[0];
-    const newBaseModel = getBaseModelSetKey(resource.baseModel) ?? baseModel;
+    const newBaseModel = getBaseModelSetType(resource.baseModel) ?? baseModel;
     if (resource.modelType === 'Checkpoint' || resource.modelType === 'VAE') {
       baseModel = newBaseModel;
     } else {
@@ -262,7 +262,7 @@ export const getFormData = (
 
   // filter out any additional resources that don't belong
   const resourceFilter = (resource: Generation.Resource) => {
-    const baseModelSetKey = getBaseModelSetKey(resource.baseModel);
+    const baseModelSetKey = getBaseModelSetType(resource.baseModel);
     return additionalResourceTypes.some((x) => {
       const modelTypeMatches = x.type === resource.modelType;
       const baseModelSetMatches = x.baseModelSet === baseModelSetKey;
@@ -300,7 +300,7 @@ export const getFormData = (
   }
 
   // set default model
-  const baseModelMatches = getBaseModelSetKey(formData.model?.baseModel) === baseModel;
+  const baseModelMatches = getBaseModelSetType(formData.model?.baseModel) === baseModel;
   if (!baseModelMatches) {
     formData.model = checkpoint;
   }
@@ -335,6 +335,7 @@ export const getFormData = (
   };
 };
 
+// TODO.orchestration - remove
 export const getClosestAspectRatio = (width?: number, height?: number, baseModel?: string) => {
   width = width ?? (baseModel === 'SDXL' ? 1024 : 512);
   height = height ?? (baseModel === 'SDXL' ? 1024 : 512);

@@ -1,4 +1,4 @@
-import { z, ZodArray, ZodNumber } from 'zod';
+import { AnyZodObject, z, ZodArray, ZodEffects, ZodNumber, ZodObject, ZodTypeAny } from 'zod';
 import { sanitizeHtml, santizeHtmlOptions } from '~/utils/html-helpers';
 import { parseNumericString, parseNumericStringArray } from '~/utils/query-string-helpers';
 
@@ -95,4 +95,23 @@ export function zodEnumFromObjKeys<K extends string>(
 ): z.ZodEnum<[K, ...K[]]> {
   const [firstKey, ...otherKeys] = Object.keys(obj) as K[];
   return z.enum([firstKey, ...otherKeys]);
+}
+
+export function stripChecksAndRefinements<TSchema extends ZodTypeAny>(schema: TSchema): TSchema {
+  if (schema instanceof ZodEffects) return stripChecksAndRefinements(schema._def.schema);
+  if (schema instanceof ZodArray)
+    return z.array(stripChecksAndRefinements(schema.element)) as unknown as TSchema;
+  if (schema instanceof ZodObject) {
+    let dictionary = z.object({});
+    for (const [key, value] of Object.entries(schema.shape)) {
+      dictionary = dictionary.extend({ [key]: stripChecksAndRefinements(value as any) });
+    }
+    return dictionary as unknown as TSchema;
+  }
+  schema._def.checks = [];
+  return schema;
+}
+
+export function getDeepPartialWithoutChecks<TSchema extends AnyZodObject>(schema: TSchema) {
+  return stripChecksAndRefinements(schema).deepPartial();
 }

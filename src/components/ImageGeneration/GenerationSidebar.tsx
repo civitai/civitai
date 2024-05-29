@@ -2,12 +2,10 @@ import { useWindowEvent } from '@mantine/hooks';
 import { useRouter } from 'next/router';
 import { useCallback, useEffect, useState } from 'react';
 import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvider';
-import { dialogStore } from '~/components/Dialog/dialogStore';
-import { GenerationDrawer } from '~/components/ImageGeneration/GenerationDrawer';
 import GenerationTabs from '~/components/ImageGeneration/GenerationTabs';
 import { ResizableSidebar } from '~/components/Resizable/ResizableSidebar';
 import { useResizeStore } from '~/components/Resizable/useResize';
-import { generationPanel, useGenerationStore } from '~/store/generation.store';
+import { useGenerationStore } from '~/store/generation.store';
 
 export function GenerationSidebar() {
   const _opened = useGenerationStore((state) => state.opened);
@@ -33,16 +31,6 @@ export function GenerationSidebar() {
   }, [opened, updateShowDrawer]);
 
   useWindowEvent('resize', updateShowDrawer);
-
-  // useEffect(() => {
-  //   opened && showDrawer
-  //     ? dialogStore.trigger({
-  //         component: GenerationDrawer,
-  //         id: 'generation-drawer',
-  //         options: { onClose: generationPanel.close },
-  //       })
-  //     : dialogStore.closeById('generation-drawer');
-  // }, [showDrawer, opened]);
 
   if (!opened) return null;
 

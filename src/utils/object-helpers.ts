@@ -9,9 +9,7 @@ export function mergeWithPartial<T>(src: T, partial: Partial<T>) {
 }
 
 type BrowserNativeObject = Date | FileList | File;
-type NonNullibleAllowUndefined<T> = T extends undefined
-  ? NonNullable<T> | undefined
-  : NonNullable<T>;
+type NonNullibleAllowUndefined<T> = T extends null ? NonNullable<T> | undefined : T;
 type RemoveNulls<T> = T extends BrowserNativeObject | Blob
   ? T
   : T extends Array<infer U>
@@ -19,10 +17,6 @@ type RemoveNulls<T> = T extends BrowserNativeObject | Blob
   : T extends object
   ? { [K in keyof T]: T[K] extends object ? RemoveNulls<T[K]> : NonNullibleAllowUndefined<T[K]> }
   : NonNullibleAllowUndefined<T>;
-
-// export function removeNulls<T extends object>(obj: T) {
-//   return omitBy<T>(obj, (value) => isNull(value)) as RemoveNulls<T>;
-// }
 
 export function removeNulls<T extends object>(obj: T): RemoveNulls<T> {
   return (
