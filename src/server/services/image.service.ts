@@ -77,7 +77,10 @@ import { getPeriods } from '~/server/utils/enum-helpers';
 import { bulkSetReportStatus } from '~/server/services/report.service';
 import { baseS3Client } from '~/utils/s3-client';
 import { trackModActivity } from '~/server/services/moderator.service';
-import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import {
+  nsfwBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import { getVotableTags2 } from '~/server/services/tag.service';
 import { Flags } from '~/shared/utils';
 import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
@@ -552,6 +555,9 @@ export const getAllImages = async ({
   const userId = user?.id;
   const isModerator = user?.isModerator ?? false;
   const includeCosmetics = include?.includes('cosmetics'); // TODO: This must be done similar to user cosmetics.
+  if (Flags.intersects(browsingLevel, nsfwBrowsingLevelsFlag)) {
+    browsingLevel = Flags.addFlag(browsingLevel, 64);
+  }
 
   // Filter to specific user content
   let targetUserId: number | undefined;
@@ -839,7 +845,7 @@ export const getAllImages = async ({
     AND.push(
       browsingLevel
         ? // TODO.audio: revert this back
-          Prisma.sql`i."nsfwLevel" != 0`
+          Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0 AND i."nsfwLevel" != 0`
         : Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`
     );
   }

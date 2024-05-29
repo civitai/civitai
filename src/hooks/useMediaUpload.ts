@@ -10,6 +10,7 @@ import { formatBytes } from '~/utils/number-helpers';
 
 const MAX_VIDEO_DIMENSIONS = constants.mediaUpload.maxVideoDimension;
 const MAX_VIDEO_DURATION = constants.mediaUpload.maxVideoDurationSeconds;
+const MAX_AUDIO_DURATION = constants.mediaUpload.maxAudioDurationSeconds;
 
 // #region [types]
 type ProcessingFile = PreprocessFileReturnType & {
@@ -93,6 +94,12 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
             if (metadata.width > MAX_VIDEO_DIMENSIONS || metadata.height > MAX_VIDEO_DIMENSIONS)
               throw new Error(
                 `Videos cannot be larger than ${MAX_VIDEO_DIMENSIONS}px from either side. Please resize your image and try again.`
+              );
+          } else if (data.type === 'audio') {
+            const { metadata } = data;
+            if (metadata.duration && metadata.duration > MAX_AUDIO_DURATION)
+              throw new Error(
+                `Audio files cannot be longer than ${MAX_AUDIO_DURATION / 60} minutes`
               );
           }
           return processing;

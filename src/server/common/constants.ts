@@ -205,8 +205,10 @@ export const constants = {
   mediaUpload: {
     maxImageFileSize: 50 * 1024 ** 2, // 50MB
     maxVideoFileSize: 500 * 1024 ** 2, // 500MB
+    maxAudioFileSize: 20 * 1024 ** 2, // 20MB
     maxVideoDimension: 3840,
     maxVideoDurationSeconds: 200,
+    maxAudioDurationSeconds: 300,
   },
   bounties: {
     engagementTypes: ['active', 'favorite', 'tracking', 'supporter', 'awarded'],

@@ -1,13 +1,17 @@
 import { ActionIcon, Group, GroupProps, useMantineTheme } from '@mantine/core';
+import { useLocalStorage } from '@mantine/hooks';
 import { IconPlayerPauseFilled, IconPlayerPlayFilled } from '@tabler/icons-react';
 import { useWavesurfer, WavesurferProps } from '@wavesurfer/react';
-import { useEffect, useRef } from 'react';
-import { Track, usePlayerStore } from '~/store/player.store';
+import { useEffect, useRef, useState } from 'react';
+import { Track } from '~/store/player.store';
 
 export function EdgeAudio({ src, wrapperProps, name, onPlay, onReady, ...props }: Props) {
   const theme = useMantineTheme();
   const containerRef = useRef<HTMLDivElement>(null);
-  const { wavesurfer, isPlaying } = useWavesurfer({
+
+  const [volume] = useLocalStorage({ key: 'player-volume', defaultValue: 1 });
+
+  const { wavesurfer } = useWavesurfer({
     container: containerRef,
     url: src,
     waveColor: theme.colors.blue[0],
@@ -24,7 +28,7 @@ export function EdgeAudio({ src, wrapperProps, name, onPlay, onReady, ...props }
     ...props,
   });
 
-  const playerStore = usePlayerStore();
+  const [playing, setPlaying] = useState(false);
 
   const handleTogglePlay: React.MouseEventHandler<HTMLButtonElement> = (e) => {
     e.stopPropagation();
@@ -48,51 +52,51 @@ export function EdgeAudio({ src, wrapperProps, name, onPlay, onReady, ...props }
 
     const subscriptions = [
       wavesurfer.on('ready', () => {
-        onReady && onReady(getPlayerParams());
+        if (onReady) onReady(getPlayerParams());
+        setPlaying(wavesurfer.isPlaying());
+        wavesurfer.setVolume(volume);
       }),
       wavesurfer.on('play', () => {
-        // onPlay &&
-        //   onPlay((prev) => {
-        //     const newParams = getPlayerParams();
-        //     if (!prev || prev.media !== newParams.media) {
-        //       if (prev) {
-        //         prev.media.pause();
-        //         prev.media.currentTime = 0;
-        //       }
-        //       return newParams;
-        //     }
-        //     return prev;
-        //   });
-
-        const params = getPlayerParams();
-        if (!playerStore.currentTrack || playerStore.currentTrack.media !== params.media) {
-          playerStore.setCurrentTrack(getPlayerParams());
-          playerStore.play();
+        if (onPlay) {
+          onPlay((prev) => {
+            const newParams = getPlayerParams();
+            if (!prev || prev.media !== newParams.media) {
+              if (prev) {
+                prev.media.pause();
+                prev.media.currentTime = 0;
+              }
+              return newParams;
+            }
+            return prev;
+          });
         }
+
+        wavesurfer.setVolume(volume);
+        setPlaying(true);
       }),
-      wavesurfer.on('pause', () => playerStore.pause()),
+      wavesurfer.on('pause', () => setPlaying(false)),
     ];
 
     return () => {
       subscriptions.forEach((unsub) => unsub());
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wavesurfer, onPlay, onReady]);
+  }, [wavesurfer]);
 
   return (
     <Group spacing="sm" w="100%" pos="relative" noWrap {...wrapperProps}>
       <ActionIcon size={40} radius="xl" variant="filled" color="blue" onClick={handleTogglePlay}>
-        {isPlaying ? <IconPlayerPauseFilled size={20} /> : <IconPlayerPlayFilled size={20} />}
+        {playing ? <IconPlayerPauseFilled size={20} /> : <IconPlayerPlayFilled size={20} />}
       </ActionIcon>
       <div ref={containerRef} style={{ overflow: 'hidden', flexGrow: 1 }} />
     </Group>
   );
 }
 
-type Props = WavesurferProps & {
+type Props = Omit<WavesurferProps, 'onPlay' | 'onReady'> & {
   src?: string;
   wrapperProps?: GroupProps;
   onReady?: (params: Track) => void;
-  onPlay?: (callback: (prev: Track) => Track) => void;
+  onPlay?: (callback: (prev: Track | null) => Track | null) => void;
   name?: string | null;
 };

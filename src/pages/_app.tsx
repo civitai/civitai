@@ -134,58 +134,59 @@ function MyApp(props: CustomAppProps) {
             <RouterTransition />
             <UpdateRequiredWatcher />
             <ChadGPT isAuthed={!!session} />
-            <UniversalPlayerProvider />
-            <SessionProvider
-              session={session}
-              refetchOnWindowFocus={false}
-              refetchWhenOffline={false}
-            >
-              <FeatureFlagsProvider flags={flags}>
-                <CookiesProvider value={cookies}>
-                  <BrowsingModeProvider>
-                    <AccountProvider>
-                      <CivitaiSessionProvider>
-                        <SignalProvider>
-                          <ActivityReportingProvider>
-                            <ReferralsProvider>
-                              <FiltersProvider>
-                                <AdsProvider>
-                                  <PaypalProvider>
-                                    <HiddenPreferencesProvider>
-                                      <CivitaiLinkProvider>
-                                        <NotificationsProvider
-                                          className="notifications-container"
-                                          zIndex={9999}
-                                        >
-                                          <BrowserRouterProvider>
-                                            <RecaptchaWidgetProvider>
-                                              <BaseLayout>
-                                                <ChatContextProvider>
-                                                  <CustomModalsProvider>
-                                                    {getLayout(<Component {...pageProps} />)}
-                                                    <StripeSetupSuccessProvider />
-                                                    <DialogProvider />
-                                                    <RoutedDialogProvider />
-                                                  </CustomModalsProvider>
-                                                </ChatContextProvider>
-                                              </BaseLayout>
-                                            </RecaptchaWidgetProvider>
-                                          </BrowserRouterProvider>
-                                        </NotificationsProvider>
-                                      </CivitaiLinkProvider>
-                                    </HiddenPreferencesProvider>
-                                  </PaypalProvider>
-                                </AdsProvider>
-                              </FiltersProvider>
-                            </ReferralsProvider>
-                          </ActivityReportingProvider>
-                        </SignalProvider>
-                      </CivitaiSessionProvider>
-                    </AccountProvider>
-                  </BrowsingModeProvider>
-                </CookiesProvider>
-              </FeatureFlagsProvider>
-            </SessionProvider>
+            <UniversalPlayerProvider>
+              <SessionProvider
+                session={session}
+                refetchOnWindowFocus={false}
+                refetchWhenOffline={false}
+              >
+                <FeatureFlagsProvider flags={flags}>
+                  <CookiesProvider value={cookies}>
+                    <BrowsingModeProvider>
+                      <AccountProvider>
+                        <CivitaiSessionProvider>
+                          <SignalProvider>
+                            <ActivityReportingProvider>
+                              <ReferralsProvider>
+                                <FiltersProvider>
+                                  <AdsProvider>
+                                    <PaypalProvider>
+                                      <HiddenPreferencesProvider>
+                                        <CivitaiLinkProvider>
+                                          <NotificationsProvider
+                                            className="notifications-container"
+                                            zIndex={9999}
+                                          >
+                                            <BrowserRouterProvider>
+                                              <RecaptchaWidgetProvider>
+                                                <BaseLayout>
+                                                  <ChatContextProvider>
+                                                    <CustomModalsProvider>
+                                                      {getLayout(<Component {...pageProps} />)}
+                                                      <StripeSetupSuccessProvider />
+                                                      <DialogProvider />
+                                                      <RoutedDialogProvider />
+                                                    </CustomModalsProvider>
+                                                  </ChatContextProvider>
+                                                </BaseLayout>
+                                              </RecaptchaWidgetProvider>
+                                            </BrowserRouterProvider>
+                                          </NotificationsProvider>
+                                        </CivitaiLinkProvider>
+                                      </HiddenPreferencesProvider>
+                                    </PaypalProvider>
+                                  </AdsProvider>
+                                </FiltersProvider>
+                              </ReferralsProvider>
+                            </ActivityReportingProvider>
+                          </SignalProvider>
+                        </CivitaiSessionProvider>
+                      </AccountProvider>
+                    </BrowsingModeProvider>
+                  </CookiesProvider>
+                </FeatureFlagsProvider>
+              </SessionProvider>
+            </UniversalPlayerProvider>
           </IsClientProvider>
         </PlausibleProvider>
         {/* </ErrorBoundary> */}

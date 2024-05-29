@@ -3,6 +3,7 @@ import React, { useEffect, useRef } from 'react';
 import { EdgeUrlProps, useEdgeUrl } from '~/client-utils/cf-images-utils';
 import { EdgeAudio } from '~/components/EdgeMedia/EdgeAudio';
 import { EdgeVideo } from '~/components/EdgeMedia/EdgeVideo';
+import { useUniversalPlayerContext } from '~/components/Player/Player';
 
 export type EdgeMediaProps = EdgeUrlProps &
   Omit<JSX.IntrinsicElements['img'], 'src' | 'srcSet' | 'ref' | 'width' | 'height' | 'metadata'> & {
@@ -40,6 +41,7 @@ export function EdgeMedia({
 }: EdgeMediaProps) {
   const { classes, cx } = useStyles({ maxWidth: width ?? undefined });
   // const currentUser = useCurrentUser();
+  const { setCurrentTrack } = useUniversalPlayerContext();
 
   const imgRef = useRef<HTMLImageElement>(null);
   if (fadeIn && imgRef.current?.complete) imgRef?.current?.style?.setProperty('opacity', '1');
@@ -89,7 +91,15 @@ export function EdgeMedia({
         />
       );
     case 'audio':
-      return <EdgeAudio src={url} duration={duration} name={name} wrapperProps={wrapperProps} />;
+      return (
+        <EdgeAudio
+          src={url}
+          duration={duration}
+          name={name}
+          wrapperProps={wrapperProps}
+          onPlay={setCurrentTrack}
+        />
+      );
     default:
       return <Text align="center">Unsupported media type</Text>;
   }

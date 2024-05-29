@@ -1,4 +1,14 @@
-import { Stack, Paper, createStyles, Button, Center, Loader, Alert, Group } from '@mantine/core';
+import {
+  Stack,
+  Paper,
+  createStyles,
+  Button,
+  Center,
+  Loader,
+  Alert,
+  Group,
+  Text,
+} from '@mantine/core';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { useState } from 'react';
@@ -21,7 +31,7 @@ export function PostImages({
   images: ImagesInfiniteModel[];
   isLoading?: boolean;
 }) {
-  const { classes } = useStyles();
+  const { classes, cx } = useStyles();
   const [showMore, setShowMore] = useState(false);
 
   if (isLoading)
@@ -41,12 +51,15 @@ export function PostImages({
     <Stack>
       {_images.map((image) => {
         const width = image.width ?? maxWidth;
+        const isAudio = image.type === 'audio';
+
         return (
           <Paper
             key={image.id}
             radius="md"
             className="relative overflow-hidden"
             shadow="md"
+            p={isAudio ? 'md' : undefined}
             mx="auto"
             style={{
               maxWidth: '100%',
@@ -54,12 +67,13 @@ export function PostImages({
               aspectRatio:
                 image.width && image.height ? `${image.width}/${image.height}` : undefined,
             }}
+            withBorder={isAudio}
           >
             <ImageGuard2 image={image} connectType="post" connectId={postId}>
               {(safe) => (
-                <>
-                  <ImageGuard2.BlurToggle className="absolute top-2 left-2 z-10" />
-                  <ImageContextMenu image={image} className="absolute top-2 right-2 z-10" />
+                <Stack spacing={8}>
+                  {!isAudio && <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />}
+                  <ImageContextMenu image={image} className="absolute right-2 top-2 z-10" />
                   <RoutedDialogLink name="imageDetail" state={{ imageId: image.id, images }}>
                     {!safe ? (
                       <div
@@ -73,23 +87,30 @@ export function PostImages({
                         <MediaHash {...image} />
                       </div>
                     ) : (
-                      <EdgeMedia
-                        src={image.url}
-                        name={image.name}
-                        alt={
-                          image.meta
-                            ? truncate(image.meta.prompt, { length: constants.altTruncateLength })
-                            : image.name ?? undefined
-                        }
-                        type={image.type}
-                        width={width < maxWidth ? width : maxWidth}
-                        anim={safe}
-                      />
+                      <Stack spacing="xl">
+                        {isAudio && (
+                          <Text size="xl" weight={600} lineClamp={3} lh={1.2}>
+                            {image.name}
+                          </Text>
+                        )}
+                        <EdgeMedia
+                          src={image.url}
+                          name={image.name}
+                          alt={
+                            image.meta
+                              ? truncate(image.meta.prompt, { length: constants.altTruncateLength })
+                              : image.name ?? undefined
+                          }
+                          type={image.type}
+                          width={width < maxWidth ? width : maxWidth}
+                          anim={safe}
+                        />
+                      </Stack>
                     )}
                   </RoutedDialogLink>
                   <Reactions
                     p={4}
-                    className={classes.reactions}
+                    className={cx(!isAudio && classes.reactions)}
                     entityId={image.id}
                     entityType="image"
                     reactions={image.reactions}
@@ -103,7 +124,7 @@ export function PostImages({
                     targetUserId={image.user.id}
                     readonly={!safe}
                   />
-                </>
+                </Stack>
               )}
             </ImageGuard2>
           </Paper>

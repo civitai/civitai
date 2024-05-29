@@ -57,7 +57,7 @@ export function PostImageDropzone({
     count: images.length,
     max,
     maxSize: [
-      { type: 'audio', maxSize: constants.mediaUpload.maxImageFileSize }, // TODO.audio: put correct file size limit
+      { type: 'audio', maxSize: constants.mediaUpload.maxAudioFileSize },
       { type: 'image', maxSize: constants.mediaUpload.maxImageFileSize },
       { type: 'video', maxSize: constants.mediaUpload.maxVideoFileSize },
     ],

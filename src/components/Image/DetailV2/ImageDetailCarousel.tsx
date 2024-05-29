@@ -108,8 +108,15 @@ function ImageContent({ image }: { image: ImagesInfiniteModel } & ConnectProps) 
               <MediaHash {...image} />
             </div>
           ) : (
-            <Stack spacing="xl" p={isAudio ? 'md' : undefined}>
-              {image.type === 'audio' && (
+            <Stack
+              spacing="xl"
+              p={isAudio ? 'md' : undefined}
+              style={{
+                maxWidth: isAudio ? 560 : undefined,
+                width: isAudio ? '100%' : undefined,
+              }}
+            >
+              {isAudio && (
                 <Text size={32} weight={600} lineClamp={3} lh={1.2}>
                   {image.name}
                 </Text>
@@ -129,8 +136,6 @@ function ImageContent({ image }: { image: ImagesInfiniteModel } & ConnectProps) 
                   style: {
                     aspectRatio:
                       image.width && image.height ? image?.width / image?.height : undefined,
-                    maxWidth: isAudio ? 560 : undefined,
-                    width: isAudio ? '100%' : undefined,
                   },
                 }}
                 width={image.width}

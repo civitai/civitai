@@ -128,7 +128,8 @@ export function ImageDetail2() {
 
   const handleSidebarToggle = () => setSidebarOpen((o) => !o);
 
-  const canCreate = !!image.meta?.prompt && !image.hideMeta;
+  const isAudio = image.type === 'audio';
+  const canCreate = !!image.meta?.prompt && !image.hideMeta && !isAudio;
 
   const IconChevron = !active ? IconChevronUp : IconChevronDown;
   const IconLayoutSidebarRight = !sidebarOpen
@@ -204,15 +205,17 @@ export function ImageDetail2() {
                     {/* Placeholder */}
                     <div className="@md:hidden" />
                     <div className="flex gap-1 @max-md:hidden">
-                      <ImageGuard2.BlurToggle {...sharedBadgeProps} />
+                      {!isAudio && <ImageGuard2.BlurToggle {...sharedBadgeProps} />}
                       {LeftImageControls}
                     </div>
 
                     <div className="flex gap-1">
-                      <ImageGuard2.BlurToggle
-                        {...sharedBadgeProps}
-                        className={`${sharedBadgeProps.className} @md:hidden`}
-                      />
+                      {!isAudio && (
+                        <ImageGuard2.BlurToggle
+                          {...sharedBadgeProps}
+                          className={`${sharedBadgeProps.className} @md:hidden`}
+                        />
+                      )}
                       <Badge {...sharedBadgeProps}>
                         <IconEye {...sharedIconProps} />
                         <Text color="white" size="xs" align="center" weight={500}>
@@ -374,7 +377,7 @@ export function ImageDetail2() {
                 entityId={image.id}
                 canAdd
                 collapsible
-                nsfwLevel={image.nsfwLevel}
+                nsfwLevel={!isAudio ? image.nsfwLevel : undefined}
               />
               <Card className="flex flex-col gap-3 rounded-xl">
                 <Text className="flex items-center gap-2 text-xl font-semibold">
