@@ -112,7 +112,7 @@ const trainingStatusFields: {
   [TrainingStatus.Paused]: {
     color: 'orange',
     description:
-      'We are checking the training data to confirm it does not violate the TOS. No action is required on your part.',
+      'Your training will resume or terminate within 24 hours. No action is required on your part.',
   },
   [TrainingStatus.Denied]: {
     color: 'red',

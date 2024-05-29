@@ -192,6 +192,7 @@ export const createTrainingRequest = async ({
            JOIN "Model" m ON m.id = mv."modelId"
            JOIN "ModelFile" mf ON mf."modelVersionId" = mv.id AND mf.type = 'Training Data'
     WHERE mv.id = ${modelVersionId}
+      AND m."deletedAt" is null
   `;
 
   if (modelVersions.length === 0) throw throwBadRequestError('Invalid model version');
