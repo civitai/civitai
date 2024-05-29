@@ -436,7 +436,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
               <Card.Section>
                 <Alert color="yellow" title="Potentially slow generation" radius={0}>
                   <Text size="xs">
-                    {`We need to download additional resources to fulfill your request. This generation may take a longer than usual to complete.`}
+                    {`We need to download additional resources to fulfill your request. This generation may take longer than usual to complete.`}
                   </Text>
                 </Alert>
               </Card.Section>
