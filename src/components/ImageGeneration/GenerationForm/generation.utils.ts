@@ -34,7 +34,7 @@ export const useGenerationFormStore = create<Partial<GenerateFormModel>>()(
 
 export const useDerivedGenerationState = () => {
   const status = useGenerationStatus();
-  const { totalCost, isCalculatingCost, costEstimateError } = useEstimateTextToImageJobCost();
+  const { cost, ready, isCalculatingCost, costEstimateError } = useEstimateTextToImageJobCost();
 
   const selectedResources = useGenerationFormStore(({ resources = [], model }) => {
     return model ? resources.concat([model]).filter(isDefined) : resources.filter(isDefined);
@@ -87,7 +87,8 @@ export const useDerivedGenerationState = () => {
   const draft = useGenerationFormStore((x) => x.draft);
 
   return {
-    totalCost,
+    cost,
+    ready,
     baseModel,
     hasResources,
     trainedWords,
@@ -123,25 +124,27 @@ export const useGenerationStatus = () => {
 export const useEstimateTextToImageJobCost = () => {
   const status = useGenerationStatus();
   const model = useGenerationFormStore((state) => state.model);
-  const baseModel = model?.baseModel ? getBaseModelSetKey(model.baseModel) : undefined;
 
   const input = useGenerationFormStore(
     useCallback(
       (state) => {
-        const { aspectRatio, steps, quantity, sampler, draft, staging } = state;
+        const { aspectRatio, steps, quantity, sampler, draft, staging, resources } = state;
+        const baseModel = model?.baseModel ? getBaseModelSetKey(model.baseModel) : undefined;
         if (!status.charge || !baseModel) return null;
 
         return {
+          model: model?.id ?? generation.defaultValues.model.id,
           baseModel: baseModel ?? generation.defaultValues.model.baseModel,
           aspectRatio: aspectRatio ?? generation.defaultValues.aspectRatio,
           steps: steps ?? generation.defaultValues.steps,
           quantity: quantity ?? generation.defaultValues.quantity,
           sampler: sampler ?? generation.defaultValues.sampler,
+          resources: resources?.map((x) => x.id),
           staging,
           draft,
         };
       },
-      [baseModel, status.charge]
+      [model, status.charge]
     )
   );
 
@@ -153,12 +156,9 @@ export const useEstimateTextToImageJobCost = () => {
     enabled: !!input,
   });
 
-  const totalCost = status.charge
-    ? Math.ceil((result?.jobs ?? []).reduce((acc, job) => acc + job.cost, 0))
-    : 0;
-
   return {
-    totalCost,
+    ...(result ?? {}),
+    cost: status.charge ? result?.cost ?? 0 : 0,
     isCalculatingCost: input ? isLoading : false,
     costEstimateError: !isLoading && isError,
   };

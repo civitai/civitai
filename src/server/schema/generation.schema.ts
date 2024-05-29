@@ -207,7 +207,7 @@ export const generateFormSchema = generationFormShapeSchema
       // Check if resources are at limit based on tier
       const { resources, tier } = data;
       const limit = defaultsByTier[tier].resources;
-      
+
       return resources.length <= limit;
     },
     { message: `You have exceed the number of allowed resources`, path: ['resources'] }
@@ -229,6 +229,7 @@ export const createGenerationRequestSchema = z.object({
 
 export type GenerationRequestTestRunSchema = z.infer<typeof generationRequestTestRunSchema>;
 export const generationRequestTestRunSchema = z.object({
+  model: z.number().optional(),
   baseModel: z.string().optional(),
   aspectRatio: z.string(),
   steps: z.coerce.number().min(1).max(100),
@@ -238,6 +239,7 @@ export const generationRequestTestRunSchema = z.object({
     .refine((val) => generation.samplers.includes(val as (typeof generation.samplers)[number]), {
       message: 'invalid sampler',
     }),
+  resources: z.number().array().optional(),
   draft: z.boolean().optional(),
 });
 export type CheckResourcesCoverageSchema = z.infer<typeof checkResourcesCoverageSchema>;
