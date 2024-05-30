@@ -290,7 +290,7 @@ export default function TrainingSelectFile({
 
   const errorMessage =
     modelVersion.trainingStatus === TrainingStatus.Paused
-      ? 'Your training will resume or terminate within 24 hours. No action is required on your part.'
+      ? 'Your training will resume or terminate within 1 business day. No action is required on your part.'
       : modelVersion.trainingStatus === TrainingStatus.Failed
       ? 'The training job failed. Please recreate this model and try again, or contact us for help.'
       : modelVersion.trainingStatus === TrainingStatus.Denied

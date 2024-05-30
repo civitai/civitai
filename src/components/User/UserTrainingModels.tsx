@@ -112,7 +112,7 @@ const trainingStatusFields: {
   [TrainingStatus.Paused]: {
     color: 'orange',
     description:
-      'Your training will resume or terminate within 24 hours. No action is required on your part.',
+      'Your training will resume or terminate within 1 business day. No action is required on your part.',
   },
   [TrainingStatus.Denied]: {
     color: 'red',
