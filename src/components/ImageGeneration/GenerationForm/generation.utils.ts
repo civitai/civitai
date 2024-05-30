@@ -133,18 +133,22 @@ export const useEstimateTextToImageJobCost = () => {
         if (!status.charge || !baseModel) return null;
 
         return {
-          model: model?.id ?? generation.defaultValues.model.id,
+          model: status.checkResourceAvailability
+            ? model?.id ?? generation.defaultValues.model.id
+            : undefined,
           baseModel: baseModel ?? generation.defaultValues.model.baseModel,
           aspectRatio: aspectRatio ?? generation.defaultValues.aspectRatio,
           steps: steps ?? generation.defaultValues.steps,
           quantity: quantity ?? generation.defaultValues.quantity,
           sampler: sampler ?? generation.defaultValues.sampler,
-          resources: resources?.map((x) => x.id),
+          resources: status.checkResourceAvailability
+            ? resources?.map((x) => x.id).sort()
+            : undefined,
           staging,
           draft,
         };
       },
-      [model, status.charge]
+      [model, status.charge, status.checkResourceAvailability]
     )
   );
 

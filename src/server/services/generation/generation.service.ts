@@ -1190,6 +1190,8 @@ export const textToImageTestRun = async ({
     resources.push(draftData.resourceId);
   }
 
+  const isSd1 = baseModel === 'SD1';
+  if (!model) model = isSd1 ? 128713 : 128078;
   const response = await orchestratorCaller.textToImage({
     payload: {
       model: `@civitai/${model}`,
