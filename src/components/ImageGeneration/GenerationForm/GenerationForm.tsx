@@ -140,7 +140,8 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
   }, [currentUser]); // eslint-disable-line
 
   const {
-    totalCost,
+    cost,
+    ready,
     baseModel,
     hasResources,
     trainedWords,
@@ -223,7 +224,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
     };
 
     setPromptWarning(null);
-    conditionalPerformTransaction(totalCost, performTransaction);
+    conditionalPerformTransaction(cost, performTransaction);
   };
 
   const { mutateAsync: reportProhibitedRequest } = trpc.user.reportProhibitedRequest.useMutation();
@@ -416,10 +417,10 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
             </Card.Section>
             {unstableResources.length > 0 && (
               <Card.Section>
-                <Alert color="yellow" title="Unstable Resources" radius={0}>
+                <Alert color="yellow" title="Potentially problematic resources" radius={0}>
                   <Text size="xs">
-                    The following resources are currently unstable and may not be available for
-                    generation
+                    {`The following resources are currently causing generation failures. You
+                    may continue, but your generation might fail.`}
                   </Text>
                   <List size="xs">
                     {unstableResources.map((resource) => (
@@ -428,6 +429,15 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                       </List.Item>
                     ))}
                   </List>
+                </Alert>
+              </Card.Section>
+            )}
+            {ready === false && (
+              <Card.Section>
+                <Alert color="yellow" title="Potentially slow generation" radius={0}>
+                  <Text size="xs">
+                    {`We need to download additional resources to fulfill your request. This generation may take longer than usual to complete.`}
+                  </Text>
                 </Alert>
               </Card.Section>
             )}
@@ -871,7 +881,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                     loading={isCalculatingCost || isLoading}
                     className={classes.generateButtonButton}
                     disabled={disableGenerateButton}
-                    buzzAmount={totalCost}
+                    buzzAmount={cost}
                     showPurchaseModal={false}
                     error={
                       costEstimateError
