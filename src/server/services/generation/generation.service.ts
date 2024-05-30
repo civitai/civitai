@@ -55,6 +55,7 @@ import {
   samplersToSchedulers,
 } from '~/shared/constants/generation.constants';
 import { findClosest } from '~/utils/number-helpers';
+import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
 
 export function parseModelVersionId(assetId: string) {
   const pattern = /^@civitai\/(\d+)$/;
@@ -642,17 +643,7 @@ export async function getGenerationStatus() {
 
 export type GenerationData = {
   resources: GenerationResource[];
-  params: {
-    clipSkip?: number;
-    aspectRatio?: string;
-    baseModel?: BaseModelSetType;
-    prompt?: string;
-    negativePrompt?: string;
-    cfgScale?: number;
-    steps?: number;
-    sampler?: string;
-    seed?: number;
-  };
+  params: Partial<TextToImageParams>;
 };
 
 export const getGenerationData = async (props: GetGenerationDataInput): Promise<GenerationData> => {

@@ -5,11 +5,11 @@ import { Queue } from './Queue';
 import { GenerationPanelView, generationPanel, useGenerationStore } from '~/store/generation.store';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import React, { useEffect } from 'react';
-import { GenerationForm } from '~/components/ImageGeneration/GenerationForm/GenerationForm';
 import { useRouter } from 'next/router';
 import { IconClockHour9 } from '@tabler/icons-react';
 import { GeneratedImageActions } from '~/components/ImageGeneration/GeneratedImageActions';
 import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvider';
+import { GenerationForm2 } from '~/components/ImageGeneration/GenerationForm/GenerationForm2';
 
 export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean }) {
   const router = useRouter();
@@ -98,7 +98,7 @@ const tabs: Tabs = {
   generate: {
     Icon: IconBrush,
     label: 'Generate',
-    Component: GenerationForm,
+    Component: GenerationForm2,
   },
   queue: {
     Icon: IconClockHour9,

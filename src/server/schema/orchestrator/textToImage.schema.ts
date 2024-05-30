@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { baseModelSetTypes, generation } from '~/server/common/constants';
 import { stripChecksAndEffects } from '~/utils/zod-helpers';
 
+export type TextToImageParams = z.infer<typeof textToImageParamsSchema>;
 export const textToImageParamsSchema = z.object({
   prompt: z
     .string()

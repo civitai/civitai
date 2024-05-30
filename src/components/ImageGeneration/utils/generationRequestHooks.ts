@@ -2,15 +2,12 @@ import { WorkflowEvent, WorkflowStepJobEvent } from '@civitai/client';
 import { InfiniteData } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';
-import { useEffect, useMemo } from 'react';
+import { useMemo } from 'react';
 import { z } from 'zod';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { SignalMessages } from '~/server/common/enums';
-import {
-  workflowIdSchema,
-  workflowQuerySchema,
-} from '~/server/schema/orchestrator/workflows.schema';
+import { workflowQuerySchema } from '~/server/schema/orchestrator/workflows.schema';
 import { getTextToImageRequests } from '~/server/services/orchestrator/textToImage';
 import { createDebouncer } from '~/utils/debouncer';
 import { showErrorNotification } from '~/utils/notifications';
@@ -31,7 +28,7 @@ export function useGetTextToImageRequests(
       data?.pages.flatMap((x) =>
         (x.items ?? []).map((response) => ({
           ...response,
-          images: response.images.sort((a, b) => {
+          images: [...response.images].sort((a, b) => {
             if (!b.completed) return 1;
             if (!a.completed) return -1;
             return b.completed.getTime() - a.completed.getTime();

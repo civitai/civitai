@@ -1,12 +1,11 @@
 import { DeepPartial } from 'react-hook-form';
 import { ModelType } from '@prisma/client';
-import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useRef } from 'react';
 import { TypeOf, z } from 'zod';
 import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { UsePersistFormReturn, usePersistForm } from '~/libs/form/hooks/usePersistForm';
 import { BaseModel, draftMode, generation, getGenerationConfig } from '~/server/common/constants';
-import { GetGenerationDataInput } from '~/server/schema/generation.schema';
 import { imageSchema } from '~/server/schema/image.schema';
 import {
   textToImageParamsSchema,
@@ -17,6 +16,7 @@ import { GenerationData } from '~/server/services/generation/generation.service'
 import { getBaseModelSetType, getIsSdxl } from '~/shared/constants/generation.constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
+import { useGenerationStore } from '~/store/generation.store';
 
 // #region [schemas]
 const extendedTextToImageResourceSchema = textToImageResourceSchema.extend({
@@ -65,7 +65,9 @@ function formatGenerationData({
   // use versionId to set the resource we want to use to derive the baseModel
   // (ie, a lora is used to derive the baseModel instead of the checkpoint)
   const baseResource = versionId ? data.resources.find((x) => x.id === versionId) : checkpoint;
-  const baseModel = getBaseModelSetType(baseResource?.baseModel);
+  const baseModel = getBaseModelSetType(
+    baseResource ? baseResource.baseModel : data.params.baseModel ?? formData.baseModel
+  );
 
   const config = getGenerationConfig(baseModel);
 
@@ -141,17 +143,14 @@ export function useGenerationForm() {
 }
 
 const defaultValues = generation.defaultValues;
-export function GenerationFormProvider({
-  input,
-  children,
-}: {
-  input?: GetGenerationDataInput;
-  children: React.ReactNode;
-}) {
+export function GenerationFormProvider({ children }: { children: React.ReactNode }) {
+  const input = useGenerationStore((state) => state.input);
+  const storeData = useGenerationStore((state) => state.data);
+
   const _form = useRef<GenerationFormProps | null>(null);
   const currentUser = useCurrentUser();
   const status = useGenerationStatus();
-  const response = trpc.generation.getGenerationData.useQuery(input!, {
+  const { data: responseData } = trpc.generation.getGenerationData.useQuery(input!, {
     enabled: input !== undefined,
   });
 
@@ -167,21 +166,29 @@ export function GenerationFormProvider({
     mode: 'onSubmit',
     values: getValues,
     exclude: ['tier', 'cost'],
+    storage: localStorage,
   });
 
   useEffect(() => {
-    const runType = !input ? 'default' : input.type === 'modelVersion' ? 'run' : 'remix';
-    const formData =
-      runType === 'default'
-        ? form.getValues()
-        : formatGenerationData({
-            formData: form.getValues(),
-            data: response.data ?? { resources: [], params: {} },
-            versionId: input?.type === 'modelVersion' ? input?.id : undefined,
-            type: runType,
-          });
-    setValues(formData);
-  }, [response.data, status, currentUser]); // eslint-disable-line
+    if (storeData) {
+      const { resources, params } = storeData.data;
+      const formData: PartialFormData = { ...params };
+      if (!!resources?.length) formData.resources = resources;
+      setValues(formData);
+    } else {
+      const runType = !input ? 'default' : input.type === 'modelVersion' ? 'run' : 'remix';
+      const formData =
+        runType === 'default'
+          ? form.getValues()
+          : formatGenerationData({
+              formData: form.getValues(),
+              data: responseData ?? { resources: [], params: {} },
+              versionId: input?.type === 'modelVersion' ? input?.id : undefined,
+              type: runType,
+            });
+      setValues(formData);
+    }
+  }, [responseData, status, currentUser, storeData]); // eslint-disable-line
 
   function handleUserLimits(data: PartialFormData): PartialFormData {
     if (!status) return data;

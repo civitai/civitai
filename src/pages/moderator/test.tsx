@@ -22,9 +22,7 @@ export default function Test() {
     <IsClient>
       <GenerationProvider>
         <div className="container max-w-xs">
-          <GenerationFormProvider>
-            <GenerationForm2 />
-          </GenerationFormProvider>
+          <GenerationForm2 />
         </div>
       </GenerationProvider>
       {/* <InnerContent /> */}
@@ -53,7 +51,7 @@ function InnerContent() {
     <Form form={form} onSubmit={(data) => console.log(data)}>
       <div className="flex flex-col gap-3">
         <Watch {...form} fields={['name', 'age']}>
-          {([name, age]) => (
+          {({ name, age }) => (
             <div>
               {name} - {age}
             </div>

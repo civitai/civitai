@@ -1,4 +1,3 @@
-import { WorkflowStatus } from '@civitai/client';
 import { resourceDataCache } from '~/server/redis/caches';
 import { REDIS_KEYS, redis } from '~/server/redis/client';
 import { GenerationStatus, generationStatusSchema } from '~/server/schema/generation.schema';

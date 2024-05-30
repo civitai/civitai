@@ -5,7 +5,7 @@ import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvi
 import GenerationTabs from '~/components/ImageGeneration/GenerationTabs';
 import { ResizableSidebar } from '~/components/Resizable/ResizableSidebar';
 import { useResizeStore } from '~/components/Resizable/useResize';
-import { useGenerationStore } from '~/store/generation.store';
+import { generationPanel, useGenerationStore } from '~/store/generation.store';
 
 export function GenerationSidebar() {
   const _opened = useGenerationStore((state) => state.opened);
@@ -19,6 +19,10 @@ export function GenerationSidebar() {
     const width = useResizeStore.getState()['generation-sidebar'];
     setFullScreen(width + 320 > window.innerWidth);
   }, []);
+
+  useEffect(() => {
+    generationPanel.open();
+  }, [isGeneratePage]);
 
   useEffect(() => {
     if (opened) {

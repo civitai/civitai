@@ -6,6 +6,7 @@ import {
   textToImage,
   whatIfTextToImage,
 } from '~/server/services/orchestrator/textToImage';
+import { submitWorkflow } from '~/server/services/orchestrator/workflows';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 
@@ -66,6 +67,42 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
       // whatIf: true,
     });
   }
+
+  // async function test({ user }: { user: SessionUser }) {
+  //   return await submitWorkflow({
+  //     whatif: true,
+  //     requestBody: {
+  //       steps: [
+  //         {
+  //           $type: 'textToImage',
+  //           input: {
+  //             model: 'urn:air:sdxl:checkpoint:civitai:101055@128078',
+  //             quantity: 4,
+  //             batchSize: 1,
+  //             additionalNetworks: {
+  //               'urn:air:sd1:embedding:civitai:99890@106916': {
+  //                 type: 'TextualInversion',
+  //                 strength: undefined,
+  //                 triggerWord: 'civit_nsfw',
+  //               },
+  //             },
+  //             prompt: '',
+  //             negativePrompt: 'civit_nsfw, ',
+  //             scheduler: 'DPM2MKarras',
+  //             steps: 20,
+  //             cfgScale: 4.5,
+  //             seed: 3912581945,
+  //             clipSkip: 2,
+  //             width: 832,
+  //             height: 1216,
+  //           },
+  //         },
+  //       ],
+  //       callbacks: undefined,
+  //     },
+  //     user,
+  //   });
+  // }
 
   // const response = await getTextToImageRequests({ user, take: 10 });
   // const response = await submitRequest({ user });

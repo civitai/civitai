@@ -18,16 +18,14 @@ import {
   useMantineTheme,
   LoadingOverlay,
 } from '@mantine/core';
-import { DeepPartial, useWatch } from 'react-hook-form';
-import { getHotkeyHandler, useLocalStorage } from '@mantine/hooks';
+import { useWatch } from 'react-hook-form';
+import { getHotkeyHandler, useDebouncedValue, useLocalStorage } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
 import { ModelType } from '@prisma/client';
 import { IconPlus } from '@tabler/icons-react';
 import { IconArrowAutofitDown } from '@tabler/icons-react';
 import { IconAlertTriangle, IconCheck } from '@tabler/icons-react';
 import Link from 'next/link';
-import { useCallback, useEffect, useState } from 'react';
-import { TypeOf, z } from 'zod';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { DailyBoostRewardClaim } from '~/components/Buzz/Rewards/DailyBoostRewardClaim';
@@ -60,44 +58,44 @@ import {
   InputSelect,
 } from '~/libs/form';
 import { Watch } from '~/libs/form/components/Watch';
-import { usePersistForm } from '~/libs/form/hooks/usePersistForm';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
-  BaseModel,
-  draftMode,
   generation,
+  generationConfig,
   getGenerationConfig,
   samplerOffsets,
 } from '~/server/common/constants';
-import {
-  GetGenerationDataInput,
-  blockedRequest,
-  defaultsByTier,
-} from '~/server/schema/generation.schema';
-import { imageGenerationSchema, imageSchema } from '~/server/schema/image.schema';
-import {
-  textToImageParamsSchema,
-  textToImageResourceSchema,
-  textToImageWhatIfSchema,
-} from '~/server/schema/orchestrator/textToImage.schema';
-import { userTierSchema } from '~/server/schema/user.schema';
-import { GenerationData } from '~/server/services/generation/generation.service';
+import { blockedRequest } from '~/server/schema/generation.schema';
+import { imageGenerationSchema } from '~/server/schema/image.schema';
+import { textToImageWhatIfSchema } from '~/server/schema/orchestrator/textToImage.schema';
 import { getBaseModelSetType, getIsSdxl } from '~/shared/constants/generation.constants';
 import { generationPanel } from '~/store/generation.store';
 import { parsePromptMetadata } from '~/utils/metadata';
 import { showErrorNotification } from '~/utils/notifications';
 import { numberWithCommas } from '~/utils/number-helpers';
-import { removeEmpty } from '~/utils/object-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import {
   GenerationFormOutput,
+  GenerationFormProvider,
   useGenerationForm,
 } from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
+import { useEffect, useState } from 'react';
+import { IsClient } from '~/components/IsClient/IsClient';
+
+export function GenerationForm2() {
+  return (
+    <IsClient>
+      <GenerationFormProvider>
+        <GenerationFormContent />
+      </GenerationFormProvider>
+    </IsClient>
+  );
+}
 
 // #region [form component]
-export function GenerationForm2() {
+export function GenerationFormContent() {
   const theme = useMantineTheme();
   const { classes, cx } = useStyles();
   const features = useFeatureFlags();
@@ -170,7 +168,6 @@ export function GenerationForm2() {
       'mod+ArrowDown',
       (event) => keyupEditAttention(event as React.KeyboardEvent<HTMLTextAreaElement>),
     ],
-    ``,
   ]);
 
   const { conditionalPerformTransaction } = useBuzzTransaction({
@@ -251,7 +248,10 @@ export function GenerationForm2() {
           </InfoPopover>
         </div>
         <Card
-          className={cx({ [classes.formError]: form.formState.errors.resources })}
+          className={cx(
+            { [classes.formError]: form.formState.errors.resources },
+            'overflow-visible'
+          )}
           withBorder
           p="sm"
           radius="md"
@@ -518,7 +518,7 @@ export function GenerationForm2() {
           </Watch>
         </div>
 
-        <div className="my-2 flex justify-between">
+        <div className="my-2 flex justify-between gap-3">
           <InputSwitch name="nsfw" label="Mature content" labelPosition="left" />
           {features.draftMode && (
             <InputSwitch
@@ -846,22 +846,30 @@ export function GenerationForm2() {
 }
 // #endregion
 
+// #region [submit button]
 function SubmitButton(props: { isLoading?: boolean }) {
   const status = useGenerationStatus();
   const canGenerate = useGenerationContext((state) => state.canGenerate);
   const form = useGenerationForm();
   const { model, resources = [], vae, ...params } = useWatch({ control: form.control });
+  const defaultModel =
+    generationConfig[getBaseModelSetType(params.baseModel) as keyof typeof generationConfig]
+      ?.checkpoint ?? model;
   const query = textToImageWhatIfSchema.safeParse({
     ...params,
     prompt: '',
     negativePrompt: '',
-    resources: [model, ...resources, vae].map((x) => (x ? x.id : undefined)).filter(isDefined),
+    seed: undefined,
+    resources: [defaultModel.id],
+    // resources: [model, ...resources, vae].map((x) => (x ? x.id : undefined)).filter(isDefined),
   });
 
-  const { data, isLoading, isError } = trpc.orchestrator.textToImageWhatIf.useQuery(
-    query.success ? query.data : ({} as any),
+  const [debounced] = useDebouncedValue(query, 50);
+
+  const { data, isError, isInitialLoading } = trpc.orchestrator.textToImageWhatIf.useQuery(
+    debounced.success ? debounced.data : ({} as any),
     {
-      enabled: query.success,
+      enabled: debounced && debounced.success,
     }
   );
 
@@ -884,19 +892,20 @@ function SubmitButton(props: { isLoading?: boolean }) {
       type="submit"
       size="lg"
       label="Generate"
-      loading={isLoading || props.isLoading}
+      loading={isInitialLoading || props.isLoading}
       className="h-auto flex-1"
       disabled={!canGenerate || !data}
       buzzAmount={data?.cost ?? 0}
       showPurchaseModal={false}
       error={
-        !isLoading && isError
+        !isInitialLoading && isError
           ? 'Error calculating cost. Please try updating your values'
           : undefined
       }
     />
   );
 }
+// #endregion
 
 // #region [styles]
 const useStyles = createStyles((theme) => ({
@@ -976,7 +985,6 @@ const sharedNumberProps: NumberInputProps = {
 
 const getAspectRatioControls = (baseModel?: string) => {
   const aspectRatios = getGenerationConfig(baseModel).aspectRatios;
-  console.log({ baseModel, aspectRatios });
   return aspectRatios.map(({ label, width, height }, index) => ({
     label: (
       <Stack spacing={2}>

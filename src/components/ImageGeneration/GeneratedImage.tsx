@@ -183,7 +183,9 @@ export function GeneratedImage({
                   alt=""
                   src={image.url}
                   style={{ zIndex: 2, width: '100%' }}
-                  onDragStart={(e) => e.dataTransfer.setData('text/uri-list', image.url)}
+                  onDragStart={(e) => {
+                    if (image.url) e.dataTransfer.setData('text/uri-list', image.url);
+                  }}
                 />
               )}
             </Box>

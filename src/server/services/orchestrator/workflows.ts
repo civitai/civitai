@@ -58,6 +58,8 @@ export async function submitWorkflow({
           throw throwAuthorizationError();
         case 403:
           throw throwInsufficientFundsError();
+        default:
+          throw error;
       }
     } else throw error;
   });
