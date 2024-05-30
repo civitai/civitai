@@ -1,4 +1,6 @@
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { EntityAccessPermission } from '~/server/common/enums';
+import { ModelVersionEarlyAccessConfig } from '~/server/schema/model-version.schema';
 import { trpc } from '~/utils/trpc';
 
 export const useQueryModelVersionsEngagement = (
@@ -24,3 +26,33 @@ export const useQueryModelVersionsEngagement = (
 
   return { alreadyNotifying, alreadyDownloaded, ...rest };
 };
+
+export const useModelVersionPermission = ({ modelVersionId  } : { modelVersionId: number }) => { 
+   const { data: modelVersion } = trpc.modelVersion.getById.useQuery(
+    { id: modelVersionId },
+  );
+
+
+  const { data: entities, isLoading: isLoadingAccess } = trpc.common.getEntityAccess.useQuery(
+    {
+      entityId: [modelVersionId],
+      entityType: 'ModelVersion',
+    }, {
+      enabled: !!modelVersion,
+    }
+  );
+
+
+
+  const [access] = entities ?? [];
+  const isEarlyAccess = modelVersion?.earlyAccessEndsAt && modelVersion?.earlyAccessEndsAt > new Date();
+  const earlyAccessConfig = modelVersion?.earlyAccessConfig as ModelVersionEarlyAccessConfig;
+
+
+  return {
+    isLoadingAccess,
+    canDownload: !isEarlyAccess ? true : access?.hasAccess && access?.permissions >= EntityAccessPermission.EarlyAccessDownload,
+    canGenerate: !isEarlyAccess ? true : access?.hasAccess && access?.permissions >= EntityAccessPermission.EarlyAccessGeneration,
+    earlyAccessConfig: !isEarlyAccess ? undefined : earlyAccessConfig,
+  };
+}

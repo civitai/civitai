@@ -197,9 +197,9 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
 
         const canDownload =
           model.mode !== ModelModifier.Archived &&
-          entityAccessForVersion.hasAccess &&
+          entityAccessForVersion?.hasAccess &&
           (!isEarlyAccess ||
-            entityAccessForVersion.permissions >= EntityAccessPermission.EarlyAccessDownload);
+            (entityAccessForVersion?.permissions ?? 0) >= EntityAccessPermission.EarlyAccessDownload);
         const canGenerate =
           !!version.generationCoverage?.covered &&
           unavailableGenResources.indexOf(version.id) === -1;
