@@ -265,3 +265,9 @@ export type ModelVersionsGeneratedImagesOnTimeframeSchema = z.infer<
 export const modelVersionsGeneratedImagesOnTimeframeSchema = z.object({
   timeframe: z.number().optional(),
 });
+
+export type ModelVersionEarlyAccessPurchase = z.infer<typeof modelVersionEarlyAccessPurchase>;
+export const modelVersionEarlyAccessPurchase = z.object({
+  modelVersionId: z.number(),
+  type: z.enum(['download', 'generation']),
+});

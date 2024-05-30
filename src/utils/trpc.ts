@@ -6,6 +6,7 @@ import superjson from 'superjson';
 import type { AppRouter } from '~/server/routers';
 import { isDev } from '~/env/other';
 import { env } from '~/env/client.mjs';
+import { showErrorNotification } from '~/utils/notifications';
 
 const url = '/api/trpc';
 const headers = {
@@ -57,3 +58,23 @@ export const trpc = createTRPCNext<AppRouter>({
   },
   ssr: false,
 });
+
+export const handleTRPCError = (
+  error: any,
+  message = 'There was an error while performing your request'
+) => {
+  try {
+    // If failed in the FE - TRPC error is a JSON string that contains an array of errors.
+    const parsedError = JSON.parse(error.message);
+    showErrorNotification({
+      title: message,
+      error: parsedError,
+    });
+  } catch (e) {
+    // Report old error as is:
+    showErrorNotification({
+      title: message,
+      error: new Error(error.message),
+    });
+  }
+};

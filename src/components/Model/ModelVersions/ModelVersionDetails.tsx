@@ -39,7 +39,7 @@ import dayjs from 'dayjs';
 import { startCase } from 'lodash-es';
 import { SessionUser } from 'next-auth';
 import { useRouter } from 'next/router';
-import { useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useCivitaiLink } from '~/components/CivitaiLink/CivitaiLinkProvider';
@@ -99,7 +99,10 @@ import { ToggleVaultButton } from '~/components/Vault/ToggleVaultButton';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useQueryUserResourceReview } from '~/components/ResourceReview/resourceReview.utils';
 import { ModelVersionReview } from '~/components/Model/ModelVersions/ModelVersionReview';
-import { useQueryModelVersionsEngagement } from '~/components/Model/ModelVersions/model-version.utils';
+import {
+  useModelVersionPermission,
+  useQueryModelVersionsEngagement,
+} from '~/components/Model/ModelVersions/model-version.utils';
 import {
   EditUserResourceReviewLight,
   UserResourceReviewComposite,
@@ -107,6 +110,7 @@ import {
 import { ResourceReviewThumbActions } from '~/components/ResourceReview/ResourceReviewThumbActions';
 import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { openContext } from '~/providers/CustomModalsProvider';
+import { ModelVersionEarlyAccessPurchase } from '~/components/Model/ModelVersions/ModelVersionEarlyAccessPurchase';
 
 const useStyles = createStyles(() => ({
   ctaContainer: {
@@ -126,7 +130,6 @@ export function ModelVersionDetails({
   user,
   onBrowseClick,
   onFavoriteClick,
-  hasAccess = true,
 }: Props) {
   const { classes } = useStyles();
   const { connected: civitaiLinked } = useCivitaiLink();
@@ -140,6 +143,15 @@ export function ModelVersionDetails({
     key: 'model-version-details-accordions',
     defaultValue: ['version-details'],
   });
+
+  const {
+    isLoadingAccess,
+    canDownload: hasDownloadPermissions,
+    canGenerate: hasGeneratePermissions,
+  } = useModelVersionPermission({
+    modelVersionId: version.id,
+  });
+
   const isOwner = model.user?.id === user?.id;
   const isOwnerOrMod = isOwner || user?.isModerator;
 
@@ -159,11 +171,37 @@ export function ModelVersionDetails({
   const displayCivitaiLink = civitaiLinked && !!version.hashes && version.hashes?.length > 0;
   const hasPendingClaimReport = model.reportStats && model.reportStats.ownershipProcessing > 0;
 
-  const canGenerate = features.imageGeneration && hasAccess && version.canGenerate;
+  const canGenerate = features.imageGeneration && version.canGenerate && hasGeneratePermissions;
   const publishVersionMutation = trpc.modelVersion.publish.useMutation();
   const publishModelMutation = trpc.model.publish.useMutation();
   const requestReviewMutation = trpc.model.requestReview.useMutation();
   const requestVersionReviewMutation = trpc.modelVersion.requestReview.useMutation();
+
+  const handleDownload = useCallback(
+    (file: { type?: string; metadata?: BasicFileMetadata }) => {
+      if (isLoadingAccess) {
+        return;
+      }
+
+      if (hasDownloadPermissions) {
+        const url = createModelFileDownloadUrl({
+          versionId: version.id,
+          type: file.type,
+          meta: file.metadata,
+        });
+
+        router.push(url);
+        return;
+      } else {
+        dialogStore.trigger({
+          component: ModelVersionEarlyAccessPurchase,
+          props: { modelVersionId: version.id },
+        });
+        console.log('You should purchase bud');
+      }
+    },
+    [isLoadingAccess, hasDownloadPermissions, version.id, router]
+  );
 
   const { currentUserReview } = useQueryUserResourceReview({
     modelId: model.id,
@@ -421,17 +459,13 @@ export function ModelVersionDetails({
   const primaryFileDetails = primaryFile && getFileDetails(primaryFile);
 
   const downloadMenuItems = filesVisible.map((file) =>
-    !archived && hasAccess ? (
+    !archived ? (
       <Menu.Item
         key={file.id}
         component="a"
         py={4}
         icon={<VerifiedText file={file} iconOnly />}
-        href={createModelFileDownloadUrl({
-          versionId: version.id,
-          type: file.type,
-          meta: file.metadata,
-        })}
+        onClick={() => handleDownload(file)}
       >
         {getFileDisplayName({ file, modelType: model.type })} ({formatKBytes(file.sizeKB)}){' '}
         {file.visibility !== 'Public' && (
@@ -471,22 +505,18 @@ export function ModelVersionDetails({
               </Badge>
             ) : null}
           </Group>
-          {hasAccess && (
-            <Button
-              component="a"
-              variant="subtle"
-              size="xs"
-              href={createModelFileDownloadUrl({
-                versionId: version.id,
-                type: file.type,
-                meta: file.metadata,
-              })}
-              disabled={archived}
-              compact
-            >
-              Download
-            </Button>
-          )}
+          <Button
+            component="a"
+            variant="subtle"
+            size="xs"
+            onClick={() => {
+              handleDownload(file);
+            }}
+            disabled={archived}
+            compact
+          >
+            Download
+          </Button>
         </Group>
         {getFileDetails(file)}
       </Stack>
@@ -642,13 +672,13 @@ export function ModelVersionDetails({
                     filesCount === 1 ? (
                       <DownloadButton
                         canDownload={version.canDownload}
+                        downloadRequiresPurchase={!hasDownloadPermissions}
                         component="a"
-                        href={createModelFileDownloadUrl({
-                          versionId: version.id,
-                          primary: true,
-                        })}
+                        onClick={() => {
+                          handleDownload(primaryFile);
+                        }}
                         tooltip="Download"
-                        disabled={!primaryFile || archived}
+                        disabled={!primaryFile || archived || isLoadingAccess}
                         sx={{ flex: 1, paddingLeft: 8, paddingRight: 8 }}
                         iconOnly
                       />
@@ -657,7 +687,8 @@ export function ModelVersionDetails({
                         <Menu.Target>
                           <DownloadButton
                             canDownload={version.canDownload}
-                            disabled={!primaryFile || archived}
+                            downloadRequiresPurchase={!hasDownloadPermissions}
+                            disabled={!primaryFile || archived || isLoadingAccess}
                             sx={{ flex: 1, paddingLeft: 8, paddingRight: 8 }}
                             iconOnly
                           />
@@ -668,12 +699,12 @@ export function ModelVersionDetails({
                   ) : (
                     <DownloadButton
                       component="a"
-                      href={createModelFileDownloadUrl({
-                        versionId: version.id,
-                        primary: true,
-                      })}
+                      onClick={() => {
+                        handleDownload(primaryFile);
+                      }}
                       canDownload={version.canDownload}
-                      disabled={!primaryFile || archived}
+                      downloadRequiresPurchase={!hasDownloadPermissions}
+                      disabled={!primaryFile || archived || isLoadingAccess}
                       sx={{ flex: '2 !important', paddingLeft: 8, paddingRight: 12 }}
                     >
                       <Text align="center">
@@ -778,12 +809,14 @@ export function ModelVersionDetails({
               community once it has been approved.
             </AlertWithIcon>
           )}
-          <EarlyAccessAlert
-            modelId={model.id}
-            versionId={version.id}
-            modelType={model.type}
-            deadline={version.earlyAccessEndsAt ?? undefined}
-          />
+          {!hasDownloadPermissions && (
+            <EarlyAccessAlert
+              modelId={model.id}
+              versionId={version.id}
+              modelType={model.type}
+              deadline={version.earlyAccessEndsAt ?? undefined}
+            />
+          )}
           <ModelFileAlert
             versionId={version.id}
             modelType={model.type}
@@ -1185,7 +1218,6 @@ type Props = {
   user?: SessionUser | null;
   onBrowseClick?: VoidFunction;
   onFavoriteClick?: (ctx: { versionId?: number; setTo: boolean }) => void;
-  hasAccess?: boolean;
 };
 
 function VersionDescriptionModal({ description }: { description: string }) {

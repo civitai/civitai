@@ -9,6 +9,7 @@ import {
   EarlyAccessModelVersionsOnTimeframeSchema,
   GetModelVersionSchema,
   ModelVersionEarlyAccessConfig,
+  ModelVersionEarlyAccessPurchase,
   ModelVersionMeta,
   ModelVersionUpsertInput,
   ModelVersionsGeneratedImagesOnTimeframeSchema,
@@ -21,6 +22,7 @@ import {
   addAdditionalLicensePermissions,
   deleteVersionById,
   earlyAccessModelVersionsOnTimeframe,
+  earlyAccessPurchase,
   getModelVersionRunStrategies,
   getVersionById,
   modelVersionGeneratedImagesOnTimeframe,
@@ -44,6 +46,7 @@ import { getFilesByEntity } from '../services/file.service';
 import { createFile } from '../services/model-file.service';
 import { getStaticContent } from '~/server/services/content.service';
 import { dataForModelsCache } from '~/server/redis/caches';
+import { getUnavailableResources } from '~/server/services/generation/generation.service';
 
 export const getModelVersionRunStrategiesHandler = ({ input: { id } }: { input: GetByIdInput }) => {
   try {
@@ -121,13 +124,19 @@ export const getModelVersionHandler = async ({ input }: { input: GetModelVersion
             },
           },
         },
+        generationCoverage: { select: { covered: true } },
       },
     });
 
     if (!version) throw throwNotFoundError(`No version with id ${input.id}`);
 
+    const unavailableGenResources = await getUnavailableResources();
+    const canGenerate =
+      !!version.generationCoverage?.covered && !unavailableGenResources.includes(version.id);
+
     return {
       ...version,
+      canGenerate,
       earlyAccessConfig: version.earlyAccessConfig as ModelVersionEarlyAccessConfig | null,
       baseModel: version.baseModel as BaseModel,
       baseModelType: version.baseModelType as BaseModelType,
@@ -563,3 +572,21 @@ export async function getVersionLicenseHandler({ input }: { input: GetByIdInput 
     else throw throwDbError(error);
   }
 }
+
+export const modelVersionEarlyAccessPurchaseHandler = async ({
+  input,
+  ctx,
+}: {
+  input: ModelVersionEarlyAccessPurchase;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    return earlyAccessPurchase({
+      ...input,
+      userId: ctx.user.id,
+    });
+  } catch (error) {
+    if (error instanceof TRPCError) error;
+    else throw throwDbError(error);
+  }
+};

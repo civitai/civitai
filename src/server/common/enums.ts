@@ -254,5 +254,5 @@ export enum EntityAccessPermission {
   None = 0, // Generally won't be used, but can be used to indicate no access
   EarlyAccessGeneration = 1,
   EarlyAccessDownload = 2,
-  All = 1024, // This number might increase if we end up having 10+ permissions, but right now, 1024 is enough. If updated, please update default value in schema.
+  All = 1 + 2, // Sum of all prev. permissions.
 }

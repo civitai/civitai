@@ -823,7 +823,7 @@ You agree to the following with respect to the Model (each a “Permission”):
   return license;
 }
 
-export const purchaseEarlyAccess = async ({
+export const earlyAccessPurchase = async ({
   userId,
   modelVersionId,
   type = 'download',
@@ -890,7 +890,11 @@ export const purchaseEarlyAccess = async ({
     entityType: 'ModelVersion',
   });
 
-  if (access.hasAccess && access.meta?.[buzzTransactionKey] && access.permissions >= permission) {
+  if (
+    access.hasAccess &&
+    access.meta?.[buzzTransactionKey] &&
+    (access.permissions & permission) !== 0
+  ) {
     // This user has already purchased early access.
     throw throwBadRequestError('You have already purchased early access for this model.');
   }
@@ -912,6 +916,7 @@ export const purchaseEarlyAccess = async ({
     buzzTransactionId = buzzTransaction.transactionId;
 
     if (access.hasAccess) {
+      // Should only happen if the user purchased Generation but NOT download.
       // Update entity access:
       await dbWrite.entityAccess.update({
         where: {
@@ -923,7 +928,11 @@ export const purchaseEarlyAccess = async ({
           },
         },
         data: {
-          permissions: Math.max(permission, access.permissions ?? 0),
+          permissions: Math.max(
+            EntityAccessPermission.EarlyAccessDownload +
+              EntityAccessPermission.EarlyAccessGeneration,
+            access.permissions ?? 0
+          ),
           meta: { ...(access.meta ?? {}), [`${type}-buzzTransactionId`]: buzzTransactionId },
         },
       });
@@ -935,7 +944,11 @@ export const purchaseEarlyAccess = async ({
           accessToType: 'ModelVersion',
           accessorId: userId,
           accessorType: 'User',
-          permissions: EntityAccessPermission.EarlyAccessDownload,
+          permissions:
+            type === 'generation'
+              ? EntityAccessPermission.EarlyAccessGeneration
+              : EntityAccessPermission.EarlyAccessGeneration +
+                EntityAccessPermission.EarlyAccessDownload,
           meta: { [`${type}-buzzTransactionId`]: buzzTransactionId },
           addedById: userId, // Since it's a purchase
         },

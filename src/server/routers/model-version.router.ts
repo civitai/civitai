@@ -11,6 +11,7 @@ import {
   unpublishModelVersionHandler,
   upsertModelVersionHandler,
   getVersionLicenseHandler,
+  modelVersionEarlyAccessPurchaseHandler,
 } from '~/server/controllers/model-version.controller';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
@@ -18,6 +19,7 @@ import {
   earlyAccessModelVersionsOnTimeframeSchema,
   getModelVersionByModelTypeSchema,
   getModelVersionSchema,
+  modelVersionEarlyAccessPurchase,
   modelVersionUpsertSchema2,
   modelVersionsGeneratedImagesOnTimeframeSchema,
   publishVersionSchema,
@@ -114,4 +116,7 @@ export const modelVersionRouter = router({
     .input(modelVersionsGeneratedImagesOnTimeframeSchema)
     .query(modelVersionGeneratedImagesOnTimeframeHandler),
   getLicense: publicProcedure.input(getByIdSchema).query(getVersionLicenseHandler),
+  earlyAccessPurchase: protectedProcedure
+    .input(modelVersionEarlyAccessPurchase)
+    .mutation(modelVersionEarlyAccessPurchaseHandler),
 });
