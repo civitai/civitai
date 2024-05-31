@@ -11,6 +11,7 @@ import {
 import { SearchIndexUpdate } from '~/server/search-index/SearchIndexUpdate';
 import { ImageModelWithIngestion, profileImageSelect } from '~/server/selectors/image.selector';
 import { isDefined } from '~/utils/type-guards';
+import { getCosmeticsForUsers } from '~/server/services/user.service';
 
 const READ_BATCH_SIZE = 10000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 10000;
@@ -137,13 +138,15 @@ const WHERE = [Prisma.sql`u.id != -1`, Prisma.sql`u."deletedAt" IS NULL`];
 const transformData = async ({
   users,
   profilePictures,
+  userCosmetics,
 }: {
   users: UserForSearchIndex[];
   profilePictures: ProfileImage[];
+  userCosmetics: Awaited<ReturnType<typeof getCosmeticsForUsers>>;
 }) => {
   const records = users.map((userRecord) => {
     const stats = userRecord.stats;
-    const cosmetics = userRecord.cosmetics ?? [];
+    const cosmetics = userCosmetics[userRecord.id] ?? [];
     const profilePicture =
       profilePictures.find((p) => p.id === userRecord.profilePictureId) ?? null;
 
@@ -234,28 +237,6 @@ export const usersSearchIndex = createSearchIndexUpdateProcessor({
         u.image
       FROM "User" u
       WHERE ${Prisma.join(where, ' AND ')}
-    ), cosmetics AS MATERIALIZED (
-      SELECT
-        uc."userId",
-        jsonb_agg(
-          jsonb_build_object(
-            'data', uc.data,
-            'cosmetic', jsonb_build_object(
-              'id', c.id,
-              'data', c.data,
-              'type', c.type,
-              'source', c.source,
-              'name', c.name,
-              'leaderboardId', c."leaderboardId",
-              'leaderboardPosition', c."leaderboardPosition"
-            )
-          )
-        )  cosmetics
-      FROM "UserCosmetic" uc
-      JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
-      AND "equippedAt" IS NOT NULL
-      WHERE uc."userId" IN (SELECT id FROM target) AND uc."equippedToId" IS NULL
-      GROUP BY uc."userId"
     ), ranks AS MATERIALIZED (
       SELECT
         ur."userId",
@@ -300,7 +281,6 @@ export const usersSearchIndex = createSearchIndexUpdateProcessor({
     )
     SELECT
       t.*,
-      (SELECT cosmetics FROM cosmetics c WHERE c."userId" = t.id),
       (SELECT rank FROM ranks r WHERE r."userId" = t.id),
       (SELECT metrics FROM metrics m WHERE m."userId" = t.id),
       (SELECT stats FROM stats s WHERE s."userId" = t.id)
@@ -312,10 +292,15 @@ export const usersSearchIndex = createSearchIndexUpdateProcessor({
       return {
         users: [],
         profilePictures: [],
+        userCosmetics: {},
       };
     }
 
     logger(`PullData :: Pulled users`);
+
+    const userCosmetics = await getCosmeticsForUsers([
+      ...new Set<number>(users.map((u) => u.id).filter(isDefined)),
+    ]);
 
     const profilePictures = await db.image.findMany({
       where: { id: { in: users.map((u) => u.profilePictureId).filter(isDefined) } },
@@ -327,6 +312,7 @@ export const usersSearchIndex = createSearchIndexUpdateProcessor({
     return {
       users,
       profilePictures,
+      userCosmetics,
     };
   },
   transformData,
