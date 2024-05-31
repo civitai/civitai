@@ -1,4 +1,4 @@
-import { Stack, Title } from '@mantine/core';
+import { Badge, Button, Group, Stack, Text, Title } from '@mantine/core';
 import { Announcements } from '~/components/Announcements/Announcements';
 import { setPageOptions } from '~/components/AppLayout/AppLayout';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
@@ -9,11 +9,16 @@ import { EarlyAccessHighlight } from '~/components/Model/EarlyAccessHighlight/Ea
 import { ModelsInfinite } from '~/components/Model/Infinite/ModelsInfinite';
 import { useModelQueryParams } from '~/components/Model/model.utils';
 import { env } from '~/env/client.mjs';
+import { useFiltersContext } from '~/providers/FiltersProvider';
 import { PeriodMode } from '~/server/schema/base.schema';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 
 export default function ModelsPage() {
   const { set, view: queryView, ...queryFilters } = useModelQueryParams();
+  const { setFilters, earlyAccess } = useFiltersContext((state) => ({
+    setFilters: state.setModelFilters,
+    earlyAccess: state.models.earlyAccess,
+  }));
   const { username, query } = queryFilters;
   const periodMode = query ? ('stats' as PeriodMode) : undefined;
   if (periodMode) queryFilters.periodMode = periodMode;
@@ -38,7 +43,17 @@ export default function ModelsPage() {
         />
         <IsClient>
           <EarlyAccessHighlight />
-          <CategoryTags />
+          <Group noWrap spacing="xs">
+            <Button
+              variant="filled"
+              color={earlyAccess ? 'blue' : 'green'}
+              onClick={() => setFilters({ earlyAccess: !earlyAccess })}
+              compact
+            >
+              <Text tt="uppercase">Early Access</Text>
+            </Button>
+            <CategoryTags />
+          </Group>
           <ModelsInfinite filters={queryFilters} showEof showAds />
         </IsClient>
       </Stack>
