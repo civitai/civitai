@@ -89,3 +89,11 @@ export const useMutateModelVersion = () => {
     purchasingModelVersionEarlyAccess: modelVersionEarlyAccessPurchaseMutation.isLoading,
   };
 };
+
+export const useQueryModelVersionDonationGoals = (
+  { versionId }: { versionId: number },
+  options?: { enabled?: boolean }
+) => {
+  const currentUser = useCurrentUser();
+  console.log('currentUser', currentUser);
+};

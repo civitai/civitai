@@ -119,4 +119,5 @@ export const modelVersionRouter = router({
   earlyAccessPurchase: protectedProcedure
     .input(modelVersionEarlyAccessPurchase)
     .mutation(modelVersionEarlyAccessPurchaseHandler),
+  donationGoals: publicProcedure.input(getByIdSchema).query(({ input }) => getVersionById(input)),
 });

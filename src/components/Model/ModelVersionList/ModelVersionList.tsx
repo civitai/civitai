@@ -13,6 +13,7 @@ import { NextLink } from '@mantine/next';
 import {
   IconAlertTriangle,
   IconBan,
+  IconBolt,
   IconBrush,
   IconChevronLeft,
   IconChevronRight,
@@ -34,6 +35,8 @@ import { containerQuery } from '~/utils/mantine-css-helpers';
 
 import { ModelById } from '~/types/router';
 import { useToggleCheckpointCoverageMutation } from '~/components/Model/model.utils';
+import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
+import { Currency } from '@prisma/client';
 
 const useStyles = createStyles((theme) => ({
   scrollContainer: { position: 'relative' },
@@ -172,6 +175,8 @@ export function ModelVersionList({
           const missingPosts = !version.posts.length;
           const published = version.status === 'Published';
           const scheduled = version.status === 'Scheduled';
+          const isEarlyAccess =
+            version.earlyAccessEndsAt && new Date(version.earlyAccessEndsAt) > new Date();
           const hasProblem = missingFiles || missingPosts || (!published && !scheduled);
 
           const versionButton = (
@@ -196,7 +201,7 @@ export function ModelVersionList({
                 return onVersionClick(version);
               }}
               leftIcon={
-                showExtraIcons && (hasProblem || scheduled) ? (
+                showExtraIcons && (hasProblem || scheduled || isEarlyAccess) ? (
                   <ThemeIcon
                     color="yellow"
                     variant="light"
@@ -204,7 +209,13 @@ export function ModelVersionList({
                     size="sm"
                     sx={{ backgroundColor: 'transparent' }}
                   >
-                    {hasProblem ? <IconAlertTriangle size={14} /> : <IconClock size={14} />}
+                    {hasProblem ? (
+                      <IconAlertTriangle size={14} />
+                    ) : scheduled ? (
+                      <IconClock size={14} />
+                    ) : (
+                      <CurrencyIcon currency={Currency.BUZZ} size={14} />
+                    )}
                   </ThemeIcon>
                 ) : undefined
               }

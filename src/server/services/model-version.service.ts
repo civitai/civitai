@@ -992,3 +992,56 @@ export const earlyAccessPurchase = async ({
     throw throwDbError(error);
   }
 };
+
+export const modelVersionDonationGoals = async ({
+  modelVersionId,
+  userId,
+  isModerator,
+}: {
+  modelVersionId: number;
+  userId?: number;
+  isModerator?: boolean;
+}) => {
+  const version = await dbRead.modelVersion.findFirstOrThrow({
+    where: { id: modelVersionId },
+    select: {
+      id: true,
+      modelId: true,
+      model: {
+        select: {
+          userId: true,
+        },
+      },
+    },
+  });
+
+  const donationGoals = await dbRead.donationGoal.findMany({
+    where: {
+      modelVersionId,
+      active: version.model.userId === userId || isModerator ? undefined : true,
+    },
+    select: {
+      id: true,
+      goalAmount: true,
+      title: true,
+      active: true,
+      isEarlyAccess: true,
+      userId: true,
+      createdAt: true,
+    },
+  });
+
+  const donationTotals = await dbRead.$queryRaw<{ donationGoalId: number; total: number }[]>`
+    SELECT
+      "donationGoalId",
+      SUM(amount) as total
+    FROM "Donation"
+    WHERE "donationGoalId" IN (${donationGoals.map((x) => x.id).join(',')})
+    GROUP BY "donationGoalId"
+  `;
+
+  return donationGoals.map((goal) => {
+    const total = donationTotals.find((x) => x.donationGoalId === goal.id)?.total ?? 0;
+    return { ...goal, total };
+  });
+};

@@ -111,6 +111,7 @@ import { ResourceReviewThumbActions } from '~/components/ResourceReview/Resource
 import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { ModelVersionEarlyAccessPurchase } from '~/components/Model/ModelVersions/ModelVersionEarlyAccessPurchase';
+import ModelVersionDonationGoals from '~/components/Model/ModelVersions/ModelVersionDonationGoals';
 
 const useStyles = createStyles(() => ({
   ctaContainer: {
@@ -813,14 +814,13 @@ export function ModelVersionDetails({
               community once it has been approved.
             </AlertWithIcon>
           )}
-          {!hasDownloadPermissions && (
-            <EarlyAccessAlert
-              modelId={model.id}
-              versionId={version.id}
-              modelType={model.type}
-              deadline={version.earlyAccessEndsAt ?? undefined}
-            />
-          )}
+          <ModelVersionDonationGoals modelVersionId={version.id} />
+          <EarlyAccessAlert
+            modelId={model.id}
+            versionId={version.id}
+            modelType={model.type}
+            deadline={version.earlyAccessEndsAt ?? undefined}
+          />
           <ModelFileAlert
             versionId={version.id}
             modelType={model.type}
