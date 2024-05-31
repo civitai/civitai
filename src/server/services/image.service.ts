@@ -2696,8 +2696,16 @@ export async function updateImageNsfwLevel({
     });
 
     // Track potential content leaking
-    const current = await dbWrite.image.findFirst({ where: { id }, select: { nsfwLevel: true } });
-    if (current?.nsfwLevel === NsfwLevel.PG && nsfwLevel >= NsfwLevel.R) {
+    // If the image is currently PG and the new level is R or higher, and the image isn't from the original user, increment the counter
+    const current = await dbWrite.image.findFirst({
+      where: { id },
+      select: { nsfwLevel: true, userId: true },
+    });
+    if (
+      current?.nsfwLevel === NsfwLevel.PG &&
+      nsfwLevel >= NsfwLevel.R &&
+      current?.userId !== user.id
+    ) {
       leakingContentCounter.inc();
     }
   }
