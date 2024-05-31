@@ -1,10 +1,12 @@
 import {
   addViewSchema,
   trackActionSchema,
+  trackPlaySchema,
   trackSearchSchema,
   trackShareSchema,
 } from '~/server/schema/track.schema';
 import { publicProcedure, router } from '~/server/trpc';
+import { NsfwLevelDeprecated } from '~/shared/constants/browsingLevel.constants';
 
 export const trackRouter = router({
   addView: publicProcedure.input(addViewSchema).mutation(({ input, ctx }) => ctx.track.view(input)),
@@ -17,4 +19,9 @@ export const trackRouter = router({
   trackSearch: publicProcedure
     .input(trackSearchSchema)
     .mutation(({ input, ctx }) => ctx.track.search(input)),
+  trackPlay: publicProcedure
+    .input(trackPlaySchema)
+    .mutation(({ input, ctx }) =>
+      ctx.track.image({ ...input, type: 'Play', nsfw: NsfwLevelDeprecated.None })
+    ),
 });

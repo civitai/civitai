@@ -2,7 +2,6 @@ import {
   Accordion,
   ActionIcon,
   Alert,
-  AspectRatio,
   Badge,
   Button,
   Divider,
@@ -57,7 +56,6 @@ import { AudioMetadata, ImageMetadata } from '~/server/schema/media.schema';
 import { formatBytes, formatDuration } from '~/utils/number-helpers';
 import { useDebouncer } from '~/utils/debouncer';
 import { EXTENSION_BY_MIME_TYPE } from '~/server/common/mime-types';
-import { SimpleImageUpload } from '~/libs/form/components/SimpleImageUpload';
 
 // #region [types]
 type SimpleMetaPropsKey = keyof typeof simpleMetaProps;
@@ -697,7 +695,13 @@ function PostAudio() {
             </Menu>
           </Group>
           {/* <SimpleImageUpload w="100%" h="100%" /> */}
-          <EdgeMedia src={media.url} type={media.type} duration={metadata?.duration} />
+          <EdgeMedia
+            src={media.url}
+            type="audio"
+            duration={metadata?.duration}
+            peaks={metadata?.peaks}
+            name={media.name}
+          />
         </Stack>
       </Paper>
       <Stack spacing={4}>

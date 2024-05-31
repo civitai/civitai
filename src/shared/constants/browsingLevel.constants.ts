@@ -91,6 +91,7 @@ const nsfwLevelReverseMapDeprecated = {
   [NsfwLevel.X]: NsfwLevelDeprecated.X,
   [NsfwLevel.XXX]: NsfwLevelDeprecated.X,
   [NsfwLevel.Blocked]: NsfwLevelDeprecated.Blocked,
+  [NsfwLevel.Unknown]: NsfwLevelDeprecated.X,
 };
 
 export const getNsfwLevelDeprecatedReverseMapping = (level: number) => {

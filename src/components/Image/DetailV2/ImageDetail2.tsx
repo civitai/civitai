@@ -29,6 +29,7 @@ import {
   IconLayoutSidebarRightCollapse,
   IconLayoutSidebarRightExpand,
   IconPhoto,
+  IconPlayerPlayFilled,
   IconShare3,
   TablerIconsProps,
 } from '@tabler/icons-react';
@@ -217,10 +218,21 @@ export function ImageDetail2() {
                         />
                       )}
                       <Badge {...sharedBadgeProps}>
-                        <IconEye {...sharedIconProps} />
-                        <Text color="white" size="xs" align="center" weight={500}>
-                          {abbreviateNumber(image.stats?.viewCountAllTime ?? 0)}
-                        </Text>
+                        {isAudio ? (
+                          <>
+                            <IconPlayerPlayFilled {...sharedIconProps} />
+                            <Text color="white" size="xs" align="center" weight={500}>
+                              {abbreviateNumber(image.stats?.playCountAllTime ?? 0)}
+                            </Text>
+                          </>
+                        ) : (
+                          <>
+                            <IconEye {...sharedIconProps} />
+                            <Text color="white" size="xs" align="center" weight={500}>
+                              {abbreviateNumber(image.stats?.viewCountAllTime ?? 0)}
+                            </Text>
+                          </>
+                        )}
                       </Badge>
                       <DownloadImage src={image.url} type={image.type} name={image.name}>
                         {({ onClick, isLoading, progress }) => (

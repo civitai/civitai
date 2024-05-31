@@ -502,6 +502,7 @@ type GetAllImagesRaw = {
   collectedCount: number;
   tippedAmountCount: number;
   viewCount: number;
+  playCount: number;
   cursorId?: string;
   type: MediaType;
   metadata: Prisma.JsonValue;
@@ -927,6 +928,7 @@ export const getAllImages = async ({
       im."collectedCount",
       im."tippedAmountCount",
       im."viewCount",
+      -- im."playCount",
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} "cursorId"
       ${queryFrom}
       ORDER BY ${Prisma.raw(orderBy)}
@@ -1053,6 +1055,7 @@ export const getAllImages = async ({
         collectedCount,
         tippedAmountCount,
         viewCount,
+        playCount,
         cursorId,
         unpublishedAt,
         ...i
@@ -1076,6 +1079,7 @@ export const getAllImages = async ({
           collectedCountAllTime: collectedCount,
           tippedAmountCountAllTime: tippedAmountCount,
           viewCountAllTime: viewCount,
+          playCountAllTime: playCount,
         },
         reactions:
           userReactions?.[i.id]?.map((r) => ({ userId: userId as number, reaction: r })) ?? [],
@@ -1182,6 +1186,7 @@ export const getImage = async ({
       COALESCE(im."commentCount", 0) "commentCount",
       COALESCE(im."tippedAmountCount", 0) "tippedAmountCount",
       COALESCE(im."viewCount", 0) "viewCount",
+      -- COALESCE(im."playCount", 0) "playCount",
       u.id "userId",
       u.username,
       u.image "userImage",
@@ -1232,6 +1237,7 @@ export const getImage = async ({
       commentCount,
       tippedAmountCount,
       viewCount,
+      playCount,
       ...firstRawImage
     },
   ] = rawImages;
@@ -1258,6 +1264,7 @@ export const getImage = async ({
       commentCountAllTime: commentCount,
       tippedAmountCountAllTime: tippedAmountCount,
       viewCountAllTime: viewCount,
+      playCountAllTime: playCount,
     },
     reactions: userId ? reactions?.map((r) => ({ userId, reaction: r })) ?? [] : [],
   };

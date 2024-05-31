@@ -1280,6 +1280,7 @@ model ImageMetric {
   tippedCount       Int             @default(0)
   tippedAmountCount Int             @default(0)
   viewCount         Int             @default(0)
+  playCount         Int             @default(0)
   updatedAt         DateTime        @default(now())
 
   @@id([imageId, timeframe])
@@ -3539,6 +3540,11 @@ model ImageStat {
   viewCountMonth           Int   @default(0)
   viewCountYear            Int   @default(0)
   viewCountAllTime         Int   @default(0)
+  playCountDay             Int   @default(0)
+  playCountWeek            Int   @default(0)
+  playCountMonth           Int   @default(0)
+  playCountYear            Int   @default(0)
+  playCountAllTime         Int   @default(0)
 }
 
 /// @view

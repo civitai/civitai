@@ -104,10 +104,19 @@ declare global {
     [key: `data-${string}`]: string;
   };
 
+  type Track = {
+    media: HTMLMediaElement;
+    duration: number;
+    name?: string | null;
+    src?: string;
+    peaks: number[][];
+  };
+
   interface Window {
     logSignal: (target: string, selector?: (args: unknown) => unknown) => void;
     Twitch: any;
     isAuthed?: boolean;
     authChecked?: boolean;
+    webkitAudioContext: typeof AudioContext;
   }
 }

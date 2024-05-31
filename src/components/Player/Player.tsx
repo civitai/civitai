@@ -45,13 +45,6 @@ const useStyles = createStyles(() => ({
   },
 }));
 
-type Track = {
-  media: HTMLMediaElement;
-  peaks: number[][];
-  duration: number;
-  name?: string | null;
-};
-
 type UniversalPlayerState = {
   currentTrack: Track | null;
   setCurrentTrack: React.Dispatch<React.SetStateAction<Track | null>>;
@@ -113,8 +106,8 @@ export function UniversalPlayerProvider({ children }: { children: React.ReactNod
                     <EdgeAudio
                       {...currentTrack}
                       wrapperProps={{ sx: { flexDirection: 'row-reverse' } }}
+                      dragToSeek={{ debounceTime: 500 }}
                       interact
-                      dragToSeek
                     />
                   </Stack>
                   <CloseButton size="sm" onClick={handleClose} aria-label="close player" />

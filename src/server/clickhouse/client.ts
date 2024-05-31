@@ -162,7 +162,8 @@ export type ImageActivityType =
   | 'DeleteTOS'
   | 'Tags'
   | 'Resources'
-  | 'Restore';
+  | 'Restore'
+  | 'Play';
 export type QuestionType = 'Create' | 'Delete';
 export type AnswerType = 'Create' | 'Delete';
 export type PartnerActivity = 'Run' | 'Update';

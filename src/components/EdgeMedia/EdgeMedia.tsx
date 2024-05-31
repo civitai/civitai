@@ -1,7 +1,7 @@
 import { createStyles, Text } from '@mantine/core';
 import React, { useEffect, useRef } from 'react';
 import { EdgeUrlProps, useEdgeUrl } from '~/client-utils/cf-images-utils';
-import { EdgeAudio } from '~/components/EdgeMedia/EdgeAudio';
+import { EdgeAudio, EdgeAudioProps } from '~/components/EdgeMedia/EdgeAudio';
 import { EdgeVideo } from '~/components/EdgeMedia/EdgeVideo';
 import { useUniversalPlayerContext } from '~/components/Player/Player';
 
@@ -12,8 +12,7 @@ export type EdgeMediaProps = EdgeUrlProps &
     contain?: boolean;
     fadeIn?: boolean;
     mediaRef?: [HTMLImageElement | null, (ref: HTMLImageElement | null) => void];
-    duration?: number;
-  };
+  } & Pick<EdgeAudioProps, 'media' | 'peaks' | 'duration' | 'onReady' | 'onAudioprocess'>;
 
 export function EdgeMedia({
   src,
@@ -36,12 +35,16 @@ export function EdgeMedia({
   mediaRef,
   transcode,
   original,
+  media,
+  peaks,
   duration,
+  onReady,
+  onAudioprocess,
   ...imgProps
 }: EdgeMediaProps) {
   const { classes, cx } = useStyles({ maxWidth: width ?? undefined });
   // const currentUser = useCurrentUser();
-  const { setCurrentTrack } = useUniversalPlayerContext();
+  const { currentTrack, setCurrentTrack } = useUniversalPlayerContext();
 
   const imgRef = useRef<HTMLImageElement>(null);
   if (fadeIn && imgRef.current?.complete) imgRef?.current?.style?.setProperty('opacity', '1');
@@ -93,11 +96,16 @@ export function EdgeMedia({
     case 'audio':
       return (
         <EdgeAudio
+          // {...(currentTrack?.src === url ? currentTrack : {})}
           src={url}
           duration={duration}
+          // media={media}
+          peaks={peaks}
           name={name}
           wrapperProps={wrapperProps}
           onPlay={setCurrentTrack}
+          onReady={onReady}
+          onAudioprocess={onAudioprocess}
         />
       );
     default:

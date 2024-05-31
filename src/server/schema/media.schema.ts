@@ -22,6 +22,7 @@ export const videoMetadataSchema = z.object({
 export type AudioMetadata = z.infer<typeof audioMetadataSchema>;
 export const audioMetadataSchema = z.object({
   duration: z.number(),
-  size: z.number().optional(),
-  format: z.string().optional(),
+  size: z.number(),
+  format: z.string(),
+  peaks: z.array(z.number().array()).optional(),
 });

@@ -8,6 +8,8 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProvider';
 import { ConnectProps, ImageGuardContent } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { useUniversalPlayerContext } from '~/components/Player/Player';
+import { useTrackEvent } from '~/components/TrackView/track.utils';
 import { useAspectRatioFit } from '~/hooks/useAspectRatioFit';
 import { useResizeObserver } from '~/hooks/useResizeObserver';
 import { constants } from '~/server/common/constants';
@@ -97,6 +99,9 @@ function ImageContent({ image }: { image: ImagesInfiniteModel } & ConnectProps) 
     width: image?.width ?? 1200,
   });
 
+  const { trackPlay } = useTrackEvent();
+  const { currentTrack } = useUniversalPlayerContext();
+
   const isAudio = image.type === 'audio';
 
   return (
@@ -139,10 +144,17 @@ function ImageContent({ image }: { image: ImagesInfiniteModel } & ConnectProps) 
                   },
                 }}
                 width={image.width}
-                anim
-                controls
                 quality={90}
                 original={image.type === 'video' ? true : undefined}
+                onAudioprocess={() =>
+                  trackPlay({
+                    imageId: image.id,
+                    ownerId: image.user.id,
+                    tags: image.tags?.map((t) => t.name) ?? [],
+                  })
+                }
+                anim
+                controls
                 // fadeIn
               />
             </Stack>

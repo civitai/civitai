@@ -2,12 +2,21 @@ import { ActionIcon, Group, GroupProps, useMantineTheme } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { IconPlayerPauseFilled, IconPlayerPlayFilled } from '@tabler/icons-react';
 import { useWavesurfer, WavesurferProps } from '@wavesurfer/react';
+import { debounce } from 'lodash-es';
 import { useEffect, useRef, useState } from 'react';
-import { Track } from '~/store/player.store';
 
-export function EdgeAudio({ src, wrapperProps, name, onPlay, onReady, ...props }: Props) {
+export function EdgeAudio({
+  src,
+  wrapperProps,
+  name,
+  onPlay,
+  onReady,
+  onAudioprocess,
+  ...props
+}: EdgeAudioProps) {
   const theme = useMantineTheme();
   const containerRef = useRef<HTMLDivElement>(null);
+  const alreadyPlayed = useRef(false);
 
   const [volume] = useLocalStorage({ key: 'player-volume', defaultValue: 1 });
 
@@ -27,6 +36,7 @@ export function EdgeAudio({ src, wrapperProps, name, onPlay, onReady, ...props }
     hideScrollbar: true,
     ...props,
   });
+  const debouncedOnAudioProcess = onAudioprocess ? debounce(onAudioprocess, 1000) : undefined;
 
   const [playing, setPlaying] = useState(false);
 
@@ -48,6 +58,7 @@ export function EdgeAudio({ src, wrapperProps, name, onPlay, onReady, ...props }
       peaks: wavesurfer.exportPeaks(),
       duration: wavesurfer.getDuration(),
       name,
+      src,
     });
 
     const subscriptions = [
@@ -75,13 +86,24 @@ export function EdgeAudio({ src, wrapperProps, name, onPlay, onReady, ...props }
         setPlaying(true);
       }),
       wavesurfer.on('pause', () => setPlaying(false)),
+      wavesurfer.on('audioprocess', () => {
+        const currentTime = wavesurfer.getCurrentTime();
+        if (
+          wavesurfer.isPlaying() &&
+          currentTime > 5 &&
+          !alreadyPlayed.current &&
+          debouncedOnAudioProcess
+        ) {
+          debouncedOnAudioProcess();
+          alreadyPlayed.current = true;
+        }
+      }),
     ];
 
     return () => {
       subscriptions.forEach((unsub) => unsub());
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wavesurfer]);
+  }, [wavesurfer, alreadyPlayed, onPlay, onReady, debouncedOnAudioProcess, src, name, volume]);
 
   return (
     <Group spacing="sm" w="100%" pos="relative" noWrap {...wrapperProps}>
@@ -93,10 +115,11 @@ export function EdgeAudio({ src, wrapperProps, name, onPlay, onReady, ...props }
   );
 }
 
-type Props = Omit<WavesurferProps, 'onPlay' | 'onReady'> & {
+export type EdgeAudioProps = Omit<WavesurferProps, 'onPlay' | 'onReady' | 'onAudioprocess'> & {
   src?: string;
   wrapperProps?: GroupProps;
   onReady?: (params: Track) => void;
   onPlay?: (callback: (prev: Track | null) => Track | null) => void;
+  onAudioprocess?: () => void;
   name?: string | null;
 };

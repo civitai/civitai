@@ -159,6 +159,8 @@ export const getBuzzWithdrawalDetails = (buzzAmount: number, platformFeeRate?: n
 const ONE_MINUTE = 60;
 const ONE_HOUR = 60 * ONE_MINUTE;
 export const formatDuration = (seconds: number) => {
+  if (seconds === 0) return '0:00';
+
   const hours = Math.floor(seconds / ONE_HOUR);
   const minutes = Math.floor((seconds % ONE_HOUR) / ONE_MINUTE);
   const remainingSeconds = Math.round(seconds % ONE_MINUTE);

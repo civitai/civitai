@@ -19,6 +19,7 @@ import { truncate } from 'lodash-es';
 import { constants } from '~/server/common/constants';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
+import { useTrackEvent } from '~/components/TrackView/track.utils';
 
 const maxWidth = 700;
 const maxInitialImages = 20;
@@ -33,6 +34,8 @@ export function PostImages({
 }) {
   const { classes, cx } = useStyles();
   const [showMore, setShowMore] = useState(false);
+
+  const { trackPlay } = useTrackEvent();
 
   if (isLoading)
     return (
@@ -104,6 +107,13 @@ export function PostImages({
                           type={image.type}
                           width={width < maxWidth ? width : maxWidth}
                           anim={safe}
+                          onAudioprocess={() =>
+                            trackPlay({
+                              imageId: image.id,
+                              ownerId: image.user.id,
+                              tags: image.tags?.map((t) => t.name) ?? [],
+                            })
+                          }
                         />
                       </Stack>
                     )}

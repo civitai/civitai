@@ -20,6 +20,7 @@ export const imageMetrics = createMetricProcessor({
       getCollectionTasks(ctx),
       getBuzzTasks(ctx),
       getViewTasks(ctx),
+      getPlayTasks(ctx),
     ]);
     log('imageMetrics update', taskBatches.flat().length, 'tasks');
     for (const tasks of taskBatches) await limitConcurrency(tasks, 5);
@@ -266,6 +267,77 @@ async function getViewTasks(ctx: MetricProcessorRunContext) {
         AND im."imageId" IN (SELECT id FROM "Image")
         ON CONFLICT ("imageId", timeframe) DO UPDATE
           SET "viewCount" = EXCLUDED."viewCount",
+              "updatedAt" = NOW();
+      `;
+    } catch (err) {
+      throw err;
+    }
+    log('getViewTasks', i + 1, 'of', tasks.length, 'done');
+  });
+
+  return tasks;
+}
+
+// TODO.justin: check this
+async function getPlayTasks(ctx: MetricProcessorRunContext) {
+  const clickhouseSince = dayjs(ctx.lastUpdate).toISOString();
+  const viewed = await ctx.ch.$query<ImageMetricView>`
+    WITH targets AS (
+      SELECT
+        imageId
+      FROM images
+      WHERE type = 'Play'
+      AND time >= parseDateTimeBestEffortOrNull('${clickhouseSince}')
+    )
+    SELECT
+      entityId AS imageId,
+      sumIf(plays, createdDate = current_date()) day,
+      sumIf(plays, createdDate >= subtractDays(current_date(), 7)) week,
+      sumIf(plays, createdDate >= subtractDays(current_date(), 30)) month,
+      sumIf(plays, createdDate >= subtractYears(current_date(), 1)) year,
+      sum(plays) all_time
+    FROM daily_plays
+    WHERE entityId IN (select imageId FROM targets)
+      AND type = 'Play'
+    GROUP BY imageId;
+  `;
+  ctx.addAffected(viewed.map((x) => x.imageId));
+
+  const tasks = chunk(viewed, 1000).map((batch, i) => async () => {
+    ctx.jobContext.checkIfCanceled();
+    log('getPlayTasks', i + 1, 'of', tasks.length);
+    try {
+      const batchJson = JSON.stringify(batch);
+      await executeRefresh(ctx)`
+        -- update image view metrics
+        INSERT INTO "ImageMetric" ("imageId", timeframe, "playCount")
+        SELECT
+          "imageId",
+          timeframe,
+          plays
+        FROM (
+            SELECT
+                CAST(mvs::json->>'imageId' AS INT) AS "imageId",
+                tf.timeframe,
+                CAST(
+                  CASE
+                    WHEN tf.timeframe = 'Day' THEN mvs::json->>'day'
+                    WHEN tf.timeframe = 'Week' THEN mvs::json->>'week'
+                    WHEN tf.timeframe = 'Month' THEN mvs::json->>'month'
+                    WHEN tf.timeframe = 'Year' THEN mvs::json->>'year'
+                    WHEN tf.timeframe = 'AllTime' THEN mvs::json->>'all_time'
+                  END
+                AS int) as plays
+            FROM json_array_elements('${batchJson}'::json) mvs
+            CROSS JOIN (
+                SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
+            ) tf
+        ) im
+        JOIN "Image" i ON i.id = im."imageId" -- ensure the image exists
+        WHERE im.plays IS NOT NULL
+        AND im."imageId" IN (SELECT id FROM "Image")
+        ON CONFLICT ("imageId", timeframe) DO UPDATE
+          SET "playCount" = EXCLUDED."playCount",
               "updatedAt" = NOW();
       `;
     } catch (err) {

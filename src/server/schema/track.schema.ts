@@ -45,6 +45,13 @@ export const trackSearchSchema = z.object({
   filters: z.object({}).passthrough().optional(),
 });
 
+export type TrackPlayInput = z.infer<typeof trackPlaySchema>;
+export const trackPlaySchema = z.object({
+  imageId: z.number(),
+  ownerId: z.number(),
+  tags: z.array(z.string()).optional().default([]),
+});
+
 // action tracking schemas
 
 const tipClickSchema = z.object({

@@ -153,6 +153,8 @@ type ImageForSearchIndex = {
     commentCountAllTime: number;
     collectedCountAllTime: number;
     tippedAmountCountAllTime: number;
+    viewCountAllTime: number;
+    playCountAllTime: number;
   } | null;
 };
 
@@ -348,7 +350,9 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
               'cryCountAllTime', SUM("cryCount"),
               'reactionCountAllTime', SUM("reactionCount"),
               'collectedCountAllTime', SUM("collectedCount"),
-              'tippedAmountCountAllTime', SUM("tippedAmountCount")
+              'tippedAmountCountAllTime', SUM("tippedAmountCount"),
+              'viewCountAllTime', SUM("viewCount"),
+              'playCountAllTime', SUM("playCount")
             ) stats
           FROM "ImageMetric" im
           WHERE im."imageId" IN (SELECT id FROM target)

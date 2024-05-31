@@ -8,23 +8,40 @@ import { useImagesContext } from '~/components/Image/Providers/ImagesProvider';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
 import { Reactions } from '~/components/Reaction/Reactions';
+import { useTrackEvent } from '~/components/TrackView/track.utils';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { AudioMetadata } from '~/server/schema/media.schema';
 import { ImagesInfiniteModel } from '~/server/services/image.service';
 import { formatDuration } from '~/utils/number-helpers';
+import { audioMetadataSchema } from '~/server/schema/media.schema';
 
 export function AudioCard({ data }: Props) {
   const context = useImagesContext();
   const router = useRouter();
 
-  const metadata = data.metadata as AudioMetadata;
+  const { trackPlay } = useTrackEvent();
+
+  const parsedMetadata = audioMetadataSchema.safeParse(data.metadata);
+  const metadata = parsedMetadata.success ? parsedMetadata.data : undefined;
 
   return (
     <RoutedDialogLink name="mediaDetail" state={{ imageId: data.id, ...context }}>
       <MasonryCard shadow="sm" bg="dark.6" style={{ borderRadius: 12 }} withBorder>
         <Stack spacing="lg" p="md">
           <Group spacing="sm" mr="-sm" noWrap>
-            <EdgeMedia type="audio" src={data.url} name={data.name} duration={metadata.duration} />
+            <EdgeMedia
+              type="audio"
+              src={data.url}
+              name={data.name}
+              duration={metadata?.duration}
+              peaks={metadata?.peaks}
+              onAudioprocess={() =>
+                trackPlay({
+                  imageId: data.id,
+                  ownerId: data.user.id,
+                  tags: data.tags?.map((t) => t.name) ?? [],
+                })
+              }
+            />
             <Group spacing={4} noWrap>
               <Badge
                 size="md"
@@ -36,7 +53,7 @@ export function AudioCard({ data }: Props) {
                 style={{ flexShrink: 0, boxShadow: '1px 2px 3px -1px #25262B33' }}
               >
                 <Text weight="bold" color="white" inherit>
-                  {formatDuration(metadata.duration)}
+                  {formatDuration(metadata?.duration ?? 0)}
                 </Text>
               </Badge>
               <ImageContextMenu image={data} iconSize={20} context="audio" />
