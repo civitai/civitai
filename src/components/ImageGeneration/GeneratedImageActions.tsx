@@ -1,13 +1,18 @@
 import { ActionIcon, Text, Tooltip, MantineNumberSize, Button } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
-import { IconInfoCircle, IconQuestionMark, IconSquareOff, IconTrash } from '@tabler/icons-react';
+import { IconInfoCircle, IconSquareOff, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { generationImageSelect } from '~/components/ImageGeneration/utils/generationImage.select';
-import { useGetTextToImageRequestsImages } from '~/components/ImageGeneration/utils/generationRequestHooks';
+import {
+  useGetTextToImageRequestsImages,
+  useUpdateTextToImageWorkflows,
+} from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { generationPanel } from '~/store/generation.store';
 import { orchestratorMediaTransmitter } from '~/store/post-image-transmitter.store';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';
+import { isDefined } from '~/utils/type-guards';
+import { constants } from '~/server/common/constants';
 
 export function GeneratedImageActions({
   actionIconSize = 'lg',
@@ -92,29 +97,28 @@ export const useGeneratedImageActions = () => {
   const deselect = () => generationImageSelect.setSelected([]);
 
   const createPostMutation = trpc.post.create.useMutation();
-  // const bulkDeleteImagesMutation = useDeleteGenerationRequestImages({
-  //   onSuccess: () => deselect(),
-  // });
+  const updateWorkflows = useUpdateTextToImageWorkflows({ onSuccess: () => deselect() });
 
   const deleteSelectedImages = () => {
-    // TODO
-    // openConfirmModal({
-    //   title: 'Delete images',
-    //   children:
-    //     'Are you sure that you want to delete the selected images? This is a destructive action and cannot be undone.',
-    //   labels: { cancel: 'Cancel', confirm: 'Yes, delete them' },
-    //   confirmProps: { color: 'red' },
-    //   onConfirm: () => bulkDeleteImagesMutation.mutate({ ids: selected }),
-    //   zIndex: constants.imageGeneration.drawerZIndex + 2,
-    //   centered: true,
-    // });
+    openConfirmModal({
+      title: 'Delete images',
+      children: 'Are you sure that you want to delete the selected images?',
+      labels: { cancel: 'Cancel', confirm: 'Yes, delete them' },
+      confirmProps: { color: 'red' },
+      onConfirm: () => updateWorkflows.hideImages(selected),
+      zIndex: constants.imageGeneration.drawerZIndex + 2,
+      centered: true,
+    });
   };
 
-  const isMutating = createPostMutation.isLoading; // TODO - check commented out code below
-  // const isMutating = bulkDeleteImagesMutation.isLoading || createPostMutation.isLoading;
+  const isMutating = updateWorkflows.isLoading || createPostMutation.isLoading;
 
   const postSelectedImages = async () => {
-    const urls = images.filter((x) => selected.includes(x.id)).map((x) => x.url);
+    const imageIds = selected.flatMap((x) => x.imageIds);
+    const urls = images
+      .filter((x) => imageIds.includes(x.id))
+      .map((x) => x.url)
+      .filter(isDefined);
     try {
       const key = 'generator';
       orchestratorMediaTransmitter.setUrls(key, urls);

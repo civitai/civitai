@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { baseModelSetTypes, generation } from '~/server/common/constants';
+import { workflowUpdateSchema } from '~/server/schema/orchestrator/workflows.schema';
 import { stripChecksAndEffects } from '~/utils/zod-helpers';
 
 export type TextToImageParams = z.infer<typeof textToImageParamsSchema>;
@@ -37,4 +38,24 @@ export const textToImageWhatIfSchema = stripChecksAndEffects(textToImageParamsSc
 export const textToImageSchema = z.object({
   params: textToImageParamsSchema,
   resources: textToImageResourceSchema.array().min(1, 'You must select at least one resource'),
+});
+
+export type TextToImageWorkflowImageMetadataSchema = z.infer<
+  typeof textToImageWorkflowImageMetadataSchema
+>;
+export const textToImageWorkflowImageMetadataSchema = z.object({
+  hidden: z.boolean().optional(),
+  feedback: z.enum(['liked', 'disliked']).optional(),
+  comments: z.string().optional(),
+});
+
+export type TextToImageWorkflowMetadata = z.infer<typeof textToImageWorkflowMetadataSchema>;
+export const textToImageWorkflowMetadataSchema = z.object({
+  images: z.record(z.string(), textToImageWorkflowImageMetadataSchema).optional(),
+});
+
+export type TextToImageWorkflowUpdateSchema = z.infer<typeof textToImageWorkflowUpdateSchema>;
+export const textToImageWorkflowUpdateSchema = workflowUpdateSchema.extend({
+  imageCount: z.number().default(0),
+  metadata: textToImageWorkflowMetadataSchema,
 });

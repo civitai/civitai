@@ -17,7 +17,6 @@ import {
   GenerateFormModel,
   GenerationRequestTestRunSchema,
   generationStatusSchema,
-  SendFeedbackInput,
 } from '~/server/schema/generation.schema';
 import React, { useMemo, useCallback } from 'react';
 import { trpc } from '~/utils/trpc';
@@ -479,25 +478,25 @@ export function keyupEditAttention(event: React.KeyboardEvent<HTMLTextAreaElemen
   target.selectionEnd = selectionEnd;
 }
 
-export const useGenerationQualityFeedback = () => {
-  const sendFeedbackMutation = trpc.generation.sendFeedback.useMutation({
-    onError(error) {
-      showErrorNotification({
-        title: 'Unable to send feedback',
-        error: new Error(error.message),
-      });
-    },
-  });
+// export const useGenerationQualityFeedback = () => {
+//   const sendFeedbackMutation = trpc.generation.sendFeedback.useMutation({
+//     onError(error) {
+//       showErrorNotification({
+//         title: 'Unable to send feedback',
+//         error: new Error(error.message),
+//       });
+//     },
+//   });
 
-  const handleSendFeedback = useCallback(
-    (payload: SendFeedbackInput) => {
-      return sendFeedbackMutation.mutateAsync(payload);
-    },
-    [sendFeedbackMutation]
-  );
+//   const handleSendFeedback = useCallback(
+//     (payload: SendFeedbackInput) => {
+//       return sendFeedbackMutation.mutateAsync(payload);
+//     },
+//     [sendFeedbackMutation]
+//   );
 
-  return {
-    sendFeedback: handleSendFeedback,
-    sending: sendFeedbackMutation.isLoading,
-  };
-};
+//   return {
+//     sendFeedback: handleSendFeedback,
+//     sending: sendFeedbackMutation.isLoading,
+//   };
+// };

@@ -11,6 +11,7 @@ import {
 } from '@tabler/icons-react';
 import { GeneratedImage } from '~/components/ImageGeneration/GeneratedImage';
 import { generationImageSelect } from '~/components/ImageGeneration/utils/generationImage.select';
+import { useUpdateTextToImageWorkflows } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { constants } from '~/server/common/constants';
 import {
@@ -39,8 +40,13 @@ export function FeedItem({
   // onCheckboxClick: (data: { image: Generation.Image; checked: boolean }) => void;
   onCreateVariantClick?: (image: NormalizedTextToImageImage) => void;
 }) {
-  const selected = generationImageSelect.useIsSelected(image.id);
-  const toggleSelect = (checked?: boolean) => generationImageSelect.toggle(image.id, checked);
+  const selected = generationImageSelect.useIsSelected({
+    workflowId: request.id,
+    imageId: image.id,
+  });
+  const toggleSelect = (checked?: boolean) =>
+    generationImageSelect.toggle({ workflowId: request.id, imageId: image.id }, checked);
+
   const [showActions, setShowActions] = useSessionStorage<boolean>({
     key: 'showAllActions',
     defaultValue: false,
@@ -48,7 +54,7 @@ export function FeedItem({
   });
 
   const toggle = () => setShowActions((prev) => !prev);
-  // const bulkDeleteImagesMutation = useDeleteGenerationRequestImages();
+  const { hideImages, isLoading } = useUpdateTextToImageWorkflows();
 
   const handleGenerate = () => {
     generationStore.setData({
@@ -57,18 +63,17 @@ export function FeedItem({
     });
   };
 
-  // TODO
   const handleDeleteImage = () => {
-    // openConfirmModal({
-    //   title: 'Delete image',
-    //   children:
-    //     'Are you sure that you want to delete this image? This is a destructive action and cannot be undone.',
-    //   labels: { cancel: 'Cancel', confirm: 'Yes, delete it' },
-    //   confirmProps: { color: 'red' },
-    //   onConfirm: () => bulkDeleteImagesMutation.mutate({ ids: [image.id] }),
-    //   zIndex: constants.imageGeneration.drawerZIndex + 2,
-    //   centered: true,
-    // });
+    openConfirmModal({
+      title: 'Delete image',
+      children:
+        'Are you sure that you want to delete this image? This is a destructive action and cannot be undone.',
+      labels: { cancel: 'Cancel', confirm: 'Yes, delete it' },
+      confirmProps: { color: 'red' },
+      onConfirm: () => hideImages([{ workflowId: request.id, imageIds: [image.id] }]),
+      zIndex: constants.imageGeneration.drawerZIndex + 2,
+      centered: true,
+    });
   };
 
   return (
@@ -149,7 +154,7 @@ export function FeedItem({
                     color="red"
                     radius={0}
                     onClick={handleDeleteImage}
-                    // loading={bulkDeleteImagesMutation.isLoading} // TODO
+                    loading={isLoading}
                   >
                     <IconTrash />
                   </ActionIcon>

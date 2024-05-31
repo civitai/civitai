@@ -28,8 +28,15 @@ import {
 } from '~/shared/constants/generation.constants';
 import { TextToImageResponse } from '~/server/services/orchestrator/types';
 import { SignalMessages } from '~/server/common/enums';
-import { queryWorkflows, submitWorkflow } from '~/server/services/orchestrator/workflows';
 import {
+  deleteManyWorkflows,
+  queryWorkflows,
+  submitWorkflow,
+  updateManyWorkflows,
+} from '~/server/services/orchestrator/workflows';
+import {
+  TextToImageWorkflowMetadata,
+  TextToImageWorkflowUpdateSchema,
   textToImageSchema,
   textToImageWhatIfSchema,
 } from '~/server/schema/orchestrator/textToImage.schema';
@@ -309,6 +316,29 @@ export async function getTextToImageRequests(
   };
 }
 
+export async function updateTextToImageWorkflow({
+  workflows,
+  user,
+}: {
+  workflows: TextToImageWorkflowUpdateSchema[];
+  user: SessionUser;
+}) {
+  const { toDelete, toUpdate } = workflows.reduce<{
+    toDelete: string[];
+    toUpdate: Omit<TextToImageWorkflowUpdateSchema, 'imageCount'>[];
+  }>(
+    (acc, { workflowId, metadata, imageCount }) => {
+      if (Object.values(metadata.images ?? {}).filter((x) => x.hidden).length === imageCount)
+        acc.toDelete.push(workflowId);
+      else acc.toUpdate.push({ workflowId, metadata });
+      return acc;
+    },
+    { toDelete: [], toUpdate: [] }
+  );
+  if (toDelete.length) await deleteManyWorkflows({ workflowIds: toDelete, user });
+  if (toUpdate.length) await updateManyWorkflows({ workflows: toUpdate, user });
+}
+
 // #region [helper methods]
 export async function formatTextToImageResponses(
   workflows: TextToImageResponse[],
@@ -343,7 +373,7 @@ export async function formatTextToImageResponses(
               const job = jobs?.find((x) => x.id === image.jobId);
               if (!job) return null;
               return {
-                // requestId: workflow.id,
+                workflowId: workflow.id,
                 jobId: job.id,
                 id: image.id,
                 status: job.status ?? ('unassignend' as WorkflowStatus),
@@ -390,7 +420,12 @@ export async function formatTextToImageResponses(
           },
           resources,
           images,
-          cost: workflow.transactions?.reduce((acc, value) => acc + (value.amount ?? 0), 0),
+          cost: Math.ceil(
+            workflow.steps
+              ?.flatMap((x) => x.jobs ?? [])
+              ?.reduce((acc, job) => acc + (job.cost ?? 0), 0)
+          ),
+          metadata: workflow.metadata as TextToImageWorkflowMetadata | undefined,
         });
       });
     })

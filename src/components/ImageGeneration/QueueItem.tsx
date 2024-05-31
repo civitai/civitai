@@ -66,7 +66,7 @@ export function QueueItem({ request }: Props) {
 
   const [showDelayedMessage, setShowDelayedMessage] = useState(false);
   const { status, params } = request;
-  const { isDraft } = params;
+  // const { isDraft } = params;
   // const status = request.status ?? GenerationRequestStatus.Pending;
   // const isDraft = request.sequential ?? false;
   // const pendingProcessing =
@@ -76,12 +76,11 @@ export function QueueItem({ request }: Props) {
   //     : request.images?.some((x) => !x.status || x.status === 'Started'));
   const pendingProcessing = status && PENDING_PROCESSING_STATUSES.includes(status);
   const processing = status === 'processing';
-  const failed = status && FAILED_STATUSES.includes(status);
+  // const failed = status && FAILED_STATUSES.includes(status);
 
-  // const deleteImageMutation = useDeleteGenerationRequestImages(); // TODO - swap out
-  // const deleteMutation = useDeleteTextToImageRequest();
+  const deleteMutation = useDeleteTextToImageRequest();
   const cancelMutation = useCancelTextToImageRequest();
-  // const cancellingDeleting = deleteImageMutation.isLoading || deleteMutation.isLoading;
+  const cancellingDeleting = deleteMutation.isLoading || cancelMutation.isLoading;
 
   useEffect(() => {
     if (!pendingProcessing) return;
@@ -101,7 +100,7 @@ export function QueueItem({ request }: Props) {
   const refundTime = dayjs(request.createdAt).add(EXPIRY_TIME, 'minute').toDate();
 
   const handleDeleteQueueItem = () => {
-    // deleteMutation.mutate({ workflowId: request.id });
+    deleteMutation.mutate({ workflowId: request.id });
   };
 
   const handleCancel = () => cancelMutation.mutate({ workflowId: request.id });
@@ -186,11 +185,7 @@ export function QueueItem({ request }: Props) {
                 {...tooltipProps}
                 label={pendingProcessing ? 'Cancel job' : 'Delete job'}
               >
-                <ActionIcon
-                  size="md"
-                  // disabled={cancellingDeleting}  // TODO
-                  color="red"
-                >
+                <ActionIcon size="md" disabled={cancellingDeleting} color="red">
                   {pendingProcessing ? <IconBan size={20} /> : <IconTrash size={20} />}
                 </ActionIcon>
               </ButtonTooltip>

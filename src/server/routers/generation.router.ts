@@ -7,7 +7,7 @@ import {
   getGenerationDataSchema,
   getGenerationRequestsSchema,
   getGenerationResourcesSchema,
-  sendFeedbackSchema,
+  // sendFeedbackSchema,
 } from '~/server/schema/generation.schema';
 import {
   checkResourcesCoverage,
@@ -17,7 +17,6 @@ import {
   getResourceGenerationData,
   getUnavailableResources,
   getUnstableResources,
-  sendGenerationFeedback,
   // textToImage,
   textToImageTestRun,
   toggleUnavailableResource,
@@ -101,11 +100,11 @@ export const generationRouter = router({
     .mutation(({ input, ctx }) =>
       toggleUnavailableResource({ ...input, isModerator: ctx.user.isModerator })
     ),
-  sendFeedback: protectedProcedure
-    .input(sendFeedbackSchema)
-    .mutation(({ input, ctx }) =>
-      sendGenerationFeedback({ ...input, userId: ctx.user.id, ip: ctx.ip })
-    ),
+  // sendFeedback: protectedProcedure
+  //   .input(sendFeedbackSchema)
+  //   .mutation(({ input, ctx }) =>
+  //     sendGenerationFeedback({ ...input, userId: ctx.user.id, ip: ctx.ip })
+  //   ),
   // textToImage: protectedProcedure
   //   .input(createGenerationRequestSchema)
   //   .mutation(({ input, ctx }) => {

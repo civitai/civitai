@@ -59,13 +59,15 @@ export function GeneratedImageLightbox({
               justifyContent: 'center',
             }}
           >
-            <EdgeMedia
-              src={item.url}
-              type="image"
-              alt={truncate(request.params.prompt, { length: constants.altTruncateLength })}
-              width={request.params.width}
-              className="max-h-full w-auto max-w-full"
-            />
+            {item.url && (
+              <EdgeMedia
+                src={item.url}
+                type="image"
+                alt={truncate(request.params.prompt, { length: constants.altTruncateLength })}
+                width={request.params.width}
+                className="max-h-full w-auto max-w-full"
+              />
+            )}
           </Carousel.Slide>
         ))}
       </Carousel>

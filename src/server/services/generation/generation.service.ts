@@ -10,7 +10,6 @@ import {
   GetGenerationRequestsOutput,
   GetGenerationResourcesInput,
   PrepareModelInput,
-  SendFeedbackInput,
 } from '~/server/schema/generation.schema';
 import { SessionUser } from 'next-auth';
 import { dbRead } from '~/server/db/client';
@@ -844,34 +843,33 @@ export async function toggleUnavailableResource({
   return unavailableResources;
 }
 
-// TODO.orchestrator - double check if there is a v2 api for this
-export const sendGenerationFeedback = async ({
-  jobId,
-  reason,
-  message,
-  userId,
-  ip,
-}: SendFeedbackInput & { userId: number; ip: string }) => {
-  const response = await orchestratorCaller.taintJobById({
-    id: jobId,
-    payload: { reason, context: { imageHash: jobId, message } },
-  });
+// export const sendGenerationFeedback = async ({
+//   jobId,
+//   reason,
+//   message,
+//   userId,
+//   ip,
+// }: SendFeedbackInput & { userId: number; ip: string }) => {
+//   const response = await orchestratorCaller.taintJobById({
+//     id: jobId,
+//     payload: { reason, context: { imageHash: jobId, message } },
+//   });
 
-  if (response.status === 404) throw throwNotFoundError();
-  if (!response.ok) throw new Error('An unknown error occurred. Please try again later');
+//   if (response.status === 404) throw throwNotFoundError();
+//   if (!response.ok) throw new Error('An unknown error occurred. Please try again later');
 
-  await generatorFeedbackReward
-    .apply(
-      {
-        jobId,
-        userId,
-      },
-      ip
-    )
-    .catch(handleLogError);
+//   await generatorFeedbackReward
+//     .apply(
+//       {
+//         jobId,
+//         userId,
+//       },
+//       ip
+//     )
+//     .catch(handleLogError);
 
-  return response;
-};
+//   return response;
+// };
 
 export const textToImageTestRun = async ({
   baseModel,

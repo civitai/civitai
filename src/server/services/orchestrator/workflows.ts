@@ -5,6 +5,7 @@ import { isDev } from '~/env/other';
 import {
   workflowQuerySchema,
   workflowIdSchema,
+  workflowUpdateSchema,
 } from '~/server/schema/orchestrator/workflows.schema';
 import {
   throwAuthorizationError,
@@ -47,6 +48,8 @@ export async function submitWorkflow({
     auth: 'ff2ddeabd724b029112668447a9388f7', // TODO - use user api token
   });
 
+  // console.dir(params, { depth: null });
+
   return await client.workflows.submitWorkflow(params).catch((error) => {
     if (error instanceof ApiError) {
       console.log('-------ERROR-------');
@@ -74,7 +77,7 @@ export async function cancelWorkflow({
     auth: 'ff2ddeabd724b029112668447a9388f7', // TODO - use user api token
   });
 
-  return await client.workflows.updateWorkflow({ workflowId, requestBody: { status: 'canceled' } });
+  await client.workflows.updateWorkflow({ workflowId, requestBody: { status: 'canceled' } });
 }
 
 export async function deleteWorkflow({
@@ -86,5 +89,54 @@ export async function deleteWorkflow({
     auth: 'ff2ddeabd724b029112668447a9388f7', // TODO - use user api token
   });
 
-  return await client.workflows.deleteWorkflow({ workflowId });
+  await client.workflows.deleteWorkflow({ workflowId });
+}
+
+export async function deleteManyWorkflows({
+  workflowIds,
+  user,
+}: {
+  workflowIds: string[];
+  user: SessionUser;
+}) {
+  const client = new CivitaiClient({
+    env: isDev ? 'dev' : 'prod',
+    auth: 'ff2ddeabd724b029112668447a9388f7', // TODO - use user api token
+  });
+
+  await Promise.all(
+    workflowIds.map((workflowId) => client.workflows.deleteWorkflow({ workflowId }))
+  );
+}
+
+export async function updateWorkflow({
+  workflowId,
+  metadata,
+  user,
+}: z.infer<typeof workflowUpdateSchema> & { user: SessionUser }) {
+  const client = new CivitaiClient({
+    env: isDev ? 'dev' : 'prod',
+    auth: 'ff2ddeabd724b029112668447a9388f7', // TODO - use user api token
+  });
+
+  await client.workflows.updateWorkflow({ workflowId, requestBody: { metadata } });
+}
+
+export async function updateManyWorkflows({
+  workflows,
+  user,
+}: {
+  workflows: z.infer<typeof workflowUpdateSchema>[];
+  user: SessionUser;
+}) {
+  const client = new CivitaiClient({
+    env: isDev ? 'dev' : 'prod',
+    auth: 'ff2ddeabd724b029112668447a9388f7', // TODO - use user api token
+  });
+
+  await Promise.all(
+    workflows.map(({ workflowId, metadata }) =>
+      client.workflows.updateWorkflow({ workflowId, requestBody: { metadata } })
+    )
+  );
 }

@@ -2,16 +2,23 @@ import { WorkflowEvent, WorkflowStepJobEvent } from '@civitai/client';
 import { InfiniteData } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import { z } from 'zod';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { SignalMessages } from '~/server/common/enums';
+import { TextToImageWorkflowImageMetadataSchema } from '~/server/schema/orchestrator/textToImage.schema';
 import { workflowQuerySchema } from '~/server/schema/orchestrator/workflows.schema';
+import { NormalizedTextToImageResponse } from '~/server/services/orchestrator';
+import { workflowCompletedStatuses } from '~/server/services/orchestrator/constants';
 import { getTextToImageRequests } from '~/server/services/orchestrator/textToImage';
 import { createDebouncer } from '~/utils/debouncer';
 import { showErrorNotification } from '~/utils/notifications';
+import { deepOmit } from '~/utils/object-helpers';
 import { queryClient, trpc } from '~/utils/trpc';
+import { isDefined } from '~/utils/type-guards';
+
+type InfiniteTextToImageRequests = InfiniteData<AsyncReturnType<typeof getTextToImageRequests>>;
 
 export function useGetTextToImageRequests(
   input?: z.input<typeof workflowQuerySchema>,
@@ -26,17 +33,24 @@ export function useGetTextToImageRequests(
   const flatData = useMemo(
     () =>
       data?.pages.flatMap((x) =>
-        (x.items ?? []).map((response) => ({
-          ...response,
-          images: [...response.images].sort((a, b) => {
-            if (!b.completed) return 1;
-            if (!a.completed) return -1;
-            return b.completed.getTime() - a.completed.getTime();
-          }),
-        }))
+        (x.items ?? [])
+          .map((response) => {
+            const images = [...response.images]
+              .filter((image) => !response.metadata?.images?.[image.id]?.hidden)
+              .sort((a, b) => {
+                if (!b.completed) return 1;
+                if (!a.completed) return -1;
+                return b.completed.getTime() - a.completed.getTime();
+              });
+            return !!images.length ? { ...response, images } : null;
+          })
+          .filter(isDefined)
       ) ?? [],
     [data]
   );
+
+  // useEffect(() => console.log({ flatData }), [flatData]);
+
   return { data: flatData, ...rest };
 }
 
@@ -46,12 +60,11 @@ export function useGetTextToImageRequestsImages(input?: z.input<typeof workflowQ
   return { requests: data, images, ...rest };
 }
 
-function updateTextToImageRequests(
-  cb: (data: InfiniteData<AsyncReturnType<typeof getTextToImageRequests>>) => void
-) {
+function updateTextToImageRequests(cb: (data: InfiniteTextToImageRequests) => void) {
   const queryKey = getQueryKey(trpc.orchestrator.getTextToImageRequests);
+  // const test = queryClient.getQueriesData({ queryKey, exact: false })
   queryClient.setQueriesData({ queryKey, exact: false }, (state) =>
-    produce(state, (old?: InfiniteData<AsyncReturnType<typeof getTextToImageRequests>>) => {
+    produce(state, (old?: InfiniteTextToImageRequests) => {
       if (!old) return;
       cb(old);
     })
@@ -97,6 +110,19 @@ export function useDeleteTextToImageRequest() {
 
 export function useCancelTextToImageRequest() {
   return trpc.orchestrator.cancelWorkflow.useMutation({
+    onSuccess: (_, { workflowId }) => {
+      updateTextToImageRequests((old) => {
+        for (const page of old.pages) {
+          const index = page.items.findIndex((x) => x.id === workflowId);
+          if (index > -1) {
+            page.items[index].images = page.items[index].images.filter((x) =>
+              workflowCompletedStatuses.includes(x.status)
+            );
+            if (!page.items[index].images.length) page.items.splice(index, 1);
+          }
+        }
+      });
+    },
     onError: (error) => {
       showErrorNotification({
         title: 'Error cancelling request',
@@ -106,8 +132,105 @@ export function useCancelTextToImageRequest() {
   });
 }
 
-export function useDeleteTextToImageImages() {
-  return;
+export function useUpdateTextToImageWorkflows(options?: { onSuccess?: () => void }) {
+  const queryKey = getQueryKey(trpc.orchestrator.getTextToImageRequests);
+  const { mutate, isLoading } = trpc.orchestrator.updateManyTextToImageWorkflows.useMutation({
+    onSuccess: (_, { workflows }) => {
+      updateTextToImageRequests((old) => {
+        for (const page of old.pages) {
+          for (const item of page.items) {
+            const workflow = workflows.find((x) => x.workflowId === item.id);
+            if (workflow) {
+              item.metadata = { ...item.metadata, ...workflow.metadata };
+            }
+          }
+        }
+      });
+      options?.onSuccess?.();
+    },
+    onError: (error) => {
+      showErrorNotification({
+        title: 'An error occurred',
+        error: new Error(error.message),
+      });
+    },
+  });
+
+  function updateWorkflows(
+    args: Array<
+      {
+        workflowId: string;
+        imageId: string;
+      } & TextToImageWorkflowImageMetadataSchema
+    >
+  ) {
+    const workflows: NormalizedTextToImageResponse[] = [];
+    const allQueriesData = queryClient.getQueriesData<InfiniteTextToImageRequests>({
+      queryKey,
+      exact: false,
+    });
+    loop: for (const [, queryData] of allQueriesData) {
+      for (const page of queryData?.pages ?? []) {
+        for (const item of page.items) {
+          if (args.some((x) => x.workflowId === item.id)) {
+            workflows.push(item);
+            if (workflows.length === args.length) break loop;
+          }
+        }
+      }
+    }
+
+    const data = args.map((props) => {
+      const { workflowId, imageId, hidden, feedback, comments } = props;
+      const workflow = workflows.find((x) => x.id === workflowId);
+      return produce({ ...workflow?.metadata?.images?.[imageId], workflowId, imageId }, (draft) => {
+        if (comments) draft.comments = comments;
+        if (hidden) draft.hidden = hidden;
+        if (feedback) draft.feedback = draft.feedback !== feedback ? feedback : undefined;
+      });
+    });
+
+    const workflowData = workflows.map((workflow) => {
+      const toUpdate = data.filter((x) => x.workflowId === workflow.id);
+      return {
+        workflowId: workflow.id,
+        imageCount: workflow.images.length,
+        metadata: deepOmit({
+          ...workflow.metadata,
+          images: produce(workflow.metadata?.images ?? {}, (draft) => {
+            for (const { imageId, workflowId, ...rest } of toUpdate) {
+              draft[imageId] = { ...draft[imageId], ...rest };
+            }
+          }),
+        }),
+      };
+    });
+
+    mutate({ workflows: workflowData });
+  }
+
+  function hideImages(args: Array<{ workflowId: string; imageIds: string[] }>) {
+    const data = args
+      .map(({ workflowId, imageIds }) =>
+        imageIds.map((imageId) => ({ workflowId, imageId, hidden: true }))
+      )
+      .flat();
+    updateWorkflows(data);
+  }
+
+  function toggleFeedback(args: {
+    workflowId: string;
+    imageId: string;
+    feedback: 'liked' | 'disliked';
+  }) {
+    updateWorkflows([args]);
+  }
+
+  function addComment(args: { workflowId: string; imageId: string; comments: string }) {
+    updateWorkflows([args]);
+  }
+
+  return { hideImages, toggleFeedback, addComment, isLoading };
 }
 
 // #region [to remove]

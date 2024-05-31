@@ -9,7 +9,6 @@ import { openManageHomeBlocksModal } from '~/components/HomeBlocks/ManageHomeBlo
 import { openAssociateModelsModal } from '~/components/Modals/AssociateModelsModal';
 import { openBlockModelTagsModal } from '~/components/Modals/BlockModelTagsModal';
 import { openBuyBuzzModal } from '~/components/Modals/BuyBuzzModal';
-import { openGenQualityFeedbackModal } from '~/components/Modals/GenerationQualityFeedbackModal';
 import { openManageClubPostModal } from '~/components/Modals/ManageClubPostModal';
 import { openReportModal } from '~/components/Modals/ReportModal';
 import { openRunStrategyModal } from '~/components/Modals/RunStrategyModal';
@@ -46,9 +45,6 @@ const BountyEntryFilesModal = dynamic(() => import('~/components/Bounty/BountyEn
 const StripeTransactionModal = dynamic(() => import('~/components/Modals/StripeTransactionModal'));
 const UserProfileEditModal = dynamic(() => import('~/components/Modals/UserProfileEditModal'));
 const ManageClubPostModal = dynamic(() => import('~/components/Modals/ManageClubPostModal'));
-const GenQualityFeedbackModal = dynamic(
-  () => import('~/components/Modals/GenerationQualityFeedbackModal')
-);
 const ChatShareModal = dynamic(() => import('~/components/Chat/ChatShareModal'));
 
 const registry = {
@@ -112,10 +108,10 @@ const registry = {
     Component: ManageClubPostModal,
     fn: openManageClubPostModal,
   },
-  imageGenQualityFeedbackModal: {
-    Component: GenQualityFeedbackModal,
-    fn: openGenQualityFeedbackModal,
-  },
+  // imageGenQualityFeedbackModal: {
+  //   Component: GenQualityFeedbackModal,
+  //   fn: openGenQualityFeedbackModal,
+  // },
   chatShareModal: {
     Component: ChatShareModal,
     fn: openChatShareModal,

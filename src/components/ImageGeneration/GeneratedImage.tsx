@@ -14,7 +14,7 @@ import {
   ThemeIcon,
   createStyles,
 } from '@mantine/core';
-import { useClipboard } from '@mantine/hooks';
+import { useClipboard, usePrevious } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import {
   IconArrowsShuffle,
@@ -31,7 +31,7 @@ import {
   IconTrash,
   IconWindowMaximize,
 } from '@tabler/icons-react';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { GeneratedImageLightbox } from '~/components/ImageGeneration/GeneratedImageLightbox';
 import { generationImageSelect } from '~/components/ImageGeneration/utils/generationImage.select';
@@ -40,13 +40,12 @@ import { useInView } from '~/hooks/useInView';
 import { constants } from '~/server/common/constants';
 import { generationStore } from '~/store/generation.store';
 import { containerQuery } from '~/utils/mantine-css-helpers';
-import { useGenerationQualityFeedback } from './GenerationForm/generation.utils';
-import { GENERATION_QUALITY } from '~/server/schema/generation.schema';
-import { openGenQualityFeedbackModal } from '../Modals/GenerationQualityFeedbackModal';
 import {
   NormalizedTextToImageImage,
   NormalizedTextToImageResponse,
 } from '~/server/services/orchestrator';
+import { useUpdateTextToImageWorkflows } from '~/components/ImageGeneration/utils/generationRequestHooks';
+import { TextToImageQualityFeedbackModal } from '~/components/Modals/GenerationQualityFeedbackModal';
 
 export function GeneratedImage({
   image,
@@ -57,14 +56,15 @@ export function GeneratedImage({
 }) {
   const { classes } = useStyles();
   const { ref, inView } = useInView({ rootMargin: '600px' });
-  const selected = generationImageSelect.useIsSelected(image.id);
-  const toggleSelect = (checked?: boolean) => generationImageSelect.toggle(image.id, checked);
+  const selected = generationImageSelect.useIsSelected({
+    workflowId: request.id,
+    imageId: image.id,
+  });
+  const toggleSelect = (checked?: boolean) =>
+    generationImageSelect.toggle({ workflowId: request.id, imageId: image.id }, checked);
   const { copied, copy } = useClipboard();
 
-  const [selectedFeedback, setSelectedFeedback] = useState<GENERATION_QUALITY | null>(null);
-
-  // const bulkDeleteImagesMutation = useDeleteGenerationRequestImages();
-  const { sendFeedback, sending } = useGenerationQualityFeedback();
+  const { hideImages, toggleFeedback, isLoading } = useUpdateTextToImageWorkflows();
 
   const handleImageClick = () => {
     if (!image || !available) return;
@@ -90,49 +90,38 @@ export function GeneratedImage({
   };
 
   const handleDeleteImage = () => {
-    // TODO - handle delete image
-    // openConfirmModal({
-    //   title: 'Delete image',
-    //   children:
-    //     'Are you sure that you want to delete this image? This is a destructive action and cannot be undone.',
-    //   labels: { cancel: 'Cancel', confirm: 'Yes, delete it' },
-    //   confirmProps: { color: 'red' },
-    //   onConfirm: () => bulkDeleteImagesMutation.mutate({ ids: [image.id] }),
-    //   zIndex: constants.imageGeneration.drawerZIndex + 2,
-    //   centered: true,
-    // });
-  };
-
-  const handleSendFeedback = async ({
-    quality,
-    message,
-  }: {
-    quality: GENERATION_QUALITY;
-    message?: string;
-  }) => {
-    if (sending || !image.jobId) return;
-
-    setSelectedFeedback(quality);
-    await sendFeedback({ jobId: image.jobId, reason: quality, message })
-      // Error handled in hook
-      .catch(() => setSelectedFeedback(null));
-  };
-
-  // TODO - how will we address generation feedback
-  const handleThumbsDownClick = () => {
-    if (!image.jobId) return;
-    openGenQualityFeedbackModal({
-      jobId: image.jobId,
-      onSubmit: () => setSelectedFeedback(GENERATION_QUALITY.BAD),
-      onFailed: () => setSelectedFeedback(null),
+    openConfirmModal({
+      title: 'Delete image',
+      children:
+        'Are you sure that you want to delete this image? This is a destructive action and cannot be undone.',
+      labels: { cancel: 'Cancel', confirm: 'Yes, delete it' },
+      confirmProps: { color: 'red' },
+      onConfirm: () => hideImages([{ workflowId: request.id, imageIds: [image.id] }]),
+      zIndex: constants.imageGeneration.drawerZIndex + 2,
+      centered: true,
     });
   };
 
   const imageRef = useRef<HTMLImageElement>(null);
 
-  const badFeedbackSelected = selectedFeedback === GENERATION_QUALITY.BAD;
-  const goodFeedbackSelected = selectedFeedback === GENERATION_QUALITY.GOOD;
+  const feedback = request.metadata?.images?.[image.id]?.feedback;
+  const badFeedbackSelected = feedback === 'disliked';
+  const goodFeedbackSelected = feedback === 'liked';
   const available = image.status === 'succeeded';
+
+  function handleToggleFeedback(newFeedback: 'liked' | 'disliked') {
+    if (feedback !== 'disliked' && newFeedback === 'disliked') {
+      dialogStore.trigger({
+        component: TextToImageQualityFeedbackModal,
+        props: {
+          workflowId: request.id,
+          imageId: image.id,
+          comments: request.metadata?.images?.[image.id]?.comments,
+        },
+      });
+    }
+    toggleFeedback({ workflowId: request.id, imageId: image.id, feedback: newFeedback });
+  }
 
   if (!available) return <></>;
 
@@ -140,13 +129,6 @@ export function GeneratedImage({
     <AspectRatio ratio={request.params.width / request.params.height} ref={ref}>
       {inView && (
         <>
-          {/* TODO - move this to new dialog trigger */}
-          {/* <CreateVariantsModal
-            opened={state.variantModalOpened}
-            onClose={() =>
-              setState((current) => ({ ...current, variantModalOpened: false, selectedItems: [] }))
-            }
-          /> */}
           <Card
             p={0}
             className={classes.imageWrapper}
@@ -257,30 +239,25 @@ export function GeneratedImage({
             {available && (
               <Group className={classes.info} w="100%" position="apart">
                 <Group spacing={4} className={classes.actionsWrapper}>
-                  {(!selectedFeedback || goodFeedbackSelected) && (
-                    <ActionIcon
-                      size="md"
-                      variant={goodFeedbackSelected ? 'light' : undefined}
-                      color={goodFeedbackSelected ? 'green' : undefined}
-                      onClick={
-                        !goodFeedbackSelected
-                          ? () => handleSendFeedback({ quality: GENERATION_QUALITY.GOOD })
-                          : undefined
-                      }
-                    >
-                      <IconThumbUp size={16} />
-                    </ActionIcon>
-                  )}
-                  {(!selectedFeedback || badFeedbackSelected) && (
-                    <ActionIcon
-                      size="md"
-                      variant={badFeedbackSelected ? 'light' : undefined}
-                      color={badFeedbackSelected ? 'red' : undefined}
-                      onClick={!badFeedbackSelected ? handleThumbsDownClick : undefined}
-                    >
-                      <IconThumbDown size={16} />
-                    </ActionIcon>
-                  )}
+                  <ActionIcon
+                    size="md"
+                    variant={goodFeedbackSelected ? 'light' : undefined}
+                    color={goodFeedbackSelected ? 'green' : undefined}
+                    disabled={isLoading}
+                    onClick={() => handleToggleFeedback('liked')}
+                  >
+                    <IconThumbUp size={16} />
+                  </ActionIcon>
+
+                  <ActionIcon
+                    size="md"
+                    variant={badFeedbackSelected ? 'light' : undefined}
+                    color={badFeedbackSelected ? 'red' : undefined}
+                    disabled={isLoading}
+                    onClick={() => handleToggleFeedback('disliked')}
+                  >
+                    <IconThumbDown size={16} />
+                  </ActionIcon>
                 </Group>
                 <ImageMetaPopover
                   meta={request.params}

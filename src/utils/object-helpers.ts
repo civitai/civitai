@@ -27,3 +27,32 @@ export function removeNulls<T extends object>(obj: T): RemoveNulls<T> {
       : obj
   ) as RemoveNulls<T>;
 }
+
+// TODO - clean this up
+export function deepOmit<T>(value: T): T {
+  if (isArray(value)) {
+    return value
+      .map((item) => (isObject(item) ? deepOmit(item) : item))
+      .filter(
+        (item) =>
+          !isNil(item) &&
+          !(isArray(item) && !item.length) &&
+          !(isObject(item) && !Object.keys(item).length)
+      ) as any;
+  } else if (isObject(value)) {
+    const result = omitBy(
+      value,
+      (v) => isNil(v) || (isArray(v) && !v.length) || (isObject(v) && !Object.keys(v).length)
+    );
+    // Recursively clean the object
+    const cleanedResult = Object.entries(result).reduce((acc, [key, val]) => {
+      const cleanedVal = deepOmit(val);
+      if (!isNil(cleanedVal) && (!isObject(cleanedVal) || Object.keys(cleanedVal).length > 0)) {
+        acc[key] = cleanedVal;
+      }
+      return acc;
+    }, {} as Record<string, any>);
+    return cleanedResult as any;
+  }
+  return value;
+}
