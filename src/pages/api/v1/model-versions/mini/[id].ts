@@ -10,6 +10,7 @@ import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { stringifyAIR } from '~/utils/string-helpers';
 import { BaseModel } from '~/server/common/constants';
 import { Availability, ModelType, Prisma } from '@prisma/client';
+import { getBaseUrl } from '~/server/utils/url-helpers';
 
 const schema = z.object({ id: z.coerce.number() });
 type VersionRow = {
@@ -71,7 +72,7 @@ export default MixedAuthEndpoint(async function handler(
   const primaryFile = getPrimaryFile(files);
   if (!primaryFile) return res.status(404).json({ error: 'Missing model file' });
 
-  const baseUrl = new URL(isProd ? `https://${req.headers.host}` : 'http://localhost:3000');
+  const baseUrl = getBaseUrl();
   const air = stringifyAIR(modelVersion)?.replace('pony', 'sdxl');
 
   const data = {
@@ -85,7 +86,7 @@ export default MixedAuthEndpoint(async function handler(
       AutoV2: primaryFile.hash,
     },
     downloadUrls: [
-      `${baseUrl.origin}${createModelFileDownloadUrl({
+      `${baseUrl}${createModelFileDownloadUrl({
         versionId: modelVersion.id,
         primary: true,
       })}`,
