@@ -144,7 +144,8 @@ export const upsertModelVersion = async ({
       dbWrite.modelVersion.create({
         data: {
           ...data,
-          earlyAccessConfig: updatedEarlyAccessConfig,
+          earlyAccessConfig:
+            updatedEarlyAccessConfig !== null ? updatedEarlyAccessConfig : Prisma.JsonNull,
           settings: settings !== null ? settings : Prisma.JsonNull,
           monetization:
             monetization && monetization.type
@@ -234,8 +235,6 @@ export const upsertModelVersion = async ({
       );
     }
 
-    console.log({ updatedEarlyAccessConfig, earlyAccessConfig });
-
     if (
       existingVersion.status === ModelStatus.Published &&
       updatedEarlyAccessConfig &&
@@ -247,12 +246,17 @@ export const upsertModelVersion = async ({
       );
     }
 
+    updatedEarlyAccessConfig = updatedEarlyAccessConfig
+      ? // Ensures we keep relevant data such as buzzTransactionId even if the user changes something.
+        { ...earlyAccessConfig, ...updatedEarlyAccessConfig }
+      : updatedEarlyAccessConfig;
+
     const version = await dbWrite.modelVersion.update({
       where: { id },
       data: {
         ...data,
         earlyAccessConfig:
-          updatedEarlyAccessConfig !== undefined ? updatedEarlyAccessConfig : undefined,
+          updatedEarlyAccessConfig !== null ? updatedEarlyAccessConfig : Prisma.JsonNull,
         settings: settings !== null ? settings : Prisma.JsonNull,
         monetization:
           existingVersion.monetization?.id && !monetization
@@ -399,6 +403,24 @@ export const publishModelVersionById = async ({
         });
 
         earlyAccessConfig.buzzTransactionId = buzzTransaction.transactionId;
+
+        if (earlyAccessConfig.donationGoalEnabled && earlyAccessConfig.donationGoal) {
+          // Good time to also create the donation goal:
+          const donationGoal = await tx.donationGoal.create({
+            data: {
+              goalAmount: earlyAccessConfig.donationGoal as number,
+              title: `Early Access for model: ${currentVersion.model.name} - ${currentVersion.name}`,
+              active: true,
+              isEarlyAccess: true,
+              modelVersionId: currentVersion.id,
+              userId: currentVersion.model.userId,
+            },
+          });
+
+          if (donationGoal) {
+            earlyAccessConfig.donationGoalId = donationGoal.id;
+          }
+        }
       }
 
       const updatedVersion = await dbWrite.modelVersion.update({

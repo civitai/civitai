@@ -47,9 +47,7 @@ export const ModelVersionEarlyAccessPurchase = ({ modelVersionId }: { modelVersi
     }
   };
 
-  console.log(modelVersion);
-
-  const supportsGeneration = features.imageGeneration && modelVersion.canGenerate;
+  const supportsGeneration = features.imageGeneration && modelVersion?.canGenerate;
   const supportsGenerationPurchase =
     supportsGeneration &&
     earlyAccessConfig?.chargeForGeneration &&
@@ -68,7 +66,7 @@ export const ModelVersionEarlyAccessPurchase = ({ modelVersionId }: { modelVersi
             the early access period or just waiting until it becomes public. The remaining time for
             early access is{' '}
             <Text component="span" weight="bold">
-              <Countdown endTime={earlyAccessEndsAt} />
+              <Countdown endTime={earlyAccessEndsAt ?? new Date()} />
             </Text>
           </Text>
           <Stack>

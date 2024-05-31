@@ -139,6 +139,9 @@ export const modelVersionEarlyAccessConfigSchema = z.object({
   chargeForGeneration: z.boolean().default(false),
   generationPrice: z.number().optional(),
   generationTrialLimit: z.number().default(10),
+  donationGoalEnabled: z.boolean().default(false),
+  donationGoal: z.number().optional(),
+  donationGoalId: z.number().optional(),
 });
 
 export const earlyAccessConfigInput = modelVersionEarlyAccessConfigSchema.omit({

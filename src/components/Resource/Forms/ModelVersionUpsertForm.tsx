@@ -125,6 +125,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
   const hasBaseModelType = ['Checkpoint'].includes(model?.type ?? '');
   const hasVAE = ['Checkpoint'].includes(model?.type ?? '');
   const showStrengthInput = ['LORA', 'Hypernetwork', 'LoCon'].includes(model?.type ?? '');
+  console.log(version?.earlyAccessConfig);
 
   const MAX_EARLY_ACCCESS = 15;
 
@@ -313,6 +314,8 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                           chargeForGeneration: false,
                           generationPrice: 100,
                           generationTrialLimit: 10,
+                          donationGoalEnabled: false,
+                          donationGoal: 1000,
                         }
                       : null
                   )
@@ -405,6 +408,30 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                           min={10}
                         />
                       </Stack>
+                    )}
+                    {(!version?.earlyAccessConfig?.buzzTransactionId ||
+                      version?.earlyAccessConfig?.donationGoalId) && (
+                      <>
+                        <InputSwitch
+                          name="earlyAccessConfig.donationGoalEnabled"
+                          label="Enable donation goal"
+                          description={
+                            'You can use this feature to remove early access once a certain amount of buzz is met. This will allow you to set a goal for your model and remove early access once that goal is met.'
+                          }
+                        />
+                        {earlyAccessConfig?.donationGoalEnabled && (
+                          <Stack>
+                            <InputNumber
+                              name="earlyAccessConfig.donationGoal"
+                              label="Donation Goal Amount"
+                              description="How much BUZZ would you like to set as your donation goal? Early access purchases will count towards this goal."
+                              min={1000}
+                              step={100}
+                              icon={<CurrencyIcon currency="BUZZ" size={16} />}
+                            />
+                          </Stack>
+                        )}
+                      </>
                     )}
                   </Stack>
                 </Stack>

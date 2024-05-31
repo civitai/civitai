@@ -178,12 +178,16 @@ export function ModelVersionDetails({
   const requestVersionReviewMutation = trpc.modelVersion.requestReview.useMutation();
 
   const handleDownload = useCallback(
-    (file: { type?: string; metadata?: BasicFileMetadata }) => {
+    (file: { type?: string; metadata?: BasicFileMetadata } | null) => {
       if (isLoadingAccess) {
         return;
       }
 
       if (hasDownloadPermissions) {
+        if (!file) {
+          return;
+        }
+
         const url = createModelFileDownloadUrl({
           versionId: version.id,
           type: file.type,
