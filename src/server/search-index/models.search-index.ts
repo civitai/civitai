@@ -2,7 +2,7 @@ import { client, updateDocs } from '~/server/meilisearch/client';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { modelHashSelect } from '~/server/selectors/modelHash.selector';
 import { Availability, MetricTimeframe, ModelHashType, ModelStatus, Prisma } from '@prisma/client';
-import { isEqual } from 'lodash';
+import { isEqual } from 'lodash-es';
 import { MODELS_SEARCH_INDEX, ModelFileType } from '~/server/common/constants';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
 import { TypoTolerance } from 'meilisearch';

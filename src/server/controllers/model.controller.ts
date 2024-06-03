@@ -74,6 +74,7 @@ import {
   upsertModel,
   getGallerySettingsByModelId,
   toggleCheckpointCoverage,
+  getModelsRaw,
 } from '~/server/services/model.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { getCategoryTags } from '~/server/services/system-cache';
@@ -90,7 +91,6 @@ import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/
 import { getDownloadUrl } from '~/utils/delivery-worker';
 import { isDefined } from '~/utils/type-guards';
 import { redis } from '../redis/client';
-import { modelHashSelect } from './../selectors/modelHash.selector';
 import { getUnavailableResources } from '../services/generation/generation.service';
 import { BountyDetailsSchema } from '../schema/bounty.schema';
 import {
@@ -99,6 +99,7 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils';
 import { resourceDataCache } from '~/server/redis/caches';
+import { dataForModelsCache } from '~/server/redis/caches';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
@@ -272,7 +273,7 @@ export const getModelsInfiniteHandler = async ({
     let isPrivate = false;
     let nextCursor: string | bigint | undefined;
     const results: Awaited<ReturnType<typeof getModelsWithImagesAndModelVersions>>['items'] = [];
-    while (results.length <= (input.limit ?? 100) && loopCount < 3) {
+    while (results.length < (input.limit ?? 100) && loopCount < 3) {
       const result = await getModelsWithImagesAndModelVersions({
         input,
         user: ctx.user,
@@ -385,6 +386,8 @@ export const upsertModelHandler = async ({
       nsfw: !getIsSafeBrowsingLevel(model.nsfwLevel),
     });
 
+    if (input.id) await dataForModelsCache.bust(input.id);
+
     return model;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -442,6 +445,8 @@ export const publishModelHandler = async ({
       });
     }
 
+    await dataForModelsCache.bust(input.id);
+
     return updatedModel;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -473,6 +478,8 @@ export const unpublishModelHandler = async ({
       nsfw: model.nsfw,
     });
 
+    await dataForModelsCache.bust(input.id);
+
     return updatedModel;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -500,6 +507,8 @@ export const deleteModelHandler = async ({
       modelId: model.id,
       nsfw: !getIsSafeBrowsingLevel(model.nsfwLevel),
     });
+
+    await dataForModelsCache.bust(id);
 
     return model;
   } catch (error) {
@@ -929,6 +938,8 @@ export const reorderModelVersionsHandler = async ({
 
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
 
+    await dataForModelsCache.bust(input.id);
+
     return model;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -1162,64 +1173,18 @@ export const getAssociatedResourcesCardDataHandler = async ({
       period,
     });
 
-    const [{ items: models }, { items: articles }] = await Promise.all([
+    const { items: models } =
       modelResources?.length > 0
-        ? getModels({
+        ? await getModelsRaw({
             user,
             input: modelInput,
-            select: {
-              id: true,
-              name: true,
-              type: true,
-              status: true,
-              createdAt: true,
-              lastVersionAt: true,
-              publishedAt: true,
-              locked: true,
-              earlyAccessDeadline: true,
-              mode: true,
-              nsfwLevel: true,
-              metrics: {
-                select: {
-                  downloadCount: true,
-                  favoriteCount: true,
-                  commentCount: true,
-                  ratingCount: true,
-                  rating: true,
-                  thumbsUpCount: true,
-                  thumbsDownCount: true,
-                },
-                where: { timeframe: period },
-              },
-              modelVersions: {
-                orderBy: { index: 'asc' },
-                take: 1,
-                where: { status: ModelStatus.Published },
-                select: {
-                  id: true,
-                  earlyAccessTimeFrame: true,
-                  createdAt: true,
-                  baseModel: true,
-                  baseModelType: true,
-                  generationCoverage: { select: { covered: true } },
-                },
-              },
-              user: { select: simpleUserSelect },
-              hashes: {
-                select: modelHashSelect,
-                where: {
-                  hashType: ModelHashType.SHA256,
-                  fileType: { in: ['Model', 'Pruned Model'] as ModelFileType[] },
-                },
-              },
-            },
           })
-        : { items: [] },
+        : { items: [] };
+
+    const { items: articles } =
       articleResources?.length > 0
-        ? getArticles({ ...articleInput, sessionUser: user })
-        : { items: [] },
-      ,
-    ]);
+        ? await getArticles({ ...articleInput, sessionUser: user })
+        : { items: [] };
 
     const modelVersionIds = models.flatMap((m) => m.modelVersions).map((m) => m.id);
     const images = !!modelVersionIds.length
@@ -1234,8 +1199,9 @@ export const getAssociatedResourcesCardDataHandler = async ({
         })
       : [];
 
+    const unavailableGenResources = await getUnavailableResources();
     const completeModels = models
-      .map(({ hashes, modelVersions, metrics, ...model }) => {
+      .map(({ hashes, modelVersions, rank, ...model }) => {
         const [version] = modelVersions;
         if (!version) return null;
         const versionImages = images.filter((i) => i.modelVersionId === version.id);
@@ -1243,19 +1209,20 @@ export const getAssociatedResourcesCardDataHandler = async ({
           (user?.isModerator || model.user.id === user?.id) &&
           (modelInput.user || modelInput.username);
         if (!versionImages.length && !showImageless) return null;
-        const canGenerate = !!version.generationCoverage?.covered;
+        const canGenerate = !!version.covered && !unavailableGenResources.includes(version.id);
 
         return {
           ...model,
-          hashes: hashes.map((hash) => hash.hash.toLowerCase()),
+          hashes: hashes.map((h) => h.toLowerCase()),
           rank: {
-            downloadCount: metrics[0]?.downloadCount ?? 0,
-            favoriteCount: metrics[0]?.favoriteCount ?? 0,
-            thumbsUpCount: metrics[0]?.thumbsUpCount ?? 0,
-            thumbsDownCount: metrics[0]?.thumbsDownCount ?? 0,
-            commentCount: metrics[0]?.commentCount ?? 0,
-            ratingCount: metrics[0]?.ratingCount ?? 0,
-            rating: metrics[0]?.rating ?? 0,
+            downloadCount: rank?.downloadCountAllTime ?? 0,
+            thumbsUpCount: rank?.thumbsUpCountAllTime ?? 0,
+            thumbsDownCount: rank?.thumbsDownCountAllTime ?? 0,
+            commentCount: rank?.commentCountAllTime ?? 0,
+            ratingCount: rank?.ratingCountAllTime ?? 0,
+            collectedCount: rank?.collectedCountAllTime ?? 0,
+            tippedAmountCount: rank?.tippedAmountCountAllTime ?? 0,
+            rating: rank.ratingAllTime ?? 0,
           },
           images: model.mode !== ModelModifier.TakenDown ? (versionImages as typeof images) : [],
           canGenerate,
@@ -1517,6 +1484,7 @@ export async function toggleCheckpointCoverageHandler({
     await modelsSearchIndex.queueUpdate([
       { id: input.id, action: SearchIndexUpdateQueueAction.Update },
     ]);
+    await dataForModelsCache.bust(input.id);
 
     return affectedVersionIds;
   } catch (error) {

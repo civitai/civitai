@@ -462,6 +462,7 @@ export default function CosmeticShopMain() {
                           ? {
                               backgroundImage: `url(${backgroundImageUrl})`,
                               backgroundPosition: 'left center',
+                              backgroundSize: 'cover',
                             }
                           : undefined
                       }

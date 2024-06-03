@@ -8,6 +8,7 @@ export async function getAllTools() {
       name: true,
       icon: true,
       type: true,
+      priority: true,
     },
     where: { enabled: true },
   });

@@ -181,8 +181,8 @@ export const generationStatusSchema = z.object({
       }
       return mergedLimits;
     }),
-  // TODO: This is for testing purposes.Turn back to false
   charge: z.boolean().default(true),
+  checkResourceAvailability: z.boolean().default(false),
 });
 export type GenerationStatus = z.infer<typeof generationStatusSchema>;
 
@@ -229,6 +229,7 @@ export const createGenerationRequestSchema = z.object({
 
 export type GenerationRequestTestRunSchema = z.infer<typeof generationRequestTestRunSchema>;
 export const generationRequestTestRunSchema = z.object({
+  model: z.number().nullish(),
   baseModel: z.string().optional(),
   aspectRatio: z.string(),
   steps: z.coerce.number().min(1).max(100),
@@ -238,6 +239,7 @@ export const generationRequestTestRunSchema = z.object({
     .refine((val) => generation.samplers.includes(val as (typeof generation.samplers)[number]), {
       message: 'invalid sampler',
     }),
+  resources: z.number().array().nullish(),
   draft: z.boolean().optional(),
 });
 export type CheckResourcesCoverageSchema = z.infer<typeof checkResourcesCoverageSchema>;

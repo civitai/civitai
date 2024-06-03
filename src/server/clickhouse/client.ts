@@ -115,7 +115,9 @@ export type UserActivityType =
   | 'Unbanned'
   | 'Muted'
   | 'Unmuted'
-  | 'RemoveContent';
+  | 'RemoveContent'
+  | 'ExcludedFromLeaderboard'
+  | 'UnexcludedFromLeaderboard';
 export type ModelVersionActivty = 'Create' | 'Publish' | 'Download' | 'Unpublish';
 export type ModelActivty =
   | 'Create'
@@ -155,7 +157,7 @@ export type CommentType =
   | 'Bounty'
   | 'BountyEntry';
 export type CommentActivity = 'Create' | 'Delete' | 'Update' | 'Hide' | 'Unhide';
-export type PostActivityType = 'Create' | 'Publish' | 'Tags';
+export type PostActivityType = 'Create' | 'Publish' | 'Tags' | 'Delete';
 export type ImageActivityType =
   | 'Create'
   | 'Delete'

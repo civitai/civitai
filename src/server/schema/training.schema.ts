@@ -1,4 +1,4 @@
-import { defaultsDeep } from 'lodash';
+import { defaultsDeep } from 'lodash-es';
 import { z } from 'zod';
 import { blockedCustomModels } from '~/components/Training/Form/TrainingCommon';
 

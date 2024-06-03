@@ -17,7 +17,7 @@ import {
   highlightInappropriate,
   includesInappropriate,
 } from '~/utils/metadata/audit';
-import { normalizeText } from '~/utils/string-helpers';
+import { normalizeText } from '~/utils/normalize-text';
 
 type AuditResult = {
   highlighted: string;

@@ -1,11 +1,12 @@
 import { useWindowEvent } from '@mantine/hooks';
+import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
 import { useCallback, useEffect, useState } from 'react';
 import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvider';
-import GenerationTabs from '~/components/ImageGeneration/GenerationTabs';
 import { ResizableSidebar } from '~/components/Resizable/ResizableSidebar';
 import { useResizeStore } from '~/components/Resizable/useResize';
 import { generationPanel, useGenerationStore } from '~/store/generation.store';
+const GenerationTabs = dynamic(() => import('~/components/ImageGeneration/GenerationTabs'));
 
 export function GenerationSidebar() {
   const _opened = useGenerationStore((state) => state.opened);

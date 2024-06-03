@@ -1,5 +1,4 @@
 import { ModelType } from '@prisma/client';
-import he from 'he';
 import { truncate } from 'lodash-es';
 import slugify from 'slugify';
 import { BaseModel, baseModelSets } from '~/server/common/constants';

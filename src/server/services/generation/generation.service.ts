@@ -364,8 +364,9 @@ const getDraftStateFromInputForOrchestrator = ({
   steps = draftModeSettings.steps;
   cfgScale = draftModeSettings.cfgScale;
   sampler = draftModeSettings.sampler;
+  const resourceId = draftModeSettings.resourceId;
 
-  return { quantity, steps, cfgScale, sampler };
+  return { quantity, steps, cfgScale, sampler, resourceId };
 };
 
 // export const createGenerationRequest = async ({
@@ -872,12 +873,14 @@ export async function toggleUnavailableResource({
 // };
 
 export const textToImageTestRun = async ({
+  model,
   baseModel,
   quantity,
   sampler,
   steps,
   aspectRatio,
   draft,
+  resources,
 }: GenerationRequestTestRunSchema) => {
   const { aspectRatios } = getGenerationConfig(baseModel);
 
@@ -898,18 +901,21 @@ export const textToImageTestRun = async ({
     quantity = draftData.quantity;
     steps = draftData.steps;
     sampler = draftData.sampler;
+    if (!resources) resources = [];
+    resources.push(draftData.resourceId);
   }
 
   const isSd1 = baseModel === 'SD1';
+  if (!model) model = isSd1 ? 128713 : 128078;
   const response = await orchestratorCaller.textToImage({
     payload: {
-      model: isSd1 ? `@civitai/128713` : '@civitai/128078',
+      model: `@civitai/${model}`,
       baseModel: baseModelToOrchestration[baseModel as BaseModelSetType],
       properties: {},
       quantity: quantity,
-      // TODO: in the future we may wanna add additional networks as they might be used for cost calculation.
-      // Not the case as of now.
-      additionalNetworks: {},
+      additionalNetworks: Object.fromEntries(
+        resources?.map((id) => [`@civitai/${id}`, { type: ModelType.LORA, strength: 1 }]) ?? []
+      ),
       params: {
         baseModel,
         scheduler: samplersToSchedulers[sampler as Sampler],
@@ -934,5 +940,26 @@ export const textToImageTestRun = async ({
     throw new Error('An unknown error occurred. Please try again later');
   }
 
-  return response.data;
+  const jobs = response.data?.jobs ?? [];
+  const cost = Math.ceil(jobs.reduce((acc, job) => acc + job.cost, 0));
+  let position = 0;
+  let ready = false;
+  let eta = dayjs().add(10, 'minutes').toDate();
+  for (const job of jobs) {
+    for (const [name, provider] of Object.entries(job.serviceProviders)) {
+      if (provider.support === 'Available' && !ready) ready = true;
+      if (!provider.queuePosition) continue;
+      if (provider.queuePosition.precedingJobs < position)
+        position = provider.queuePosition.precedingJobs;
+      if (provider.queuePosition.estimatedStartDate < eta)
+        eta = provider.queuePosition.estimatedStartDate;
+    }
+  }
+
+  return {
+    cost,
+    ready,
+    eta,
+    position,
+  };
 };
