@@ -126,7 +126,7 @@ export function ModelCard({ data, forceInView }: Props) {
     ]);
   }
 
-  if (features.profileOverhaul && currentUser?.id === data.user.id) {
+  if (currentUser?.id === data.user.id) {
     contextMenuItems = contextMenuItems.concat([
       <AddToShowcaseMenuItem key="add-to-showcase" entityType="Model" entityId={data.id} />,
       <AddArtFrameMenuItem

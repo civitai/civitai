@@ -614,19 +614,11 @@ function LayoutSelector({ children }: { children: React.ReactNode }) {
   const { username } = router.query as { username: string };
   const features = useFeatureFlags();
 
-  if (features.profileOverhaul) {
-    return (
-      <ProfileLayout username={username}>
-        <ProfileHeader username={username} />
-        {children}
-      </ProfileLayout>
-    );
-  }
-
   return (
-    <ScrollArea>
-      <NestedLayout>{children}</NestedLayout>
-    </ScrollArea>
+    <ProfileLayout username={username}>
+      <ProfileHeader username={username} />
+      {children}
+    </ProfileLayout>
   );
 }
 

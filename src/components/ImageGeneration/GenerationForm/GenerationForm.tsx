@@ -130,7 +130,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
       ...defaultValues,
       ...storedState,
       steps,
-      // Use solely to to update the resource oimits based on tier
+      // Use solely to update the resource limits based on tier
       tier: currentUser?.tier ?? 'free',
     });
     const subscription = form.watch((value) => {
@@ -249,6 +249,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
     const prompt = form.getValues('prompt');
     const metadata = parsePromptMetadata(prompt);
     const result = imageGenerationSchema.safeParse(metadata);
+
     if (result.success) {
       generationStore.setParams(result.data);
       setShowFillForm(false);
