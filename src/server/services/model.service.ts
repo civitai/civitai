@@ -1324,6 +1324,7 @@ export const publishModelById = async ({
           status,
           publishedAt: !republishing ? publishedAt : undefined,
           meta: isEmpty(meta) ? Prisma.JsonNull : meta,
+          deletedAt: null,
           modelVersions: includeVersions
             ? {
                 updateMany: {

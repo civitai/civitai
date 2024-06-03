@@ -82,6 +82,7 @@ import { getVotableTags2 } from '~/server/services/tag.service';
 import { Flags } from '~/shared/utils';
 import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
+import { removeEmpty } from '~/utils/object-helpers';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -2695,8 +2696,16 @@ export async function updateImageNsfwLevel({
     });
 
     // Track potential content leaking
-    const current = await dbWrite.image.findFirst({ where: { id }, select: { nsfwLevel: true } });
-    if (current?.nsfwLevel === NsfwLevel.PG && nsfwLevel >= NsfwLevel.R) {
+    // If the image is currently PG and the new level is R or higher, and the image isn't from the original user, increment the counter
+    const current = await dbWrite.image.findFirst({
+      where: { id },
+      select: { nsfwLevel: true, userId: true },
+    });
+    if (
+      current?.nsfwLevel === NsfwLevel.PG &&
+      nsfwLevel >= NsfwLevel.R &&
+      current?.userId !== user.id
+    ) {
       leakingContentCounter.inc();
     }
   }
@@ -3002,7 +3011,8 @@ export async function getImageGenerationData({ id }: { id: number }) {
   const parsedMeta = imageMetaOutput.safeParse(image.meta);
   const data = parsedMeta.success ? parsedMeta.data : {};
   const { 'Clip skip': legacyClipSkip, clipSkip = legacyClipSkip, external, ...rest } = data;
-  const meta = parsedMeta.success && !image.hideMeta ? { ...rest, clipSkip } : undefined;
+  const meta =
+    parsedMeta.success && !image.hideMeta ? removeEmpty({ ...rest, clipSkip }) : undefined;
 
   return {
     meta,
