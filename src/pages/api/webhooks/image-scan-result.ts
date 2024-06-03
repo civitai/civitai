@@ -1,29 +1,28 @@
-import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
-import * as z from 'zod';
-import { dbWrite } from '~/server/db/client';
 import { ImageIngestionStatus, Prisma, TagSource, TagTarget, TagType } from '@prisma/client';
+import { uniqBy } from 'lodash-es';
+import { z } from 'zod';
+import { topLevelModerationCategories } from '~/libs/moderation';
+import { tagsNeedingReview as minorTags, tagsToIgnore } from '~/libs/tags';
+import { constants } from '~/server/common/constants';
+import { NsfwLevel, SearchIndexUpdateQueueAction, SignalMessages } from '~/server/common/enums';
+import { dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
+import { scanJobsSchema } from '~/server/schema/image.schema';
+import { imagesSearchIndex } from '~/server/search-index';
+import { updateImageTagIdsForImages } from '~/server/services/image.service';
+import { updatePostNsfwLevel } from '~/server/services/post.service';
+import { getTagRules } from '~/server/services/system-cache';
+import { deleteUserProfilePictureCache } from '~/server/services/user.service';
+import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
+import { getComputedTags } from '~/server/utils/tag-rules';
+import { logToDb } from '~/utils/logging';
 import {
   auditMetaData,
   getTagsFromPrompt,
   includesInappropriate,
   includesPoi,
 } from '~/utils/metadata/audit';
-import { topLevelModerationCategories } from '~/libs/moderation';
-import { tagsNeedingReview as minorTags, tagsToIgnore } from '~/libs/tags';
-import { logToDb } from '~/utils/logging';
-import { constants } from '~/server/common/constants';
-import { getComputedTags } from '~/server/utils/tag-rules';
-import { updatePostNsfwLevel } from '~/server/services/post.service';
-import { imagesSearchIndex } from '~/server/search-index';
-import { deleteUserProfilePictureCache } from '~/server/services/user.service';
-import { updateImageTagIdsForImages } from '~/server/services/image.service';
 import { signalClient } from '~/utils/signal-client';
-import { SignalMessages, SearchIndexUpdateQueueAction } from '~/server/common/enums';
-import { scanJobsSchema } from '~/server/schema/image.schema';
-import { getTagRules } from '~/server/services/system-cache';
-import { uniqBy } from 'lodash-es';
-import { NsfwLevel } from '~/server/common/enums';
-import { logToAxiom } from '~/server/logging/client';
 import { normalizeText } from '~/utils/normalize-text';
 
 const REQUIRED_SCANS = [TagSource.WD14, TagSource.Rekognition];
@@ -35,6 +34,7 @@ enum Status {
   NotFound = 1, // image not found at url
   Unscannable = 2,
 }
+
 const pendingStates: ImageIngestionStatus[] = [
   ImageIngestionStatus.Pending,
   ImageIngestionStatus.Error,
@@ -123,6 +123,7 @@ export default WebhookEndpoint(async function imageTags(req, res) {
 });
 
 type Tag = { tag: string; confidence: number; id?: number; source?: TagSource };
+
 async function handleSuccess({ id, tags: incomingTags = [], source, context }: BodyProps) {
   if (!incomingTags) return;
 

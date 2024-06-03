@@ -421,23 +421,41 @@ model Import {
 }
 
 enum ModelStatus {
-  Draft // saved but incomplete
-  Training // actively training
-  Published // complete
-  Scheduled // scheduled for publish
-  Unpublished // taken from published -> hidden intentionally?
-  UnpublishedViolation // taken from published -> hidden unintentionally?
-  GatherInterest // unused?
-  Deleted // deleted by user/system
+  /// saved but incomplete
+  Draft
+  /// actively training
+  Training
+  /// complete
+  Published
+  /// scheduled for publish
+  Scheduled
+  /// taken from published -> hidden intentionally?
+  Unpublished
+  /// taken from published -> hidden unintentionally?
+  UnpublishedViolation
+  /// unused?
+  GatherInterest
+  /// deleted by user/system
+  Deleted
 }
 
 enum TrainingStatus {
-  Pending // not submitted yet (in draft mode)
-  Submitted // submitted for processing (in civitai queue/delay, OR not picked up by external system)
-  Processing // actively generating
-  InReview // done, waiting for publish
-  Failed // something went wrong either externally or internally
-  Approved // published
+  /// not submitted yet (in draft mode)
+  Pending
+  /// submitted for processing (in civitai queue/delay, OR not picked up by external system)
+  Submitted
+  /// awaiting approval or confirmation
+  Paused
+  /// rejected for violation
+  Denied
+  /// actively generating
+  Processing
+  /// done, waiting for publish
+  InReview
+  /// something went wrong either externally or internally
+  Failed
+  /// published
+  Approved
 }
 
 enum CommercialUse {

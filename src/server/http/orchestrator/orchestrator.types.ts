@@ -181,6 +181,6 @@ export namespace Orchestrator {
       descending?: boolean;
     };
 
-    export type GetResponse = Array<{ type?: string; dateTime?: string }>;
+    export type GetResponse = Array<{ type?: string; dateTime?: string; context?: MixedObject }>;
   }
 }

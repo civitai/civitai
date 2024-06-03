@@ -6,6 +6,7 @@ import {
   Button,
   Card,
   Center,
+  createStyles,
   Group,
   Loader,
   MantineTheme,
@@ -15,42 +16,50 @@ import {
   Text,
   ThemeIcon,
   Tooltip,
-  createStyles,
 } from '@mantine/core';
+import { useLocalStorage } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
 import { CollectionType, ModelFileVisibility, ModelModifier, ModelStatus } from '@prisma/client';
 import {
-  IconClock,
-  IconDownload,
   IconBrush,
-  IconExclamationMark,
-  IconLicense,
-  IconMessageCircle2,
-  IconShare3,
+  IconClock,
   IconCloudCheck,
   IconCloudLock,
+  IconDownload,
+  IconExclamationMark,
   IconHeart,
-  IconPhotoPlus,
+  IconLicense,
   IconLock,
+  IconMessageCircle2,
+  IconPhotoPlus,
+  IconShare3,
 } from '@tabler/icons-react';
 import { TRPCClientErrorBase } from '@trpc/client';
 import { DefaultErrorShape } from '@trpc/server';
 import dayjs from 'dayjs';
 import { startCase } from 'lodash-es';
 import { SessionUser } from 'next-auth';
+import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useRef, useState } from 'react';
-
+import { adsRegistry } from '~/components/Ads/adsRegistry';
+import { Adunit } from '~/components/Ads/AdUnit';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { useCivitaiLink } from '~/components/CivitaiLink/CivitaiLinkProvider';
 import { CivitaiLinkManageButton } from '~/components/CivitaiLink/CivitaiLinkManageButton';
+import { useCivitaiLink } from '~/components/CivitaiLink/CivitaiLinkProvider';
+import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
-import { CreatorCard, SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
+import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
 import {
   DescriptionTable,
   type Props as DescriptionTableProps,
 } from '~/components/DescriptionTable/DescriptionTable';
+import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { FileInfo } from '~/components/FileInfo/FileInfo';
+import { IconBadge } from '~/components/IconBadge/IconBadge';
+import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { EarlyAccessAlert } from '~/components/Model/EarlyAccessAlert/EarlyAccessAlert';
 import { HowToButton, HowToUseModel } from '~/components/Model/HowToUseModel/HowToUseModel';
 import { ModelCarousel } from '~/components/Model/ModelCarousel/ModelCarousel';
@@ -58,15 +67,28 @@ import { ModelFileAlert } from '~/components/Model/ModelFileAlert/ModelFileAlert
 import { ModelHash } from '~/components/Model/ModelHash/ModelHash';
 import { ModelURN, URNExplanation } from '~/components/Model/ModelURN/ModelURN';
 import { DownloadButton } from '~/components/Model/ModelVersions/DownloadButton';
+import { useQueryModelVersionsEngagement } from '~/components/Model/ModelVersions/model-version.utils';
+import { ModelVersionReview } from '~/components/Model/ModelVersions/ModelVersionReview';
 import { ScheduleModal } from '~/components/Model/ScheduleModal/ScheduleModal';
 import { PermissionIndicator } from '~/components/PermissionIndicator/PermissionIndicator';
+import { PoiAlert } from '~/components/PoiAlert/PoiAlert';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
+import {
+  EditUserResourceReviewLight,
+  UserResourceReviewComposite,
+} from '~/components/ResourceReview/EditUserResourceReview';
+import { useQueryUserResourceReview } from '~/components/ResourceReview/resourceReview.utils';
+import { ResourceReviewThumbActions } from '~/components/ResourceReview/ResourceReviewThumbActions';
 import { GenerateButton } from '~/components/RunStrategy/GenerateButton';
 import { RunButton } from '~/components/RunStrategy/RunButton';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
+import { IconCivitai } from '~/components/SVG/IconCivitai';
+import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
+import { ToggleVaultButton } from '~/components/Vault/ToggleVaultButton';
 import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
+import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
   baseModelLicenses,
@@ -79,34 +101,11 @@ import { unpublishReasons } from '~/server/common/moderation-helpers';
 import { getFileDisplayName, getPrimaryFile } from '~/server/utils/model-helpers';
 import { ModelById } from '~/types/router';
 import { formatDate, formatDateMin } from '~/utils/date-helpers';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { formatKBytes } from '~/utils/number-helpers';
 import { getDisplayName, removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import { PoiAlert } from '~/components/PoiAlert/PoiAlert';
-import Link from 'next/link';
-import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
-import { IconCivitai } from '~/components/SVG/IconCivitai';
-import { containerQuery } from '~/utils/mantine-css-helpers';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
-import { dialogStore } from '~/components/Dialog/dialogStore';
-import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
-import { IconBadge } from '~/components/IconBadge/IconBadge';
-import { Adunit } from '~/components/Ads/AdUnit';
-import { adsRegistry } from '~/components/Ads/adsRegistry';
-import { useLocalStorage } from '@mantine/hooks';
-import { ToggleVaultButton } from '~/components/Vault/ToggleVaultButton';
-import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
-import { useQueryUserResourceReview } from '~/components/ResourceReview/resourceReview.utils';
-import { ModelVersionReview } from '~/components/Model/ModelVersions/ModelVersionReview';
-import { useQueryModelVersionsEngagement } from '~/components/Model/ModelVersions/model-version.utils';
-import {
-  EditUserResourceReviewLight,
-  UserResourceReviewComposite,
-} from '~/components/ResourceReview/EditUserResourceReview';
-import { ResourceReviewThumbActions } from '~/components/ResourceReview/ResourceReviewThumbActions';
-import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
-import { openContext } from '~/providers/CustomModalsProvider';
 
 const useStyles = createStyles(() => ({
   ctaContainer: {

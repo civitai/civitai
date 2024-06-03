@@ -1,4 +1,4 @@
-import { Image, ImageGenerationProcess, Prisma, TrainingStatus } from '@prisma/client';
+import { ImageGenerationProcess, Prisma, TrainingStatus } from '@prisma/client';
 import { ModelFileType } from '~/server/common/constants';
 import { MyDraftModelGetAll, MyTrainingModelGetAll } from '~/types/router';
 import { QS } from '~/utils/qs';
@@ -51,12 +51,8 @@ export function getModelWizardUrl(model: MyDraftModelGetAll['items'][number]) {
 
 export function getModelTrainingWizardUrl(model: MyTrainingModelGetAll['items'][number]) {
   const currentVersion = model.modelVersions[0];
-  if (
-    currentVersion &&
-    currentVersion.trainingStatus &&
-    currentVersion.trainingStatus !== TrainingStatus.Pending &&
-    currentVersion.trainingStatus !== TrainingStatus.Failed
-  ) {
+  const trainingStatus = currentVersion?.trainingStatus;
+  if (trainingStatus && trainingStatus !== TrainingStatus.Pending) {
     // TODO [bw] what should we do here? check for specific other values?
     return `/models/${model.id}/wizard?step=1`;
   }

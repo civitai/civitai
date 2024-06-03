@@ -1,6 +1,5 @@
 import { ModelHashType, ModelStatus, Prisma, ScanResultCode } from '@prisma/client';
 import { z } from 'zod';
-
 import { env } from '~/env/server.mjs';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';

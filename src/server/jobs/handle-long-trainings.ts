@@ -19,10 +19,11 @@ const logJob = (data: MixedObject) => {
 };
 
 type JobStatus =
-  | { status: 'Failed' }
+  | { status: 'Failed'; date?: Date; context?: MixedObject }
   | {
       status: 'Succeeded' | 'Deleted' | 'Canceled' | 'Expired' | 'Processing' | 'Rejected';
       date: Date;
+      context?: MixedObject;
     };
 const failedState: JobStatus = { status: 'Failed' };
 
@@ -43,10 +44,10 @@ async function getJobStatus(jobId: string, submittedAt: Date, log: (message: str
   if (!eventData) return fail(`Couldn't parse JSON events for job`);
   if (!eventData.length) return fail(`No event history for job`);
 
-  const { type: status, dateTime: date } = eventData[0];
+  const { type: status, dateTime: date, context } = eventData[0];
   if (!status || !date) return fail(`Couldn't grab latest type/date for job`);
 
-  return { status, date: new Date(date) } as JobStatus;
+  return { status, context, date: new Date(date) } as JobStatus;
 }
 
 async function handleJob({
@@ -86,17 +87,18 @@ async function handleJob({
   }
 
   if (
-    job.status === 'Failed' ||
-    job.status === 'Deleted' ||
-    job.status === 'Canceled' ||
-    job.status === 'Expired'
+    (job.status === 'Failed' ||
+      job.status === 'Deleted' ||
+      job.status === 'Canceled' ||
+      job.status === 'Expired') &&
+    !job.context?.needsReview
   ) {
     log(`Job status is ${job.status} - failing.`);
     await updateStatus('Failed');
     return await refund();
   }
 
-  const jobUpdated = job.date.getTime();
+  const jobUpdated = job.date?.getTime() ?? new Date().getTime();
   const minsDiff = (new Date().getTime() - jobUpdated) / (1000 * 60);
 
   if (job.status === 'Rejected') {
