@@ -12,9 +12,11 @@ import {
   updateTextToImageWorkflow,
 } from '~/server/services/orchestrator/textToImage';
 import { cancelWorkflow, deleteWorkflow } from '~/server/services/orchestrator/workflows';
-import { protectedProcedure, router } from '~/server/trpc';
+import { guardedProcedure, protectedProcedure, router } from '~/server/trpc';
 import { edgeCacheIt } from '~/server/middleware.trpc';
 import { CacheTTL } from '~/server/common/constants';
+import { TRPCError } from '@trpc/server';
+import { reportProhibitedRequestHandler } from '~/server/controllers/user.controller';
 
 export const orchestratorRouter = router({
   // #region [requests]
@@ -24,12 +26,6 @@ export const orchestratorRouter = router({
   cancelWorkflow: protectedProcedure
     .input(workflowIdSchema)
     .mutation(({ ctx, input }) => cancelWorkflow({ ...input, user: ctx.user })),
-  // updateWorkflow: protectedProcedure
-  //   .input(workflowUpdateSchema)
-  //   .mutation(({ ctx, input }) => updateWorkflow({ ...input, user: ctx.user })),
-  // updateManyWorkflows: protectedProcedure
-  //   .input(z.object({ workflows: workflowUpdateSchema.array() }))
-  //   .mutation(({ ctx, input }) => updateManyWorkflows({ ...input, user: ctx.user })),
   // #endregion
 
   // #region [textToImage]
@@ -40,9 +36,19 @@ export const orchestratorRouter = router({
     .input(textToImageWhatIfSchema)
     .use(edgeCacheIt({ ttl: CacheTTL.hour }))
     .query(({ input, ctx }) => whatIfTextToImage({ ...input, user: ctx.user })),
-  createTextToImage: protectedProcedure
-    .input(textToImageSchema)
-    .mutation(({ ctx, input }) => createTextToImage({ ...input, user: ctx.user })),
+  createTextToImage: guardedProcedure.input(textToImageSchema).mutation(async ({ ctx, input }) => {
+    try {
+      await createTextToImage({ ...input, user: ctx.user });
+    } catch (e) {
+      if (e instanceof TRPCError && e.message.startsWith('Your prompt was flagged')) {
+        await reportProhibitedRequestHandler({
+          input: { prompt: input.params.prompt, source: 'External' },
+          ctx,
+        });
+      }
+      throw e;
+    }
+  }),
   updateManyTextToImageWorkflows: protectedProcedure
     .input(z.object({ workflows: textToImageWorkflowUpdateSchema.array() }))
     .mutation(({ ctx, input }) => updateTextToImageWorkflow({ ...input, user: ctx.user })),
