@@ -3021,6 +3021,7 @@ model Tool {
   type       ToolType
   domain     String?
   imageTools ImageTool[]
+  priority   Int?
 }
 
 model ImageTool {
