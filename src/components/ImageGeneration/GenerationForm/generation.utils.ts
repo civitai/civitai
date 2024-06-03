@@ -31,76 +31,76 @@ export const useGenerationFormStore = create<Partial<GenerateFormModel>>()(
   persist(() => ({}), { name: 'generation-form-2', version: 0 })
 );
 
-export const useDerivedGenerationState = () => {
-  const status = useGenerationStatus();
-  const { cost, ready, isCalculatingCost, costEstimateError } = useEstimateTextToImageJobCost();
+// export const useDerivedGenerationState = () => {
+//   const status = useGenerationStatus();
+//   const { cost, ready, isCalculatingCost, costEstimateError } = useEstimateTextToImageJobCost();
 
-  const selectedResources = useGenerationFormStore(({ resources = [], model }) => {
-    return model ? resources.concat([model]).filter(isDefined) : resources.filter(isDefined);
-  });
-  const { unstableResources: allUnstableResources } = useUnstableResources();
+//   const selectedResources = useGenerationFormStore(({ resources = [], model }) => {
+//     return model ? resources.concat([model]).filter(isDefined) : resources.filter(isDefined);
+//   });
+//   const { unstableResources: allUnstableResources } = useUnstableResources();
 
-  const { baseModel } = useGenerationFormStore(
-    useCallback(
-      ({ model }) => {
-        const baseModel = model?.baseModel ? getBaseModelSetType(model.baseModel) : undefined;
-        return {
-          baseModel,
-        };
-      },
-      [status]
-    )
-  );
+//   const { baseModel } = useGenerationFormStore(
+//     useCallback(
+//       ({ model }) => {
+//         const baseModel = model?.baseModel ? getBaseModelSetType(model.baseModel) : undefined;
+//         return {
+//           baseModel,
+//         };
+//       },
+//       [status]
+//     )
+//   );
 
-  const hasResources = useGenerationFormStore(
-    ({ resources = [], vae }) => [...resources, vae].filter(isDefined).length > 0
-  );
+//   const hasResources = useGenerationFormStore(
+//     ({ resources = [], vae }) => [...resources, vae].filter(isDefined).length > 0
+//   );
 
-  const additionalResourcesCount = useGenerationFormStore(({ resources = [] }) => resources.length);
+//   const additionalResourcesCount = useGenerationFormStore(({ resources = [] }) => resources.length);
 
-  const resources = useGenerationFormStore((state) => state.resources);
-  const isLCM = useGenerationFormStore(
-    (state) =>
-      (state.model?.baseModel.includes('LCM') ||
-        state.resources?.some((x) => x.baseModel.includes('LCM'))) ??
-      false
-  );
-  const trainedWords = useMemo(
-    () => resources?.flatMap((x) => x.trainedWords).filter(isDefined) ?? [],
-    [resources]
-  );
+//   const resources = useGenerationFormStore((state) => state.resources);
+//   const isLCM = useGenerationFormStore(
+//     (state) =>
+//       (state.model?.baseModel.includes('LCM') ||
+//         state.resources?.some((x) => x.baseModel.includes('LCM'))) ??
+//       false
+//   );
+//   const trainedWords = useMemo(
+//     () => resources?.flatMap((x) => x.trainedWords).filter(isDefined) ?? [],
+//     [resources]
+//   );
 
-  const samplerCfgOffset = useGenerationFormStore(({ sampler, cfgScale }) => {
-    const castedSampler = sampler as keyof typeof samplerOffsets;
-    const samplerOffset = samplerOffsets[castedSampler] ?? 0;
-    const cfgOffset = Math.max((cfgScale ?? 0) - 4, 0) * 2;
+//   const samplerCfgOffset = useGenerationFormStore(({ sampler, cfgScale }) => {
+//     const castedSampler = sampler as keyof typeof samplerOffsets;
+//     const samplerOffset = samplerOffsets[castedSampler] ?? 0;
+//     const cfgOffset = Math.max((cfgScale ?? 0) - 4, 0) * 2;
 
-    return samplerOffset + cfgOffset;
-  });
+//     return samplerOffset + cfgOffset;
+//   });
 
-  const unstableResources = useMemo(
-    () => selectedResources.filter((x) => allUnstableResources.includes(x.id)),
-    [selectedResources, allUnstableResources]
-  );
+//   const unstableResources = useMemo(
+//     () => selectedResources.filter((x) => allUnstableResources.includes(x.id)),
+//     [selectedResources, allUnstableResources]
+//   );
 
-  const draft = useGenerationFormStore((x) => x.draft);
+//   const draft = useGenerationFormStore((x) => x.draft);
 
-  return {
-    cost,
-    ready,
-    baseModel,
-    hasResources,
-    trainedWords,
-    additionalResourcesCount,
-    samplerCfgOffset,
-    isSDXL: baseModel === 'SDXL',
-    isLCM,
-    unstableResources,
-    isCalculatingCost,
-    draft,
-    costEstimateError,
-  };
-};
+//   return {
+//     cost,
+//     ready,
+//     baseModel,
+//     hasResources,
+//     trainedWords,
+//     additionalResourcesCount,
+//     samplerCfgOffset,
+//     isSDXL: baseModel === 'SDXL',
+//     isLCM,
+//     unstableResources,
+//     isCalculatingCost,
+//     draft,
+//     costEstimateError,
+//   };
+// };
 
 const defaultServiceStatus = generationStatusSchema.parse({});
 export const useGenerationStatus = () => {
@@ -120,53 +120,53 @@ export const useGenerationStatus = () => {
   }, [data, currentUser]);
 };
 
-export const useEstimateTextToImageJobCost = () => {
-  const status = useGenerationStatus();
-  const model = useGenerationFormStore((state) => state.model);
-  const baseModel = model?.baseModel ? getBaseModelSetType(model.baseModel) : undefined;
+// export const useEstimateTextToImageJobCost = () => {
+//   const status = useGenerationStatus();
+//   const model = useGenerationFormStore((state) => state.model);
+//   const baseModel = model?.baseModel ? getBaseModelSetType(model.baseModel) : undefined;
 
-  const input = useGenerationFormStore(
-    useCallback(
-      (state) => {
-        const { aspectRatio, steps, quantity, sampler, draft, staging, resources } = state;
-        const baseModel = model?.baseModel ? getBaseModelSetKey(model.baseModel) : undefined;
-        if (!status.charge || !baseModel) return null;
+//   const input = useGenerationFormStore(
+//     useCallback(
+//       (state) => {
+//         const { aspectRatio, steps, quantity, sampler, draft, staging, resources } = state;
+//         const baseModel = model?.baseModel ? getBaseModelSetType(model.baseModel) : undefined;
+//         if (!status.charge || !baseModel) return null;
 
-        return {
-          model: status.checkResourceAvailability
-            ? model?.id ?? generation.defaultValues.model.id
-            : undefined,
-          baseModel: baseModel ?? generation.defaultValues.model.baseModel,
-          aspectRatio: aspectRatio ?? generation.defaultValues.aspectRatio,
-          steps: steps ?? generation.defaultValues.steps,
-          quantity: quantity ?? generation.defaultValues.quantity,
-          sampler: sampler ?? generation.defaultValues.sampler,
-          resources: status.checkResourceAvailability
-            ? resources?.map((x) => x.id).sort()
-            : undefined,
-          staging,
-          draft,
-        };
-      },
-      [model, status.charge, status.checkResourceAvailability]
-    )
-  );
+//         return {
+//           model: status.checkResourceAvailability
+//             ? model?.id ?? generation.defaultValues.model.id
+//             : undefined,
+//           baseModel: baseModel ?? generation.defaultValues.model.baseModel,
+//           aspectRatio: aspectRatio ?? generation.defaultValues.aspectRatio,
+//           steps: steps ?? generation.defaultValues.steps,
+//           quantity: quantity ?? generation.defaultValues.quantity,
+//           sampler: sampler ?? generation.defaultValues.sampler,
+//           resources: status.checkResourceAvailability
+//             ? resources?.map((x) => x.id).sort()
+//             : undefined,
+//           staging,
+//           draft,
+//         };
+//       },
+//       [model, status.charge, status.checkResourceAvailability]
+//     )
+//   );
 
-  const {
-    data: result,
-    isLoading,
-    isError,
-  } = trpc.generation.estimateTextToImage.useQuery(input as GenerationRequestTestRunSchema, {
-    enabled: !!input,
-  });
+//   const {
+//     data: result,
+//     isLoading,
+//     isError,
+//   } = trpc.generation.estimateTextToImage.useQuery(input as GenerationRequestTestRunSchema, {
+//     enabled: !!input,
+//   });
 
-  return {
-    ...(result ?? {}),
-    cost: status.charge ? result?.cost ?? 0 : 0,
-    isCalculatingCost: input ? isLoading : false,
-    costEstimateError: !isLoading && isError,
-  };
-};
+//   return {
+//     ...(result ?? {}),
+//     cost: status.charge ? result?.cost ?? 0 : 0,
+//     isCalculatingCost: input ? isLoading : false,
+//     costEstimateError: !isLoading && isError,
+//   };
+// };
 
 export const useUnstableResources = () => {
   const { data: unstableResources = [] } = trpc.generation.getUnstableResources.useQuery(
@@ -220,143 +220,143 @@ export const useUnsupportedResources = () => {
   };
 };
 
-export const getFormData = (
-  type: RunType,
-  { resources = [], params }: Partial<Generation.Data>
-) => {
-  const state = useGenerationFormStore.getState();
-  let formData = { ...state, ...params };
+// export const getFormData = (
+//   type: RunType,
+//   { resources = [], params }: Partial<Generation.Data>
+// ) => {
+//   const state = useGenerationFormStore.getState();
+//   let formData = { ...state, ...params };
 
-  formData.model = resources.find((x) => x.modelType === 'Checkpoint') ?? formData.model;
+//   formData.model = resources.find((x) => x.modelType === 'Checkpoint') ?? formData.model;
 
-  /* baseModel needs to be determined as soon as possible
-    if(type === 'run') selected resource determines the baseModel
-    else baseModel is based off checkpoint model */
-  let baseModel = getBaseModelSetType(formData.model?.baseModel) ?? 'SD1';
-  if (type === 'run') {
-    const resource = resources[0];
-    const newBaseModel = getBaseModelSetType(resource.baseModel) ?? baseModel;
-    if (resource.modelType === 'Checkpoint' || resource.modelType === 'VAE') {
-      baseModel = newBaseModel;
-    } else {
-      // only use generationConfig for previous and new baseModels
-      const config = Object.entries(generationConfig)
-        .filter(([key]) => [baseModel, newBaseModel].includes(key as BaseModelSetType))
-        .map(([, value]) => value);
+//   /* baseModel needs to be determined as soon as possible
+//     if(type === 'run') selected resource determines the baseModel
+//     else baseModel is based off checkpoint model */
+//   let baseModel = getBaseModelSetType(formData.model?.baseModel) ?? 'SD1';
+//   if (type === 'run') {
+//     const resource = resources[0];
+//     const newBaseModel = getBaseModelSetType(resource.baseModel) ?? baseModel;
+//     if (resource.modelType === 'Checkpoint' || resource.modelType === 'VAE') {
+//       baseModel = newBaseModel;
+//     } else {
+//       // only use generationConfig for previous and new baseModels
+//       const config = Object.entries(generationConfig)
+//         .filter(([key]) => [baseModel, newBaseModel].includes(key as BaseModelSetType))
+//         .map(([, value]) => value);
 
-      const shouldUpdate = !config.every(({ additionalResourceTypes }) => {
-        return additionalResourceTypes.some(({ type, baseModelSet, baseModels }) => {
-          if (type !== resource.modelType) return false;
-          let allSupportedBaseModels = getBaseModelSet(baseModelSet) ?? [];
-          if (baseModels) {
-            for (const baseModel of baseModels) {
-              allSupportedBaseModels = [
-                ...new Set(allSupportedBaseModels.concat(getBaseModelSet(baseModel) ?? [])),
-              ];
-            }
-          }
-          return allSupportedBaseModels.includes(resource.baseModel as BaseModel);
-        });
-      });
-      if (shouldUpdate) baseModel = newBaseModel;
-    }
-  }
+//       const shouldUpdate = !config.every(({ additionalResourceTypes }) => {
+//         return additionalResourceTypes.some(({ type, baseModelSet, baseModels }) => {
+//           if (type !== resource.modelType) return false;
+//           let allSupportedBaseModels = getBaseModelSet(baseModelSet) ?? [];
+//           if (baseModels) {
+//             for (const baseModel of baseModels) {
+//               allSupportedBaseModels = [
+//                 ...new Set(allSupportedBaseModels.concat(getBaseModelSet(baseModel) ?? [])),
+//               ];
+//             }
+//           }
+//           return allSupportedBaseModels.includes(resource.baseModel as BaseModel);
+//         });
+//       });
+//       if (shouldUpdate) baseModel = newBaseModel;
+//     }
+//   }
 
-  const { additionalResourceTypes, checkpoint } = getGenerationConfig(baseModel);
+//   const { additionalResourceTypes, checkpoint } = getGenerationConfig(baseModel);
 
-  // filter out any additional resources that don't belong
-  const resourceFilter = (resource: Generation.Resource) => {
-    const baseModelSetKey = getBaseModelSetType(resource.baseModel);
-    return additionalResourceTypes.some((x) => {
-      const modelTypeMatches = x.type === resource.modelType;
-      const baseModelSetMatches = x.baseModelSet === baseModelSetKey;
-      const baseModelIncluded = x.baseModels?.includes(resource.baseModel as BaseModel);
-      return modelTypeMatches && (baseModelSetMatches || baseModelIncluded);
-    });
-  };
+//   // filter out any additional resources that don't belong
+//   const resourceFilter = (resource: Generation.Resource) => {
+//     const baseModelSetKey = getBaseModelSetType(resource.baseModel);
+//     return additionalResourceTypes.some((x) => {
+//       const modelTypeMatches = x.type === resource.modelType;
+//       const baseModelSetMatches = x.baseModelSet === baseModelSetKey;
+//       const baseModelIncluded = x.baseModels?.includes(resource.baseModel as BaseModel);
+//       return modelTypeMatches && (baseModelSetMatches || baseModelIncluded);
+//     });
+//   };
 
-  if (type === 'run') {
-    formData.vae =
-      resources.filter((x) => x.modelType === 'VAE').filter(resourceFilter)[0] ?? formData.vae;
-    formData.resources = [...(formData.resources ?? []), ...resources]
-      .filter((x) => x.modelType !== 'Checkpoint' && x.modelType !== 'VAE')
-      .filter(resourceFilter);
-  } else if (type === 'remix') {
-    formData.vae = resources.find((x) => x.modelType === 'VAE') ?? formData.vae;
-    formData.resources = resources
-      .filter((x) => x.modelType !== 'Checkpoint' && x.modelType !== 'VAE')
-      .filter(resourceFilter);
-  }
+//   if (type === 'run') {
+//     formData.vae =
+//       resources.filter((x) => x.modelType === 'VAE').filter(resourceFilter)[0] ?? formData.vae;
+//     formData.resources = [...(formData.resources ?? []), ...resources]
+//       .filter((x) => x.modelType !== 'Checkpoint' && x.modelType !== 'VAE')
+//       .filter(resourceFilter);
+//   } else if (type === 'remix') {
+//     formData.vae = resources.find((x) => x.modelType === 'VAE') ?? formData.vae;
+//     formData.resources = resources
+//       .filter((x) => x.modelType !== 'Checkpoint' && x.modelType !== 'VAE')
+//       .filter(resourceFilter);
+//   }
 
-  if (params) {
-    if (params.width || params.height)
-      formData.aspectRatio = getClosestAspectRatio(
-        params?.width,
-        params?.height,
-        params?.baseModel
-      );
-    if (params.sampler)
-      formData.sampler = generation.samplers.includes(
-        params.sampler as (typeof generation.samplers)[number]
-      )
-        ? params.sampler
-        : undefined;
-  }
+//   if (params) {
+//     if (params.width || params.height)
+//       formData.aspectRatio = getClosestAspectRatio(
+//         params?.width,
+//         params?.height,
+//         params?.baseModel
+//       );
+//     if (params.sampler)
+//       formData.sampler = generation.samplers.includes(
+//         params.sampler as (typeof generation.samplers)[number]
+//       )
+//         ? params.sampler
+//         : undefined;
+//   }
 
-  // set default model
-  const baseModelMatches = getBaseModelSetType(formData.model?.baseModel) === baseModel;
-  if (!baseModelMatches) {
-    formData.model = checkpoint;
-  }
+//   // set default model
+//   const baseModelMatches = getBaseModelSetType(formData.model?.baseModel) === baseModel;
+//   if (!baseModelMatches) {
+//     formData.model = checkpoint;
+//   }
 
-  const maxValueKeys = Object.keys(generation.maxValues);
-  for (const item of maxValueKeys) {
-    const key = item as keyof typeof generation.maxValues;
-    if (formData[key]) {
-      formData[key] = Math.min(formData[key] ?? 0, generation.maxValues[key]);
-    }
-  }
+//   const maxValueKeys = Object.keys(generation.maxValues);
+//   for (const item of maxValueKeys) {
+//     const key = item as keyof typeof generation.maxValues;
+//     if (formData[key]) {
+//       formData[key] = Math.min(formData[key] ?? 0, generation.maxValues[key]);
+//     }
+//   }
 
-  if (type !== 'remix') formData = removeEmpty(formData);
-  formData.resources = formData.resources?.length
-    ? uniqBy(formData.resources, 'id').slice(0, 9)
-    : undefined;
+//   if (type !== 'remix') formData = removeEmpty(formData);
+//   formData.resources = formData.resources?.length
+//     ? uniqBy(formData.resources, 'id').slice(0, 9)
+//     : undefined;
 
-  // Look through data for Draft resource.
-  // If we find them, toggle draft and remove the resource.
-  const isSDXL = baseModel === 'SDXL' || baseModel === 'Pony' || baseModel === 'SDXLDistilled';
-  const draftResourceId = draftMode[isSDXL ? 'sdxl' : 'sd1'].resourceId;
-  const draftResourceIndex = formData.resources?.findIndex((x) => x.id === draftResourceId) ?? -1;
-  if (draftResourceIndex !== -1) {
-    formData.draft = true;
-    formData.resources?.splice(draftResourceIndex, 1);
-  }
-  if (isSDXL) formData.clipSkip = 2;
+//   // Look through data for Draft resource.
+//   // If we find them, toggle draft and remove the resource.
+//   const isSDXL = baseModel === 'SDXL' || baseModel === 'Pony' || baseModel === 'SDXLDistilled';
+//   const draftResourceId = draftMode[isSDXL ? 'sdxl' : 'sd1'].resourceId;
+//   const draftResourceIndex = formData.resources?.findIndex((x) => x.id === draftResourceId) ?? -1;
+//   if (draftResourceIndex !== -1) {
+//     formData.draft = true;
+//     formData.resources?.splice(draftResourceIndex, 1);
+//   }
+//   if (isSDXL) formData.clipSkip = 2;
 
-  return {
-    ...formData,
-    baseModel,
-  };
-};
+//   return {
+//     ...formData,
+//     baseModel,
+//   };
+// };
 
 // TODO.orchestration - remove
-export const getClosestAspectRatio = (width?: number, height?: number, baseModel?: string) => {
-  width = width ?? (baseModel === 'SDXL' ? 1024 : 512);
-  height = height ?? (baseModel === 'SDXL' ? 1024 : 512);
-  const aspectRatios = getGenerationConfig(baseModel).aspectRatios;
-  const ratios = aspectRatios.map((x) => x.width / x.height);
-  const closest = findClosest(ratios, width / height);
-  const index = ratios.indexOf(closest);
-  return `${index ?? 0}`;
-};
+// export const getClosestAspectRatio = (width?: number, height?: number, baseModel?: string) => {
+//   width = width ?? (baseModel === 'SDXL' ? 1024 : 512);
+//   height = height ?? (baseModel === 'SDXL' ? 1024 : 512);
+//   const aspectRatios = getGenerationConfig(baseModel).aspectRatios;
+//   const ratios = aspectRatios.map((x) => x.width / x.height);
+//   const closest = findClosest(ratios, width / height);
+//   const index = ratios.indexOf(closest);
+//   return `${index ?? 0}`;
+// };
 
 // TODO - move these somewhere that makes more sense
-export const getBaseModelSet = (baseModel?: string) => {
-  if (!baseModel) return undefined;
-  return Object.entries(baseModelSets).find(
-    ([key, set]) => key === baseModel || set.includes(baseModel as BaseModel)
-  )?.[1];
-};
+// export const getBaseModelSet = (baseModel?: string) => {
+//   if (!baseModel) return undefined;
+//   return Object.entries(baseModelSets).find(
+//     ([key, set]) => key === baseModel || set.includes(baseModel as BaseModel)
+//   )?.[1];
+// };
 
 /**
  * Taken from stable-diffusion-webui github repo and modified to fit our needs

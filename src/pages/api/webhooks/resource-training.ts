@@ -1,7 +1,6 @@
 import { TrainingStatus } from '@prisma/client';
 import { z } from 'zod';
 import { env } from '~/env/server.mjs';
-import { JobStatus } from '~/libs/orchestrator/jobs';
 import { SignalMessages } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { trainingCompleteEmail, trainingFailEmail } from '~/server/email/templates';
@@ -63,7 +62,7 @@ const schema = z.object({
   jobHasCompleted: z.boolean(),
 });
 
-const mapTrainingStatus: { [key in JobStatus]: TrainingStatus } = {
+const mapTrainingStatus: { [key: string]: TrainingStatus } = {
   Initialized: TrainingStatus.Submitted,
   Claimed: TrainingStatus.Submitted,
   ClaimExpired: TrainingStatus.Submitted,
@@ -102,7 +101,7 @@ export default WebhookEndpoint(async (req, res) => {
 
   const data = bodyResults.data;
   const needsReview = !!data.context?.needsReview;
-  const jobStatus = data.type as JobStatus;
+  const jobStatus = data.type;
 
   if (['Deleted', 'Canceled', 'Expired', 'Failed'].includes(jobStatus) && !needsReview) {
     logWebhook({

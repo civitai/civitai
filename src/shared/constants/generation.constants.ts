@@ -97,6 +97,13 @@ export function getBaseModelSetType(baseModel?: string, defaultType?: BaseModelS
   )?.[0] ?? defaultType) as BaseModelSetType;
 }
 
+export const getBaseModelSet = (baseModel?: string) => {
+  if (!baseModel) return undefined;
+  return Object.entries(baseModelSets).find(
+    ([key, set]) => key === baseModel || set.includes(baseModel as BaseModel)
+  )?.[1];
+};
+
 export function getIsSdxl(baseModelSetType: BaseModelSetType) {
   return (
     baseModelSetType === 'SDXL' ||

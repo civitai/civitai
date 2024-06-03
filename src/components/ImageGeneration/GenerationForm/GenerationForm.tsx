@@ -3,8 +3,8 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { blockedRequest } from '~/server/schema/generation.schema';
 import {
-  getFormData,
-  useDerivedGenerationState,
+  // getFormData,
+  // useDerivedGenerationState,
   useGenerationFormStore,
   keyupEditAttention,
   useGenerationStatus,
@@ -126,37 +126,37 @@ const schema = textToImageParamsSchema.extend({
 //     return steps > limit ? limit : steps;
 //   }
 
-  useEffect(() => {
-    const storedState = useGenerationFormStore.getState();
-    const steps = getSteps(storedState.steps ?? defaultValues.steps, limits.steps);
-    if (steps !== storedState.steps) useGenerationFormStore.setState({ steps });
-    form.reset({
-      ...defaultValues,
-      ...storedState,
-      steps,
-      // Use solely to update the resource limits based on tier
-      tier: currentUser?.tier ?? 'free',
-    });
-    const subscription = form.watch((value) => {
-      useGenerationFormStore.setState({ ...(value as GenerateFormModel) }, true);
-    });
-    return () => subscription.unsubscribe();
-  }, [currentUser]); // eslint-disable-line
+// useEffect(() => {
+//   const storedState = useGenerationFormStore.getState();
+//   const steps = getSteps(storedState.steps ?? defaultValues.steps, limits.steps);
+//   if (steps !== storedState.steps) useGenerationFormStore.setState({ steps });
+//   form.reset({
+//     ...defaultValues,
+//     ...storedState,
+//     steps,
+//     // Use solely to update the resource limits based on tier
+//     tier: currentUser?.tier ?? 'free',
+//   });
+//   const subscription = form.watch((value) => {
+//     useGenerationFormStore.setState({ ...(value as GenerateFormModel) }, true);
+//   });
+//   return () => subscription.unsubscribe();
+// }, [currentUser]); // eslint-disable-line
 
-  const {
-    cost,
-    ready,
-    baseModel,
-    hasResources,
-    trainedWords,
-    additionalResourcesCount,
-    samplerCfgOffset,
-    isSDXL,
-    unstableResources,
-    isCalculatingCost,
-    draft,
-    costEstimateError,
-  } = useDerivedGenerationState();
+// const {
+//   cost,
+//   ready,
+//   baseModel,
+//   hasResources,
+//   trainedWords,
+//   additionalResourcesCount,
+//   samplerCfgOffset,
+//   isSDXL,
+//   unstableResources,
+//   isCalculatingCost,
+//   draft,
+//   costEstimateError,
+// } = useDerivedGenerationState();
 
 //   const { conditionalPerformTransaction } = useBuzzTransaction({
 //     message: (requiredBalance) =>
@@ -231,9 +231,9 @@ const schema = textToImageParamsSchema.extend({
 //       }
 //     };
 
-    setPromptWarning(null);
-    conditionalPerformTransaction(cost, performTransaction);
-  };
+//   setPromptWarning(null);
+//   conditionalPerformTransaction(cost, performTransaction);
+// };
 
 //   const { mutateAsync: reportProhibitedRequest } = trpc.user.reportProhibitedRequest.useMutation();
 //   const handleError = async (e: unknown) => {
@@ -251,25 +251,25 @@ const schema = textToImageParamsSchema.extend({
 //   };
 //   // #endregion
 
-  // #region [handle parse prompt]
-  const [showFillForm, setShowFillForm] = useState(false);
-  const handleParsePrompt = async () => {
-    const prompt = form.getValues('prompt');
-    const metadata = parsePromptMetadata(prompt);
-    const result = imageGenerationSchema.safeParse(metadata);
+// #region [handle parse prompt]
+// const [showFillForm, setShowFillForm] = useState(false);
+// const handleParsePrompt = async () => {
+//   const prompt = form.getValues('prompt');
+//   const metadata = parsePromptMetadata(prompt);
+//   const result = imageGenerationSchema.safeParse(metadata);
 
-    if (result.success) {
-      generationStore.setParams(result.data);
-      setShowFillForm(false);
-    } else {
-      console.error(result.error);
-      showErrorNotification({
-        title: 'Unable to parse prompt',
-        error: new Error('We are unable to fill out the form with the provided prompt.'),
-      });
-    }
-  };
-  // #endregion
+//   if (result.success) {
+//     generationStore.setParams(result.data);
+//     setShowFillForm(false);
+//   } else {
+//     console.error(result.error);
+//     showErrorNotification({
+//       title: 'Unable to parse prompt',
+//       error: new Error('We are unable to fill out the form with the provided prompt.'),
+//     });
+//   }
+// };
+// #endregion
 
 //   const promptKeyHandler = getHotkeyHandler([
 //     ['mod+Enter', () => form.handleSubmit(handleSubmit)()],
@@ -368,89 +368,89 @@ const schema = textToImageParamsSchema.extend({
 //                           </Badge>
 //                         )}
 
-                        <Button
-                          component="span"
-                          compact
-                          variant="light"
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            setOpened(true);
-                          }}
-                          radius="xl"
-                          ml="auto"
-                          disabled={atLimit}
-                        >
-                          <Group spacing={4} noWrap>
-                            <IconPlus size={16} />
-                            <Text size="sm" weight={500}>
-                              Add
-                            </Text>
-                          </Group>
-                        </Button>
-                      </Group>
-                      {atLimit && (!currentUser || currentUser.tier === 'free') && (
-                        <Text size="xs">
-                          <Link href="/pricing" passHref>
-                            <Anchor
-                              color="yellow"
-                              rel="nofollow"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              Become a member
-                            </Anchor>
-                          </Link>{' '}
-                          <Text inherit span>
-                            to use more resources at once
-                          </Text>
-                        </Text>
-                      )}
-                    </Stack>
-                  </Accordion.Control>
-                  <Accordion.Panel>
-                    <InputResourceSelectMultiple
-                      name="resources"
-                      limit={limits.resources}
-                      buttonLabel="Add additional resource"
-                      modalOpened={opened}
-                      onCloseModal={() => setOpened(false)}
-                      options={{
-                        canGenerate: true,
-                        resources: getGenerationConfig(baseModel).additionalResourceTypes,
-                      }}
-                      hideButton
-                    />
-                  </Accordion.Panel>
-                </Accordion.Item>
-              </PersistentAccordion>
-            </Card.Section>
-            {unstableResources.length > 0 && (
-              <Card.Section>
-                <Alert color="yellow" title="Potentially problematic resources" radius={0}>
-                  <Text size="xs">
-                    {`The following resources are currently causing generation failures. You
-                    may continue, but your generation might fail.`}
-                  </Text>
-                  <List size="xs">
-                    {unstableResources.map((resource) => (
-                      <List.Item key={resource.id}>
-                        {resource.modelName} - {resource.name}
-                      </List.Item>
-                    ))}
-                  </List>
-                </Alert>
-              </Card.Section>
-            )}
-            {ready === false && (
-              <Card.Section>
-                <Alert color="yellow" title="Potentially slow generation" radius={0}>
-                  <Text size="xs">
-                    {`We need to download additional resources to fulfill your request. This generation may take longer than usual to complete.`}
-                  </Text>
-                </Alert>
-              </Card.Section>
-            )}
-          </Card>
+//               <Button
+//                 component="span"
+//                 compact
+//                 variant="light"
+//                 onClick={(e) => {
+//                   e.preventDefault();
+//                   e.stopPropagation();
+//                   setOpened(true);
+//                 }}
+//                 radius="xl"
+//                 ml="auto"
+//                 disabled={atLimit}
+//               >
+//                 <Group spacing={4} noWrap>
+//                   <IconPlus size={16} />
+//                   <Text size="sm" weight={500}>
+//                     Add
+//                   </Text>
+//                 </Group>
+//               </Button>
+//             </Group>
+//             {atLimit && (!currentUser || currentUser.tier === 'free') && (
+//               <Text size="xs">
+//                 <Link href="/pricing" passHref>
+//                   <Anchor
+//                     color="yellow"
+//                     rel="nofollow"
+//                     onClick={(e) => e.stopPropagation()}
+//                   >
+//                     Become a member
+//                   </Anchor>
+//                 </Link>{' '}
+//                 <Text inherit span>
+//                   to use more resources at once
+//                 </Text>
+//               </Text>
+//             )}
+//           </Stack>
+//         </Accordion.Control>
+//         <Accordion.Panel>
+//           <InputResourceSelectMultiple
+//             name="resources"
+//             limit={limits.resources}
+//             buttonLabel="Add additional resource"
+//             modalOpened={opened}
+//             onCloseModal={() => setOpened(false)}
+//             options={{
+//               canGenerate: true,
+//               resources: getGenerationConfig(baseModel).additionalResourceTypes,
+//             }}
+//             hideButton
+//           />
+//         </Accordion.Panel>
+//       </Accordion.Item>
+//     </PersistentAccordion>
+//   </Card.Section>
+//   {unstableResources.length > 0 && (
+//     <Card.Section>
+//       <Alert color="yellow" title="Potentially problematic resources" radius={0}>
+//         <Text size="xs">
+//           {`The following resources are currently causing generation failures. You
+//           may continue, but your generation might fail.`}
+//         </Text>
+//         <List size="xs">
+//           {unstableResources.map((resource) => (
+//             <List.Item key={resource.id}>
+//               {resource.modelName} - {resource.name}
+//             </List.Item>
+//           ))}
+//         </List>
+//       </Alert>
+//     </Card.Section>
+//   )}
+//   {ready === false && (
+//     <Card.Section>
+//       <Alert color="yellow" title="Potentially slow generation" radius={0}>
+//         <Text size="xs">
+//           {`We need to download additional resources to fulfill your request. This generation may take longer than usual to complete.`}
+//         </Text>
+//       </Alert>
+//     </Card.Section>
+//   )}
+// </Card>
 
 //           <Stack spacing={0}>
 //             <Input.Wrapper
@@ -602,303 +602,298 @@ const schema = textToImageParamsSchema.extend({
 //             )}
 //           </Group>
 
-          <PersistentAccordion
-            storeKey="generation-form-advanced"
-            variant="contained"
-            classNames={{
-              item: classes.accordionItem,
-              control: classes.accordionControl,
-              content: classes.accordionContent,
-            }}
-          >
-            <Accordion.Item value="advanced">
-              <Accordion.Control>
-                <Text size="sm" weight={590}>
-                  Advanced
-                </Text>
-              </Accordion.Control>
-              <Accordion.Panel>
-                <Stack>
-                  <Stack pos="relative">
-                    <LoadingOverlay
-                      color={theme.colorScheme === 'dark' ? theme.colors.dark[7] : '#fff'}
-                      opacity={0.8}
-                      m={-8}
-                      radius="md"
-                      loader={
-                        <Text color="yellow" weight={500}>
-                          Not available in Draft Mode
-                        </Text>
-                      }
-                      zIndex={2}
-                      visible={!!draft}
-                    />
-                    <InputNumberSlider
-                      name="cfgScale"
-                      label={
-                        <Group spacing={4} noWrap>
-                          <Input.Label>CFG Scale</Input.Label>
-                          <InfoPopover size="xs" iconProps={{ size: 14 }}>
-                            Controls how closely the image generation follows the text prompt.{' '}
-                            <Anchor
-                              href="https://wiki.civitai.com/wiki/Classifier_Free_Guidance"
-                              target="_blank"
-                              rel="nofollow noreferrer"
-                              span
-                            >
-                              Learn more
-                            </Anchor>
-                            .
-                          </InfoPopover>
-                        </Group>
-                      }
-                      min={1}
-                      max={isSDXL ? 10 : 30}
-                      step={0.5}
-                      precision={1}
-                      sliderProps={sharedSliderProps}
-                      numberProps={sharedNumberProps}
-                      presets={[
-                        { label: 'Creative', value: '4' },
-                        { label: 'Balanced', value: '7' },
-                        { label: 'Precise', value: '10' },
-                      ]}
-                      reverse
-                      disabled={cfgDisabled}
-                    />
-                    <InputSelect
-                      name="sampler"
-                      disabled={samplerDisabled}
-                      label={
-                        <Group spacing={4} noWrap>
-                          <Input.Label>Sampler</Input.Label>
-                          <InfoPopover size="xs" iconProps={{ size: 14 }}>
-                            Each will produce a slightly (or significantly) different image result.{' '}
-                            <Anchor
-                              href="https://wiki.civitai.com/wiki/Sampler"
-                              target="_blank"
-                              rel="nofollow noreferrer"
-                              span
-                            >
-                              Learn more
-                            </Anchor>
-                            .
-                          </InfoPopover>
-                        </Group>
-                      }
-                      data={generation.samplers}
-                      presets={[
-                        { label: 'Fast', value: 'Euler a' },
-                        { label: 'Popular', value: 'DPM++ 2M Karras' },
-                      ]}
-                    />
-                    <InputNumberSlider
-                      name="steps"
-                      disabled={stepsDisabled}
-                      label={
-                        <Group spacing={4} noWrap>
-                          <Input.Label>Steps</Input.Label>
-                          <InfoPopover size="xs" iconProps={{ size: 14 }}>
-                            The number of iterations spent generating an image.{' '}
-                            <Anchor
-                              href="https://wiki.civitai.com/wiki/Sampling_Steps"
-                              target="_blank"
-                              rel="nofollow noreferrer"
-                              span
-                            >
-                              Learn more
-                            </Anchor>
-                            .
-                          </InfoPopover>
-                        </Group>
-                      }
-                      min={draft ? 3 : 10}
-                      max={draft ? 12 : limits.steps}
-                      sliderProps={sharedSliderProps}
-                      numberProps={sharedNumberProps}
-                      presets={[
-                        {
-                          label: 'Fast',
-                          value: Number(10 + samplerCfgOffset).toString(),
-                        },
-                        {
-                          label: 'Balanced',
-                          value: Number(20 + samplerCfgOffset).toString(),
-                        },
-                        {
-                          label: 'High',
-                          value: Number(30 + samplerCfgOffset).toString(),
-                        },
-                      ]}
-                      reverse
-                    />
-                  </Stack>
-                  <InputSeed name="seed" label="Seed" min={1} max={generation.maxValues.seed} />
-                  {!isSDXL && (
-                    <InputNumberSlider
-                      name="clipSkip"
-                      label="Clip Skip"
-                      min={1}
-                      max={generation.maxValues.clipSkip}
-                      sliderProps={{
-                        ...sharedSliderProps,
-                        marks: clipSkipMarks,
-                      }}
-                      numberProps={sharedNumberProps}
-                    />
-                  )}
-                  <InputResourceSelect
-                    name="vae"
-                    label={
-                      <Group spacing={4} noWrap>
-                        <Input.Label>{getDisplayName(ModelType.VAE)}</Input.Label>
-                        <InfoPopover size="xs" iconProps={{ size: 14 }}>
-                          These provide additional color and detail improvements.{' '}
-                          <Anchor
-                            href="https://wiki.civitai.com/wiki/Variational_Autoencoder"
-                            target="_blank"
-                            rel="nofollow noreferrer"
-                            span
-                          >
-                            Learn more
-                          </Anchor>
-                          .
-                        </InfoPopover>
-                      </Group>
-                    }
-                    buttonLabel="Add VAE"
-                    options={{
-                      canGenerate: true,
-                      resources: [{ type: ModelType.VAE, baseModelSet: baseModel }],
-                    }}
-                  />
-                  {currentUser?.isModerator && (
-                    <InputSwitch name="staging" label="Test Mode" labelPosition="left" />
-                  )}
-                </Stack>
-              </Accordion.Panel>
-            </Accordion.Item>
-          </PersistentAccordion>
-          {/* <Card {...sharedCardProps}>
-          <Stack>
-            <Text>TODO.hires</Text>
-          </Stack>
-          </Card> */}
-        </ScrollArea>
-        <div className={cx(classes.generationArea, 'px-2 py-2 flex flex-col gap-2')}>
-          <DailyBoostRewardClaim />
-          {promptWarning && (
-            <div>
-              <Alert color="red" title="Prohibited Prompt">
-                <Text>{promptWarning}</Text>
-                <Button
-                  color="red"
-                  variant="light"
-                  onClick={() => setPromptWarning(null)}
-                  style={{ marginTop: 10 }}
-                  leftIcon={<IconCheck />}
-                  fullWidth
-                >
-                  I Understand, Continue Generating
-                </Button>
-              </Alert>
-              <Text size="xs" color="dimmed" mt={4}>
-                Is this a mistake?{' '}
-                <Text
-                  component="a"
-                  td="underline"
-                  href={`https://forms.clickup.com/8459928/f/825mr-9671/KRFFR2BFKJCROV3B8Q?Civitai Username=${currentUser?.username}`}
-                  target="_blank"
-                >
-                  Submit your prompt for review
-                </Text>{' '}
-                so we can refine our system.
-              </Text>
-            </div>
-          )}
-          {status.available && !reviewed ? (
-            <Alert color="yellow" title="Image Generation Terms">
-              <Text size="xs">
-                By using the image generator you confirm that you have read and agree to our{' '}
-                <Text component={NextLink} href="/content/tos" td="underline">
-                  Terms of Service
-                </Text>{' '}
-                presented during onboarding. Failure to abide by{' '}
-                <Text component={NextLink} href="/content/tos" td="underline">
-                  our content policies
-                </Text>{' '}
-                will result in the loss of your access to the image generator.
-              </Text>
-              <Button
-                color="yellow"
-                variant="light"
-                onClick={() => setReviewed(true)}
-                style={{ marginTop: 10 }}
-                leftIcon={<IconCheck />}
-                fullWidth
-              >
-                I Confirm, Start Generating
-              </Button>
-            </Alert>
-          ) : status.available && !promptWarning ? (
-            <>
-              {status.charge && new Date() < BUZZ_CHARGE_NOTICE_END && (
-                <DismissibleAlert id="generator-charge-buzz">
-                  <Text>
-                    Generating images now costs Buzz.{' '}
-                    <Text component={NextLink} href="/articles/4797" td="underline">
-                      Learn why
-                    </Text>
-                  </Text>
-                </DismissibleAlert>
-              )}
+//   <PersistentAccordion
+//     storeKey="generation-form-advanced"
+//     variant="contained"
+//     classNames={{
+//       item: classes.accordionItem,
+//       control: classes.accordionControl,
+//       content: classes.accordionContent,
+//     }}
+//   >
+//     <Accordion.Item value="advanced">
+//       <Accordion.Control>
+//         <Text size="sm" weight={590}>
+//           Advanced
+//         </Text>
+//       </Accordion.Control>
+//       <Accordion.Panel>
+//         <Stack>
+//           <Stack pos="relative">
+//             <LoadingOverlay
+//               color={theme.colorScheme === 'dark' ? theme.colors.dark[7] : '#fff'}
+//               opacity={0.8}
+//               m={-8}
+//               radius="md"
+//               loader={
+//                 <Text color="yellow" weight={500}>
+//                   Not available in Draft Mode
+//                 </Text>
+//               }
+//               zIndex={2}
+//               visible={!!draft}
+//             />
+//             <InputNumberSlider
+//               name="cfgScale"
+//               label={
+//                 <Group spacing={4} noWrap>
+//                   <Input.Label>CFG Scale</Input.Label>
+//                   <InfoPopover size="xs" iconProps={{ size: 14 }}>
+//                     Controls how closely the image generation follows the text prompt.{' '}
+//                     <Anchor
+//                       href="https://wiki.civitai.com/wiki/Classifier_Free_Guidance"
+//                       target="_blank"
+//                       rel="nofollow noreferrer"
+//                       span
+//                     >
+//                       Learn more
+//                     </Anchor>
+//                     .
+//                   </InfoPopover>
+//                 </Group>
+//               }
+//               min={1}
+//               max={isSDXL ? 10 : 30}
+//               step={0.5}
+//               precision={1}
+//               sliderProps={sharedSliderProps}
+//               numberProps={sharedNumberProps}
+//               presets={[
+//                 { label: 'Creative', value: '4' },
+//                 { label: 'Balanced', value: '7' },
+//                 { label: 'Precise', value: '10' },
+//               ]}
+//               reverse
+//               disabled={cfgDisabled}
+//             />
+//             <InputSelect
+//               name="sampler"
+//               disabled={samplerDisabled}
+//               label={
+//                 <Group spacing={4} noWrap>
+//                   <Input.Label>Sampler</Input.Label>
+//                   <InfoPopover size="xs" iconProps={{ size: 14 }}>
+//                     Each will produce a slightly (or significantly) different image result.{' '}
+//                     <Anchor
+//                       href="https://wiki.civitai.com/wiki/Sampler"
+//                       target="_blank"
+//                       rel="nofollow noreferrer"
+//                       span
+//                     >
+//                       Learn more
+//                     </Anchor>
+//                     .
+//                   </InfoPopover>
+//                 </Group>
+//               }
+//               data={generation.samplers}
+//               presets={[
+//                 { label: 'Fast', value: 'Euler a' },
+//                 { label: 'Popular', value: 'DPM++ 2M Karras' },
+//               ]}
+//             />
+//             <InputNumberSlider
+//               name="steps"
+//               disabled={stepsDisabled}
+//               label={
+//                 <Group spacing={4} noWrap>
+//                   <Input.Label>Steps</Input.Label>
+//                   <InfoPopover size="xs" iconProps={{ size: 14 }}>
+//                     The number of iterations spent generating an image.{' '}
+//                     <Anchor
+//                       href="https://wiki.civitai.com/wiki/Sampling_Steps"
+//                       target="_blank"
+//                       rel="nofollow noreferrer"
+//                       span
+//                     >
+//                       Learn more
+//                     </Anchor>
+//                     .
+//                   </InfoPopover>
+//                 </Group>
+//               }
+//               min={draft ? 3 : 10}
+//               max={draft ? 12 : limits.steps}
+//               sliderProps={sharedSliderProps}
+//               numberProps={sharedNumberProps}
+//               presets={[
+//                 {
+//                   label: 'Fast',
+//                   value: Number(10 + samplerCfgOffset).toString(),
+//                 },
+//                 {
+//                   label: 'Balanced',
+//                   value: Number(20 + samplerCfgOffset).toString(),
+//                 },
+//                 {
+//                   label: 'High',
+//                   value: Number(30 + samplerCfgOffset).toString(),
+//                 },
+//               ]}
+//               reverse
+//             />
+//           </Stack>
+//           <InputSeed name="seed" label="Seed" min={1} max={generation.maxValues.seed} />
+//           {!isSDXL && (
+//             <InputNumberSlider
+//               name="clipSkip"
+//               label="Clip Skip"
+//               min={1}
+//               max={generation.maxValues.clipSkip}
+//               sliderProps={{
+//                 ...sharedSliderProps,
+//                 marks: clipSkipMarks,
+//               }}
+//               numberProps={sharedNumberProps}
+//             />
+//           )}
+//           <InputResourceSelect
+//             name="vae"
+//             label={
+//               <Group spacing={4} noWrap>
+//                 <Input.Label>{getDisplayName(ModelType.VAE)}</Input.Label>
+//                 <InfoPopover size="xs" iconProps={{ size: 14 }}>
+//                   These provide additional color and detail improvements.{' '}
+//                   <Anchor
+//                     href="https://wiki.civitai.com/wiki/Variational_Autoencoder"
+//                     target="_blank"
+//                     rel="nofollow noreferrer"
+//                     span
+//                   >
+//                     Learn more
+//                   </Anchor>
+//                   .
+//                 </InfoPopover>
+//               </Group>
+//             }
+//             buttonLabel="Add VAE"
+//             options={{
+//               canGenerate: true,
+//               resources: [{ type: ModelType.VAE, baseModelSet: baseModel }],
+//             }}
+//           />
+//           {currentUser?.isModerator && (
+//             <InputSwitch name="staging" label="Test Mode" labelPosition="left" />
+//           )}
+//         </Stack>
+//       </Accordion.Panel>
+//     </Accordion.Item>
+//   </PersistentAccordion>
+// </ScrollArea>
+// <div className={cx(classes.generationArea, 'px-2 py-2 flex flex-col gap-2')}>
+//   <DailyBoostRewardClaim />
+//   {promptWarning && (
+//     <div>
+//       <Alert color="red" title="Prohibited Prompt">
+//         <Text>{promptWarning}</Text>
+//         <Button
+//           color="red"
+//           variant="light"
+//           onClick={() => setPromptWarning(null)}
+//           style={{ marginTop: 10 }}
+//           leftIcon={<IconCheck />}
+//           fullWidth
+//         >
+//           I Understand, Continue Generating
+//         </Button>
+//       </Alert>
+//       <Text size="xs" color="dimmed" mt={4}>
+//         Is this a mistake?{' '}
+//         <Text
+//           component="a"
+//           td="underline"
+//           href={`https://forms.clickup.com/8459928/f/825mr-9671/KRFFR2BFKJCROV3B8Q?Civitai Username=${currentUser?.username}`}
+//           target="_blank"
+//         >
+//           Submit your prompt for review
+//         </Text>{' '}
+//         so we can refine our system.
+//       </Text>
+//     </div>
+//   )}
+//   {status.available && !reviewed ? (
+//     <Alert color="yellow" title="Image Generation Terms">
+//       <Text size="xs">
+//         By using the image generator you confirm that you have read and agree to our{' '}
+//         <Text component={NextLink} href="/content/tos" td="underline">
+//           Terms of Service
+//         </Text>{' '}
+//         presented during onboarding. Failure to abide by{' '}
+//         <Text component={NextLink} href="/content/tos" td="underline">
+//           our content policies
+//         </Text>{' '}
+//         will result in the loss of your access to the image generator.
+//       </Text>
+//       <Button
+//         color="yellow"
+//         variant="light"
+//         onClick={() => setReviewed(true)}
+//         style={{ marginTop: 10 }}
+//         leftIcon={<IconCheck />}
+//         fullWidth
+//       >
+//         I Confirm, Start Generating
+//       </Button>
+//     </Alert>
+//   ) : status.available && !promptWarning ? (
+//     <>
+//       {status.charge && new Date() < BUZZ_CHARGE_NOTICE_END && (
+//         <DismissibleAlert id="generator-charge-buzz">
+//           <Text>
+//             Generating images now costs Buzz.{' '}
+//             <Text component={NextLink} href="/articles/4797" td="underline">
+//               Learn why
+//             </Text>
+//           </Text>
+//         </DismissibleAlert>
+//       )}
 
-              <QueueSnackbar />
-              <Group spacing="xs" className={classes.generateButtonContainer} noWrap>
-                <Card withBorder className={classes.generateButtonQuantity} p={0}>
-                  <Stack spacing={0}>
-                    <Text
-                      size="xs"
-                      color="dimmed"
-                      weight={500}
-                      ta="center"
-                      className={classes.generateButtonQuantityText}
-                    >
-                      Quantity
-                    </Text>
-                    <InputQuantity
-                      name="quantity"
-                      className={classes.generateButtonQuantityInput}
-                    />
-                  </Stack>
-                </Card>
-                {!status.charge ? (
-                  <Button
-                    type="submit"
-                    size="lg"
-                    className={classes.generateButtonButton}
-                    loading={isLoading}
-                    disabled={!canGenerate}
-                  >
-                    <Text ta="center">Generate</Text>
-                  </Button>
-                ) : (
-                  <BuzzTransactionButton
-                    type="submit"
-                    size="lg"
-                    label="Generate"
-                    loading={isCalculatingCost || isLoading}
-                    className={classes.generateButtonButton}
-                    disabled={disableGenerateButton}
-                    buzzAmount={cost}
-                    showPurchaseModal={false}
-                    error={
-                      costEstimateError
-                        ? 'Error calculating cost. Please try updating your values'
-                        : undefined
-                    }
-                  />
-                )}
+//       <QueueSnackbar />
+//       <Group spacing="xs" className={classes.generateButtonContainer} noWrap>
+//         <Card withBorder className={classes.generateButtonQuantity} p={0}>
+//           <Stack spacing={0}>
+//             <Text
+//               size="xs"
+//               color="dimmed"
+//               weight={500}
+//               ta="center"
+//               className={classes.generateButtonQuantityText}
+//             >
+//               Quantity
+//             </Text>
+//             <InputQuantity
+//               name="quantity"
+//               className={classes.generateButtonQuantityInput}
+//             />
+//           </Stack>
+//         </Card>
+//         {!status.charge ? (
+//           <Button
+//             type="submit"
+//             size="lg"
+//             className={classes.generateButtonButton}
+//             loading={isLoading}
+//             disabled={!canGenerate}
+//           >
+//             <Text ta="center">Generate</Text>
+//           </Button>
+//         ) : (
+//           <BuzzTransactionButton
+//             type="submit"
+//             size="lg"
+//             label="Generate"
+//             loading={isCalculatingCost || isLoading}
+//             className={classes.generateButtonButton}
+//             disabled={disableGenerateButton}
+//             buzzAmount={cost}
+//             showPurchaseModal={false}
+//             error={
+//               costEstimateError
+//                 ? 'Error calculating cost. Please try updating your values'
+//                 : undefined
+//             }
+//           />
+//         )}
 
 //                 <Button
 //                   onClick={handleClearAll}

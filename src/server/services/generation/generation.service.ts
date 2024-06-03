@@ -20,7 +20,7 @@ import {
   throwInsufficientFundsError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { Prisma } from '@prisma/client';
+import { ModelType, Prisma } from '@prisma/client';
 
 import { isDefined } from '~/utils/type-guards';
 
@@ -55,6 +55,7 @@ import {
 } from '~/shared/constants/generation.constants';
 import { findClosest } from '~/utils/number-helpers';
 import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
+import dayjs from 'dayjs';
 
 export function parseModelVersionId(assetId: string) {
   const pattern = /^@civitai\/(\d+)$/;
