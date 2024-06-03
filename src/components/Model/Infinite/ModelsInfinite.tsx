@@ -60,29 +60,13 @@ export function ModelsInfinite({
       ) : !!models.length ? (
         <div style={{ position: 'relative' }}>
           <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
-          {features.modelCardV2 ? (
-            <MasonryGrid
-              data={models}
-              render={ModelCard}
-              itemId={(x) => x.id}
-              empty={<NoContent />}
-              withAds={showAds}
-            />
-          ) : (
-            <MasonryColumns
-              data={models}
-              imageDimensions={(data) => {
-                const width = data.images[0]?.width ?? 450;
-                const height = data.images[0]?.height ?? 450;
-                return { width, height };
-              }}
-              adjustHeight={({ imageRatio, height }) => height + (imageRatio >= 1 ? 60 : 0)}
-              maxItemHeight={600}
-              render={AmbientModelCard}
-              itemId={(data) => data.id}
-              withAds={showAds}
-            />
-          )}
+          <MasonryGrid
+            data={models}
+            render={ModelCard}
+            itemId={(x) => x.id}
+            empty={<NoContent />}
+            withAds={showAds}
+          />
 
           {hasNextPage && (
             <InViewLoader

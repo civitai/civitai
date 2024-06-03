@@ -116,16 +116,5 @@ function ProfileOverview() {
     </>
   );
 }
-
-export function UserProfileEntry() {
-  const features = useFeatureFlags();
-
-  if (features.profileOverhaul) {
-    return <ProfileOverview />;
-  }
-
-  return <UserImagesPage />;
-}
-
-setPageOptions(UserProfileEntry, { innerLayout: UserProfileLayout });
-export default UserProfileEntry;
+setPageOptions(ProfileOverview, { innerLayout: UserProfileLayout });
+export default ProfileOverview;

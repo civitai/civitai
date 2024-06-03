@@ -51,24 +51,11 @@ export default function UserArticlesPage() {
     selfView ? query.section ?? 'published' : 'published'
   );
   const viewingPublished = section === 'published';
-  const features = useFeatureFlags();
-  const Wrapper = useMemo(
-    () =>
-      function Wrapper({ children }: { children: React.ReactNode }) {
-        return features.profileOverhaul ? (
-          <Box mt="md">{children}</Box>
-        ) : (
-          <Tabs.Panel value="/articles">{children}</Tabs.Panel>
-        );
-      },
-    [features.profileOverhaul]
-  );
-
   // currently not showing any content if the username is undefined
   if (!username) return <NotFound />;
 
   return (
-    <Wrapper>
+    <Box mt="md">
       <MasonryProvider
         columnWidth={constants.cardSizes.model}
         maxColumnCount={7}
@@ -121,7 +108,7 @@ export default function UserArticlesPage() {
           </Stack>
         </MasonryContainer>
       </MasonryProvider>
-    </Wrapper>
+    </Box>
   );
 }
 
