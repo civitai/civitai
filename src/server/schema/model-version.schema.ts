@@ -142,6 +142,7 @@ export const modelVersionEarlyAccessConfigSchema = z.object({
   donationGoalEnabled: z.boolean().default(false),
   donationGoal: z.number().optional(),
   donationGoalId: z.number().optional(),
+  originalPublishedAt: z.date().optional(),
 });
 
 export const earlyAccessConfigInput = modelVersionEarlyAccessConfigSchema.omit({

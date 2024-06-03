@@ -69,11 +69,16 @@ const DonationGoalItem = ({ donationGoal }: { donationGoal: ModelVersionDonation
             Supporting this model does not grant you early access.
           </Text>
         )}
-        <Group position="apart" noWrap>
+        <Group position="apart" noWrap align="start">
           <Text size="sm">{donationGoal.title}</Text>
           <Group spacing={0} position="left" align="center" noWrap>
             <CurrencyIcon currency={Currency.BUZZ} size={16} />
-            <Text size="xs">
+            <Text
+              size="xs"
+              sx={{
+                whiteSpace: 'nowrap',
+              }}
+            >
               {donationGoal.total} / {donationGoal.goalAmount}
             </Text>
           </Group>

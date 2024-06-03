@@ -227,23 +227,30 @@ export const upsertModelVersion = async ({
     if (
       existingVersion.status === ModelStatus.Published &&
       updatedEarlyAccessConfig &&
-      earlyAccessConfig &&
-      updatedEarlyAccessConfig.downloadPrice > earlyAccessConfig.downloadPrice
+      earlyAccessConfig
     ) {
-      throw throwBadRequestError(
-        'You cannot increase the download price on a model after it has been published.'
-      );
-    }
+      // Check all changes related now:
 
-    if (
-      existingVersion.status === ModelStatus.Published &&
-      updatedEarlyAccessConfig &&
-      earlyAccessConfig &&
-      updatedEarlyAccessConfig.timeframe > earlyAccessConfig?.timeframe
-    ) {
-      throw throwBadRequestError(
-        'You cannot increase the early access time frame for a published early access model version.'
-      );
+      if (updatedEarlyAccessConfig.downloadPrice > earlyAccessConfig.downloadPrice) {
+        throw throwBadRequestError(
+          'You cannot increase the download price on a model after it has been published.'
+        );
+      }
+
+      if (updatedEarlyAccessConfig.timeframe > earlyAccessConfig?.timeframe) {
+        throw throwBadRequestError(
+          'You cannot increase the early access time frame for a published early access model version.'
+        );
+      }
+
+      if (
+        updatedEarlyAccessConfig.donationGoalEnabled !== earlyAccessConfig.donationGoalEnabled ||
+        updatedEarlyAccessConfig.donationGoal !== earlyAccessConfig.donationGoal
+      ) {
+        throw throwBadRequestError(
+          'You cannot update donation goals on a published early access model version.'
+        );
+      }
     }
 
     updatedEarlyAccessConfig = updatedEarlyAccessConfig
@@ -403,13 +410,14 @@ export const publishModelVersionById = async ({
         });
 
         earlyAccessConfig.buzzTransactionId = buzzTransaction.transactionId;
+        earlyAccessConfig.originalPublishedAt = publishedAt; // Store the original published at date for future reference.
 
         if (earlyAccessConfig.donationGoalEnabled && earlyAccessConfig.donationGoal) {
           // Good time to also create the donation goal:
           const donationGoal = await tx.donationGoal.create({
             data: {
               goalAmount: earlyAccessConfig.donationGoal as number,
-              title: `Early Access for model: ${currentVersion.model.name} - ${currentVersion.name}`,
+              title: `Early Access Donation Goal`,
               active: true,
               isEarlyAccess: true,
               modelVersionId: currentVersion.id,
@@ -886,6 +894,11 @@ export const earlyAccessPurchase = async ({
   }
 
   const earlyAccesConfig = modelVersion.earlyAccessConfig as ModelVersionEarlyAccessConfig;
+  const earlyAccessDonationGoal = earlyAccesConfig.donationGoalId
+    ? await dbRead.donationGoal.findFirst({
+        where: { id: earlyAccesConfig.donationGoalId, isEarlyAccess: true, active: true },
+      })
+    : undefined;
 
   if (!earlyAccesConfig || !modelVersion.earlyAccessEndsAt) {
     throw throwBadRequestError('This model version does not have early access enabled.');
@@ -922,15 +935,16 @@ export const earlyAccessPurchase = async ({
   }
 
   let buzzTransactionId;
+  const amount =
+    type === 'download'
+      ? earlyAccesConfig.downloadPrice
+      : (earlyAccesConfig.generationPrice as number);
 
   try {
     const buzzTransaction = await createBuzzTransaction({
       fromAccountId: userId,
       toAccountId: modelVersion.model.userId,
-      amount:
-        type === 'download'
-          ? earlyAccesConfig.downloadPrice
-          : (earlyAccesConfig.generationPrice as number),
+      amount,
       type: TransactionType.Purchase,
       description: `Gain early access on model: ${modelVersion.model.name} - ${modelVersion.name}`,
     });
@@ -973,6 +987,18 @@ export const earlyAccessPurchase = async ({
                 EntityAccessPermission.EarlyAccessDownload,
           meta: { [`${type}-buzzTransactionId`]: buzzTransactionId },
           addedById: userId, // Since it's a purchase
+        },
+      });
+    }
+
+    if (earlyAccessDonationGoal) {
+      // Create a donation record:
+      await dbWrite.donation.create({
+        data: {
+          amount,
+          donationGoalId: earlyAccessDonationGoal.id,
+          userId,
+          buzzTransactionId,
         },
       });
     }

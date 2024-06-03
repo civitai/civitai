@@ -108,9 +108,10 @@ export const donateToGoal = async ({
           SET "earlyAccessConfig" = jsonb_set(
             COALESCE("earlyAccessConfig", '{}'::jsonb),
             '{timeframe}',
-            to_jsonb(${0}),
-            "earlyAccessEndsAt" = NOW()
-          )
+            to_jsonb(${0})
+          ),
+          "earlyAccessEndsAt" = NOW(),
+          "availability" = 'Public'
           WHERE "id" = ${goal.modelVersionId}
         `;
       }

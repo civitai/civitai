@@ -418,16 +418,18 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                           description={
                             'You can use this feature to remove early access once a certain amount of buzz is met. This will allow you to set a goal for your model and remove early access once that goal is met.'
                           }
+                          disabled={version?.earlyAccessConfig?.donationGoalId}
                         />
                         {earlyAccessConfig?.donationGoalEnabled && (
                           <Stack>
                             <InputNumber
                               name="earlyAccessConfig.donationGoal"
                               label="Donation Goal Amount"
-                              description="How much BUZZ would you like to set as your donation goal? Early access purchases will count towards this goal."
+                              description="How much BUZZ would you like to set as your donation goal? Early access purchases will count towards this goal. After publishing, you cannot change this value"
                               min={1000}
                               step={100}
                               icon={<CurrencyIcon currency="BUZZ" size={16} />}
+                              disabled={version?.earlyAccessConfig?.donationGoalId}
                             />
                           </Stack>
                         )}

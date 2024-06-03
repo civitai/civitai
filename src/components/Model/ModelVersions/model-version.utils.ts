@@ -73,6 +73,9 @@ export const useMutateModelVersion = () => {
           entityId: [modelVersionId],
           entityType: 'ModelVersion',
         });
+
+        // Manage donation goals:
+        queryUtils.modelVersion.donationGoals.invalidate({ id: modelVersionId });
       },
       onError(error) {
         handleTRPCError(error, 'Failed to purchase early access');

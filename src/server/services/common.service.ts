@@ -148,7 +148,8 @@ export const hasEntityAccess = async ({
   }
 
   // TODO: Add userId index to Club, ClubMemberhsip and ClubAdmin.
-  const entityAccess = await dbRead.$queryRaw<EntityAccessRaw[]>`
+  // Note, we use DB write because we don't wanna have the user experience lag after unlocks.
+  const entityAccess = await dbWrite.$queryRaw<EntityAccessRaw[]>`
     SELECT
       ea."accessToId" "entityId",
       ${
@@ -161,55 +162,55 @@ export const hasEntityAccess = async ({
       AND ea."accessToType" = ${entityType}
       AND (
         -- ClubTier check
-        (
-          ea."accessorType" = 'ClubTier' AND
-          (
-            -- User is a member of the club tier
-            ea."accessorId" IN (
-              SELECT cm."clubTierId"
-              FROM "ClubMembership" cm
-              WHERE cm."userId" = ${userId} AND (cm."expiresAt"<= NOW() OR cm."expiresAt" IS NULL)
-            )
-            -- User is a admin of the club tier
-            OR ea."accessorId" IN (
-              SELECT ct.id
-              FROM "ClubTier" ct
-              JOIN "ClubAdmin" ca ON ca."clubId" = ct."clubId"
-              WHERE ca."userId" = ${userId}
-            )
-            -- User is a owner of the club
-            OR ea."accessorId" IN (
-              SELECT ct.id
-              FROM "ClubTier" ct
-              JOIN "Club" c ON c.id = ct."clubId"
-              WHERE c."userId" = ${userId}
-            )
-          )
-        ) OR
-        -- Club check
-        (
-          ea."accessorType" = 'Club' AND
-          (
-            -- User is the owner of the club
-            ea."accessorId" IN (
-              SELECT c.id
-              FROM "Club" c
-              WHERE c."userId" = ${userId}
-            )
-            -- User is a member of this club
-            OR ea."accessorId" IN (
-              SELECT cm."clubId"
-              FROM "ClubMembership" cm
-              WHERE cm."userId" = ${userId} AND (cm."expiresAt"<= NOW() OR cm."expiresAt" IS NULL)
-            )
-            --- User is an admin of this club
-            OR ea."accessorId" IN (
-              SELECT ca."clubId"
-              FROM "ClubAdmin" ca
-              WHERE ca."userId" = ${userId}
-            )
-          )
-        ) OR
+        -- (
+        --   ea."accessorType" = 'ClubTier' AND
+        --   (
+        --     -- User is a member of the club tier
+        --     ea."accessorId" IN (
+        --       SELECT cm."clubTierId"
+        --       FROM "ClubMembership" cm
+        --       WHERE cm."userId" = ${userId} AND (cm."expiresAt"<= NOW() OR cm."expiresAt" IS NULL)
+        --     )
+        --     -- User is a admin of the club tier
+        --     OR ea."accessorId" IN (
+        --       SELECT ct.id
+        --       FROM "ClubTier" ct
+        --       JOIN "ClubAdmin" ca ON ca."clubId" = ct."clubId"
+        --       WHERE ca."userId" = ${userId}
+        --     )
+        --     -- User is a owner of the club
+        --     OR ea."accessorId" IN (
+        --       SELECT ct.id
+        --       FROM "ClubTier" ct
+        --       JOIN "Club" c ON c.id = ct."clubId"
+        --       WHERE c."userId" = ${userId}
+        --     )
+        --   )
+        -- ) OR
+        -- -- Club check
+        -- (
+        --   ea."accessorType" = 'Club' AND
+        --   (
+        --     -- User is the owner of the club
+        --     ea."accessorId" IN (
+        --       SELECT c.id
+        --       FROM "Club" c
+        --       WHERE c."userId" = ${userId}
+        --     )
+        --     -- User is a member of this club
+        --     OR ea."accessorId" IN (
+        --       SELECT cm."clubId"
+        --       FROM "ClubMembership" cm
+        --       WHERE cm."userId" = ${userId} AND (cm."expiresAt"<= NOW() OR cm."expiresAt" IS NULL)
+        --     )
+        --     --- User is an admin of this club
+        --     OR ea."accessorId" IN (
+        --       SELECT ca."clubId"
+        --       FROM "ClubAdmin" ca
+        --       WHERE ca."userId" = ${userId}
+        --     )
+        --   )
+        -- ) OR
         -- User check
         (
           ea."accessorType" = 'User' AND ea."accessorId" = ${userId}
