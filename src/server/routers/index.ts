@@ -61,6 +61,7 @@ import { redeemableCodeRouter } from '~/server/routers/redeemableCode.router';
 import { toolRouter } from '~/server/routers/tool.router';
 import { cosmeticShopRouter } from '~/server/routers/cosmetic-shop.router';
 import { techniqueRouter } from '~/server/routers/technique.router';
+import { donationGoalRouter } from '~/server/routers/donation-goal.router';
 
 export const appRouter = router({
   account: accountRouter,
@@ -124,6 +125,7 @@ export const appRouter = router({
   tool: toolRouter,
   cosmeticShop: cosmeticShopRouter,
   technique: techniqueRouter,
+  donationGoal: donationGoalRouter,
 });
 
 // export type definition of API

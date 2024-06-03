@@ -25,6 +25,7 @@ import {
   earlyAccessPurchase,
   getModelVersionRunStrategies,
   getVersionById,
+  modelVersionDonationGoals,
   modelVersionGeneratedImagesOnTimeframe,
   publishModelVersionById,
   toggleNotifyModelVersion,
@@ -584,6 +585,25 @@ export const modelVersionEarlyAccessPurchaseHandler = async ({
     return earlyAccessPurchase({
       ...input,
       userId: ctx.user.id,
+    });
+  } catch (error) {
+    if (error instanceof TRPCError) error;
+    else throw throwDbError(error);
+  }
+};
+
+export const modelVersionDonationGoalsHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: Context;
+}) => {
+  try {
+    return modelVersionDonationGoals({
+      ...input,
+      userId: ctx.user?.id,
+      isModerator: ctx.user?.isModerator,
     });
   } catch (error) {
     if (error instanceof TRPCError) error;

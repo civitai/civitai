@@ -12,6 +12,7 @@ import {
   upsertModelVersionHandler,
   getVersionLicenseHandler,
   modelVersionEarlyAccessPurchaseHandler,
+  modelVersionDonationGoalsHandler,
 } from '~/server/controllers/model-version.controller';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
@@ -119,5 +120,5 @@ export const modelVersionRouter = router({
   earlyAccessPurchase: protectedProcedure
     .input(modelVersionEarlyAccessPurchase)
     .mutation(modelVersionEarlyAccessPurchaseHandler),
-  donationGoals: publicProcedure.input(getByIdSchema).query(({ input }) => getVersionById(input)),
+  donationGoals: publicProcedure.input(getByIdSchema).query(modelVersionDonationGoalsHandler),
 });

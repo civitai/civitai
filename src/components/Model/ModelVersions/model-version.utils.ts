@@ -91,9 +91,21 @@ export const useMutateModelVersion = () => {
 };
 
 export const useQueryModelVersionDonationGoals = (
-  { versionId }: { versionId: number },
+  { modelVersionId }: { modelVersionId: number },
   options?: { enabled?: boolean }
 ) => {
   const currentUser = useCurrentUser();
-  console.log('currentUser', currentUser);
+  const { data: donationGoals, ...other } = trpc.modelVersion.donationGoals.useQuery(
+    {
+      id: modelVersionId,
+    },
+    {
+      ...(options ?? {}),
+    }
+  );
+
+  return {
+    donationGoals: donationGoals ?? [],
+    ...other,
+  };
 };

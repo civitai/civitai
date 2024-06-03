@@ -201,7 +201,7 @@ export function ModelVersionList({
                 return onVersionClick(version);
               }}
               leftIcon={
-                showExtraIcons && (hasProblem || scheduled || isEarlyAccess) ? (
+                showExtraIcons && (hasProblem || scheduled) ? (
                   <ThemeIcon
                     color="yellow"
                     variant="light"
@@ -209,13 +209,17 @@ export function ModelVersionList({
                     size="sm"
                     sx={{ backgroundColor: 'transparent' }}
                   >
-                    {hasProblem ? (
-                      <IconAlertTriangle size={14} />
-                    ) : scheduled ? (
-                      <IconClock size={14} />
-                    ) : (
-                      <CurrencyIcon currency={Currency.BUZZ} size={14} />
-                    )}
+                    {hasProblem ? <IconAlertTriangle size={14} /> : <IconClock size={14} />}
+                  </ThemeIcon>
+                ) : isEarlyAccess ? (
+                  <ThemeIcon
+                    color="yellow"
+                    variant="light"
+                    radius="xl"
+                    size="sm"
+                    sx={{ backgroundColor: 'transparent' }}
+                  >
+                    <CurrencyIcon currency={Currency.BUZZ} size={14} />
                   </ThemeIcon>
                 ) : undefined
               }

@@ -994,16 +994,16 @@ export const earlyAccessPurchase = async ({
 };
 
 export const modelVersionDonationGoals = async ({
-  modelVersionId,
+  id,
   userId,
   isModerator,
 }: {
-  modelVersionId: number;
+  id: number;
   userId?: number;
   isModerator?: boolean;
 }) => {
   const version = await dbRead.modelVersion.findFirstOrThrow({
-    where: { id: modelVersionId },
+    where: { id },
     select: {
       id: true,
       modelId: true,
@@ -1017,7 +1017,7 @@ export const modelVersionDonationGoals = async ({
 
   const donationGoals = await dbRead.donationGoal.findMany({
     where: {
-      modelVersionId,
+      modelVersionId: id,
       active: version.model.userId === userId || isModerator ? undefined : true,
     },
     select: {
@@ -1028,15 +1028,20 @@ export const modelVersionDonationGoals = async ({
       isEarlyAccess: true,
       userId: true,
       createdAt: true,
+      description: true,
     },
   });
+
+  if (donationGoals.length === 0) {
+    return [];
+  }
 
   const donationTotals = await dbRead.$queryRaw<{ donationGoalId: number; total: number }[]>`
     SELECT
       "donationGoalId",
-      SUM(amount) as total
+      SUM("amount")::int as total
     FROM "Donation"
-    WHERE "donationGoalId" IN (${donationGoals.map((x) => x.id).join(',')})
+    WHERE "donationGoalId" IN (${Prisma.join(donationGoals.map((x) => x.id))})
     GROUP BY "donationGoalId"
   `;
 

@@ -116,3 +116,8 @@ export type VaultItemGetPaged = RouterOutput['vault']['getItemsPaged']['items'][
 export type CosmeticGetById = Exclude<RouterOutput['cosmetic']['getById'], null>;
 export type CosmeticShopItemGetById = RouterOutput['cosmeticShop']['getShopItemById'];
 export type CosmeticShopSectionGetById = RouterOutput['cosmeticShop']['getSectionById'];
+
+export type ModelVersionDonationGoal = Exclude<
+  RouterOutput['modelVersion']['donationGoals'],
+  undefined
+>[number];
