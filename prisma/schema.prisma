@@ -1606,6 +1606,11 @@ model KeyValue {
   value Json
 }
 
+enum ApiKeyType {
+  System
+  User
+}
+
 model ApiKey {
   id        Int        @id @default(autoincrement())
   key       String     @unique
@@ -1614,11 +1619,14 @@ model ApiKey {
   userId    Int
   user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
   createdAt DateTime   @default(now())
+  type      ApiKeyType @default(User)
+  expiresAt DateTime?
 }
 
 enum KeyScope {
   Read
   Write
+  Generate
 }
 
 model Comment {
