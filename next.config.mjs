@@ -143,8 +143,8 @@ export default defineNextConfig(withAxiom({
         permanent: true,
       },
       {
-        source: '/images/:path*',
-        destination: '/media/:path*',
+        source: '/images/:id(\\d+)', // This ensures `:id` is a sequence of digits only
+        destination: '/media/:id',
         permanent: true,
       },
       {

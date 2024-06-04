@@ -106,7 +106,7 @@ export function UniversalPlayerProvider({ children }: { children: React.ReactNod
                     <EdgeAudio
                       {...currentTrack}
                       wrapperProps={{ sx: { flexDirection: 'row-reverse' } }}
-                      dragToSeek={{ debounceTime: 500 }}
+                      dragToSeek
                       interact
                     />
                   </Stack>

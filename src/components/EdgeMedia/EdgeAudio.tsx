@@ -30,13 +30,13 @@ export function EdgeAudio({
     barWidth: 2,
     barRadius: 4,
     cursorWidth: 0,
+    sampleRate: 1000,
     width: '100%',
     normalize: true,
     interact: false,
     hideScrollbar: true,
     ...props,
   });
-  const debouncedOnAudioProcess = onAudioprocess ? debounce(onAudioprocess, 1000) : undefined;
 
   const [playing, setPlaying] = useState(false);
 
@@ -55,7 +55,7 @@ export function EdgeAudio({
 
     const getPlayerParams = () => ({
       media: wavesurfer.getMediaElement(),
-      peaks: wavesurfer.exportPeaks(),
+      peaks: props.peaks,
       duration: wavesurfer.getDuration(),
       name,
       src,
@@ -88,13 +88,8 @@ export function EdgeAudio({
       wavesurfer.on('pause', () => setPlaying(false)),
       wavesurfer.on('audioprocess', () => {
         const currentTime = wavesurfer.getCurrentTime();
-        if (
-          wavesurfer.isPlaying() &&
-          currentTime > 5 &&
-          !alreadyPlayed.current &&
-          debouncedOnAudioProcess
-        ) {
-          debouncedOnAudioProcess();
+        if (wavesurfer.isPlaying() && currentTime > 5 && !alreadyPlayed.current && onAudioprocess) {
+          onAudioprocess();
           alreadyPlayed.current = true;
         }
       }),
@@ -103,7 +98,7 @@ export function EdgeAudio({
     return () => {
       subscriptions.forEach((unsub) => unsub());
     };
-  }, [wavesurfer, alreadyPlayed, onPlay, onReady, debouncedOnAudioProcess, src, name, volume]);
+  }, [wavesurfer, alreadyPlayed, onPlay, onReady, onAudioprocess, src, name, volume]);
 
   return (
     <Group spacing="sm" w="100%" pos="relative" noWrap {...wrapperProps}>

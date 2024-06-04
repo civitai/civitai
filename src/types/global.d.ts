@@ -109,7 +109,7 @@ declare global {
     duration: number;
     name?: string | null;
     src?: string;
-    peaks: number[][];
+    peaks?: number[][] | undefined;
   };
 
   interface Window {

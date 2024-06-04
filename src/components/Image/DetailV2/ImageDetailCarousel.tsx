@@ -12,6 +12,7 @@ import { useTrackEvent } from '~/components/TrackView/track.utils';
 import { useAspectRatioFit } from '~/hooks/useAspectRatioFit';
 import { useResizeObserver } from '~/hooks/useResizeObserver';
 import { constants } from '~/server/common/constants';
+import { audioMetadataSchema } from '~/server/schema/media.schema';
 import { ImagesInfiniteModel } from '~/server/services/image.service';
 
 export function ImageDetailCarousel() {
@@ -99,8 +100,39 @@ function ImageContent({ image }: { image: ImagesInfiniteModel } & ConnectProps) 
   });
 
   const { trackPlay } = useTrackEvent();
-
   const isAudio = image.type === 'audio';
+
+  if (isAudio) {
+    const parsedAudioMetadata = audioMetadataSchema.safeParse(image.metadata);
+    const audioMetadata = parsedAudioMetadata.success ? parsedAudioMetadata.data : undefined;
+    return (
+      <div ref={setRef} className="relative flex size-full items-center justify-center">
+        <Stack spacing="xl" p="md" style={{ maxWidth: 560, width: '100%' }}>
+          {isAudio && (
+            <Text size={32} weight={600} lineClamp={3} lh={1.2}>
+              {image.name}
+            </Text>
+          )}
+          <EdgeMedia
+            src={image.url}
+            name={image.name ?? image.id.toString()}
+            type="audio"
+            className="max-h-full w-auto max-w-full"
+            original={image.type === 'video' ? true : undefined}
+            peaks={audioMetadata?.peaks}
+            duration={audioMetadata?.duration}
+            onAudioprocess={() =>
+              trackPlay({
+                imageId: image.id,
+                ownerId: image.user.id,
+                tags: image.tags?.map((t) => t.name) ?? [],
+              })
+            }
+          />
+        </Stack>
+      </div>
+    );
+  }
 
   return (
     <ImageGuardContent image={image}>
@@ -111,51 +143,29 @@ function ImageContent({ image }: { image: ImagesInfiniteModel } & ConnectProps) 
               <MediaHash {...image} />
             </div>
           ) : (
-            <Stack
-              spacing="xl"
-              p={isAudio ? 'md' : undefined}
-              style={{
-                maxWidth: isAudio ? 560 : undefined,
-                width: isAudio ? '100%' : undefined,
+            <EdgeMedia
+              src={image.url}
+              name={image.name ?? image.id.toString()}
+              alt={
+                image.meta
+                  ? truncate(image.meta.prompt, { length: constants.altTruncateLength })
+                  : image.name ?? undefined
+              }
+              type={image.type}
+              className={`max-h-full w-auto max-w-full ${!safe ? 'invisible' : ''}`}
+              wrapperProps={{
+                className: `max-h-full w-auto max-w-full ${!safe ? 'invisible' : ''}`,
+                style: {
+                  aspectRatio:
+                    image.width && image.height ? image?.width / image?.height : undefined,
+                },
               }}
-            >
-              {isAudio && (
-                <Text size={32} weight={600} lineClamp={3} lh={1.2}>
-                  {image.name}
-                </Text>
-              )}
-              <EdgeMedia
-                src={image.url}
-                name={image.name ?? image.id.toString()}
-                alt={
-                  image.meta
-                    ? truncate(image.meta.prompt, { length: constants.altTruncateLength })
-                    : image.name ?? undefined
-                }
-                type={image.type}
-                className={`max-h-full w-auto max-w-full ${!safe ? 'invisible' : ''}`}
-                wrapperProps={{
-                  className: `max-h-full w-auto max-w-full ${!safe ? 'invisible' : ''}`,
-                  style: {
-                    aspectRatio:
-                      image.width && image.height ? image?.width / image?.height : undefined,
-                  },
-                }}
-                width={image.width}
-                quality={90}
-                original={image.type === 'video' ? true : undefined}
-                onAudioprocess={() =>
-                  trackPlay({
-                    imageId: image.id,
-                    ownerId: image.user.id,
-                    tags: image.tags?.map((t) => t.name) ?? [],
-                  })
-                }
-                anim
-                controls
-                // fadeIn
-              />
-            </Stack>
+              width={image.width}
+              quality={90}
+              original={image.type === 'video' ? true : undefined}
+              anim
+              controls
+            />
           )}
         </div>
       )}
