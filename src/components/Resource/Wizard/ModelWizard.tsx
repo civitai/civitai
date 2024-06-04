@@ -10,6 +10,7 @@ import { Files, UploadStepActions } from '~/components/Resource/Files';
 import { FilesProvider } from '~/components/Resource/FilesProvider';
 import { ModelUpsertForm } from '~/components/Resource/Forms/ModelUpsertForm';
 import { ModelVersionUpsertForm } from '~/components/Resource/Forms/ModelVersionUpsertForm';
+import { PostUpsertForm2 } from '~/components/Resource/Forms/PostUpsertForm2';
 import TrainingSelectFile from '~/components/Resource/Forms/TrainingSelectFile';
 import { useIsChangingLocation } from '~/components/RouterTransition/RouterTransition';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -19,7 +20,6 @@ import { QS } from '~/utils/qs';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
 import { TemplateSelect } from './TemplateSelect';
-import { PostUpsertForm2 } from '~/components/Resource/Forms/PostUpsertForm2';
 
 export type ModelWithTags = Omit<ModelById, 'tagsOnModels'> & {
   tagsOnModels: Array<{ isCategory: boolean; id: number; name: string }>;
@@ -88,14 +88,14 @@ const CreateSteps = ({
     >
       {/* Step 1: Model Info */}
       <Stepper.Step label={editing ? 'Edit model' : 'Create your model'}>
-        <div className="container max-w-sm flex flex-col gap-3 relative">
+        <div className="container relative flex max-w-sm flex-col gap-3">
           <LoadingOverlay visible={isInitialLoading || isBountyFieldsInitialLoading} />
           <Title order={3}>{editing ? 'Edit model' : 'Create your model'}</Title>
           <ModelUpsertForm
             model={model ?? templateFields ?? bountyFields}
             onSubmit={({ id }) => {
               if (editing) return goNext();
-              router.replace(getWizardUrl({ id, step: 2, templateId, bountyId }));
+              router.replace(getWizardUrl({ id, step: 2, templateId, bountyId })).then();
             }}
           >
             {({ loading }) => (
@@ -111,7 +111,7 @@ const CreateSteps = ({
 
       {/* Step 2: Version Info */}
       <Stepper.Step label={hasVersions ? 'Edit version' : 'Add version'}>
-        <div className="container max-w-sm flex flex-col gap-3">
+        <div className="container flex max-w-sm flex-col gap-3">
           <Title order={3}>{hasVersions ? 'Edit version' : 'Add version'}</Title>
           <ModelVersionUpsertForm
             model={model ?? templateFields ?? bountyFields}
@@ -138,7 +138,7 @@ const CreateSteps = ({
         loading={uploading > 0}
         color={error + aborted > 0 ? 'red' : undefined}
       >
-        <div className="container max-w-sm flex flex-col gap-3">
+        <div className="container flex max-w-sm flex-col gap-3">
           <Title order={3}>Upload files</Title>
           <Files />
           <UploadStepActions onBackClick={goBack} onNextClick={goNext} />
@@ -191,11 +191,17 @@ const TrainSteps = ({
         loading={
           modelVersion.trainingStatus === TrainingStatus.Pending ||
           modelVersion.trainingStatus === TrainingStatus.Submitted ||
+          modelVersion.trainingStatus === TrainingStatus.Paused ||
           modelVersion.trainingStatus === TrainingStatus.Processing
         }
-        color={modelVersion.trainingStatus === TrainingStatus.Failed ? 'red' : undefined}
+        color={
+          modelVersion.trainingStatus === TrainingStatus.Failed ||
+          modelVersion.trainingStatus === TrainingStatus.Denied
+            ? 'red'
+            : undefined
+        }
       >
-        <div className="container max-w-sm flex flex-col gap-3">
+        <div className="container flex max-w-sm flex-col gap-3">
           <Title order={3}>Select Model File</Title>
           <Title mb="sm" order={5}>
             Choose a model file from the results of your training run.
@@ -208,7 +214,7 @@ const TrainSteps = ({
 
       {/* Step 2: Model Info */}
       <Stepper.Step label="Edit model">
-        <div className="container max-w-sm flex flex-col gap-3">
+        <div className="container flex max-w-sm flex-col gap-3">
           <Title order={3}>Edit model</Title>
           <ModelUpsertForm model={model} onSubmit={goNext}>
             {({ loading }) => (
@@ -227,7 +233,7 @@ const TrainSteps = ({
 
       {/* Step 3: Version Info */}
       <Stepper.Step label="Edit version">
-        <div className="container max-w-sm flex flex-col gap-3">
+        <div className="container flex max-w-sm flex-col gap-3">
           <Title order={3}>Edit version</Title>
           <ModelVersionUpsertForm model={model} version={modelVersion} onSubmit={goNext}>
             {({ loading }) => (
@@ -301,17 +307,21 @@ export function ModelWizard() {
     if (isTransitioning) return;
     if (step < MAX_STEPS) {
       // TODO does bountyId need to be here?
-      router.replace(getWizardUrl({ id, step: step + 1, templateId, src }), undefined, {
-        shallow: !isNew,
-      });
+      router
+        .replace(getWizardUrl({ id, step: step + 1, templateId, src }), undefined, {
+          shallow: !isNew,
+        })
+        .then();
     }
   };
 
   const goBack = () => {
     if (step > 1) {
-      router.replace(getWizardUrl({ id, step: step - 1, templateId, src }), undefined, {
-        shallow: !isNew,
-      });
+      router
+        .replace(getWizardUrl({ id, step: step - 1, templateId, src }), undefined, {
+          shallow: !isNew,
+        })
+        .then();
     }
   };
 
@@ -327,17 +337,23 @@ export function ModelWizard() {
       const hasFiles = model.modelVersions.some((version) => version.files.length > 0);
 
       if (!hasVersions)
-        router.replace(getWizardUrl({ id, step: 2, templateId, bountyId, src }), undefined, {
-          shallow: true,
-        });
+        router
+          .replace(getWizardUrl({ id, step: 2, templateId, bountyId, src }), undefined, {
+            shallow: true,
+          })
+          .then();
       else if (!hasFiles)
-        router.replace(getWizardUrl({ id, step: 3, templateId, bountyId, src }), undefined, {
-          shallow: true,
-        });
+        router
+          .replace(getWizardUrl({ id, step: 3, templateId, bountyId, src }), undefined, {
+            shallow: true,
+          })
+          .then();
       else
-        router.replace(getWizardUrl({ id, step: 4, templateId, bountyId, src }), undefined, {
-          shallow: true,
-        });
+        router
+          .replace(getWizardUrl({ id, step: 4, templateId, bountyId, src }), undefined, {
+            shallow: true,
+          })
+          .then();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, isNew, model, templateId, bountyId, src]);
@@ -353,7 +369,7 @@ export function ModelWizard() {
 
   return (
     <FilesProvider model={modelFlatTags} version={modelVersion}>
-      <div className="container max-w-sm flex flex-col gap-3">
+      <div className="container flex max-w-sm flex-col gap-3">
         {modelLoading ? (
           <PageLoader text="Loading model..." />
         ) : modelError ? (

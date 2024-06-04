@@ -210,9 +210,10 @@ export const upsertModelVersion = async ({
       },
     });
 
-    const earlyAccessConfig = existingVersion.earlyAccessConfig
-      ? (existingVersion.earlyAccessConfig as ModelVersionEarlyAccessConfig)
-      : null;
+    const earlyAccessConfig =
+      existingVersion.earlyAccessConfig !== null
+        ? (existingVersion.earlyAccessConfig as unknown as ModelVersionEarlyAccessConfig)
+        : null;
 
     if (
       existingVersion.status === ModelStatus.Published &&
@@ -893,16 +894,17 @@ export const earlyAccessPurchase = async ({
     throw throwBadRequestError('You cannot purchase early access for your own model.');
   }
 
-  const earlyAccesConfig = modelVersion.earlyAccessConfig as ModelVersionEarlyAccessConfig;
+  const earlyAccesConfig = modelVersion.earlyAccessConfig as ModelVersionEarlyAccessConfig | null;
+
+  if (!earlyAccesConfig || !modelVersion.earlyAccessEndsAt) {
+    throw throwBadRequestError('This model version does not have early access enabled.');
+  }
+
   const earlyAccessDonationGoal = earlyAccesConfig.donationGoalId
     ? await dbRead.donationGoal.findFirst({
         where: { id: earlyAccesConfig.donationGoalId, isEarlyAccess: true, active: true },
       })
     : undefined;
-
-  if (!earlyAccesConfig || !modelVersion.earlyAccessEndsAt) {
-    throw throwBadRequestError('This model version does not have early access enabled.');
-  }
 
   if (modelVersion.status !== ModelStatus.Published) {
     throw throwBadRequestError('You can only purchase early access for published models.');

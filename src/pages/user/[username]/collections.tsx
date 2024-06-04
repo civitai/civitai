@@ -32,7 +32,6 @@ export default function UserCollectionsPage() {
   const router = useRouter();
   const { set, ...queryFilters } = useCollectionQueryParams();
   const sort = queryFilters.sort ?? constants.collectionFilterDefaults.sort;
-  const features = useFeatureFlags();
 
   const username = (router.query.username as string) ?? '';
   const { data: creator, isLoading } = trpc.user.getCreator.useQuery(
@@ -40,33 +39,21 @@ export default function UserCollectionsPage() {
     { enabled: username !== constants.system.user.username }
   );
 
-  const Wrapper = useMemo(
-    () =>
-      function Wrapper({ children }: { children: React.ReactNode }) {
-        return features.profileOverhaul ? (
-          <Box mt="md">{children}</Box>
-        ) : (
-          <Tabs.Panel value="/collections">{children}</Tabs.Panel>
-        );
-      },
-    [features.profileOverhaul]
-  );
-
   // currently not showing any content if the username is undefined
   if (!username || (!creator && !isLoading)) return <NotFound />;
 
   if (isLoading) {
     return (
-      <Wrapper>
+      <Box mt="md">
         <Center>
           <Loader />
         </Center>
-      </Wrapper>
+      </Box>
     );
   }
 
   return (
-    <Wrapper>
+    <Box mt="md">
       <MasonryProvider
         columnWidth={constants.cardSizes.model}
         maxColumnCount={7}
@@ -89,7 +76,7 @@ export default function UserCollectionsPage() {
           </Stack>
         </MasonryContainer>
       </MasonryProvider>
-    </Wrapper>
+    </Box>
   );
 }
 

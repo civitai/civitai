@@ -27,6 +27,19 @@ export function ImageToolsPopover({
   const options: ComboboxOption[] = useMemo(
     () =>
       tools
+        .sort((a, b) => {
+          if (a.priority || b.priority) {
+            return (a.priority ?? 999) - (b.priority ?? 999);
+          } else {
+            if (a.name < b.name) {
+              return -1;
+            }
+            if (a.name > b.name) {
+              return 1;
+            }
+            return 0;
+          }
+        })
         .map((tool) => ({
           label: tool.name,
           value: tool.id,
@@ -99,7 +112,7 @@ export function ImageToolsPopover({
       <Popover.Target>
         {React.cloneElement(children, { onClick: () => setOpened((o) => !o) })}
       </Popover.Target>
-      <Popover.Dropdown className="p-0 rounded-lg">
+      <Popover.Dropdown className="rounded-lg p-0">
         <AlwaysOpenCombobox
           value={value}
           onChange={handleSetValue}
@@ -112,12 +125,12 @@ export function ImageToolsPopover({
           )}
           footer={
             !!value.length && (
-              <div className="p-2 pt-0 flex flex-col gap-2">
+              <div className="flex flex-col gap-2 p-2 pt-0">
                 <div>
                   <Divider />
                   <div className="flex justify-center">
                     <UnstyledButton
-                      className="cursor-pointer m-1"
+                      className="m-1 cursor-pointer"
                       onClick={() => setShowSelected((b) => !b)}
                     >
                       <Text variant="link" align="center">
