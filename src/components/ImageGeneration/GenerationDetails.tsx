@@ -1,10 +1,10 @@
 import { Accordion, AccordionControlProps, Text } from '@mantine/core';
-import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import {
   DescriptionTable,
   Props as DescriptionTableProps,
 } from '~/components/DescriptionTable/DescriptionTable';
-import { Generation } from '~/server/services/generation/generation.types';
+import { LineClamp } from '~/components/LineClamp/LineClamp';
+import { NormalizedTextToImageParams } from '~/server/services/orchestrator';
 import { getDisplayName, titleCase } from '~/utils/string-helpers';
 
 export function GenerationDetails({
@@ -14,14 +14,15 @@ export function GenerationDetails({
   controlProps,
   ...descriptionTableProps
 }: Props) {
-  const detailItems = Object.entries(params).map(([key, value]) => ({
-    label: titleCase(getDisplayName(key)),
-    value: (
-      <ContentClamp maxHeight={44} labelSize="xs">
-        {value as string}
-      </ContentClamp>
-    ),
-  }));
+  const detailItems = Object.entries(params)
+    .filter(([, value]) => {
+      if (Array.isArray(value)) return false;
+      return value !== undefined;
+    })
+    .map(([key, value]) => ({
+      label: titleCase(getDisplayName(key)),
+      value: <LineClamp lineClamp={2}>{`${value}`}</LineClamp>,
+    }));
 
   return (
     <Accordion
@@ -64,7 +65,7 @@ export function GenerationDetails({
 
 type Props = Omit<DescriptionTableProps, 'items'> & {
   label: string;
-  params: Partial<Generation.Params>;
+  params: Partial<NormalizedTextToImageParams>;
   upsideDown?: boolean;
   controlProps?: AccordionControlProps;
 };
