@@ -38,9 +38,15 @@ export function useGetTextToImageRequests(
             const images = [...response.images]
               .filter((image) => !response.metadata?.images?.[image.id]?.hidden)
               .sort((a, b) => {
-                if (!b.completed) return 1;
-                if (!a.completed) return -1;
-                return b.completed.getTime() - a.completed.getTime();
+                if (a.completed !== b.completed) {
+                  if (!b.completed) return 1;
+                  if (!a.completed) return -1;
+                  return b.completed.getTime() - a.completed.getTime();
+                } else {
+                  if (a.id < b.id) return -1;
+                  if (a.id > b.id) return 1;
+                  return 0;
+                }
               });
             return !!images.length ? { ...response, images } : null;
           })
@@ -233,104 +239,6 @@ export function useUpdateTextToImageWorkflows(options?: { onSuccess?: () => void
   return { hideImages, toggleFeedback, addComment, isLoading };
 }
 
-// #region [to remove]
-// export const useGetGenerationRequests = (
-//   input?: GetGenerationRequestsInput,
-//   options?: { enabled?: boolean; onError?: (err: unknown) => void }
-// ) => {
-//   const currentUser = useCurrentUser();
-//   const { data, isLoading, ...rest } = trpc.generation.getRequests.useInfiniteQuery(input ?? {}, {
-//     getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
-//     enabled: !!currentUser,
-//     ...options,
-//   });
-//   const requests = useMemo(
-//     () =>
-//       data?.pages.flatMap((x) => {
-//         const items = !!x ? x.items : [];
-//         return items;
-//       }) ?? [],
-//     [data]
-//   );
-//   const images = useMemo(() => requests.flatMap((x) => x.images ?? []), [requests]);
-
-//   useEffect(() => {
-//     if (!isLoading) updateFromEvents();
-//   }, [isLoading]);
-
-//   return { data, requests, images, isLoading: !currentUser ? false : isLoading, ...rest };
-// };
-
-// export const updateGenerationRequest = (
-//   cb: (data: InfiniteData<GetGenerationRequestsReturn>) => void
-// ) => {
-//   const queryKey = getQueryKey(trpc.generation.getRequests);
-//   queryClient.setQueriesData({ queryKey, exact: false }, (state) =>
-//     produce(state, (old?: InfiniteData<GetGenerationRequestsReturn>) => {
-//       if (!old) return;
-//       cb(old);
-//     })
-//   );
-// };
-
-// export const useDeleteGenerationRequest = () => {
-//   return trpc.generation.deleteRequest.useMutation({
-//     onSuccess: (_, { id }) => {
-//       updateGenerationRequest((data) => {
-//         for (const page of data.pages) {
-//           const index = page.items.findIndex((x) => x.id === id);
-//           if (index > -1) page.items.splice(index, 1);
-//         }
-//       });
-//     },
-//     onError: (error) => {
-//       showErrorNotification({
-//         title: 'Error deleting request',
-//         error: new Error(error.message),
-//       });
-//     },
-//   });
-// };
-
-// const bulkDeleteImagesMutation = trpc.generation.bulkDeleteImages.useMutation;
-// export const useDeleteGenerationRequestImages = (
-//   ...args: Parameters<typeof bulkDeleteImagesMutation>
-// ) => {
-//   const [options] = args;
-//   return trpc.generation.bulkDeleteImages.useMutation({
-//     ...options,
-//     onSuccess: (response, request, context) => {
-//       updateGenerationRequest((data) => {
-//         for (const page of data.pages) {
-//           for (const item of page.items) {
-//             for (const id of request.ids) {
-//               const index = item.images?.findIndex((x) => x.id === id) ?? -1;
-//               if (index > -1) item.images?.splice(index, 1);
-//             }
-//             if (item.images?.every((x) => x.available))
-//               item.status = GenerationRequestStatus.Succeeded;
-//           }
-//           // if there are requests without images, remove the requests
-//           page.items = page.items.filter((x) => {
-//             const hasImages = !!x.images?.length;
-//             return hasImages;
-//           });
-//         }
-//       });
-//       options?.onSuccess?.(response, request, context);
-//     },
-//     onError: (error, ...args) => {
-//       const [variables] = args;
-//       showErrorNotification({
-//         title: variables.cancelled ? 'Error cancelling request' : 'Error deleting images',
-//         error: new Error(error.message),
-//       });
-//       options?.onError?.(error, ...args);
-//     },
-//   });
-// };
-// #endregion
-
 type CustomJobEvent = Omit<WorkflowStepJobEvent, '$type'> & { $type: 'job'; completed?: Date };
 type CustomWorkflowEvent = Omit<WorkflowEvent, '$type'> & { $type: 'workflow' };
 const debouncer = createDebouncer(100);
@@ -341,7 +249,7 @@ export function useTextToImageSignalUpdate() {
     SignalMessages.TextToImageUpdate,
     (data: CustomJobEvent | CustomWorkflowEvent) => {
       if (data.$type === 'job' && data.jobId) {
-        signalJobEventsDictionary[data.jobId] = data;
+        signalJobEventsDictionary[data.jobId] = { ...data, completed: new Date() };
       } else if (data.$type === 'workflow' && data.workflowId) {
         signalWorkflowEventsDictionary[data.workflowId] = data;
       }
@@ -370,16 +278,25 @@ function updateFromEvents() {
             delete signalWorkflowEventsDictionary[item.id];
         }
 
-        for (const image of item.images) {
-          if (!image.jobId) continue;
-          const signalEvent = signalJobEventsDictionary[image.jobId];
+        // get all jobIds associated with images
+        const imageJobIds = [...new Set(item.images.map((x) => x.jobId))];
+        // get any pending events associated with imageJobIds
+        const jobEventIds = Object.keys(signalJobEventsDictionary).filter((jobId) =>
+          imageJobIds.includes(jobId)
+        );
+
+        for (const jobId of jobEventIds) {
+          const signalEvent = signalJobEventsDictionary[jobId];
           if (!signalEvent) continue;
           const { status } = signalEvent;
-          image.status = signalEvent.status!;
-          image.completed = signalEvent.completed;
+          const images = item.images.filter((x) => x.jobId === jobId);
+          for (const image of images) {
+            image.status = signalEvent.status!;
+            image.completed = signalEvent.completed;
+          }
 
-          if (status === signalJobEventsDictionary[image.jobId].status) {
-            delete signalJobEventsDictionary[image.jobId];
+          if (status === signalJobEventsDictionary[jobId].status) {
+            delete signalJobEventsDictionary[jobId];
             if (!Object.keys(signalJobEventsDictionary).length) break;
           }
         }
