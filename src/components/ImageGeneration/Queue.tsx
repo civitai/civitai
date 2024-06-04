@@ -1,7 +1,7 @@
 import OneKeyMap from '@essentials/one-key-map';
 import trieMemoize from 'trie-memoize';
 import { Alert, Center, Loader, Stack, Text } from '@mantine/core';
-import { IconInbox } from '@tabler/icons-react';
+import { IconCalendar, IconClock, IconInbox } from '@tabler/icons-react';
 
 import { QueueItem } from '~/components/ImageGeneration/QueueItem';
 import { useGetGenerationRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
@@ -56,6 +56,10 @@ export function Queue() {
   return (
     <ScrollArea scrollRestore={{ key: 'queue' }} className="flex flex-col gap-2 px-3">
       <Stack>
+        <Text size="xs" color="dimmed" my={-10}>
+          <IconCalendar size={14} style={{ display: 'inline', marginTop: -3 }} strokeWidth={2} />{' '}
+          Generated images are only retained for 30 days.
+        </Text>
         {requests.map((request) => (
           <div key={request.id} id={request.id.toString()}>
             {createRenderElement(QueueItem, request.id, request)}
