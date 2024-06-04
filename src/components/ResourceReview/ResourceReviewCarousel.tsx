@@ -78,10 +78,10 @@ export function ResourceReviewCarousel({
                 {(safe) => (
                   <Center style={{ height: '100%', width: '100%' }}>
                     <div style={{ width: '100%', position: 'relative' }}>
-                      <ImageGuard2.BlurToggle className="absolute top-2 left-2 z-10" />
-                      <ImageContextMenu image={image} className="absolute top-2 right-2 z-10" />
+                      <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
+                      <ImageContextMenu image={image} className="absolute right-2 top-2 z-10" />
 
-                      <RoutedDialogLink name="imageDetail" state={{ imageId: image.id, images }}>
+                      <RoutedDialogLink name="mediaDetail" state={{ imageId: image.id, images }}>
                         <AspectRatio
                           ratio={1}
                           sx={(theme) => ({

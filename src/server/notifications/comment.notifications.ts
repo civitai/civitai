@@ -12,7 +12,7 @@ export const threadUrlMap = ({ threadType, threadParentId, ...details }: any) =>
 
   return {
     model: `/models/${threadParentId}?dialog=commentThread&${queryString}`,
-    image: `/images/${threadParentId}?${queryString}`,
+    image: `/media/${threadParentId}?${queryString}`,
     post: `/posts/${threadParentId}?${queryString}#comments`,
     article: `/articles/${threadParentId}?${queryString}#comments`,
     review: `/reviews/${threadParentId}?${queryString}`,
@@ -425,7 +425,7 @@ export const commentNotifications = createNotificationProcessor({
         let message = `${details.username} commented on your image`;
         if (details.modelName) message += ` posted to the ${details.modelName} model`;
 
-        const url = `/images/${details.imageId}?highlight=${details.commentId}`;
+        const url = `/media/${details.imageId}?highlight=${details.commentId}`;
         return { message, url };
       }
 
@@ -447,7 +447,7 @@ export const commentNotifications = createNotificationProcessor({
       } else {
         searchParams.returnUrl = `/models/${details.modelId}`;
       }
-      const url = `/images/${details.imageId}?${new URLSearchParams(searchParams).toString()}`;
+      const url = `/media/${details.imageId}?${new URLSearchParams(searchParams).toString()}`;
 
       return { message, url };
     },

@@ -476,7 +476,7 @@ export default function Rater() {
               className={classes.link}
               component={NextLink}
               target="_blank"
-              href={`/images/${image?.id}`}
+              href={`/media/${image?.id}`}
               variant="transparent"
             >
               <IconExternalLink />

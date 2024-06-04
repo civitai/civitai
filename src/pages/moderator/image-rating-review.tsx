@@ -98,7 +98,7 @@ function ImageRatingCard(item: AsyncReturnType<typeof getImageRatingRequests>['i
 
   return (
     <div className={`flex flex-col items-stretch card ${updated ? '!border-green-600' : ''}`}>
-      <NextLink href={`/images/${item.id}`} target="_blank">
+      <NextLink href={`/media/${item.id}`} target="_blank">
         <EdgeMedia src={item.url} type={item.type} width={450} className="w-full" />
       </NextLink>
       <div className="flex flex-col gap-4 p-4">

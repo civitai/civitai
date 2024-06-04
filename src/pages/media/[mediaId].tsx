@@ -6,11 +6,6 @@ import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvid
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { ImageDetail2 } from '~/components/Image/DetailV2/ImageDetail2';
 import { createPage } from '~/components/AppLayout/createPage';
-import { z } from 'zod';
-
-const querySchema = z.object({
-  mediaId: z.coerce.number(),
-});
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,

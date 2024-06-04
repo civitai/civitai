@@ -168,7 +168,7 @@ export function ImageCard({ data }: Props) {
   const context = useImagesContext();
 
   return (
-    <RoutedDialogLink name="imageDetail" state={{ imageId: data.id, ...context }}>
+    <RoutedDialogLink name="mediaDetail" state={{ imageId: data.id, ...context }}>
       <UnroutedImageCard data={data} />
     </RoutedDialogLink>
   );

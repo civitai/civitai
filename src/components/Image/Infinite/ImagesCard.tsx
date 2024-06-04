@@ -71,7 +71,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
 
   return (
     <HolidayFrame {...cardDecoration}>
-      <RoutedDialogLink name="imageDetail" state={{ imageId: image.id, images }}>
+      <RoutedDialogLink name="mediaDetail" state={{ imageId: image.id, images }}>
         <MasonryCard
           withBorder
           shadow="sm"

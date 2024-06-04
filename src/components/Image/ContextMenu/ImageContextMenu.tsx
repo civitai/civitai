@@ -263,7 +263,7 @@ function ImageMenuItems(
               icon={<IconEye size={14} stroke={1.5} />}
               onClick={() =>
                 triggerRoutedDialog({
-                  name: 'imageDetail',
+                  name: 'mediaDetail',
                   state: { imageId },
                 })
               }

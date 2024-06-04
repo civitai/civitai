@@ -41,7 +41,7 @@ export const parseBuzzTransactionDetails = (
       label: 'Model',
     },
     Image: {
-      url: `/images/${entityId}`,
+      url: `/media/${entityId}`,
       notification: `${baseNotification} on one of your images!`,
       label: 'Image',
     },

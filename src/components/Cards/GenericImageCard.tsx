@@ -38,7 +38,7 @@ export function GenericImageCard({
         return `/bounties/${entityId}`;
       }
       case 'Image': {
-        return `/images/${entityId}`;
+        return `/media/${entityId}`;
       }
       default: {
         return '/';

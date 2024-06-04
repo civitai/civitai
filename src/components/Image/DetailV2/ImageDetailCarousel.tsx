@@ -8,7 +8,6 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProvider';
 import { ConnectProps, ImageGuardContent } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { useUniversalPlayerContext } from '~/components/Player/Player';
 import { useTrackEvent } from '~/components/TrackView/track.utils';
 import { useAspectRatioFit } from '~/hooks/useAspectRatioFit';
 import { useResizeObserver } from '~/hooks/useResizeObserver';
@@ -100,7 +99,6 @@ function ImageContent({ image }: { image: ImagesInfiniteModel } & ConnectProps) 
   });
 
   const { trackPlay } = useTrackEvent();
-  const { currentTrack } = useUniversalPlayerContext();
 
   const isAudio = image.type === 'audio';
 

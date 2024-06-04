@@ -198,7 +198,7 @@ function ModelCarouselContent({
                           </HoverActionButton>
                         )}
                       </Stack>
-                      <RoutedDialogLink name="imageDetail" state={{ imageId: image.id, images }}>
+                      <RoutedDialogLink name="mediaDetail" state={{ imageId: image.id, images }}>
                         <Indicator
                           label="From Community"
                           radius="sm"

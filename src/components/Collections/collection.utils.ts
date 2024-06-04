@@ -71,7 +71,7 @@ export const getCollectionItemReviewData = (collectionItem: CollectionItemExpand
             }
           : null,
         user: collectionItem.data.user,
-        url: `/images/${collectionItem.data.id}`,
+        url: `/media/${collectionItem.data.id}`,
         baseModel: collectionItem.data.baseModel,
         itemAddedAt: collectionItem.createdAt,
         dataCreatedAt: collectionItem.data.createdAt,

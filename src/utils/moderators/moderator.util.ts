@@ -14,6 +14,6 @@ export const getImageEntityUrl = (image: {
     case 'BountyEntry':
       return `/bounties/entries/${image.entityId}`;
     default:
-      return `/images/${image.id}`;
+      return `/media/${image.id}`;
   }
 };

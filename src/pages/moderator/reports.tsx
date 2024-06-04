@@ -453,7 +453,7 @@ const getReportLink = (report: ReportDetail) => {
     return `/models/${report.comment.modelId}/?dialog=commentThread&commentId=${
       report.comment.parentId ?? report.comment.id
     }&highlight=${report.comment.id}`;
-  else if (report.image) return `/images/${report.image.id}`;
+  else if (report.image) return `/media/${report.image.id}`;
   else if (report.article) return `/articles/${report.article.id}`;
   else if (report.post) return `/posts/${report.post.id}`;
   else if (report.reportedUser) return `/user/${report.reportedUser.username}`;

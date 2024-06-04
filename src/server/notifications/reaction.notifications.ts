@@ -84,7 +84,7 @@ export const reactionNotifications = createNotificationProcessor({
         } model has received ${details.reactionCount} reactions`;
       }
 
-      return { message, url: `/images/${details.imageId}?postId=${details.postId}` };
+      return { message, url: `/media/${details.imageId}?postId=${details.postId}` };
     },
     prepareQuery: ({ lastSent, category }) => `
       WITH milestones AS (

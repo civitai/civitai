@@ -143,6 +143,11 @@ export default defineNextConfig(withAxiom({
         permanent: true,
       },
       {
+        source: '/images/:path*',
+        destination: '/media/:path*',
+        permanent: true,
+      },
+      {
         source: '/appeal',
         destination: 'https://forms.clickup.com/8459928/f/825mr-5844/5NXSA2EIT3YOS2JSF7',
         permanent: true,

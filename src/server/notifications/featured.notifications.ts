@@ -42,7 +42,7 @@ export const featuredNotifications = createNotificationProcessor({
     toggleable: false,
     prepareMessage: ({ details }) => ({
       message: `Congrats! Your image has been featured on the homepage`,
-      url: `/images/${details.imageId}`,
+      url: `/media/${details.imageId}`,
     }),
     prepareQuery: async ({ lastSent, category }) => `
       WITH data AS (

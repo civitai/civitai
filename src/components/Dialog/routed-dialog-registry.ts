@@ -37,15 +37,6 @@ function createDialogDictionary<T extends Record<string, unknown>>(
 }
 
 export const dialogs = createDialogDictionary({
-  imageDetail: {
-    component: ImageDetailModal,
-    target: '#main',
-    resolve: (query, { imageId, ...state }) => ({
-      query: { ...query, imageId },
-      asPath: `/images/${imageId}`,
-      state,
-    }),
-  },
   mediaDetail: {
     component: ImageDetailModal,
     target: '#main',

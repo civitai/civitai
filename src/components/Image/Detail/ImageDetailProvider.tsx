@@ -106,7 +106,7 @@ export function ImageDetailProvider({
             postId: prefetchedImage.postId || undefined,
           }),
         },
-        `/images/${imageId}`
+        `/media/${imageId}`
       );
     }
   }, [prefetchedImage]); // eslint-disable-line
@@ -155,7 +155,7 @@ export function ImageDetailProvider({
     browserRouter.replace(
       { query: { ...query, imageId: id } },
       {
-        pathname: `/images/${id}`,
+        pathname: `/media/${id}`,
         query: QS.parse(queryString) as any,
       }
     );

@@ -326,7 +326,7 @@ export function ImagesAsPostsCard({
                           </Stack>
                         )}
                         <RoutedDialogLink
-                          name="imageDetail"
+                          name="mediaDetail"
                           state={{ imageId: image.id, images: [image] }}
                           className={classes.link}
                         >
@@ -456,7 +456,7 @@ export function ImagesAsPostsCard({
                                   </Stack>
                                 )}
                                 <RoutedDialogLink
-                                  name="imageDetail"
+                                  name="mediaDetail"
                                   state={{ imageId: image.id, images: data.images }}
                                   className={classes.link}
                                 >

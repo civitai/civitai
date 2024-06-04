@@ -7,7 +7,7 @@ export const collectionNotifications = createNotificationProcessor({
     prepareMessage: ({ details }) => ({
       message: `The item you submitted to the contest "${details.collectionName}" has been ${details.status}.`,
       url: details.imageId
-        ? `/images/${details.imageId}`
+        ? `/media/${details.imageId}`
         : details.modelId
         ? `/models/${details.modelId}`
         : details.articleId

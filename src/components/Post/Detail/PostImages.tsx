@@ -77,7 +77,7 @@ export function PostImages({
                 <Stack spacing={8}>
                   {!isAudio && <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />}
                   <ImageContextMenu image={image} className="absolute right-2 top-2 z-10" />
-                  <RoutedDialogLink name="imageDetail" state={{ imageId: image.id, images }}>
+                  <RoutedDialogLink name="mediaDetail" state={{ imageId: image.id, images }}>
                     {!safe ? (
                       <div
                         style={{
