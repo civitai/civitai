@@ -1,11 +1,27 @@
-import { ActionIcon, Group, GroupProps, useMantineTheme } from '@mantine/core';
+import { ActionIcon, Alert, Center, Group, GroupProps } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { IconPlayerPauseFilled, IconPlayerPlayFilled } from '@tabler/icons-react';
-import { useWavesurfer, WavesurferProps } from '@wavesurfer/react';
-import { debounce } from 'lodash-es';
-import { useEffect, useRef, useState } from 'react';
+import { WavesurferProps, useWavesurfer } from '@wavesurfer/react';
+import { memo, useEffect, useRef, useState } from 'react';
+import { WaveSurferOptions } from 'wavesurfer.js';
+import { AUDIO_SAMPLE_RATE } from '~/server/common/constants';
 
-export function EdgeAudio({
+const wavesurferOptions: Partial<WaveSurferOptions> = {
+  waveColor: '#D9D9D9',
+  progressColor: '#44A1FA',
+  height: 40,
+  barGap: 4,
+  barWidth: 2,
+  barRadius: 4,
+  cursorWidth: 0,
+  sampleRate: AUDIO_SAMPLE_RATE,
+  width: '100%',
+  normalize: true,
+  interact: false,
+  hideScrollbar: true,
+};
+
+function _EdgeAudio({
   src,
   wrapperProps,
   name,
@@ -14,31 +30,20 @@ export function EdgeAudio({
   onAudioprocess,
   ...props
 }: EdgeAudioProps) {
-  const theme = useMantineTheme();
   const containerRef = useRef<HTMLDivElement>(null);
   const alreadyPlayed = useRef(false);
 
   const [volume] = useLocalStorage({ key: 'player-volume', defaultValue: 1 });
 
   const { wavesurfer } = useWavesurfer({
+    ...wavesurferOptions,
     container: containerRef,
     url: src,
-    waveColor: theme.colors.blue[0],
-    progressColor: theme.colors.blue[7],
-    height: 40,
-    barGap: 4,
-    barWidth: 2,
-    barRadius: 4,
-    cursorWidth: 0,
-    sampleRate: 1000,
-    width: '100%',
-    normalize: true,
-    interact: false,
-    hideScrollbar: true,
     ...props,
   });
 
   const [playing, setPlaying] = useState(false);
+  const [loadError, setLoadError] = useState(false);
 
   const handleTogglePlay: React.MouseEventHandler<HTMLButtonElement> = (e) => {
     e.stopPropagation();
@@ -55,7 +60,7 @@ export function EdgeAudio({
 
     const getPlayerParams = () => ({
       media: wavesurfer.getMediaElement(),
-      peaks: props.peaks,
+      peaks: props.peaks as number[][],
       duration: wavesurfer.getDuration(),
       name,
       src,
@@ -67,27 +72,18 @@ export function EdgeAudio({
         setPlaying(wavesurfer.isPlaying());
         wavesurfer.setVolume(volume);
       }),
+      wavesurfer.on('error', (error) => {
+        console.error(error);
+        setLoadError(true);
+      }),
       wavesurfer.on('play', () => {
-        if (onPlay) {
-          onPlay((prev) => {
-            const newParams = getPlayerParams();
-            if (!prev || prev.media !== newParams.media) {
-              if (prev) {
-                prev.media.pause();
-                prev.media.currentTime = 0;
-              }
-              return newParams;
-            }
-            return prev;
-          });
-        }
+        if (onPlay) onPlay(getPlayerParams());
 
         wavesurfer.setVolume(volume);
         setPlaying(true);
       }),
       wavesurfer.on('pause', () => setPlaying(false)),
-      wavesurfer.on('audioprocess', () => {
-        const currentTime = wavesurfer.getCurrentTime();
+      wavesurfer.on('audioprocess', (currentTime) => {
         if (wavesurfer.isPlaying() && currentTime > 5 && !alreadyPlayed.current && onAudioprocess) {
           onAudioprocess();
           alreadyPlayed.current = true;
@@ -98,7 +94,18 @@ export function EdgeAudio({
     return () => {
       subscriptions.forEach((unsub) => unsub());
     };
-  }, [wavesurfer, alreadyPlayed, onPlay, onReady, onAudioprocess, src, name, volume]);
+  }, [wavesurfer, onPlay, onReady, onAudioprocess]);
+
+  useEffect(() => {
+    if (wavesurfer) wavesurfer.setVolume(volume);
+  }, [volume, wavesurfer]);
+
+  // if (loadError)
+  //   return (
+  //     <Alert w="100%" color="red" radius="md">
+  //       <Center>Failed to load audio</Center>
+  //     </Alert>
+  //   );
 
   return (
     <Group spacing="sm" w="100%" pos="relative" noWrap {...wrapperProps}>
@@ -110,11 +117,13 @@ export function EdgeAudio({
   );
 }
 
+export const EdgeAudio = memo(_EdgeAudio);
+
 export type EdgeAudioProps = Omit<WavesurferProps, 'onPlay' | 'onReady' | 'onAudioprocess'> & {
   src?: string;
   wrapperProps?: GroupProps;
   onReady?: (params: Track) => void;
-  onPlay?: (callback: (prev: Track | null) => Track | null) => void;
+  onPlay?: (track: Track | null) => void;
   onAudioprocess?: () => void;
   name?: string | null;
 };

@@ -144,7 +144,7 @@ export default defineNextConfig(withAxiom({
       },
       {
         source: '/images/:id(\\d+)', // This ensures `:id` is a sequence of digits only
-        destination: '/media/:id',
+        destination: '/media/:id(\\d+)',
         permanent: true,
       },
       {

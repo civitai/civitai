@@ -12,16 +12,17 @@ import { useTrackEvent } from '~/components/TrackView/track.utils';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { ImagesInfiniteModel } from '~/server/services/image.service';
 import { formatDuration } from '~/utils/number-helpers';
-import { audioMetadataSchema } from '~/server/schema/media.schema';
+import { AudioMetadata } from '~/server/schema/media.schema';
+import { usePlayerStore } from '~/store/player.store';
 
 export function AudioCard({ data }: Props) {
   const context = useImagesContext();
   const router = useRouter();
-
   const { trackPlay } = useTrackEvent();
+  const currentTrack = usePlayerStore((state) => state.currentTrack);
+  const isSameTrack = currentTrack?.src === data.url;
 
-  const parsedMetadata = audioMetadataSchema.safeParse(data.metadata);
-  const metadata = parsedMetadata.success ? parsedMetadata.data : undefined;
+  const metadata = data.metadata as AudioMetadata | null;
 
   return (
     <RoutedDialogLink name="mediaDetail" state={{ imageId: data.id, ...context }}>
@@ -29,6 +30,7 @@ export function AudioCard({ data }: Props) {
         <Stack spacing="lg" p="md">
           <Group spacing="sm" mr="-sm" noWrap>
             <EdgeMedia
+              key={isSameTrack ? 'global' : data.id}
               type="audio"
               src={data.url}
               name={data.name}

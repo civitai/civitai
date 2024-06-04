@@ -15,6 +15,7 @@ import { useLocalStorage } from '@mantine/hooks';
 import { IconVolume, IconVolumeOff } from '@tabler/icons-react';
 import { createContext, useCallback, useContext, useState } from 'react';
 import { EdgeAudio } from '~/components/EdgeMedia/EdgeAudio';
+import { usePlayerStore } from '~/store/player.store';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { formatDuration } from '~/utils/number-helpers';
 
@@ -104,7 +105,10 @@ export function UniversalPlayerProvider({ children }: { children: React.ReactNod
                       </Group>
                     )}
                     <EdgeAudio
-                      {...currentTrack}
+                      media={currentTrack?.media}
+                      peaks={currentTrack?.peaks}
+                      duration={currentTrack?.duration}
+                      name={currentTrack?.name}
                       wrapperProps={{ sx: { flexDirection: 'row-reverse' } }}
                       dragToSeek
                       interact
@@ -121,16 +125,82 @@ export function UniversalPlayerProvider({ children }: { children: React.ReactNod
   );
 }
 
+export function GlobalPlayer() {
+  const { classes } = useStyles();
+  const { currentTrack, setCurrentTrack } = usePlayerStore((state) => state);
+
+  const handleClose = useCallback(() => {
+    if (currentTrack) {
+      currentTrack.media.pause();
+      currentTrack.media.currentTime = 0;
+    }
+    setCurrentTrack(null);
+  }, [currentTrack, setCurrentTrack]);
+
+  return (
+    <Transition mounted={!!currentTrack} transition="scale-y">
+      {(style) => (
+        <Portal target="main">
+          <div className={classes.wrapper} style={style}>
+            <Paper className={classes.player} p="sm" shadow="md">
+              <Group position="apart" noWrap>
+                <Stack spacing={4} style={{ flexGrow: 1 }}>
+                  {currentTrack?.name && (
+                    <Group spacing={8} position="apart" noWrap>
+                      <Text size="sm" color="white" weight="bold" lineClamp={1}>
+                        {currentTrack.name}
+                      </Text>
+                      <Group spacing={8} noWrap>
+                        {currentTrack?.duration && (
+                          <Badge
+                            size="md"
+                            color="gray.8"
+                            variant="filled"
+                            radius="sm"
+                            px={4}
+                            py={2}
+                            style={{ flexShrink: 0, boxShadow: '1px 2px 3px -1px #25262B33' }}
+                          >
+                            <Text weight="bold" color="white" inherit>
+                              {formatDuration(currentTrack.duration)}
+                            </Text>
+                          </Badge>
+                        )}
+                        <VolumeControl />
+                      </Group>
+                    </Group>
+                  )}
+                  <EdgeAudio
+                    src={currentTrack?.src}
+                    // media={currentTrack?.media}
+                    peaks={currentTrack?.peaks}
+                    duration={currentTrack?.duration}
+                    name={currentTrack?.name}
+                    wrapperProps={{ sx: { flexDirection: 'row-reverse' } }}
+                    dragToSeek
+                    interact
+                    autoplay
+                  />
+                </Stack>
+                <CloseButton size="sm" onClick={handleClose} aria-label="close player" />
+              </Group>
+            </Paper>
+          </div>
+        </Portal>
+      )}
+    </Transition>
+  );
+}
+
 function VolumeControl() {
   const [volume, setVolume] = useLocalStorage({ key: 'player-volume', defaultValue: 1 });
   const [endVolume, setEndVolume] = useState(volume);
-  const { currentTrack } = useUniversalPlayerContext();
+  const currentTrack = usePlayerStore((state) => state.currentTrack);
 
   const handleSetVolume = (value: number) => {
     if (!currentTrack) return;
 
     setVolume(value);
-    currentTrack.media.volume = value;
   };
 
   return (

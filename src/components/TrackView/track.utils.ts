@@ -5,6 +5,7 @@ import {
   TrackSearchInput,
   TrackShareInput,
 } from '~/server/schema/track.schema';
+import { useCallback } from 'react';
 
 export const useTrackEvent = () => {
   const { mutateAsync: trackShare } = trpc.track.trackShare.useMutation();
@@ -12,21 +13,19 @@ export const useTrackEvent = () => {
   const { mutateAsync: trackSearch } = trpc.track.trackSearch.useMutation();
   const { mutateAsync: trackPlay } = trpc.track.trackPlay.useMutation();
 
-  const handleTrackShare = (data: TrackShareInput) => {
-    return trackShare(data);
-  };
+  const handleTrackShare = useCallback((data: TrackShareInput) => trackShare(data), [trackShare]);
 
-  const handleTrackAction = (data: TrackActionInput) => {
-    return trackAction(data);
-  };
+  const handleTrackAction = useCallback(
+    (data: TrackActionInput) => trackAction(data),
+    [trackAction]
+  );
 
-  const handleTrackSearch = (data: TrackSearchInput) => {
-    return trackSearch(data);
-  };
+  const handleTrackSearch = useCallback(
+    (data: TrackSearchInput) => trackSearch(data),
+    [trackSearch]
+  );
 
-  const handleTrackPlay = (data: TrackPlayInput) => {
-    return trackPlay(data);
-  };
+  const handleTrackPlay = useCallback((data: TrackPlayInput) => trackPlay(data), [trackPlay]);
 
   return {
     trackShare: handleTrackShare,

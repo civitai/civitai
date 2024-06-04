@@ -1,14 +1,4 @@
-import {
-  Stack,
-  Paper,
-  createStyles,
-  Button,
-  Center,
-  Loader,
-  Alert,
-  Group,
-  Text,
-} from '@mantine/core';
+import { Stack, Paper, createStyles, Button, Center, Loader, Group, Text } from '@mantine/core';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { useState } from 'react';
@@ -20,6 +10,7 @@ import { constants } from '~/server/common/constants';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { useTrackEvent } from '~/components/TrackView/track.utils';
+import { AudioMetadata } from '~/server/schema/media.schema';
 
 const maxWidth = 700;
 const maxInitialImages = 20;
@@ -55,6 +46,7 @@ export function PostImages({
       {_images.map((image) => {
         const width = image.width ?? maxWidth;
         const isAudio = image.type === 'audio';
+        const audioMetadata = image.metadata as AudioMetadata | null;
 
         return (
           <Paper
@@ -107,6 +99,8 @@ export function PostImages({
                           type={image.type}
                           width={width < maxWidth ? width : maxWidth}
                           anim={safe}
+                          peaks={audioMetadata?.peaks}
+                          duration={audioMetadata?.duration}
                           onAudioprocess={() =>
                             trackPlay({
                               imageId: image.id,

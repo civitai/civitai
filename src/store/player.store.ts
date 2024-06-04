@@ -2,31 +2,34 @@ import { useCallback } from 'react';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 
-export type Track = {
-  duration: number;
-  media: HTMLMediaElement;
-  peaks: number[][];
-  name?: string | null;
-};
-
 type PlayerStore = {
   currentTrack: Track | null;
-  setCurrentTrack: (track: Track | null) => void;
-  play: () => void;
-  pause: () => void;
-  isPlaying: boolean;
+  setCurrentTrack: (arg: Track | null) => void;
+  isPlaying: () => boolean;
 };
 
-const useStore = create<PlayerStore>()(
-  immer((set) => ({
+export const usePlayerStore = create<PlayerStore>()(
+  immer((set, get) => ({
     currentTrack: null,
-    setCurrentTrack: (track) => set({ currentTrack: track }),
-    play: () => set({ isPlaying: true }),
-    pause: () => set({ isPlaying: false }),
-    isPlaying: false,
+    setCurrentTrack: (track) => {
+      set((state) => {
+        const prevTrack = state.currentTrack;
+        if (!prevTrack || prevTrack.media !== track?.media) {
+          if (prevTrack) {
+            prevTrack.media.pause();
+            prevTrack.media.currentTime = 0;
+          }
+        }
+        state.currentTrack = track;
+      });
+    },
+    isPlaying: () => {
+      const currentTrack = get().currentTrack;
+      return !currentTrack?.media?.paused ?? false;
+    },
   }))
 );
 
-export const usePlayerStore = () => {
-  return useStore(useCallback((state) => state, []));
-};
+// export const usePlayerStore = () => {
+//   return useStore(useCallback((state) => state, []));
+// };

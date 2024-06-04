@@ -715,3 +715,9 @@ export const creatorCardStatsDefaults = ['followers', 'likes'];
 export const creatorCardMaxStats = 3;
 
 export const milestoneNotificationFix = '2024-04-20';
+
+// #region [Audio]
+
+export const AUDIO_SAMPLE_RATE = 3000;
+
+// #endregion
