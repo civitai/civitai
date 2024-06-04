@@ -1,3 +1,5 @@
+import { CivitaiClient } from '@civitai/client';
+import { isDev } from '~/env/other';
 import { resourceDataCache } from '~/server/redis/caches';
 import { REDIS_KEYS, redis } from '~/server/redis/client';
 import { GenerationStatus, generationStatusSchema } from '~/server/schema/generation.schema';
@@ -7,6 +9,13 @@ import {
   minorPositives,
   safeNegatives,
 } from '~/shared/constants/generation.constants';
+
+export class OrchestratorClient extends CivitaiClient {
+  constructor(token: string) {
+    super({ env: 'dev', auth: token });
+    // super({ env: isDev ? 'dev' : 'prod', auth: token });
+  }
+}
 
 export async function getGenerationStatus() {
   const status = generationStatusSchema.parse(

@@ -873,94 +873,94 @@ export async function toggleUnavailableResource({
 //   return response;
 // };
 
-export const textToImageTestRun = async ({
-  model,
-  baseModel,
-  quantity,
-  sampler,
-  steps,
-  aspectRatio,
-  draft,
-  resources,
-}: GenerationRequestTestRunSchema) => {
-  const { aspectRatios } = getGenerationConfig(baseModel);
+// export const textToImageTestRun = async ({
+//   model,
+//   baseModel,
+//   quantity,
+//   sampler,
+//   steps,
+//   aspectRatio,
+//   draft,
+//   resources,
+// }: GenerationRequestTestRunSchema) => {
+//   const { aspectRatios } = getGenerationConfig(baseModel);
 
-  if (aspectRatio.includes('x'))
-    throw throwBadRequestError('Invalid size. Please select your size and try again');
+//   if (aspectRatio.includes('x'))
+//     throw throwBadRequestError('Invalid size. Please select your size and try again');
 
-  const { height, width } = aspectRatios[Number(aspectRatio)];
+//   const { height, width } = aspectRatios[Number(aspectRatio)];
 
-  if (draft) {
-    const draftData = getDraftStateFromInputForOrchestrator({
-      baseModel: baseModel,
-      quantity: quantity,
-      steps: steps,
-      cfgScale: 0,
-      sampler: sampler,
-    });
+//   if (draft) {
+//     const draftData = getDraftStateFromInputForOrchestrator({
+//       baseModel: baseModel,
+//       quantity: quantity,
+//       steps: steps,
+//       cfgScale: 0,
+//       sampler: sampler,
+//     });
 
-    quantity = draftData.quantity;
-    steps = draftData.steps;
-    sampler = draftData.sampler;
-    if (!resources) resources = [];
-    resources.push(draftData.resourceId);
-  }
+//     quantity = draftData.quantity;
+//     steps = draftData.steps;
+//     sampler = draftData.sampler;
+//     if (!resources) resources = [];
+//     resources.push(draftData.resourceId);
+//   }
 
-  const isSd1 = baseModel === 'SD1';
-  if (!model) model = isSd1 ? 128713 : 128078;
-  const response = await orchestratorCaller.textToImage({
-    payload: {
-      model: `@civitai/${model}`,
-      baseModel: baseModelToOrchestration[baseModel as BaseModelSetType],
-      properties: {},
-      quantity: quantity,
-      additionalNetworks: Object.fromEntries(
-        resources?.map((id) => [`@civitai/${id}`, { type: ModelType.LORA, strength: 1 }]) ?? []
-      ),
-      params: {
-        baseModel,
-        scheduler: samplersToSchedulers[sampler as Sampler],
-        steps,
-        height,
-        width,
-        // Defaults - These are not used for calculating cost
-        prompt: '',
-        negativePrompt: '',
-        clipSkip: 7,
-        cfgScale: 7,
-      },
-    },
-    isTestRun: true,
-  });
+//   const isSd1 = baseModel === 'SD1';
+//   if (!model) model = isSd1 ? 128713 : 128078;
+//   const response = await orchestratorCaller.textToImage({
+//     payload: {
+//       model: `@civitai/${model}`,
+//       baseModel: baseModelToOrchestration[baseModel as BaseModelSetType],
+//       properties: {},
+//       quantity: quantity,
+//       additionalNetworks: Object.fromEntries(
+//         resources?.map((id) => [`@civitai/${id}`, { type: ModelType.LORA, strength: 1 }]) ?? []
+//       ),
+//       params: {
+//         baseModel,
+//         scheduler: samplersToSchedulers[sampler as Sampler],
+//         steps,
+//         height,
+//         width,
+//         // Defaults - These are not used for calculating cost
+//         prompt: '',
+//         negativePrompt: '',
+//         clipSkip: 7,
+//         cfgScale: 7,
+//       },
+//     },
+//     isTestRun: true,
+//   });
 
-  if (!response.ok) {
-    if (response.status === 403) {
-      throw throwInsufficientFundsError();
-    }
+//   if (!response.ok) {
+//     if (response.status === 403) {
+//       throw throwInsufficientFundsError();
+//     }
 
-    throw new Error('An unknown error occurred. Please try again later');
-  }
+//     throw new Error('An unknown error occurred. Please try again later');
+//   }
 
-  const jobs = response.data?.jobs ?? [];
-  const cost = Math.ceil(jobs.reduce((acc, job) => acc + job.cost, 0));
-  let position = 0;
-  let ready = false;
-  let eta = dayjs().add(10, 'minutes').toDate();
-  for (const job of jobs) {
-    for (const [name, provider] of Object.entries(job.serviceProviders)) {
-      if (provider.support === 'Available' && !ready) ready = true;
-      if (!provider.queuePosition) continue;
-      if (provider.queuePosition.precedingJobs < position)
-        position = provider.queuePosition.precedingJobs;
-      if (provider.queuePosition.estimatedStartDate < eta)
-        eta = provider.queuePosition.estimatedStartDate;
-    }
-  }
+//   const jobs = response.data?.jobs ?? [];
+//   const cost = Math.ceil(jobs.reduce((acc, job) => acc + job.cost, 0));
+//   let position = 0;
+//   let ready = false;
+//   let eta = dayjs().add(10, 'minutes').toDate();
+//   for (const job of jobs) {
+//     for (const [name, provider] of Object.entries(job.serviceProviders)) {
+//       if (provider.support === 'Available' && !ready) ready = true;
+//       if (!provider.queuePosition) continue;
+//       if (provider.queuePosition.precedingJobs < position)
+//         position = provider.queuePosition.precedingJobs;
+//       if (provider.queuePosition.estimatedStartDate < eta)
+//         eta = provider.queuePosition.estimatedStartDate;
+//     }
+//   }
 
-  return {
-    cost,
-    ready,
-    eta,
-    position,
-  };
-};
+//   return {
+//     cost,
+//     ready,
+//     eta,
+//     position,
+//   };
+// };

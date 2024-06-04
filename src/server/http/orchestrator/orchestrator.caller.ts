@@ -114,9 +114,9 @@ class OrchestratorCaller extends HttpCaller {
     return this.delete('/v2/models/@civitai/' + modelVersionId);
   }
 
-  public taintJobById({ id, payload }: { id: string; payload: Orchestrator.TaintJobByIdPayload }) {
-    return this.put(`/v1/consumer/jobs/${id}`, { payload });
-  }
+  // public taintJobById({ id, payload }: { id: string; payload: Orchestrator.TaintJobByIdPayload }) {
+  //   return this.put(`/v1/consumer/jobs/${id}`, { payload });
+  // }
 
   public deleteJobById({ id }: { id: string }) {
     return this.delete(`/v1/consumer/jobs/${id}`);

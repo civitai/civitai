@@ -18,7 +18,7 @@ import {
   getUnavailableResources,
   getUnstableResources,
   // textToImage,
-  textToImageTestRun,
+  // textToImageTestRun,
   toggleUnavailableResource,
 } from '~/server/services/generation/generation.service';
 import {
@@ -115,8 +115,8 @@ export const generationRouter = router({
   //       },
   //     });
   //   }),
-  estimateTextToImage: publicProcedure
-    .input(generationRequestTestRunSchema)
-    .use(edgeCacheIt({ ttl: CacheTTL.sm }))
-    .query(({ input }) => textToImageTestRun(input)),
+  // estimateTextToImage: publicProcedure
+  //   .input(generationRequestTestRunSchema)
+  //   .use(edgeCacheIt({ ttl: CacheTTL.sm }))
+  //   .query(({ input }) => textToImageTestRun(input)),
 });
