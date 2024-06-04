@@ -47,8 +47,9 @@ import dayjs from 'dayjs';
 export async function textToImage({
   user,
   whatIf,
+  token,
   ...input
-}: z.input<typeof textToImageSchema> & { user: SessionUser; whatIf?: boolean }) {
+}: z.input<typeof textToImageSchema> & { user: SessionUser; whatIf?: boolean; token: string }) {
   const parsedInput = textToImageSchema.parse(input);
   const { params } = parsedInput;
 
@@ -245,14 +246,14 @@ export async function textToImage({
   const workflow = (await submitWorkflow({
     whatif: whatIf,
     requestBody,
-    user,
+    token,
   })) as TextToImageResponse;
 
   return { workflow, resourceDataWithInjects };
 }
 
 export async function createTextToImage(
-  args: z.input<typeof textToImageSchema> & { user: SessionUser }
+  args: z.input<typeof textToImageSchema> & { user: SessionUser; token: string }
 ) {
   const { workflow, resourceDataWithInjects } = await textToImage(args);
   const [formatted] = await formatTextToImageResponses([workflow], resourceDataWithInjects);
@@ -262,13 +263,15 @@ export async function createTextToImage(
 export async function whatIfTextToImage({
   resources,
   user,
+  token,
   ...params
-}: z.input<typeof textToImageWhatIfSchema> & { user: SessionUser }) {
+}: z.input<typeof textToImageWhatIfSchema> & { user: SessionUser; token: string }) {
   const { workflow } = await textToImage({
     params,
     resources: resources.map((id) => ({ id })),
     whatIf: true,
     user,
+    token,
   });
 
   let cost = 0,
@@ -301,14 +304,12 @@ export async function whatIfTextToImage({
 }
 
 export async function getTextToImageRequests(
-  props: Omit<Parameters<typeof queryWorkflows>[0], 'jobType'>
+  props: Omit<Parameters<typeof queryWorkflows>[0], 'jobType'> & { token: string }
 ) {
   const { nextCursor, items } = await queryWorkflows({
     ...props,
     jobType: ['textToImage'],
   });
-
-  // return items;
 
   return {
     items: await formatTextToImageResponses(items as TextToImageResponse[]),
@@ -318,10 +319,10 @@ export async function getTextToImageRequests(
 
 export async function updateTextToImageWorkflow({
   workflows,
-  user,
+  token,
 }: {
   workflows: TextToImageWorkflowUpdateSchema[];
-  user: SessionUser;
+  token: string;
 }) {
   const { toDelete, toUpdate } = workflows.reduce<{
     toDelete: string[];
@@ -335,8 +336,8 @@ export async function updateTextToImageWorkflow({
     },
     { toDelete: [], toUpdate: [] }
   );
-  if (toDelete.length) await deleteManyWorkflows({ workflowIds: toDelete, user });
-  if (toUpdate.length) await updateManyWorkflows({ workflows: toUpdate, user });
+  if (toDelete.length) await deleteManyWorkflows({ workflowIds: toDelete, token });
+  if (toUpdate.length) await updateManyWorkflows({ workflows: toUpdate, token });
 }
 
 // #region [helper methods]

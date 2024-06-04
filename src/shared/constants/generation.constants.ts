@@ -5,6 +5,11 @@ import { BaseModel, BaseModelSetType, baseModelSets } from '~/server/common/cons
 import { ResourceData } from '~/server/redis/caches';
 import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 
+export const generationServiceCookie = {
+  name: 'generation-service',
+  maxAge: 300,
+};
+
 export const generationStatusColors: Record<WorkflowStatus, MantineColor> = {
   unassigned: 'yellow',
   preparing: 'yellow',

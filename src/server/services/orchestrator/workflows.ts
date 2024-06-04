@@ -1,5 +1,4 @@
 import { $OpenApiTs, ApiError, CivitaiClient } from '@civitai/client';
-import { SessionUser } from 'next-auth';
 import { z } from 'zod';
 import { isDev } from '~/env/other';
 import {
@@ -14,12 +13,12 @@ import {
 } from '~/server/utils/errorHandling';
 
 export async function queryWorkflows({
-  user,
+  token,
   ...params
-}: z.output<typeof workflowQuerySchema> & { user: SessionUser }) {
+}: z.output<typeof workflowQuerySchema> & { token: string }) {
   const client = new CivitaiClient({
     env: isDev ? 'dev' : 'prod',
-    auth: 'ff2ddeabd724b029112668447a9388f7', // TODO - use user api token
+    auth: token,
   });
 
   const { next, items = [] } = await client.workflows.queryWorkflows(params);
@@ -28,24 +27,24 @@ export async function queryWorkflows({
 }
 
 export async function getWorkflow({
-  user,
+  token,
   ...params
-}: $OpenApiTs['/v2/consumer/workflows/{workflowId}']['get']['req'] & { user: SessionUser }) {
+}: $OpenApiTs['/v2/consumer/workflows/{workflowId}']['get']['req'] & { token: string }) {
   const client = new CivitaiClient({
     env: isDev ? 'dev' : 'prod',
-    auth: 'ff2ddeabd724b029112668447a9388f7', // TODO - use user api token
+    auth: token,
   });
 
   return await client.workflows.getWorkflow(params);
 }
 
 export async function submitWorkflow({
-  user,
+  token,
   ...params
-}: $OpenApiTs['/v2/consumer/workflows']['post']['req'] & { user: SessionUser }) {
+}: $OpenApiTs['/v2/consumer/workflows']['post']['req'] & { token: string }) {
   const client = new CivitaiClient({
     env: isDev ? 'dev' : 'prod',
-    auth: 'ff2ddeabd724b029112668447a9388f7', // TODO - use user api token
+    auth: token,
   });
 
   // console.dir(params, { depth: null });
@@ -70,11 +69,11 @@ export async function submitWorkflow({
 
 export async function cancelWorkflow({
   workflowId,
-  user,
-}: z.infer<typeof workflowIdSchema> & { user: SessionUser }) {
+  token,
+}: z.infer<typeof workflowIdSchema> & { token: string }) {
   const client = new CivitaiClient({
     env: isDev ? 'dev' : 'prod',
-    auth: 'ff2ddeabd724b029112668447a9388f7', // TODO - use user api token
+    auth: token,
   });
 
   await client.workflows.updateWorkflow({ workflowId, requestBody: { status: 'canceled' } });
@@ -82,11 +81,11 @@ export async function cancelWorkflow({
 
 export async function deleteWorkflow({
   workflowId,
-  user,
-}: z.infer<typeof workflowIdSchema> & { user: SessionUser }) {
+  token,
+}: z.infer<typeof workflowIdSchema> & { token: string }) {
   const client = new CivitaiClient({
     env: isDev ? 'dev' : 'prod',
-    auth: 'ff2ddeabd724b029112668447a9388f7', // TODO - use user api token
+    auth: token,
   });
 
   await client.workflows.deleteWorkflow({ workflowId });
@@ -94,14 +93,14 @@ export async function deleteWorkflow({
 
 export async function deleteManyWorkflows({
   workflowIds,
-  user,
+  token,
 }: {
   workflowIds: string[];
-  user: SessionUser;
+  token: string;
 }) {
   const client = new CivitaiClient({
     env: isDev ? 'dev' : 'prod',
-    auth: 'ff2ddeabd724b029112668447a9388f7', // TODO - use user api token
+    auth: token,
   });
 
   await Promise.all(
@@ -112,11 +111,11 @@ export async function deleteManyWorkflows({
 export async function updateWorkflow({
   workflowId,
   metadata,
-  user,
-}: z.infer<typeof workflowUpdateSchema> & { user: SessionUser }) {
+  token,
+}: z.infer<typeof workflowUpdateSchema> & { token: string }) {
   const client = new CivitaiClient({
     env: isDev ? 'dev' : 'prod',
-    auth: 'ff2ddeabd724b029112668447a9388f7', // TODO - use user api token
+    auth: token,
   });
 
   await client.workflows.updateWorkflow({ workflowId, requestBody: { metadata } });
@@ -124,14 +123,14 @@ export async function updateWorkflow({
 
 export async function updateManyWorkflows({
   workflows,
-  user,
+  token,
 }: {
   workflows: z.infer<typeof workflowUpdateSchema>[];
-  user: SessionUser;
+  token: string;
 }) {
   const client = new CivitaiClient({
     env: isDev ? 'dev' : 'prod',
-    auth: 'ff2ddeabd724b029112668447a9388f7', // TODO - use user api token
+    auth: token,
   });
 
   await Promise.all(
