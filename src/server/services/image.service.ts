@@ -99,6 +99,17 @@ export const imageUrlInUse = async ({ url, id }: { url: string; id: number }) =>
   return !!otherImagesWithSameUrl;
 };
 
+export async function purgeResizeCache({ url }: { url: string }) {
+  const { items } = await baseS3Client.listObjects({
+    bucket: env.S3_IMAGE_CACHE_BUCKET,
+    prefix: url,
+  });
+  await baseS3Client.deleteManyObjects({
+    bucket: env.S3_IMAGE_CACHE_BUCKET,
+    keys: items.map((x) => x.Key).filter(isDefined),
+  });
+}
+
 export const deleteImageById = async ({
   id,
   updatePost,
@@ -113,15 +124,8 @@ export const deleteImageById = async ({
 
     try {
       if (isProd && !(await imageUrlInUse({ url: image.url, id }))) {
-        const { items } = await baseS3Client.listObjects({
-          bucket: env.S3_IMAGE_CACHE_BUCKET,
-          prefix: image.url,
-        });
         await baseS3Client.deleteObject({ bucket: env.S3_IMAGE_UPLOAD_BUCKET, key: image.url });
-        await baseS3Client.deleteManyObjects({
-          bucket: env.S3_IMAGE_CACHE_BUCKET,
-          keys: items.map((x) => x.Key).filter(isDefined),
-        });
+        await purgeResizeCache({ url: image.url });
       }
     } catch {
       // Ignore errors
@@ -138,23 +142,6 @@ export const deleteImageById = async ({
   } catch {
     // Ignore errors
   }
-};
-
-// consider refactoring this endoint to only allow for updating `needsReview`, because that is all this endpoint is being used for...
-export const updateImageById = async ({
-  id,
-  data,
-}: {
-  id: number;
-  data: Prisma.ImageUpdateArgs['data'];
-}) => {
-  const image = await dbWrite.image.update({ where: { id }, data });
-
-  if (image.tosViolation) {
-    await imagesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
-  }
-
-  return image;
 };
 
 export const moderateImages = async ({

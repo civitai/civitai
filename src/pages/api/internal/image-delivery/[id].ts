@@ -26,6 +26,7 @@ export default WebhookEndpoint(async function handler(req: NextApiRequest, res: 
       "hideMeta"
     FROM "Image"
     WHERE url = ${id}
+    LIMIT 1
   `;
   if (!image) return res.status(404).json({ error: 'Image not found' });
   res.status(200).json(image);
