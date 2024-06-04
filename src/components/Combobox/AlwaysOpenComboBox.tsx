@@ -55,7 +55,7 @@ export function AlwaysOpenCombobox<T extends Key, TOption extends ComboboxOption
           placeholder="search..."
           className="m-2"
           radius="xl"
-          auto
+          autoFocus
         />
         <Divider />
         <ScrollArea.Autosize

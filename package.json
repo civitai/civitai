@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "3.0.163",
+  "version": "3.0.165",
   "private": true,
   "scripts": {
     "start": "next start",
@@ -165,7 +165,6 @@
     "react-lottie": "^1.2.4",
     "react-markdown": "^8.0.3",
     "react-social-media-embed": "^2.5.9",
-    "react-virtuoso": "^4.3.11",
     "redis": "^4.6.4",
     "rehype-raw": "^6.1.1",
     "remark-gemoji": "^8.0.0",
