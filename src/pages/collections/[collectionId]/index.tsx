@@ -1,6 +1,7 @@
 import { CollectionContributorPermission } from '@prisma/client';
 import { Collection } from '~/components/Collections/Collection';
 import { useCollectionQueryParams } from '~/components/Collections/collection.utils';
+import { Meta } from '~/components/Meta/Meta';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { CollectionsLayout } from '~/components/Collections/CollectionsLayout';
 
@@ -30,6 +31,7 @@ export const getServerSideProps = createServerSideProps({
 export default function Collections({ collectionId }: { collectionId: number }) {
   return (
     <CollectionsLayout>
+      <Meta title={`Collection | ${collectionId}`} description="View the collection details" />
       {collectionId && <Collection collectionId={collectionId} fluid />}
     </CollectionsLayout>
   );

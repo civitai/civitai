@@ -24,6 +24,7 @@ import {
 import { ProfileSectionSchema, ProfileSectionType } from '~/server/schema/user-profile.schema';
 import { UserImagesPage } from '~/pages/user/[username]/images';
 import { UserProfileLayout } from '~/components/Profile/old/OldProfileLayout';
+import { Meta } from '~/components/Meta/Meta';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -81,6 +82,8 @@ function ProfileOverview() {
 
   return (
     <>
+      <Meta title={`User Profile | ${user.username}`} description="View user profile and content" />
+
       {shouldDisplayUserNullStateBool ? (
         <Stack>
           <Stack align="center" py="lg">
