@@ -7,7 +7,7 @@ import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema'
 
 export const generationServiceCookie = {
   name: 'generation-service',
-  maxAge: 300,
+  maxAge: 3600,
 };
 
 export const generationStatusColors: Record<WorkflowStatus, MantineColor> = {
