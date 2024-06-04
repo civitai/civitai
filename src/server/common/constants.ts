@@ -298,14 +298,14 @@ export const constants = {
       cover: ':modelVersionId/:userId/cover.jpg',
     },
   },
-  supporterBadge: 'f5b9e5ca-4c3d-4d35-b30d-c199e9c6b124',
+  supporterBadge: '376e8db1-f91a-46ed-93a2-85efe6dd391f',
   memberships: {
     tierOrder: ['founder', 'bronze', 'silver', 'gold'],
     badges: {
-      founder: 'f5b9e5ca-4c3d-4d35-b30d-c199e9c6b124',
-      bronze: 'f5b9e5ca-4c3d-4d35-b30d-c199e9c6b124',
-      silver: '76ac8cd6-00a3-41ef-9129-f514e66ee70f',
-      gold: '0f0b185e-0c36-4eb1-bc97-2f4be36da546',
+      founder: '376e8db1-f91a-46ed-93a2-85efe6dd391f',
+      bronze: '376e8db1-f91a-46ed-93a2-85efe6dd391f',
+      silver: '1827f80a-b80c-4c55-8c67-dd2a384f4f9b',
+      gold: 'b6883947-df3e-46c9-b490-46ed7c0766a3',
     },
     founderDiscount: {
       maxDiscountDate: new Date('2024-05-01T00:00:00Z'),

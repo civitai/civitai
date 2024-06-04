@@ -96,7 +96,9 @@ type ModalData = {
   eta?: string;
 };
 
-const trainingStatusFields: Record<TrainingStatus, { color: MantineColor; description: string }> = {
+const trainingStatusFields: {
+  [key in TrainingStatus]: { color: MantineColor; description: string };
+} = {
   [TrainingStatus.Pending]: {
     color: 'yellow',
     description:
@@ -107,19 +109,29 @@ const trainingStatusFields: Record<TrainingStatus, { color: MantineColor; descri
     description:
       'A request to train has been submitted, and will soon be actively processing. You will be emailed when it is complete.',
   },
+  [TrainingStatus.Paused]: {
+    color: 'orange',
+    description:
+      'Your training will resume or terminate within 1 business day. No action is required on your part.',
+  },
+  [TrainingStatus.Denied]: {
+    color: 'red',
+    description:
+      'We have found an issue with the training dataset that may violate the TOS. This request has been rejected - please contact us with any questions.',
+  },
   [TrainingStatus.Processing]: {
     color: 'teal',
     description:
-      'The training is actively processing. In other words: the model is baking. You will be emailed when it is complete.',
+      'The training job is actively processing. In other words: the model is baking. You will be emailed when it is complete.',
   },
   [TrainingStatus.InReview]: {
     color: 'green',
     description:
-      'Training is completed, and your resulting model files are ready to be reviewed and published.',
+      'Training is complete, and your resulting model files are ready to be reviewed and published.',
   },
   [TrainingStatus.Approved]: {
     color: 'green',
-    description: 'The training is complete AND the results were published to Civitai.',
+    description: 'Training is complete, and the results were published to Civitai.',
   },
   [TrainingStatus.Failed]: {
     color: 'red',
@@ -166,7 +178,7 @@ export default function UserTrainingModels() {
       e.preventDefault();
       window.open(href, '_blank');
     } else if (e.button === 0) {
-      router.push(href);
+      router.push(href).then();
     }
   };
 
@@ -379,7 +391,8 @@ export default function UserTrainingModels() {
                               </HoverCard>
                             </>
                           )}
-                          {thisModelVersion.trainingStatus === TrainingStatus.Failed && (
+                          {(thisModelVersion.trainingStatus === TrainingStatus.Failed ||
+                            thisModelVersion.trainingStatus === TrainingStatus.Denied) && (
                             <Button
                               size="xs"
                               color="gray"

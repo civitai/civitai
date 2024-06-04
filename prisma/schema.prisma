@@ -144,29 +144,31 @@ model BuzzWithdrawalRequest {
 }
 
 model User {
-  id                  Int                   @id @default(autoincrement())
-  name                String?
-  username            String?               @unique @db.Citext
-  email               String?               @unique @db.Citext
-  emailVerified       DateTime?
-  image               String?
-  showNsfw            Boolean               @default(false)
-  blurNsfw            Boolean               @default(true)
-  browsingLevel       Int                   @default(1)
-  onboarding          Int                   @default(0)
-  isModerator         Boolean?              @default(false)
-  createdAt           DateTime              @default(now())
-  deletedAt           DateTime?
-  customerId          String?               @unique
-  subscriptionId      String?
-  subscription        CustomerSubscription?
-  mutedAt             DateTime? /// Updated via trigger
-  muted               Boolean               @default(false)
-  bannedAt            DateTime?
-  autoplayGifs        Boolean?              @default(true)
-  filePreferences     Json                  @default("{\"size\": \"pruned\", \"fp\": \"fp16\", \"format\": \"SafeTensor\"}")
-  leaderboardShowcase String?
-  referral            UserReferral?
+  id                      Int                   @id @default(autoincrement())
+  name                    String?
+  username                String?               @unique @db.Citext
+  email                   String?               @unique @db.Citext
+  emailVerified           DateTime?
+  image                   String?
+  showNsfw                Boolean               @default(false)
+  blurNsfw                Boolean               @default(true)
+  browsingLevel           Int                   @default(1)
+  onboarding              Int                   @default(0)
+  isModerator             Boolean?              @default(false)
+  createdAt               DateTime              @default(now())
+  deletedAt               DateTime?
+  customerId              String?               @unique
+  subscriptionId          String?
+  subscription            CustomerSubscription?
+  mutedAt                 DateTime? /// Updated via trigger
+  muted                   Boolean               @default(false)
+  muteConfirmedAt         DateTime?
+  bannedAt                DateTime?
+  autoplayGifs            Boolean?              @default(true)
+  filePreferences         Json                  @default("{\"size\": \"pruned\", \"fp\": \"fp16\", \"format\": \"SafeTensor\"}")
+  leaderboardShowcase     String?
+  referral                UserReferral?
+  excludeFromLeaderboards Boolean               @default(false)
 
   profile          UserProfile?
   profilePictureId Int?               @unique
@@ -419,23 +421,41 @@ model Import {
 }
 
 enum ModelStatus {
-  Draft // saved but incomplete
-  Training // actively training
-  Published // complete
-  Scheduled // scheduled for publish
-  Unpublished // taken from published -> hidden intentionally?
-  UnpublishedViolation // taken from published -> hidden unintentionally?
-  GatherInterest // unused?
-  Deleted // deleted by user/system
+  /// saved but incomplete
+  Draft
+  /// actively training
+  Training
+  /// complete
+  Published
+  /// scheduled for publish
+  Scheduled
+  /// taken from published -> hidden intentionally?
+  Unpublished
+  /// taken from published -> hidden unintentionally?
+  UnpublishedViolation
+  /// unused?
+  GatherInterest
+  /// deleted by user/system
+  Deleted
 }
 
 enum TrainingStatus {
-  Pending // not submitted yet (in draft mode)
-  Submitted // submitted for processing (in civitai queue/delay, OR not picked up by external system)
-  Processing // actively generating
-  InReview // done, waiting for publish
-  Failed // something went wrong either externally or internally
-  Approved // published
+  /// not submitted yet (in draft mode)
+  Pending
+  /// submitted for processing (in civitai queue/delay, OR not picked up by external system)
+  Submitted
+  /// awaiting approval or confirmation
+  Paused
+  /// rejected for violation
+  Denied
+  /// actively generating
+  Processing
+  /// done, waiting for publish
+  InReview
+  /// something went wrong either externally or internally
+  Failed
+  /// published
+  Approved
 }
 
 enum CommercialUse {
@@ -3002,6 +3022,7 @@ model Tool {
   type       ToolType
   domain     String?
   imageTools ImageTool[]
+  priority   Int?
 }
 
 model ImageTool {
