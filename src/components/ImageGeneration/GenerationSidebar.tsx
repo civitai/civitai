@@ -22,7 +22,7 @@ export function GenerationSidebar() {
   }, []);
 
   useEffect(() => {
-    generationPanel.open();
+    if (isGeneratePage) generationPanel.open();
   }, [isGeneratePage]);
 
   useEffect(() => {
