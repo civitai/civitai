@@ -8,6 +8,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { refundTransaction } from '~/server/services/buzz.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { withRetries } from '~/server/utils/errorHandling';
+import { queueNewTrainingModerationWebhook } from '~/server/webhooks/training-moderation.webhooks';
 
 export type EpochSchema = z.infer<typeof epochSchema>;
 const epochSchema = z.object({
@@ -245,6 +246,13 @@ export async function updateRecords(
       trainingStatus: status,
     },
   });
+
+  // trigger webhook alert
+  if (status === TrainingStatus.Paused) {
+    try {
+      await queueNewTrainingModerationWebhook(modelFile.modelVersionId);
+    } catch {}
+  }
 
   const model = await dbWrite.model.findFirst({
     where: { id: modelVersion.modelId },
