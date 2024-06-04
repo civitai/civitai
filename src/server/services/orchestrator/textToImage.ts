@@ -208,7 +208,7 @@ export async function textToImage({
   let batchSize = 1;
   if (params.draft) {
     quantity = Math.ceil(params.quantity / 4);
-    batchSize = Math.ceil(params.quantity / 4) * 4;
+    batchSize = 4;
   }
 
   const step: TextToImageStepTemplate = {
@@ -256,6 +256,8 @@ export async function createTextToImage(
   args: z.input<typeof textToImageSchema> & { user: SessionUser; token: string }
 ) {
   const { workflow, resourceDataWithInjects } = await textToImage(args);
+
+  console.dir(workflow, { depth: null });
   const [formatted] = await formatTextToImageResponses([workflow], resourceDataWithInjects);
   return formatted;
 }
@@ -400,6 +402,11 @@ export async function formatTextToImageResponses(
           ? !!resources.find((x) => x.id === draftModeSettings.resourceId)
           : false;
 
+        let quantity = input.quantity ?? 1;
+        if (isDraft) {
+          quantity *= 4;
+        }
+
         return removeNulls({
           id: workflow.id as string,
           status: workflow.status ?? ('unassignend' as WorkflowStatus),
@@ -408,7 +415,7 @@ export async function formatTextToImageResponses(
             baseModel,
             prompt,
             negativePrompt,
-            quantity: input.quantity ?? 1,
+            quantity,
             controlNets: input.controlNets,
             scheduler: input.scheduler,
             steps: input.steps,
