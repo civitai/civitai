@@ -81,7 +81,7 @@ import {
   useGenerationForm,
   blockedRequest,
 } from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { create } from 'zustand';
 
@@ -857,19 +857,24 @@ function SubmitButton(props: { isLoading?: boolean }) {
   const status = useGenerationStatus();
   const canGenerate = useGenerationContext((state) => state.canGenerate);
   const form = useGenerationForm();
-  const { model, resources, vae, ...params } = useWatch({ control: form.control });
+  const params = useWatch({ control: form.control });
   const [enabled, setEnabled] = useState(false);
   const defaultModel =
     generationConfig[getBaseModelSetType(params.baseModel) as keyof typeof generationConfig]
-      ?.checkpoint ?? model;
-  const query = textToImageWhatIfSchema.safeParse({
-    ...params,
-    prompt: '',
-    negativePrompt: '',
-    seed: undefined,
-    resources: [defaultModel.id],
-    // resources: [model, ...resources, vae].map((x) => (x ? x.id : undefined)).filter(isDefined),
-  });
+      ?.checkpoint ?? params.model;
+
+  const query = useMemo(
+    () =>
+      textToImageWhatIfSchema.safeParse({
+        ...params,
+        prompt: '',
+        negativePrompt: '',
+        seed: undefined,
+        resources: [defaultModel.id],
+        // resources: [model, ...resources, vae].map((x) => (x ? x.id : undefined)).filter(isDefined),
+      }),
+    [params]
+  );
 
   useEffect(() => {
     setTimeout(() => setEnabled(true), 150);
