@@ -237,10 +237,14 @@ export function ModelVersionDetails({
       }
     } catch (e) {
       const error = e as TRPCClientErrorBase<DefaultErrorShape>;
+      const reason = error?.message?.includes('Insufficient funds')
+        ? 'You do not have enough funds to publish this model. You can remove early access or purchase more buzz in order to publish.'
+        : 'Something went wrong while publishing your model. Please try again later.';
+
       showErrorNotification({
         error: new Error(error.message),
         title: 'Error publishing model',
-        reason: 'Something went wrong while publishing your model. Please try again later.',
+        reason,
       });
     }
 

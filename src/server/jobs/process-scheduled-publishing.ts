@@ -107,6 +107,7 @@ export const processScheduledPublishing = createJob(
         // Initially, I think this will be OK.
         await publishModelVersionsWithEarlyAccess({
           modelVersionIds: earlyAccess,
+          continueOnError: true,
         });
       }
     }

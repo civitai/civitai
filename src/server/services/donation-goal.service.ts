@@ -110,7 +110,7 @@ export const donateToGoal = async ({
             '{timeframe}',
             to_jsonb(${0})
           ),
-          "earlyAccessEndsAt" = NOW(),
+          "earlyAccessEndsAt" = NULL,
           "availability" = 'Public'
           WHERE "id" = ${goal.modelVersionId}
         `;

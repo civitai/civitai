@@ -35,6 +35,7 @@ import { env } from '~/env/server.mjs';
 import { createBuzzTransaction } from '~/server/services/buzz.service';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { hasEntityAccess } from '~/server/services/common.service';
+import { createNotification } from '~/server/services/notification.service';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
@@ -373,11 +374,13 @@ export const publishModelVersionsWithEarlyAccess = async ({
   publishedAt,
   meta,
   tx,
+  continueOnError = false,
 }: {
   modelVersionIds: number[];
   publishedAt?: Date;
   meta?: ModelVersionMeta;
   tx?: Prisma.TransactionClient;
+  continueOnError?: boolean;
 }) => {
   if (modelVersionIds.length === 0) return [];
   const dbClient = tx ?? dbWrite;
@@ -394,58 +397,83 @@ export const publishModelVersionsWithEarlyAccess = async ({
 
   const updatedVersions = await Promise.all(
     versions.map(async (currentVersion) => {
-      const earlyAccessConfig =
-        currentVersion.earlyAccessConfig as ModelVersionEarlyAccessConfig | null;
+      try {
+        const earlyAccessConfig =
+          currentVersion.earlyAccessConfig as ModelVersionEarlyAccessConfig | null;
 
-      if (earlyAccessConfig && !earlyAccessConfig.buzzTransactionId) {
-        // We should charge for thisL
-        const buzzTransaction = await createBuzzTransaction({
-          fromAccountId: currentVersion.model.userId,
-          toAccountId: 0,
-          amount: earlyAccessConfig.timeframe * constants.earlyAccess.buzzChargedPerDay,
-          type: TransactionType.Purchase,
-          description: `Early access for model: ${currentVersion.model.name} - ${currentVersion.name}`,
-        });
-
-        earlyAccessConfig.buzzTransactionId = buzzTransaction.transactionId;
-        earlyAccessConfig.originalPublishedAt = publishedAt; // Store the original published at date for future reference.
-
-        if (earlyAccessConfig.donationGoalEnabled && earlyAccessConfig.donationGoal) {
-          // Good time to also create the donation goal:
-          const donationGoal = await dbClient.donationGoal.create({
-            data: {
-              goalAmount: earlyAccessConfig.donationGoal as number,
-              title: `Early Access Donation Goal`,
-              active: true,
-              isEarlyAccess: true,
-              modelVersionId: currentVersion.id,
-              userId: currentVersion.model.userId,
-            },
+        if (earlyAccessConfig && !earlyAccessConfig.buzzTransactionId) {
+          // We should charge for thisL
+          const buzzTransaction = await createBuzzTransaction({
+            fromAccountId: currentVersion.model.userId,
+            toAccountId: 0,
+            amount: earlyAccessConfig.timeframe * constants.earlyAccess.buzzChargedPerDay,
+            type: TransactionType.Purchase,
+            description: `Early access for model: ${currentVersion.model.name} - ${currentVersion.name}`,
+            insufficientFundsErrorMsg: 'Insufficient funds to pay for early access.',
           });
 
-          if (donationGoal) {
-            earlyAccessConfig.donationGoalId = donationGoal.id;
+          earlyAccessConfig.buzzTransactionId = buzzTransaction.transactionId;
+          earlyAccessConfig.originalPublishedAt = publishedAt; // Store the original published at date for future reference.
+
+          if (earlyAccessConfig.donationGoalEnabled && earlyAccessConfig.donationGoal) {
+            // Good time to also create the donation goal:
+            const donationGoal = await dbClient.donationGoal.create({
+              data: {
+                goalAmount: earlyAccessConfig.donationGoal as number,
+                title: `Early Access Donation Goal`,
+                active: true,
+                isEarlyAccess: true,
+                modelVersionId: currentVersion.id,
+                userId: currentVersion.model.userId,
+              },
+            });
+
+            if (donationGoal) {
+              earlyAccessConfig.donationGoalId = donationGoal.id;
+            }
           }
         }
+
+        const updatedVersion = await dbClient.modelVersion.update({
+          where: { id: currentVersion.id },
+          data: {
+            status: ModelStatus.Published,
+            publishedAt: publishedAt,
+            earlyAccessConfig: earlyAccessConfig ?? undefined,
+            meta,
+          },
+          select: {
+            id: true,
+            modelId: true,
+            baseModel: true,
+            model: { select: { userId: true, id: true, type: true, nsfw: true } },
+          },
+        });
+
+        return updatedVersion;
+      } catch (e: any) {
+        console.log(e.message);
+        if (e?.message?.includes('Insufficient funds to pay for early access.')) {
+          // Create a notification for the user that the early access failed.
+          createNotification({
+            userId: currentVersion.model.userId,
+            type: 'early-access-failed-to-publish',
+            category: 'System',
+            details: {
+              error: e,
+              modelVersionId: currentVersion.id,
+              modelId: currentVersion.model.id,
+              displayName: `${currentVersion.model.name}: ${currentVersion.name}`,
+            },
+          }).catch((error) => {
+            // Print out any errors
+            // TODO.logs: sent to logger service
+            console.error(error);
+          });
+        }
+
+        if (!continueOnError) throw e;
       }
-
-      const updatedVersion = await dbClient.modelVersion.update({
-        where: { id: currentVersion.id },
-        data: {
-          status: ModelStatus.Published,
-          publishedAt: publishedAt,
-          earlyAccessConfig: earlyAccessConfig ?? undefined,
-          meta,
-        },
-        select: {
-          id: true,
-          modelId: true,
-          baseModel: true,
-          model: { select: { userId: true, id: true, type: true, nsfw: true } },
-        },
-      });
-
-      return updatedVersion;
     })
   );
 
