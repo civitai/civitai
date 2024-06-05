@@ -5,6 +5,7 @@ import { Sampler, getGenerationConfig } from '~/server/common/constants';
 import { extModeration } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
 import {
+  AirResourceData,
   getGenerationStatus,
   getResourceDataWithInjects,
 } from '~/server/services/orchestrator/common';
@@ -91,26 +92,14 @@ export async function textToImage({
     minorPositives,
   } = resourceDataWithInjects;
 
-  type AirResourceData = ReturnType<typeof airify>[number];
-  function airify(resources: ResourceData[]) {
-    return resources
-      .map((resource) => {
-        const air = stringifyAIR({
-          baseModel: resource.baseModel,
-          type: resource.model.type,
-          source: 'civitai',
-          modelId: resource.model.id,
-          id: resource.id,
-        });
-        if (!air) return null;
-        return {
-          ...resource,
-          ...parsedInput.resources.find((x) => x.id === resource.id),
-          air,
-          triggerWord: resource.trainedWords?.[0],
-        };
-      })
-      .filter(isDefined);
+  type ResourceData = ReturnType<typeof airify>[number];
+  // TODO - rename
+  function airify(resources: AirResourceData[]) {
+    return resources.map((resource) => ({
+      ...resource,
+      ...parsedInput.resources.find((x) => x.id === resource.id),
+      triggerWord: resource.trainedWords?.[0],
+    }));
   }
 
   const resources = airify(resourceData);
@@ -156,7 +145,7 @@ export async function textToImage({
   const { height, width } = config.aspectRatios[Number(params.aspectRatio)];
   const availableResourceTypes = config.additionalResourceTypes.map((x) => x.type);
   const additionalNetworks: { [key: string]: ImageJobNetworkParams } = {};
-  function addAdditionalNetwork(resource: AirResourceData) {
+  function addAdditionalNetwork(resource: ResourceData) {
     additionalNetworks[resource.air] = {
       type: resource.model.type,
       strength: resource.strength,
@@ -262,6 +251,7 @@ export async function createTextToImage(
   return formatted;
 }
 
+export type TextToImageWhatIf = AsyncReturnType<typeof whatIfTextToImage>;
 export async function whatIfTextToImage({
   resources,
   user,
@@ -277,7 +267,7 @@ export async function whatIfTextToImage({
   });
 
   let cost = 0,
-    ready = false,
+    ready = true,
     eta = dayjs().add(10, 'minutes').toDate(),
     position = 0;
 
@@ -289,13 +279,14 @@ export async function whatIfTextToImage({
       if (!queuePosition) continue;
 
       const { precedingJobs, startAt, support } = queuePosition;
-      if (support === 'available' && !ready) ready = true;
+      if (support !== 'available' && ready) ready = false;
       if (precedingJobs && precedingJobs < position) {
         position = precedingJobs;
         if (startAt && new Date(startAt).getTime() < eta.getTime()) eta = new Date(startAt);
       }
     }
   }
+  // console.dir(workflow, { depth: null });
 
   return {
     cost: Math.ceil(cost),
