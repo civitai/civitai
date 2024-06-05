@@ -36,7 +36,10 @@ export function useGetTextToImageRequests(
         (x.items ?? [])
           .map((response) => {
             const images = [...response.images]
-              .filter((image) => !response.metadata?.images?.[image.id]?.hidden)
+              .filter(
+                (image) =>
+                  !response.metadata?.images?.[image.id]?.hidden && image.status === 'succeeded'
+              )
               .sort((a, b) => {
                 if (a.completed !== b.completed) {
                   if (!b.completed) return 1;
@@ -120,11 +123,13 @@ export function useCancelTextToImageRequest() {
       updateTextToImageRequests((old) => {
         for (const page of old.pages) {
           for (const item of page.items.filter((x) => x.id === workflowId)) {
-            item.status = 'canceled';
             for (const image of item.images.filter(
               (x) => !workflowCompletedStatuses.includes(x.status)
             )) {
               image.status = 'canceled';
+            }
+            if (item.images.some((x) => x.status === 'canceled')) {
+              item.status = 'canceled';
             }
           }
           // const index = page.items.findIndex((x) => x.id === workflowId);

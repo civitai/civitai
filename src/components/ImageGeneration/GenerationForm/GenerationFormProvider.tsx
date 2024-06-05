@@ -223,6 +223,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
   const status = useGenerationStatus();
   const { data: responseData } = trpc.generation.getGenerationData.useQuery(input!, {
     enabled: input !== undefined,
+    keepPreviousData: true,
   });
 
   const getValues = useCallback(
