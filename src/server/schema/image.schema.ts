@@ -297,13 +297,7 @@ export const getInfiniteImagesSchema = baseQuerySchema
     pending: z.boolean().optional(),
     tools: z.number().array().optional(),
     techniques: z.number().array().optional(),
-    baseModels: z
-      .union([z.enum(constants.baseModels), z.enum(constants.baseModels).array()])
-      .optional()
-      .transform((rel) => {
-        if (!rel) return undefined;
-        return Array.isArray(rel) ? rel : [rel];
-      }),
+    baseModels: z.enum(constants.baseModels).array().optional(),
   })
   .transform((value) => {
     if (value.withTags) {

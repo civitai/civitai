@@ -220,7 +220,6 @@ export const getInfiniteImagesHandler = async ({
       user: ctx.user,
       headers: { src: 'getInfiniteImagesHandler' },
       include: [...input.include, 'tagIds'],
-      includeBaseModel: true,
     });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
