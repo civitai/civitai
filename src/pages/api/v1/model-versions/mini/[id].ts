@@ -56,7 +56,9 @@ export default MixedAuthEndpoint(async function handler(
       mv."baseModel",
       mv.status,
       mv.availability,
-      m.type
+      mv."earlyAccessEndsAt",
+      (mv."earlyAccessEndsAt" > NOW()) AS "checkPermission"
+      m.type,
     FROM "ModelVersion" mv
     JOIN "Model" m ON m.id = mv."modelId"
     WHERE ${Prisma.join(where, ' AND ')}
