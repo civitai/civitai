@@ -24,6 +24,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
 import { useGenerationStore } from '~/store/generation.store';
 import { auditPrompt } from '~/utils/metadata/audit';
+import { defaultsByTier } from '~/server/schema/generation.schema';
 
 // #region [schemas]
 const extendedTextToImageResourceSchema = textToImageResourceSchema.extend({
@@ -42,35 +43,46 @@ const extendedTextToImageResourceSchema = textToImageResourceSchema.extend({
 type PartialFormData = Partial<TypeOf<typeof formSchema>>;
 type DeepPartialFormData = DeepPartial<TypeOf<typeof formSchema>>;
 export type GenerationFormOutput = TypeOf<typeof formSchema>;
-const formSchema = textToImageParamsSchema.extend({
-  tier: userTierSchema,
-  model: extendedTextToImageResourceSchema,
-  resources: extendedTextToImageResourceSchema.array().min(0).max(9).default([]),
-  vae: extendedTextToImageResourceSchema.optional(),
-  prompt: z
-    .string()
-    .nonempty('Prompt cannot be empty')
-    .max(1500, 'Prompt cannot be longer than 1500 characters')
-    .superRefine((val, ctx) => {
-      const { blockedFor, success } = auditPrompt(val);
-      if (!success) {
-        let message = `Blocked for: ${blockedFor.join(', ')}`;
-        const count = blockedRequest.increment();
-        const status = blockedRequest.status();
-        if (status === 'warned') {
-          message += `. If you continue to attempt blocked prompts, your account will be sent for review.`;
-        } else if (status === 'notified') {
-          message += `. Your account has been sent for review. If you continue to attempt blocked prompts, your generation permissions will be revoked.`;
-        }
+const formSchema = textToImageParamsSchema
+  .extend({
+    tier: userTierSchema,
+    model: extendedTextToImageResourceSchema,
+    resources: extendedTextToImageResourceSchema.array().min(0).max(9).default([]),
+    vae: extendedTextToImageResourceSchema.optional(),
+    prompt: z
+      .string()
+      .nonempty('Prompt cannot be empty')
+      .max(1500, 'Prompt cannot be longer than 1500 characters')
+      .superRefine((val, ctx) => {
+        const { blockedFor, success } = auditPrompt(val);
+        if (!success) {
+          let message = `Blocked for: ${blockedFor.join(', ')}`;
+          const count = blockedRequest.increment();
+          const status = blockedRequest.status();
+          if (status === 'warned') {
+            message += `. If you continue to attempt blocked prompts, your account will be sent for review.`;
+          } else if (status === 'notified') {
+            message += `. Your account has been sent for review. If you continue to attempt blocked prompts, your generation permissions will be revoked.`;
+          }
 
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message,
-          params: { count },
-        });
-      }
-    }),
-});
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message,
+            params: { count },
+          });
+        }
+      }),
+  })
+  .refine(
+    (data) => {
+      // Check if resources are at limit based on tier
+      const { resources, tier } = data;
+      const limit = defaultsByTier[tier].resources;
+
+      return resources.length <= limit;
+    },
+    { message: `You have exceed the number of allowed resources`, path: ['resources'] }
+  );
 
 export const blockedRequest = (() => {
   let instances: number[] = [];
@@ -206,7 +218,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
   const input = useGenerationStore((state) => state.input);
   const storeData = useGenerationStore((state) => state.data);
 
-  const _form = useRef<GenerationFormProps | null>(null);
+  // const _form = useRef<GenerationFormProps | null>(null);
   const currentUser = useCurrentUser();
   const status = useGenerationStatus();
   const { data: responseData } = trpc.generation.getGenerationData.useQuery(input!, {
@@ -276,9 +288,9 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
     }
   }
 
-  if (!_form.current) {
-    _form.current = { ...form, setValues, reset };
-  }
+  // if (!_form.current) {
+  //   _form.current = { ...form, setValues, reset };
+  // }
 
   return (
     <GenerationFormContext.Provider value={{ ...form, setValues, reset }}>

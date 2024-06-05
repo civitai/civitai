@@ -81,9 +81,13 @@ import {
   useGenerationForm,
   blockedRequest,
 } from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
-import { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { create } from 'zustand';
+import {
+  TextToImageWhatIfProvider,
+  useTextToImageWhatIfContext,
+} from '~/components/ImageGeneration/GenerationForm/TextToImageWhatIfProvider';
 
 const useCostStore = create<{ cost?: number }>(() => ({}));
 
@@ -91,7 +95,9 @@ export function GenerationForm2() {
   return (
     <IsClient>
       <GenerationFormProvider>
-        <GenerationFormContent />
+        <TextToImageWhatIfProvider>
+          <GenerationFormContent />
+        </TextToImageWhatIfProvider>
       </GenerationFormProvider>
     </IsClient>
   );
@@ -390,6 +396,7 @@ export function GenerationFormContent() {
                       </Alert>
                     </Card.Section>
                   )}
+                  <ReadySection />
                 </>
               );
             }}
@@ -852,42 +859,27 @@ export function GenerationFormContent() {
 }
 // #endregion
 
+// #region [ready section]
+function ReadySection() {
+  const { data } = useTextToImageWhatIfContext();
+
+  return data?.ready === false ? (
+    <Card.Section>
+      <Alert color="yellow" title="Potentially slow generation" radius={0}>
+        <Text size="xs">
+          {`We need to download additional resources to fulfill your request. This generation may take longer than usual to complete.`}
+        </Text>
+      </Alert>
+    </Card.Section>
+  ) : null;
+}
+// #endregion
+
 // #region [submit button]
 function SubmitButton(props: { isLoading?: boolean }) {
   const status = useGenerationStatus();
   const canGenerate = useGenerationContext((state) => state.canGenerate);
-  const form = useGenerationForm();
-  const params = useWatch({ control: form.control });
-  const [enabled, setEnabled] = useState(false);
-  const defaultModel =
-    generationConfig[getBaseModelSetType(params.baseModel) as keyof typeof generationConfig]
-      ?.checkpoint ?? params.model;
-
-  const query = useMemo(
-    () =>
-      textToImageWhatIfSchema.safeParse({
-        ...params,
-        prompt: '',
-        negativePrompt: '',
-        seed: undefined,
-        resources: [defaultModel.id],
-        // resources: [model, ...resources, vae].map((x) => (x ? x.id : undefined)).filter(isDefined),
-      }),
-    [params]
-  );
-
-  useEffect(() => {
-    setTimeout(() => setEnabled(true), 150);
-  }, []);
-
-  const [debounced] = useDebouncedValue(query, 50);
-
-  const { data, isError, isInitialLoading } = trpc.orchestrator.textToImageWhatIf.useQuery(
-    debounced.success ? debounced.data : ({} as any),
-    {
-      enabled: debounced && debounced.success && enabled,
-    }
-  );
+  const { data, isError, isInitialLoading } = useTextToImageWhatIfContext();
 
   useEffect(() => {
     if (data) {
