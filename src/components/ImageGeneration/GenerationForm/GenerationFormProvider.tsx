@@ -5,7 +5,13 @@ import { TypeOf, z } from 'zod';
 import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { UsePersistFormReturn, usePersistForm } from '~/libs/form/hooks/usePersistForm';
-import { BaseModel, draftMode, generation, getGenerationConfig } from '~/server/common/constants';
+import {
+  BaseModel,
+  constants,
+  draftMode,
+  generation,
+  getGenerationConfig,
+} from '~/server/common/constants';
 import { imageSchema } from '~/server/schema/image.schema';
 import {
   textToImageParamsSchema,
@@ -17,6 +23,7 @@ import { getBaseModelSetType, getIsSdxl } from '~/shared/constants/generation.co
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
 import { useGenerationStore } from '~/store/generation.store';
+import { auditPrompt } from '~/utils/metadata/audit';
 
 // #region [schemas]
 const extendedTextToImageResourceSchema = textToImageResourceSchema.extend({
@@ -37,11 +44,63 @@ type DeepPartialFormData = DeepPartial<TypeOf<typeof formSchema>>;
 export type GenerationFormOutput = TypeOf<typeof formSchema>;
 const formSchema = textToImageParamsSchema.extend({
   tier: userTierSchema,
-  cost: z.number(),
   model: extendedTextToImageResourceSchema,
-  resources: extendedTextToImageResourceSchema.array().min(0).max(9),
+  resources: extendedTextToImageResourceSchema.array().min(0).max(9).default([]),
   vae: extendedTextToImageResourceSchema.optional(),
+  prompt: z
+    .string()
+    .nonempty('Prompt cannot be empty')
+    .max(1500, 'Prompt cannot be longer than 1500 characters')
+    .superRefine((val, ctx) => {
+      const { blockedFor, success } = auditPrompt(val);
+      if (!success) {
+        let message = `Blocked for: ${blockedFor.join(', ')}`;
+        const count = blockedRequest.increment();
+        const status = blockedRequest.status();
+        if (status === 'warned') {
+          message += `. If you continue to attempt blocked prompts, your account will be sent for review.`;
+        } else if (status === 'notified') {
+          message += `. Your account has been sent for review. If you continue to attempt blocked prompts, your generation permissions will be revoked.`;
+        }
+
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message,
+          params: { count },
+        });
+      }
+    }),
 });
+
+export const blockedRequest = (() => {
+  let instances: number[] = [];
+  const updateStorage = () => {
+    localStorage.setItem('brc', JSON.stringify(instances));
+  };
+  const increment = () => {
+    instances.push(Date.now());
+    updateStorage();
+    return instances.length;
+  };
+  const status = () => {
+    const count = instances.length;
+    if (count > constants.imageGeneration.requestBlocking.muted) return 'muted';
+    if (count > constants.imageGeneration.requestBlocking.notified) return 'notified';
+    if (count > constants.imageGeneration.requestBlocking.warned) return 'warned';
+    return 'ok';
+  };
+  if (typeof window !== 'undefined') {
+    const storedInstances = JSON.parse(localStorage.getItem('brc') ?? '[]');
+    const cutOff = Date.now() - 1000 * 60 * 60 * 24;
+    instances = storedInstances.filter((x: number) => x > cutOff);
+    updateStorage();
+  }
+
+  return {
+    status,
+    increment,
+  };
+})();
 
 // #endregion
 
@@ -165,7 +224,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
     reValidateMode: 'onSubmit',
     mode: 'onSubmit',
     values: getValues,
-    exclude: ['tier', 'cost'],
+    exclude: ['tier'],
     storage: localStorage,
   });
 
@@ -222,7 +281,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
   }
 
   return (
-    <GenerationFormContext.Provider value={_form.current}>
+    <GenerationFormContext.Provider value={{ ...form, setValues, reset }}>
       {children}
     </GenerationFormContext.Provider>
   );

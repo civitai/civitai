@@ -257,7 +257,7 @@ export async function createTextToImage(
 ) {
   const { workflow, resourceDataWithInjects } = await textToImage(args);
 
-  console.dir(workflow, { depth: null });
+  // console.dir(workflow, { depth: null });
   const [formatted] = await formatTextToImageResponses([workflow], resourceDataWithInjects);
   return formatted;
 }

@@ -65,7 +65,6 @@ import {
   getGenerationConfig,
   samplerOffsets,
 } from '~/server/common/constants';
-import { blockedRequest } from '~/server/schema/generation.schema';
 import { imageGenerationSchema } from '~/server/schema/image.schema';
 import { textToImageWhatIfSchema } from '~/server/schema/orchestrator/textToImage.schema';
 import { getBaseModelSetType, getIsSdxl } from '~/shared/constants/generation.constants';
@@ -80,9 +79,13 @@ import {
   GenerationFormOutput,
   GenerationFormProvider,
   useGenerationForm,
+  blockedRequest,
 } from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
 import { useEffect, useState } from 'react';
 import { IsClient } from '~/components/IsClient/IsClient';
+import { create } from 'zustand';
+
+const useCostStore = create<{ cost?: number }>(() => ({}));
 
 export function GenerationForm2() {
   return (
@@ -186,7 +189,10 @@ export function GenerationFormContent() {
       return;
     }
 
-    const { model, resources: additionalResources, vae, cost, ...params } = data;
+    const { cost } = useCostStore.getState();
+    if (!cost) return;
+
+    const { model, resources: additionalResources, vae, ...params } = data;
     const resources = [model, ...additionalResources, vae]
       .filter(isDefined)
       .filter((x) => x.covered !== false);
@@ -851,7 +857,8 @@ function SubmitButton(props: { isLoading?: boolean }) {
   const status = useGenerationStatus();
   const canGenerate = useGenerationContext((state) => state.canGenerate);
   const form = useGenerationForm();
-  const { model, resources = [], vae, ...params } = useWatch({ control: form.control });
+  const { model, resources, vae, ...params } = useWatch({ control: form.control });
+  const [enabled, setEnabled] = useState(false);
   const defaultModel =
     generationConfig[getBaseModelSetType(params.baseModel) as keyof typeof generationConfig]
       ?.checkpoint ?? model;
@@ -864,17 +871,23 @@ function SubmitButton(props: { isLoading?: boolean }) {
     // resources: [model, ...resources, vae].map((x) => (x ? x.id : undefined)).filter(isDefined),
   });
 
+  useEffect(() => {
+    setTimeout(() => setEnabled(true), 150);
+  }, []);
+
   const [debounced] = useDebouncedValue(query, 50);
 
   const { data, isError, isInitialLoading } = trpc.orchestrator.textToImageWhatIf.useQuery(
     debounced.success ? debounced.data : ({} as any),
     {
-      enabled: debounced && debounced.success,
+      enabled: debounced && debounced.success && enabled,
     }
   );
 
   useEffect(() => {
-    if (data) form.setValue('cost', data.cost);
+    if (data) {
+      useCostStore.setState({ cost: data.cost });
+    }
   }, [data?.cost]); // eslint-disable-line
 
   return !status.charge ? (

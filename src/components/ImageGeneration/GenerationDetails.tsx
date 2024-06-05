@@ -17,6 +17,7 @@ export function GenerationDetails({
   const detailItems = Object.entries(params)
     .filter(([, value]) => {
       if (Array.isArray(value)) return false;
+      if (typeof value === 'string') return !!value.length;
       return value !== undefined;
     })
     .map(([key, value]) => ({

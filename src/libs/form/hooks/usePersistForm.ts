@@ -149,5 +149,8 @@ export function usePersistForm<
     };
   }
 
-  return _formControl.current;
+  return {
+    ...form,
+    clear: () => getStorage().removeItem(storageKey),
+  };
 }
