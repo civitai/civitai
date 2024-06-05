@@ -47,7 +47,8 @@ export function usePersistForm<
   const _storageSchema = useRef<AnyZodObject | undefined>();
   if (!_storageSchema.current)
     _storageSchema.current = z.object({
-      state: schema ? getDeepPartialWithoutChecks(schema) : z.object({}).passthrough(),
+      state: z.object({}).passthrough(),
+      // state: schema ? getDeepPartialWithoutChecks(schema) : z.object({}).passthrough(),
       version: z.number(),
     });
 

@@ -108,7 +108,10 @@ export function stripChecksAndEffects<TSchema extends ZodTypeAny>(schema: TSchem
     }
     return dictionary as unknown as TSchema;
   }
-  schema._def.checks = [];
+  if (schema._def.innerType) {
+    schema._def.innerType = stripChecksAndEffects(schema._def.innerType);
+  }
+  if (schema._def.checks) schema._def.checks = [];
   return schema;
 }
 
