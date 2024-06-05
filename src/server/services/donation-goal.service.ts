@@ -3,6 +3,7 @@ import { GetByIdInput } from '~/server/schema/base.schema';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { DonateToGoalInput } from '~/server/schema/donation-goal.schema';
 import { createBuzzTransaction } from '~/server/services/buzz.service';
+import { updateModelEarlyAccessDeadline } from '~/server/services/model.service';
 
 export const donationGoalById = async ({
   id,
@@ -99,21 +100,31 @@ export const donateToGoal = async ({
         select: {
           earlyAccessConfig: true,
           earlyAccessEndsAt: true,
+          modelId: true,
         },
       });
 
       if (modelVersion?.earlyAccessEndsAt && modelVersion.earlyAccessEndsAt > new Date()) {
         await dbWrite.$executeRaw`
           UPDATE "ModelVersion"
-          SET "earlyAccessConfig" = jsonb_set(
-            COALESCE("earlyAccessConfig", '{}'::jsonb),
-            '{timeframe}',
-            to_jsonb(${0})
-          ),
+          SET "earlyAccessConfig" =  
+            COALESCE("earlyAccessConfig", '{}'::jsonb)  || JSONB_BUILD_OBJECT(
+              'timeframe', 0,
+              'originalPublishAt', "publishedAt"
+              'originalTimeframe', "earlyAccessConfig"->>'timeframe'
+            ),
           "earlyAccessEndsAt" = NULL,
-          "availability" = 'Public'
+          "availability" = 'Public',
+          "publishedAt" = NOW()
           WHERE "id" = ${goal.modelVersionId}
         `;
+
+        await updateModelEarlyAccessDeadline({
+          id: modelVersion.modelId,
+        }).catch((e) => {
+          console.error('Unable to update model early access deadline');
+          console.error(e);
+        });
       }
     }
 

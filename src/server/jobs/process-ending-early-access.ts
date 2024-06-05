@@ -14,6 +14,7 @@ export const processingEngingEarlyAccess = createJob(
         "earlyAccessConfig" = COALESCE("earlyAccessConfig", '{}'::jsonb) || JSONB_BUILD_OBJECT(
           'timeframe', 0,
           'originalPublishAt', "publishedAt"
+          'originalTimeframe', "earlyAccessConfig"->>'timeframe'
         ),
         "earlyAccessEndsAt" = NULL,
         "publishedAt" = NOW(),

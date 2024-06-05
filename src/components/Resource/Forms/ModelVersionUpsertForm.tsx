@@ -54,6 +54,7 @@ import {
 } from '~/server/schema/model-version.schema';
 import { ModelUpsertInput } from '~/server/schema/model.schema';
 import { isEarlyAccess } from '~/server/utils/early-access-helpers';
+import { isFutureDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { numericString } from '~/utils/zod-helpers';
@@ -125,7 +126,9 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
   const hasBaseModelType = ['Checkpoint'].includes(model?.type ?? '');
   const hasVAE = ['Checkpoint'].includes(model?.type ?? '');
   const showStrengthInput = ['LORA', 'Hypernetwork', 'LoCon'].includes(model?.type ?? '');
-  console.log(version?.earlyAccessConfig);
+  const isEarlyAccessOver =
+    (!version?.earlyAccessEndsAt || !isFutureDate(version?.earlyAccessEndsAt)) &&
+    !!version?.earlyAccessConfig?.buzzTransactionId;
 
   const MAX_EARLY_ACCCESS = 15;
 
@@ -283,6 +286,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
           {showEarlyAccessInput && (
             <Stack spacing={0}>
               <Divider label="Early Access Set Up" mb="md" />
+
               <DismissibleAlert
                 id="ea-info"
                 size="sm"
@@ -300,6 +304,12 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                 }
                 mb="xs"
               />
+              {isEarlyAccessOver && (
+                <Text size="xs" color="red">
+                  Early access has ended for this model version. You cannot make changes to early
+                  access settings.
+                </Text>
+              )}
               <Switch
                 my="sm"
                 label="I want to make this version part of the Early Access Program"
@@ -320,6 +330,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                       : null
                   )
                 }
+                disabled={isEarlyAccessOver}
               />
               {earlyAccessConfig && (
                 <Stack>
@@ -354,6 +365,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                         },
                       })}
                       fullWidth
+                      disabled={isEarlyAccessOver}
                     />
                     <Group noWrap>
                       <CurrencyIcon currency={Currency.BUZZ} size={16} />
@@ -382,6 +394,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                       step={100}
                       icon={<CurrencyIcon currency="BUZZ" size={16} />}
                       withAsterisk
+                      disabled={isEarlyAccessOver}
                     />
                     <InputSwitch
                       name="earlyAccessConfig.chargeForGeneration"
@@ -389,6 +402,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                       description={
                         'This will allow users to pay for generation only, but will not grant the ability to download. Payments for download already cover generation.'
                       }
+                      disabled={isEarlyAccessOver}
                     />
                     {earlyAccessConfig?.chargeForGeneration && (
                       <Stack>
@@ -400,12 +414,14 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                           max={earlyAccessConfig?.downloadPrice}
                           step={100}
                           icon={<CurrencyIcon currency="BUZZ" size={16} />}
+                          disabled={isEarlyAccessOver}
                         />
                         <InputNumber
                           name="earlyAccessConfig.generationTrialLimit"
                           label="Free Trial Limit"
                           description="How many free generations would you like to offer to users who have not paid for generation or download?"
                           min={10}
+                          disabled={isEarlyAccessOver}
                         />
                       </Stack>
                     )}
@@ -416,9 +432,11 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                           name="earlyAccessConfig.donationGoalEnabled"
                           label="Enable donation goal"
                           description={
-                            'You can use this feature to remove early access once a certain amount of buzz is met. This will allow you to set a goal for your model and remove early access once that goal is met.'
+                            'You can use this feature to remove early access once a certain amount of buzz is met. This will allow you to set a goal for your model and remove early access once that goal is met. Please note that after the model is published, you cannot change this value.'
                           }
-                          disabled={!!version?.earlyAccessConfig?.donationGoalId}
+                          disabled={
+                            !!version?.earlyAccessConfig?.donationGoalId || isEarlyAccessOver
+                          }
                         />
                         {earlyAccessConfig?.donationGoalEnabled && (
                           <Stack>
@@ -429,7 +447,9 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                               min={1000}
                               step={100}
                               icon={<CurrencyIcon currency="BUZZ" size={16} />}
-                              disabled={!!version?.earlyAccessConfig?.donationGoalId}
+                              disabled={
+                                !!version?.earlyAccessConfig?.donationGoalId || isEarlyAccessOver
+                              }
                             />
                           </Stack>
                         )}

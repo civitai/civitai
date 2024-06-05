@@ -19,6 +19,7 @@ export function getEarlyAccessDeadline({
   return deadline;
 }
 
+// DEPRECATED: Use the `earlyAccessEndsAt` field on the model version instead
 export function isEarlyAccess({
   versionCreatedAt,
   publishedAt,
