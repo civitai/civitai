@@ -788,11 +788,6 @@ const getImageGenerationData = async (id: number) => {
   };
 };
 
-// TODO.orchestrator
-export async function prepareModelInOrchestrator({ id }: PrepareModelInput) {
-  await orchestratorCaller.bustModelCache({ modelVersionId: id });
-}
-
 export async function getUnstableResources() {
   const cachedData = await redis
     .hGet(REDIS_KEYS.SYSTEM.FEATURES, 'generation:unstable-resources')

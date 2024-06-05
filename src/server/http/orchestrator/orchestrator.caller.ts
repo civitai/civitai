@@ -17,21 +17,21 @@ class OrchestratorCaller extends HttpCaller {
     });
   }
 
-  public textToImage({
-    payload,
-    isTestRun = false,
-  }: {
-    payload: Omit<Orchestrator.Generation.TextToImageJobPayload, 'type'>;
-    isTestRun?: boolean;
-  }) {
-    return this.post<Orchestrator.Generation.TextToImageResponse>(
-      `/v1/consumer/jobs${isTestRun ? '?whatif=true' : undefined}`,
-      {
-        // TODO.Orchestrator: Timeout is a temporary measure - Remove once Koen approves of it.
-        payload: { $type: 'textToImage', timeout: '00:05:00', ...payload },
-      }
-    );
-  }
+  // public textToImage({
+  //   payload,
+  //   isTestRun = false,
+  // }: {
+  //   payload: Omit<Orchestrator.Generation.TextToImageJobPayload, 'type'>;
+  //   isTestRun?: boolean;
+  // }) {
+  //   return this.post<Orchestrator.Generation.TextToImageResponse>(
+  //     `/v1/consumer/jobs${isTestRun ? '?whatif=true' : undefined}`,
+  //     {
+  //       // TODO.Orchestrator: Timeout is a temporary measure - Remove once Koen approves of it.
+  //       payload: { $type: 'textToImage', timeout: '00:05:00', ...payload },
+  //     }
+  //   );
+  // }
 
   public copyAsset({
     payload,
@@ -59,17 +59,17 @@ class OrchestratorCaller extends HttpCaller {
     });
   }
 
-  public getBlob({ payload }: { payload: Orchestrator.Generation.BlobGetPayload }) {
-    return this.post<Orchestrator.Generation.BlobGetResponse>('/v1/consumer/jobs', {
-      payload: { $type: 'blobGet', ...payload },
-    });
-  }
+  // public getBlob({ payload }: { payload: Orchestrator.Generation.BlobGetPayload }) {
+  //   return this.post<Orchestrator.Generation.BlobGetResponse>('/v1/consumer/jobs', {
+  //     payload: { $type: 'blobGet', ...payload },
+  //   });
+  // }
 
-  public deleteBlob({ payload }: { payload: Orchestrator.Generation.BlobActionPayload }) {
-    return this.post<Orchestrator.Generation.BlobActionPayload>('/v1/consumer/jobs', {
-      payload: { $type: 'blobDelete', ...payload },
-    });
-  }
+  // public deleteBlob({ payload }: { payload: Orchestrator.Generation.BlobActionPayload }) {
+  //   return this.post<Orchestrator.Generation.BlobActionPayload>('/v1/consumer/jobs', {
+  //     payload: { $type: 'blobDelete', ...payload },
+  //   });
+  // }
 
   public imageResourceTraining({
     payload,
@@ -110,9 +110,9 @@ class OrchestratorCaller extends HttpCaller {
     return this.get<Orchestrator.GetJobResponse>(`/v1/consumer/jobs/${id}`);
   }
 
-  public bustModelCache({ modelVersionId }: Orchestrator.Generation.BustModelCache) {
-    return this.delete('/v2/models/@civitai/' + modelVersionId);
-  }
+  // public bustModelCache({ modelVersionId }: Orchestrator.Generation.BustModelCache) {
+  //   return this.delete('/v2/models/@civitai/' + modelVersionId);
+  // }
 
   // public taintJobById({ id, payload }: { id: string; payload: Orchestrator.TaintJobByIdPayload }) {
   //   return this.put(`/v1/consumer/jobs/${id}`, { payload });

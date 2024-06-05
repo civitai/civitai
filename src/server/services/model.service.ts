@@ -43,10 +43,7 @@ import {
   getAvailableCollectionItemsFilterForUser,
   getUserCollectionPermissionsById,
 } from '~/server/services/collection.service';
-import {
-  getUnavailableResources,
-  prepareModelInOrchestrator,
-} from '~/server/services/generation/generation.service';
+import { getUnavailableResources } from '~/server/services/generation/generation.service';
 import {
   getImagesForModelVersionCache,
   getImagesForModelVersion,
@@ -86,6 +83,7 @@ import {
 } from '~/server/selectors/cosmetic.selector';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { dataForModelsCache } from '~/server/redis/caches';
+import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
@@ -1374,10 +1372,7 @@ export const publishModelById = async ({
   );
 
   if (includeVersions && status !== ModelStatus.Scheduled) {
-    // Send to orchestrator
-    Promise.all(
-      model.modelVersions.map((version) => prepareModelInOrchestrator({ id: version.id }))
-    );
+    await bustOrchestratorModelCache(model.modelVersions.map((x) => x.id));
   }
 
   // Fetch affected posts to update their images in search index

@@ -2,8 +2,8 @@ import { Prisma } from '@prisma/client';
 import { createJob, getJobDate } from './job';
 import { dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
-import orchestratorCaller from '~/server/http/orchestrator/orchestrator.caller';
 import { dataForModelsCache } from '~/server/redis/caches';
+import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 
 type ScheduledEntity = {
   id: number;
@@ -115,7 +115,7 @@ export const processScheduledPublishing = createJob(
         entityType: 'modelVersion',
         entityId: modelVersion.id,
       });
-      await orchestratorCaller.bustModelCache({ modelVersionId: modelVersion.id });
+      await bustOrchestratorModelCache([modelVersion.id]);
       if (modelVersion.extras && modelVersion.extras.hasOwnProperty('modelId')) {
         await dataForModelsCache.bust(modelVersion.extras.modelId);
       }

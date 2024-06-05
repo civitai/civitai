@@ -23,7 +23,6 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { updateModelLastVersionAt } from './model.service';
-import { prepareModelInOrchestrator } from './generation/generation.service';
 import { isDefined } from '~/utils/type-guards';
 import { imagesSearchIndex, modelsSearchIndex } from '~/server/search-index';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
@@ -31,6 +30,7 @@ import dayjs from 'dayjs';
 import { clickhouse } from '~/server/clickhouse/client';
 import { maxDate } from '~/utils/date-helpers';
 import { env } from '~/env/server.mjs';
+import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
@@ -360,8 +360,8 @@ export const publishModelVersionById = async ({
       await tx.$executeRaw`
         UPDATE "Post"
         SET
-          "publishedAt" = CASE 
-            WHEN "metadata"->>'prevPublishedAt' IS NOT NULL 
+          "publishedAt" = CASE
+            WHEN "metadata"->>'prevPublishedAt' IS NOT NULL
             THEN to_timestamp("metadata"->>'prevPublishedAt', 'YYYY-MM-DD"T"HH24:MI:SS.MS')
             ELSE ${publishedAt}
           END,
@@ -395,7 +395,7 @@ export const publishModelVersionById = async ({
 
   if (!republishing && !meta?.unpublishedBy)
     await updateModelLastVersionAt({ id: version.modelId });
-  await prepareModelInOrchestrator({ id: version.id });
+  await bustOrchestratorModelCache([version.id]);
   await preventReplicationLag('model', version.modelId);
   await preventReplicationLag('modelVersion', id);
 
@@ -433,7 +433,7 @@ export const unpublishModelVersionById = async ({
 
       await tx.$executeRaw`
         UPDATE "Post"
-        SET 
+        SET
           "metadata" = "metadata" || jsonb_build_object(
             'unpublishedAt', ${unpublishedAt},
             'unpublishedBy', ${user.id},
