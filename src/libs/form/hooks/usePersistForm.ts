@@ -1,4 +1,4 @@
-import { TypeOf, z, AnyZodObject } from 'zod';
+import { TypeOf, z, AnyZodObject, ZodEffects } from 'zod';
 import {
   Path,
   useForm,
@@ -17,7 +17,7 @@ export type UsePersistFormReturn<TFieldValues extends FieldValues = FieldValues>
   };
 
 export function usePersistForm<
-  TSchema extends AnyZodObject,
+  TSchema extends AnyZodObject | ZodEffects<AnyZodObject>,
   TExclude extends Array<Path<TypeOf<TSchema>>>
 >(
   storageKey: string,
