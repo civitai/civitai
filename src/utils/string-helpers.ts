@@ -223,7 +223,6 @@ export function stringifyAIR({
     )?.[0] ?? 'multi'
   ).toLowerCase();
   const urnType = typeUrnMap[type] ?? 'unknown';
-  if (!urnType) return null;
 
   return Air.stringify({
     ecosystem,
