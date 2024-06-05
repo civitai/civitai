@@ -9,6 +9,7 @@ import {
   minorPositives,
   safeNegatives,
 } from '~/shared/constants/generation.constants';
+import { stringifyAIR } from '~/utils/string-helpers';
 
 export class OrchestratorClient extends CivitaiClient {
   constructor(token: string) {
@@ -24,9 +25,25 @@ export async function getGenerationStatus() {
 
   return status as GenerationStatus;
 }
+
+export type AirResourceData = AsyncReturnType<typeof getResourceDataWithAirs>[number];
+export async function getResourceDataWithAirs(versionIds: number[]) {
+  const resources = await resourceDataCache.fetch(versionIds);
+  return resources.map((resource) => ({
+    ...resource,
+    air: stringifyAIR({
+      baseModel: resource.baseModel,
+      type: resource.model.type,
+      source: 'civitai',
+      modelId: resource.model.id,
+      id: resource.id,
+    }),
+  }));
+}
+
 export async function getResourceDataWithInjects(modelVersionIds: number[]) {
   const ids = [...modelVersionIds, ...allInjectedIds];
-  const allResources = await resourceDataCache.fetch(ids);
+  const allResources = await getResourceDataWithAirs(ids);
 
   function getInjected(injected: Array<{ id: number; triggerWord: string }>) {
     return allResources
