@@ -368,6 +368,90 @@ export const updateModelVersionById = async ({
   await preventReplicationLag('modelVersion', id);
 };
 
+export const publishModelVersionsWithEarlyAccess = async ({
+  modelVersionIds,
+  publishedAt,
+  meta,
+  tx,
+}: {
+  modelVersionIds: number[];
+  publishedAt?: Date;
+  meta?: ModelVersionMeta;
+  tx?: Prisma.TransactionClient;
+}) => {
+  if (modelVersionIds.length === 0) return [];
+  const dbClient = tx ?? dbWrite;
+
+  const versions = await dbRead.modelVersion.findMany({
+    where: { id: { in: modelVersionIds } },
+    select: {
+      id: true,
+      name: true,
+      earlyAccessConfig: true,
+      model: { select: { userId: true, name: true } },
+    },
+  });
+
+  const updatedVersions = await Promise.all(
+    versions.map(async (currentVersion) => {
+      const earlyAccessConfig =
+        currentVersion.earlyAccessConfig as ModelVersionEarlyAccessConfig | null;
+
+      if (earlyAccessConfig && !earlyAccessConfig.buzzTransactionId) {
+        // We should charge for thisL
+        const buzzTransaction = await createBuzzTransaction({
+          fromAccountId: currentVersion.model.userId,
+          toAccountId: 0,
+          amount: earlyAccessConfig.timeframe * constants.earlyAccess.buzzChargedPerDay,
+          type: TransactionType.Purchase,
+          description: `Early access for model: ${currentVersion.model.name} - ${currentVersion.name}`,
+        });
+
+        earlyAccessConfig.buzzTransactionId = buzzTransaction.transactionId;
+        earlyAccessConfig.originalPublishedAt = publishedAt; // Store the original published at date for future reference.
+
+        if (earlyAccessConfig.donationGoalEnabled && earlyAccessConfig.donationGoal) {
+          // Good time to also create the donation goal:
+          const donationGoal = await dbClient.donationGoal.create({
+            data: {
+              goalAmount: earlyAccessConfig.donationGoal as number,
+              title: `Early Access Donation Goal`,
+              active: true,
+              isEarlyAccess: true,
+              modelVersionId: currentVersion.id,
+              userId: currentVersion.model.userId,
+            },
+          });
+
+          if (donationGoal) {
+            earlyAccessConfig.donationGoalId = donationGoal.id;
+          }
+        }
+      }
+
+      const updatedVersion = await dbClient.modelVersion.update({
+        where: { id: currentVersion.id },
+        data: {
+          status: ModelStatus.Published,
+          publishedAt: publishedAt,
+          earlyAccessConfig: earlyAccessConfig ?? undefined,
+          meta,
+        },
+        select: {
+          id: true,
+          modelId: true,
+          baseModel: true,
+          model: { select: { userId: true, id: true, type: true, nsfw: true } },
+        },
+      });
+
+      return updatedVersion;
+    })
+  );
+
+  return updatedVersions;
+};
+
 export const publishModelVersionById = async ({
   id,
   publishedAt,
@@ -391,62 +475,41 @@ export const publishModelVersionById = async ({
     },
   });
 
-  const earlyAccessConfig =
-    currentVersion.earlyAccessConfig as ModelVersionEarlyAccessConfig | null;
-
   const version = await dbWrite.$transaction(
     async (tx) => {
-      if (
-        status === ModelStatus.Published &&
-        earlyAccessConfig &&
-        !earlyAccessConfig.buzzTransactionId
-      ) {
+      let updatedVersion;
+      if (status === ModelStatus.Published && currentVersion.earlyAccessConfig) {
         // We should charge for thisL
-        const buzzTransaction = await createBuzzTransaction({
-          fromAccountId: currentVersion.model.userId,
-          toAccountId: 0,
-          amount: earlyAccessConfig.timeframe * constants.earlyAccess.buzzChargedPerDay,
-          type: TransactionType.Purchase,
-          description: `Early access for model: ${currentVersion.model.name} - ${currentVersion.name}`,
+        const [updated] = await publishModelVersionsWithEarlyAccess({
+          modelVersionIds: [id],
+          publishedAt,
+          meta,
+          tx,
         });
 
-        earlyAccessConfig.buzzTransactionId = buzzTransaction.transactionId;
-        earlyAccessConfig.originalPublishedAt = publishedAt; // Store the original published at date for future reference.
-
-        if (earlyAccessConfig.donationGoalEnabled && earlyAccessConfig.donationGoal) {
-          // Good time to also create the donation goal:
-          const donationGoal = await tx.donationGoal.create({
-            data: {
-              goalAmount: earlyAccessConfig.donationGoal as number,
-              title: `Early Access Donation Goal`,
-              active: true,
-              isEarlyAccess: true,
-              modelVersionId: currentVersion.id,
-              userId: currentVersion.model.userId,
-            },
-          });
-
-          if (donationGoal) {
-            earlyAccessConfig.donationGoalId = donationGoal.id;
-          }
+        if (!updated) {
+          throw throwBadRequestError('Failed to publish model version.');
         }
+
+        updatedVersion = updated;
       }
 
-      const updatedVersion = await dbWrite.modelVersion.update({
-        where: { id },
-        data: {
-          status,
-          publishedAt: !republishing ? publishedAt : undefined,
-          meta,
-          earlyAccessConfig: earlyAccessConfig ?? undefined,
-        },
-        select: {
-          id: true,
-          modelId: true,
-          baseModel: true,
-          model: { select: { userId: true, id: true, type: true, nsfw: true } },
-        },
-      });
+      if (!updatedVersion) {
+        updatedVersion = await dbWrite.modelVersion.update({
+          where: { id },
+          data: {
+            status,
+            publishedAt: !republishing ? publishedAt : undefined,
+            meta,
+          },
+          select: {
+            id: true,
+            modelId: true,
+            baseModel: true,
+            model: { select: { userId: true, id: true, type: true, nsfw: true } },
+          },
+        });
+      }
 
       await tx.$executeRaw`
         UPDATE "Post"
@@ -465,6 +528,8 @@ export const publishModelVersionById = async ({
     },
     { timeout: 10000 }
   );
+
+  if (!version) throw throwNotFoundError('Something went wrong. Please try again.');
 
   // Fetch all posts and images related to the model version to update in search index
   const posts = await dbRead.post.findMany({

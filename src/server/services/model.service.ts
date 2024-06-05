@@ -86,6 +86,7 @@ import {
 } from '~/server/selectors/cosmetic.selector';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { dataForModelsCache } from '~/server/redis/caches';
+import { publishModelVersionsWithEarlyAccess } from '~/server/services/model-version.service';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
@@ -1325,14 +1326,6 @@ export const publishModelById = async ({
           publishedAt: !republishing ? publishedAt : undefined,
           meta: isEmpty(meta) ? Prisma.JsonNull : meta,
           deletedAt: null,
-          modelVersions: includeVersions
-            ? {
-                updateMany: {
-                  where: { id: { in: versionIds } },
-                  data: { status, publishedAt: !republishing ? publishedAt : undefined },
-                },
-              }
-            : undefined,
         },
         select: {
           id: true,
@@ -1344,6 +1337,12 @@ export const publishModelById = async ({
       });
 
       if (includeVersions) {
+        // Publish model versions with early access check:
+        await publishModelVersionsWithEarlyAccess({
+          modelVersionIds: versionIds,
+          publishedAt: !republishing ? publishedAt : undefined,
+        });
+
         await tx.$executeRaw`
           UPDATE "Post"
           SET
@@ -1584,10 +1583,7 @@ export const updateModelEarlyAccessDeadline = async ({ id }: GetByIdInput) => {
   if (!model) throw throwNotFoundError();
 
   const { modelVersions } = model;
-  const nextEarlyAccess = modelVersions.find(
-    (v) =>
-      !!v.earlyAccessEndsAt
-  );
+  const nextEarlyAccess = modelVersions.find((v) => !!v.earlyAccessEndsAt);
 
   if (nextEarlyAccess) {
     await updateModelById({

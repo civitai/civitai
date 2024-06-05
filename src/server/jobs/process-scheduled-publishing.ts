@@ -4,6 +4,7 @@ import { dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
 import orchestratorCaller from '~/server/http/orchestrator/orchestrator.caller';
 import { dataForModelsCache } from '~/server/redis/caches';
+import { publishModelVersionsWithEarlyAccess } from '~/server/services/model-version.service';
 
 type ScheduledEntity = {
   id: number;
@@ -31,11 +32,13 @@ export const processScheduledPublishing = createJob(
         mv.id,
         m."userId",
         JSON_BUILD_OBJECT(
-          'modelId', m.id
+          'modelId', m.id,
+          'hasEarlyAccess', mv."earlyAccesConfig" IS NOT NULL,
         ) as "extras"
       FROM "ModelVersion" mv
       JOIN "Model" m ON m.id = mv."modelId"
-      WHERE mv.status = 'Scheduled' AND mv."publishedAt" <= ${now};
+      WHERE mv.status = 'Scheduled'
+        AND mv."publishedAt" <= ${now}
     `;
     const scheduledPosts = await dbWrite.$queryRaw<ScheduledEntity[]>`
       SELECT
@@ -88,13 +91,24 @@ export const processScheduledPublishing = createJob(
     }
 
     if (scheduledModelVersions.length) {
-      const scheduledModelVersionIds = scheduledModelVersions.map(({ id }) => id);
+      const earlyAccess = scheduledModelVersions
+        .filter((item) => !!item.extras?.hasEarlyAccess)
+        .map(({ id }) => id);
+
       transaction.push(dbWrite.$executeRaw`
         -- Update scheduled versions published
         UPDATE "ModelVersion" SET status = 'Published'
-        WHERE id IN (${Prisma.join(scheduledModelVersionIds)})
+        WHERE id IN (${Prisma.join(scheduledModelVersions)})
           AND status = 'Scheduled' AND "publishedAt" <= ${now};
       `);
+
+      if (earlyAccess.length) {
+        // The only downside to this failing is that the model version will be published with no early access.
+        // Initially, I think this will be OK.
+        await publishModelVersionsWithEarlyAccess({
+          modelVersionIds: earlyAccess,
+        });
+      }
     }
 
     await dbWrite.$transaction(transaction);

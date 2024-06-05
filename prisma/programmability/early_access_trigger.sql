@@ -1,7 +1,11 @@
 CREATE OR REPLACE FUNCTION early_access_ends_at()
 RETURNS TRIGGER AS $$
 BEGIN
-    IF NEW."publishedAt" IS NOT NULL AND NEW."earlyAccessConfig" IS NOT NULL THEN
+    IF NEW."publishedAt" IS NOT NULL
+        AND NEW."earlyAccessConfig" IS NOT NULL
+        -- Ensure the user has paid for early access
+        AND NEW."earlyAccessConfig"->>'buzzTransactionId' IS NOT NULL 
+    THEN
         IF NEW."earlyAccessConfig"->>'timeframe' IS NOT NULL
             AND NEW."earlyAccessConfig"->>'timeframe' > 0 THEN
                 UPDATE "ModelVersion" 
