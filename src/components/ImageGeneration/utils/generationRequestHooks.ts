@@ -119,13 +119,21 @@ export function useCancelTextToImageRequest() {
     onSuccess: (_, { workflowId }) => {
       updateTextToImageRequests((old) => {
         for (const page of old.pages) {
-          const index = page.items.findIndex((x) => x.id === workflowId);
-          if (index > -1) {
-            page.items[index].images = page.items[index].images.filter((x) =>
-              workflowCompletedStatuses.includes(x.status)
-            );
-            if (!page.items[index].images.length) page.items.splice(index, 1);
+          for (const item of page.items.filter((x) => x.id === workflowId)) {
+            item.status = 'canceled';
+            for (const image of item.images.filter(
+              (x) => !workflowCompletedStatuses.includes(x.status)
+            )) {
+              image.status = 'canceled';
+            }
           }
+          // const index = page.items.findIndex((x) => x.id === workflowId);
+          // if (index > -1) {
+          //   page.items[index].images = page.items[index].images.filter((x) =>
+          //     workflowCompletedStatuses.includes(x.status)
+          //   );
+          //   if (!page.items[index].images.length) page.items.splice(index, 1);
+          // }
         }
       });
     },
