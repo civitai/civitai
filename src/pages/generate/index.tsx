@@ -58,7 +58,7 @@ export default function GeneratePage() {
   // desktop view
   return (
     <GenerationProvider>
-      <Meta title="Generate" description="Create and manage your generated images" deIndex />
+      <Meta title="Generate" deIndex />
 
       <Tabs
         variant="pills"
