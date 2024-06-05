@@ -264,10 +264,6 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
   maxQueueSize: 20, // Avoids hogging too much memory.
   pullSteps: 3,
   prepareBatches: async ({ db }, lastUpdatedAt) => {
-
-    console.log( Prisma.sql`
-        WHERE i."createdAt" >= ${lastUpdatedAt} 
-      `);
     const data = await db.$queryRaw<{ startId: number; endId: number }[]>`
     SELECT (	
       SELECT

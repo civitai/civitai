@@ -100,7 +100,7 @@ export default PublicEndpoint(
       ...input,
       user: session?.user,
     });
-    console.log(fileResult);
+
     if (fileResult.status === 'not-found') return errorResponse(404, 'File not found');
     if (fileResult.status === 'archived')
       return errorResponse(410, 'Model archived, not available for download');

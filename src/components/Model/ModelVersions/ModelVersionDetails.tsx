@@ -201,7 +201,6 @@ export function ModelVersionDetails({
           component: ModelVersionEarlyAccessPurchase,
           props: { modelVersionId: version.id },
         });
-        console.log('You should purchase bud');
       }
     },
     [isLoadingAccess, hasDownloadPermissions, version.id, router]

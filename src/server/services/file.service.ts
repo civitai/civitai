@@ -191,8 +191,6 @@ export const getFileForModelVersion = async ({
   const archived = modelVersion.model.mode === ModelModifier.Archived;
   if (!noAuth && archived) return { status: 'archived' };
 
-  console.log(entityAccess);
-
   const isMod = user?.isModerator;
   const userId = user?.id;
   const isOwner = !!userId && modelVersion.model.userId === userId;
