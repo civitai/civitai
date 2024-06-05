@@ -119,6 +119,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
           },
           meta: image.meta,
           username: image.user.username,
+          baseModel: image.baseModel,
         };
       }),
       metadata,

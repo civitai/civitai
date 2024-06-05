@@ -540,6 +540,7 @@ export const getAllImages = async ({
   notPublished,
   tools,
   techniques,
+  baseModels,
 }: GetInfiniteImagesOutput & {
   userId?: number;
   user?: SessionUser;
@@ -825,6 +826,15 @@ export const getAllImages = async ({
   //     WHERE "imageId" = i.id AND "techniqueId" IN (${Prisma.join(techniques)})
   //   )`);
   // }
+
+  if (baseModels?.length) {
+    AND.push(Prisma.sql`i.id IN (
+      SELECT ir."imageId"
+      FROM "ImageResource" ir
+      JOIN "ModelVersion" mv ON ir."modelVersionId" = mv.id
+      WHERE mv."baseModel" IN (${Prisma.join(baseModels)})
+    )`);
+  }
 
   if (pending && (isModerator || userId)) {
     if (isModerator) {
