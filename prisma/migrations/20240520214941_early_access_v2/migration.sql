@@ -6,8 +6,7 @@ ALTER TABLE "EntityAccess" ADD COLUMN     "meta" JSONB DEFAULT '{}',
 ADD COLUMN     "permissions" INTEGER NOT NULL DEFAULT 0;
 
 -- AlterTable
-ALTER TABLE "ModelVersion" DROP COLUMN "earlyAccessTimeFrame",
-ADD COLUMN     "earlyAccessConfig" JSONB NOT NULL DEFAULT '{}',
+ALTER TABLE "ModelVersion" ADD COLUMN     "earlyAccessConfig" JSONB NOT NULL DEFAULT '{}',
 ADD COLUMN     "earlyAccessEndsAt" TIMESTAMP(3);
 
 -- CreateTable
@@ -50,3 +49,21 @@ ALTER TABLE "Donation" ADD CONSTRAINT "Donation_userId_fkey" FOREIGN KEY ("userI
 
 -- AddForeignKey
 ALTER TABLE "Donation" ADD CONSTRAINT "Donation_donationGoalId_fkey" FOREIGN KEY ("donationGoalId") REFERENCES "DonationGoal"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+
+-- Run this only once, this will migrate the data from the existing early access config to the new early access config
+UPDATE "ModelVersion"
+SET "earlyAccessConfig" = JSONB_BUILD_OBJECT(
+    'timeframe', "earlyAccessTimeFrame",
+    'buzzTransactionId', 'migrated-from-existing',
+    'downloadPrice', 500,
+    'generationPrice', 100,
+    'chargeForGeneration', false,
+    'generationTrialLimit', 10,
+    'originalPublishedAt', "publishedAt"
+)
+WHERE 
+    "publishedAt" >= NOW() - INTERVAL '15 days'
+    AND "earlyAccessTimeFrame" IS NOT NULL
+    AND "earlyAccessTimeFrame" > 0
+    AND "publishedAt" + INTERVAL '1 day' * "earlyAccessTimeFrame" > now();

@@ -1,5 +1,6 @@
 import { increaseDate, maxDate } from '~/utils/date-helpers';
 
+// DEPRECATED: Use the `earlyAccessEndsAt` field on the model version instead
 export function getEarlyAccessDeadline({
   versionCreatedAt,
   publishedAt,
