@@ -529,7 +529,6 @@ export const getAllImages = async ({
   excludeCrossPosts,
   reactions,
   ids,
-  includeBaseModel,
   types,
   hidden,
   followed,
