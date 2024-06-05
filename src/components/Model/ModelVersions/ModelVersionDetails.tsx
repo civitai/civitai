@@ -111,6 +111,7 @@ import { getDisplayName, removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { ModelVersionEarlyAccessPurchase } from '~/components/Model/ModelVersions/ModelVersionEarlyAccessPurchase';
 import ModelVersionDonationGoals from '~/components/Model/ModelVersions/ModelVersionDonationGoals';
+import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 
 const useStyles = createStyles(() => ({
   ctaContainer: {
@@ -564,6 +565,8 @@ export function ModelVersionDetails({
       !model.allowNoCredit ||
       !model.allowDerivatives ||
       model.allowDifferentLicense);
+  const publishRequiresBuzz =
+    version.earlyAccessConfig?.timeframe ?? (0 && !version?.earlyAccessConfig?.buzzTransactionId);
 
   return (
     <ContainerGrid gutter="xl" gutterSm="sm" gutterMd="xl">
@@ -592,14 +595,29 @@ export function ModelVersionDetails({
           ) : showPublishButton ? (
             <Stack spacing={4}>
               <Button.Group>
-                <Button
-                  color="green"
-                  onClick={() => handlePublishClick()}
-                  loading={publishing}
-                  fullWidth
-                >
-                  Publish this version
-                </Button>
+                {publishRequiresBuzz ? (
+                  <BuzzTransactionButton
+                    onPerformTransaction={handlePublishClick}
+                    label="Publish this version"
+                    buzzAmount={
+                      (version.earlyAccessConfig?.timeframe ?? 0) *
+                      constants.earlyAccess.buzzChargedPerDay
+                    }
+                    color="yellow.7"
+                    size="xs"
+                    fullWidth
+                    loading={publishing}
+                  />
+                ) : (
+                  <Button
+                    color="green"
+                    onClick={() => handlePublishClick()}
+                    loading={publishing}
+                    fullWidth
+                  >
+                    Publish this version
+                  </Button>
+                )}
                 <Tooltip label={scheduledPublishDate ? 'Reschedule' : 'Schedule publish'} withArrow>
                   <Button
                     color="green"
@@ -611,15 +629,30 @@ export function ModelVersionDetails({
                   </Button>
                 </Tooltip>
               </Button.Group>
+              {publishRequiresBuzz && (
+                <Text size="xs" color="dimmed">
+                  This model version requires Buzz to publish due to early access. Removing early
+                  access will allow you to publish at no cost to you.
+                </Text>
+              )}
               {scheduledPublishDate && isOwnerOrMod && (
-                <Group spacing={4}>
-                  <ThemeIcon color="gray" variant="filled" radius="xl">
-                    <IconClock size={20} />
-                  </ThemeIcon>
-                  <Text size="xs" color="dimmed">
-                    Scheduled for {dayjs(scheduledPublishDate).format('MMMM D, h:mma')}
-                  </Text>
-                </Group>
+                <Stack>
+                  <Group spacing={4}>
+                    <ThemeIcon color="gray" variant="filled" radius="xl">
+                      <IconClock size={20} />
+                    </ThemeIcon>
+                    <Text size="xs" color="dimmed">
+                      Scheduled for {dayjs(scheduledPublishDate).format('MMMM D, h:mma')}
+                    </Text>
+                  </Group>
+                  {publishRequiresBuzz && (
+                    <Text size="xs" color="yellow.7">
+                      You will be charged Buzz when the model is published. If you do not have
+                      enough Buzz at that time, the model will be published without early access and
+                      open to the public.
+                    </Text>
+                  )}
+                </Stack>
               )}
             </Stack>
           ) : (

@@ -391,7 +391,7 @@ export const publishModelVersionsWithEarlyAccess = async ({
       id: true,
       name: true,
       earlyAccessConfig: true,
-      model: { select: { userId: true, name: true } },
+      model: { select: { id: true, userId: true, name: true } },
     },
   });
 

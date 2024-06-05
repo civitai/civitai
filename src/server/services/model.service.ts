@@ -1337,11 +1337,19 @@ export const publishModelById = async ({
       });
 
       if (includeVersions) {
-        // Publish model versions with early access check:
-        await publishModelVersionsWithEarlyAccess({
-          modelVersionIds: versionIds,
-          publishedAt: !republishing ? publishedAt : undefined,
-        });
+        if (status === ModelStatus.Published) {
+          // Publish model versions with early access check:
+          await publishModelVersionsWithEarlyAccess({
+            modelVersionIds: versionIds,
+            publishedAt: !republishing ? publishedAt : undefined,
+          });
+        } else if (status === ModelStatus.Scheduled) {
+          // Schedule model versions:
+          await tx.modelVersion.updateMany({
+            where: { id: { in: versionIds } },
+            data: { status, publishedAt: !republishing ? publishedAt : undefined },
+          });
+        }
 
         await tx.$executeRaw`
           UPDATE "Post"
