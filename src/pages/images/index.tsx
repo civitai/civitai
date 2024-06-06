@@ -22,7 +22,7 @@ export default function ImagesPage() {
         description="See the latest art created by the generative AI art community and delve into the inspirations and prompts behind their work"
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/images`, rel: 'canonical' }]}
       />
-      <ToolBanner />
+      {/* <ToolBanner /> */}
       <MasonryContainer>
         {hidden && <Title>Your Hidden Images</Title>}
         <Stack spacing="xs">
