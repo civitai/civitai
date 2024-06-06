@@ -810,7 +810,7 @@ export const getAllImages = async ({
     AND.push(Prisma.sql`EXISTS (
       SELECT 1
       FROM "ImageTechnique" it
-      WHERE it."imageId" = i.id AND it."toolId" IN (${Prisma.join(techniques)})
+      WHERE it."imageId" = i.id AND it."techniqueId" IN (${Prisma.join(techniques)})
     )`);
   }
 

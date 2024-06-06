@@ -242,11 +242,11 @@ export function ImageFiltersDropdown({
           onChange={(tools) => handleChange({ tools })}
         />
 
-        {/*<Divider label="Techniques" labelProps={{ weight: 'bold', size: 'sm' }} />
+        <Divider label="Techniques" labelProps={{ weight: 'bold', size: 'sm' }} />
         <TechniqueMultiSelect
           value={mergedFilters.techniques ?? []}
           onChange={(techniques) => handleChange({ techniques })}
-        /> */}
+        />
       </Stack>
       {filterLength > 0 && (
         <Button
