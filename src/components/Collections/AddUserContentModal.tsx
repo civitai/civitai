@@ -1,5 +1,6 @@
 import {
   ActionIcon,
+  Anchor,
   AspectRatio,
   Button,
   Center,
@@ -38,7 +39,7 @@ import {
   bulkSaveCollectionItemsInput,
 } from '~/server/schema/collection.schema';
 import { ImageGetInfinite } from '~/types/router';
-import { showErrorNotification } from '~/utils/notifications';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
 import { truncate } from 'lodash-es';
@@ -84,9 +85,23 @@ export function AddUserContentModal({ collectionId, opened, onClose, ...props }:
     addSimpleImagePostCollectionMutation.mutate(
       { collectionId, images: filteredImages },
       {
-        onSuccess: async () => {
+        onSuccess: async (data) => {
           handleClose();
+          showSuccessNotification({
+            autoClose: 10000, // 10s
+            title: 'Your media has been successfully added to this collection.',
+            message: (
+              <Stack>
+                <Text>
+                  <Anchor href={`/posts/${data.post.id}/edit`}>Click here</Anchor> to add tags and
+                  descriptions to your images.
+                </Text>
+              </Stack>
+            ),
+          });
           await queryUtils.image.getInfinite.invalidate();
+          await queryUtils.collection.getById.invalidate({ id: collectionId });
+          await queryUtils.collection.getAllUser.refetch();
         },
         onError(error) {
           showErrorNotification({
@@ -301,7 +316,7 @@ function SelectableImageCard({ data: image }: { data: ImageGetInfinite[number] }
         <ImageGuard2 image={image}>
           {(safe) => (
             <>
-              <ImageGuard2.BlurToggle className="absolute top-2 left-2 z-10" />
+              <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
               {!safe ? (
                 <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>
                   <MediaHash {...image} />
