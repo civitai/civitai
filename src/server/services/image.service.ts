@@ -529,6 +529,7 @@ export const getAllImages = async ({
   excludeCrossPosts,
   reactions,
   ids,
+  includeBaseModel,
   types,
   hidden,
   followed,
@@ -910,7 +911,7 @@ export const getAllImages = async ({
       u."deletedAt",
       p."availability",
       ${Prisma.raw(
-        baseModels?.length
+        includeBaseModel
           ? `(
             SELECT mv."baseModel"
             FROM "ImageResource" ir
