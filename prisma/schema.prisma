@@ -3013,15 +3013,16 @@ enum ToolType {
 }
 
 model Tool {
-  id         Int         @id @default(autoincrement())
-  name       String
-  icon       String?
-  createdAt  DateTime    @default(now())
-  enabled    Boolean     @default(true)
-  type       ToolType
-  domain     String?
-  imageTools ImageTool[]
-  priority   Int?
+  id          Int         @id @default(autoincrement())
+  name        String
+  icon        String?
+  createdAt   DateTime    @default(now())
+  enabled     Boolean     @default(true)
+  type        ToolType
+  domain      String?
+  imageTools  ImageTool[]
+  priority    Int?
+  description String?
 }
 
 model ImageTool {
