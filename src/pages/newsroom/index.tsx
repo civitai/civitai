@@ -5,6 +5,7 @@ import { FeaturedArticle } from '~/components/Newsroom/FeaturedArticle';
 import { MediaKit } from '~/components/Newsroom/MediaKit';
 import { News } from '~/components/Newsroom/News';
 import { PressMentions } from '~/components/Newsroom/PressMentions';
+import { Meta } from '~/components/Meta/Meta';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { trpc } from '~/utils/trpc';
@@ -39,6 +40,7 @@ export default function CivitaiNewsroom() {
 
   return (
     <>
+      <Meta title="Civitai Newsroom" description="The latest news and updates from Civitai" />
       <div className={classes.hero}>
         <Container size="md">
           <Stack align="center" spacing={0}>
