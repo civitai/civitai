@@ -105,11 +105,10 @@ declare global {
   };
 
   type Track = {
-    media: HTMLMediaElement;
     duration: number;
+    src: string;
     name?: string | null;
-    src?: string;
-    peaks?: number[][] | undefined;
+    peaks?: (Float32Array | number[])[] | undefined;
   };
 
   interface Window {

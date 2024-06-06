@@ -13,14 +13,11 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { ImagesInfiniteModel } from '~/server/services/image.service';
 import { formatDuration } from '~/utils/number-helpers';
 import { AudioMetadata } from '~/server/schema/media.schema';
-import { usePlayerStore } from '~/store/player.store';
 
 export function AudioCard({ data }: Props) {
   const context = useImagesContext();
   const router = useRouter();
   const { trackPlay } = useTrackEvent();
-  const currentTrack = usePlayerStore((state) => state.currentTrack);
-  const isSameTrack = currentTrack?.src === data.url;
 
   const metadata = data.metadata as AudioMetadata | null;
 
@@ -30,19 +27,18 @@ export function AudioCard({ data }: Props) {
         <Stack spacing="lg" p="md">
           <Group spacing="sm" mr="-sm" noWrap>
             <EdgeMedia
-              key={isSameTrack ? 'global' : data.id}
               type="audio"
               src={data.url}
               name={data.name}
-              duration={metadata?.duration}
-              peaks={metadata?.peaks}
-              onAudioprocess={() =>
-                trackPlay({
-                  imageId: data.id,
-                  ownerId: data.user.id,
-                  tags: data.tags?.map((t) => t.name) ?? [],
-                })
-              }
+              // duration={metadata?.duration}
+              // peaks={metadata?.peaks}
+              // onAudioprocess={() =>
+              //   trackPlay({
+              //     imageId: data.id,
+              //     ownerId: data.user.id,
+              //     tags: data.tags?.map((t) => t.name) ?? [],
+              //   })
+              // }
             />
             <Group spacing={4} noWrap>
               <Badge

@@ -304,7 +304,7 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
                     </>
                   ) : (
                     <>
-                      <MediaHash {...file} />
+                      {file.type !== 'audio' && <MediaHash {...file} />}
                       <Progress
                         size="xl"
                         value={file.progress}

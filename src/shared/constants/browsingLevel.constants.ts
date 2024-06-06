@@ -26,6 +26,7 @@ export const browsingLevelLabels = {
   [NsfwLevel.X]: 'X',
   [NsfwLevel.XXX]: 'XXX',
   [NsfwLevel.Blocked]: 'Blocked',
+  [NsfwLevel.Unknown]: '?',
 } as const;
 
 export const browsingLevelDescriptions = {
@@ -106,6 +107,7 @@ export const votableTagColors = {
   [NsfwLevel.X]: { dark: { color: 'red', shade: 9 }, light: { color: 'red', shade: 6 } },
   [NsfwLevel.XXX]: { dark: { color: 'red', shade: 9 }, light: { color: 'red', shade: 6 } },
   [NsfwLevel.Blocked]: { dark: { color: 'red', shade: 9 }, light: { color: 'red', shade: 6 } },
+  [NsfwLevel.Unknown]: { dark: { color: 'red', shade: 9 }, light: { color: 'red', shade: 6 } },
 } as const;
 
 export const toggleableBrowsingCategories = [

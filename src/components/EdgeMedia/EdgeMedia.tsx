@@ -4,7 +4,6 @@ import { EdgeUrlProps, useEdgeUrl } from '~/client-utils/cf-images-utils';
 import { EdgeAudio, EdgeAudioProps } from '~/components/EdgeMedia/EdgeAudio';
 import { EdgeVideo } from '~/components/EdgeMedia/EdgeVideo';
 import { useUniversalPlayerContext } from '~/components/Player/Player';
-import { usePlayerStore } from '~/store/player.store';
 
 export type EdgeMediaProps = EdgeUrlProps &
   Omit<JSX.IntrinsicElements['img'], 'src' | 'srcSet' | 'ref' | 'width' | 'height' | 'metadata'> & {
@@ -45,8 +44,7 @@ export function EdgeMedia({
 }: EdgeMediaProps) {
   const { classes, cx } = useStyles({ maxWidth: width ?? undefined });
   // const currentUser = useCurrentUser();
-  const setCurrentTrack = usePlayerStore((state) => state.setCurrentTrack);
-  const currentTrack = usePlayerStore((state) => state.currentTrack);
+  const { globalAudio, currentTrack, setCurrentTrack } = useUniversalPlayerContext();
 
   const imgRef = useRef<HTMLImageElement>(null);
   if (fadeIn && imgRef.current?.complete) imgRef?.current?.style?.setProperty('opacity', '1');
@@ -100,15 +98,13 @@ export function EdgeMedia({
 
       return (
         <EdgeAudio
-          key={isSameTrack ? 'global' : url}
-          src={!isSameTrack ? url : undefined}
+          src={url}
           duration={duration}
-          media={isSameTrack ? currentTrack.media : undefined}
+          media={isSameTrack ? globalAudio ?? undefined : undefined}
           peaks={peaks}
           name={name}
           wrapperProps={wrapperProps}
           onPlay={setCurrentTrack}
-          // onReady={onReady}
           onAudioprocess={onAudioprocess}
         />
       );

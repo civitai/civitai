@@ -4,27 +4,16 @@ import { IconPlayerPauseFilled, IconPlayerPlayFilled } from '@tabler/icons-react
 import { WavesurferProps, useWavesurfer } from '@wavesurfer/react';
 import { memo, useEffect, useRef, useState } from 'react';
 import { WaveSurferOptions } from 'wavesurfer.js';
+import { useUniversalPlayerContext } from '~/components/Player/Player';
 import { AUDIO_SAMPLE_RATE } from '~/server/common/constants';
-
-const wavesurferOptions: Partial<WaveSurferOptions> = {
-  waveColor: '#D9D9D9',
-  progressColor: '#44A1FA',
-  height: 40,
-  barGap: 4,
-  barWidth: 2,
-  barRadius: 4,
-  cursorWidth: 0,
-  sampleRate: AUDIO_SAMPLE_RATE,
-  width: '100%',
-  normalize: true,
-  interact: false,
-  hideScrollbar: true,
-};
 
 function _EdgeAudio({
   src,
   wrapperProps,
   name,
+  duration,
+  peaks,
+  media,
   onPlay,
   onReady,
   onAudioprocess,
@@ -36,9 +25,23 @@ function _EdgeAudio({
   const [volume] = useLocalStorage({ key: 'player-volume', defaultValue: 1 });
 
   const { wavesurfer } = useWavesurfer({
-    ...wavesurferOptions,
     container: containerRef,
-    url: src,
+    waveColor: '#D9D9D9',
+    progressColor: '#44A1FA',
+    height: 40,
+    barGap: 4,
+    barWidth: 2,
+    barRadius: 4,
+    cursorWidth: 0,
+    // sampleRate: AUDIO_SAMPLE_RATE,
+    width: '100%',
+    normalize: true,
+    interact: false,
+    hideScrollbar: true,
+    url: !media ? src : undefined,
+    duration,
+    peaks,
+    media,
     ...props,
   });
 
@@ -58,31 +61,29 @@ function _EdgeAudio({
   useEffect(() => {
     if (!wavesurfer) return;
 
-    const getPlayerParams = () => ({
-      media: wavesurfer.getMediaElement(),
-      peaks: props.peaks as number[][],
-      duration: wavesurfer.getDuration(),
-      name,
-      src,
-    });
-
     const subscriptions = [
       wavesurfer.on('ready', () => {
-        if (onReady) onReady(getPlayerParams());
+        if (onReady) onReady({ name, duration, src, peaks });
         setPlaying(wavesurfer.isPlaying());
-        wavesurfer.setVolume(volume);
+        // wavesurfer.setVolume(volume);
       }),
       wavesurfer.on('error', (error) => {
         console.error(error);
         setLoadError(true);
       }),
       wavesurfer.on('play', () => {
-        if (onPlay) onPlay(getPlayerParams());
+        console.log('playing');
+        if (onPlay) {
+          onPlay({ name, duration, src, peaks });
+        }
 
-        wavesurfer.setVolume(volume);
+        // wavesurfer.setVolume(volume);
         setPlaying(true);
       }),
-      wavesurfer.on('pause', () => setPlaying(false)),
+      wavesurfer.on('pause', () => {
+        console.log('pausing');
+        setPlaying(false);
+      }),
       wavesurfer.on('audioprocess', (currentTime) => {
         if (wavesurfer.isPlaying() && currentTime > 5 && !alreadyPlayed.current && onAudioprocess) {
           onAudioprocess();
@@ -90,22 +91,25 @@ function _EdgeAudio({
         }
       }),
     ];
-
-    return () => {
-      subscriptions.forEach((unsub) => unsub());
-    };
-  }, [wavesurfer, onPlay, onReady, onAudioprocess]);
+  }, [duration, name, onAudioprocess, onPlay, onReady, peaks, src, volume, wavesurfer]);
 
   useEffect(() => {
     if (wavesurfer) wavesurfer.setVolume(volume);
   }, [volume, wavesurfer]);
 
-  // if (loadError)
-  //   return (
-  //     <Alert w="100%" color="red" radius="md">
-  //       <Center>Failed to load audio</Center>
-  //     </Alert>
-  //   );
+  useEffect(() => {
+    return () => {
+      wavesurfer?.unAll();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  if (loadError)
+    return (
+      <Alert w="100%" color="red" radius="md">
+        <Center>Failed to load audio</Center>
+      </Alert>
+    );
 
   return (
     <Group spacing="sm" w="100%" pos="relative" noWrap {...wrapperProps}>
@@ -122,8 +126,8 @@ export const EdgeAudio = memo(_EdgeAudio);
 export type EdgeAudioProps = Omit<WavesurferProps, 'onPlay' | 'onReady' | 'onAudioprocess'> & {
   src?: string;
   wrapperProps?: GroupProps;
-  onReady?: (params: Track) => void;
-  onPlay?: (track: Track | null) => void;
+  onReady?: (params: Partial<Track>) => void;
+  onPlay?: (params: Partial<Track>) => void;
   onAudioprocess?: () => void;
   name?: string | null;
 };

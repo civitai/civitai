@@ -2,7 +2,7 @@ import { Carousel, Embla } from '@mantine/carousel';
 import { Stack, Text } from '@mantine/core';
 import { useHotkeys, useOs } from '@mantine/hooks';
 import { truncate } from 'lodash-es';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProvider';
 import { ConnectProps, ImageGuardContent } from '~/components/ImageGuard/ImageGuard2';
@@ -13,7 +13,6 @@ import { useResizeObserver } from '~/hooks/useResizeObserver';
 import { constants } from '~/server/common/constants';
 import { AudioMetadata } from '~/server/schema/media.schema';
 import { ImagesInfiniteModel } from '~/server/services/image.service';
-import { usePlayerStore } from '~/store/player.store';
 
 export function ImageDetailCarousel() {
   const { images, index, canNavigate, connect, navigate } = useImageDetailContext();
@@ -100,37 +99,30 @@ function ImageContent({ image }: { image: ImagesInfiniteModel } & ConnectProps) 
   });
 
   const { trackPlay } = useTrackEvent();
-  const currentTrack = usePlayerStore((state) => state.currentTrack);
-  const isAudio = image.type === 'audio';
-  const isSameTrack = currentTrack?.src === image.url;
 
-  if (isAudio) {
+  if (image.type === 'audio') {
     const audioMetadata = image.metadata as AudioMetadata | null;
 
     return (
       <div ref={setRef} className="relative flex size-full items-center justify-center">
         <Stack spacing="xl" p="md" style={{ maxWidth: 560, width: '100%' }}>
-          {isAudio && (
-            <Text size={32} weight={600} lineClamp={3} lh={1.2}>
-              {image.name}
-            </Text>
-          )}
+          <Text size={32} weight={600} lineClamp={3} lh={1.2}>
+            {image.name}
+          </Text>
           <EdgeMedia
-            key={isSameTrack ? 'global' : image.url}
             src={image.url}
             name={image.name ?? image.id.toString()}
             type="audio"
             className="max-h-full w-auto max-w-full"
-            original={image.type === 'video' ? true : undefined}
-            peaks={audioMetadata?.peaks}
-            duration={audioMetadata?.duration}
-            onAudioprocess={() =>
-              trackPlay({
-                imageId: image.id,
-                ownerId: image.user.id,
-                tags: image.tags?.map((t) => t.name) ?? [],
-              })
-            }
+            // peaks={audioMetadata?.peaks}
+            // duration={audioMetadata?.duration}
+            // onAudioprocess={() => {
+            //   trackPlay({
+            //     imageId: image.id,
+            //     ownerId: image.user.id,
+            //     tags: image.tags?.map((t) => t.name) ?? [],
+            //   });
+            // }}
           />
         </Stack>
       </div>
