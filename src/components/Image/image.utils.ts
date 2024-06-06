@@ -1,20 +1,20 @@
+import { closeModal, openConfirmModal } from '@mantine/modals';
+import { hideNotification, showNotification } from '@mantine/notifications';
 import { MediaType, MetricTimeframe, ReviewReactions } from '@prisma/client';
+import { isEqual } from 'lodash-es';
 import { useMemo, useState } from 'react';
 import { z } from 'zod';
+import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
 import { FilterKeys, useFiltersContext } from '~/providers/FiltersProvider';
 import { ImageSort } from '~/server/common/enums';
 import { periodModeSchema } from '~/server/schema/base.schema';
 import { GetInfiniteImagesInput } from '~/server/schema/image.schema';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { booleanString, numericString, numericStringArray } from '~/utils/zod-helpers';
-import { isEqual } from 'lodash-es';
-import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
-import { showNotification, hideNotification } from '@mantine/notifications';
-import { closeModal, openConfirmModal } from '@mantine/modals';
-import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 
 export const imagesQueryParamSchema = z
   .object({
@@ -75,7 +75,7 @@ export const useQueryImages = (
   const { applyHiddenPreferences = true, ...queryOptions } = options ?? {};
   filters ??= {};
   const { data, isLoading, ...rest } = trpc.image.getInfinite.useInfiniteQuery(
-    { include: ['cosmetics'], ...filters },
+    { ...filters },
     {
       getNextPageParam: (lastPage) => lastPage.nextCursor,
       trpc: { context: { skipBatch: true } },
@@ -134,6 +134,7 @@ export const useQueryModelVersionImages = (
 };
 
 const CSAM_NOTIFICATION_ID = 'sending-report';
+
 export function useReportCsamImages(
   options?: Parameters<typeof trpc.image.reportCsamImages.useMutation>[0]
 ) {

@@ -585,6 +585,7 @@ function PostImage() {
           src={url}
           width={metadata?.width ?? 450}
           type={type}
+          original={type === 'video' ? true : undefined}
           className={showPreview ? 'rounded-none' : 'rounded-lg'}
         />
       </div>

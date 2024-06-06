@@ -7,9 +7,9 @@ import { Form, InputRadioGroup, InputText, useForm } from '~/libs/form';
 import { BaseModel, constants } from '~/server/common/constants';
 import { TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import { TrainingModelData } from '~/types/router';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 
 type tmTypes = (typeof constants.trainingModelTypes)[number];
 
@@ -276,6 +276,11 @@ export function TrainingFormBasic({ model }: { model?: TrainingModelData }) {
         </InputRadioGroup>
         <InputText name="name" label="Name" placeholder="Name" withAsterisk />
       </Stack>
+      {/*
+        TODO: option to "select existing model"
+          would find all training models and spawn a new version
+          instead of creating a new model
+       */}
       <Group mt="xl" position="right">
         <Button
           type="submit"

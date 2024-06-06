@@ -56,6 +56,8 @@ export namespace Orchestrator {
     export type ClearAssetsJobResponse = Orchestrator.JobResponse<ClearAssetsJob>;
 
     const imageResourceTrainingJobInputDryRunSchema = z.object({
+      priority: z.union([z.number(), z.enum(['high', 'normal', 'low'])]),
+      // interruptible: z.boolean(),
       model: z.string(),
       cost: z.number(),
       trainingData: z.string(),
@@ -179,6 +181,6 @@ export namespace Orchestrator {
       descending?: boolean;
     };
 
-    export type GetResponse = Array<{ type?: string; dateTime?: string }>;
+    export type GetResponse = Array<{ type?: string; dateTime?: string; context?: MixedObject }>;
   }
 }

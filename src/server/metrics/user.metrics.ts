@@ -230,9 +230,10 @@ async function getReactionTasks(ctx: MetricProcessorRunContext) {
         WHEN type IN ${reactionTypes} THEN 1
         ELSE -1
       END) as all_time
-    FROM reactions
-    WHERE (time < parseDateTimeBestEffort('2024-04-27') OR userId != ownerId)
-      AND ownerId IN (SELECT ownerId FROM targets)
+    FROM reactions r
+    WHERE
+      (r.time < parseDateTimeBestEffort('2024-04-27') OR r.userId != r.ownerId)
+      AND r.ownerId IN (SELECT ownerId FROM targets)
     GROUP BY 1;
   `;
 

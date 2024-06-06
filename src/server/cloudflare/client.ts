@@ -32,7 +32,9 @@ export async function purgeCache({ urls, tags }: { urls?: string[]; tags?: strin
     urls = [...new Set([...(urls || []), ...taggedUrls])];
   }
 
-  await Promise.all(chunk(urls, 30).map((files) => client.zones.purgeCache(env.CF_ZONE_ID!, { files })));
+  await Promise.all(
+    chunk(urls, 30).map((files) => client.zones.purgeCache(env.CF_ZONE_ID!, { files }))
+  );
 
   // Clean-up tag cache
   if (tags) {

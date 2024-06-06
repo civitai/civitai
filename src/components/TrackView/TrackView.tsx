@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { useAdsContext } from '~/components/Ads/AdsProvider';
+// import { useAdsContext } from '~/components/Ads/AdsProvider';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { AddViewSchema } from '~/server/schema/track.schema';
@@ -17,7 +17,8 @@ export function TrackView({
   const trackMutation = trpc.track.addView.useMutation();
   const observedEntityId = useRef<number | null>(null);
 
-  const status = useAdViewSatus();
+  const status = 'Off';
+  // const status = useAdViewSatus();
   const nsfw = currentUser?.showNsfw ?? false;
   const browsingLevel = useBrowsingLevelDebounced();
 
@@ -45,10 +46,10 @@ export function TrackView({
   return null;
 }
 
-function useAdViewSatus() {
-  const { isMember, enabled, adsBlocked } = useAdsContext();
-  if (isMember) return 'Member';
-  if (!enabled) return 'Off';
-  if (adsBlocked) return 'Blocked';
-  return 'Served';
-}
+// function useAdViewSatus() {
+//   const { isMember, enabled, adsBlocked } = useAdsContext();
+//   if (isMember) return 'Member';
+//   if (!enabled) return 'Off';
+//   if (adsBlocked) return 'Blocked';
+//   return 'Served';
+// }

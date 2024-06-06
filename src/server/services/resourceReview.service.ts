@@ -20,6 +20,7 @@ import {
 } from '~/server/selectors/resourceReview.selector';
 import { ReviewSort } from '~/server/common/enums';
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
+import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
 
 export type ResourceReviewDetailModel = AsyncReturnType<typeof getResourceReview>;
 export const getResourceReview = async ({ id, userId }: GetByIdInput & { userId?: number }) => {
@@ -39,9 +40,11 @@ export const getUserResourceReview = async ({
   modelId,
   modelVersionId,
   userId,
-}: GetUserResourceReviewInput & { userId: number }) => {
+  tx,
+}: GetUserResourceReviewInput & { userId: number; tx?: Prisma.TransactionClient }) => {
   if (!userId) throw throwAuthorizationError();
-  const results = await dbRead.resourceReview.findMany({
+  const dbClient = tx ?? (await getDbWithoutLag('resourceReview', userId));
+  const results = await dbClient.resourceReview.findMany({
     where: { modelId, modelVersionId, userId },
     select: resourceReviewSimpleSelect,
   });

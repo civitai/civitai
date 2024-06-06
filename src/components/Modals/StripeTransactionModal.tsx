@@ -22,7 +22,7 @@ import { trpc } from '~/utils/trpc';
 import { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
 import { useTrackEvent } from '../TrackView/track.utils';
 import { closeAllModals } from '@mantine/modals';
-import { useUserPaymentMethods } from '~/components/Stripe/stripe.utils';
+import { usePaymentIntent, useUserPaymentMethods } from '~/components/Stripe/stripe.utils';
 import { PaymentMethodItem } from '~/components/Account/PaymentMethodsCard';
 import { useRecaptchaToken } from '../Recaptcha/useReptchaToken';
 import { RECAPTCHA_ACTIONS } from '../../server/common/constants';
@@ -60,6 +60,8 @@ const StripeTransactionModal = ({
   clientSecret,
   successMessage,
   paymentMethodTypes = [],
+  setupFuturePayment,
+  setupFuturePaymentToggle,
 }: Props & { clientSecret: string; onClose: () => void; paymentMethodTypes?: string[] }) => {
   const { userPaymentMethods, isLoading: isLoadingPaymentMethods } = useUserPaymentMethods();
   const [success, setSuccess] = useState<boolean>(false);
@@ -157,6 +159,21 @@ const StripeTransactionModal = ({
             <Text weight="bold">Add new payment method</Text>
           </Stack>
         )}
+        {setupFuturePayment && (
+          <Text size="sm">
+            Don&rsquo;t see your payment method?{' '}
+            <Text color="blue.4" component="button" onClick={setupFuturePaymentToggle}>
+              Click here
+            </Text>
+          </Text>
+        )}
+        {!setupFuturePayment && (
+          <Text size="sm">
+            <Text color="blue.4" component="button" onClick={setupFuturePaymentToggle}>
+              Back to default payment methods
+            </Text>
+          </Text>
+        )}
         <PaymentElement id="payment-element" options={paymentElementOptions} />
         {errorMessage && (
           <Text color="red" size="sm">
@@ -204,6 +221,8 @@ type Props = {
   onSuccess?: (stripePaymentIntentId: string) => Promise<void>;
   metadata: PaymentIntentMetadataSchema;
   paymentMethodTypes?: string[];
+  setupFuturePayment?: boolean;
+  setupFuturePaymentToggle?: () => void;
 };
 
 const { openModal, Modal } = createContextModal<Props>({
@@ -226,36 +245,26 @@ const { openModal, Modal } = createContextModal<Props>({
   }) => {
     const theme = useMantineTheme();
     const stripePromise = useStripePromise();
+
     const {
-      token: recaptchaToken,
-      loading: isLoadingRecaptcha,
-      error: recaptchaError,
-    } = useRecaptchaToken(RECAPTCHA_ACTIONS.STRIPE_TRANSACTION);
-
-    const { data, isLoading, isFetching, error } = trpc.stripe.getPaymentIntent.useQuery(
-      {
-        unitAmount,
-        currency,
-        metadata,
-        paymentMethodTypes: desiredPaymentMethodTypes,
-        recaptchaToken: recaptchaToken as string,
-      },
-      {
-        enabled: !!unitAmount && !!currency && !!recaptchaToken,
-        refetchOnMount: 'always',
-        cacheTime: 0,
-        trpc: { context: { skipBatch: true } },
-      }
-    );
-
-    const { isLoading: isLoadingPaymentMethods } = useUserPaymentMethods({
-      enabled: !!data?.clientSecret,
+      clientSecret,
+      paymentMethodTypes,
+      isLoading,
+      setupFuturePayment,
+      setSetupFuturePayment,
+      error,
+    } = usePaymentIntent({
+      currency,
+      metadata,
+      unitAmount,
+      desiredPaymentMethodTypes,
     });
 
-    const clientSecret = data?.clientSecret;
-    const paymentMethodTypes = data?.paymentMethodTypes;
+    const { isLoading: isLoadingPaymentMethods } = useUserPaymentMethods({
+      enabled: !!clientSecret,
+    });
 
-    if (isLoading || isFetching || isLoadingPaymentMethods || isLoadingRecaptcha) {
+    if (isLoading || isLoadingPaymentMethods) {
       return (
         <Center>
           <Loader variant="bars" />
@@ -267,17 +276,11 @@ const { openModal, Modal } = createContextModal<Props>({
       context.close();
     };
 
-    if (!recaptchaToken) {
-      return (
-        <Error error={recaptchaError ?? 'Unable to get recaptcha token.'} onClose={handleClose} />
-      );
-    }
-
-    if (!clientSecret) {
+    if (error || !clientSecret) {
       return (
         <Error
           error={
-            error?.message ??
+            error ??
             'We are unable to connect you with Stripe services to perform a transaction. Please try again later.'
           }
           onClose={handleClose}
@@ -303,6 +306,8 @@ const { openModal, Modal } = createContextModal<Props>({
           // This is the payment methods we will end up supporting based off of
           // the payment intent instead of the ones we "wish" to support.
           paymentMethodTypes={paymentMethodTypes}
+          setupFuturePayment={setupFuturePayment}
+          setupFuturePaymentToggle={() => setSetupFuturePayment(!setupFuturePayment)}
           {...props}
         />
       </Elements>

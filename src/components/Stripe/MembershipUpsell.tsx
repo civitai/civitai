@@ -12,7 +12,7 @@ import {
   Box,
 } from '@mantine/core';
 import { IconCheck, IconDiscountCheck } from '@tabler/icons-react';
-import { capitalize } from 'lodash';
+import { capitalize } from 'lodash-es';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { getPlanDetails } from '~/components/Stripe/PlanCard';
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
@@ -115,7 +115,7 @@ export const MembershipUpsell = ({ buzzAmount }: { buzzAmount: number }) => {
         </Badge>
         {image && (
           <Box w={80}>
-            <EdgeMedia src={image} width="original" />
+            <EdgeMedia src={image} />
           </Box>
         )}
         <Stack spacing={0}>

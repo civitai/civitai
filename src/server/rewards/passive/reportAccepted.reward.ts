@@ -6,7 +6,7 @@ export const reportAcceptedReward = createBuzzEvent({
   description: 'For each report you make that is accepted',
   awardAmount: 50,
   caps: [{ amount: 1000, interval: 'month', keyParts: ['toUserId'] }],
-  getKey: async (input: PostEvent) => {
+  getKey: async (input: ReportEvent) => {
     return {
       toUserId: input.userId,
       forId: input.reportId,
@@ -16,7 +16,7 @@ export const reportAcceptedReward = createBuzzEvent({
   },
 });
 
-type PostEvent = {
+type ReportEvent = {
   reportId: number;
   userId: number;
 };

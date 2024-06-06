@@ -42,6 +42,7 @@ import { dbRead } from '../db/client';
 import { getFilesByEntity } from '../services/file.service';
 import { createFile } from '../services/model-file.service';
 import { getStaticContent } from '~/server/services/content.service';
+import { dataForModelsCache } from '~/server/redis/caches';
 
 export const getModelVersionRunStrategiesHandler = ({ input: { id } }: { input: GetByIdInput }) => {
   try {
@@ -250,6 +251,8 @@ export const upsertModelVersionHandler = async ({
       }
     }
 
+    await dataForModelsCache.bust(version.modelId);
+
     return version;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -267,6 +270,8 @@ export const deleteModelVersionHandler = async ({ input }: { input: GetByIdInput
       console.error(e);
     });
 
+    await dataForModelsCache.bust(version.modelId);
+
     return version;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -282,7 +287,10 @@ export const publishModelVersionHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
-    const version = await getVersionById({ id: input.id, select: { meta: true, status: true } });
+    const version = await getVersionById({
+      id: input.id,
+      select: { meta: true, status: true, modelId: true },
+    });
     if (!version) throw throwNotFoundError(`No model version with id ${input.id}`);
 
     const versionMeta = version.meta as ModelVersionMeta | null;
@@ -316,6 +324,8 @@ export const publishModelVersionHandler = async ({
       });
     }
 
+    await dataForModelsCache.bust(version.modelId);
+
     return updatedVersion;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -332,10 +342,10 @@ export const unpublishModelVersionHandler = async ({
 }) => {
   try {
     const { id } = input;
-    const modelVersion = await getVersionById({ id, select: { meta: true } });
-    if (!modelVersion) throw throwNotFoundError(`No model version with id ${input.id}`);
+    const version = await getVersionById({ id, select: { meta: true, modelId: true } });
+    if (!version) throw throwNotFoundError(`No model version with id ${input.id}`);
 
-    const meta = (modelVersion.meta as ModelVersionMeta | null) || {};
+    const meta = (version.meta as ModelVersionMeta | null) || {};
     const updatedVersion = await unpublishModelVersionById({ ...input, meta, user: ctx.user });
 
     // Send event in background
@@ -345,6 +355,8 @@ export const unpublishModelVersionHandler = async ({
       modelId: updatedVersion.model.id,
       nsfw: updatedVersion.model.nsfw,
     });
+
+    await dataForModelsCache.bust(version.modelId);
 
     return updatedVersion;
   } catch (error) {

@@ -1,6 +1,6 @@
 import { Paper, createStyles, Text, Stack, Group } from '@mantine/core';
 import { IconBolt } from '@tabler/icons-react';
-import { capitalize } from 'lodash';
+import { capitalize } from 'lodash-es';
 import { useUserMultipliers } from '~/components/Buzz/useBuzz';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -54,7 +54,7 @@ export const SubscriptionFeature = ({
   return (
     <Paper className={classes.card} py="xs">
       <Group noWrap>
-        {image && <EdgeMedia src={image} width="original" style={{ width: 50 }} />}
+        {image && <EdgeMedia src={image} style={{ width: 50 }} />}
         <Stack spacing={2}>
           <Text className={classes.title}>{title}</Text>
           <Text className={classes.subtitle} lh={1.2}>

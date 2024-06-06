@@ -12,7 +12,7 @@ import {
 import { openConfirmModal } from '@mantine/modals';
 import { CosmeticEntity } from '@prisma/client';
 import { IconArrowRight } from '@tabler/icons-react';
-import { truncate } from 'lodash';
+import { truncate } from 'lodash-es';
 import { z } from 'zod';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 
@@ -179,7 +179,6 @@ export function CardDecorationModal({ entityType, entityId, image, currentCosmet
                   <Group noWrap>
                     <Image
                       src={getEdgeUrl(selectedItem.entityImage.url, {
-                        width: 'original',
                         transcode: false,
                         anim: false,
                       })}
@@ -197,7 +196,6 @@ export function CardDecorationModal({ entityType, entityId, image, currentCosmet
                     <IconArrowRight size={24} style={{ flexShrink: 0 }} />
                     <Image
                       src={getEdgeUrl(image.url, {
-                        width: 'original',
                         transcode: false,
                         anim: false,
                       })}

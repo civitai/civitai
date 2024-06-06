@@ -20,6 +20,7 @@ import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
 import { TableOfContent } from '~/components/Article/Detail/TableOfContent';
+import { Meta } from '~/components/Meta/Meta';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 
 const contentRoot = 'src/static-content/rules';
@@ -70,6 +71,10 @@ export default function Safety({ content }: InferGetServerSidePropsType<typeof g
 
   return (
     <>
+      <Meta
+        title="Safety Center | Policies and Guidelines"
+        description="Our policies and guidelines for safety"
+      />
       <div className={classes.hero}>
         <Container size="md">
           <Stack align="center" spacing={0}>

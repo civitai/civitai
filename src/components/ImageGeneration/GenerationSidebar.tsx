@@ -1,13 +1,14 @@
 import { useWindowEvent } from '@mantine/hooks';
+import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
 import { useCallback, useEffect, useState } from 'react';
 import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { GenerationDrawer } from '~/components/ImageGeneration/GenerationDrawer';
-import GenerationTabs from '~/components/ImageGeneration/GenerationTabs';
 import { ResizableSidebar } from '~/components/Resizable/ResizableSidebar';
 import { useResizeStore } from '~/components/Resizable/useResize';
 import { generationPanel, useGenerationStore } from '~/store/generation.store';
+const GenerationTabs = dynamic(() => import('~/components/ImageGeneration/GenerationTabs'));
 
 export function GenerationSidebar() {
   const _opened = useGenerationStore((state) => state.opened);
@@ -56,7 +57,7 @@ export function GenerationSidebar() {
       className={`z-10 ${fullScreen ? 'max-w-0' : ''}`}
     >
       <div className={`size-full ${fullScreen ? `fixed inset-0 w-screen` : ''}`}>
-        <ContainerProvider containerName="generation-sidebar" className="bg-gray-0 dark:bg-dark-9">
+        <ContainerProvider containerName="generation-sidebar" className="bg-gray-0 dark:bg-dark-7">
           <GenerationTabs fullScreen={fullScreen} />
         </ContainerProvider>
       </div>

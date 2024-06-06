@@ -22,6 +22,7 @@ import {
   GetUserCosmeticsSchema,
   GetUserTagsSchema,
   ReportProhibitedRequestInput,
+  SetLeaderboardEligibilitySchema,
   SetUserSettingsInput,
   ToggleBlockedTagSchema,
   ToggleFavoriteInput,
@@ -77,6 +78,7 @@ import {
   toggleBookmarked,
   toggleReview,
   getUserDownloads,
+  setLeaderboardEligibility,
 } from '~/server/services/user.service';
 import {
   handleLogError,
@@ -139,8 +141,10 @@ export const getAllUsersHandler = async ({
 
 export const getUserCreatorHandler = async ({
   input: { username, id, leaderboardId },
+  ctx,
 }: {
   input: GetUserByUsernameSchema;
+  ctx: Context;
 }) => {
   if (!username && !id) throw throwBadRequestError('Must provide username or id');
   if (id === constants.system.user.id || username === constants.system.user.username) return null;
@@ -148,6 +152,7 @@ export const getUserCreatorHandler = async ({
   try {
     const user = await getUserCreator({ username, id, leaderboardId });
     if (!user) throw throwNotFoundError('Could not find user');
+    if (!ctx.user?.isModerator) user.excludeFromLeaderboards = false; // Mask from non-moderators
 
     return user;
   } catch (error) {
@@ -308,7 +313,7 @@ export const completeOnboardingHandler = async ({
         break;
     }
     const isComplete = onboarding === OnboardingComplete;
-    if (isComplete && changed) onboardingCompletedCounter.inc();
+    if (isComplete && changed && onboardingCompletedCounter) onboardingCompletedCounter.inc();
   } catch (e) {
     const err = e as Error;
     if (!err.message.includes('constraint failed')) onboardingErrorCounter.inc();
@@ -782,7 +787,8 @@ export async function toggleFavoriteHandler({
       setTo,
     });
   } else {
-    const userModelReviews = await getUserResourceReview({ userId, modelId });
+    // Need dbWrite to avoid propagation lag
+    const userModelReviews = await getUserResourceReview({ userId, modelId, tx: dbWrite });
 
     // Remove it from bookmark collection if no reviews
     if (!userModelReviews?.length)
@@ -1334,3 +1340,17 @@ export const getUserPurchasedRewardsHandler = async ({
     throw throwDbError(error);
   }
 };
+
+export async function setLeaderboardEligibilityHandler({
+  ctx,
+  input,
+}: {
+  ctx: DeepNonNullable<Context>;
+  input: SetLeaderboardEligibilitySchema;
+}) {
+  await setLeaderboardEligibility(input);
+  await ctx.track.userActivity({
+    type: input.setTo ? 'ExcludedFromLeaderboard' : 'UnexcludedFromLeaderboard',
+    targetUserId: input.id,
+  });
+}

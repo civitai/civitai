@@ -241,7 +241,6 @@ export const CreatorCardV2 = ({
         {backgroundImage && backgroundImage.data.url ? (
           <EdgeMedia
             src={backgroundImage.data.url}
-            width="original"
             type={backgroundImage.data.type ?? 'image'}
             transcode={isVideo}
             anim={true}

@@ -171,9 +171,11 @@ export const createTrainingRequest = async ({
   userId,
   modelVersionId,
   isModerator,
+  skipModeration,
 }: CreateTrainingRequestInput & {
   userId?: number;
   isModerator?: boolean;
+  skipModeration?: boolean;
 }) => {
   const status = await getTrainingServiceStatus();
   if (!status.available && !isModerator)
@@ -190,6 +192,7 @@ export const createTrainingRequest = async ({
            JOIN "Model" m ON m.id = mv."modelId"
            JOIN "ModelFile" mf ON mf."modelVersionId" = mv.id AND mf.type = 'Training Data'
     WHERE mv.id = ${modelVersionId}
+      AND m."deletedAt" is null
   `;
 
   if (modelVersions.length === 0) throw throwBadRequestError('Invalid model version');
@@ -209,6 +212,7 @@ export const createTrainingRequest = async ({
 
   const samplePrompts = modelVersion.trainingDetails.samplePrompts;
   const baseModelType = modelVersion.trainingDetails.baseModelType ?? 'sd15';
+  const isPriority = modelVersion.trainingDetails.highPriority ?? false;
 
   for (const [key, value] of Object.entries(trainingParams)) {
     const setting = trainingSettings.find((ts) => ts.name === key);
@@ -236,7 +240,7 @@ export const createTrainingRequest = async ({
 
   // Determine if we still need to charge them for this training
   let transactionId = modelVersion.fileMetadata?.trainingResults?.transactionId;
-  if (!transactionId) {
+  if (!transactionId && !skipModeration) {
     // And if so, charge them
     if (eta === undefined) {
       throw throwBadRequestError(
@@ -249,6 +253,7 @@ export const createTrainingRequest = async ({
       cost: status.cost,
       eta,
       isCustom,
+      isPriority,
     });
 
     if (!price || price < status.cost.baseBuzz) {
@@ -293,9 +298,10 @@ export const createTrainingRequest = async ({
 
   const { url: trainingUrl } = await getGetUrl(modelVersion.trainingUrl);
   const generationRequest: Orchestrator.Training.ImageResourceTrainingJobPayload = {
-    // priority: 10,
+    priority: isPriority ? 'high' : 'normal',
+    // interruptible: !isPriority,
     callbackUrl: `${env.WEBHOOK_URL}/resource-training?token=${env.WEBHOOK_TOKEN}`,
-    properties: { userId, transactionId, modelFileId: modelVersion.fileId },
+    properties: { userId, transactionId, skipModeration, modelFileId: modelVersion.fileId },
     model: baseModel in modelMap ? modelMap[baseModel] : baseModel,
     trainingData: trainingUrl,
     cost: Math.round((eta ?? 0) * 100) / 100,
@@ -336,28 +342,32 @@ export const createTrainingRequest = async ({
   }
 
   const data = response.data;
+  const jobId = data?.jobs?.[0]?.jobId;
   const fileMetadata = modelVersion.fileMetadata || {};
 
-  await dbWrite.modelFile.update({
-    where: { id: modelVersion.fileId },
-    data: {
-      metadata: {
-        ...fileMetadata,
-        trainingResults: {
-          ...(fileMetadata.trainingResults || {}),
-          submittedAt: new Date().toISOString(),
-          jobId: data?.jobs?.[0]?.jobId,
-          transactionId,
-          history: (fileMetadata.trainingResults?.history || []).concat([
-            {
-              time: new Date().toISOString(),
-              status: TrainingStatus.Submitted,
-            },
-          ]),
+  await withRetries(() =>
+    dbWrite.modelFile.update({
+      where: { id: modelVersion.fileId },
+      data: {
+        metadata: {
+          ...fileMetadata,
+          trainingResults: {
+            ...(fileMetadata.trainingResults || {}),
+            submittedAt: new Date().toISOString(),
+            jobId,
+            transactionId,
+            history: (fileMetadata.trainingResults?.history || []).concat([
+              {
+                time: new Date().toISOString(),
+                status: TrainingStatus.Submitted,
+                jobId,
+              },
+            ]),
+          },
         },
       },
-    },
-  });
+    })
+  );
 
   // const [formatted] = await formatGenerationRequests([data]);
   return data;
@@ -365,10 +375,13 @@ export const createTrainingRequest = async ({
 
 export const createTrainingRequestDryRun = async ({
   baseModel,
+  isPriority,
 }: CreateTrainingRequestDryRunInput) => {
   if (!baseModel) return null;
 
   const generationRequest: Orchestrator.Training.ImageResourceTrainingJobDryRunPayload = {
+    priority: isPriority ? 'high' : 'normal',
+    // interruptible: !isPriority,
     model: baseModel in modelMap ? modelMap[baseModel] : baseModel,
     // cost: Math.round((cost ?? 0) * 100) / 100,
     cost: 0,

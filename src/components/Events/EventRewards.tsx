@@ -66,7 +66,6 @@ export function EventRewards({ event }: { event: string }) {
                 <EdgeMedia
                   src={(reward.data as { url: string })?.url}
                   alt={`Event reward: ${reward.name}`}
-                  width="original"
                 />
               </div>
               <Text align="center" size="lg" weight={590} w="100%" tt="capitalize">

@@ -92,15 +92,17 @@ export const imageGenerationSchema = z.object({
 });
 
 export const imageMetaSchema = imageGenerationSchema.partial().passthrough();
-export const imageMetaOutput = imageGenerationSchema.extend({
-  comfy: z.preprocess(
-    (value) => (typeof value === 'string' ? JSON.parse(value) : value),
-    comfyMetaSchema.optional()
-  ),
-  controlNets: z.string().array().optional(),
-  software: z.coerce.string().optional(),
-  civitaiResources: z.any().optional(),
-});
+export const imageMetaOutput = imageGenerationSchema
+  .extend({
+    comfy: z.preprocess(
+      (value) => (typeof value === 'string' ? JSON.parse(value) : value),
+      comfyMetaSchema.optional()
+    ),
+    controlNets: z.string().array().optional(),
+    software: z.coerce.string().optional(),
+    civitaiResources: z.any().optional(),
+  })
+  .passthrough();
 
 export type FaceDetectionInput = z.infer<typeof faceDetectionSchema>;
 export const faceDetectionSchema = z.object({
@@ -295,6 +297,7 @@ export const getInfiniteImagesSchema = baseQuerySchema
     pending: z.boolean().optional(),
     tools: z.number().array().optional(),
     techniques: z.number().array().optional(),
+    baseModels: z.enum(constants.baseModels).array().optional(),
   })
   .transform((value) => {
     if (value.withTags) {

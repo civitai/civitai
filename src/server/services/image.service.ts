@@ -82,6 +82,7 @@ import { getVotableTags2 } from '~/server/services/tag.service';
 import { Flags } from '~/shared/utils';
 import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
+import { removeEmpty } from '~/utils/object-helpers';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -98,6 +99,17 @@ export const imageUrlInUse = async ({ url, id }: { url: string; id: number }) =>
   return !!otherImagesWithSameUrl;
 };
 
+export async function purgeResizeCache({ url }: { url: string }) {
+  const { items } = await baseS3Client.listObjects({
+    bucket: env.S3_IMAGE_CACHE_BUCKET,
+    prefix: url,
+  });
+  await baseS3Client.deleteManyObjects({
+    bucket: env.S3_IMAGE_CACHE_BUCKET,
+    keys: items.map((x) => x.Key).filter(isDefined),
+  });
+}
+
 export const deleteImageById = async ({
   id,
   updatePost,
@@ -112,15 +124,8 @@ export const deleteImageById = async ({
 
     try {
       if (isProd && !(await imageUrlInUse({ url: image.url, id }))) {
-        const { items } = await baseS3Client.listObjects({
-          bucket: env.S3_IMAGE_CACHE_BUCKET,
-          prefix: image.url,
-        });
         await baseS3Client.deleteObject({ bucket: env.S3_IMAGE_UPLOAD_BUCKET, key: image.url });
-        await baseS3Client.deleteManyObjects({
-          bucket: env.S3_IMAGE_CACHE_BUCKET,
-          keys: items.map((x) => x.Key).filter(isDefined),
-        });
+        await purgeResizeCache({ url: image.url });
       }
     } catch {
       // Ignore errors
@@ -137,23 +142,6 @@ export const deleteImageById = async ({
   } catch {
     // Ignore errors
   }
-};
-
-// consider refactoring this endoint to only allow for updating `needsReview`, because that is all this endpoint is being used for...
-export const updateImageById = async ({
-  id,
-  data,
-}: {
-  id: number;
-  data: Prisma.ImageUpdateArgs['data'];
-}) => {
-  const image = await dbWrite.image.update({ where: { id }, data });
-
-  if (image.tosViolation) {
-    await imagesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
-  }
-
-  return image;
 };
 
 export const moderateImages = async ({
@@ -244,10 +232,14 @@ export const updateImageReportStatusByReason = ({
   reason: ReportReason;
   status: ReportStatus;
 }) => {
-  return dbWrite.report.updateMany({
-    where: { reason, image: { imageId: id } },
-    data: { status },
-  });
+  return dbWrite.$queryRaw<{ id: number; userId: number }[]>`
+    UPDATE "Report" r SET status = ${status}::"ReportStatus"
+    FROM "ImageReport" i
+    WHERE i."reportId" = r.id
+      AND i."imageId" = ${id}
+      AND r.reason = ${reason}::"ReportReason"
+    RETURNING id, "userId"
+  `;
 };
 
 export const getImageDetail = async ({ id }: GetByIdInput) => {
@@ -535,6 +527,7 @@ export const getAllImages = async ({
   notPublished,
   tools,
   techniques,
+  baseModels,
 }: GetInfiniteImagesOutput & {
   userId?: number;
   user?: SessionUser;
@@ -821,6 +814,14 @@ export const getAllImages = async ({
     )`);
   }
 
+  if (baseModels?.length) {
+    AND.push(Prisma.sql`EXISTS (
+      SELECT 1 FROM "ModelVersion" mv
+      RIGHT JOIN "ImageResource" ir ON ir."imageId" = i.id AND ir."modelVersionId" = mv.id
+      WHERE mv."baseModel" IN (${Prisma.join(baseModels)})
+    )`);
+  }
+
   if (pending && (isModerator || userId)) {
     if (isModerator) {
       AND.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`);
@@ -899,12 +900,13 @@ export const getAllImages = async ({
       ${Prisma.raw(
         includeBaseModel
           ? `(
-        SELECT mv."baseModel" FROM "ModelVersion" mv
-        RIGHT JOIN "ImageResource" ir ON ir."imageId" = i.id AND ir."modelVersionId" = mv.id
-        JOIN "Model" m ON mv."modelId" = m.id
-        WHERE m."type" = 'Checkpoint'
-        LIMIT 1
-      ) "baseModel",`
+            SELECT mv."baseModel"
+            FROM "ImageResource" ir
+            LEFT JOIN "ModelVersion" mv ON ir."modelVersionId" = mv.id
+            LEFT JOIN "Model" m ON mv."modelId" = m.id
+            WHERE m."type" = 'Checkpoint' AND ir."imageId" = i.id
+            LIMIT 1
+          ) "baseModel",`
           : ''
       )}
       im."cryCount",
@@ -2691,8 +2693,16 @@ export async function updateImageNsfwLevel({
     });
 
     // Track potential content leaking
-    const current = await dbWrite.image.findFirst({ where: { id }, select: { nsfwLevel: true } });
-    if (current?.nsfwLevel === NsfwLevel.PG && nsfwLevel >= NsfwLevel.R) {
+    // If the image is currently PG and the new level is R or higher, and the image isn't from the original user, increment the counter
+    const current = await dbWrite.image.findFirst({
+      where: { id },
+      select: { nsfwLevel: true, userId: true },
+    });
+    if (
+      current?.nsfwLevel === NsfwLevel.PG &&
+      nsfwLevel >= NsfwLevel.R &&
+      current?.userId !== user.id
+    ) {
       leakingContentCounter.inc();
     }
   }
@@ -2933,7 +2943,7 @@ export async function updateImageTechniques({
 export function purgeImageGenerationDataCache(id: number) {
   purgeCache({ tags: [`image-generation-data-${id}`] });
 }
-const strengthTypes: ModelType[] = ['TextualInversion', 'LORA'];
+const strengthTypes: ModelType[] = ['TextualInversion', 'LORA', 'DoRA', 'LoCon'];
 export async function getImageGenerationData({ id }: { id: number }) {
   const image = await dbRead.image.findUnique({
     where: { id },
@@ -2950,6 +2960,7 @@ export async function getImageGenerationData({ id }: { id: number }) {
               id: true,
               name: true,
               icon: true,
+              domain: true,
             },
           },
         },
@@ -2998,7 +3009,8 @@ export async function getImageGenerationData({ id }: { id: number }) {
   const parsedMeta = imageMetaOutput.safeParse(image.meta);
   const data = parsedMeta.success ? parsedMeta.data : {};
   const { 'Clip skip': legacyClipSkip, clipSkip = legacyClipSkip, external, ...rest } = data;
-  const meta = parsedMeta.success && !image.hideMeta ? { ...rest, clipSkip } : undefined;
+  const meta =
+    parsedMeta.success && !image.hideMeta ? removeEmpty({ ...rest, clipSkip }) : undefined;
 
   return {
     meta,

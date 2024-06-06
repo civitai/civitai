@@ -1,5 +1,12 @@
-import { CosmeticEntity, CosmeticSource, CosmeticType, Prisma } from '@prisma/client';
-import { CacheTTL } from '~/server/common/constants';
+import {
+  Availability,
+  CosmeticEntity,
+  CosmeticSource,
+  CosmeticType,
+  ModelStatus,
+  Prisma,
+} from '@prisma/client';
+import { BaseModel, BaseModelType, CacheTTL } from '~/server/common/constants';
 import { dbWrite, dbRead } from '~/server/db/client';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
@@ -235,4 +242,87 @@ export const resourceDataCache = createCachedArray<GenerationResourceSelect>({
     return results;
   },
   ttl: CacheTTL.hour,
+});
+
+type ModelVersionDetails = {
+  id: number;
+  name: string;
+  earlyAccessTimeFrame: number;
+  baseModel: BaseModel;
+  baseModelType: BaseModelType;
+  createdAt: Date;
+  trainingStatus: string;
+  description: string;
+  trainedWords?: string[];
+  vaeId: number | null;
+  publishedAt: Date | null;
+  status: ModelStatus;
+  covered: boolean;
+  availability: Availability;
+};
+type ModelDataCache = {
+  modelId: number;
+  hashes: string[];
+  tags: { tagId: number; name: string }[];
+  versions: ModelVersionDetails[];
+};
+export const dataForModelsCache = createCachedObject<ModelDataCache>({
+  key: REDIS_KEYS.CACHES.DATA_FOR_MODEL,
+  idKey: 'modelId',
+  ttl: CacheTTL.day,
+  lookupFn: async (ids) => {
+    const versions = await dbRead.$queryRaw<(ModelVersionDetails & { modelId: number })[]>`
+      SELECT
+        mv."id",
+        mv.index,
+        mv."modelId",
+        mv."name",
+        mv."earlyAccessTimeFrame",
+        mv."baseModel",
+        mv."baseModelType",
+        mv."createdAt",
+        mv."trainingStatus",
+        mv."publishedAt",
+        mv."status",
+        mv.availability,
+        mv."nsfwLevel",
+        mv."description",
+        mv."trainedWords",
+        mv."vaeId",
+        COALESCE((
+          SELECT gc.covered
+          FROM "GenerationCoverage" gc
+          WHERE gc."modelVersionId" = mv.id
+        ), false) AS covered
+      FROM "ModelVersion" mv
+      WHERE mv."modelId" IN (${Prisma.join(ids)})
+      ORDER BY mv."modelId", mv.index;
+    `;
+
+    const hashes = await dbRead.$queryRaw<{ modelId: number; hash: string }[]>`
+      SELECT "modelId", hash
+      FROM "ModelHash"
+      WHERE
+        "modelId" IN (${Prisma.join(ids)})
+        AND "hashType" = 'SHA256'
+        AND "fileType" IN ('Model', 'Pruned Model');
+    `;
+
+    const tags = await dbRead.$queryRaw<{ modelId: number; tagId: number; name: string }[]>`
+      SELECT "modelId", "tagId", t."name"
+      FROM "TagsOnModels"
+      JOIN "Tag" t ON "tagId" = t."id"
+      WHERE "modelId" IN (${Prisma.join(ids)})
+      AND "tagId" IS NOT NULL;
+    `;
+
+    const results = versions.reduce((acc, { modelId, ...version }) => {
+      acc[modelId] ??= { modelId, hashes: [], tags: [], versions: [] };
+      acc[modelId].versions.push(version);
+      return acc;
+    }, {} as Record<number, ModelDataCache>);
+    for (const { modelId, hash } of hashes) results[modelId]?.hashes.push(hash);
+    for (const { modelId, ...tag } of tags) results[modelId]?.tags.push(tag);
+    return results;
+  },
 });

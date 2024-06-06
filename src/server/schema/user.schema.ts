@@ -227,3 +227,9 @@ export const userOnboardingSchema = z.discriminatedUnion('step', [
     source: z.string().optional(),
   }),
 ]);
+
+export const setLeaderboardEligbilitySchema = z.object({
+  id: z.number(),
+  setTo: z.boolean(),
+});
+export type SetLeaderboardEligibilitySchema = z.infer<typeof setLeaderboardEligbilitySchema>;

@@ -23,6 +23,8 @@ import { GetInfiniteImagesInput } from '~/server/schema/image.schema';
 import { getDisplayName } from '~/utils/string-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { ToolMultiSelect } from '~/components/Tool/ToolMultiSelect';
+import { TechniqueMultiSelect } from '~/components/Technique/TechniqueMultiSelect';
+import { activeBaseModels, BaseModel } from '~/server/common/constants'; // Add this import
 
 // TODO: adjust filter as we begin to support more media types
 const availableMediaTypes = Object.values(MediaType).filter(
@@ -90,7 +92,8 @@ export function ImageFiltersDropdown({
     (mergedFilters.fromPlatform ? 1 : 0) +
     (mergedFilters.notPublished ? 1 : 0) +
     (!!mergedFilters.tools?.length ? 1 : 0) +
-    (mergedFilters.period && mergedFilters.period !== MetricTimeframe.AllTime ? 1 : 0);
+    (mergedFilters.period && mergedFilters.period !== MetricTimeframe.AllTime ? 1 : 0) +
+    (mergedFilters.baseModels?.length ?? 0);
 
   const clearFilters = useCallback(() => {
     const reset = {
@@ -102,6 +105,7 @@ export function ImageFiltersDropdown({
       notPublished: false,
       tools: [],
       period: MetricTimeframe.AllTime,
+      baseModels: undefined,
     };
 
     if (onChange) onChange(reset);
@@ -165,6 +169,22 @@ export function ImageFiltersDropdown({
         )}
       </Stack>
       <Stack spacing="md">
+        <Divider label="Base model" labelProps={{ weight: 'bold', size: 'sm' }} />
+        <Chip.Group
+          spacing={8}
+          value={(mergedFilters.baseModels as string[]) ?? []}
+          onChange={(baseModels: BaseModel[]) => setFilters({ baseModels })}
+          multiple
+          my={4}
+        >
+          {activeBaseModels.map((baseModel, index) => (
+            <Chip key={index} value={baseModel} {...chipProps}>
+              {baseModel}
+            </Chip>
+          ))}
+        </Chip.Group>
+      </Stack>
+      <Stack spacing="md">
         <Divider label="Media type" labelProps={{ weight: 'bold', size: 'sm' }} />
         <Chip.Group
           spacing={8}
@@ -222,7 +242,11 @@ export function ImageFiltersDropdown({
           onChange={(tools) => handleChange({ tools })}
         />
 
-        {/*<Divider label="Techniques" labelProps={{ weight: 'bold', size: 'sm' }} /> */}
+        {/*<Divider label="Techniques" labelProps={{ weight: 'bold', size: 'sm' }} />
+        <TechniqueMultiSelect
+          value={mergedFilters.techniques ?? []}
+          onChange={(techniques) => handleChange({ techniques })}
+        /> */}
       </Stack>
       {filterLength > 0 && (
         <Button

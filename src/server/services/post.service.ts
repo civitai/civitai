@@ -30,6 +30,7 @@ import {
   getImagesForPosts,
   ingestImage,
   purgeImageGenerationDataCache,
+  purgeResizeCache,
 } from '~/server/services/image.service';
 import { findOrCreateTagsByName, getVotableImageTags } from '~/server/services/tag.service';
 import { getToolByDomain, getToolByName } from '~/server/services/tool.service';
@@ -541,7 +542,12 @@ export const deletePost = async ({ id }: GetByIdInput) => {
   }
 
   await bustCachesForPost(id);
-  await dbWrite.post.delete({ where: { id } });
+  const [result] = await dbWrite.$queryRaw<{ id: number; nsfwLevel: number }[]>`
+    DELETE FROM "Post"
+    WHERE id = ${id}
+    RETURNING id, "nsfwLevel"
+  `;
+  return result;
 };
 
 type PostQueryResult = { id: number; name: string; isCategory: boolean; postCount: number }[];
@@ -775,14 +781,25 @@ export async function bustCachesForPost(postId: number) {
 }
 
 export const updatePostImage = async (image: UpdatePostImageInput) => {
-  await dbWrite.image.update({
+  const currentImage = await dbWrite.image.findUnique({
+    where: { id: image.id },
+    select: { hideMeta: true },
+  });
+
+  const result = await dbWrite.image.update({
     where: { id: image.id },
     data: {
       ...image,
       meta: image.meta !== null ? (image.meta as Prisma.JsonObject) : Prisma.JsonNull,
     },
-    select: { id: true },
+    select: { id: true, url: true },
   });
+
+  // If changing hide meta, purge the resize cache so that we strip metadata
+  if (image.hideMeta && currentImage && currentImage.hideMeta !== image.hideMeta) {
+    await purgeResizeCache({ url: result.url });
+  }
+
   purgeImageGenerationDataCache(image.id);
 };
 

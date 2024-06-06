@@ -75,7 +75,7 @@ const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async 
     }).catch();
   });
   try {
-    await limitConcurrency(tasks, 3);
+    await limitConcurrency(tasks, 1);
     log('Leaderboards - Done');
     await updateLegendsBoardResults();
     await setLastRun();
@@ -112,6 +112,10 @@ async function updateLegendsBoardResults() {
         JOIN "User" u ON u.id = lr."userId"
         WHERE date <= now()
           AND position < 100
+          AND (
+            NOT u."excludeFromLeaderboards"
+            OR EXISTS (SELECT 1 FROM "Leaderboard" l WHERE l.id = lr."leaderboardId" AND NOT l.public)
+          )
           AND u."deletedAt" IS NULL
         GROUP BY "userId", "leaderboardId"
       )
@@ -157,9 +161,14 @@ async function defaultLeadboardPopulation(ctx: LeaderboardContext) {
     SELECT
       '${ctx.id}' as "leaderboardId",
       current_date + interval '${ctx.addDays} days' as date,
-      *,
+      s.*,
       row_number() OVER (ORDER BY score DESC) as position
-    FROM scores
+    FROM scores s
+    JOIN "User" u ON u.id = s."userId"
+    WHERE (
+      NOT u."excludeFromLeaderboards"
+      OR EXISTS (SELECT 1 FROM "Leaderboard" l WHERE l.id = '${ctx.id}' AND NOT l.public)
+    )
     ORDER BY score DESC
     LIMIT 1000
   `);
@@ -285,6 +294,7 @@ async function imageLeaderboardPopulation(ctx: LeaderboardContext, [min, max]: [
     FROM jsonb_array_elements('${userScoresJson}'::jsonb) s
     JOIN "User" u ON u.id = (s->>'userId')::int
     WHERE u."deletedAt" IS NULL AND u.id > 0
+      AND NOT u."excludeFromLeaderboards"
     ORDER BY (s->>'score')::int DESC
     LIMIT 1000
   `);

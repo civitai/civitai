@@ -7,8 +7,8 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 export type EdgeUrlProps = {
   src: string;
   name?: string | null;
-  width?: number | undefined | 'original';
-  height?: number | undefined;
+  width?: number | null;
+  height?: number | null;
   fit?: 'scale-down' | 'contain' | 'cover' | 'crop' | 'pad';
   anim?: boolean;
   blur?: number; // 0-250
@@ -20,6 +20,7 @@ export type EdgeUrlProps = {
   optimized?: boolean;
   transcode?: boolean;
   type?: MediaType;
+  original?: true;
 };
 
 const typeExtensions: Record<MediaType, string> = {
@@ -30,15 +31,49 @@ const typeExtensions: Record<MediaType, string> = {
 
 export function getEdgeUrl(
   src: string,
-  { name, type, anim, transcode, width, ...variantParams }: Omit<EdgeUrlProps, 'src'>
+  {
+    name,
+    type,
+    anim,
+    transcode,
+    width,
+    height,
+    original,
+    fit,
+    blur,
+    quality,
+    gravity,
+    metadata,
+    background,
+    gamma,
+    optimized,
+  }: Omit<EdgeUrlProps, 'src'>
 ) {
   if (!src || src.startsWith('http') || src.startsWith('blob')) return src;
+
+  if (!width && !height) original = true;
+  if (original) {
+    width = undefined;
+    height = undefined;
+  }
+  // if(width && height) // TODO
+  if (width && width > 1800) width = 1800;
+  if (height && height > 1000) height = 1000;
+
   const modifiedParams = {
     anim: anim ? undefined : anim,
     transcode: transcode ? true : undefined,
-    width: width === 'original' ? undefined : width,
-    original: width === 'original' ? true : undefined,
-    ...variantParams,
+    width: width ?? undefined,
+    height: height ?? undefined,
+    original,
+    fit,
+    blur,
+    quality,
+    gravity,
+    metadata,
+    background,
+    gamma,
+    optimized,
   };
   const params = Object.entries(modifiedParams)
     .filter(([, value]) => value !== undefined)
@@ -55,15 +90,19 @@ export function getEdgeUrl(
 }
 
 const videoTypeExtensions = ['.gif', '.mp4', '.webm'];
-export function useGetEdgeUrl(src: string, options: Omit<EdgeUrlProps, 'src'> | undefined) {
-  const currentUser = useCurrentUser();
-  if (!src || src.startsWith('http') || src.startsWith('blob')) return src;
 
-  let { anim, transcode } = options ?? {};
-  const inferredType = videoTypeExtensions.some((ext) => options?.name?.endsWith(ext))
+export function useEdgeUrl(src: string, options: Omit<EdgeUrlProps, 'src'> | undefined) {
+  const currentUser = useCurrentUser();
+
+  const inferredType = videoTypeExtensions.some((ext) => (options?.name || src)?.endsWith(ext))
     ? 'video'
     : 'image';
   let type = options?.type ?? inferredType;
+
+  if (!src || src.startsWith('http') || src.startsWith('blob'))
+    return { url: src, type: inferredType };
+
+  let { anim, transcode } = options ?? {};
 
   if (inferredType === 'video' && type === 'image') {
     transcode = true;
@@ -77,16 +116,14 @@ export function useGetEdgeUrl(src: string, options: Omit<EdgeUrlProps, 'src'> | 
 
   const optimized = currentUser?.filePreferences?.imageFormat === 'optimized';
 
-  return getEdgeUrl(src, {
-    anim,
-    transcode,
+  return {
+    url: getEdgeUrl(src, {
+      ...options,
+      anim,
+      transcode,
+      type,
+      optimized: optimized ? true : undefined,
+    }),
     type,
-    optimized: optimized ? true : undefined,
-    width: options?.width,
-    fit: options?.fit,
-    blur: options?.blur,
-    quality: options?.quality,
-    gravity: options?.gravity,
-    name: options?.name,
-  });
+  };
 }
