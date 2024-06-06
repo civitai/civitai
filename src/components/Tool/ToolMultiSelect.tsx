@@ -19,6 +19,7 @@ export function ToolMultiSelect({
       loading={isLoading}
       placeholder={placeholder}
       data={data.map(({ id, name, type }) => ({ value: id, label: name, group: type }))}
+      searchable
     />
   );
 }

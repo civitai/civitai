@@ -19,6 +19,7 @@ export function TechniqueMultiSelect({
       loading={isLoading}
       placeholder={placeholder}
       data={data.map(({ id, name }) => ({ value: id, label: name }))}
+      searchable
     />
   );
 }
