@@ -56,9 +56,19 @@ export default MixedAuthEndpoint(async function handler(
       mv."baseModel",
       mv.status,
       mv.availability,
-      mv."earlyAccessEndsAt",
-      (mv."earlyAccessEndsAt" > NOW() AND mv."availability" = 'EarlyAccess') AS "checkPermission"
       m.type,
+      mv."earlyAccessEndsAt",
+      (mv."earlyAccessEndsAt" > NOW() AND mv."availability" = 'EarlyAccess') AS "checkPermission",
+      (
+        CASE
+          mv."earlyAccessConfig"->>'chargeForGeneration'
+        WHEN 'true'
+        THEN 
+          COALESCE(CAST(mv."earlyAccessConfig"->>'generationTrialLimit' AS int), 10) 
+        ELSE 
+          NULL
+        END
+      ) AS "freeTrialLimit",
     FROM "ModelVersion" mv
     JOIN "Model" m ON m.id = mv."modelId"
     WHERE ${Prisma.join(where, ' AND ')}
