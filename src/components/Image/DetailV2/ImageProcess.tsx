@@ -33,7 +33,12 @@ export function ImageProcess({ imageId }: { imageId: number }) {
                 classNames={{ inner: 'flex gap-1 h-full' }}
               >
                 {domain ? (
-                  <a href={domain} target="_blank" rel="noreferrer">
+                  <a
+                    href={domain}
+                    target="_blank"
+                    rel="noreferrer"
+                    data-activity={`tool-click:${id}`}
+                  >
                     {name}
                   </a>
                 ) : (
