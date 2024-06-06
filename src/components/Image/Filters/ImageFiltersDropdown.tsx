@@ -92,6 +92,7 @@ export function ImageFiltersDropdown({
     (mergedFilters.fromPlatform ? 1 : 0) +
     (mergedFilters.notPublished ? 1 : 0) +
     (!!mergedFilters.tools?.length ? 1 : 0) +
+    (!!mergedFilters.techniques?.length ? 1 : 0) +
     (mergedFilters.period && mergedFilters.period !== MetricTimeframe.AllTime ? 1 : 0) +
     (mergedFilters.baseModels?.length ?? 0);
 
