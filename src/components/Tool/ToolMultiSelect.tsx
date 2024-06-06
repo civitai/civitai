@@ -4,9 +4,11 @@ import { trpc } from '~/utils/trpc';
 export function ToolMultiSelect({
   value,
   onChange,
+  placeholder = 'select...',
 }: {
   value: number[];
   onChange: (value: number[]) => void;
+  placeholder?: string;
 }) {
   const { data = [], isLoading } = trpc.tool.getAll.useQuery();
 
@@ -15,7 +17,7 @@ export function ToolMultiSelect({
       value={value}
       onChange={onChange}
       loading={isLoading}
-      placeholder="select..."
+      placeholder={placeholder}
       data={data.map(({ id, name, type }) => ({ value: id, label: name, group: type }))}
     />
   );
