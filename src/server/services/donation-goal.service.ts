@@ -107,10 +107,10 @@ export const donateToGoal = async ({
       if (modelVersion?.earlyAccessEndsAt && modelVersion.earlyAccessEndsAt > new Date()) {
         await dbWrite.$executeRaw`
           UPDATE "ModelVersion"
-          SET "earlyAccessConfig" =  
+          SET "earlyAccessConfig" = 
             COALESCE("earlyAccessConfig", '{}'::jsonb)  || JSONB_BUILD_OBJECT(
               'timeframe', 0,
-              'originalPublishAt', "publishedAt"
+              'originalPublishAt', "publishedAt",
               'originalTimeframe', "earlyAccessConfig"->>'timeframe'
             ),
           "earlyAccessEndsAt" = NULL,
