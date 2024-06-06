@@ -8,11 +8,10 @@ import { adsRegistry } from '~/components/Ads/adsRegistry';
 import { useMantineTheme } from '@mantine/core';
 import { ScrollAreaMain } from '~/components/ScrollArea/ScrollAreaMain';
 
+const maxColumnCount = 7;
+
 export function FeedLayout({ children }: { children: React.ReactNode }) {
   const theme = useMantineTheme();
-
-  const maxColumnCount = 7;
-
   return (
     <ScrollAreaMain>
       <IsClient>
@@ -27,7 +26,7 @@ export function FeedLayout({ children }: { children: React.ReactNode }) {
             style={{ margin: `0 auto ${theme.spacing.xs}px`, zIndex: 10 }}
             {...adsRegistry.feedLayoutHeader}
           />
-          <MasonryContainer>{children}</MasonryContainer>
+          {children}
         </MasonryProvider>
       </IsClient>
     </ScrollAreaMain>

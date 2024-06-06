@@ -37,27 +37,22 @@ export default function ArticlesPage() {
         description="Learn, innovate, and draw inspiration from generative AI articles written by the Civitai community"
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/articles`, rel: 'canonical' }]}
       />
-      <MasonryProvider
-        columnWidth={constants.cardSizes.image}
-        maxColumnCount={7}
-        maxSingleColumnWidth={450}
-      >
-        <MasonryContainer>
-          <Stack spacing="xs">
-            <Announcements
-              sx={() => ({
-                marginBottom: -35,
-                [containerQuery.smallerThan('md')]: {
-                  marginBottom: -5,
-                },
-              })}
-            />
-            {query.favorites && <Title>Your Bookmarked Articles</Title>}
-            <ArticleCategories />
-            <ArticlesInfinite filters={query} />
-          </Stack>
-        </MasonryContainer>
-      </MasonryProvider>
+
+      <MasonryContainer>
+        <Stack spacing="xs">
+          <Announcements
+            sx={() => ({
+              marginBottom: -35,
+              [containerQuery.smallerThan('md')]: {
+                marginBottom: -5,
+              },
+            })}
+          />
+          {query.favorites && <Title>Your Bookmarked Articles</Title>}
+          <ArticleCategories />
+          <ArticlesInfinite filters={query} />
+        </Stack>
+      </MasonryContainer>
     </>
   );
 }
