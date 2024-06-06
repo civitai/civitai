@@ -57,7 +57,7 @@ export default MixedAuthEndpoint(async function handler(
       mv.status,
       mv.availability,
       mv."earlyAccessEndsAt",
-      (mv."earlyAccessEndsAt" > NOW()) AS "checkPermission"
+      (mv."earlyAccessEndsAt" > NOW() AND mv."availability" = 'EarlyAccess') AS "checkPermission"
       m.type,
     FROM "ModelVersion" mv
     JOIN "Model" m ON m.id = mv."modelId"
