@@ -2960,6 +2960,7 @@ export async function getImageGenerationData({ id }: { id: number }) {
               id: true,
               name: true,
               icon: true,
+              domain: true,
             },
           },
         },
