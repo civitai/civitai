@@ -12,18 +12,18 @@ export function ImageProcess({ imageId }: { imageId: number }) {
   if (!tools.length && !techniques.length) return null;
 
   return (
-    <Card className="rounded-xl flex flex-col gap-3">
-      <Text className="flex items-center gap-2 font-semibold text-xl">
+    <Card className="flex flex-col gap-3 rounded-xl">
+      <Text className="flex items-center gap-2 text-xl font-semibold">
         <IconChartBubble />
         <span>Process</span>
       </Text>
       {!!tools.length && (
         <div className="flex flex-col gap-1">
-          <div className="flex justify-between items-center">
-            <Text className="text-md font-semibold">Tools</Text>
+          <div className="flex items-center justify-between">
+            <Text className="font-semibold">Tools</Text>
           </div>
           <div className="flex flex-wrap gap-2">
-            {tools.map(({ id, name, notes }) => (
+            {tools.map(({ id, name, notes, domain }) => (
               <Badge
                 key={id}
                 size="lg"
@@ -32,7 +32,13 @@ export function ImageProcess({ imageId }: { imageId: number }) {
                 }`}
                 classNames={{ inner: 'flex gap-1 h-full' }}
               >
-                <span>{name}</span>
+                {domain ? (
+                  <a href={domain} target="_blank" rel="noreferrer">
+                    {name}
+                  </a>
+                ) : (
+                  <span>{name}</span>
+                )}
                 {notes && (
                   <>
                     <div className="h-full border-l border-blue-8 border-opacity-30"></div>
@@ -55,10 +61,10 @@ export function ImageProcess({ imageId }: { imageId: number }) {
       )}
       {!!techniques.length && (
         <div className="flex flex-col gap-1">
-          <div className="flex justify-between items-center">
-            <Text className="text-md font-semibold">Techniques</Text>
+          <div className="flex items-center justify-between">
+            <Text className="font-semibold">Techniques</Text>
           </div>
-          <ul className="list-none flex flex-col gap-2">
+          <ul className="flex list-none flex-col gap-2">
             {techniques.map(({ id, name, notes }) => (
               <li key={id}>
                 <Text>{name}</Text>

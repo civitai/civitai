@@ -4,11 +4,12 @@ import { dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
 import { dataForModelsCache } from '~/server/redis/caches';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
+import { isDefined } from '~/utils/type-guards';
 
 type ScheduledEntity = {
   id: number;
   userId: number;
-  extras?: Record<string, any>;
+  extras?: { modelId: number } & MixedObject;
 };
 
 export const processScheduledPublishing = createJob(
@@ -116,9 +117,6 @@ export const processScheduledPublishing = createJob(
         entityId: modelVersion.id,
       });
       await bustOrchestratorModelCache([modelVersion.id]);
-      if (modelVersion.extras && modelVersion.extras.hasOwnProperty('modelId')) {
-        await dataForModelsCache.bust(modelVersion.extras.modelId);
-      }
     }
     for (const post of scheduledPosts) {
       await eventEngine.processEngagement({
@@ -128,6 +126,11 @@ export const processScheduledPublishing = createJob(
         entityId: post.id,
       });
     }
+
+    const processedModelIds = scheduledModelVersions
+      .map((entity) => entity.extras?.modelId)
+      .filter(isDefined);
+    if (processedModelIds.length) await dataForModelsCache.bust(processedModelIds);
 
     await setLastRun();
   }
