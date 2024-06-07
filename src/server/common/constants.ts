@@ -334,7 +334,7 @@ export const constants = {
     },
   },
   modelGallery: {
-    maxPinnedPosts: 6,
+    maxPinnedPosts: 10,
   },
 } as const;
 export const activeBaseModels = constants.baseModels.filter(
