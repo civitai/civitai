@@ -76,16 +76,13 @@ export function GeneratedImage({
 
   const handleGenerate = () => {
     const { resources, params } = request;
-    generationStore.setData({
-      type: 'remix',
-      data: { resources, params: { ...params, seed: undefined } },
-    });
+    generationStore.setData({ resources, params: { ...params, seed: undefined } });
   };
 
   const handleGenerateWithSeed = () => {
     generationStore.setData({
-      type: 'remix',
-      data: { ...request, params: { ...request.params, seed: image.seed ?? request.params.seed } },
+      ...request,
+      params: { ...request.params, seed: image.seed ?? request.params.seed },
     });
   };
 

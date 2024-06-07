@@ -36,10 +36,7 @@ export function useGetTextToImageRequests(
         (x.items ?? [])
           .map((response) => {
             const images = [...response.images]
-              .filter(
-                (image) =>
-                  !response.metadata?.images?.[image.id]?.hidden && image.status === 'succeeded'
-              )
+              .filter((image) => !response.metadata?.images?.[image.id]?.hidden)
               .sort((a, b) => {
                 if (a.completed !== b.completed) {
                   if (!b.completed) return 1;
@@ -51,7 +48,8 @@ export function useGetTextToImageRequests(
                   return 0;
                 }
               });
-            return !!images.length ? { ...response, images } : null;
+            return { ...response, images };
+            // return !!images.length ? { ...response, images } : null;
           })
           .filter(isDefined)
       ) ?? [],

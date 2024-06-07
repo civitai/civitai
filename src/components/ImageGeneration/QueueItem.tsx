@@ -111,10 +111,7 @@ export function QueueItem({ request }: Props) {
 
   const handleGenerate = () => {
     const { resources, params } = request;
-    generationStore.setData({
-      type: 'remix',
-      data: { resources, params: { ...params, seed: undefined } },
-    });
+    generationStore.setData({ resources, params: { ...params, seed: undefined } });
   };
 
   const { prompt, ...details } = request.params;
@@ -131,7 +128,8 @@ export function QueueItem({ request }: Props) {
   // TODO - verify this
   const refunded = Math.ceil(
     !!request.cost
-      ? (request.cost / params.quantity) * (params.quantity - (request.images?.length ?? 0))
+      ? (request.cost / params.quantity) *
+          (params.quantity - (request.images?.filter((x) => x.status === 'succeeded').length ?? 0))
       : 0
   );
   const cost = !!request.cost ? request.cost - refunded : 0;

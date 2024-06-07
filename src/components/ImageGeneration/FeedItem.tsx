@@ -58,8 +58,8 @@ export function FeedItem({
 
   const handleGenerate = () => {
     generationStore.setData({
-      type: 'remix',
-      data: { ...request, params: { ...request.params, seed: image.seed ?? request.params.seed } },
+      ...request,
+      params: { ...request.params, seed: image.seed ?? request.params.seed },
     });
   };
 
