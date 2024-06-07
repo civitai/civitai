@@ -218,10 +218,9 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
   const input = useGenerationStore((state) => state.input);
   const storeData = useGenerationStore((state) => state.data);
 
-  // const _form = useRef<GenerationFormProps | null>(null);
   const currentUser = useCurrentUser();
   const status = useGenerationStatus();
-  const { data: responseData } = trpc.generation.getGenerationData.useQuery(input!, {
+  const { data: responseData, isFetching } = trpc.generation.getGenerationData.useQuery(input!, {
     enabled: input !== undefined,
     keepPreviousData: true,
   });
@@ -243,11 +242,11 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
 
   useEffect(() => {
     if (storeData) {
-      const { resources, params } = storeData.data;
+      const { resources, params } = storeData;
       const formData: PartialFormData = { ...params };
       if (!!resources?.length) formData.resources = resources;
       setValues(formData);
-    } else {
+    } else if (responseData && !isFetching) {
       const runType = !input ? 'default' : input.type === 'modelVersion' ? 'run' : 'remix';
       const formData =
         runType === 'default'
@@ -260,7 +259,14 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
             });
       setValues(formData);
     }
-  }, [responseData, status, currentUser, storeData]); // eslint-disable-line
+  }, [responseData, status, currentUser, storeData, isFetching, input]); // eslint-disable-line
+
+  function setValues(data: PartialFormData) {
+    const limited = handleUserLimits(data);
+    for (const [key, value] of Object.entries(limited)) {
+      form.setValue(key as keyof PartialFormData, value);
+    }
+  }
 
   function handleUserLimits(data: PartialFormData): PartialFormData {
     if (!status) return data;
@@ -281,17 +287,6 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
   function reset() {
     form.reset(getDefaultValues(form.getValues()));
   }
-
-  function setValues(data: PartialFormData) {
-    const limited = handleUserLimits(data);
-    for (const [key, value] of Object.entries(limited)) {
-      form.setValue(key as keyof PartialFormData, value);
-    }
-  }
-
-  // if (!_form.current) {
-  //   _form.current = { ...form, setValues, reset };
-  // }
 
   return (
     <GenerationFormContext.Provider value={{ ...form, setValues, reset }}>

@@ -10,15 +10,13 @@ export type GenerationPanelView = 'queue' | 'generate' | 'feed';
 type GenerationState = {
   opened: boolean;
   view: GenerationPanelView;
-  data?: { type: RunType; data: Partial<GenerationData> };
+  data?: Partial<GenerationData>;
   input?: GetGenerationDataInput;
   // used to populate form with model/image generation data
   open: (input?: GetGenerationDataInput) => Promise<void>;
   close: () => void;
   setView: (view: GenerationPanelView) => void;
-  setParams: (data: GenerationData['params']) => void;
-  setData: (args: { data: Partial<GenerationData>; type: RunType }) => void;
-  clearData: () => void;
+  setData: (args: Partial<GenerationData>) => void;
 };
 
 export const useGenerationStore = create<GenerationState>()(
@@ -32,13 +30,9 @@ export const useGenerationStore = create<GenerationState>()(
           state.input = input;
           if (input) {
             state.view = 'generate';
+            state.data = undefined;
           }
         });
-
-        // if (!input) return;
-        // const data = await getGenerationData(input);
-        // const type = input.type === 'modelVersion' ? 'run' : 'remix';
-        // if (data) get().setData({ type, data: { ...data } });
       },
       close: () =>
         set((state) => {
@@ -48,15 +42,7 @@ export const useGenerationStore = create<GenerationState>()(
         set((state) => {
           state.view = view;
         }),
-      setParams: (params) => {
-        set((state) => {
-          state.data = {
-            type: 'params',
-            data: { params },
-          };
-        });
-      },
-      setData: ({ data, type }) =>
+      setData: (data) =>
         set((state) => {
           state.view = 'generate';
           if (
@@ -64,23 +50,18 @@ export const useGenerationStore = create<GenerationState>()(
             !(generation.samplers as string[]).includes(data.params.sampler)
           )
             data.params.sampler = generation.defaultValues.sampler;
-          state.data = { type, data };
-        }),
-
-      clearData: () =>
-        set((state) => {
-          state.data = undefined;
+          state.data = data;
         }),
     })),
     { name: 'generation-store' }
   )
 );
 
-useGenerationStore.subscribe((state) => {
-  if ((state.view !== 'generate' || !state.opened) && !!state.data) {
-    state.clearData();
-  }
-});
+// useGenerationStore.subscribe((state) => {
+//   if ((state.view !== 'generate' || !state.opened) && !!state.data) {
+//     state.clearData();
+//   }
+// });
 
 const store = useGenerationStore.getState();
 export const generationPanel = {
@@ -91,23 +72,4 @@ export const generationPanel = {
 
 export const generationStore = {
   setData: store.setData,
-  setParams: store.setParams,
-  clearData: store.clearData,
 };
-
-// const dictionary: Record<string, GenerationData> = {};
-// const getGenerationData = async (input: GetGenerationDataInput) => {
-//   try {
-//     const key = `${input.type}_${input.id}`;
-//     if (key && dictionary[key]) return dictionary[key];
-//     else {
-//       const response = await fetch(`/api/generation/data?${QS.stringify(input)}`);
-//       if (!response.ok) throw new Error(response.statusText);
-//       const data: GenerationData = await response.json();
-//       if (key) dictionary[key] = data;
-//       return data;
-//     }
-//   } catch (error: any) {
-//     showErrorNotification({ error });
-//   }
-// };
