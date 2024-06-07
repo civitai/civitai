@@ -1609,8 +1609,6 @@ export const bulkSaveItems = async ({
 
   await homeBlockCacheBust(HomeBlockType.Collection, collectionId);
 
-  console.log(data);
-
   return dbWrite.collectionItem.createMany({ data });
 };
 
