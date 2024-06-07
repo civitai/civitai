@@ -20,6 +20,8 @@ export async function queryWorkflows({
 
   const { next, items = [] } = await client.workflows.queryWorkflows(params);
 
+  // console.dir(items, { depth: null });
+
   return { nextCursor: next, items };
 }
 
@@ -37,11 +39,14 @@ export async function submitWorkflow({
   ...params
 }: $OpenApiTs['/v2/consumer/workflows']['post']['req'] & { token: string }) {
   const client = new OrchestratorClient(token);
+  // console.log({ token });
+  // console.log(JSON.stringify(params));
 
   return await client.workflows.submitWorkflow(params).catch((error) => {
     if (error instanceof ApiError) {
       console.log('-------ERROR-------');
       console.dir({ error }, { depth: null });
+      console.log('-------END ERROR-------');
       switch (error.status) {
         case 400:
           throw throwBadRequestError(); // TODO - better error handling

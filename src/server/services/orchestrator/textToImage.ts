@@ -44,6 +44,7 @@ import {
 import { removeNulls } from '~/utils/object-helpers';
 import { ResourceData } from '~/server/redis/caches';
 import dayjs from 'dayjs';
+import { env } from '~/env/server.mjs';
 
 export async function textToImage({
   user,
@@ -207,7 +208,7 @@ export async function textToImage({
       quantity,
       batchSize,
       additionalNetworks,
-      // providers: params.draft ? (env.DRAFT_MODE_PROVIDERS as Provider[] | undefined) : undefined, // TODO - ??
+      // providers: params.draft ? (env.DRAFT_MODE_PROVIDERS as Provider[] | undefined) : undefined,
       prompt: positivePrompts.join(', '),
       negativePrompt: negativePrompts.join(', '),
       scheduler: samplersToSchedulers[params.sampler as Sampler] as Scheduler,
@@ -225,7 +226,7 @@ export async function textToImage({
     callbacks: !whatIf
       ? [
           {
-            url: `https://signals-dev.civitai.com/users/${user.id}/signals/${SignalMessages.TextToImageUpdate}`, // TODO - env var?
+            url: `${env.SIGNALS_ENDPOINT}/users/${user.id}/signals/${SignalMessages.TextToImageUpdate}`,
             type: ['job:*', 'workflow:*'],
           },
         ]
