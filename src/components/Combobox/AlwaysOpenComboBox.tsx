@@ -30,7 +30,11 @@ export function AlwaysOpenCombobox<T extends Key, TOption extends ComboboxOption
   const [search, setSearch] = useState('');
 
   const filtered = search.length
-    ? options.filter((x) => x.label.toLowerCase().includes(search))
+    ? options.filter((x) => {
+        const match = x.label.toLowerCase().includes(search);
+        if (showSelected) return match || value?.includes(x.value as T);
+        return match;
+      })
     : options;
 
   const grouped = filtered.reduce<Record<string, TOption[]>>((acc, option) => {
