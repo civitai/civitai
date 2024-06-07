@@ -30,10 +30,10 @@ export function ImageToolsPopover({
           if (a.priority || b.priority) {
             return (a.priority ?? 999) - (b.priority ?? 999);
           } else {
-            if (a.name < b.name) {
+            if (a.name.toLowerCase() < b.name.toLowerCase()) {
               return -1;
             }
-            if (a.name > b.name) {
+            if (a.name.toLowerCase() > b.name.toLowerCase()) {
               return 1;
             }
             return 0;
