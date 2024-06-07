@@ -12,6 +12,7 @@ type Props<T extends Key, TOption extends ComboboxOptionProps> = {
     props: { active: boolean; selected: boolean; disabled: boolean } & TOption
   ) => React.ReactNode;
   footer?: React.ReactNode;
+  showSelected?: boolean;
 };
 
 export function AlwaysOpenCombobox<T extends Key, TOption extends ComboboxOptionProps>({
@@ -21,6 +22,7 @@ export function AlwaysOpenCombobox<T extends Key, TOption extends ComboboxOption
   options = [],
   renderOption,
   footer,
+  showSelected,
 }: Props<T, TOption>) {
   const { classes } = useStyles();
   const [search, setSearch] = useState('');
@@ -55,7 +57,6 @@ export function AlwaysOpenCombobox<T extends Key, TOption extends ComboboxOption
           placeholder="search..."
           className="m-2"
           radius="xl"
-          autoFocus
         />
         <Divider />
         <ScrollArea.Autosize
