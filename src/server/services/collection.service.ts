@@ -69,6 +69,7 @@ import { collectionsSearchIndex } from '~/server/search-index';
 import { createNotification } from '~/server/services/notification.service';
 
 export type CollectionContributorPermissionFlags = {
+  collectionId: number;
   read: boolean;
   write: boolean;
   writeReview: boolean;
@@ -120,6 +121,7 @@ export const getUserCollectionPermissionsById = async ({
   isModerator?: boolean;
 }) => {
   const permissions: CollectionContributorPermissionFlags = {
+    collectionId,
     read: false,
     write: false,
     writeReview: false,

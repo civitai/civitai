@@ -16,6 +16,8 @@ import {
   AddSimpleImagePostInput,
   GetAllCollectionsInfiniteSchema,
   UpdateCollectionCoverImageInput,
+  GetCollectionPermissionDetails,
+  CollectionMetadataSchema,
 } from '~/server/schema/collection.schema';
 import {
   saveItemInCollections,
@@ -47,6 +49,7 @@ import { imageSelect } from '~/server/selectors/image.selector';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { isDefined } from '~/utils/type-guards';
 import { collectedContentReward } from '~/server/rewards';
+import { dbRead } from '../db/client';
 
 export const getAllCollectionsInfiniteHandler = async ({
   input,
@@ -466,4 +469,36 @@ export const addSimpleImagePostHandler = async ({
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
   }
+};
+
+export const getPermissionDetailsHandler = async ({
+  input: { ids },
+  ctx,
+}: {
+  input: GetCollectionPermissionDetails;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  if (ids.length === 0) return [];
+
+  const collections = await dbRead.collection.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, name: true, metadata: true, mode: true },
+  });
+
+  // Get permissions for each of these
+  const permissions = await Promise.all(
+    collections.map((c) =>
+      getUserCollectionPermissionsById({
+        id: c.id,
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+      })
+    )
+  );
+
+  return collections.map((c) => ({
+    ...c,
+    metadata: (c.metadata ?? {}) as CollectionMetadataSchema,
+    permissions: permissions.find((p) => p.collectionId === c.id),
+  }));
 };

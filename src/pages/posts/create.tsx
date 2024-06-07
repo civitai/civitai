@@ -50,7 +50,15 @@ export default createPage(
     const currentUser = useCurrentUser();
     const router = useRouter();
     const params = postEditQuerySchema.parse(router.query);
-    const { modelId, modelVersionId, tag: tagId, video: postingVideo, clubId, reviewing } = params;
+    const {
+      modelId,
+      modelVersionId,
+      tag: tagId,
+      video: postingVideo,
+      clubId,
+      reviewing,
+      collections: collectionIds,
+    } = params;
 
     const isMuted = currentUser?.muted ?? false;
     const displayReview = !isMuted && !!reviewing && !!modelVersionId && !!modelId;
@@ -76,12 +84,25 @@ export default createPage(
         { enabled: !!currentUser && displayReview }
       );
 
+    const { collections, isLoading: loadingCollections } = useCollectionsForPostCreation({
+      collectionIds: collectionIds,
+    });
+
     let backButtonUrl = modelId ? `/models/${modelId}` : '/';
+
     if (modelVersionId) backButtonUrl += `?modelVersionId=${modelVersionId}`;
     if (tagId) backButtonUrl = `/posts?tags=${tagId}&view=feed`;
     if (clubId) backButtonUrl = `/clubs/${clubId}`;
+    if (collectionIds?.length)
+      backButtonUrl =
+        collectionIds.length > 1 ? `/collections` : `/collections/${collectionIds[0]}`;
 
-    const loading = (loadingCurrentUserReview || versionLoading) && !currentUserReview && !version;
+    const loading =
+      (loadingCurrentUserReview ||
+        versionLoading ||
+        (collectionIds?.length && loadingCollections)) &&
+      !currentUserReview &&
+      !version;
 
     if (currentUser?.muted)
       return (

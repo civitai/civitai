@@ -200,3 +200,8 @@ export const getAllCollectionsInfiniteSchema = infiniteQuerySchema
   })
   .merge(userPreferencesSchema)
   .partial();
+
+export type GetCollectionPermissionDetails = z.infer<typeof getCollectionPermissionDetails>;
+export const getCollectionPermissionDetails = z.object({
+  ids: z.array(z.number()),
+});

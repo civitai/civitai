@@ -7,6 +7,7 @@ import {
   getAllCollectionsInfiniteHandler,
   getAllUserCollectionsHandler,
   getCollectionByIdHandler,
+  getPermissionDetailsHandler,
   getUserCollectionItemsByItemHandler,
   saveItemHandler,
   unfollowHandler,
@@ -23,6 +24,7 @@ import {
   getAllCollectionItemsSchema,
   getAllCollectionsInfiniteSchema,
   getAllUserCollectionsInputSchema,
+  getCollectionPermissionDetails,
   getUserCollectionItemsByItemSchema,
   saveCollectionItemInputSchema,
   updateCollectionCoverImageInput,
@@ -120,4 +122,8 @@ export const collectionRouter = router({
     .input(addSimpleImagePostInput)
     .use(isFlagProtected('collections'))
     .mutation(addSimpleImagePostHandler),
+  getPermissionDetails: protectedProcedure
+    .input(getCollectionPermissionDetails)
+    .use(isFlagProtected('collections'))
+    .query(getPermissionDetailsHandler),
 });

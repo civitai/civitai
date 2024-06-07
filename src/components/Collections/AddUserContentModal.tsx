@@ -44,6 +44,7 @@ import { trpc } from '~/utils/trpc';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
 import { truncate } from 'lodash-es';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
+import { NextLink } from '@mantine/next';
 
 export function AddUserContentModal({ collectionId, opened, onClose, ...props }: Props) {
   const currentUser = useCurrentUser();
@@ -156,122 +157,38 @@ export function AddUserContentModal({ collectionId, opened, onClose, ...props }:
             {error}
           </AlertWithIcon>
         )}
-        {addSimpleImagePostCollectionMutation.isLoading ? (
-          <Center py="xl" h="250px">
-            <Stack align="center">
-              <Loader />
-              <Text color="dimmed">
-                Adding images to the collection. This may take a few seconds
-              </Text>
-            </Stack>
-          </Center>
-        ) : (
-          <>
-            <ImageDropzone
-              label="Drop or click to select your images to add to this collection"
-              onDrop={handleDropImages}
-              count={files.length}
-              accept={[...IMAGE_MIME_TYPE, ...VIDEO_MIME_TYPE]}
-            />
-            {files.length > 0 ? (
-              <SimpleGrid
-                spacing="sm"
-                breakpoints={[
-                  { minWidth: 'xs', cols: 1 },
-                  { minWidth: 'sm', cols: 3 },
-                  { minWidth: 'md', cols: 4 },
-                ]}
-              >
-                {files
-                  .slice()
-                  .reverse()
-                  .map((file) => (
-                    <Paper
-                      key={file.url}
-                      radius="sm"
-                      p={0}
-                      sx={{ position: 'relative', overflow: 'hidden', height: 332 }}
-                      withBorder
-                    >
-                      {file.status === 'success' ? (
-                        <>
-                          <EdgeMedia
-                            placeholder="empty"
-                            src={file.url}
-                            alt={file.name ?? undefined}
-                            name={file.name ?? undefined}
-                            style={{ objectFit: 'cover', height: '100%' }}
-                          />
-                          <div style={{ position: 'absolute', top: 12, right: 12 }}>
-                            <ActionIcon
-                              variant="filled"
-                              size="lg"
-                              color="red"
-                              onClick={() => removeImage(file.url)}
-                            >
-                              <IconTrash size={26} strokeWidth={2.5} />
-                            </ActionIcon>
-                          </div>
-                          {file.type === 'image' && (
-                            <div style={{ position: 'absolute', bottom: 12, right: 12 }}>
-                              <ImageMetaPopover meta={file.meta}>
-                                <ActionIcon variant="light" color="dark" size="lg">
-                                  <IconInfoCircle color="white" strokeWidth={2.5} size={26} />
-                                </ActionIcon>
-                              </ImageMetaPopover>
-                            </div>
-                          )}
-                        </>
-                      ) : (
-                        <>
-                          <MediaHash {...file} />
-                          <Progress
-                            size="xl"
-                            value={file.progress}
-                            label={`${Math.floor(file.progress)}%`}
-                            color={file.progress < 100 ? 'blue' : 'green'}
-                            striped
-                            animate
-                          />
-                        </>
-                      )}
-                    </Paper>
-                  ))}
-              </SimpleGrid>
-            ) : (
-              <>
-                <Divider label="or select from your library" labelPosition="center" />
-                <MasonryProvider
-                  columnWidth={constants.cardSizes.image}
-                  maxColumnCount={4}
-                  maxSingleColumnWidth={450}
-                >
-                  <MasonryContainer m={0} p={0}>
-                    <ScrollArea.Autosize maxHeight="500px">
-                      {currentUser && (
-                        <ImagesInfinite
-                          filters={{
-                            collectionId: undefined,
-                            username: currentUser.username,
-                            period: 'AllTime',
-                            sort: ImageSort.Newest,
-                            hidden: undefined,
-                            types: undefined,
-                            withMeta: undefined,
-                            followed: undefined,
-                            fromPlatform: undefined,
-                          }}
-                          renderItem={SelectableImageCard}
-                          nextPageLoaderOptions={{ root: undefined }}
-                        />
-                      )}
-                    </ScrollArea.Autosize>
-                  </MasonryContainer>
-                </MasonryProvider>
-              </>
-            )}
-          </>
-        )}
+        <Button component={NextLink} href={`/posts/create?collection=${collectionId}`}>
+          Create a new image post
+        </Button>
+
+        <Divider label="or select from your library" labelPosition="center" />
+        <MasonryProvider
+          columnWidth={constants.cardSizes.image}
+          maxColumnCount={4}
+          maxSingleColumnWidth={450}
+        >
+          <MasonryContainer m={0} p={0}>
+            <ScrollArea.Autosize maxHeight="500px">
+              {currentUser && (
+                <ImagesInfinite
+                  filters={{
+                    collectionId: undefined,
+                    username: currentUser.username,
+                    period: 'AllTime',
+                    sort: ImageSort.Newest,
+                    hidden: undefined,
+                    types: undefined,
+                    withMeta: undefined,
+                    followed: undefined,
+                    fromPlatform: undefined,
+                  }}
+                  renderItem={SelectableImageCard}
+                  nextPageLoaderOptions={{ root: undefined }}
+                />
+              )}
+            </ScrollArea.Autosize>
+          </MasonryContainer>
+        </MasonryProvider>
         <Group
           spacing="xs"
           position="right"
