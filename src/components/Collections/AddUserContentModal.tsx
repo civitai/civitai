@@ -199,6 +199,7 @@ export function AddUserContentModal({ collectionId, opened, onClose, ...props }:
                             placeholder="empty"
                             src={file.url}
                             alt={file.name ?? undefined}
+                            name={file.name ?? undefined}
                             style={{ objectFit: 'cover', height: '100%' }}
                           />
                           <div style={{ position: 'absolute', top: 12, right: 12 }}>
