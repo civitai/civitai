@@ -101,7 +101,7 @@ export function AddUserContentModal({ collectionId, opened, onClose, ...props }:
           });
           await queryUtils.image.getInfinite.invalidate();
           await queryUtils.collection.getById.invalidate({ id: collectionId });
-          await queryUtils.collection.getAllUser.refetch();
+          await queryUtils.collection.getAllUser.invalidate();
         },
         onError(error) {
           showErrorNotification({
