@@ -527,6 +527,7 @@ export const getAllImages = async ({
   notPublished,
   tools,
   techniques,
+  baseModels,
 }: GetInfiniteImagesOutput & {
   userId?: number;
   user?: SessionUser;
@@ -813,6 +814,14 @@ export const getAllImages = async ({
   //   )`);
   // }
 
+  if (baseModels?.length) {
+    AND.push(Prisma.sql`EXISTS (
+      SELECT 1 FROM "ModelVersion" mv
+      RIGHT JOIN "ImageResource" ir ON ir."imageId" = i.id AND ir."modelVersionId" = mv.id
+      WHERE mv."baseModel" IN (${Prisma.join(baseModels)})
+    )`);
+  }
+
   if (pending && (isModerator || userId)) {
     if (isModerator) {
       AND.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`);
@@ -891,12 +900,13 @@ export const getAllImages = async ({
       ${Prisma.raw(
         includeBaseModel
           ? `(
-        SELECT mv."baseModel" FROM "ModelVersion" mv
-        RIGHT JOIN "ImageResource" ir ON ir."imageId" = i.id AND ir."modelVersionId" = mv.id
-        JOIN "Model" m ON mv."modelId" = m.id
-        WHERE m."type" = 'Checkpoint'
-        LIMIT 1
-      ) "baseModel",`
+            SELECT mv."baseModel"
+            FROM "ImageResource" ir
+            LEFT JOIN "ModelVersion" mv ON ir."modelVersionId" = mv.id
+            LEFT JOIN "Model" m ON mv."modelId" = m.id
+            WHERE m."type" = 'Checkpoint' AND ir."imageId" = i.id
+            LIMIT 1
+          ) "baseModel",`
           : ''
       )}
       im."cryCount",
@@ -2950,6 +2960,7 @@ export async function getImageGenerationData({ id }: { id: number }) {
               id: true,
               name: true,
               icon: true,
+              domain: true,
             },
           },
         },

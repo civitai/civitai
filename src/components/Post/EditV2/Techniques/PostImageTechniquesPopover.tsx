@@ -1,4 +1,4 @@
-import { Button, Checkbox, Divider, Popover, Text, UnstyledButton } from '@mantine/core';
+import { Button, Checkbox, Divider, Text, UnstyledButton } from '@mantine/core';
 import React, { useState, useMemo } from 'react';
 import { PostEditImageDetail, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
 import { trpc } from '~/utils/trpc';
@@ -8,13 +8,13 @@ import { AlwaysOpenCombobox } from '~/components/Combobox/AlwaysOpenComboBox';
 import { ComboboxOption } from '~/components/Combobox/combobox.types';
 
 export function ImageTechniquesPopover({
-  children,
   image,
+  onSuccess,
 }: {
-  children: React.ReactElement;
   image: PostEditImageDetail;
+  onSuccess?: () => void;
 }) {
-  const { data: techniques = [] } = trpc.technique.getAll.useQuery();
+  const { data: techniques = [], isLoading: loadingTechniques } = trpc.technique.getAll.useQuery();
   const [updateImage, imageCount, imageIds] = usePostEditStore((state) => [
     state.updateImage,
     state.images.length,
@@ -22,7 +22,6 @@ export function ImageTechniquesPopover({
   ]);
   const [showSelected, setShowSelected] = useState(false);
   const [value, setValue] = useState<number[]>(() => []);
-  const [opened, setOpened] = useState(false);
 
   const options: ComboboxOption[] = useMemo(
     () =>
@@ -52,8 +51,8 @@ export function ImageTechniquesPopover({
       { data: payload },
       {
         onSuccess: () => {
-          setOpened(false);
           handleClose(ids);
+          onSuccess?.();
         },
       }
     );
@@ -88,70 +87,52 @@ export function ImageTechniquesPopover({
   }
 
   return (
-    <Popover
-      position="bottom-start"
-      withinPortal
-      onClose={handleClose}
-      trapFocus
-      opened={opened}
-      onChange={setOpened}
-    >
-      <Popover.Target>
-        {React.cloneElement(children, { onClick: () => setOpened((o) => !o) })}
-      </Popover.Target>
-      <Popover.Dropdown className="p-0 rounded-lg">
-        <AlwaysOpenCombobox
-          value={value}
-          onChange={handleSetValue}
-          options={options}
-          renderOption={({ selected, label }) => (
-            <>
-              <span>{label}</span>
-              <Checkbox checked={selected} readOnly tabIndex={-1} />
-            </>
-          )}
-          footer={
-            !!value.length && (
-              <div className="p-2 pt-0 flex flex-col gap-2">
-                <div>
-                  <Divider />
-                  <div className="flex justify-center">
-                    <UnstyledButton
-                      className="cursor-pointer m-1"
-                      onClick={() => setShowSelected((b) => !b)}
-                    >
-                      <Text variant="link" align="center">
-                        {!showSelected ? `Show ${value.length} selected` : `Show all`}
-                      </Text>
-                    </UnstyledButton>
-                  </div>
-                  <Divider />
-                </div>
-                <Button
-                  compact
-                  size="md"
-                  disabled={isLoading}
-                  onClick={() => handleAddTechniques()}
+    <AlwaysOpenCombobox
+      value={value}
+      onChange={handleSetValue}
+      options={options}
+      loading={loadingTechniques}
+      renderOption={({ selected, label }) => (
+        <>
+          <span>{label}</span>
+          <Checkbox checked={selected} readOnly tabIndex={-1} />
+        </>
+      )}
+      footer={
+        !!value.length && (
+          <div className="flex flex-col gap-2 p-2 pt-0">
+            <div>
+              <Divider />
+              <div className="flex justify-center">
+                <UnstyledButton
+                  className="m-1 cursor-pointer"
+                  onClick={() => setShowSelected((b) => !b)}
                 >
-                  Add
-                </Button>
-                {imageCount > 1 && (
-                  <Button
-                    className="text-sm"
-                    variant="default"
-                    compact
-                    size="md"
-                    disabled={isLoading}
-                    onClick={() => handleAddTechniques(true)}
-                  >
-                    Add to all images ({imageCount})
-                  </Button>
-                )}
+                  <Text variant="link" align="center">
+                    {!showSelected ? `Show ${value.length} selected` : `Show all`}
+                  </Text>
+                </UnstyledButton>
               </div>
-            )
-          }
-        />
-      </Popover.Dropdown>
-    </Popover>
+              <Divider />
+            </div>
+            <Button compact size="md" disabled={isLoading} onClick={() => handleAddTechniques()}>
+              Add
+            </Button>
+            {imageCount > 1 && (
+              <Button
+                className="text-sm"
+                variant="default"
+                compact
+                size="md"
+                disabled={isLoading}
+                onClick={() => handleAddTechniques(true)}
+              >
+                Add to all images ({imageCount})
+              </Button>
+            )}
+          </div>
+        )
+      }
+    />
   );
 }

@@ -11,6 +11,7 @@ import {
   Stack,
   Text,
   Title,
+  Center,
 } from '@mantine/core';
 import { ArticleEngagementType, Availability } from '@prisma/client';
 import { IconBolt, IconBookmark, IconShare3 } from '@tabler/icons-react';
@@ -250,38 +251,47 @@ export default function ArticleDetailsPage({
                 ratio={constants.article.coverImageWidth / constants.article.coverImageHeight}
               >
                 {image && (
-                  <ImageGuard2 image={image} connectType="article" connectId={article.id}>
-                    {(safe) => (
-                      <Box
-                        role="button"
-                        tabIndex={0}
-                        onClick={() => onSetImage(image.id)}
-                        onKeyDown={getHotkeyHandler([
-                          ['Enter', handleOpenCoverImage(image.id)],
-                          ['Space', handleOpenCoverImage(image.id)],
-                        ])}
-                        sx={{ cursor: 'pointer', height: '100%' }}
-                      >
-                        <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
-                        <ImageContextMenu image={image} className="absolute right-2 top-2 z-10" />
-                        {!safe ? (
-                          <div className="relative h-full rounded-lg object-cover">
-                            <MediaHash {...image} />
-                          </div>
-                        ) : (
-                          <EdgeMedia
-                            src={image.url}
-                            className="h-full rounded-lg object-cover"
-                            name={image.name}
-                            alt={article.title}
-                            type={image.type}
-                            width={MAX_WIDTH}
-                            anim={safe}
-                          />
-                        )}
-                      </Box>
-                    )}
-                  </ImageGuard2>
+                  <Box
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => onSetImage(image.id)}
+                    onKeyDown={getHotkeyHandler([
+                      ['Enter', handleOpenCoverImage(image.id)],
+                      ['Space', handleOpenCoverImage(image.id)],
+                    ])}
+                    sx={{ cursor: 'pointer' }}
+                  >
+                    <Center className="size-full">
+                      <div className="relative size-full">
+                        <ImageGuard2 image={image} connectType="article" connectId={article.id}>
+                          {(safe) => (
+                            <>
+                              <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
+                              <ImageContextMenu
+                                image={image}
+                                className="absolute right-2 top-2 z-10"
+                              />
+                              {!safe ? (
+                                <div className="relative h-full overflow-hidden rounded-lg object-cover">
+                                  <MediaHash {...image} />
+                                </div>
+                              ) : (
+                                <EdgeMedia
+                                  src={image.url}
+                                  className="h-full rounded-lg object-cover"
+                                  name={image.name}
+                                  alt={article.title}
+                                  type={image.type}
+                                  width={MAX_WIDTH}
+                                  anim={safe}
+                                />
+                              )}
+                            </>
+                          )}
+                        </ImageGuard2>
+                      </div>
+                    </Center>
+                  </Box>
                 )}
               </AspectRatio>
               {article.content && (

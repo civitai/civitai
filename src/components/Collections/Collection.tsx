@@ -67,6 +67,7 @@ import { containerQuery } from '~/utils/mantine-css-helpers';
 import { truncate } from 'lodash-es';
 import { ImageContextMenuProvider } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { removeTags } from '~/utils/string-helpers';
 
 const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
   const { set, ...query } = useModelQueryParams();
@@ -434,7 +435,11 @@ export function Collection({
       {collection && (
         <Meta
           title={`${collection.name} - collection posted by ${collection.user.username}`}
-          description={collection.description ?? undefined}
+          description={
+            collection.description
+              ? truncate(removeTags(collection.description), { length: 150 })
+              : ''
+          }
           images={collection.image}
           deIndex={
             collection.read !== 'Public' || collection.availability === Availability.Unsearchable
