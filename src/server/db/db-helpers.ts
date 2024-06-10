@@ -3,7 +3,13 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { redis } from '~/server/redis/client';
 import { Task, limitConcurrency } from '~/server/utils/concurrency-helpers';
 
-type LaggingType = 'model' | 'modelVersion' | 'commentModel' | 'resourceReview';
+type LaggingType =
+  | 'model'
+  | 'modelVersion'
+  | 'commentModel'
+  | 'resourceReview'
+  | 'post'
+  | 'postImages';
 export async function getDbWithoutLag(type: LaggingType, id?: number) {
   if (env.REPLICATION_LAG_DELAY <= 0 || !id) return dbRead;
   const value = await redis.get(`lag-helper:${type}:${id}`);
