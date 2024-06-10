@@ -262,7 +262,7 @@ export const getUserCollectionsWithPermissions = async <
 
   const queries: Prisma.Sql[] = [
     Prisma.sql`(
-      SELECT c."id", c."name", c."description", c."read", c."userId", c."write"
+      ${SELECT}
       FROM "Collection" c
       WHERE "userId" = ${userId} 
         ${AND.length > 0 ? Prisma.sql`AND ${Prisma.join(AND, ',')}` : Prisma.sql``}
