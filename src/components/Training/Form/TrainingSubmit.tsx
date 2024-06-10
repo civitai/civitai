@@ -214,7 +214,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
       );
       updateRun(model.id, selectedRun.id, { params: { numRepeats } });
     }
-  }, [selectedRunIndex]);
+  }, [selectedRun.id, thisMetadata?.numImages]);
 
   // Set targetSteps automatically on value changes
   useEffect(() => {
@@ -298,7 +298,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     const defaultParams = trainingSettings.reduce(
       (a, v) => ({
         ...a,
-        [v.name]: v.overrides?.[formBaseModel]?.default ?? v.default,
+        [v.name]: v.overrides?.[data.base!]?.default ?? v.default,
       }),
       {} as TrainingDetailsParams
     );
@@ -402,7 +402,6 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
       return;
     }
 
-    console.log(runs);
     for (const r of runs) {
       if (!r.base) {
         showErrorNotification({

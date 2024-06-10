@@ -367,7 +367,9 @@ export default function UserTrainingModels() {
                     style={{ cursor: 'pointer' }}
                     onMouseUp={(e) => goToModel(e, getModelTrainingWizardUrl(mv))}
                   >
-                    <td>{mv.name}</td>
+                    <td>
+                      {mv.model.name} - {mv.name}
+                    </td>
                     <td>
                       <Badge>{splitUppercase(thisTrainingDetails?.type || 'N/A')}</Badge>
                     </td>

@@ -893,6 +893,7 @@ export const getMyTrainingModelsHandler = async ({
         model: {
           select: {
             id: true,
+            name: true,
             _count: {
               select: {
                 modelVersions: true,
