@@ -10,15 +10,7 @@ export function flagifyBrowsingLevel(levels: number[]) {
 }
 
 // #region [nsfw levels]
-export type BrowsingLevels = typeof nsfwLevels;
-export type BrowsingLevel = BrowsingLevels[number];
-export const nsfwLevels = [
-  NsfwLevel.PG,
-  NsfwLevel.PG13,
-  NsfwLevel.R,
-  NsfwLevel.X,
-  NsfwLevel.XXX,
-] as const;
+export const nsfwLevels = [NsfwLevel.PG, NsfwLevel.PG13, NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX];
 
 export const nsfwLevelLabels = {
   [NsfwLevel.PG]: 'PG',
@@ -27,7 +19,7 @@ export const nsfwLevelLabels = {
   [NsfwLevel.X]: 'X',
   [NsfwLevel.XXX]: 'XXX',
   [NsfwLevel.Blocked]: 'Blocked',
-} as const;
+};
 
 export const nsfwLevelDescriptions = {
   [NsfwLevel.PG]: 'Safe for work. No naughty stuff',
@@ -35,7 +27,13 @@ export const nsfwLevelDescriptions = {
   [NsfwLevel.R]: 'Adult themes and situations, partial nudity, graphic violence, or death',
   [NsfwLevel.X]: 'Graphic nudity, adult objects, or settings',
   [NsfwLevel.XXX]: 'Overtly sexual or disturbing graphic content',
-} as const;
+};
+
+export function getNsfwLevelDetails(nsfwLevel: number) {
+  const name = nsfwLevelLabels[nsfwLevel as keyof typeof nsfwLevelLabels];
+  const description = nsfwLevelDescriptions[nsfwLevel as keyof typeof nsfwLevelDescriptions];
+  return { name, description };
+}
 // #endregion
 
 // #region [browsing levels]

@@ -1,6 +1,5 @@
 import React, { createContext, useContext, useDeferredValue, useEffect, useState } from 'react';
 import {
-  BrowsingLevel,
   allBrowsingLevelsFlag,
   safeBrowsingLevels,
 } from '~/shared/constants/browsingLevel.constants';
@@ -46,7 +45,7 @@ export function useBrowsingModeContext() {
       }),
     toggleBlurNsfw: (blurNsfw?: boolean) =>
       store.setState((state) => ({ blurNsfw: blurNsfw ?? !state.blurNsfw })),
-    toggleBrowsingLevel: (level: BrowsingLevel) => {
+    toggleBrowsingLevel: (level: number) => {
       store.setState((state) => {
         const instance = state.browsingLevel;
         const browsingLevel = !instance
@@ -173,7 +172,7 @@ export function useBrowsingLevelDebounced() {
 //   return getIsPublicBrowsingLevel(level);
 // }
 
-export function useIsBrowsingLevelSelected(level: BrowsingLevel) {
+export function useIsBrowsingLevelSelected(level: number) {
   const { useStore } = useBrowsingModeContext();
   const browsingLevel = useStore((x) => x.browsingLevel);
   return Flags.hasFlag(browsingLevel, level);

@@ -4,7 +4,6 @@ import {
   useIsBrowsingLevelSelected,
 } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import {
-  BrowsingLevel,
   nsfwLevelDescriptions,
   nsfwLevelLabels,
   nsfwLevels,
@@ -22,7 +21,7 @@ export function BrowsingLevelsStacked() {
   );
 }
 
-function BrowsingLevelItem({ level }: { level: BrowsingLevel }) {
+function BrowsingLevelItem({ level }: { level: number }) {
   const isSelected = useIsBrowsingLevelSelected(level);
   const { toggleBrowsingLevel } = useBrowsingModeContext();
   const { classes, cx } = useStyles();

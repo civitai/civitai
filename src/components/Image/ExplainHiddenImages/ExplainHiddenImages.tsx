@@ -7,11 +7,7 @@ import {
 import { useHiddenPreferencesContext } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import { useQueryHiddenPreferences } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import {
-  BrowsingLevel,
-  nsfwLevelLabels,
-  flagifyBrowsingLevel,
-} from '~/shared/constants/browsingLevel.constants';
+import { nsfwLevelLabels, flagifyBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils';
 
 export function ExplainHiddenImages({
@@ -52,7 +48,7 @@ export function ExplainHiddenImages({
                 variant="outline"
                 classNames={classes}
               >
-                {nsfwLevelLabels[browsingLevel as BrowsingLevel]}
+                {nsfwLevelLabels[browsingLevel]}
               </Badge>
             ))}
           </Group>

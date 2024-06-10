@@ -16,7 +16,6 @@ import { NextLink } from '@mantine/next';
 import { ExoclickAd } from '~/components/Ads/Exoclick/ExoclickAd';
 import { AscendeumAd } from '~/components/Ads/AscendeumAds/AscendeumAd';
 import { isDefined } from '~/utils/type-guards';
-import { BrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 
 const useStyles = createStyles((theme) => ({
   root: { display: 'flex', flexDirection: 'column', background: 'none' },
@@ -31,7 +30,7 @@ export function Adunit<TAscendeum extends AscendeumAdUnitType>({
   className,
   ...paperProps
 }: {
-  browsingLevelOverride?: BrowsingLevel[];
+  browsingLevelOverride?: number[];
   sfw: AscendeumAdUnit<TAscendeum>;
   nsfw?: ExoclickAdUnit;
   children?: (Ad: JSX.Element) => React.ReactElement;
