@@ -49,16 +49,15 @@ export function getModelWizardUrl(model: MyDraftModelGetAll['items'][number]) {
   return `/models/${model.id}`;
 }
 
-export function getModelTrainingWizardUrl(model: MyTrainingModelGetAll['items'][number]) {
-  const currentVersion = model.modelVersions[0];
-  const trainingStatus = currentVersion?.trainingStatus;
+export function getModelTrainingWizardUrl(mv: MyTrainingModelGetAll['items'][number]) {
+  const trainingStatus = mv.trainingStatus;
   if (trainingStatus && trainingStatus !== TrainingStatus.Pending) {
     // TODO [bw] what should we do here? check for specific other values?
-    return `/models/${model.id}/wizard?step=1`;
+    return `/models/${mv.model.id}/wizard?step=1&modelVersionId=${mv.id}`;
   }
 
-  const hasTrainingData = !!currentVersion?.files.length;
+  const hasTrainingData = !!mv.files.length;
 
-  if (!hasTrainingData) return `/models/train?modelId=${model.id}&step=2`;
-  return `/models/train?modelId=${model.id}&step=3`;
+  if (!hasTrainingData) return `/models/train?modelId=${mv.model.id}&step=2`;
+  return `/models/train?modelId=${mv.model.id}&step=3`;
 }

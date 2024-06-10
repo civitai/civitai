@@ -31,8 +31,8 @@ export const recipeSchema = z.object({
   multiplier: z.number(),
 });
 
-const trainingDetailsBaseModels15 = ['sd_1_5', 'anime', 'semi', 'realistic'] as const;
-const trainingDetailsBaseModelsXL = ['sdxl', 'pony'] as const;
+export const trainingDetailsBaseModels15 = ['sd_1_5', 'anime', 'semi', 'realistic'] as const;
+export const trainingDetailsBaseModelsXL = ['sdxl', 'pony'] as const;
 const trainingDetailsBaseModelCustom = z
   .string()
   .refine((value) => /^civitai:\d+@\d+$/.test(value ?? ''));
@@ -48,18 +48,28 @@ export type TrainingDetailsBaseModel =
   | TrainingDetailsBaseModelList
   | TrainingDetailsBaseModelCustom;
 
+export const optimizerTypes = ['AdamW8Bit', 'Adafactor', 'Prodigy'] as const;
+export const loraTypes = ['lora'] as const; // LoCon Lycoris", "LoHa Lycoris
+export const lrSchedulerTypes = [
+  'constant',
+  'cosine',
+  'cosine_with_restarts',
+  'constant_with_warmup',
+  'linear',
+] as const;
+
 export type TrainingDetailsParams = z.infer<typeof trainingDetailsParams>;
 export const trainingDetailsParams = z.object({
   unetLR: z.number(),
   textEncoderLR: z.number(),
-  optimizerType: z.string(), // TODO actually an enum
+  optimizerType: z.enum(optimizerTypes),
   networkDim: z.number(),
   networkAlpha: z.number(),
-  lrScheduler: z.string(), // TODO actually an enum
+  lrScheduler: z.enum(lrSchedulerTypes),
   maxTrainEpochs: z.number(),
   numRepeats: z.number(),
   resolution: z.number(),
-  loraType: z.string(), // TODO actually an enum
+  loraType: z.enum(loraTypes),
   enableBucket: z.boolean(),
   keepTokens: z.number(),
 

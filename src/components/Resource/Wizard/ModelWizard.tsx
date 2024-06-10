@@ -29,6 +29,7 @@ const querySchema = z.object({
   id: z.coerce.number().optional(),
   templateId: z.coerce.number().optional(),
   bountyId: z.coerce.number().optional(),
+  modelVersionId: z.coerce.number().optional(),
   src: z.coerce.string().optional(),
 });
 
@@ -208,7 +209,7 @@ const TrainSteps = ({
             <br />
             Sample images are provided for reference.
           </Title>
-          <TrainingSelectFile model={model} onNextClick={goNext} />
+          <TrainingSelectFile model={model} modelVersion={modelVersion} onNextClick={goNext} />
         </div>
       </Stepper.Step>
 
@@ -249,6 +250,8 @@ const TrainSteps = ({
           </ModelVersionUpsertForm>
         </div>
       </Stepper.Step>
+
+      {/* Step 4: Post Info */}
       <Stepper.Step label={postId ? 'Edit post' : 'Create a post'}>
         {model && modelVersion && (
           <PostUpsertForm2 postId={postId} modelVersionId={modelVersion.id} modelId={model.id} />
@@ -263,16 +266,18 @@ function getWizardUrl({
   step,
   templateId,
   bountyId,
+  modelVersionId,
   src,
 }: {
   step: number;
   id?: number;
   templateId?: number;
   bountyId?: number;
+  modelVersionId?: number;
   src?: string;
 }) {
   if (!id) return '';
-  const query = QS.stringify({ templateId, bountyId, step, src });
+  const query = QS.stringify({ templateId, bountyId, modelVersionId, step, src });
   return `/models/${id}/wizard?${query}`;
 }
 
@@ -286,6 +291,7 @@ export function ModelWizard() {
   const id = result.success ? result.data.id : undefined;
   const templateId = result.success ? result.data.templateId : undefined;
   const bountyId = result.success ? result.data.bountyId : undefined;
+  const modelVersionId = result.success ? result.data.modelVersionId : undefined;
   const src = result.success ? result.data.src : undefined;
   // Not using zod schema here cause we don't want it failing if step is not a number
   const routeStep = router.query.step ? Number(router.query.step) : 1;
@@ -301,16 +307,25 @@ export function ModelWizard() {
     isError: modelError,
   } = trpc.model.getById.useQuery({ id: Number(id) }, { enabled: !!id });
 
-  const modelVersion = model?.modelVersions?.[0];
+  const isTraining = model?.uploadType === ModelUploadType.Trained;
+
+  const modelVersions = model?.modelVersions;
+  const modelVersion =
+    isTraining && !!modelVersionId
+      ? modelVersions?.find((mv) => mv.id === modelVersionId) ?? modelVersions?.[0]
+      : modelVersions?.[0];
 
   const goNext = () => {
     if (isTransitioning) return;
     if (step < MAX_STEPS) {
-      // TODO does bountyId need to be here?
       router
-        .replace(getWizardUrl({ id, step: step + 1, templateId, src }), undefined, {
-          shallow: !isNew,
-        })
+        .replace(
+          getWizardUrl({ id, step: step + 1, templateId, bountyId, modelVersionId, src }),
+          undefined,
+          {
+            shallow: !isNew,
+          }
+        )
         .then();
     }
   };
@@ -318,20 +333,22 @@ export function ModelWizard() {
   const goBack = () => {
     if (step > 1) {
       router
-        .replace(getWizardUrl({ id, step: step - 1, templateId, src }), undefined, {
-          shallow: !isNew,
-        })
+        .replace(
+          getWizardUrl({ id, step: step - 1, templateId, bountyId, modelVersionId, src }),
+          undefined,
+          {
+            shallow: !isNew,
+          }
+        )
         .then();
     }
   };
-
-  const showTraining = model?.uploadType === ModelUploadType.Trained;
 
   useEffect(() => {
     // redirect to correct step if missing values
     if (!isNew) {
       // don't redirect for trained type or if model is not loaded
-      if (showTraining || !model) return;
+      if (isTraining || !model) return;
 
       const hasVersions = model.modelVersions.length > 0;
       const hasFiles = model.modelVersions.some((version) => version.files.length > 0);
@@ -384,7 +401,7 @@ export function ModelWizard() {
                   contentSlug={['feature-introduction', 'model-upload']}
                 />
               </Group>
-              {isNew && !showTraining && currentUser && (
+              {isNew && !isTraining && currentUser && (
                 <Popover
                   opened={opened}
                   width={400}
@@ -408,7 +425,7 @@ export function ModelWizard() {
       </div>
       {!modelLoading && !modelError && (
         <>
-          {showTraining ? (
+          {isTraining ? (
             <TrainSteps
               model={modelFlatTags!}
               modelVersion={modelVersion!}

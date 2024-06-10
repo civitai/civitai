@@ -55,6 +55,7 @@ async function handleJob({
   modelVersionId,
   modelId,
   modelName,
+  modelVersionName,
   userEmail,
   userUsername,
   status,
@@ -77,6 +78,7 @@ async function handleJob({
       await trainingCompleteEmail.send({
         model: { id: modelId, name: modelName },
         user: { email: userEmail, username: userUsername },
+        mName: modelVersionName,
       });
       return true;
     }
@@ -169,6 +171,7 @@ async function handleJob({
       await trainingFailEmail.send({
         model: { id: modelId, name: modelName },
         user: { email: userEmail, username: userUsername },
+        mName: modelVersionName,
       });
     } catch {
       log('Could not send failure email.');
@@ -225,6 +228,7 @@ type TrainingRunResult = {
   modelVersionId: number;
   modelId: number;
   modelName: string;
+  modelVersionName: string;
   userEmail: string;
   userUsername: string;
   updated: string;
@@ -241,6 +245,7 @@ export const handleLongTrainings = createJob('handle-long-trainings', `*/10 * * 
            mv.id               as                                                      "modelVersionId",
            m.id                as                                                      "modelId",
            m.name              as                                                      "modelName",
+           mv.name             as                                                      "modelVersionName",
            u.email             as                                                      "userEmail",
            u.username          as                                                      "userUsername",
            mv."trainingStatus" as                                                      status,

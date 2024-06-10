@@ -21,7 +21,9 @@ import { NotFound } from '~/components/AppLayout/NotFound';
 import { DownloadButton } from '~/components/Model/ModelVersions/DownloadButton';
 import { ModelWithTags } from '~/components/Resource/Wizard/ModelWizard';
 import { EpochSchema } from '~/pages/api/webhooks/resource-training';
+import { ModelVersionUpsertInput } from '~/server/schema/model-version.schema';
 import { orchestratorMediaTransmitter } from '~/store/post-image-transmitter.store';
+import { ModelVersionById } from '~/types/router';
 import { getModelFileFormat } from '~/utils/file-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { showErrorNotification } from '~/utils/notifications';
@@ -141,9 +143,11 @@ const EpochRow = ({
 
 export default function TrainingSelectFile({
   model,
+  modelVersion,
   onNextClick,
 }: {
-  model?: ModelWithTags;
+  model: ModelWithTags | ModelVersionById['model'];
+  modelVersion: ModelWithTags['modelVersions'][number] | ModelVersionById;
   onNextClick: () => void;
 }) {
   const queryUtils = trpc.useUtils();
@@ -151,9 +155,8 @@ export default function TrainingSelectFile({
 
   const [awaitInvalidate, setAwaitInvalidate] = useState<boolean>(false);
 
-  const modelVersion = model?.modelVersions?.[0];
-  const modelFile = modelVersion?.files.find((f) => f.type === 'Training Data');
-  const existingModelFile = modelVersion?.files.find((f) => f.type === 'Model');
+  const modelFile = modelVersion.files.find((f) => f.type === 'Training Data');
+  const existingModelFile = modelVersion.files.find((f) => f.type === 'Model');
   const mfEpochs = modelFile?.metadata?.trainingResults?.epochs || [];
 
   const [selectedFile, setSelectedFile] = useState<string | undefined>(
@@ -163,18 +166,13 @@ export default function TrainingSelectFile({
 
   const upsertFileMutation = trpc.modelFile.upsert.useMutation({
     async onSuccess() {
-      if (!model || !modelVersion) {
-        // showErrorNotification({
-        //   error: new Error('Missing model data. Please try again.'),
-        // });
-        return;
-      }
-
-      const versionMutateData = {
+      const versionMutateData: ModelVersionUpsertInput = {
         id: modelVersion.id,
         modelId: model.id,
-        name: model.name,
-        baseModel: 'SD 1.5' as const,
+        name: modelVersion.name,
+        baseModel: modelVersion.baseModel,
+        trainedWords: [],
+        // ---
         trainingStatus: TrainingStatus.Approved,
       };
 
@@ -213,14 +211,6 @@ export default function TrainingSelectFile({
   const moveAssetMutation = trpc.training.moveAsset.useMutation();
 
   const handleSubmit = async (overrideFile?: string) => {
-    if (!model || !modelVersion) {
-      showErrorNotification({
-        error: new Error('Missing model data. Please try again.'),
-        autoClose: false,
-      });
-      return;
-    }
-
     const fileUrl = overrideFile || selectedFile;
     if (!fileUrl || !fileUrl.length) {
       showErrorNotification({

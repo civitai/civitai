@@ -10,17 +10,18 @@ type TrainingCompleteEmailData = {
     email: string | null;
     username: string | null;
   };
+  mName: string;
 };
 
 const reviewUrl = (model: TrainingCompleteEmailData['model']) =>
   getBaseUrl() + `/models/${model.id}/wizard`;
 
 export const trainingCompleteEmail = createEmail({
-  header: ({ user, model }: TrainingCompleteEmailData) => ({
-    subject: `Your model "${model.name}" is ready for review`,
+  header: ({ user, model, mName }: TrainingCompleteEmailData) => ({
+    subject: `Your model "${model.name} - ${mName}" is ready for review`,
     to: user.email,
   }),
-  html({ user, model }: TrainingCompleteEmailData) {
+  html({ model }: TrainingCompleteEmailData) {
     const brandColor = '#346df1';
     const color = {
       background: '#f9f9f9',
@@ -82,8 +83,8 @@ export const trainingCompleteEmail = createEmail({
   },
 
   /** Email Text body (fallback for email clients that don't render HTML, e.g. feature phones) */
-  text({ model }: TrainingCompleteEmailData) {
-    return `Your model "${model.name}" is ready for review:\n${reviewUrl(model)}\n\n`;
+  text({ mName, model }: TrainingCompleteEmailData) {
+    return `Your model "${model.name} - ${mName}" is ready for review:\n${reviewUrl(model)}\n\n`;
   },
   testData: async () => ({
     model: {
@@ -94,5 +95,6 @@ export const trainingCompleteEmail = createEmail({
       email: 'test@test.com',
       username: 'tester',
     },
+    mName: 'V1',
   }),
 });

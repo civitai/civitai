@@ -10,17 +10,18 @@ type TrainingCompleteEmailData = {
     email: string | null;
     username: string | null;
   };
+  mName: string;
 };
 
 const reviewUrl = (username: TrainingCompleteEmailData['user']['username']) =>
   getBaseUrl() + `/user/${username}/models?section=training`;
 
 export const trainingFailEmail = createEmail({
-  header: ({ user, model }: TrainingCompleteEmailData) => ({
-    subject: `Your model "${model.name}" failed to train`,
+  header: ({ user, mName, model }: TrainingCompleteEmailData) => ({
+    subject: `Your model "${model.name} - ${mName}" failed to train`,
     to: user.email,
   }),
-  html({ model, user }: TrainingCompleteEmailData) {
+  html({ user, model, mName }: TrainingCompleteEmailData) {
     const brandColor = '#346df1';
     const color = {
       background: '#f9f9f9',
@@ -54,7 +55,7 @@ export const trainingFailEmail = createEmail({
               };">
               Unfortunately, this model ("${
                 model.name
-              }") failed to train properly. If you have not yet received your refund, you should receive it within 24 hours.
+              } - ${mName}") failed to train properly. If you have not yet received your refund, you should receive it within 24 hours.
             </td>
           </tr>
           <tr>
@@ -84,8 +85,10 @@ export const trainingFailEmail = createEmail({
   },
 
   /** Email Text body (fallback for email clients that don't render HTML, e.g. feature phones) */
-  text({ user, model }: TrainingCompleteEmailData) {
-    return `Your model "${model.name}" failed to train:\n${reviewUrl(user.username)}\n\n`;
+  text({ user, model, mName }: TrainingCompleteEmailData) {
+    return `Your model "${model.name} - ${mName}" failed to train:\n${reviewUrl(
+      user.username
+    )}\n\n`;
   },
   testData: async () => ({
     model: {
@@ -96,5 +99,6 @@ export const trainingFailEmail = createEmail({
       email: 'test@test.com',
       username: 'tester',
     },
+    mName: 'V1',
   }),
 });

@@ -17,6 +17,7 @@ export const buzzUpdateSignalSchema = z.object({
 export type TrainingUpdateSignalSchema = z.infer<typeof trainingUpdateSignalSchema>;
 export const trainingUpdateSignalSchema = z.object({
   modelId: z.number(),
+  modelVersionId: z.number(),
   status: z.nativeEnum(TrainingStatus),
   fileMetadata: modelFileMetadataSchema,
 });

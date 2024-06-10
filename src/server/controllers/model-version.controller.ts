@@ -1,21 +1,24 @@
 import { ModelStatus } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 
-import { BaseModel, BaseModelType, baseModelLicenses, constants } from '~/server/common/constants';
+import { BaseModel, baseModelLicenses, BaseModelType, constants } from '~/server/common/constants';
 import { Context } from '~/server/createContext';
 import { eventEngine } from '~/server/events';
+import { dataForModelsCache } from '~/server/redis/caches';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   EarlyAccessModelVersionsOnTimeframeSchema,
   GetModelVersionSchema,
   ModelVersionMeta,
-  ModelVersionUpsertInput,
   ModelVersionsGeneratedImagesOnTimeframeSchema,
+  ModelVersionUpsertInput,
   PublishVersionInput,
   RecommendedSettingsSchema,
+  TrainingDetailsObj,
 } from '~/server/schema/model-version.schema';
 import { DeclineReviewSchema, UnpublishModelSchema } from '~/server/schema/model.schema';
 import { ModelFileModel } from '~/server/selectors/modelFile.selector';
+import { getStaticContent } from '~/server/services/content.service';
 import {
   addAdditionalLicensePermissions,
   deleteVersionById,
@@ -37,12 +40,10 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { modelFileSelect } from '../selectors/modelFile.selector';
 import { dbRead } from '../db/client';
+import { modelFileSelect } from '../selectors/modelFile.selector';
 import { getFilesByEntity } from '../services/file.service';
 import { createFile } from '../services/model-file.service';
-import { getStaticContent } from '~/server/services/content.service';
-import { dataForModelsCache } from '~/server/redis/caches';
 
 export const getModelVersionRunStrategiesHandler = ({ input: { id } }: { input: GetByIdInput }) => {
   try {
@@ -73,6 +74,8 @@ export const getModelVersionHandler = async ({ input }: { input: GetModelVersion
         status: true,
         createdAt: true,
         vaeId: true,
+        trainingDetails: true,
+        trainingStatus: true,
         model: {
           select: {
             id: true,
@@ -81,6 +84,7 @@ export const getModelVersionHandler = async ({ input }: { input: GetModelVersion
             status: true,
             publishedAt: true,
             nsfw: true,
+            uploadType: true,
             user: { select: { id: true } },
           },
         },
@@ -128,6 +132,7 @@ export const getModelVersionHandler = async ({ input }: { input: GetModelVersion
       ...version,
       baseModel: version.baseModel as BaseModel,
       baseModelType: version.baseModelType as BaseModelType,
+      trainingDetails: version.trainingDetails as TrainingDetailsObj | undefined,
       files: version.files as unknown as Array<
         Omit<ModelFileModel, 'metadata'> & { metadata: FileMetadata }
       >,

@@ -23,6 +23,7 @@ export const getModelData = async ({ input }: { input: GetByIdInput }) => {
             files: {
               select: {
                 id: true,
+                name: true,
                 url: true,
                 type: true,
                 metadata: true,

@@ -41,6 +41,16 @@ export default WebhookEndpoint(async (req, res) => {
 
   const { approve, modelVersionId } = bodyResults.data;
 
+  const version = await dbWrite.modelVersion.findFirst({
+    where: { id: modelVersionId },
+    select: {
+      trainingStatus: true,
+    },
+  });
+  if (!version || version.trainingStatus !== TrainingStatus.Paused) {
+    return res.status(400).json({ ok: false, error: 'No version of type "paused" found.' });
+  }
+
   if (approve) {
     logWebhook({ message: 'Approved training dataset', type: 'info', data: { modelVersionId } });
 
