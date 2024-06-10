@@ -104,7 +104,7 @@ function ImageRatingCard(item: AsyncReturnType<typeof getImageRatingRequests>['i
       <div className="flex flex-col gap-4 p-4">
         <div className="grid gap-1" style={{ gridTemplateColumns: `min-content 1fr` }}>
           {nsfwLevels.map((level) => {
-            const votes = item.votes[level as unknown as any] ?? 0;
+            const votes = item.votes[level] ?? 0;
             const sections: { value: number; label?: string; color: MantineColor }[] = [];
             if (votes > 0) {
               const count = item.ownerVote > 0 ? votes - 1 : votes;

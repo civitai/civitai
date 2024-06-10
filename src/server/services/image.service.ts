@@ -2727,13 +2727,7 @@ export async function updateImageNsfwLevel({
 
 type ImageRatingRequestResponse = {
   id: number;
-  votes: {
-    [NsfwLevel.PG]: NsfwLevel.PG;
-    [NsfwLevel.PG13]: NsfwLevel.PG13;
-    [NsfwLevel.R]: NsfwLevel.R;
-    [NsfwLevel.X]: NsfwLevel.X;
-    [NsfwLevel.XXX]: NsfwLevel.XXX;
-  };
+  votes: Record<NsfwLevel, number>;
   url: string;
   nsfwLevel: number;
   nsfwLevelLocked: boolean;
