@@ -23,7 +23,7 @@ import { EventHomeBlock } from '~/components/HomeBlocks/EventHomeBlock';
 import { Adunit } from '~/components/Ads/AdUnit';
 import { adsRegistry } from '~/components/Ads/adsRegistry';
 import {
-  publicBrowsingLevelsFlag,
+  safeBrowsingLevels,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { BrowsingModeOverrideProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
@@ -124,7 +124,7 @@ export default function Home() {
               }
             })}
           </BrowsingModeOverrideProvider>
-          <BrowsingModeOverrideProvider browsingLevel={publicBrowsingLevelsFlag}>
+          <BrowsingModeOverrideProvider browsingLevel={safeBrowsingLevels}>
             {env.NEXT_PUBLIC_UI_HOMEPAGE_IMAGES ? (
               <Box ref={ref}>
                 <MasonryContainer py={32}>

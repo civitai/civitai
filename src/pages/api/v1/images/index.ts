@@ -3,7 +3,7 @@ import {
   NsfwLevelDeprecated,
   getNsfwLevelDeprecatedReverseMapping,
   nsfwBrowsingLevelsFlag,
-  publicBrowsingLevelsFlag,
+  safeBrowsingLevels,
 } from '~/shared/constants/browsingLevel.constants';
 import { MediaType, MetricTimeframe } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
@@ -48,8 +48,7 @@ const imagesEndpointSchema = z.object({
     .optional()
     .transform((value) => {
       if (!value) return undefined;
-      if (typeof value === 'boolean')
-        return value ? nsfwBrowsingLevelsFlag : publicBrowsingLevelsFlag;
+      if (typeof value === 'boolean') return value ? nsfwBrowsingLevelsFlag : safeBrowsingLevels;
       return nsfwLevelMapDeprecated[value] as number;
     }),
   browsingLevel: z.coerce.number().optional(),
@@ -77,7 +76,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
           .json({ error: "You've requested too many pages, please use cursors instead" });
     }
 
-    const _browsingLevel = browsingLevel ?? nsfw ?? publicBrowsingLevelsFlag;
+    const _browsingLevel = browsingLevel ?? nsfw ?? safeBrowsingLevels;
 
     const { items, nextCursor } = await getAllImages({
       ...data,

@@ -36,9 +36,10 @@ export const browsingLevelDescriptions = {
   [NsfwLevel.XXX]: 'Overtly sexual or disturbing graphic content',
 } as const;
 
+// #region [old]
 // public browsing levels
-export const publicBrowsingLevelsArray: BrowsingLevel[] = [NsfwLevel.PG];
-export const publicBrowsingLevelsFlag = flagifyBrowsingLevel(publicBrowsingLevelsArray);
+// export const publicBrowsingLevelsArray: BrowsingLevel[] = [NsfwLevel.PG];
+// export const publicBrowsingLevelsFlag = flagifyBrowsingLevel(publicBrowsingLevelsArray);
 
 export const sfwBrowsingLevelsArray: BrowsingLevel[] = [NsfwLevel.PG, NsfwLevel.PG13];
 export const sfwBrowsingLevelsFlag = flagifyBrowsingLevel(sfwBrowsingLevelsArray);
@@ -46,13 +47,17 @@ export const sfwBrowsingLevelsFlag = flagifyBrowsingLevel(sfwBrowsingLevelsArray
 // nsfw browsing levels
 export const nsfwBrowsingLevelsArray: BrowsingLevel[] = [NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX];
 export const nsfwBrowsingLevelsFlag = flagifyBrowsingLevel(nsfwBrowsingLevelsArray);
+// #endregion
+
+export const safeBrowsingLevels = flagifyBrowsingLevel([NsfwLevel.PG]);
+export const nsfwBrowsingLevels = flagifyBrowsingLevel([NsfwLevel.PG13, NsfwLevel.R]);
+export const graphicBrowsingLevels = flagifyBrowsingLevel([NsfwLevel.X, NsfwLevel.XXX]);
 
 // all browsing levels
 export const allBrowsingLevelsFlag = flagifyBrowsingLevel([...browsingLevels]);
 
 export function getIsPublicBrowsingLevel(level: number) {
-  const levels = parseBitwiseBrowsingLevel(level);
-  return levels.every((level) => publicBrowsingLevelsArray.includes(level));
+  return Flags.hasFlag(safeBrowsingLevels, level);
 }
 
 export function getIsSafeBrowsingLevel(level: number) {
@@ -60,14 +65,14 @@ export function getIsSafeBrowsingLevel(level: number) {
 }
 
 export function hasPublicBrowsingLevel(level: number) {
-  return level !== 0 && Flags.intersects(publicBrowsingLevelsFlag, level);
+  return level !== 0 && Flags.intersects(safeBrowsingLevels, level);
 }
 
 export const browsingLevelOr = (array: (number | undefined)[]) => {
   for (const item of array) {
     if (!!item) return item;
   }
-  return publicBrowsingLevelsFlag;
+  return safeBrowsingLevels;
 };
 
 export enum NsfwLevelDeprecated {

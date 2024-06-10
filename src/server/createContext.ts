@@ -5,7 +5,7 @@ import { Tracker } from './clickhouse/client';
 import requestIp from 'request-ip';
 import { isProd } from '~/env/other';
 import { parseBrowsingMode } from '~/server/utils/server-side-helpers';
-import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { safeBrowsingLevels } from '~/shared/constants/browsingLevel.constants';
 
 type CacheSettings = {
   browserTTL?: number;
@@ -55,7 +55,7 @@ export const createContext = async ({
 export const publicApiContext = (req: NextApiRequest, res: NextApiResponse) => ({
   user: undefined,
   acceptableOrigin: true,
-  browsingLevel: publicBrowsingLevelsFlag,
+  browsingLevel: safeBrowsingLevels,
   showNsfw: false,
   track: new Tracker(req, res),
   ip: requestIp.getClientIp(req) ?? '',

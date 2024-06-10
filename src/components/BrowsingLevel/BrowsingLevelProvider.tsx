@@ -2,7 +2,7 @@ import React, { createContext, useContext, useDeferredValue, useEffect, useState
 import {
   BrowsingLevel,
   allBrowsingLevelsFlag,
-  publicBrowsingLevelsFlag,
+  safeBrowsingLevels,
 } from '~/shared/constants/browsingLevel.constants';
 import { useCookies } from '~/providers/CookiesProvider';
 import { Flags } from '~/shared/utils';
@@ -158,8 +158,8 @@ export function useBrowsingLevel() {
   const browsingLevel = useStore((x) => x.browsingLevel);
   const showNsfw = useStore((x) => x.showNsfw);
   if (browsingLevelOverride) return browsingLevelOverride;
-  if (!showNsfw) return publicBrowsingLevelsFlag;
-  return !browsingLevel ? publicBrowsingLevelsFlag : browsingLevel;
+  if (!showNsfw) return safeBrowsingLevels;
+  return !browsingLevel ? safeBrowsingLevels : browsingLevel;
 }
 
 export function useBrowsingLevelDebounced() {
