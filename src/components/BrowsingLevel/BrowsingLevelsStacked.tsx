@@ -5,9 +5,9 @@ import {
 } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import {
   BrowsingLevel,
-  browsingLevelDescriptions,
-  browsingLevelLabels,
-  browsingLevels,
+  nsfwLevelDescriptions,
+  nsfwLevelLabels,
+  nsfwLevels,
 } from '~/shared/constants/browsingLevel.constants';
 
 export function BrowsingLevelsStacked() {
@@ -15,7 +15,7 @@ export function BrowsingLevelsStacked() {
 
   return (
     <Paper withBorder p={0} className={classes.root}>
-      {browsingLevels.map((level) => (
+      {nsfwLevels.map((level) => (
         <BrowsingLevelItem key={level} level={level} />
       ))}
     </Paper>
@@ -38,10 +38,10 @@ function BrowsingLevelItem({ level }: { level: BrowsingLevel }) {
     >
       <Group noWrap>
         <Text weight={700} w={50} ta="center">
-          {browsingLevelLabels[level]}
+          {nsfwLevelLabels[level]}
         </Text>
         <Text lh={1.2} size="sm" ta="left" sx={{ flex: '1 1' }}>
-          {browsingLevelDescriptions[level]}
+          {nsfwLevelDescriptions[level]}
         </Text>
       </Group>
       <Switch checked={isSelected} onClick={() => toggleBrowsingLevel(level)} />

@@ -2,9 +2,9 @@ import { Modal, Paper, Text, createStyles, UnstyledButton } from '@mantine/core'
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
-  browsingLevels,
-  browsingLevelLabels,
-  browsingLevelDescriptions,
+  nsfwLevels,
+  nsfwLevelLabels,
+  nsfwLevelDescriptions,
 } from '~/shared/constants/browsingLevel.constants';
 import { imageStore } from '~/store/image.store';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -45,7 +45,7 @@ export default function SetBrowsingLevelModal({
   return (
     <Modal title={isModerator ? 'Image ratings' : 'Vote for image rating'} {...dialog}>
       <Paper withBorder p={0} className={classes.root}>
-        {browsingLevels.map((level) => (
+        {nsfwLevels.map((level) => (
           <UnstyledButton
             key={level}
             p="md"
@@ -53,8 +53,8 @@ export default function SetBrowsingLevelModal({
             className={cx({ [classes.active]: nsfwLevel === level })}
             onClick={() => handleClick(level)}
           >
-            <Text weight={700}>{browsingLevelLabels[level]}</Text>
-            <Text>{browsingLevelDescriptions[level]}</Text>
+            <Text weight={700}>{nsfwLevelLabels[level]}</Text>
+            <Text>{nsfwLevelDescriptions[level]}</Text>
           </UnstyledButton>
         ))}
       </Paper>

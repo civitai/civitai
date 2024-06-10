@@ -9,7 +9,7 @@ import { useQueryHiddenPreferences } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
   BrowsingLevel,
-  browsingLevelLabels,
+  nsfwLevelLabels,
   flagifyBrowsingLevel,
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils';
@@ -52,7 +52,7 @@ export function ExplainHiddenImages({
                 variant="outline"
                 classNames={classes}
               >
-                {browsingLevelLabels[browsingLevel as BrowsingLevel]}
+                {nsfwLevelLabels[browsingLevel as BrowsingLevel]}
               </Badge>
             ))}
           </Group>

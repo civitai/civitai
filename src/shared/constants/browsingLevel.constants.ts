@@ -9,9 +9,10 @@ export function flagifyBrowsingLevel(levels: number[]) {
   return Flags.arrayToInstance(levels);
 }
 
-export type BrowsingLevels = typeof browsingLevels;
+// #region [nsfw levels]
+export type BrowsingLevels = typeof nsfwLevels;
 export type BrowsingLevel = BrowsingLevels[number];
-export const browsingLevels = [
+export const nsfwLevels = [
   NsfwLevel.PG,
   NsfwLevel.PG13,
   NsfwLevel.R,
@@ -19,7 +20,7 @@ export const browsingLevels = [
   NsfwLevel.XXX,
 ] as const;
 
-export const browsingLevelLabels = {
+export const nsfwLevelLabels = {
   [NsfwLevel.PG]: 'PG',
   [NsfwLevel.PG13]: 'PG-13',
   [NsfwLevel.R]: 'R',
@@ -28,30 +29,43 @@ export const browsingLevelLabels = {
   [NsfwLevel.Blocked]: 'Blocked',
 } as const;
 
-export const browsingLevelDescriptions = {
+export const nsfwLevelDescriptions = {
   [NsfwLevel.PG]: 'Safe for work. No naughty stuff',
   [NsfwLevel.PG13]: 'Revealing clothing, violence, or light gore',
   [NsfwLevel.R]: 'Adult themes and situations, partial nudity, graphic violence, or death',
   [NsfwLevel.X]: 'Graphic nudity, adult objects, or settings',
   [NsfwLevel.XXX]: 'Overtly sexual or disturbing graphic content',
 } as const;
-
-// #region [old]
-export const sfwBrowsingLevelsFlag = flagifyBrowsingLevel([NsfwLevel.PG, NsfwLevel.PG13]);
-export const nsfwBrowsingLevelsFlag = flagifyBrowsingLevel([
-  NsfwLevel.R,
-  NsfwLevel.X,
-  NsfwLevel.XXX,
-]);
 // #endregion
 
+// #region [browsing levels]
 // browsing level groups
 export const safeBrowsingLevels = flagifyBrowsingLevel([NsfwLevel.PG]);
 export const nsfwBrowsingLevels = flagifyBrowsingLevel([NsfwLevel.PG13, NsfwLevel.R]);
 export const graphicBrowsingLevels = flagifyBrowsingLevel([NsfwLevel.X, NsfwLevel.XXX]);
 
 // all browsing levels
-export const allBrowsingLevelsFlag = flagifyBrowsingLevel([...browsingLevels]);
+export const allBrowsingLevelsFlag = flagifyBrowsingLevel([...nsfwLevels]);
+
+export const browsingLevels = [safeBrowsingLevels, nsfwBrowsingLevels, graphicBrowsingLevels];
+const browsingLevelDetails = {
+  [safeBrowsingLevels]: { name: 'Safe', description: 'Safe for work. No naughty stuff' },
+  [nsfwBrowsingLevels]: { name: 'NSFW', description: 'Safe for work. No naughty stuff' },
+  [graphicBrowsingLevels]: { name: 'Graphic', description: 'Safe for work. No naughty stuff' },
+};
+export function getBrowsingLevelDetails(level: number) {
+  return browsingLevelDetails[level] ?? {};
+}
+// #endregion
+
+// used on the home page to set the level of content we want to show
+export const sfwBrowsingLevelsFlag = flagifyBrowsingLevel([NsfwLevel.PG, NsfwLevel.PG13]);
+// used to draw the line on where we blur media content
+export const nsfwBrowsingLevelsFlag = flagifyBrowsingLevel([
+  NsfwLevel.R,
+  NsfwLevel.X,
+  NsfwLevel.XXX,
+]);
 
 export function getIsPublicBrowsingLevel(level: number) {
   return Flags.hasFlag(safeBrowsingLevels, level);

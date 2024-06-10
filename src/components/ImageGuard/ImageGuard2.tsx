@@ -10,7 +10,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';
 import { NsfwLevel } from '~/server/common/enums';
 import {
-  browsingLevelLabels,
+  nsfwLevelLabels,
   nsfwBrowsingLevelsFlag,
   getIsSafeBrowsingLevel,
 } from '~/shared/constants/browsingLevel.constants';
@@ -155,18 +155,18 @@ function ImageGuardContentInner({
       {!show && explain && (
         <BlurToggle>
           {(toggle) => (
-            <Center className="absolute z-20 transform -translate-x-1/2 -translate-y-[60%] top-1/2 left-1/2 flex flex-col text-white">
+            <Center className="absolute left-1/2 top-1/2 z-20 flex -translate-x-1/2 -translate-y-[60%] flex-col text-white">
               <Stack align="center" spacing="sm" w="100%">
-                <Text size="sm" className="text-shadow-sm shadow-black/50">
+                <Text size="sm" className="shadow-black/50 text-shadow-sm">
                   This image is rated
                 </Text>
                 <Badge
                   color="red"
                   size="xl"
                   classNames={classes}
-                  className="shadow shadow-black/30 min-w-[32px] text-center"
+                  className="min-w-[32px] text-center shadow shadow-black/30"
                 >
-                  {browsingLevelLabels[browsingLevel as NsfwLevel]}
+                  {nsfwLevelLabels[browsingLevel as NsfwLevel]}
                 </Badge>
                 <Button
                   onClick={toggle}
@@ -224,7 +224,7 @@ export function BrowsingLevelBadge({
 
   return (
     <Badge classNames={classes} className={badgeClass} {...badgeProps}>
-      {browsingLevelLabels[browsingLevel as NsfwLevel]}
+      {nsfwLevelLabels[browsingLevel as NsfwLevel]}
     </Badge>
   );
 }
@@ -280,7 +280,7 @@ function BlurToggle({
         color={!nsfw ? color : undefined}
         {...badgeProps}
       >
-        {browsingLevelLabels[browsingLevel]}
+        {nsfwLevelLabels[browsingLevel]}
       </Badge>
     ) : null;
   }

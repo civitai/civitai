@@ -18,9 +18,9 @@ import { trpc } from '~/utils/trpc';
 import { useGallerySettings } from './gallery.utils';
 import {
   allBrowsingLevelsFlag,
-  browsingLevelDescriptions,
-  browsingLevelLabels,
-  browsingLevels,
+  nsfwLevelDescriptions,
+  nsfwLevelLabels,
+  nsfwLevels,
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
@@ -227,7 +227,7 @@ function BrowsingLevelsStacked({
     <div>
       <Text weight={500}>Allowed Browsing Levels</Text>
       <Paper withBorder p={0} className={classes.root}>
-        {browsingLevels.map((level) => {
+        {nsfwLevels.map((level) => {
           const isSelected = Flags.hasFlag(browsingLevel, level);
           return (
             <Group
@@ -240,10 +240,10 @@ function BrowsingLevelsStacked({
             >
               <Group noWrap>
                 <Text weight={700} w={50} ta="center">
-                  {browsingLevelLabels[level]}
+                  {nsfwLevelLabels[level]}
                 </Text>
                 <Text lh={1.2} size="sm" ta="left" sx={{ flex: '1 1' }}>
-                  {browsingLevelDescriptions[level]}
+                  {nsfwLevelDescriptions[level]}
                 </Text>
               </Group>
               <Text color="green" inline style={{ visibility: !isSelected ? 'hidden' : undefined }}>

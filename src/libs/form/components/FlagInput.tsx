@@ -1,13 +1,10 @@
 import { Checkbox, Input, MantineNumberSize, Stack } from '@mantine/core';
 import { Flags } from '~/shared/utils';
-import {
-  browsingLevelDescriptions,
-  browsingLevels,
-} from '~/shared/constants/browsingLevel.constants';
+import { nsfwLevelDescriptions, nsfwLevels } from '~/shared/constants/browsingLevel.constants';
 
 const flagOptions = {
-  NsfwLevel: browsingLevels.map((level) => ({
-    label: browsingLevelDescriptions[level],
+  NsfwLevel: nsfwLevels.map((level) => ({
+    label: nsfwLevelDescriptions[level],
     value: level,
   })),
 } as const;
