@@ -1552,6 +1552,7 @@ export const getTrainingModelsByUserId = async <TSelect extends Prisma.ModelVers
     status: { in: [ModelStatus.Draft, ModelStatus.Training] },
     model: {
       userId,
+      status: { notIn: [ModelStatus.Deleted] },
       uploadType: { equals: ModelUploadType.Trained },
     },
   };
