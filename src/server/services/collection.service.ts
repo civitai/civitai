@@ -249,7 +249,7 @@ export const getUserCollectionsWithPermissions = async <
 }: {
   input: GetAllUserCollectionsInputSchema & { userId: number };
 }) => {
-  const { userId, permissions, permission, contributingOnly } = input;
+  const { userId, permissions, permission, contributingOnly = true } = input;
   // By default, owned collections will be always returned
   const AND: Prisma.Sql[] = [];
   const SELECT: Prisma.Sql = Prisma.raw(
