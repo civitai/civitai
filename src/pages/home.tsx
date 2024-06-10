@@ -24,7 +24,7 @@ import { Adunit } from '~/components/Ads/AdUnit';
 import { adsRegistry } from '~/components/Ads/adsRegistry';
 import {
   safeBrowsingLevels,
-  sfwBrowsingLevelsFlag,
+  homePageBrowsingLevels,
 } from '~/shared/constants/browsingLevel.constants';
 import { BrowsingModeOverrideProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { isProd } from '~/env/other';
@@ -75,7 +75,7 @@ export default function Home() {
             },
           })}
         >
-          <BrowsingModeOverrideProvider browsingLevel={sfwBrowsingLevelsFlag}>
+          <BrowsingModeOverrideProvider browsingLevel={homePageBrowsingLevels}>
             {homeBlocks.map((homeBlock, i) => {
               const showAds = i % 2 === 0 && i > 0;
               switch (homeBlock.type) {

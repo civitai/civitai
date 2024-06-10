@@ -11,7 +11,7 @@ import { constants } from '~/server/common/constants';
 import { NsfwLevel } from '~/server/common/enums';
 import {
   nsfwLevelLabels,
-  nsfwBrowsingLevelsFlag,
+  blurrableBrowsingLevels,
   getIsSafeBrowsingLevel,
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils';
@@ -92,7 +92,7 @@ function useImageGuard({ image, connectId, connectType }: UseImageGuardProps) {
 
   const userId = image.userId ?? image.user?.id;
   const showUnprocessed = !nsfwLevel && (currentUser?.isModerator || userId === currentUser?.id);
-  const nsfw = Flags.hasFlag(nsfwBrowsingLevelsFlag, nsfwLevel);
+  const nsfw = Flags.hasFlag(blurrableBrowsingLevels, nsfwLevel);
   const shouldBlur = (currentUser?.blurNsfw ?? true) && !showUnprocessed;
   const safe = !nsfw ? true : !shouldBlur;
   const show = safe || (showConnect ?? showImage);
@@ -215,7 +215,7 @@ export function BrowsingLevelBadge({
 } & BadgeProps & { onClick?: () => void; sfwClassName?: string; nsfwClassName?: string }) {
   const { classes, cx } = useBadgeStyles({ browsingLevel });
   if (!browsingLevel) return null;
-  const nsfw = Flags.hasFlag(nsfwBrowsingLevelsFlag, browsingLevel);
+  const nsfw = Flags.hasFlag(blurrableBrowsingLevels, browsingLevel);
 
   const badgeClass = cx(className, {
     [sfwClassName ? sfwClassName : '']: !nsfw,

@@ -75,9 +75,9 @@ export function getBrowsingLevel(nsfwLevel: number) {
 // #endregion
 
 // used on the home page to set the level of content we want to show
-export const sfwBrowsingLevelsFlag = flagifyBrowsingLevel([NsfwLevel.PG, NsfwLevel.PG13]);
+export const homePageBrowsingLevels = flagifyBrowsingLevel([NsfwLevel.PG, NsfwLevel.PG13]);
 // used to draw the line on where we blur media content
-export const nsfwBrowsingLevelsFlag = flagifyBrowsingLevel([
+export const blurrableBrowsingLevels = flagifyBrowsingLevel([
   NsfwLevel.R,
   NsfwLevel.X,
   NsfwLevel.XXX,
@@ -88,7 +88,7 @@ export function getIsPublicBrowsingLevel(level: number) {
 }
 
 export function getIsSafeBrowsingLevel(level: number) {
-  return level !== 0 && !Flags.intersects(level, nsfwBrowsingLevelsFlag);
+  return level !== 0 && !Flags.intersects(level, blurrableBrowsingLevels);
 }
 
 export function hasPublicBrowsingLevel(level: number) {

@@ -78,7 +78,7 @@ import { getPeriods } from '~/server/utils/enum-helpers';
 import { bulkSetReportStatus } from '~/server/services/report.service';
 import { baseS3Client } from '~/utils/s3-client';
 import { trackModActivity } from '~/server/services/moderator.service';
-import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { homePageBrowsingLevels } from '~/shared/constants/browsingLevel.constants';
 import { getVotableTags2 } from '~/server/services/tag.service';
 import { Flags } from '~/shared/utils';
 import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
@@ -2538,7 +2538,7 @@ export async function get404Images() {
       AND c.name = '404 Contest'
       AND i."ingestion" = 'Scanned'
       AND i."needsReview" IS NULL
-      AND (i."nsfwLevel" & ${sfwBrowsingLevelsFlag}) != 0
+      AND (i."nsfwLevel" & ${homePageBrowsingLevels}) != 0
       AND ci.status = 'ACCEPTED';
   `;
 

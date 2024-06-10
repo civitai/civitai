@@ -10,7 +10,7 @@ import {
 } from '~/server/search-index';
 import { ImageConnectionType, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
-import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { blurrableBrowsingLevels } from '~/shared/constants/browsingLevel.constants';
 
 async function getImageConnectedEntities(imageIds: number[]) {
   // these dbReads could be run concurrently
@@ -290,7 +290,7 @@ export async function updateBountyNsfwLevels(bountyIds: number[]) {
       )
       UPDATE "Bounty" b SET "nsfwLevel" = (
         CASE
-          WHEN b.nsfw = TRUE THEN ${nsfwBrowsingLevelsFlag}
+          WHEN b.nsfw = TRUE THEN ${blurrableBrowsingLevels}
           ELSE level."nsfwLevel"
         END
       )
@@ -328,7 +328,7 @@ export async function updateCollectionsNsfwLevels(collectionIds: number[]) {
   const collections = await dbWrite.$queryRaw<{ id: number }[]>(Prisma.sql`
     UPDATE "Collection" c
     SET "nsfwLevel" = (
-      CASE WHEN c.nsfw = TRUE THEN ${nsfwBrowsingLevelsFlag}
+      CASE WHEN c.nsfw = TRUE THEN ${blurrableBrowsingLevels}
       ELSE (
         SELECT COALESCE(bit_or(COALESCE(i."nsfwLevel", p."nsfwLevel", m."nsfwLevel", a."nsfwLevel",0)), 0)
         FROM "CollectionItem" ci
@@ -365,7 +365,7 @@ export async function updateModelNsfwLevels(modelIds: number[]) {
     UPDATE "Model" m
     SET "nsfwLevel" = (
       CASE
-        WHEN m.nsfw = TRUE THEN ${nsfwBrowsingLevelsFlag}
+        WHEN m.nsfw = TRUE THEN ${blurrableBrowsingLevels}
         ELSE level."nsfwLevel"
       END
     )
@@ -385,7 +385,7 @@ export async function updateModelVersionNsfwLevels(modelVersionIds: number[]) {
       SELECT
         mv.id,
         CASE
-          WHEN m.nsfw = TRUE THEN ${nsfwBrowsingLevelsFlag}
+          WHEN m.nsfw = TRUE THEN ${blurrableBrowsingLevels}
           WHEN m."userId" = -1 THEN (
             SELECT COALESCE(bit_or(ranked."nsfwLevel"), 0) "nsfwLevel"
             FROM (

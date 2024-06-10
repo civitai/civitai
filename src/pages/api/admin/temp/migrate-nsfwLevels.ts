@@ -6,7 +6,7 @@ import { dataProcessor } from '~/server/db/db-helpers';
 import { pgDbWrite } from '~/server/db/pgDb';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { invalidateAllSessions } from '~/server/utils/session-helpers';
-import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { blurrableBrowsingLevels } from '~/shared/constants/browsingLevel.constants';
 
 type MigrationType = z.infer<typeof migrationTypes>;
 const migrationTypes = z.enum([
@@ -263,7 +263,7 @@ async function migrateBounties(req: NextApiRequest, res: NextApiResponse) {
         )
         UPDATE "Bounty" b SET "nsfwLevel" = (
           CASE
-            WHEN b.nsfw = TRUE THEN ${nsfwBrowsingLevelsFlag}
+            WHEN b.nsfw = TRUE THEN ${blurrableBrowsingLevels}
             ELSE level."nsfwLevel"
           END
         )
@@ -354,7 +354,7 @@ async function migrateModelVersions(req: NextApiRequest, res: NextApiResponse) {
           SELECT
             mv.id,
             CASE
-              WHEN m.nsfw = TRUE THEN ${nsfwBrowsingLevelsFlag}
+              WHEN m.nsfw = TRUE THEN ${blurrableBrowsingLevels}
               WHEN m."userId" = -1 THEN (
                 SELECT COALESCE(bit_or(ranked."nsfwLevel"), 0) "nsfwLevel"
                 FROM (
@@ -440,7 +440,7 @@ async function migrateModels(req: NextApiRequest, res: NextApiResponse) {
         UPDATE "Model" m
         SET "nsfwLevel" = (
           CASE
-            WHEN m.nsfw = TRUE THEN ${nsfwBrowsingLevelsFlag}
+            WHEN m.nsfw = TRUE THEN ${blurrableBrowsingLevels}
             ELSE level."nsfwLevel"
           END
         )
