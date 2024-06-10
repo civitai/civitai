@@ -232,7 +232,7 @@ export function ModelVersionWizard({ data }: Props) {
   const isTraining = modelData?.uploadType === ModelUploadType.Trained;
 
   useEffect(() => {
-    if (isTraining) return;
+    if (isTraining || isInitialLoading) return;
 
     // redirect to correct step if missing values
     if (!isNew) {
