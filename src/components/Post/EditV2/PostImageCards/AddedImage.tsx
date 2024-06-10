@@ -498,7 +498,7 @@ function EditDetail() {
                   <PopoverPanel className="[--anchor-gap:4px]" anchor="top start" focus>
                     {({ close }) => (
                       <Card p={0} withBorder>
-                        <ImageToolsPopover image={image} onSuccess={close} />
+                        <ImageToolsPopover image={media} onSuccess={close} />
                       </Card>
                     )}
                   </PopoverPanel>
@@ -546,7 +546,7 @@ function EditDetail() {
                   <PopoverPanel className="[--anchor-gap:4px]" anchor="top start" focus>
                     {({ close }) => (
                       <Card p={0} withBorder>
-                        <ImageTechniquesPopover image={image} onSuccess={close} />
+                        <ImageTechniquesPopover image={media} onSuccess={close} />
                       </Card>
                     )}
                   </PopoverPanel>

@@ -33,7 +33,7 @@ function _EdgeAudio({
     barWidth: 2,
     barRadius: 4,
     cursorWidth: 0,
-    // sampleRate: AUDIO_SAMPLE_RATE,
+    sampleRate: AUDIO_SAMPLE_RATE,
     width: '100%',
     normalize: true,
     interact: false,
