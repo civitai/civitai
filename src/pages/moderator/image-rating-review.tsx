@@ -17,7 +17,7 @@ import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { getImageRatingRequests } from '~/server/services/image.service';
-import { nsfwLevelLabels, nsfwLevels } from '~/shared/constants/browsingLevel.constants';
+import { getNsfwLevelDetails, nsfwLevels } from '~/shared/constants/browsingLevel.constants';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -104,7 +104,7 @@ function ImageRatingCard(item: AsyncReturnType<typeof getImageRatingRequests>['i
       <div className="flex flex-col gap-4 p-4">
         <div className="grid gap-1" style={{ gridTemplateColumns: `min-content 1fr` }}>
           {nsfwLevels.map((level) => {
-            const votes = item.votes[level];
+            const votes = item.votes[level as any] ?? 0;
             const sections: { value: number; label?: string; color: MantineColor }[] = [];
             if (votes > 0) {
               const count = item.ownerVote > 0 ? votes - 1 : votes;
@@ -135,7 +135,7 @@ function ImageRatingCard(item: AsyncReturnType<typeof getImageRatingRequests>['i
                       : 'blue'
                   }
                 >
-                  {nsfwLevelLabels[level]}
+                  {getNsfwLevelDetails(level).name}
                 </Button>
                 <Progress size={26} sections={sections} />
               </React.Fragment>

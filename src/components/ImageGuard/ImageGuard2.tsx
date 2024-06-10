@@ -4,7 +4,7 @@ import Router from 'next/router';
 import React, { createContext, useCallback, useContext } from 'react';
 import { create } from 'zustand';
 import { ConfirmDialog } from '~/components/Dialog/Common/ConfirmDialog';
-import { openSetBrowsingLevelModal } from '~/components/Dialog/dialog-registry';
+import { openSetNsfwLevelModal } from '~/components/Dialog/dialog-registry';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';
@@ -273,7 +273,7 @@ function BlurToggle({
             ? (e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                openSetBrowsingLevelModal({ imageId, nsfwLevel: browsingLevel });
+                openSetNsfwLevelModal({ imageId, nsfwLevel: browsingLevel });
               }
             : undefined
         }

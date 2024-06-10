@@ -11,7 +11,7 @@ import { imageStore } from '~/store/image.store';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
-export default function SetBrowsingLevelModal({
+export default function SetNsfwLevelModal({
   imageId,
   nsfwLevel,
 }: {

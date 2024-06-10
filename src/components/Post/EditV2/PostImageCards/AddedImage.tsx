@@ -25,7 +25,7 @@ import {
 } from '@tabler/icons-react';
 import React, { createContext, useContext, useState } from 'react';
 import { ConfirmDialog } from '~/components/Dialog/Common/ConfirmDialog';
-import { openSetBrowsingLevelModal } from '~/components/Dialog/dialog-registry';
+import { openSetNsfwLevelModal } from '~/components/Dialog/dialog-registry';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { UnblockImage } from '~/components/Image/UnblockImage/UnblockImage';
@@ -614,9 +614,7 @@ function PostImage() {
         <BrowsingLevelBadge
           browsingLevel={nsfwLevel}
           size="lg"
-          onClick={
-            !isBlocked ? () => openSetBrowsingLevelModal({ imageId: id, nsfwLevel }) : undefined
-          }
+          onClick={!isBlocked ? () => openSetNsfwLevelModal({ imageId: id, nsfwLevel }) : undefined}
           className={`absolute left-2 top-2 z-20 ${!isBlocked ? 'cursor-pointer' : ''}`}
         />
       )}
