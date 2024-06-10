@@ -320,13 +320,18 @@ export const getUserCollectionsWithPermissions = async <
     ${Prisma.join(queries, ' UNION ')}
   `;
 
-  const images = await dbRead.image.findMany({
-    where: {
-      id: {
-        in: collections.map((c) => c.imageId).filter(isDefined),
-      },
-    },
-  });
+  const collectionImageIds = collections.map((c) => c.imageId).filter(isDefined);
+
+  const images =
+    collectionImageIds.length > 0
+      ? await dbRead.image.findMany({
+          where: {
+            id: {
+              in: collectionImageIds,
+            },
+          },
+        })
+      : [];
 
   // Return user collections first && add isOwner  property
   return collections
