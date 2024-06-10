@@ -232,27 +232,55 @@ export const getUserCollectionPermissionsById = async ({
   return permissions;
 };
 
+type CollectionForPermission = {
+  id: number;
+  name: string;
+  description?: string;
+  read: CollectionReadConfiguration;
+  userId: number;
+  write: CollectionWriteConfiguration;
+  imageId?: number;
+};
+
 export const getUserCollectionsWithPermissions = async <
   TSelect extends Prisma.CollectionSelect = Prisma.CollectionSelect
 >({
   input,
-  select,
 }: {
   input: GetAllUserCollectionsInputSchema & { userId: number };
-  select: TSelect;
 }) => {
   const { userId, permissions, permission, contributingOnly } = input;
   // By default, owned collections will be always returned
-  const OR: Prisma.Enumerable<Prisma.CollectionWhereInput> = [{ userId }];
+  const AND: Prisma.Sql[] = [];
+  const SELECT: Prisma.Sql = Prisma.raw(
+    `SELECT c."id", c."name", c."description", c."read", c."userId", c."write", c."imageId"`
+  );
+
+  if (input.type) {
+    AND.push(Prisma.sql`(c."type" = ${input.type}::"CollectionType" OR c."type" IS NULL)`);
+  }
+
+  const queries: Prisma.Sql[] = [
+    Prisma.sql`(
+      SELECT c."id", c."name", c."description", c."read", c."userId", c."write"
+      FROM "Collection" c
+      WHERE "userId" = ${userId} 
+        ${AND.length > 0 ? Prisma.sql`AND ${Prisma.join(AND, ',')}` : Prisma.sql``}
+
+    )`,
+  ];
 
   if (
     permissions &&
     permissions.includes(CollectionContributorPermission.ADD) &&
     !contributingOnly
   ) {
-    OR.push({
-      write: CollectionWriteConfiguration.Public,
-    });
+    queries.push(Prisma.sql`
+      ${SELECT}
+      FROM "Collection" c
+      WHERE "write" = ${CollectionWriteConfiguration.Public}::"CollectionWriteConfiguration"
+          ${AND.length > 0 ? Prisma.sql`AND ${Prisma.join(AND, ',')}` : Prisma.sql``}
+    `);
   }
 
   if (
@@ -263,52 +291,49 @@ export const getUserCollectionsWithPermissions = async <
     // Even with view permission we don't really
     // want to return unlisted unless the user is a contributor
     // with that permission
-    OR.push({
-      read: CollectionWriteConfiguration.Public,
-    });
+    queries.push(Prisma.sql`
+      ${SELECT}
+      FROM "Collection" c
+      WHERE "read" = ${CollectionReadConfiguration.Public}::"CollectionReadConfiguration"
+        ${AND.length > 0 ? Prisma.sql`AND ${Prisma.join(AND, ',')}` : Prisma.sql``}
+
+    `);
   }
 
   if (permissions || permission) {
-    OR.push({
-      contributors: {
-        some: {
-          userId,
-          permissions: {
-            hasSome: permission ? [permission] : permissions,
-          },
-        },
-      },
-    });
+    queries.push(Prisma.sql`(
+        ${SELECT}
+        FROM "CollectionContributor" AS cc
+        JOIN "Collection" AS c ON c."id" = cc."collectionId"
+        WHERE cc."userId" = ${userId} 
+          AND cc."permissions" && ARRAY[${Prisma.raw(
+            (permissions || [permission]).map((p) => `'${p}'`).join(',')
+          )}]::"CollectionContributorPermission"[]
+          AND cc."collectionId" IS NOT NULL
+          ${AND.length > 0 ? Prisma.sql`AND ${Prisma.join(AND, ',')}` : Prisma.sql``}
+    )`);
   }
 
-  const AND: Prisma.Enumerable<Prisma.CollectionWhereInput> = [{ OR }];
+  // Moved to using raw queries because of huge performance issues with Prisma.
+  // Now we're doing Unions which makes it faster
+  const collections = await dbRead.$queryRaw<CollectionForPermission[]>`
+    ${Prisma.join(queries, ' UNION ')}
+  `;
 
-  if (input.type) {
-    // TODO.collections: Support exclusive type
-    AND.push({
-      OR: [
-        {
-          type: input.type,
-        },
-        {
-          type: null,
-        },
-      ],
-    });
-  }
-
-  const collections = (await dbRead.collection.findMany({
+  const images = await dbRead.image.findMany({
     where: {
-      AND,
+      id: {
+        in: collections.map((c) => c.imageId).filter(isDefined),
+      },
     },
-    select,
-  })) as Collection[];
+  });
 
   // Return user collections first && add isOwner  property
   return collections
     .map((collection) => ({
       ...collection,
       isOwner: collection.userId === userId,
+      image: images.find((i) => i.id === collection.imageId),
     }))
     .sort(({ userId: collectionUserId }) => (userId === collectionUserId ? -1 : 1));
 };
@@ -1000,7 +1025,6 @@ export const getUserCollectionItemsByItem = async ({
       ],
       userId,
     },
-    select: { id: true, userId: true },
   });
 
   if (userCollections.length === 0) return [];
