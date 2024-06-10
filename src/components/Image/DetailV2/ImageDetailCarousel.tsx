@@ -114,8 +114,8 @@ function ImageContent({ image }: { image: ImagesInfiniteModel } & ConnectProps) 
             name={image.name ?? image.id.toString()}
             type="audio"
             className="max-h-full w-auto max-w-full"
-            // peaks={audioMetadata?.peaks}
-            // duration={audioMetadata?.duration}
+            peaks={audioMetadata?.peaks}
+            duration={audioMetadata?.duration}
             // onAudioprocess={() => {
             //   trackPlay({
             //     imageId: image.id,

@@ -30,8 +30,8 @@ export function AudioCard({ data }: Props) {
               type="audio"
               src={data.url}
               name={data.name}
-              // duration={metadata?.duration}
-              // peaks={metadata?.peaks}
+              duration={metadata?.duration}
+              peaks={metadata?.peaks}
               // onAudioprocess={() =>
               //   trackPlay({
               //     imageId: data.id,

@@ -105,6 +105,7 @@ export function EdgeMedia({
           name={name}
           wrapperProps={wrapperProps}
           onPlay={setCurrentTrack}
+          // onReady={onReady}
           onAudioprocess={onAudioprocess}
         />
       );

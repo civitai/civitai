@@ -4,7 +4,6 @@ import {
   CloseButton,
   Group,
   Paper,
-  Portal,
   Slider,
   Stack,
   Text,
@@ -15,7 +14,6 @@ import { useLocalStorage } from '@mantine/hooks';
 import { IconVolume, IconVolumeOff } from '@tabler/icons-react';
 import { createContext, useCallback, useContext, useRef, useState } from 'react';
 import { EdgeAudio } from '~/components/EdgeMedia/EdgeAudio';
-import { usePlayerStore } from '~/store/player.store';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { formatDuration } from '~/utils/number-helpers';
 
@@ -73,8 +71,6 @@ export function UniversalPlayerProvider({ children }: { children: React.ReactNod
     audioRef.current.pause();
     audioRef.current.currentTime = 0;
   }, [setCurrentTrack]);
-
-  console.log('rendering', { currentTrack, audio: audioRef.current });
 
   return (
     <UniversalPlayerContext.Provider
