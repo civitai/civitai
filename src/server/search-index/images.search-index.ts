@@ -316,7 +316,8 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
         i."height",
         i."hash",
         jsonb_build_object(
-          'prompt', i."meta"->'prompt'
+          'prompt', i."meta"->'prompt',
+          'comfy', i."meta"->'comfy'
         ) "meta",
         i."hideMeta",
         i."generationProcess",

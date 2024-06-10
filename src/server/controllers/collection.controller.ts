@@ -457,6 +457,11 @@ export const addSimpleImagePostHandler = async ({
     );
     const imageIds = postImages.map((image) => image.id);
     await bulkSaveItems({ input: { collectionId, imageIds, userId }, permissions });
+
+    return {
+      post,
+      permissions,
+    };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

@@ -112,7 +112,10 @@ async function updateLegendsBoardResults() {
         JOIN "User" u ON u.id = lr."userId"
         WHERE date <= now()
           AND position < 100
-          AND NOT u."excludeFromLeaderboards"
+          AND (
+            NOT u."excludeFromLeaderboards"
+            OR EXISTS (SELECT 1 FROM "Leaderboard" l WHERE l.id = lr."leaderboardId" AND NOT l.public)
+          )
           AND u."deletedAt" IS NULL
         GROUP BY "userId", "leaderboardId"
       )
@@ -162,7 +165,10 @@ async function defaultLeadboardPopulation(ctx: LeaderboardContext) {
       row_number() OVER (ORDER BY score DESC) as position
     FROM scores s
     JOIN "User" u ON u.id = s."userId"
-    WHERE NOT u."excludeFromLeaderboards"
+    WHERE (
+      NOT u."excludeFromLeaderboards"
+      OR EXISTS (SELECT 1 FROM "Leaderboard" l WHERE l.id = '${ctx.id}' AND NOT l.public)
+    )
     ORDER BY score DESC
     LIMIT 1000
   `);

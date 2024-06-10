@@ -28,7 +28,22 @@ import {
 import { ResourceReviewThumbActions } from '~/components/ResourceReview/ResourceReviewThumbActions';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { postEditQuerySchema } from '~/server/schema/post.schema';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { getLoginLink } from '~/utils/login-helpers';
 import { trpc } from '~/utils/trpc';
+
+export const getServerSideProps = createServerSideProps({
+  useSession: true,
+  resolver: async ({ session, ctx }) => {
+    if (!session)
+      return {
+        redirect: {
+          destination: getLoginLink({ returnUrl: ctx.resolvedUrl, reason: 'post-images' }),
+          permanent: false,
+        },
+      };
+  },
+});
 
 export default createPage(
   function PostCreate() {

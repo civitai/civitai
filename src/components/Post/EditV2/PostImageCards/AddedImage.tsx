@@ -4,6 +4,7 @@ import {
   Alert,
   Badge,
   Button,
+  Card,
   Divider,
   Group,
   Loader,
@@ -52,6 +53,7 @@ import { PostImageTechnique } from '~/components/Post/EditV2/Techniques/PostImag
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { Popover, PopoverButton, PopoverPanel } from '@headlessui/react';
 import { AudioMetadata, ImageMetadata } from '~/server/schema/media.schema';
 import { formatBytes, formatDuration } from '~/utils/number-helpers';
 import { useDebouncer } from '~/utils/debouncer';
@@ -478,8 +480,10 @@ function EditDetail() {
                     image.
                   </InfoPopover>
                 </div>
-                <ImageToolsPopover image={media}>
-                  <Button
+                <Popover>
+                  <PopoverButton
+                    as={Button}
+                    // @ts-ignore eslint-disable-next-line
                     variant="light"
                     color="blue"
                     compact
@@ -490,8 +494,15 @@ function EditDetail() {
                   >
                     <IconPlus size={16} />
                     <span>TOOL</span>
-                  </Button>
-                </ImageToolsPopover>
+                  </PopoverButton>
+                  <PopoverPanel className="[--anchor-gap:4px]" anchor="top start" focus>
+                    {({ close }) => (
+                      <Card p={0} withBorder>
+                        <ImageToolsPopover image={image} onSuccess={close} />
+                      </Card>
+                    )}
+                  </PopoverPanel>
+                </Popover>
               </div>
               {!!media.tools?.length && (
                 <ul className="flex flex-col">
@@ -517,8 +528,10 @@ function EditDetail() {
                     <IconInfoCircle />
                   </ActionIcon> */}
                 </div>
-                <ImageTechniquesPopover image={media}>
-                  <Button
+                <Popover>
+                  <PopoverButton
+                    as={Button}
+                    // @ts-ignore eslint-disable-next-line
                     variant="light"
                     color="blue"
                     compact
@@ -529,8 +542,15 @@ function EditDetail() {
                   >
                     <IconPlus size={16} />
                     <span>TOOL</span>
-                  </Button>
-                </ImageTechniquesPopover>
+                  </PopoverButton>
+                  <PopoverPanel className="[--anchor-gap:4px]" anchor="top start" focus>
+                    {({ close }) => (
+                      <Card p={0} withBorder>
+                        <ImageTechniquesPopover image={image} onSuccess={close} />
+                      </Card>
+                    )}
+                  </PopoverPanel>
+                </Popover>
               </div>
               {!!media.techniques.length && (
                 <ul className="flex flex-col">
@@ -609,6 +629,7 @@ function PostImage() {
           src={url}
           width={metadata?.width ?? 450}
           type={type}
+          original={type === 'video' ? true : undefined}
           className={showPreview ? 'rounded-none' : 'rounded-lg'}
         />
       </div>

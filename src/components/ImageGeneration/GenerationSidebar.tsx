@@ -57,7 +57,7 @@ export function GenerationSidebar() {
       className={`z-10 ${fullScreen ? 'max-w-0' : ''}`}
     >
       <div className={`size-full ${fullScreen ? `fixed inset-0 w-screen` : ''}`}>
-        <ContainerProvider containerName="generation-sidebar" className="bg-gray-0 dark:bg-dark-9">
+        <ContainerProvider containerName="generation-sidebar" className="bg-gray-0 dark:bg-dark-7">
           <GenerationTabs fullScreen={fullScreen} />
         </ContainerProvider>
       </div>

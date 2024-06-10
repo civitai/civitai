@@ -1,5 +1,5 @@
 import { Combobox, ComboboxInput, ComboboxOptions, ComboboxOption } from '@headlessui/react';
-import { Divider, Input, ScrollArea, Text, createStyles } from '@mantine/core';
+import { Divider, Input, Loader, ScrollArea, Text, createStyles } from '@mantine/core';
 import React, { Key, useState } from 'react';
 import { ComboboxOption as ComboboxOptionProps } from '~/components/Combobox/combobox.types';
 
@@ -12,6 +12,8 @@ type Props<T extends Key, TOption extends ComboboxOptionProps> = {
     props: { active: boolean; selected: boolean; disabled: boolean } & TOption
   ) => React.ReactNode;
   footer?: React.ReactNode;
+  showSelected?: boolean;
+  loading?: boolean;
 };
 
 export function AlwaysOpenCombobox<T extends Key, TOption extends ComboboxOptionProps>({
@@ -21,6 +23,8 @@ export function AlwaysOpenCombobox<T extends Key, TOption extends ComboboxOption
   options = [],
   renderOption,
   footer,
+  showSelected,
+  loading,
 }: Props<T, TOption>) {
   const { classes } = useStyles();
   const [search, setSearch] = useState('');
@@ -55,7 +59,6 @@ export function AlwaysOpenCombobox<T extends Key, TOption extends ComboboxOption
           placeholder="search..."
           className="m-2"
           radius="xl"
-          autoFocus
         />
         <Divider />
         <ScrollArea.Autosize
@@ -64,7 +67,11 @@ export function AlwaysOpenCombobox<T extends Key, TOption extends ComboboxOption
           offsetScrollbars
           classNames={classes}
         >
-          {nothingFound ? (
+          {loading ? (
+            <div className="flex justify-center p-3">
+              <Loader />
+            </div>
+          ) : nothingFound ? (
             <Text align="center" className="p-2" color="dimmed">
               Nothing found
             </Text>
