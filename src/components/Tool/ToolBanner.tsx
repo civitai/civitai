@@ -1,36 +1,28 @@
 import { Button, Title, Text } from '@mantine/core';
 import { useEffect, useState } from 'react';
+import { useImageQueryParams } from '~/components/Image/image.utils';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
-import { useFiltersContext } from '~/providers/FiltersProvider';
 import { trpc } from '~/utils/trpc';
 
 export function ToolBanner() {
-  const toolIds = useFiltersContext((state) => state.images.tools);
-  const [selectedId, setSelectedId] = useState(toolIds?.[0] ?? null);
+  const { query } = useImageQueryParams();
+  const { tools: toolIds } = query;
+  const selectedId = toolIds?.[0];
 
   const { data } = trpc.tool.getAll.useQuery(undefined, { enabled: !!toolIds?.length });
-
-  useEffect(() => {
-    if (!toolIds) {
-      setSelectedId(null);
-    } else if (!selectedId || !toolIds.includes(selectedId)) {
-      setSelectedId(toolIds[0]);
-    }
-  }, [toolIds, selectedId]);
-
   const selected = data?.find((x) => x.id === selectedId);
 
   if (!data || !selected) return null;
 
   return (
-    <div className="-mt-4 p-4">
+    <div className="-mt-4 mb-3 bg-gray-1 px-3 py-6 dark:bg-dark-9">
       <MasonryContainer>
-        <div className="flex flex-col gap-3">
+        <div className="flex max-w-md flex-col gap-2">
           <div className="flex justify-between gap-3">
             <Title order={2} className="font-semibold">
               {selected.name}
             </Title>
-            <div className="flex flex-wrap gap-1">
+            {/* <div className="flex flex-wrap gap-1">
               {data
                 .filter((tool) => toolIds?.includes(tool.id))
                 .map((tool) => (
@@ -43,7 +35,7 @@ export function ToolBanner() {
                     {tool.name}
                   </Button>
                 ))}
-            </div>
+            </div> */}
           </div>
           <Text>{selected.description}</Text>
         </div>

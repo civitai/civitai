@@ -38,6 +38,7 @@ type ImageFilters = {
   hidden?: boolean;
   fromPlatform?: boolean;
   pending?: boolean;
+  tools?: number[];
 };
 
 type ImagesInfiniteProps = {

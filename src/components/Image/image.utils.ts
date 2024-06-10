@@ -45,6 +45,7 @@ export const imagesQueryParamSchema = z
     followed: booleanString(),
     fromPlatform: booleanString(),
     notPublished: booleanString(),
+    tools: numericStringArray(),
   })
   .partial();
 

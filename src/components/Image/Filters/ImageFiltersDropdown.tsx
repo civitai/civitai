@@ -22,9 +22,11 @@ import { useFiltersContext } from '~/providers/FiltersProvider';
 import { GetInfiniteImagesInput } from '~/server/schema/image.schema';
 import { getDisplayName } from '~/utils/string-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
-import { ToolMultiSelect } from '~/components/Tool/ToolMultiSelect';
+import { ToolMultiSelect, ToolSelect } from '~/components/Tool/ToolMultiSelect';
 import { TechniqueMultiSelect } from '~/components/Technique/TechniqueMultiSelect';
 import { activeBaseModels, BaseModel } from '~/server/common/constants'; // Add this import
+import { useRouter } from 'next/router';
+import { useImageQueryParams } from '~/components/Image/image.utils';
 
 // TODO: adjust filter as we begin to support more media types
 const availableMediaTypes = Object.values(MediaType).filter(
@@ -75,6 +77,17 @@ export function ImageFiltersDropdown({
   const isClient = useIsClient();
   const currentUser = useCurrentUser();
   const isModerator = currentUser?.isModerator;
+  const router = useRouter();
+  const imageParams = useImageQueryParams();
+
+  function handleToolChange(value: number) {
+    if (!value) {
+      const { tools, ...query } = router.query;
+      router.replace({ query }, undefined, { shallow: true });
+    } else {
+      router.replace({ query: { ...router.query, tools: value } }, undefined, { shallow: true });
+    }
+  }
 
   const [opened, setOpened] = useState(false);
 
@@ -238,9 +251,9 @@ export function ImageFiltersDropdown({
         </Group>
 
         <Divider label="Tools" labelProps={{ weight: 'bold', size: 'sm' }} />
-        <ToolMultiSelect
-          value={mergedFilters.tools ?? []}
-          onChange={(tools) => handleChange({ tools })}
+        <ToolSelect
+          value={(imageParams.query.tools ?? [])[0]}
+          onChange={(toolId) => handleToolChange(toolId)}
           placeholder="Created with..."
         />
 

@@ -48,7 +48,7 @@ export function SelectWrapper<T extends string | number>({
   });
 
   const parsedValue = useMemo(
-    () => (value !== undefined && value !== null ? String(value) : undefined),
+    () => (value !== undefined && value !== null ? String(value) : null),
     [value]
   );
 

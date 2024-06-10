@@ -3,7 +3,7 @@ import { Announcements } from '~/components/Announcements/Announcements';
 import { setPageOptions } from '~/components/AppLayout/AppLayout';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { ImageCategories } from '~/components/Image/Filters/ImageCategories';
-import { useImageFilters } from '~/components/Image/image.utils';
+import { useImageFilters, useImageQueryParams } from '~/components/Image/image.utils';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
@@ -13,7 +13,8 @@ import { env } from '~/env/client.mjs';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 
 export default function ImagesPage() {
-  const { hidden } = useImageFilters('images');
+  const { query } = useImageQueryParams();
+  const { hidden } = query;
 
   return (
     <>
@@ -22,7 +23,7 @@ export default function ImagesPage() {
         description="See the latest art created by the generative AI art community and delve into the inspirations and prompts behind their work"
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/images`, rel: 'canonical' }]}
       />
-      {/* <ToolBanner /> */}
+      <ToolBanner />
       <MasonryContainer>
         {hidden && <Title>Your Hidden Images</Title>}
         <Stack spacing="xs">

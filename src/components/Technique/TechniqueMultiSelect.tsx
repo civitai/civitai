@@ -20,6 +20,7 @@ export function TechniqueMultiSelect({
       placeholder={placeholder}
       data={data.map(({ id, name }) => ({ value: id, label: name }))}
       searchable
+      clearable
     />
   );
 }

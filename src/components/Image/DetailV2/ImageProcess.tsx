@@ -1,4 +1,5 @@
 import { Card, Text, Badge, UnstyledButton, Popover } from '@mantine/core';
+import { NextLink } from '@mantine/next';
 import { IconChartBubble, IconMessage } from '@tabler/icons-react';
 import { LineClamp } from '~/components/LineClamp/LineClamp';
 import { trpc } from '~/utils/trpc';
@@ -32,18 +33,9 @@ export function ImageProcess({ imageId }: { imageId: number }) {
                 }`}
                 classNames={{ inner: 'flex gap-1 h-full' }}
               >
-                {domain ? (
-                  <a
-                    href={domain}
-                    target="_blank"
-                    rel="noreferrer"
-                    data-activity={`tool-click:${id}`}
-                  >
-                    {name}
-                  </a>
-                ) : (
-                  <span>{name}</span>
-                )}
+                <NextLink href={`/images?tools=${id}`} data-activity={`tool-click:${id}`}>
+                  {name}
+                </NextLink>
                 {notes && (
                   <>
                     <div className="h-full border-l border-blue-8 border-opacity-30"></div>
