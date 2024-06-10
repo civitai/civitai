@@ -47,7 +47,10 @@ import { ContentPolicyLink } from '../ContentPolicyLink/ContentPolicyLink';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { constants } from '~/server/common/constants';
 import { imageSchema } from '~/server/schema/image.schema';
-import { nsfwLevelLabels, nsfwLevels } from '~/shared/constants/browsingLevel.constants';
+import {
+  browsingLevels,
+  getBrowsingLevelDetails,
+} from '~/shared/constants/browsingLevel.constants';
 import { openBrowsingLevelGuide } from '~/components/Dialog/dialog-registry';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 
@@ -76,8 +79,8 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
-export const browsingLevelSelectOptions = nsfwLevels.map((level) => ({
-  label: nsfwLevelLabels[level],
+export const browsingLevelSelectOptions = browsingLevels.map((level) => ({
+  label: getBrowsingLevelDetails(level),
   value: String(level),
 }));
 

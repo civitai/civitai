@@ -5,6 +5,7 @@ import {
   nsfwLevels,
   nsfwLevelLabels,
   nsfwLevelDescriptions,
+  getNsfwLevelDetails,
 } from '~/shared/constants/browsingLevel.constants';
 import { imageStore } from '~/store/image.store';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -45,18 +46,21 @@ export default function SetBrowsingLevelModal({
   return (
     <Modal title={isModerator ? 'Image ratings' : 'Vote for image rating'} {...dialog}>
       <Paper withBorder p={0} className={classes.root}>
-        {nsfwLevels.map((level) => (
-          <UnstyledButton
-            key={level}
-            p="md"
-            w="100%"
-            className={cx({ [classes.active]: nsfwLevel === level })}
-            onClick={() => handleClick(level)}
-          >
-            <Text weight={700}>{nsfwLevelLabels[level]}</Text>
-            <Text>{nsfwLevelDescriptions[level]}</Text>
-          </UnstyledButton>
-        ))}
+        {nsfwLevels.map((level) => {
+          const { name, description } = getNsfwLevelDetails(level);
+          return (
+            <UnstyledButton
+              key={level}
+              p="md"
+              w="100%"
+              className={cx({ [classes.active]: nsfwLevel === level })}
+              onClick={() => handleClick(level)}
+            >
+              <Text weight={700}>{name}</Text>
+              <Text>{description}</Text>
+            </UnstyledButton>
+          );
+        })}
       </Paper>
     </Modal>
   );
