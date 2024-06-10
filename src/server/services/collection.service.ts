@@ -170,13 +170,19 @@ export const getUserCollectionPermissionsById = async ({
   }
 
   if (collection.write === CollectionWriteConfiguration.Public) {
-    // Follow will grant write permissions
+    // Follow will make it so that they can see the collection in their feed.
     permissions.follow = true;
+    // Means that the users will be able to add stuff to the collection without following. It will follow automatically.
+    permissions.write = true;
     permissions.followPermissions.push(CollectionContributorPermission.ADD);
   }
+
   if (collection.write === CollectionWriteConfiguration.Review) {
-    // Follow will grant write permissions
+    // Follow will make it so that they can see the collection in their feed.
     permissions.follow = true;
+
+    // Means that the users will be able to add stuff to the collection without following. It will follow automatically.
+    permissions.writeReview = true;
     permissions.followPermissions.push(CollectionContributorPermission.ADD_REVIEW);
   }
 
@@ -194,7 +200,9 @@ export const getUserCollectionPermissionsById = async ({
   if (isModerator) {
     permissions.manage = true;
     permissions.read = true;
-    permissions.write = true;
+    // Makes sure that moderators' stuff still needs to be reviewed.
+    permissions.write = collection.write === CollectionWriteConfiguration.Public;
+    permissions.writeReview = collection.write === CollectionWriteConfiguration.Review;
   }
 
   const [contributorItem] = collection.contributors;
@@ -390,6 +398,15 @@ export const saveItemInCollections = async ({
           isModerator,
           id: collectionId,
         });
+
+        if (!permission.isContributor) {
+          // Make sure to follow the collection
+          return addContributorToCollection({
+            targetUserId: userId,
+            userId: userId,
+            collectionId,
+          });
+        }
 
         if (collection.mode === CollectionMode.Contest) {
           await validateContestCollectionEntry({
@@ -1470,6 +1487,15 @@ export const bulkSaveItems = async ({
   });
 
   if (!collection) throw throwNotFoundError('No collection with id ' + collectionId);
+
+  if (!permissions.isContributor) {
+    // Make sure to follow the collection
+    return addContributorToCollection({
+      targetUserId: userId,
+      userId: userId,
+      collectionId,
+    });
+  }
 
   const metadata = (collection.metadata ?? {}) as CollectionMetadataSchema;
 

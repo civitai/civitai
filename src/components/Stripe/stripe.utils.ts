@@ -1,8 +1,16 @@
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';
-import { PaymentMethodDeleteInput } from '~/server/schema/stripe.schema';
+import {
+  PaymentIntentMetadataSchema,
+  PaymentMethodDeleteInput,
+} from '~/server/schema/stripe.schema';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { useCallback, useEffect, useState } from 'react';
+import { useRecaptchaToken } from '~/components/Recaptcha/useReptchaToken';
+import { RECAPTCHA_ACTIONS } from '~/server/common/constants';
+import { Currency } from '@prisma/client';
+import { useDebouncer } from '~/utils/debouncer';
 
 export const useMutateStripe = () => {
   const queryUtils = trpc.useContext();
@@ -68,5 +76,86 @@ export const useUserStripeConnect = () => {
   return {
     userStripeConnect,
     isLoading,
+  };
+};
+
+export const usePaymentIntent = ({
+  unitAmount,
+  currency = Currency.USD,
+  metadata,
+  desiredPaymentMethodTypes,
+}: {
+  unitAmount: number;
+  currency?: Currency;
+  metadata: PaymentIntentMetadataSchema;
+  desiredPaymentMethodTypes?: string[];
+}) => {
+  const [setupFuturePayment, setSetupFuturePayment] = useState(true);
+  const [clientSecret, setClientSecret] = useState<string | null>(null);
+  const [paymentMethodTypes, setPaymentMethodTypes] = useState<string[] | undefined>(undefined);
+  const [error, setError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const getPaymentIntentMutation = trpc.stripe.getPaymentIntent.useMutation();
+
+  // const { data, isLoading, isFetching, error } = trpc.stripe.getPaymentIntent.useQuery(
+  //   {
+  //     unitAmount,
+  //     currency,
+  //     metadata,
+  //     paymentMethodTypes: desiredPaymentMethodTypes,
+  //     recaptchaToken: recaptchaToken as string,
+  //     setupFuturePayment,
+  //   },
+  //   {
+  //     cacheTime: 0,
+  //     trpc: { context: { skipBatch: true } },
+  //     enabled: !!unitAmount && !!currency && !!recaptchaToken,
+  //   }
+  // );
+
+  const { getToken } = useRecaptchaToken(RECAPTCHA_ACTIONS.STRIPE_TRANSACTION);
+  const debouncer = useDebouncer(300);
+  const getPaymentIntent = useCallback(async () => {
+    setClientSecret(null);
+    setPaymentMethodTypes(undefined);
+    setError(null);
+    setIsLoading(true);
+
+    try {
+      const recaptchaToken = await getToken();
+
+      if (!recaptchaToken) {
+        throw new Error('Unable to get recaptcha token.');
+      }
+
+      const data = await getPaymentIntentMutation.mutateAsync({
+        unitAmount,
+        currency,
+        metadata,
+        paymentMethodTypes: desiredPaymentMethodTypes,
+        setupFuturePayment,
+        recaptchaToken: recaptchaToken as string,
+      });
+
+      setClientSecret(data.clientSecret);
+      setPaymentMethodTypes(data.paymentMethodTypes);
+    } catch (err: any) {
+      setError(err?.message ?? err ?? 'An error occurred');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [unitAmount, currency, metadata, desiredPaymentMethodTypes, setupFuturePayment, getToken]);
+
+  useEffect(() => {
+    debouncer(() => getPaymentIntent());
+  }, [setupFuturePayment]);
+
+  return {
+    clientSecret,
+    paymentMethodTypes,
+    isLoading,
+    setupFuturePayment,
+    setSetupFuturePayment,
+    error,
   };
 };
