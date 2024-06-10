@@ -7,7 +7,11 @@ import {
 import { useHiddenPreferencesContext } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import { useQueryHiddenPreferences } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { nsfwLevelLabels, flagifyBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import {
+  flagifyBrowsingLevel,
+  getBrowsingLevel,
+  getBrowsingLevelDetails,
+} from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils';
 
 export function ExplainHiddenImages({
@@ -48,7 +52,7 @@ export function ExplainHiddenImages({
                 variant="outline"
                 classNames={classes}
               >
-                {nsfwLevelLabels[browsingLevel]}
+                {getBrowsingLevelDetails(browsingLevel).name}
               </Badge>
             ))}
           </Group>
@@ -104,10 +108,10 @@ export function useExplainHiddenImages<
         }
       }
       if (!Flags.intersects(browsingLevel, image.nsfwLevel) && image.nsfwLevel !== browsingLevel) {
-        const dict =
-          image.nsfwLevel < browsingLevel ? browsingLevelBelowDict : browsingLevelAboveDict;
-        if (!dict[image.nsfwLevel]) dict[image.nsfwLevel] = 1;
-        else dict[image.nsfwLevel]++;
+        const imageLevel = getBrowsingLevel(image.nsfwLevel);
+        const dict = imageLevel < browsingLevel ? browsingLevelBelowDict : browsingLevelAboveDict;
+        if (!dict[imageLevel]) dict[imageLevel] = 1;
+        else dict[imageLevel]++;
       }
     }
 

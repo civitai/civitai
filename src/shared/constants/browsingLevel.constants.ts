@@ -13,20 +13,21 @@ export function flagifyBrowsingLevel(levels: number[]) {
 export const nsfwLevels = [NsfwLevel.PG, NsfwLevel.PG13, NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX];
 
 export const nsfwLevelLabels = {
-  [NsfwLevel.PG]: 'PG',
-  [NsfwLevel.PG13]: 'PG-13',
-  [NsfwLevel.R]: 'R',
-  [NsfwLevel.X]: 'X',
-  [NsfwLevel.XXX]: 'XXX',
+  [NsfwLevel.PG]: 'Safe',
+  [NsfwLevel.PG13]: 'LG (lightly graphic)',
+  [NsfwLevel.R]: 'MG (moderately graphic)',
+  [NsfwLevel.X]: 'FG (fairly graphic)',
+  [NsfwLevel.XXX]: 'VG (very graphic)',
   [NsfwLevel.Blocked]: 'Blocked',
 };
 
 export const nsfwLevelDescriptions = {
-  [NsfwLevel.PG]: 'Safe for work. No naughty stuff',
-  [NsfwLevel.PG13]: 'Revealing clothing, violence, or light gore',
-  [NsfwLevel.R]: 'Adult themes and situations, partial nudity, graphic violence, or death',
-  [NsfwLevel.X]: 'Graphic nudity, adult objects, or settings',
-  [NsfwLevel.XXX]: 'Overtly sexual or disturbing graphic content',
+  [NsfwLevel.PG]: 'Content that can be viewed by anyone.',
+  [NsfwLevel.PG13]: 'Content that requires consideration before sharing in professional setting',
+  [NsfwLevel.R]: 'Content that contains some visually explicit scenes with moderate intensity',
+  [NsfwLevel.X]: 'Content that is noticeably more detailed and intense',
+  [NsfwLevel.XXX]:
+    'Content that is extensive and explicit, with a high level of graphic detail and intensity',
 };
 
 export function getNsfwLevelDetails(nsfwLevel: number) {
@@ -47,12 +48,29 @@ export const allBrowsingLevelsFlag = flagifyBrowsingLevel([...nsfwLevels]);
 
 export const browsingLevels = [safeBrowsingLevels, nsfwBrowsingLevels, graphicBrowsingLevels];
 const browsingLevelDetails = {
-  [safeBrowsingLevels]: { name: 'Safe', description: 'Safe for work. No naughty stuff' },
-  [nsfwBrowsingLevels]: { name: 'NSFW', description: 'Safe for work. No naughty stuff' },
-  [graphicBrowsingLevels]: { name: 'Graphic', description: 'Safe for work. No naughty stuff' },
+  [safeBrowsingLevels]: {
+    name: 'Safe',
+    description:
+      'Features no obvious or visually detailed scenes of explicit material, making it suitable for all audiences.',
+  },
+  [nsfwBrowsingLevels]: {
+    name: 'Sensitive Content',
+    description:
+      ' Includes material that may not be acceptable for all audiences or all settings. ',
+  },
+  [graphicBrowsingLevels]: {
+    name: 'Graphic Content',
+    description:
+      'Content that is extensive and explicit, with a high level of graphic detail and intensity. Viewer discretion advised.',
+  },
 };
 export function getBrowsingLevelDetails(level: number) {
   return browsingLevelDetails[level] ?? {};
+}
+
+/** get browsing level based on nsfwLevel with safe default */
+export function getBrowsingLevel(nsfwLevel: number) {
+  return browsingLevels.find((level) => Flags.hasFlag(level, nsfwLevel)) ?? safeBrowsingLevels;
 }
 // #endregion
 
