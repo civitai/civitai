@@ -1,5 +1,6 @@
 import {
   Availability,
+  HiddenType,
   ImageGenerationProcess,
   ImageIngestionStatus,
   MediaType,
@@ -467,6 +468,7 @@ type GetAllImagesRaw = {
   scannedAt: Date | null;
   ingestion: ImageIngestionStatus;
   needsReview: string | null;
+  hidden: HiddenType | null;
   userId: number;
   index: number | null;
   postId: number | null;
@@ -826,13 +828,15 @@ export const getAllImages = async ({
     if (isModerator) {
       AND.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`);
     } else if (userId) {
-      AND.push(Prisma.sql`(i."needsReview" IS NULL OR i."userId" = ${userId})`);
+      AND.push(
+        Prisma.sql`((i."needsReview" IS NULL AND i."hidden" IS NULL) OR i."userId" = ${userId})`
+      );
       AND.push(
         Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR (i."nsfwLevel" = 0 AND i."userId" = ${userId}))`
       );
     }
   } else {
-    AND.push(Prisma.sql`i."needsReview" IS NULL`);
+    AND.push(Prisma.sql`i."needsReview" IS NULL AND i."hidden" IS NULL`);
     AND.push(
       browsingLevel
         ? Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0 AND i."nsfwLevel" != 0`
@@ -1137,7 +1141,7 @@ export const getImage = async ({
     AND.push(
       Prisma.sql`(${Prisma.join(
         [
-          Prisma.sql`i."needsReview" IS NULL AND i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`,
+          Prisma.sql`(i."needsReview" IS NULL AND i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus")`,
           Prisma.sql`i."userId" = ${userId}`,
         ],
         ' OR '
@@ -1360,13 +1364,15 @@ export const getImagesForModelVersion = async ({
     if (isModerator) {
       imageWhere.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`);
     } else if (userId) {
-      imageWhere.push(Prisma.sql`(i."needsReview" IS NULL OR i."userId" = ${userId})`);
+      imageWhere.push(
+        Prisma.sql`((i."needsReview" IS NULL AND i."hidden" IS NULL) OR i."userId" = ${userId})`
+      );
       imageWhere.push(
         Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR (i."nsfwLevel" = 0 AND i."userId" = ${userId}))`
       );
     }
   } else {
-    imageWhere.push(Prisma.sql`i."needsReview" IS NULL`);
+    imageWhere.push(Prisma.sql`i."needsReview" IS NULL AND i."hidden" IS NULL`);
     imageWhere.push(
       browsingLevel
         ? Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`
@@ -1515,13 +1521,16 @@ export const getImagesForPosts = async ({
     if (isModerator) {
       imageWhere.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`);
     } else if (userId) {
-      imageWhere.push(Prisma.sql`(i."needsReview" IS NULL OR i."userId" = ${userId})`);
+      imageWhere.push(
+        Prisma.sql`((i."needsReview" IS NULL AND i."hidden" IS NULL) OR i."userId" = ${userId})`
+      );
       imageWhere.push(
         Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR (i."nsfwLevel" = 0 AND i."userId" = ${userId}))`
       );
     }
   } else {
     imageWhere.push(Prisma.sql`i."needsReview" IS NULL`);
+    imageWhere.push(Prisma.sql`i."hidden" IS NULL`);
     imageWhere.push(
       browsingLevel
         ? Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`
@@ -1775,7 +1784,7 @@ export const getImagesByEntity = async ({
 
   if (!isModerator) {
     const needsReviewOr = [
-      Prisma.sql`i."needsReview" IS NULL`,
+      Prisma.sql`(i."needsReview" IS NULL AND i."hidden" IS NULL)`,
       userId ? Prisma.sql`i."userId" = ${userId}` : null,
     ].filter(isDefined);
 
@@ -2033,6 +2042,7 @@ export const getEntityCoverImage = async ({
                   WHERE m."id" = e."entityId"
                       AND i."ingestion" = 'Scanned'
                       AND i."needsReview" IS NULL
+                      AND i."hidden" IS NULL
                   ) mi
                   WHERE mi.rn = 1
                 )
@@ -2048,6 +2058,7 @@ export const getEntityCoverImage = async ({
                   WHERE mv."id" = e."entityId"
                       AND i."ingestion" = 'Scanned'
                       AND i."needsReview" IS NULL
+                      AND i."hidden" IS NULL
                   ORDER BY mv.index, i."postId", i.index
                   ) mi
                   LIMIT 1
@@ -2058,6 +2069,7 @@ export const getEntityCoverImage = async ({
             WHERE i.id = e."entityId"
               AND i."ingestion" = 'Scanned'
               AND i."needsReview" IS NULL
+              AND i."hidden" IS NULL
           )
         WHEN e."entityType" = 'Article'
           THEN (
@@ -2070,6 +2082,7 @@ export const getEntityCoverImage = async ({
               WHERE a."id" = e."entityId"
                   AND i."ingestion" = 'Scanned'
                   AND i."needsReview" IS NULL
+                  AND i."hidden" IS NULL
             ) ai
             LIMIT 1
           )
@@ -2084,6 +2097,7 @@ export const getEntityCoverImage = async ({
               WHERE p."id" = e."entityId"
                   AND i."ingestion" = 'Scanned'
                   AND i."needsReview" IS NULL
+                  AND i."hidden" IS NULL
               ORDER BY i."postId", i.index
             ) pi
             LIMIT 1
@@ -2123,7 +2137,10 @@ export const getEntityCoverImage = async ({
       t."entityType"
     FROM targets t
     JOIN "Image" i ON i.id = t."imageId"
-    WHERE i."ingestion" = 'Scanned' AND i."needsReview" IS NULL`;
+    WHERE i."ingestion" = 'Scanned'
+      AND i."needsReview" IS NULL
+      AND i."hidden" IS NULL
+    `;
 
   let tagsVar: (VotableTagModel & { imageId: number })[] | undefined = [];
   if (include && include.includes('tags')) {

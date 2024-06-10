@@ -1176,6 +1176,11 @@ enum MediaType {
   audio
 }
 
+enum HiddenType {
+  System
+  MissingMetadata
+}
+
 model Image {
   id                Int                     @id @default(autoincrement())
   name              String?
@@ -1210,6 +1215,7 @@ model Image {
   blockedFor        String?
   scanJobs          Json?
   assignedUser      User?                   @relation("profilePicture")
+  hidden            HiddenType?
 
   reports             ImageReport[]
   reactions           ImageReaction[]

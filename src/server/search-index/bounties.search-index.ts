@@ -337,6 +337,7 @@ export const bountiesSearchIndex = createSearchIndexUpdateProcessor({
         JOIN "ImageConnection" ic ON ic."imageId" = i.id AND ic."entityId" IN (SELECT "id" FROM target) AND ic."entityType" = 'Bounty'
         WHERE i."ingestion" = 'Scanned'
           AND i."needsReview" IS NULL
+          AND i."hidden" IS NULL
         GROUP BY ic."entityId"
       ), tags AS MATERIALIZED (
         SELECT

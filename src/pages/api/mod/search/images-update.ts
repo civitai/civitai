@@ -21,6 +21,7 @@ const IMAGE_WHERE: (idOffset: number) => Prisma.Sql[] = (idOffset: number) => [
   Prisma.sql`i."tosViolation" = false`,
   Prisma.sql`i."type" = 'image'`,
   Prisma.sql`i."needsReview" IS NULL`,
+  Prisma.sql`i."hidden" IS NULL`,
   Prisma.sql`p."publishedAt" IS NOT NULL`,
   Prisma.sql`p."availability" != 'Private'::"Availability"`,
 ];
