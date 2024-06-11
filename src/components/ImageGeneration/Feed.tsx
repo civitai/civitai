@@ -63,7 +63,7 @@ export function Feed() {
             );
             if (!request) return null;
 
-            return <GeneratedImage key={image.id} request={request} image={image} />;
+            return <GeneratedImage key={image.jobId} request={request} image={image} />;
           })
           .filter(isDefined)}
       </div>

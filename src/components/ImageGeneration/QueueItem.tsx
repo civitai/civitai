@@ -219,7 +219,7 @@ export function QueueItem({ request }: Props) {
           <div className={classes.grid}>
             {processing && <GenerationPlaceholder request={request} />}
             {images.map((image) => (
-              <GeneratedImage key={image.id} image={image} request={request} />
+              <GeneratedImage key={image.jobId} image={image} request={request} />
             ))}
           </div>
         )}
