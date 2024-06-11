@@ -108,6 +108,7 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
 
   const [type, allowDerivatives] = form.watch(['type', 'allowDerivatives']);
   const [nsfw, poi] = form.watch(['nsfw', 'poi']);
+  const allowCommercialUse = form.watch('allowCommercialUse');
   const hasPoiInNsfw = nsfw && poi;
   const { isDirty, errors } = form.formState;
 
@@ -348,11 +349,45 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                         Select all permissions you would like to apply to your model.
                       </Text>
                     </Stack>
-                    <InputCheckboxGroup spacing="xs" name="allowCommercialUse">
+                    <Checkbox.Group
+                      spacing="xs"
+                      value={allowCommercialUse}
+                      defaultValue={defaultValues.allowCommercialUse}
+                      onChange={(v: CommercialUse[]) => {
+                        if (v.includes(CommercialUse.Sell)) {
+                          const deduped = new Set([
+                            ...v,
+                            CommercialUse.RentCivit,
+                            CommercialUse.Rent,
+                          ]);
+                          form.setValue('allowCommercialUse', Array.from(deduped), {
+                            shouldDirty: true,
+                          });
+                        } else if (v.includes(CommercialUse.Rent)) {
+                          const deduped = new Set([...v, CommercialUse.RentCivit]);
+                          form.setValue('allowCommercialUse', Array.from(deduped), {
+                            shouldDirty: true,
+                          });
+                        } else {
+                          form.setValue('allowCommercialUse', v, { shouldDirty: true });
+                        }
+                      }}
+                    >
                       {commercialUseOptions.map(({ value, label }) => (
-                        <Checkbox key={value} value={value} label={label} />
+                        <Checkbox
+                          key={value}
+                          value={value}
+                          label={label}
+                          disabled={
+                            (value === CommercialUse.RentCivit &&
+                              (allowCommercialUse?.includes(CommercialUse.Sell) ||
+                                allowCommercialUse?.includes(CommercialUse.Rent))) ||
+                            (value === CommercialUse.Rent &&
+                              allowCommercialUse?.includes(CommercialUse.Sell))
+                          }
+                        />
                       ))}
-                    </InputCheckboxGroup>
+                    </Checkbox.Group>
                   </Stack>
                 </ContainerGrid.Col>
               </ContainerGrid>
