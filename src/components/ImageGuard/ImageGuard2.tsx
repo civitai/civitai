@@ -155,16 +155,16 @@ function ImageGuardContentInner({
       {!show && explain && (
         <BlurToggle>
           {(toggle) => (
-            <Center className="absolute z-20 transform -translate-x-1/2 -translate-y-[60%] top-1/2 left-1/2 flex flex-col text-white">
+            <Center className="absolute left-1/2 top-1/2 z-20 flex -translate-x-1/2 -translate-y-[60%] flex-col text-white">
               <Stack align="center" spacing="sm" w="100%">
-                <Text size="sm" className="text-shadow-sm shadow-black/50">
+                <Text size="sm" className="shadow-black/50 text-shadow-sm">
                   This image is rated
                 </Text>
                 <Badge
                   color="red"
                   size="xl"
                   classNames={classes}
-                  className="shadow shadow-black/30 min-w-[32px] text-center"
+                  className="min-w-[32px] text-center shadow shadow-black/30"
                 >
                   {browsingLevelLabels[browsingLevel as NsfwLevel]}
                 </Badge>
@@ -214,8 +214,7 @@ export function BrowsingLevelBadge({
   browsingLevel?: number;
 } & BadgeProps & { onClick?: () => void; sfwClassName?: string; nsfwClassName?: string }) {
   const { classes, cx } = useBadgeStyles({ browsingLevel });
-  if (!browsingLevel) return null;
-  const nsfw = Flags.hasFlag(nsfwBrowsingLevelsFlag, browsingLevel);
+  const nsfw = Flags.hasFlag(nsfwBrowsingLevelsFlag, browsingLevel ?? NsfwLevel.XXX);
 
   const badgeClass = cx(className, {
     [sfwClassName ? sfwClassName : '']: !nsfw,
