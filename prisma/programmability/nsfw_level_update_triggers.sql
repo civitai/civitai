@@ -43,6 +43,25 @@ FOR EACH ROW
 EXECUTE FUNCTION update_image_nsfw_level();
 
 
+CREATE OR REPLACE FUNCTION update_image_hidden()
+RETURNS TRIGGER AS $image_hidden$
+BEGIN
+  -- 24 is the aggregate of our graphic nsfwLevel bitwise enum flags
+  IF ((24 | NEW."nsfwLevel") = 24 AND NEW.meta->>'prompt' IS NULL) THEN
+    NEW.hidden = 'MissingMetadata';
+  ELSIF (NEW.hidden = 'MissingMetadata') THEN
+    NEW.hidden = NULL;
+  END IF;
+  RETURN NEW;
+END;
+$image_hidden$ LANGUAGE plpgsql;
+---
+-- setup image trigger
+CREATE OR REPLACE TRIGGER image_nsfw_level_meta_change
+BEFORE UPDATE OF "nsfwLevel", "meta" ON "Image"
+FOR EACH ROW
+EXECUTE FUNCTION update_image_hidden();
+
 -- POST TRIGGER
 CREATE OR REPLACE FUNCTION update_post_nsfw_level()
 RETURNS TRIGGER AS $post_nsfw_level$
