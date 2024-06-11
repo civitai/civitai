@@ -945,7 +945,6 @@ const getImageGenerationData = async (id: number): Promise<Generation.Data> => {
       m.id "modelId",
       m.name "modelName",
       m.type "modelType",
-      m.minor,
       ir."hash",
       ir.strength,
       gc.covered
