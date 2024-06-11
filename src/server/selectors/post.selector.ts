@@ -22,6 +22,7 @@ export const editPostImageSelect = Prisma.validator<Prisma.ImageSelect>()({
   blockedFor: true,
   nsfwLevel: true,
   index: true,
+  hidden: true,
   tools: {
     select: {
       notes: true,
