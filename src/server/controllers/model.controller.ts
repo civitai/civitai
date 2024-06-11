@@ -920,6 +920,37 @@ export const getMyTrainingModelsHandler = async ({
   }
 };
 
+export const getAvailableTrainingModelsHandler = async ({
+  ctx,
+}: {
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    return await dbRead.model.findMany({
+      where: {
+        userId: ctx.user.id,
+        uploadType: ModelUploadType.Trained,
+        status: { notIn: [ModelStatus.Deleted] },
+      },
+      select: {
+        id: true,
+        name: true,
+        modelVersions: {
+          select: {
+            id: true,
+            trainingDetails: true,
+            baseModel: true,
+          },
+        },
+      },
+      orderBy: { updatedAt: 'desc' },
+    });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
 export const reorderModelVersionsHandler = async ({
   input,
 }: {

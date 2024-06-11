@@ -1,24 +1,22 @@
 import { z } from 'zod';
-
-import { env } from '~/env/server.mjs';
 import {
-  toggleCheckpointCoverageHandler,
   changeModelModifierHandler,
   declineReviewHandler,
   deleteModelHandler,
   findResourcesToAssociateHandler,
   getAssociatedResourcesCardDataHandler,
+  getAvailableTrainingModelsHandler,
   getDownloadCommandHandler,
   getModelByHashesHandler,
   getModelDetailsForReviewHandler,
   getModelGallerySettingsHandler,
   getModelHandler,
   getModelReportDetailsHandler,
+  getModelsInfiniteHandler,
+  getModelsPagedSimpleHandler,
   getModelTemplateFieldsHandler,
   getModelTemplateFromBountyHandler,
   getModelVersionsHandler,
-  getModelsInfiniteHandler,
-  getModelsPagedSimpleHandler,
   getMyDraftModelsHandler,
   getMyTrainingModelsHandler,
   getSimpleModelsInfiniteHandler,
@@ -26,6 +24,7 @@ import {
   reorderModelVersionsHandler,
   requestReviewHandler,
   restoreModelHandler,
+  toggleCheckpointCoverageHandler,
   toggleModelLockHandler,
   unpublishModelHandler,
   updateGallerySettingsHandler,
@@ -35,17 +34,16 @@ import { dbRead } from '~/server/db/client';
 import { applyUserPreferences, cacheIt, edgeCacheIt } from '~/server/middleware.trpc';
 import { getAllQuerySchema, getByIdSchema } from '~/server/schema/base.schema';
 import {
-  GetAllModelsOutput,
-  ModelInput,
   changeModelModifierSchema,
   declineReviewSchema,
   deleteModelSchema,
   findResourcesToAssociateSchema,
+  GetAllModelsOutput,
   getAllModelsSchema,
   getAssociatedResourcesSchema,
   getDownloadSchema,
-  getModelVersionsSchema,
   getModelsWithCategoriesSchema,
+  getModelVersionsSchema,
   getSimpleModelsInfiniteSchema,
   modelByHashesInput,
   modelUpsertSchema,
@@ -74,9 +72,7 @@ import {
   publicProcedure,
   router,
 } from '~/server/trpc';
-import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
-import { prepareFile } from '~/utils/file-helpers';
-import { checkFileExists, getS3Client } from '~/utils/s3-utils';
+import { throwAuthorizationError } from '~/server/utils/errorHandling';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   if (!ctx.user) throw throwAuthorizationError();
@@ -126,6 +122,7 @@ export const modelRouter = router({
   getMyTrainingModels: protectedProcedure
     .input(getAllQuerySchema)
     .query(getMyTrainingModelsHandler),
+  getAvailableTrainingModels: protectedProcedure.query(getAvailableTrainingModelsHandler),
   upsert: guardedProcedure.input(modelUpsertSchema).mutation(upsertModelHandler),
   delete: protectedProcedure
     .input(deleteModelSchema)
