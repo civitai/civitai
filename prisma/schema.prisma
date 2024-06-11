@@ -499,6 +499,7 @@ model Model {
   nsfw                Boolean         @default(false)
   tosViolation        Boolean         @default(false)
   poi                 Boolean         @default(false)
+  minor               Boolean         @default(false)
   userId              Int
   user                User            @relation("creator", fields: [userId], references: [id])
   status              ModelStatus     @default(Draft)

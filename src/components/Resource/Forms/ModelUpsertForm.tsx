@@ -58,6 +58,9 @@ const schema = modelUpsertSchema
   })
   .refine((data) => !(data.nsfw && data.poi), {
     message: 'Mature content depicting actual people is not permitted.',
+  })
+  .refine((data) => !(data.nsfw && data.minor), {
+    message: 'Mature content depicting minors is not permitted.',
   });
 const querySchema = z.object({
   category: z.preprocess(parseNumericString, z.number().optional()),
@@ -72,7 +75,7 @@ const commercialUseOptions: Array<{ value: CommercialUse; label: string }> = [
   { value: CommercialUse.Sell, label: 'Sell this model or merges' },
 ];
 
-const lockableProperties = ['nsfw', 'poi', 'category', 'tags'];
+const lockableProperties = ['nsfw', 'poi', 'minor', 'category', 'tags'];
 
 export function ModelUpsertForm({ model, children, onSubmit }: Props) {
   const router = useRouter();
@@ -376,6 +379,12 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                   label="Is intended to produce mature themes"
                   disabled={isLocked('nsfw')}
                   description={isLockedDescription('category')}
+                />
+                <InputCheckbox
+                  name="minor"
+                  label="Depicts a minor"
+                  disabled={isLocked('minor')}
+                  description={isLockedDescription('minor')}
                 />
               </Stack>
             </Paper>

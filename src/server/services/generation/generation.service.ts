@@ -691,6 +691,11 @@ export const createGenerationRequest = async ({
   const isPromptNsfw = includesNsfw(params.prompt);
   nsfw ??= isPromptNsfw !== false;
 
+  const hasMinorResource = resourceData.some((resource) => resource.model.minor);
+  if (hasMinorResource) {
+    nsfw = false;
+  }
+
   // Disable nsfw if the prompt contains minor words
   // POI is handled via SPMs within the worker
   if (includesMinor(params.prompt)) nsfw = false;
@@ -940,6 +945,7 @@ const getImageGenerationData = async (id: number): Promise<Generation.Data> => {
       m.id "modelId",
       m.name "modelName",
       m.type "modelType",
+      m.minor,
       ir."hash",
       ir.strength,
       gc.covered
