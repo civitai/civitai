@@ -436,7 +436,7 @@ export const getArticles = async ({
     const coverIds = articles.map((x) => x.coverId).filter(isDefined);
     const coverImages = coverIds.length
       ? await dbRead.image.findMany({
-          where: { id: { in: coverIds } },
+          where: { id: { in: coverIds }, hidden: null, needsReview: null, ingestion: 'Scanned' },
           select: imageSelect,
         })
       : [];
@@ -457,9 +457,7 @@ export const getArticles = async ({
       .map(({ tags, stats, user, userCosmetics, cursorId, ...article }) => {
         const { profilePictureId, ...u } = user;
         const profilePicture = profilePictures.find((p) => p.id === profilePictureId) ?? null;
-        const coverImage = coverImages.find(
-          (x) => x.id === article.coverId && !x.hidden && !x.needsReview
-        );
+        const coverImage = coverImages.find((x) => x.id === article.coverId);
 
         return {
           ...article,
