@@ -12,6 +12,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { TagVotableEntityType, VotableTagModel } from '~/libs/tags';
 import { getIsPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { trpc } from '~/utils/trpc';
+import { NsfwLevel } from '~/server/common/enums';
 
 export function VotableTags({
   entityId: id,
@@ -63,13 +64,13 @@ export function VotableTags({
   const showAddibles = !collapsible || showAll;
   return (
     <Group spacing={4} {...props}>
-      {nsfwLevel && type === 'image' && (
+      {(nsfwLevel || currentUser?.isModerator) && type === 'image' && (
         <BrowsingLevelBadge
           radius="xs"
           browsingLevel={nsfwLevel}
           className="cursor-pointer"
           onClick={() =>
-            currentUser ? openSetNsfwLevelModal({ imageId: id, nsfwLevel }) : undefined
+            currentUser ? openSetNsfwLevelModal({ imageId: id, nsfwLevel ?? NsfwLevel.XXX }) : undefined
           }
           sfwClassName={classes.nsfwBadge}
         />

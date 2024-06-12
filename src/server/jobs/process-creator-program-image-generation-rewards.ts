@@ -68,8 +68,8 @@ export const processCreatorProgramImageGenerationRewards = createJob(
 
     const date = dayjs();
     // We grant buzz for the previous month on start of month.
-    // Extract 7 days in case 1 month  = 30 days and may break february.
-    const lastMonth = date.subtract(7, 'day').startOf('month');
+    // Extract 26 days in case 1 month  = 30 days and may break february.
+    const lastMonth = date.subtract(26, 'day').startOf('month');
     const chLastUpdate = dayjs(lastUpdate).toISOString();
 
     // Get all records that need to be processed
@@ -111,7 +111,6 @@ export const processCreatorProgramImageGenerationRewards = createJob(
         if (amount === 0) {
           return null;
         }
-
 
         return {
           fromAccountId: 0,
