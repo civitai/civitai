@@ -156,6 +156,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   const [selectedRunIndex, setSelectedRunIndex] = useState<number>(0);
   const selectedRun = runs[selectedRunIndex] ?? defaultRun;
 
+  const [multiMode, setMultiMode] = useState(runs.length > 1);
   const [openedSections, setOpenedSections] = useState<string[]>([]);
   const [etaMins, setEtaMins] = useState<number | undefined>(undefined);
   // const [debouncedEtaMins] = useDebouncedValue(etaMins, 2000);
@@ -214,6 +215,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
       );
       updateRun(model.id, selectedRun.id, { params: { numRepeats } });
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedRun.id, thisMetadata?.numImages]);
 
   // Set targetSteps automatically on value changes
@@ -238,6 +240,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         params: { targetSteps: newSteps },
       });
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     selectedRun.params.maxTrainEpochs,
     selectedRun.params.numRepeats,
@@ -263,6 +266,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     if (price !== selectedRun.buzzCost) {
       updateRun(model.id, selectedRun.id, { buzzCost: price });
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     selectedRun.params.targetSteps,
     selectedRun.highPriority,
@@ -270,8 +274,6 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     formBaseModelType,
     status.cost,
   ]);
-
-  // TODO there is some bug with the optimizer being blank...
 
   // Adjust optimizer and related settings
   useEffect(() => {
@@ -291,6 +293,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         params: { optimizerArgs: newOptimizerArgs, lrScheduler: newScheduler },
       });
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedRun.params.optimizerType]);
 
   // - Apply default params with overrides and calculations upon base model selection
@@ -337,7 +340,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   const createFileMutation = trpc.modelFile.create.useMutation();
   const doTraining = trpc.training.createRequest.useMutation();
 
-  const doTrainingMut = async (modelVersionId: number, idx: number) => {
+  const doTrainingMut = async (modelVersionId: number, idx: number, runId: number) => {
     try {
       await doTraining.mutateAsync({ modelVersionId });
 
@@ -347,6 +350,8 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
       showSuccessNotification({
         message: `Submitted ${finishedRuns}/${runs.length} runs...`,
       });
+
+      removeRun(model.id, runId);
 
       if (finishedRuns === runs.length) {
         showSuccessNotification({
@@ -362,7 +367,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     } catch (e) {
       const error = e as TRPCClientErrorBase<DefaultErrorShape>;
       showErrorNotification({
-        title: `Failed to submit run #${idx} for training`,
+        title: `Failed to submit run #${idx + 1} for training`,
         error: new Error(error.message),
         reason: error.message ?? 'An unexpected error occurred. Please try again later.',
         autoClose: false,
@@ -370,6 +375,10 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
 
       if (idx > 0) {
         await deleteVersionMutation.mutateAsync({ id: modelVersionId });
+      }
+
+      if (finishedRuns === runs.length) {
+        setAwaitInvalidate(false);
       }
     }
   };
@@ -480,12 +489,15 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     setAwaitInvalidate(true);
 
     runs.forEach(async (run, idx) => {
-      const { params, customModel, samplePrompts, staging, highPriority } = run;
+      const { base, baseType, params, customModel, samplePrompts, staging, highPriority } = run;
       const { optimizerArgs, ...paramData } = params;
 
       const baseModelConvert: BaseModel =
         (customModel?.baseModel as BaseModel | undefined) ??
-        (formBaseModel === 'sdxl' ? 'SDXL 1.0' : formBaseModel === 'pony' ? 'Pony' : 'SD 1.5');
+        (base === 'sdxl' ? 'SDXL 1.0' : base === 'pony' ? 'Pony' : 'SD 1.5');
+
+      // TODO there is a bug here where if >1 fails and then get resubmitted, the idx will be 0
+      //  and thus overwrites the first version...
 
       // update the first one since it exists, or create for others
       const versionMutateData: ModelVersionUpsertInput = {
@@ -500,8 +512,8 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         clipSkip: paramData.clipSkip,
         trainingDetails: {
           ...((thisModelVersion.trainingDetails as TrainingDetailsObj) ?? {}),
-          baseModel: formBaseModel,
-          baseModelType: formBaseModelType,
+          baseModel: base,
+          baseModelType: baseType,
           params: paramData,
           samplePrompts,
           staging,
@@ -514,7 +526,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         const newVersionId = response.id;
 
         if (idx === 0) {
-          await doTrainingMut(thisModelVersion.id, idx);
+          await doTrainingMut(newVersionId, idx, run.id);
         } else {
           try {
             const fileMutateData: ModelFileCreateInput = {
@@ -530,12 +542,12 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
             const fileResponse = await createFileMutation.mutateAsync(fileMutateData);
             const fileModelVersionId = fileResponse.modelVersion.id;
 
-            await doTrainingMut(fileModelVersionId, idx);
+            await doTrainingMut(fileModelVersionId, idx, run.id);
           } catch (e) {
             const error = e as TRPCClientErrorBase<DefaultErrorShape>;
             showErrorNotification({
               error: new Error(error.message),
-              title: `Failed to create model file for run #${idx}`,
+              title: `Failed to create model file for run #${idx + 1}`,
               autoClose: false,
             });
             finishedRuns++;
@@ -546,7 +558,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         const error = e as TRPCClientErrorBase<DefaultErrorShape>;
         showErrorNotification({
           error: new Error(error.message),
-          title: `Failed to save model version info for run #${idx}`,
+          title: `Failed to save model version info for run #${idx + 1}`,
           autoClose: false,
         });
         finishedRuns++;
@@ -606,8 +618,8 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         </Accordion.Item>
       </Accordion>
 
-      <Stack className={classes.sticky}>
-        <Group mt="md" position="apart" noWrap>
+      <Switch
+        label={
           <Group spacing={4}>
             <InfoPopover size="xs" iconProps={{ size: 16 }}>
               Submit up to {maxRuns} training runs at once.
@@ -615,8 +627,19 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
               You can use different base models and/or parameters, all trained on the same dataset.
               Each will be created as their own version.
             </InfoPopover>
-            <Title order={5}>Training Runs</Title>
+            <Text>Show Multi Training</Text>
           </Group>
+        }
+        labelPosition="left"
+        checked={multiMode}
+        mt="md"
+        disabled={runs.length > 1}
+        onChange={(event) => setMultiMode(event.currentTarget.checked)}
+      />
+
+      <Stack className={classes.sticky} sx={!multiMode ? { display: 'none' } : {}}>
+        <Group mt="md" position="apart" noWrap>
+          <Title order={5}>Training Runs</Title>
           <Group spacing="xs" ml="sm">
             <Button
               color="green"
@@ -659,7 +682,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
               variant="light"
               compact
               leftIcon={<IconX size={16} />}
-              // disabled={runs.length <= 1}
+              disabled={runs.length <= 1}
               onClick={() => {
                 removeRun(model.id, selectedRun.id);
                 setSelectedRunIndex(0);
@@ -1201,7 +1224,9 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         </Button>
         <BuzzTransactionButton
           loading={awaitInvalidate}
-          disabled={blockedModels.includes(formBaseModel ?? '') || !status.available}
+          disabled={
+            blockedModels.includes(formBaseModel ?? '') || !status.available || awaitInvalidate
+          }
           label={`Submit${runs.length > 1 ? ` (${runs.length} runs)` : ''}`}
           buzzAmount={buzzCost ?? 0}
           onPerformTransaction={handleSubmit}
