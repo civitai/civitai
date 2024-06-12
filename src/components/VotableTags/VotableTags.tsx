@@ -70,7 +70,9 @@ export function VotableTags({
           browsingLevel={nsfwLevel}
           className="cursor-pointer"
           onClick={() =>
-            currentUser ? openSetNsfwLevelModal({ imageId: id, nsfwLevel ?? NsfwLevel.XXX }) : undefined
+            currentUser
+              ? openSetNsfwLevelModal({ imageId: id, nsfwLevel: nsfwLevel ?? NsfwLevel.XXX })
+              : undefined
           }
           sfwClassName={classes.nsfwBadge}
         />
