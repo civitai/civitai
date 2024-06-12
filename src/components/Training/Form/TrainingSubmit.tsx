@@ -351,7 +351,8 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         message: `Submitted ${finishedRuns}/${runs.length} runs...`,
       });
 
-      removeRun(model.id, runId);
+      // TODO re-enable this, but for now it messes with the length
+      // removeRun(model.id, runId);
 
       if (finishedRuns === runs.length) {
         showSuccessNotification({
