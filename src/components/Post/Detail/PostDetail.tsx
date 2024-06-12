@@ -40,6 +40,7 @@ import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { PostComments } from '~/components/Post/Detail/PostComments';
 import { PostControls } from '~/components/Post/Detail/PostControls';
 import { PostImages } from '~/components/Post/Detail/PostImages';
+import { usePostContestCollectionDetails } from '~/components/Post/post.utils';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
@@ -79,6 +80,15 @@ export function PostDetailContent({ postId }: Props) {
     isLoading: imagesLoading,
   } = useQueryImages({ postId, pending: true, browsingLevel: undefined });
   const { data: postResources = [] } = trpc.post.getResources.useQuery({ id: postId });
+  const { collectionItems } = usePostContestCollectionDetails(
+    {
+      id: postId,
+    },
+    {
+      enabled: !!post?.collectionId,
+    }
+  );
+
   const hiddenExplained = useExplainHiddenImages(unfilteredImages);
 
   const meta = (
@@ -109,6 +119,8 @@ export function PostDetailContent({ postId }: Props) {
   const relatedResource =
     post.modelVersion?.id &&
     postResources.find((resource) => resource.modelVersionId === post.modelVersionId);
+
+  const postCollectionItem = collectionItems?.find((item) => item.postId === post.id);
 
   return (
     <>
@@ -260,7 +272,13 @@ export function PostDetailContent({ postId }: Props) {
               <Alert>Unable to load images</Alert>
             ) : (
               <>
-                <PostImages postId={post.id} images={images} isLoading={imagesLoading} />
+                <PostImages
+                  postId={post.id}
+                  images={images}
+                  isLoading={imagesLoading}
+                  collectionItems={collectionItems}
+                  isOwner={currentUser?.id === post.user.id}
+                />
                 {hiddenExplained.hasHidden && !imagesLoading && (
                   <Paper component={Center} p="xl" mih={300} withBorder>
                     <ExplainHiddenImages {...hiddenExplained} />

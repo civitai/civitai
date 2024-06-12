@@ -23,6 +23,7 @@ import {
   getPostTags,
   getPostsInfinite,
   getPostResources,
+  getPostContestCollectionDetails,
 } from './../services/post.service';
 import { TRPCError } from '@trpc/server';
 import { PostCreateInput } from '~/server/schema/post.schema';
@@ -488,6 +489,22 @@ export const getPostResourcesHandler = async ({ input }: { input: GetByIdInput }
     const resources = await getPostResources({ ...input });
 
     return resources.filter((x) => x.name !== 'vae');
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+// #endregion
+
+// #region [post for collections]
+export const getPostContestCollectionDetailsHandler = async ({
+  input,
+}: {
+  input: GetByIdInput;
+}) => {
+  try {
+    const items = await getPostContestCollectionDetails({ ...input });
+    return items;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

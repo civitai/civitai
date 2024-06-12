@@ -1,7 +1,9 @@
 import {
   Availability,
   CollectionContributorPermission,
+  CollectionMode,
   CollectionReadConfiguration,
+  CollectionType,
   Prisma,
   TagTarget,
   TagType,
@@ -836,4 +838,43 @@ export const updatePostNsfwLevel = async (ids: number | number[]) => {
     -- Update post NSFW level
     SELECT update_post_nsfw_levels(ARRAY[${ids.join(',')}]);
   `);
+};
+
+export const getPostContestCollectionDetails = async ({ id }: GetByIdInput) => {
+  const post = await dbRead.post.findUnique({
+    where: { id },
+    select: { collectionId: true, userId: true },
+  });
+
+  if (!post || !post.collectionId) return [];
+
+  const collection = await dbRead.collection.findUnique({
+    where: { id: post.collectionId },
+  });
+
+  if (!collection || collection?.mode !== CollectionMode?.Contest) return [];
+
+  const isImageCollection = collection.type === CollectionType.Image;
+
+  const images = isImageCollection
+    ? await dbRead.image.findMany({
+        where: { postId: id },
+      })
+    : [];
+
+  const items = await dbRead.collectionItem.findMany({
+    where: {
+      collectionId: post.collectionId,
+      postId: isImageCollection ? undefined : id,
+      imageId: isImageCollection ? { in: images.map((i) => i.id) } : undefined,
+    },
+    select: { postId: true, imageId: true, status: true, createdAt: true, reviewedAt: true },
+  });
+
+  return items.map((item) => {
+    return {
+      ...item,
+      collection,
+    };
+  });
 };
