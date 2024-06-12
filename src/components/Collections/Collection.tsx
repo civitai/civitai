@@ -68,6 +68,7 @@ import { truncate } from 'lodash-es';
 import { ImageContextMenuProvider } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { removeTags } from '~/utils/string-helpers';
+import { useRouter } from 'next/router';
 
 const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
   const { set, ...query } = useModelQueryParams();
@@ -360,6 +361,7 @@ export function Collection({
   const { classes } = useStyles();
   const [opened, setOpened] = useState(false);
   const currentUser = useCurrentUser();
+  const router = useRouter();
 
   const { data: { collection, permissions } = {}, isLoading } = trpc.collection.getById.useQuery({
     id: collectionId,
@@ -540,7 +542,13 @@ export function Collection({
                           color="blue"
                           variant="subtle"
                           radius="xl"
-                          onClick={() => setOpened(true)}
+                          onClick={() => {
+                            if (!!metadata.existingEntriesDisabled) {
+                              router.push(`/posts/create?collectionId=${collection.id}`);
+                            } else {
+                              setOpened(true);
+                            }
+                          }}
                         >
                           <IconCirclePlus />
                         </ActionIcon>

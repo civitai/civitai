@@ -42,6 +42,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
     predicate: (mutation) => mutation.options.mutationKey?.flat().includes('post') ?? false,
     exact: false,
   });
+  const publishLabel = post.collectionId ? 'Submit' : 'Publish';
   // #endregion
 
   // #region [publish post]
@@ -94,8 +95,8 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
 
   return (
     <>
-      <div className="flex flex-col gap-0 5">
-        <div className="flex justify-between items-center">
+      <div className="5 flex flex-col gap-0">
+        <div className="flex items-center justify-between">
           <Title size="sm">POST</Title>
           <Badge color={mutating > 0 ? 'yellow' : 'green'} size="lg">
             {mutating > 0 ? 'Saving' : 'Saved'}
@@ -107,7 +108,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
             <>
               Your post is currently{' '}
               <Tooltip
-                label="Click the Publish button to make your post Public to share with the Civitai community for comments and reactions."
+                label={`Click the ${publishLabel} button to make your post Public to share with the Civitai community for comments and reactions.`}
                 {...tooltipProps}
               >
                 <Text component="span" underline>
@@ -142,26 +143,36 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
           width={260}
           withArrow
         >
-          <Button.Group>
+          {post.collectionId ? (
             <Button
-              disabled={!canPublish}
+              disabled={!canPublish || !!mutating}
               onClick={() => handlePublish()}
               loading={updatePostMutation.isLoading}
-              className="flex-1"
             >
-              Publish
+              {publishLabel}
             </Button>
-            <Tooltip label="Schedule Publish" withArrow>
+          ) : (
+            <Button.Group>
               <Button
-                variant="outline"
+                disabled={!canPublish || !!mutating}
+                onClick={() => handlePublish()}
                 loading={updatePostMutation.isLoading}
-                onClick={handleScheduleClick}
-                disabled={!canPublish}
+                className="flex-1"
               >
-                <IconClock size={20} />
+                {publishLabel}
               </Button>
-            </Tooltip>
-          </Button.Group>
+              <Tooltip label="Schedule Publish" withArrow>
+                <Button
+                  variant="outline"
+                  loading={updatePostMutation.isLoading}
+                  onClick={handleScheduleClick}
+                  disabled={!canPublish || !!mutating}
+                >
+                  <IconClock size={20} />
+                </Button>
+              </Tooltip>
+            </Button.Group>
+          )}
         </Tooltip>
       ) : (
         <Button.Group>

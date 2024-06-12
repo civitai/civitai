@@ -133,5 +133,6 @@ export const postEditQuerySchema = z.object({
   clubId: z.coerce.number().optional(),
   reviewing: z.string().optional(),
   src: z.coerce.string().optional(),
-  collectionId: numericStringArray().optional(),
+  collections: numericStringArray().optional(),
+  collectionId: z.coerce.number().optional(),
 });

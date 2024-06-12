@@ -234,7 +234,7 @@ export const useCollectionsForPostCreation = ({
       ids: collectionIds,
     },
     {
-      enabled: collectionIds?.lenght > 0,
+      enabled: collectionIds?.length > 0,
     }
   );
 

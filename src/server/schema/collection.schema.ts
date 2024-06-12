@@ -96,6 +96,7 @@ export const collectionMetadataSchema = z
     maxItemsPerUser: z.coerce.number().optional(),
     submissionStartDate: z.coerce.date().nullish(),
     submissionEndDate: z.coerce.date().nullish(),
+    existingEntriesDisabled: z.coerce.boolean().optional(),
   })
   .refine(
     ({ submissionStartDate, submissionEndDate }) => {

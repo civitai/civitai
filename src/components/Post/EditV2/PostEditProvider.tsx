@@ -79,6 +79,9 @@ const createContextStore = (post?: PostDetailEditable) =>
             data: { ...data, index },
           })) ?? [],
         isReordering: false,
+        /**
+         * @deprecated
+         */
         setPost: (post) => set({ post: { ...post, images: [] } }),
         updatePost: (cb) =>
           set(({ post }) => {

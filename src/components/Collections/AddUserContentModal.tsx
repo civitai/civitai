@@ -157,7 +157,7 @@ export function AddUserContentModal({ collectionId, opened, onClose, ...props }:
             {error}
           </AlertWithIcon>
         )}
-        <Button component={NextLink} href={`/posts/create?collection=${collectionId}`}>
+        <Button component={NextLink} href={`/posts/create?collectionId=${collectionId}`}>
           Create a new image post
         </Button>
 

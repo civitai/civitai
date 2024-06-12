@@ -121,7 +121,7 @@ export const getUserCollectionPermissionsById = async ({
   isModerator?: boolean;
 }) => {
   const permissions: CollectionContributorPermissionFlags = {
-    collectionId,
+    collectionId: id,
     read: false,
     write: false,
     writeReview: false,
@@ -1315,7 +1315,7 @@ export function getContributorCount({ collectionIds: ids }: { collectionIds: num
   `;
 }
 
-const validateContestCollectionEntry = async ({
+export const validateContestCollectionEntry = async ({
   collectionId,
   userId,
   metadata,
