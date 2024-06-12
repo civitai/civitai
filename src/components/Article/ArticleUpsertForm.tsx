@@ -18,7 +18,7 @@ import {
 import { TagTarget } from '@prisma/client';
 import { IconQuestionMark, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { forwardRef, useEffect, useRef, useState } from 'react';
 import { z } from 'zod';
 
 import { BackButton } from '~/components/BackButton/BackButton';
@@ -79,10 +79,15 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
-export const browsingLevelSelectOptions = browsingLevels.map((level) => ({
-  label: getBrowsingLevelDetails(level),
-  value: String(level),
-}));
+const browsingLevelSelectOptions = browsingLevels.map((level) => {
+  const { name: label, description } = getBrowsingLevelDetails(level);
+
+  return {
+    label,
+    description,
+    value: String(level),
+  };
+});
 
 export function ArticleUpsertForm({ article }: Props) {
   const currentUser = useCurrentUser();
@@ -247,6 +252,9 @@ export function ArticleUpsertForm({ article }: Props) {
             <InputSelect
               name="userNsfwLevel"
               data={browsingLevelSelectOptions}
+              itemComponent={MaturitylevelOption}
+              placeholder="Select a maturity level"
+              maxDropdownHeight={600}
               label={
                 <Group spacing={4} noWrap>
                   Maturity Level
@@ -428,3 +436,20 @@ type ActionButtonProps = StackProps & {
   publishButtonProps: FormButtonProps;
   article?: ArticleGetById;
 };
+
+const MaturitylevelOption = forwardRef<HTMLDivElement, ItemProps>(
+  ({ label, description, ...others }: ItemProps, ref) => (
+    <div ref={ref} {...others}>
+      <Text>{label}</Text>
+      <Text size="xs" color="dimmed">
+        {description}
+      </Text>
+    </div>
+  )
+);
+MaturitylevelOption.displayName = 'MaturitylevelOption';
+
+interface ItemProps extends React.ComponentPropsWithoutRef<'div'> {
+  label: string;
+  description: string;
+}

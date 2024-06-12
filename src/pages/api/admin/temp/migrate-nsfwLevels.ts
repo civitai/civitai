@@ -125,10 +125,10 @@ async function migrateImagesHidden(req: NextApiRequest, res: NextApiResponse) {
     processor: async ({ start, end, cancelFns }) => {
       const { cancel, result } = await pgDbWrite.cancellableQuery(Prisma.sql`
         UPDATE "Image" i
-        SET hidden = CASE(
+        SET hidden = CASE
           WHEN i.meta->>'prompt' IS NULL THEN ${HiddenType.MissingMetadata}::"HiddenType"
           ELSE NULL
-        ),
+        END,
         "hideMeta" = false
         WHERE i.id BETWEEN ${start} AND ${end}
           AND i."nsfwLevel" != 0 AND (i."nsfwLevel" & ${graphicBrowsingLevels}) != 0;
