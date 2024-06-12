@@ -247,15 +247,19 @@ function filterPreferences<
           hidden.browsingLevel++;
           return false;
         }
+
         if (article.user && hiddenUsers.get(article.user.id)) {
           hidden.users++;
           return false;
         }
-        for (const tag of article.tags ?? [])
+
+        for (const tag of article.tags ?? []) {
           if (hiddenTags.get(tag.id)) {
             hidden.tags++;
             return false;
           }
+        }
+
         if (article.coverImage) {
           if (hiddenImages.get(article.coverImage.id)) {
             hidden.images++;
@@ -266,7 +270,10 @@ function filterPreferences<
               hidden.tags++;
               return false;
             }
+        } else {
+          return false;
         }
+
         return true;
       });
 
@@ -348,20 +355,26 @@ function filterPreferences<
             hidden.browsingLevel++;
             return false;
           }
+
           if (hiddenUsers.get(bounty.user.id)) {
             hidden.users++;
             return false;
           }
-          for (const image of bounty.images ?? [])
+
+          for (const image of bounty.images ?? []) {
             if (hiddenImages.get(image.id)) {
               hidden.images++;
               return false;
             }
-          for (const tag of bounty.tags ?? [])
+          }
+
+          for (const tag of bounty.tags ?? []) {
             if (hiddenTags.get(tag)) {
               hidden.tags++;
               return false;
             }
+          }
+
           return true;
         })
         .map(({ images, ...x }) => {
@@ -379,12 +392,7 @@ function filterPreferences<
             hidden.noImages++;
           }
 
-          return filteredImages.length
-            ? {
-                ...x,
-                images: filteredImages,
-              }
-            : null;
+          return filteredImages.length ? { ...x, images: filteredImages } : null;
         })
         .filter(isDefined);
 

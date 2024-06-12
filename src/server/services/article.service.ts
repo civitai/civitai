@@ -457,7 +457,9 @@ export const getArticles = async ({
       .map(({ tags, stats, user, userCosmetics, cursorId, ...article }) => {
         const { profilePictureId, ...u } = user;
         const profilePicture = profilePictures.find((p) => p.id === profilePictureId) ?? null;
-        const coverImage = coverImages.find((x) => x.id === article.coverId);
+        const coverImage = coverImages.find(
+          (x) => x.id === article.coverId && !x.hidden && !x.needsReview
+        );
 
         return {
           ...article,
