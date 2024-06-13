@@ -25,6 +25,10 @@ const gradients = {
     inner: ['#135F20', '#020709'],
     outer: ['#53C42B', '#1D962F'],
   },
+  pride: {
+    inner: ['#746A11', '#2A7911', '#117642', '#106A71', '#0E145E', '#200D57'],
+    outer: ['#E04A4A', '#E04A4A', '#E0B54A', '#4AE0D4', '#4A6AE0', '#D44AE0'],
+  },
 };
 
 export function Logo({ ...props }: LogoProps) {
@@ -45,6 +49,9 @@ export function Logo({ ...props }: LogoProps) {
     // New Year
     if (month === 11 && day >= 26) return 'newyear';
     if (month === 2 && day >= 14 && day <= 17) return 'stpatty';
+
+    // Pride
+    if (month === 5) return 'pride';
 
     return null;
   }, [showHoliday]);
@@ -69,6 +76,11 @@ export function Logo({ ...props }: LogoProps) {
         </>
       )}
       <svg className={classes.svg} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 107 22.7">
+        <defs>
+          <linearGradient id="prideGradient" gradientTransform="rotate(45)">
+            {generatePrideGradient(gradients.pride.outer)}
+          </linearGradient>
+        </defs>
         <g className={classes.text}>
           <path
             className={classes.c}
@@ -87,30 +99,43 @@ export function Logo({ ...props }: LogoProps) {
           <path className={classes.accent} d="M46.7,16.2v5.1h-5.1" />
         </g>
         <g className={classes.badge}>
-          <linearGradient
-            id="innerGradient"
-            gradientUnits="userSpaceOnUse"
-            x1="10.156"
-            y1="22.45"
-            x2="10.156"
-            y2="2.4614"
-            gradientTransform="matrix(1 0 0 -1 0 24)"
-          >
-            <stop offset="0" style={{ stopColor: innerGradient[0] }} />
-            <stop offset="1" style={{ stopColor: innerGradient[1] }} />
-          </linearGradient>
-          <linearGradient
-            id="outerGradient"
-            gradientUnits="userSpaceOnUse"
-            x1="10.156"
-            y1="22.45"
-            x2="10.156"
-            y2="2.45"
-            gradientTransform="matrix(1 0 0 -1 0 24)"
-          >
-            <stop offset="0" style={{ stopColor: outerGradient[0] }} />
-            <stop offset="1" style={{ stopColor: outerGradient[1] }} />
-          </linearGradient>
+          {holiday === 'pride' ? (
+            <>
+              <linearGradient id="innerGradient" gradientTransform="rotate(45)">
+                {generatePrideGradient(gradients.pride.inner)}
+              </linearGradient>
+              <linearGradient id="outerGradient" gradientTransform="rotate(45)">
+                {generatePrideGradient(gradients.pride.outer)}
+              </linearGradient>
+            </>
+          ) : (
+            <>
+              <linearGradient
+                id="innerGradient"
+                gradientUnits="userSpaceOnUse"
+                x1="10.156"
+                y1="22.45"
+                x2="10.156"
+                y2="2.4614"
+                gradientTransform="matrix(1 0 0 -1 0 24)"
+              >
+                <stop offset="0" style={{ stopColor: innerGradient[0] }} />
+                <stop offset="1" style={{ stopColor: innerGradient[1] }} />
+              </linearGradient>
+              <linearGradient
+                id="outerGradient"
+                gradientUnits="userSpaceOnUse"
+                x1="10.156"
+                y1="22.45"
+                x2="10.156"
+                y2="2.45"
+                gradientTransform="matrix(1 0 0 -1 0 24)"
+              >
+                <stop offset="0" style={{ stopColor: outerGradient[0] }} />
+                <stop offset="1" style={{ stopColor: outerGradient[1] }} />
+              </linearGradient>
+            </>
+          )}
           <path
             style={{ fill: 'url(#innerGradient)' }}
             d="M1.5,6.6v10l8.7,5l8.7-5v-10l-8.7-5L1.5,6.6z"
@@ -292,12 +317,22 @@ const useStyles = createStyles((theme, _, getRef) => ({
   },
 
   newyear: {},
+
   stpatty: {
     [`.${getRef('ai')}`]: {
       fill: theme.colors.green[8],
     },
     [`.${getRef('accent')}`]: {
       fill: theme.colors.green[8],
+    },
+  },
+
+  pride: {
+    [`.${getRef('ai')}`]: {
+      fill: 'url(#prideGradient)',
+    },
+    [`.${getRef('accent')}`]: {
+      fill: 'url(#prideGradient)',
     },
   },
 }));
@@ -421,3 +456,11 @@ const peekOutDeer = keyframes({
     transform: 'scale(0.5)',
   },
 });
+
+const generatePrideGradient = (colors: string[]) => {
+  const stops = colors.map((color, index) => {
+    const offset = (index / (colors.length - 1)) * 100;
+    return <stop key={index} offset={`${offset}%`} stopColor={color} />;
+  });
+  return stops;
+};
