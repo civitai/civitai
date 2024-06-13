@@ -48,6 +48,7 @@ export const generationResourceSchema = z.object({
   minStrength: z.number().optional(),
   maxStrength: z.number().optional(),
   image: imageSchema.pick({ url: true }).optional(),
+  minor: z.boolean().optional(),
 
   // navigation props
   covered: z.boolean().optional(),

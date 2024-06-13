@@ -358,10 +358,13 @@ export const upsertModelHandler = async ({
 }) => {
   try {
     const { id: userId } = ctx.user;
-    const { nsfw, poi } = input;
+    const { nsfw, poi, minor } = input;
 
     if (nsfw && poi)
       throw throwBadRequestError('Mature content depicting actual people is not permitted.');
+
+    if (nsfw && minor)
+      throw throwBadRequestError('Mature content depicting minors is not permitted.');
 
     // Check tags for multiple categories
     const { tagsOnModels } = input;
