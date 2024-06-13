@@ -280,15 +280,16 @@ async function handleSuccess({ id, tags: incomingTags = [], source, context }: B
     const inappropriate = includesInappropriate(prompt, nsfw);
     if (inappropriate !== false) reviewKey = inappropriate;
     if (!reviewKey && nsfw) {
-      const [{ poi }] = await dbWrite.$queryRaw<{ poi: boolean }[]>`
+      const [{ poi, minor }] = await dbWrite.$queryRaw<{ poi: boolean; minor: boolean }[]>`
         WITH to_check AS (
           -- Check based on associated resources
           SELECT
-            COUNT(*) > 0 "poi"
+            COUNT(*) > 0 "poi",
+            COUNT(*) FILTER (WHERE m.minor) > 0 "minor"
           FROM "ImageResource" ir
           JOIN "ModelVersion" mv ON ir."modelVersionId" = mv.id
           JOIN "Model" m ON m.id = mv."modelId"
-          WHERE ir."imageId" = ${image.id} AND m.poi
+          WHERE ir."imageId" = ${image.id}
           UNION
           -- Check based on associated bounties
           SELECT
@@ -307,9 +308,10 @@ async function handleSuccess({ id, tags: incomingTags = [], source, context }: B
           JOIN "Bounty" b ON b.id = be."bountyId"
           WHERE ic."imageId" = ${image.id}
         )
-        SELECT bool_or(poi) "poi" FROM to_check;
+        SELECT bool_or(poi) "poi", bool_or(minor) "minor" FROM to_check;
       `;
       if (poi) reviewKey = 'poi';
+      if (minor) reviewKey = 'minor';
     }
     if (!reviewKey && hasMinorTag && !hasAdultTag && (!hasCartoonTag || nsfw)) {
       reviewKey = 'minor';
