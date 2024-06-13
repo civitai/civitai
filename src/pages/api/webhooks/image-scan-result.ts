@@ -284,17 +284,16 @@ async function handleSuccess({ id, tags: incomingTags = [], source, context }: B
         WITH to_check AS (
           -- Check based on associated resources
           SELECT
-            COUNT(*) > 0 "poi",
-            COUNT(*) FILTER (WHERE m.minor) > 0 "minor"
+            SUM(IIF(b.poi, 1, 0)) > 0 "poi",
+            SUM(IIF(m.minor, 1, 0)) > 0 "minor"
           FROM "ImageResource" ir
           JOIN "ModelVersion" mv ON ir."modelVersionId" = mv.id
-          JOIN "Model" m ON m.id = mv.id
+          JOIN "Model" m ON m.id = mv."modelId"
           WHERE ir."imageId" = ${image.id} AND m.poi
           UNION
           -- Check based on associated bounties
           SELECT
-            SUM(IIF(b.poi, 1, 0)) > 0 "poi",
-            false as "minor"
+            SUM(IIF(b.poi, 1, 0)) > 0 "poi"
           FROM "Image" i
           JOIN "ImageConnection" ic ON ic."imageId" = i.id
           JOIN "Bounty" b ON ic."entityType" = 'Bounty' AND b.id = ic."entityId"
@@ -302,8 +301,7 @@ async function handleSuccess({ id, tags: incomingTags = [], source, context }: B
           UNION
           -- Check based on associated bounty entries
           SELECT
-            SUM(IIF(b.poi, 1, 0)) > 0 "poi",
-            false as "minor"
+            SUM(IIF(b.poi, 1, 0)) > 0 "poi"
           FROM "Image" i
           JOIN "ImageConnection" ic ON ic."imageId" = i.id
           JOIN "BountyEntry" be ON ic."entityType" = 'BountyEntry' AND be.id = ic."entityId"
