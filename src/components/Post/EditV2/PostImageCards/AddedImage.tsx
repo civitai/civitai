@@ -54,7 +54,6 @@ import { trpc } from '~/utils/trpc';
 import { Popover, PopoverButton, PopoverPanel } from '@headlessui/react';
 import { Flags } from '~/shared/utils';
 import { graphicBrowsingLevels } from '~/shared/constants/browsingLevel.constants';
-import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
 import { Dropzone, FileWithPath } from '@mantine/dropzone';
 import { IconUpload } from '@tabler/icons-react';
@@ -64,6 +63,7 @@ import { constants } from '~/server/common/constants';
 import { auditMetaData } from '~/utils/metadata/audit';
 import { ComfyNodes } from '~/components/ImageMeta/ImageMeta';
 import { isEmpty } from 'lodash-es';
+import { calculateSizeInMegabytes } from '~/utils/json-helpers';
 
 // #region [types]
 type SimpleMetaPropsKey = keyof typeof simpleMetaProps;
@@ -772,7 +772,13 @@ function ComfyWorkflowCard() {
     const meta = await getMetadata(file).catch(() => undefined);
     const result = auditMetaData(meta, true);
 
-    if (!isEmpty(meta) && result.success) {
+    if (!isEmpty(meta) && meta.comfy && result.success) {
+      const comfyFieldSize = calculateSizeInMegabytes(meta.comfy);
+      if (comfyFieldSize > 1) {
+        setError('Comfy metadata is too large. Please consider updating your workflow');
+        return;
+      }
+
       setLoading(true);
       await updateImageMeta(meta);
       setLoading(false);

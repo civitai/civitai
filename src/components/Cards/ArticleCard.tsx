@@ -7,7 +7,6 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useRouter } from 'next/router';
 import { IconBolt, IconBookmark, IconEye, IconMessageCircle2 } from '@tabler/icons-react';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { slugit } from '~/utils/string-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import type { ArticleGetAllRecord } from '~/server/services/article.service';
