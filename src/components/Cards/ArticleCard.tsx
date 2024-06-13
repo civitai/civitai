@@ -65,10 +65,10 @@ export function ArticleCard({ data, aspectRatio }: Props) {
                     spacing={4}
                     position="apart"
                     align="top"
-                    className="absolute top-2 left-2 right-2 z-10"
+                    className="absolute inset-x-2 top-2 z-10"
                   >
                     <Group spacing={4}>
-                      <ImageGuard2.BlurToggle />
+                      <ImageGuard2.BlurToggle className={classes.chip} />
                       {category && (
                         <Badge size="sm" variant="gradient" gradient={{ from: 'cyan', to: 'blue' }}>
                           {category.name}
@@ -119,30 +119,42 @@ export function ArticleCard({ data, aspectRatio }: Props) {
               )}
             </Stack>
             <Group position="apart">
-              <Group spacing={4}>
-                <IconBadge icon={<IconBookmark size={14} />} color="dark">
+              <Badge className={cx(classes.statChip, classes.chip)} variant="light" radius="xl">
+                <Group spacing={2} noWrap>
+                  <IconBookmark size={14} strokeWidth={2.5} />
                   <Text size="xs" color="white">
                     {abbreviateNumber(favoriteCount)}
                   </Text>
-                </IconBadge>
-                <IconBadge icon={<IconMessageCircle2 size={14} />} color="dark">
+                </Group>
+                <Group spacing={2} noWrap>
+                  <IconMessageCircle2 size={14} strokeWidth={2.5} />
                   <Text size="xs" color="white">
                     {abbreviateNumber(commentCount)}
                   </Text>
-                </IconBadge>
+                </Group>
                 <InteractiveTipBuzzButton toUserId={user.id} entityType={'Article'} entityId={id}>
-                  <IconBadge icon={<IconBolt size={14} />} color="dark">
+                  <Group spacing={2} noWrap>
+                    <IconBolt size={14} strokeWidth={2.5} />
                     <Text size="xs" color="white">
                       {abbreviateNumber(tippedAmountCount + tippedAmount)}
                     </Text>
-                  </IconBadge>
+                  </Group>
                 </InteractiveTipBuzzButton>
-              </Group>
-              <IconBadge icon={<IconEye size={14} />} color="dark">
-                <Text size="xs" color="white">
-                  {abbreviateNumber(viewCount)}
-                </Text>
-              </IconBadge>
+              </Badge>
+              <Badge
+                className={cx(classes.statChip, classes.chip)}
+                pl={6}
+                pr={8}
+                variant="light"
+                radius="xl"
+              >
+                <Group spacing={4} noWrap>
+                  <IconEye size={14} strokeWidth={2.5} />
+                  <Text size="xs" color="white">
+                    {abbreviateNumber(viewCount)}
+                  </Text>
+                </Group>
+              </Badge>
             </Group>
           </Stack>
         </div>
