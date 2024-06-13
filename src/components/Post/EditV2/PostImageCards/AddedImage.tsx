@@ -11,6 +11,7 @@ import {
   Menu,
   Text,
   Tooltip,
+  Anchor,
 } from '@mantine/core';
 import { ImageIngestionStatus } from '@prisma/client';
 import {
@@ -743,12 +744,18 @@ function HiddenImageBanner() {
       classNames={{ message: 'flex flex-col items-center justify-center' }}
     >
       <Text color="yellow" className="font-bold">
-        Restricted Viewing
+        Missing educational information
       </Text>
       {hidden === 'MissingMetadata' ? (
         <Text>
-          This image won&apos;t show up in the feeds because it&apos;s marked as graphic content and
-          it&apos;s missing metadata, which is required based on our TOS.
+          Your image has been detected to include graphic content. Per our{' '}
+          <Anchor href="/content/tos" target="_blank" rel="nofollow noreferrer">
+            ToS
+          </Anchor>
+          , graphic content on Civitai is required to have artistic, educational or scientific
+          value. To have your image appear please include metadata. If your image has been marked as
+          graphic content in error, please change the rating and a moderator will review your image
+          shortly.
         </Text>
       ) : (
         <Text>

@@ -76,7 +76,7 @@ export function BrowsingModeMenu({ closeMenu }: { closeMenu?: () => void }) {
             <Checkbox
               checked={blurNsfw}
               onChange={(e) => toggleBlurNsfw(e.target.checked)}
-              label="Blur mature content (R+)"
+              label="Blur mature content"
               size="md"
             />
           </Stack>

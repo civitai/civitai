@@ -5,7 +5,7 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { Form, InputNumber, InputSelect, InputTextArea, useForm } from '~/libs/form';
 import { constants } from '~/server/common/constants';
 import { NsfwLevel } from '~/server/common/enums';
-import { baseImageMetaSchema } from '~/server/schema/image.schema';
+import { ImageMetaProps, baseImageMetaSchema } from '~/server/schema/image.schema';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { auditImageMeta } from '~/utils/media-preprocessors';
 import { trpc } from '~/utils/trpc';
@@ -29,24 +29,20 @@ export function ImageMetaModal({
   const dialog = useDialogContext();
   const [blockedFor, setBlockedFor] = useState(props.blockedFor);
 
-  const { mutate, isLoading } = trpc.post.updateImage.useMutation();
+  const { mutate, isLoading } = trpc.post.updateImage.useMutation({
+    onSuccess: (_, { meta }) => {
+      updateImage(id, (image) => {
+        image.meta = (meta as ImageMetaProps) ?? image.meta;
+      });
+      dialog.onClose();
+    },
+  });
   const form = useForm({ schema: baseImageMetaSchema, defaultValues: meta });
 
   const handleSubmit = async (data: z.infer<typeof baseImageMetaSchema>) => {
     const { blockedFor } = await auditImageMeta(data, !getIsSafeBrowsingLevel(nsfwLevel));
     setBlockedFor(blockedFor?.join(', '));
-    if (!blockedFor)
-      mutate(
-        { id, meta: { ...meta, ...data } },
-        {
-          onSuccess: () => {
-            updateImage(id, (image) => {
-              image.meta = { ...image.meta, ...data };
-            });
-            dialog.onClose();
-          },
-        }
-      );
+    if (!blockedFor) mutate({ id, meta: { ...meta, ...data } });
   };
 
   return (
@@ -73,7 +69,7 @@ export function ImageMetaModal({
           />
           <InputNumber name="seed" label="Seed" format="default" />
         </div>
-        <div className="flex justify-end mt-4">
+        <div className="mt-4 flex justify-end">
           <Button type="submit" loading={isLoading}>
             Save
           </Button>

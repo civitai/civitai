@@ -1,4 +1,4 @@
-import { Alert, AlertProps, Text } from '@mantine/core';
+import { Alert, AlertProps, Text, Anchor } from '@mantine/core';
 import { HiddenType } from '@prisma/client';
 
 export function HiddenContentAlert({ hidden, ...alertProps }: Props) {
@@ -10,12 +10,16 @@ export function HiddenContentAlert({ hidden, ...alertProps }: Props) {
       {...alertProps}
     >
       <Text color="yellow" className="font-bold">
-        Restricted Viewing
+        Content hidden
       </Text>
       {hidden === 'MissingMetadata' ? (
         <Text>
-          This content won&apos;t show up in the feeds because it&apos;s marked as graphic content
-          and it&apos;s missing metadata, which is required based on our TOS.
+          Your cover image has been detected to include graphic content. Per our{' '}
+          <Anchor href="/content/tos" target="_blank" rel="nofollow noreferrer">
+            ToS
+          </Anchor>
+          , graphic content on Civitai is required to have artistic, educational or scientific
+          value. To have your image appear please ensure it has metadata.
         </Text>
       ) : (
         <Text>

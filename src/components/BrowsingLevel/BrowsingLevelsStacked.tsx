@@ -1,21 +1,32 @@
-import { Group, Paper, Switch, Text, createStyles } from '@mantine/core';
+import { Group, Paper, Stack, Switch, Text, createStyles } from '@mantine/core';
 import {
+  useBrowsingLevel,
   useBrowsingModeContext,
   useIsBrowsingLevelSelected,
 } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import {
   browsingLevels,
   getBrowsingLevelDetails,
+  graphicBrowsingLevels,
+  nsfwBrowsingLevels,
 } from '~/shared/constants/browsingLevel.constants';
+import { Flags } from '~/shared/utils';
 
 export function BrowsingLevelsStacked() {
   const { classes } = useStyles();
+  const browsingLevel = useBrowsingLevel();
 
   return (
     <Paper withBorder p={0} className={classes.root}>
-      {browsingLevels.map((level) => (
-        <BrowsingLevelItem key={level} level={level} />
-      ))}
+      {browsingLevels
+        .filter(
+          (level) =>
+            !Flags.intersects(level, graphicBrowsingLevels) ||
+            Flags.intersects(browsingLevel, nsfwBrowsingLevels)
+        )
+        .map((level) => (
+          <BrowsingLevelItem key={level} level={level} />
+        ))}
     </Paper>
   );
 }
@@ -36,14 +47,12 @@ function BrowsingLevelItem({ level }: { level: number }) {
       className={cx({ [classes.active]: isSelected })}
       noWrap
     >
-      <Group noWrap>
-        <Text weight={700} w={50} ta="center">
-          {name}
-        </Text>
-        <Text lh={1.2} size="sm" ta="left" sx={{ flex: '1 1' }}>
+      <Stack spacing={4}>
+        <Text weight={700}>{name}</Text>
+        <Text lh={1.2} size="sm" ta="left">
           {description}
         </Text>
-      </Group>
+      </Stack>
       <Switch checked={isSelected} onClick={() => toggleBrowsingLevel(level)} />
     </Group>
   );

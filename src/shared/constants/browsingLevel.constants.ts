@@ -54,12 +54,12 @@ const browsingLevelDetails = {
       'Features no obvious or visually detailed scenes of explicit material, making it suitable for all audiences.',
   },
   [nsfwBrowsingLevels]: {
-    name: 'Sensitive Content',
+    name: 'NSFW',
     description:
       ' Includes material that may not be acceptable for all audiences or all settings. ',
   },
   [graphicBrowsingLevels]: {
-    name: 'Graphic Content',
+    name: 'NSFW+',
     description:
       'Content that is extensive and explicit, with a high level of graphic detail and intensity. Viewer discretion advised.',
   },
