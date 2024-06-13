@@ -58,6 +58,9 @@ const schema = modelUpsertSchema
   })
   .refine((data) => !(data.nsfw && data.poi), {
     message: 'Mature content depicting actual people is not permitted.',
+  })
+  .refine((data) => !(data.nsfw && data.minor), {
+    message: 'Mature content depicting minors is not permitted.',
   });
 const querySchema = z.object({
   category: z.preprocess(parseNumericString, z.number().optional()),
@@ -72,7 +75,7 @@ const commercialUseOptions: Array<{ value: CommercialUse; label: string }> = [
   { value: CommercialUse.Sell, label: 'Sell this model or merges' },
 ];
 
-const lockableProperties = ['nsfw', 'poi', 'category', 'tags'];
+const lockableProperties = ['nsfw', 'poi', 'minor', 'category', 'tags'];
 
 export function ModelUpsertForm({ model, children, onSubmit }: Props) {
   const router = useRouter();
@@ -108,6 +111,7 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
 
   const [type, allowDerivatives] = form.watch(['type', 'allowDerivatives']);
   const [nsfw, poi] = form.watch(['nsfw', 'poi']);
+  const allowCommercialUse = form.watch('allowCommercialUse');
   const hasPoiInNsfw = nsfw && poi;
   const { isDirty, errors } = form.formState;
 
@@ -348,11 +352,45 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                         Select all permissions you would like to apply to your model.
                       </Text>
                     </Stack>
-                    <InputCheckboxGroup spacing="xs" name="allowCommercialUse">
+                    <Checkbox.Group
+                      spacing="xs"
+                      value={allowCommercialUse}
+                      defaultValue={defaultValues.allowCommercialUse}
+                      onChange={(v: CommercialUse[]) => {
+                        if (v.includes(CommercialUse.Sell)) {
+                          const deduped = new Set([
+                            ...v,
+                            CommercialUse.RentCivit,
+                            CommercialUse.Rent,
+                          ]);
+                          form.setValue('allowCommercialUse', Array.from(deduped), {
+                            shouldDirty: true,
+                          });
+                        } else if (v.includes(CommercialUse.Rent)) {
+                          const deduped = new Set([...v, CommercialUse.RentCivit]);
+                          form.setValue('allowCommercialUse', Array.from(deduped), {
+                            shouldDirty: true,
+                          });
+                        } else {
+                          form.setValue('allowCommercialUse', v, { shouldDirty: true });
+                        }
+                      }}
+                    >
                       {commercialUseOptions.map(({ value, label }) => (
-                        <Checkbox key={value} value={value} label={label} />
+                        <Checkbox
+                          key={value}
+                          value={value}
+                          label={label}
+                          disabled={
+                            (value === CommercialUse.RentCivit &&
+                              (allowCommercialUse?.includes(CommercialUse.Sell) ||
+                                allowCommercialUse?.includes(CommercialUse.Rent))) ||
+                            (value === CommercialUse.Rent &&
+                              allowCommercialUse?.includes(CommercialUse.Sell))
+                          }
+                        />
                       ))}
-                    </InputCheckboxGroup>
+                    </Checkbox.Group>
                   </Stack>
                 </ContainerGrid.Col>
               </ContainerGrid>
@@ -376,6 +414,12 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                   label="Is intended to produce mature themes"
                   disabled={isLocked('nsfw')}
                   description={isLockedDescription('category')}
+                />
+                <InputCheckbox
+                  name="minor"
+                  label="Depicts a minor"
+                  disabled={isLocked('minor')}
+                  description={isLockedDescription('minor')}
                 />
               </Stack>
             </Paper>

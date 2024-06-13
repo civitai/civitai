@@ -14,8 +14,8 @@ export const cosmeticShopNotifications = createNotificationProcessor({
         SELECT MAX(COALESCE(si."availableFrom", ssi."createdAt")) as last_item
         FROM "CosmeticShopSectionItem" ssi
         JOIN "CosmeticShopItem" si ON si.id = ssi."shopItemId"
-        WHERE (ssi."createdAt" > '${lastSent}'::timestamp OR si."availableFrom" >= '${lastSent}'::timestamp)
-          AND (si."availableFrom" >= NOW() OR si."availableFrom" IS NULL)
+        WHERE (ssi."createdAt" > '${lastSent}'::timestamp OR (si."availableFrom" BETWEEN '${lastSent}'::timestamp AND now()))
+          AND (si."availableTo" >= NOW() OR si."availableTo" IS NULL)
       ), created_notifications AS (
         INSERT INTO "Notification"("id", "userId", "type", "details", "category", "createdAt")
         SELECT
