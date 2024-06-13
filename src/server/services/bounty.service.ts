@@ -566,7 +566,7 @@ export const getImagesForBounties = async ({
 }) => {
   const imageOr: Prisma.Enumerable<Prisma.ImageWhereInput> = isModerator
     ? [{ ingestion: { notIn: [] } }]
-    : [{ ingestion: ImageIngestionStatus.Scanned, needsReview: null }];
+    : [{ ingestion: ImageIngestionStatus.Scanned, needsReview: null, hidden: null }];
   if (userId) imageOr.push({ userId });
 
   const connections = await dbRead.imageConnection.findMany({
@@ -582,14 +582,12 @@ export const getImagesForBounties = async ({
   });
 
   const groupedImages = groupBy(
-    connections
-      .filter(({ image }) => !image.hidden && !image.needsReview)
-      .map(({ entityId, image }) => ({
-        ...image,
-        nsfwLefel: image.nsfwLevel as NsfwLevel,
-        tags: image.tags.map((t) => ({ id: t.tag.id, name: t.tag.name })),
-        entityId,
-      })),
+    connections.map(({ entityId, image }) => ({
+      ...image,
+      nsfwLefel: image.nsfwLevel as NsfwLevel,
+      tags: image.tags.map((t) => ({ id: t.tag.id, name: t.tag.name })),
+      entityId,
+    })),
     'entityId'
   );
 

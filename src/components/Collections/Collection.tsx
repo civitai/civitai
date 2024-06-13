@@ -68,6 +68,7 @@ import { truncate } from 'lodash-es';
 import { ImageContextMenuProvider } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { removeTags } from '~/utils/string-helpers';
+import { HiddenContentAlert } from '~/components/HiddenContentAlert/HiddenContentAlert';
 
 const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
   const { set, ...query } = useModelQueryParams();
@@ -429,6 +430,9 @@ export function Collection({
     ) : null;
 
   const nsfw = collection ? !getIsSafeBrowsingLevel(collection.nsfwLevel) : false;
+  const image = collection?.image;
+  const showHiddenContentAlert =
+    !!image && !!image.hidden && collection?.user.id === currentUser?.id;
 
   return (
     <>
@@ -454,6 +458,9 @@ export function Collection({
         >
           <MasonryContainer {...containerProps} p={0}>
             <Stack spacing="xl" w="100%">
+              {showHiddenContentAlert && image?.hidden && (
+                <HiddenContentAlert hidden={image.hidden} className="mb-4" />
+              )}
               <Group spacing="xl">
                 {collection?.image && (
                   <Box

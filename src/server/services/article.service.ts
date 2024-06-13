@@ -436,7 +436,10 @@ export const getArticles = async ({
     const coverIds = articles.map((x) => x.coverId).filter(isDefined);
     const coverImages = coverIds.length
       ? await dbRead.image.findMany({
-          where: { id: { in: coverIds }, hidden: null, needsReview: null, ingestion: 'Scanned' },
+          where:
+            pending && (isModerator || userId)
+              ? { id: { in: coverIds }, userId: userId ?? undefined }
+              : { id: { in: coverIds }, hidden: null, needsReview: null, ingestion: 'Scanned' },
           select: imageSelect,
         })
       : [];

@@ -49,7 +49,7 @@ import {
 } from '~/server/services/generation/generation.service';
 import {
   getImagesForModelVersionCache,
-  getImagesForModelVersion,
+  getImagesForModelVersionCache2,
 } from '~/server/services/image.service';
 import { getCategoryTags } from '~/server/services/system-cache';
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
@@ -976,8 +976,9 @@ export const getModelsWithImagesAndModelVersions = async ({
     .flatMap((m) => m.modelVersions)
     .map((m) => m.id);
 
+  const { user: _ignoredUser, ...getImagesParams } = input;
   const modelVersionImages = !!modelVersionIds.length
-    ? await getImagesForModelVersionCache(modelVersionIds)
+    ? await getImagesForModelVersionCache2({ ...getImagesParams, modelVersionIds })
     : {};
 
   const { excludedTagIds, status } = input;

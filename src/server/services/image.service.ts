@@ -1309,6 +1309,18 @@ export type ImagesForModelVersions = {
   sizeKB?: number;
 };
 
+type ImagesForModelVersionsParams = {
+  modelVersionIds: number | number[];
+  excludedTagIds?: number[];
+  excludedIds?: number[];
+  excludedUserIds?: number[];
+  imagesPerVersion?: number;
+  include?: Array<'meta' | 'tags'>;
+  user?: SessionUser;
+  pending?: boolean;
+  browsingLevel?: number;
+};
+
 export const getImagesForModelVersion = async ({
   modelVersionIds,
   excludedTagIds,
@@ -1319,17 +1331,7 @@ export const getImagesForModelVersion = async ({
   user,
   pending,
   browsingLevel,
-}: {
-  modelVersionIds: number | number[];
-  excludedTagIds?: number[];
-  excludedIds?: number[];
-  excludedUserIds?: number[];
-  imagesPerVersion?: number;
-  include?: Array<'meta' | 'tags'>;
-  user?: SessionUser;
-  pending?: boolean;
-  browsingLevel?: number;
-}) => {
+}: ImagesForModelVersionsParams) => {
   if (!Array.isArray(modelVersionIds)) modelVersionIds = [modelVersionIds];
   if (!modelVersionIds.length) return [] as ImagesForModelVersions[];
 
@@ -1485,6 +1487,28 @@ export const getImagesForModelVersion = async ({
 export async function getImagesForModelVersionCache(modelVersionIds: number[]) {
   return await imagesForModelVersionsCache.fetch(modelVersionIds);
 }
+
+export async function getImagesForModelVersionCache2(
+  options: Omit<ImagesForModelVersionsParams, 'modelVersionIds'> & { modelVersionIds: number[] }
+) {
+  if (options.pending) {
+    const images = await getImagesForModelVersion(options);
+    const records: Record<
+      string,
+      { modelVersionId: number; images: AsyncReturnType<typeof getImagesForModelVersion> }
+    > = {};
+    for (const image of images) {
+      if (!records[image.modelVersionId])
+        records[image.modelVersionId] = { modelVersionId: image.modelVersionId, images: [] };
+      records[image.modelVersionId].images.push(image);
+    }
+
+    return records;
+  }
+
+  return imagesForModelVersionsCache.fetch(options.modelVersionIds);
+}
+
 export async function deleteImagesForModelVersionCache(modelVersionId: number) {
   await imagesForModelVersionsCache.bust(modelVersionId);
 }
