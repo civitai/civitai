@@ -1,5 +1,6 @@
 import {
   Availability,
+  CollectionMode,
   ImageGenerationProcess,
   ImageIngestionStatus,
   MediaType,
@@ -31,7 +32,7 @@ import { pgDbRead } from '~/server/db/pgDb';
 import { postMetrics } from '~/server/metrics';
 import { leakingContentCounter } from '~/server/prom/client';
 import { imagesForModelVersionsCache, tagIdsForImagesCache } from '~/server/redis/caches';
-import { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
+import { GetByIdInput, UserPreferencesInput, getByIdSchema } from '~/server/schema/base.schema';
 import {
   AddOrRemoveImageToolsOutput,
   CreateImageSchema,
@@ -3028,3 +3029,23 @@ export async function getImageGenerationData({ id }: { id: number }) {
     generationProcess: image.generationProcess,
   };
 }
+
+export const getImageContestCollectionDetails = async ({ id }: GetByIdInput) => {
+  const items = await dbRead.collectionItem.findMany({
+    where: {
+      collection: {
+        mode: CollectionMode.Contest,
+      },
+      imageId: id,
+    },
+    select: {
+      imageId: true,
+      status: true,
+      createdAt: true,
+      reviewedAt: true,
+      collection: true,
+    },
+  });
+
+  return items;
+};
