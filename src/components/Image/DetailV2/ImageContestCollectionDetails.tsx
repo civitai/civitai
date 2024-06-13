@@ -1,4 +1,4 @@
-import { Anchor, Button, Card, Text } from '@mantine/core';
+import { Anchor, Button, Card, Divider, Text } from '@mantine/core';
 import { CollectionItemStatus, CollectionType } from '@prisma/client';
 import { IconTournament } from '@tabler/icons-react';
 import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProvider';
@@ -34,8 +34,7 @@ export const ImageContestCollectionDetails = ({
           if (isOwner) {
             return (
               <div key={item.collection.id} className="flex flex-col gap-3">
-                <hr className="my-1 h-0.5 border-t-0 bg-neutral-100 dark:bg-white/10" />
-
+                <Divider />
                 <Text>
                   You have submitted this image to the{' '}
                   <Text weight="bold" component="span">
@@ -91,7 +90,7 @@ export const ImageContestCollectionDetails = ({
 
           return (
             <div key={item.collection.id} className="flex flex-col gap-3">
-              <hr className="my-1 h-0.5 border-t-0 bg-neutral-100 dark:bg-white/10" />
+              <Divider />
               <Text>
                 This image is part of the{' '}
                 <Text weight="bold" component="span">
