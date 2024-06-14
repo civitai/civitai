@@ -168,11 +168,6 @@ export function useBrowsingLevelDebounced() {
   return useDeferredValue(debounced ?? browsingLevel);
 }
 
-// export function useIsPublicBrowsingLevel() {
-//   const level = useBrowsingLevelDebounced();
-//   return getIsPublicBrowsingLevel(level);
-// }
-
 export function useIsBrowsingLevelSelected(level: BrowsingLevel) {
   const { useStore } = useBrowsingModeContext();
   const browsingLevel = useStore((x) => x.browsingLevel);

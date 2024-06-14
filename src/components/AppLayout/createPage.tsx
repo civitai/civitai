@@ -1,5 +1,6 @@
 import { NextPage } from 'next';
 import React, { ReactElement } from 'react';
+import { UseFeatureFlagsReturn } from '~/providers/FeatureFlagsProvider';
 
 export type InnerLayoutOptions = {
   InnerLayout?: (page: { children: React.ReactElement }) => JSX.Element;
@@ -10,11 +11,14 @@ export type InnerLayoutOptions = {
 export type OuterLayoutOptions = {
   layout: (page: { children: React.ReactNode }) => JSX.Element;
 };
-type CreatePageOptions = InnerLayoutOptions | OuterLayoutOptions;
+type BaseOptions = {
+  features?: (features: UseFeatureFlagsReturn) => boolean;
+};
+type CreatePageOptions = (InnerLayoutOptions | OuterLayoutOptions) & BaseOptions;
 
 export type CustomNextPage = NextPage & {
   getLayout?: (page: ReactElement) => JSX.Element;
-  options?: InnerLayoutOptions;
+  options?: InnerLayoutOptions & BaseOptions;
 };
 
 export function createPage(Component: CustomNextPage, options?: CreatePageOptions) {
