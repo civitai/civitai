@@ -798,7 +798,7 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
       ...image,
       meta: image.meta !== null ? (image.meta as Prisma.JsonObject) : Prisma.JsonNull,
     },
-    select: { id: true, url: true },
+    select: { id: true, url: true, hidden: true },
   });
 
   // If changing hide meta, purge the resize cache so that we strip metadata
@@ -807,6 +807,8 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
   }
 
   purgeImageGenerationDataCache(image.id);
+
+  return result;
 };
 
 export const reorderPostImages = async ({ id: postId, imageIds }: ReorderPostImagesInput) => {

@@ -29,6 +29,12 @@ export function ExplainHiddenImages({
   const totalHiddenByBrowsingLevel = hiddenByBrowsingLevel.length;
   const totalHiddenByTags = hiddenByTags.length;
   const showHiddenBrowsingLevels = totalHiddenByBrowsingLevel > 0 && !!currentUser?.showNsfw;
+  console.log({
+    hiddenByBrowsingLevel,
+    hiddenByTags,
+    totalHiddenByBrowsingLevel,
+    totalHiddenByTags,
+  });
 
   const handleShowAll = () => {
     const browsingLevelOverride = flagifyBrowsingLevel(
@@ -80,7 +86,7 @@ export function ExplainHiddenImages({
   );
 }
 
-const useStyles = createStyles((theme) => ({
+const useStyles = createStyles(() => ({
   rightSection: {
     marginLeft: 10,
     paddingLeft: 10,
@@ -129,7 +135,7 @@ export function useExplainHiddenImages<
     }));
 
     return {
-      hiddenBelowBrowsingLevel: hiddenBelowBrowsingLevel,
+      hiddenBelowBrowsingLevel,
       hiddenAboveBrowsingLevel,
       hiddenByTags,
       hasHidden:

@@ -1,4 +1,5 @@
 import { Button, Modal, Text } from '@mantine/core';
+import { HiddenType } from '@prisma/client';
 import { useState } from 'react';
 import { z } from 'zod';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
@@ -23,16 +24,20 @@ export function ImageMetaModal({
   nsfwLevel?: number;
   updateImage: (
     id: number,
-    cb: (props: { meta?: z.infer<typeof baseImageMetaSchema> | null }) => void
+    cb: (props: {
+      meta?: z.infer<typeof baseImageMetaSchema> | null;
+      hidden?: HiddenType | null;
+    }) => void
   ) => void;
 }) {
   const dialog = useDialogContext();
   const [blockedFor, setBlockedFor] = useState(props.blockedFor);
 
   const { mutate, isLoading } = trpc.post.updateImage.useMutation({
-    onSuccess: (_, { meta }) => {
+    onSuccess: (result, payload) => {
       updateImage(id, (image) => {
-        image.meta = (meta as ImageMetaProps) ?? image.meta;
+        image.meta = (payload.meta as ImageMetaProps) ?? image.meta;
+        image.hidden = result.hidden ?? null;
       });
       dialog.onClose();
     },

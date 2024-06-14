@@ -23,7 +23,9 @@ export function HiddenContentAlert({ hidden, ...alertProps }: Props) {
         </Text>
       ) : (
         <Text>
-          This content won&apos;t show up in the feed because it&apos;s marked as graphic content.
+          Your image won&apos;t show up in the feed because it&apos;s marked as graphic content. If
+          your image has been marked as graphic content in error, please change the rating and a
+          moderator will review your image shortly.
         </Text>
       )}
     </Alert>

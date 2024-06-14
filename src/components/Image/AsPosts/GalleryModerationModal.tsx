@@ -238,14 +238,12 @@ function BrowsingLevelsStacked({
               className={cx({ [classes.active]: isSelected })}
               noWrap
             >
-              <Group noWrap>
-                <Text weight={700} w={50} ta="center">
-                  {name}
-                </Text>
-                <Text lh={1.2} size="sm" ta="left" sx={{ flex: '1 1' }}>
+              <Stack spacing={4}>
+                <Text weight={700}>{name}</Text>
+                <Text lh={1.2} size="sm" ta="left">
                   {description}
                 </Text>
-              </Group>
+              </Stack>
               <Text color="green" inline style={{ visibility: !isSelected ? 'hidden' : undefined }}>
                 <IconCheck />
               </Text>

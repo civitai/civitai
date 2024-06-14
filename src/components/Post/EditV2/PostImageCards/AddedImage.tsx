@@ -154,10 +154,11 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
   };
 
   const updateImageMutation = trpc.post.updateImage.useMutation({
-    onSuccess: (_, { id, hideMeta, meta }) => {
+    onSuccess: (result, { id, hideMeta, meta }) => {
       updateImage(id, (image) => {
         image.hideMeta = hideMeta ?? false;
         image.meta = (meta as ImageMetaProps) ?? image.meta;
+        image.hidden = result.hidden ?? null;
       });
     },
   });
@@ -743,24 +744,33 @@ function HiddenImageBanner() {
       className={`p-3 @container ${showPreview ? 'rounded-none' : 'rounded-lg'}`}
       classNames={{ message: 'flex flex-col items-center justify-center' }}
     >
-      <Text color="yellow" className="font-bold">
-        Missing educational information
-      </Text>
       {hidden === 'MissingMetadata' ? (
-        <Text>
-          Your image has been detected to include graphic content. Per our{' '}
-          <Anchor href="/content/tos" target="_blank" rel="nofollow noreferrer">
-            ToS
-          </Anchor>
-          , graphic content on Civitai is required to have artistic, educational or scientific
-          value. To have your image appear please include metadata. If your image has been marked as
-          graphic content in error, please change the rating and a moderator will review your image
-          shortly.
-        </Text>
+        <>
+          <Text color="yellow" className="font-bold">
+            Missing educational information
+          </Text>
+          <Text>
+            Your image has been detected to include graphic content. Per our{' '}
+            <Anchor href="/content/tos" target="_blank" rel="nofollow noreferrer">
+              ToS
+            </Anchor>
+            , graphic content on Civitai is required to have artistic, educational or scientific
+            value. To have your image appear please include metadata. If your image has been marked
+            as graphic content in error, please change the rating and a moderator will review your
+            image shortly.
+          </Text>
+        </>
       ) : (
-        <Text>
-          This image won&apos;t show up in the feed because it&apos;s marked as graphic content.
-        </Text>
+        <>
+          <Text color="yellow" className="font-bold">
+            Content hidden
+          </Text>
+          <Text>
+            Your image won&apos;t show up in the feed because it&apos;s marked as graphic content.
+            If your image has been marked as graphic content in error, please change the rating and
+            a moderator will review your image shortly.
+          </Text>
+        </>
       )}
     </Alert>
   );
