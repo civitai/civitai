@@ -1,3 +1,4 @@
+import { CsamReportType } from '@prisma/client';
 import { z } from 'zod';
 import { Ncmec } from '~/server/http/ncmec/ncmec.schema';
 import { zodEnumFromObjKeys } from '~/utils/zod-helpers';
@@ -21,42 +22,37 @@ export const csamContentsDictionary = {
 } as const;
 
 // #region [user input]
-export type CsamFileOutput = z.output<typeof imageSchema>;
-const imageSchema = z.object({
+const ncmecUploadResultSchema = z.object({
+  fileId: z.string().optional(),
+  hash: z.string().optional(),
+});
+export type CsamImage = z.output<typeof imageSchema>;
+const imageSchema = ncmecUploadResultSchema.extend({
   id: z.number(),
   fileAnnotations: Ncmec.fileAnnotationsSchema.default({}),
 });
 
-const sharedFormSchema = z.object({
-  contents: zodEnumFromObjKeys(csamContentsDictionary).array().optional(),
+const trainingDataSchema = ncmecUploadResultSchema.extend({
+  filename: z.string(),
 });
 
-export type CsamUserReportInput = z.infer<typeof userReportSchema>;
-const userReportSchema = sharedFormSchema.extend({
-  origin: z.literal('user'),
-  minorDepiction: z.enum(['real', 'non-real']),
-});
-
-export type CsamTestingReportInput = z.infer<typeof internalReportSchema>;
-const internalReportSchema = sharedFormSchema.extend({
-  origin: z.literal('testing'),
-  capabilities: zodEnumFromObjKeys(csamCapabilitiesDictionary).array().optional(),
-});
-
-export const csamReportFormSchema = z.discriminatedUnion('origin', [
-  userReportSchema,
-  internalReportSchema,
-]);
-
-export type CsamReportUserInput = z.infer<typeof csamReportUserInputSchema>;
-export const csamReportUserInputSchema = z.object({
-  contents: zodEnumFromObjKeys(csamContentsDictionary).array().optional(),
-  images: imageSchema.array(),
+export type CsamReportDetails = z.infer<typeof csamReportDetails>;
+export const csamReportDetails = z.object({
   modelVersionIds: z.number().array().optional(),
-  userId: z.number().default(-1),
   minorDepiction: z.enum(['real', 'non-real']).optional(),
   capabilities: zodEnumFromObjKeys(csamCapabilitiesDictionary).array().optional(),
+  contents: zodEnumFromObjKeys(csamContentsDictionary).array().optional(),
+  trainingData: trainingDataSchema.array().optional(),
 });
+
+export type CsamReportSchema = z.infer<typeof csamReportSchema>;
+export const csamReportSchema = z.object({
+  userId: z.number(),
+  imageIds: z.number().array().optional(),
+  details: csamReportDetails.optional(),
+  type: z.nativeEnum(CsamReportType),
+});
+
 // #endregion
 
 export type GetImageResourcesOutput = z.output<typeof getImageResourcesSchema>;

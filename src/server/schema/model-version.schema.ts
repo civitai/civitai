@@ -1,6 +1,7 @@
 import {
   ModelStatus,
   ModelType,
+  ModelUploadType,
   ModelVersionMonetizationType,
   ModelVersionSponsorshipSettingsType,
   TrainingStatus,
@@ -8,11 +9,18 @@ import {
 import { v4 as uuidv4 } from 'uuid';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
+import { infiniteQuerySchema } from '~/server/schema/base.schema';
 
 import { imageSchema } from '~/server/schema/image.schema';
 import { modelFileSchema } from '~/server/schema/model-file.schema';
 import { ModelMeta } from '~/server/schema/model.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
+
+export type QueryModelVersionSchema = z.infer<typeof queryModelVersionsSchema>;
+export const queryModelVersionsSchema = infiniteQuerySchema.extend({
+  trainingStatus: z.nativeEnum(TrainingStatus).optional(),
+  // uploadType: z.nativeEnum(ModelUploadType).optional(),
+});
 
 export type RecipeModelInput = z.infer<typeof recipeModelSchema>;
 export const recipeModelSchema = z.object({
