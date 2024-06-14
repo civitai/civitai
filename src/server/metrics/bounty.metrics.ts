@@ -120,7 +120,7 @@ async function getBenefactorTasks(ctx: MetricProcessorRunContext) {
     -- get recent bounty benefactors
     SELECT "bountyId" as id
     FROM "BountyBenefactor"
-    WHERE "createdAt" > '${ctx.lastUpdate}'
+    WHERE "createdAt" > '${ctx.lastUpdate}' OR "updatedAt" > '${ctx.lastUpdate}'
   `;
 
   const tasks = chunk(affected, 1000).map((ids, i) => async () => {

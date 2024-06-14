@@ -564,6 +564,7 @@ function EditDetail() {
               entityId={image.id}
               entityType="image"
               tags={!!image.tags.length ? image.tags : undefined}
+              nsfwLevel={image.nsfwLevel}
               collapsible
               canAdd
             />
