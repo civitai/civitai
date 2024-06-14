@@ -84,7 +84,10 @@ function ReviewTrainingData() {
   );
 }
 
-export default createPage(ReviewTrainingData, { withScrollArea: false });
+export default createPage(ReviewTrainingData, {
+  withScrollArea: false,
+  features: (features) => !!features.reviewTrainingData,
+});
 
 function ReviewImages({
   onNext,

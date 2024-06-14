@@ -2,11 +2,12 @@ import { Title, Text, Button, Loader } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { useRouter } from 'next/router';
 import { useMemo } from 'react';
+import { createPage } from '~/components/AppLayout/createPage';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { formatDate } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
 
-export default function TrainingDataReviewPage() {
+function TrainingDataReviewPage() {
   const router = useRouter();
   const { data, isFetching, hasNextPage, fetchNextPage } =
     trpc.moderator.modelVersions.query.useInfiniteQuery(
@@ -49,3 +50,7 @@ export default function TrainingDataReviewPage() {
     </div>
   );
 }
+
+export default createPage(TrainingDataReviewPage, {
+  features: (features) => !!features.reviewTrainingData,
+});
