@@ -26,6 +26,7 @@ import {
   MediaType,
   MetricTimeframe,
   Prisma,
+  TagTarget,
 } from '@prisma/client';
 import {
   throwAuthorizationError,
@@ -67,6 +68,7 @@ import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
 import { collectionsSearchIndex } from '~/server/search-index';
 import { createNotification } from '~/server/services/notification.service';
+import { isNotTag, isTag } from '~/server/schema/tag.schema';
 
 export type CollectionContributorPermissionFlags = {
   collectionId: number;
@@ -363,6 +365,16 @@ export const getCollectionById = async ({ input }: { input: GetByIdInput }) => {
       mode: true,
       metadata: true,
       availability: true,
+      tags: {
+        select: {
+          tag: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+        },
+      },
     },
   });
   if (!collection) throw throwNotFoundError(`No collection with id ${id}`);
@@ -378,6 +390,9 @@ export const getCollectionById = async ({ input }: { input: GetByIdInput }) => {
         }
       : null,
     metadata: (collection.metadata ?? {}) as CollectionMetadataSchema,
+    tags: collection.tags.map((t) => ({
+      ...t.tag,
+    })),
   };
 };
 
@@ -581,6 +596,7 @@ export const upsertCollection = async ({
     nsfw,
     mode,
     metadata,
+    tags,
     ...collectionItem
   } = input;
 
@@ -636,6 +652,30 @@ export const upsertCollection = async ({
                     },
                   },
                 }
+            : undefined,
+          tags: tags
+            ? {
+                deleteMany: {
+                  tagId: {
+                    notIn: tags.filter(isTag).map((x) => x.id),
+                  },
+                },
+                connectOrCreate: tags.filter(isTag).map((tag) => ({
+                  where: { tagId_collectionId: { tagId: tag.id, collectionId: id as number } },
+                  create: { tagId: tag.id },
+                })),
+                create: tags.filter(isNotTag).map((tag) => {
+                  const name = tag.name.toLowerCase().trim();
+                  return {
+                    tag: {
+                      connectOrCreate: {
+                        where: { name },
+                        create: { name, target: [TagTarget.Collection] },
+                      },
+                    },
+                  };
+                }),
+              }
             : undefined,
         },
       });
@@ -731,6 +771,21 @@ export const upsertCollection = async ({
         },
       },
       items: { create: { ...collectionItem, imageId, addedById: userId } },
+      tags: tags
+        ? {
+            create: tags.map((tag) => {
+              const name = tag.name.toLowerCase().trim();
+              return {
+                tag: {
+                  connectOrCreate: {
+                    where: { name },
+                    create: { name, target: [TagTarget.Collection] },
+                  },
+                },
+              };
+            }),
+          }
+        : undefined,
     },
   });
 

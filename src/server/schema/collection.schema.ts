@@ -17,6 +17,7 @@ import {
 import { CollectionReviewSort, CollectionSort } from '~/server/common/enums';
 import { constants } from '~/server/common/constants';
 import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
+import { tagSchema } from '~/server/schema/tag.schema';
 
 // TODO.Fix: Type-safety. This isn't actually typesafe. You can choose a type and a id that don't match.
 const collectionItemSchema = z.object({
@@ -140,6 +141,7 @@ export const upsertCollectionInput = z
     type: z.nativeEnum(CollectionType).default(CollectionType.Model),
     mode: z.nativeEnum(CollectionMode).nullish(),
     metadata: collectionMetadataSchema.optional(),
+    tags: z.array(tagSchema).nullish(),
   })
   .merge(collectionItemSchema);
 
