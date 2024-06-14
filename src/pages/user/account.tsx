@@ -37,25 +37,25 @@ export default function Account({ providers }: Props) {
               experience on the site
             </Text>
           </Stack>
-          {/* <ProfileCard />
+          <ProfileCard />
           <SocialProfileCard />
-          <SettingsCard /> */}
+          <SettingsCard />
           <ContentControlsCard />
           {/* <ModerationCard /> */}
-          {/* <AccountsCard providers={providers} />
-          <StripeConnectCard /> */}
-          {/* {currentUser?.subscriptionId && <SubscriptionCard />} */}
-          {/* <PaymentMethodsCard /> */}
+          <AccountsCard providers={providers} />
+          <StripeConnectCard />
+          {currentUser?.subscriptionId && <SubscriptionCard />}
+          <PaymentMethodsCard />
           {/* {buzz && <UserReferralCodesCard />} */}
-          {/* <NotificationsCard /> */}
-          {/* {apiKeys && <ApiKeysCard />} */}
-          {/* <DeleteCard /> */}
-          {/* <Divider label="Extras" /> */}
-          {/* <Group spacing="sm">
+          <NotificationsCard />
+          {apiKeys && <ApiKeysCard />}
+          <DeleteCard />
+          <Divider label="Extras" />
+          <Group spacing="sm">
             <Button variant="subtle" onClick={() => currentUser?.refresh()}>
               Refresh my session
             </Button>
-          </Group> */}
+          </Group>
         </Stack>
       </Container>
     </>
