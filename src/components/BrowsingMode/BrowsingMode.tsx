@@ -2,10 +2,11 @@ import { Group, Text, Stack, Popover, ActionIcon, Checkbox, Button, Tooltip } fr
 import { NextLink } from '@mantine/next';
 import {
   IconCaretRightFilled,
-  IconDeviceGamepad,
-  IconEyeExclamation,
+  IconEyeCog,
+  IconSettings,
   TablerIconsProps,
 } from '@tabler/icons-react';
+import Link from 'next/link';
 import { useBrowsingModeContext } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { BrowsingLevelsGrouped } from '~/components/BrowsingLevel/BrowsingLevelsGrouped';
 import { openHiddenTagsModal } from '~/components/Dialog/dialog-registry';
@@ -19,7 +20,7 @@ export function BrowsingModeIcon({ iconProps = {} }: BrowsingModeIconProps) {
     <Popover zIndex={constants.imageGeneration.drawerZIndex + 1} withArrow withinPortal>
       <Popover.Target>
         <ActionIcon>
-          <IconEyeExclamation {...iconProps} />
+          <IconEyeCog {...iconProps} />
         </ActionIcon>
       </Popover.Target>
       <Popover.Dropdown p="md">
@@ -44,31 +45,38 @@ export function BrowsingModeMenu({ closeMenu }: { closeMenu?: () => void }) {
   return (
     <div id="browsing-mode">
       <Stack spacing="md" className="sm:min-w-96">
+        <Group align="flex-start" spacing={8} position="apart" noWrap>
+          <Text sx={{ lineHeight: 1 }}>Content Controls</Text>
+          <Group spacing={4} noWrap>
+            {showNsfw && (
+              <Tooltip label="Help us improve by playing!" withArrow color="dark">
+                <Button
+                  onClick={closeMenu}
+                  component={NextLink}
+                  href="/research/rater"
+                  compact
+                  size="xs"
+                  ml="auto"
+                  variant="outline"
+                >
+                  <Group spacing={4}>
+                    Rating Game
+                    <IconCaretRightFilled size={14} />
+                  </Group>
+                </Button>
+              </Tooltip>
+            )}
+            <Link href="/user/account#content-controls">
+              <ActionIcon size="xs" radius="sm" variant="subtle">
+                <IconSettings />
+              </ActionIcon>
+            </Link>
+          </Group>
+        </Group>
         {showNsfw && (
           <Stack spacing="lg">
             <Stack spacing={4}>
               <Stack spacing={0}>
-                <Group align="flex-start">
-                  <Text sx={{ lineHeight: 1 }}>Browsing Level</Text>
-                  {showNsfw && (
-                    <Tooltip label="Help us improve by playing!" withArrow color="dark">
-                      <Button
-                        onClick={closeMenu}
-                        component={NextLink}
-                        href="/research/rater"
-                        compact
-                        size="xs"
-                        ml="auto"
-                        variant="outline"
-                      >
-                        <Group spacing={4}>
-                          Rating Game
-                          <IconCaretRightFilled size={14} />
-                        </Group>
-                      </Button>
-                    </Tooltip>
-                  )}
-                </Group>
                 <Text color="dimmed">Select the levels of content you want to see</Text>
               </Stack>
               <BrowsingLevelsGrouped />

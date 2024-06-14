@@ -56,7 +56,9 @@ export default function SetNsfwLevelModal({
               className={cx({ [classes.active]: nsfwLevel === level })}
               onClick={() => handleClick(level)}
             >
-              <Text weight={700}>{name}</Text>
+              <Text weight={700} tt="capitalize">
+                {name}
+              </Text>
               <Text>{description}</Text>
             </UnstyledButton>
           );

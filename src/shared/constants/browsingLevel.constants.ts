@@ -42,9 +42,27 @@ export function getNsfwLevelDetails(nsfwLevel: number) {
 export const safeBrowsingLevels = flagifyBrowsingLevel([NsfwLevel.PG]);
 export const nsfwBrowsingLevels = flagifyBrowsingLevel([NsfwLevel.PG13, NsfwLevel.R]);
 export const graphicBrowsingLevels = flagifyBrowsingLevel([NsfwLevel.X, NsfwLevel.XXX]);
-
 // all browsing levels
 export const allBrowsingLevelsFlag = flagifyBrowsingLevel([...nsfwLevels]);
+
+export function getVisibleBrowsingLevels(browsingLevel: number) {
+  return browsingLevels.filter(
+    (level) =>
+      !Flags.intersects(level, graphicBrowsingLevels) ||
+      Flags.intersects(browsingLevel, nsfwBrowsingLevels)
+  );
+}
+
+export function deriveBrowsingLevel(level: number) {
+  const hasNsfw = Flags.hasFlag(level, nsfwBrowsingLevels);
+  const hasGraphic = Flags.hasFlag(level, graphicBrowsingLevels);
+  if (!hasNsfw && hasGraphic) level = Flags.removeFlag(level, graphicBrowsingLevels);
+  return level;
+}
+
+export function getIsDefaultBrowsingLevel(instance: number, level: number) {
+  return instance === 0 && level === safeBrowsingLevels;
+}
 
 export const browsingLevels = [safeBrowsingLevels, nsfwBrowsingLevels, graphicBrowsingLevels];
 const browsingLevelDetails = {

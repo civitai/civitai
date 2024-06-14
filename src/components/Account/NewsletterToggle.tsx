@@ -1,4 +1,4 @@
-import { Stack, Switch, Group, Text, Popover } from '@mantine/core';
+import { Stack, Switch, Group, Text, Popover, Card, CardProps, createStyles } from '@mantine/core';
 import { IconInfoSquareRounded } from '@tabler/icons-react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { showSuccessNotification } from '~/utils/notifications';
@@ -15,11 +15,11 @@ export function NewsletterToggle({
   children?: (data: {
     subscribed: boolean;
     isLoading: boolean;
-    setSubscribed: (subscribed: boolean) => Promise<void>;
+    setSubscribed: (subscribed: boolean, email?: string) => Promise<void>;
   }) => JSX.Element | null;
 }) {
   const currentUser = useCurrentUser();
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const { data: subscription, isLoading } = trpc.newsletter.getSubscription.useQuery();
   const { mutate } = trpc.newsletter.updateSubscription.useMutation({
     async onMutate({ subscribed }) {
@@ -44,8 +44,8 @@ export function NewsletterToggle({
 
   if (!currentUser) return null;
   const subscribed = subscription?.subscribed ?? false;
-  const setSubscribed = async (subscribed: boolean) => {
-    mutate({ subscribed });
+  const setSubscribed = async (subscribed: boolean, email?: string) => {
+    mutate({ subscribed, email });
   };
 
   if (children) return children({ subscribed, setSubscribed, isLoading });
@@ -95,3 +95,85 @@ export function NewsletterToggle({
     </Group>
   );
 }
+
+export function NewsletterCallout({
+  email,
+  disabled,
+  ...cardProps
+}: Omit<CardProps, 'children'> & { email?: string; disabled?: boolean }) {
+  const { classes } = useStyles();
+
+  return (
+    <Card className={classes.newsletterCard} withBorder {...cardProps}>
+      <Card.Section withBorder inheritPadding py="xs">
+        <Group position="apart">
+          <Text weight={500}>Send me the Civitai Newsletter!</Text>
+          <NewsletterToggle>
+            {({ subscribed, setSubscribed, isLoading: subscriptionLoading }) => (
+              <Switch
+                disabled={disabled || subscriptionLoading}
+                checked={subscribed}
+                onChange={({ target }) => setSubscribed(target.checked, email)}
+              />
+            )}
+          </NewsletterToggle>
+        </Group>
+      </Card.Section>
+      <Text lh={1.3} mt="xs">
+        Biweekly updates on industry news, new Civitai features, trending resources, community
+        contests, and more!
+      </Text>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src="/images/newsletter-banner.png"
+        alt="Robot holding a newspaper"
+        className={classes.newsletterBot}
+      />
+    </Card>
+  );
+}
+
+const useStyles = createStyles((theme) => ({
+  newsletterCard: {
+    position: 'relative',
+    overflow: 'visible',
+    borderColor: theme.colors.blue[5],
+    marginTop: 60,
+    [theme.fn.largerThan('sm')]: {
+      marginTop: 70,
+    },
+
+    '&::before': {
+      content: '""',
+      position: 'absolute',
+      left: '-3px',
+      top: '-3px',
+      background: theme.fn.linearGradient(
+        10,
+        theme.colors.blue[9],
+        theme.colors.blue[7],
+        theme.colors.blue[5],
+        theme.colors.cyan[9],
+        theme.colors.cyan[7],
+        theme.colors.cyan[5]
+      ),
+      backgroundSize: '200%',
+      borderRadius: theme.radius.sm,
+      width: 'calc(100% + 6px)',
+      height: 'calc(100% + 6px)',
+      filter: 'blur(4px)',
+      zIndex: -1,
+      animation: 'glowing 20s linear infinite',
+      transition: 'opacity .3s ease-in-out',
+    },
+  },
+  newsletterBot: {
+    objectPosition: 'top',
+    objectFit: 'cover',
+    position: 'absolute',
+    top: -100,
+    right: 0,
+    width: 200,
+    zIndex: -1,
+  },
+}));

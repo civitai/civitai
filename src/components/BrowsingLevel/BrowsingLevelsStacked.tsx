@@ -5,12 +5,10 @@ import {
   useIsBrowsingLevelSelected,
 } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import {
-  browsingLevels,
   getBrowsingLevelDetails,
-  graphicBrowsingLevels,
-  nsfwBrowsingLevels,
+  getVisibleBrowsingLevels,
+  getIsDefaultBrowsingLevel,
 } from '~/shared/constants/browsingLevel.constants';
-import { Flags } from '~/shared/utils';
 
 export function BrowsingLevelsStacked() {
   const { classes } = useStyles();
@@ -18,25 +16,20 @@ export function BrowsingLevelsStacked() {
 
   return (
     <Paper withBorder p={0} className={classes.root}>
-      {browsingLevels
-        .filter(
-          (level) =>
-            !Flags.intersects(level, graphicBrowsingLevels) ||
-            Flags.intersects(browsingLevel, nsfwBrowsingLevels)
-        )
-        .map((level) => (
-          <BrowsingLevelItem key={level} level={level} />
-        ))}
+      {getVisibleBrowsingLevels(browsingLevel).map((level) => (
+        <BrowsingLevelItem key={level} level={level} />
+      ))}
     </Paper>
   );
 }
 
 function BrowsingLevelItem({ level }: { level: number }) {
   const isSelected = useIsBrowsingLevelSelected(level);
-  const { toggleBrowsingLevel } = useBrowsingModeContext();
+  const { toggleBrowsingLevel, useStore } = useBrowsingModeContext();
   const { classes, cx } = useStyles();
 
   const { name, description } = getBrowsingLevelDetails(level);
+  const isDefaultBrowsingLevel = useStore((x) => getIsDefaultBrowsingLevel(x.browsingLevel, level));
 
   return (
     <Group

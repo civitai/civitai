@@ -13,6 +13,8 @@ import {
   nsfwLevelLabels,
   blurrableBrowsingLevels,
   getIsSafeBrowsingLevel,
+  getBrowsingLevelDetails,
+  getBrowsingLevel,
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils';
 import { useImageStore } from '~/store/image.store';
@@ -150,12 +152,14 @@ function ImageGuardContentInner({
   children: React.ReactNode;
 }) {
   const { classes } = useBadgeStyles({ browsingLevel });
+  const { name } = getBrowsingLevelDetails(getBrowsingLevel(browsingLevel));
+
   return (
     <>
       {!show && explain && (
         <BlurToggle>
           {(toggle) => (
-            <Center className="absolute left-1/2 top-1/2 z-20 flex -translate-x-1/2 -translate-y-[60%] flex-col text-white">
+            <Center className="absolute left-1/2 top-1/2 z-20 flex -translate-x-1/2 translate-y-[-60%] flex-col text-white">
               <Stack align="center" spacing="sm" w="100%">
                 <Text size="sm" className="shadow-black/50 text-shadow-sm">
                   This image is rated
@@ -166,7 +170,7 @@ function ImageGuardContentInner({
                   classNames={classes}
                   className="min-w-[32px] text-center shadow shadow-black/30"
                 >
-                  {nsfwLevelLabels[browsingLevel as NsfwLevel]}
+                  {name}
                 </Badge>
                 <Button
                   onClick={toggle}
@@ -354,9 +358,9 @@ const useBadgeStyles = createStyles((theme, params: { browsingLevel?: number }) 
       paddingLeft: 8,
       paddingRight: 8,
 
-      '& > span': {
-        lineHeight: 1,
-      },
+      // '& > span': {
+      //   lineHeight: 1,
+      // },
     },
   };
 });

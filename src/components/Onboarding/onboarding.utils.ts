@@ -7,7 +7,7 @@ import { Flags } from '~/shared/utils';
 export const onboardingSteps = [
   OnboardingSteps.TOS,
   OnboardingSteps.Profile,
-  OnboardingSteps.BrowsingLevels,
+  // OnboardingSteps.BrowsingLevels,
   OnboardingSteps.Buzz,
 ];
 
