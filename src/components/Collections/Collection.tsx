@@ -13,6 +13,7 @@ import {
   createStyles,
   Menu,
   Popover,
+  Select,
 } from '@mantine/core';
 import { Availability, CollectionMode, CollectionType, MetricTimeframe } from '@prisma/client';
 import {
@@ -163,6 +164,7 @@ const ImageCollection = ({
         period: MetricTimeframe.AllTime,
         sort,
         collectionId: collection.id,
+        collectionTagId: query.collectionTagId,
       }
     : {
         ...query,
@@ -218,6 +220,7 @@ const ImageCollection = ({
                   value={sort}
                   onChange={(x) => replace({ sort: x as ImageSort })}
                 />
+
                 <PeriodFilter
                   type="images"
                   value={period}
@@ -226,6 +229,19 @@ const ImageCollection = ({
               </Group>
               <ImageCategories />
             </>
+          )}
+          {isContestCollection && collection.tags.length > 0 && (
+            <Select
+              label="Collection Categories"
+              value={query.collectionTagId?.toString() ?? null}
+              onChange={(x) => replace({ collectionTagId: x ? parseInt(x, 10) : undefined })}
+              placeholder="All"
+              data={collection.tags.map((tag) => ({
+                value: tag.id.toString(),
+                label: tag.name,
+              }))}
+              clearable
+            />
           )}
           <ReactionSettingsProvider settings={{ hideReactionCount: isContestCollection }}>
             <ImagesInfinite

@@ -268,6 +268,7 @@ export const getInfiniteImagesSchema = baseQuerySchema
     postId: z.number().optional(),
     postIds: z.number().array().optional(),
     collectionId: z.number().optional(),
+    collectionTagId: z.number().optional(),
     modelId: z.number().optional(),
     modelVersionId: z.number().optional(),
     imageId: z.number().optional(),

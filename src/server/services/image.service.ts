@@ -530,6 +530,7 @@ export const getAllImages = async ({
   tools,
   techniques,
   baseModels,
+  collectionTagId,
 }: GetInfiniteImagesOutput & {
   userId?: number;
   user?: SessionUser;
@@ -664,6 +665,10 @@ export const getAllImages = async ({
     throw throwBadRequestError('Random sort requires a collectionId');
   }
 
+  if (collectionTagId && !collectionId) {
+    throw throwBadRequestError('collectionTagId requires a collectionId');
+  }
+
   // Filter to a specific collection and relevant status:
   if (collectionId) {
     const displayOwnedItems = userId
@@ -680,6 +685,7 @@ export const getAllImages = async ({
         ctcursor AS (
           SELECT ci."imageId", ci."randomId" FROM "CollectionItem" ci
             WHERE ci."collectionId" = ${collectionId}
+              ${Prisma.raw(collectionTagId ? ` AND ci."tagId" = ${collectionTagId}` : ``)}
               AND ci."imageId" = ${cursor}
             LIMIT 1
         ),
@@ -691,6 +697,7 @@ export const getAllImages = async ({
           FROM "CollectionItem" ci
           JOIN "Collection" c ON c.id = ci."collectionId"
           WHERE ci."collectionId" = ${collectionId}
+            ${Prisma.raw(collectionTagId ? ` AND ci."tagId" = ${collectionTagId}` : ``)}
             AND ci."imageId" IS NOT NULL
             AND (
               (
