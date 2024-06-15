@@ -70,6 +70,7 @@ import { collectionsSearchIndex } from '~/server/search-index';
 import { createNotification } from '~/server/services/notification.service';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
 import { collectionSelect } from '~/server/selectors/collection.selector';
+import { input } from '@tensorflow/tfjs';
 
 export type CollectionContributorPermissionFlags = {
   collectionId: number;
@@ -1583,7 +1584,15 @@ const validateFeaturedCollectionEntry = async ({
 };
 
 export const bulkSaveItems = async ({
-  input: { userId, collectionId, articleIds = [], modelIds = [], imageIds = [], postIds = [] },
+  input: {
+    userId,
+    collectionId,
+    articleIds = [],
+    modelIds = [],
+    imageIds = [],
+    postIds = [],
+    tagId,
+  },
   permissions,
 }: {
   input: BulkSaveCollectionItemsInput & { userId: number };
@@ -1591,10 +1600,24 @@ export const bulkSaveItems = async ({
 }) => {
   const collection = await dbRead.collection.findUnique({
     where: { id: collectionId },
-    select: { type: true, metadata: true, name: true, userId: true, mode: true },
+    select: collectionSelect,
   });
 
   if (!collection) throw throwNotFoundError('No collection with id ' + collectionId);
+
+  if (collection.tags.length > 0 && !tagId) {
+    throw throwBadRequestError(
+      'It is required to tag your entry in order for it to be added to this collection'
+    );
+  }
+
+  if (collection.tags.length === 0 && tagId) {
+    throw throwBadRequestError('This collection does not support tagging entries');
+  }
+
+  if (collection.tags.length > 0 && tagId && !collection.tags.find((t) => t.tag.id === tagId)) {
+    throw throwBadRequestError('The tag provided is not allowed in this collection');
+  }
 
   if (!permissions.isContributor) {
     // Make sure to follow the collection
@@ -1635,6 +1658,7 @@ export const bulkSaveItems = async ({
     status: permissions.writeReview ? CollectionItemStatus.REVIEW : CollectionItemStatus.ACCEPTED,
     reviewedAt: permissions.write ? new Date() : null,
     reviewedById: permissions.write ? userId : null,
+    tagId,
   };
   let data: Prisma.CollectionItemCreateManyInput[] = [];
   if (

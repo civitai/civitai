@@ -243,3 +243,15 @@ export const useCollectionsForPostCreation = ({
     ...other,
   };
 };
+
+export const useCollection = (collectionId: number) => {
+  const { data: { collection, permissions } = {}, ...rest } = trpc.collection.getById.useQuery({
+    id: collectionId,
+  });
+
+  return {
+    collection,
+    permissions,
+    ...rest,
+  };
+};

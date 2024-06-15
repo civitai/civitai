@@ -58,11 +58,14 @@ type State = {
   post?: PostDetailEditable;
   images: ControlledImage[];
   isReordering: boolean;
+  collectionId?: number | null;
+  collectionTagId: number | null;
   setPost: (data: PostParams) => void;
   updatePost: (cb: (data: PostParams) => void) => void;
   setImages: (cb: (images: ControlledImage[]) => ControlledImage[]) => void;
   updateImage: (id: number, cb: (image: PostEditImageDetail) => void) => void;
   toggleReordering: () => void;
+  updateCollection: (collectionId: number | null, tagId?: number | null) => void;
 };
 // #endregion
 
@@ -79,6 +82,8 @@ const createContextStore = (post?: PostDetailEditable) =>
             data: { ...data, index },
           })) ?? [],
         isReordering: false,
+        collectionId: post?.collectionId,
+        collectionTagId: null,
         /**
          * @deprecated
          */
@@ -101,6 +106,7 @@ const createContextStore = (post?: PostDetailEditable) =>
           set((state) => {
             state.isReordering = !state.isReordering;
           }),
+        updateCollection: (collectionId, tagId) => set({ collectionId, collectionTagId: tagId }),
       })),
       { name: 'PostDetailEditable' }
     )

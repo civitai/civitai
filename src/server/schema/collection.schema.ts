@@ -78,6 +78,7 @@ export const bulkSaveCollectionItemsInput = z
     articleIds: z.coerce.number().array().optional(),
     postIds: z.coerce.number().array().optional(),
     modelIds: z.coerce.number().array().optional(),
+    tagId: z.coerce.number().nullish(),
   })
   .refine(
     ({ articleIds, imageIds, postIds, modelIds }) =>

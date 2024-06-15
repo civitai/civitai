@@ -60,7 +60,10 @@ import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
 import { formatDate } from '~/utils/date-helpers';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { isCollectionSubsmissionPeriod } from '~/components/Collections/collection.utils';
+import {
+  isCollectionSubsmissionPeriod,
+  useCollection,
+} from '~/components/Collections/collection.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 import { containerQuery } from '~/utils/mantine-css-helpers';
@@ -363,9 +366,7 @@ export function Collection({
   const currentUser = useCurrentUser();
   const router = useRouter();
 
-  const { data: { collection, permissions } = {}, isLoading } = trpc.collection.getById.useQuery({
-    id: collectionId,
-  });
+  const { collection, permissions, isLoading } = useCollection(collectionId);
 
   if (!isLoading && !collection) {
     return (

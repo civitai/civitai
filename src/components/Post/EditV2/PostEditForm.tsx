@@ -59,10 +59,8 @@ export function PostEditForm() {
         styles={{ input: { fontWeight: 600, padding: 0 } }}
         autosize
       />
-      <Group spacing="sm">
-        {post && <EditPostTags post={post} />}
-        <CollectionSelectDropdown />
-      </Group>
+      <Group spacing="sm">{post && <EditPostTags post={post} />}</Group>
+      <CollectionSelectDropdown />
       <InputRTE
         name="detail"
         placeholder="Add a description..."

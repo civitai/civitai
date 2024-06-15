@@ -119,14 +119,38 @@ export const createPostHandler = async ({
 };
 
 export const updatePostHandler = async ({
-  input,
+  input: { collectionTagId, ...input },
   ctx,
 }: {
   input: PostUpdateInput;
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
-    if (input.collectionId) {
+    const post = await dbRead.post.findFirst({
+      where: {
+        id: input.id,
+      },
+      select: {
+        publishedAt: true,
+        collectionId: true,
+        id: true,
+      },
+    });
+
+    if (
+      input.publishedAt &&
+      !post?.publishedAt &&
+      post?.collectionId &&
+      dayjs(input.publishedAt).isAfter(dayjs().add(10, 'minutes'))
+    ) {
+      throw throwBadRequestError('Cannot schedule a post in a collection');
+    }
+
+    if (post && input.publishedAt && input.collectionId) {
+      // Confirm & Validate in the case of a contest collection
+      // That a submission can be made. We only do this as the user publishes
+      // Because images are ready only at this point.
+
       // Check if user has access to the collection
       const permissions = await getUserCollectionPermissionsById({
         id: input.collectionId,
@@ -149,37 +173,10 @@ export const updatePostHandler = async ({
           'The collection you are trying to select is not a post or image collection'
         );
       }
-    }
 
-    const post = await dbRead.post.findFirst({
-      where: {
-        id: input.id,
-      },
-      select: {
-        publishedAt: true,
-        collectionId: true,
-        id: true,
-      },
-    });
-
-    if (
-      input.publishedAt &&
-      !post?.publishedAt &&
-      post?.collectionId &&
-      dayjs(input.publishedAt).isAfter(dayjs().add(10, 'minutes'))
-    ) {
-      throw throwBadRequestError('Cannot schedule a post in a collection');
-    }
-
-    if (input.publishedAt && post?.collectionId) {
-      // Confirm & Validate in the case of a contest collection
-      // That a submission can be made. We only do this as the user publishes
-      // Because images are ready only at this point.
-      const collection = await getCollectionById({
-        input: {
-          id: post.collectionId,
-        },
-      });
+      if (collection.tags.length > 0 && !collectionTagId) {
+        throw throwBadRequestError('You must select a tag for this collection');
+      }
 
       if (collection.mode === CollectionMode.Contest) {
         const postIds = collection.type === CollectionType.Post ? [input.id] : [];
@@ -194,6 +191,7 @@ export const updatePostHandler = async ({
                 },
               })
             : [];
+
         await validateContestCollectionEntry({
           metadata: collection.metadata as CollectionMetadataSchema,
           collectionId: collection.id,
@@ -244,6 +242,7 @@ export const updatePostHandler = async ({
               collectionId: updatedPost.collectionId,
               postIds: [updatedPost.id],
               userId: ctx.user.id,
+              tagId: collectionTagId,
             },
             permissions,
           });
@@ -267,6 +266,7 @@ export const updatePostHandler = async ({
               collectionId: updatedPost.collectionId,
               imageIds: images.map((i) => i.id),
               userId: ctx.user.id,
+              tagId: collectionTagId,
             },
             permissions,
           });

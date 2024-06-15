@@ -61,6 +61,7 @@ export const postUpdateSchema = z.object({
   detail: z.string().nullish(),
   publishedAt: z.date().optional(),
   collectionId: z.number().nullish(),
+  collectionTagId: z.number().nullish(),
 });
 
 export type RemovePostTagInput = z.infer<typeof removePostTagSchema>;

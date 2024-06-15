@@ -25,12 +25,15 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
   const params = usePostEditParams();
   const { returnUrl, afterPublish } = params;
   const [deleted, setDeleted] = useState(false);
-  const [updatePost, isReordering, hasImages, showReorder] = usePostEditStore((state) => [
-    state.updatePost,
-    state.isReordering,
-    state.images.filter((x) => x.type === 'added').length > 0,
-    state.images.length > 1,
-  ]);
+  const [updatePost, isReordering, hasImages, showReorder, collectionId, collectionTagId] =
+    usePostEditStore((state) => [
+      state.updatePost,
+      state.isReordering,
+      state.images.filter((x) => x.type === 'added').length > 0,
+      state.images.length > 1,
+      state.collectionId,
+      state.collectionTagId,
+    ]);
   const canPublish = hasImages && !isReordering;
   const todayRef = useRef(new Date());
   const canSchedule = post.publishedAt && post.publishedAt.getTime() > new Date().getTime();
@@ -42,13 +45,19 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
     predicate: (mutation) => mutation.options.mutationKey?.flat().includes('post') ?? false,
     exact: false,
   });
-  const publishLabel = post.collectionId ? 'Submit' : 'Publish';
+  const publishLabel = collectionId ? 'Submit' : 'Publish';
   // #endregion
 
   // #region [publish post]
   const publish = (publishedAt = new Date()) =>
     updatePostMutation.mutate(
-      { id: post.id ?? 0, title: !post.title ? params.postTitle : undefined, publishedAt },
+      {
+        id: post.id ?? 0,
+        title: !post.title ? params.postTitle : undefined,
+        publishedAt,
+        collectionId,
+        collectionTagId,
+      },
       {
         onSuccess: async (_, post) => {
           const { id, publishedAt } = post;
@@ -143,7 +152,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
           width={260}
           withArrow
         >
-          {post.collectionId ? (
+          {collectionId ? (
             <Button
               disabled={!canPublish || !!mutating}
               onClick={() => handlePublish()}

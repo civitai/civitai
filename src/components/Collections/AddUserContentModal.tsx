@@ -13,6 +13,7 @@ import {
   Paper,
   Progress,
   ScrollArea,
+  Select,
   SimpleGrid,
   Stack,
   Text,
@@ -45,14 +46,16 @@ import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
 import { truncate } from 'lodash-es';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { NextLink } from '@mantine/next';
+import { useCollection } from './collection.utils';
 
 export function AddUserContentModal({ collectionId, opened, onClose, ...props }: Props) {
   const currentUser = useCurrentUser();
   const queryUtils = trpc.useUtils();
-
+  const { collection } = useCollection(collectionId);
   const selected = useStore((state) => Object.keys(state.selected).map(Number));
   const deselectAll = useStore((state) => state.deselectAll);
   const [error, setError] = useState('');
+  const [tagId, setTagId] = useState<number | null>(null);
 
   const { files, uploadToCF, removeImage, resetFiles } = useCFImageUpload();
 
@@ -117,7 +120,7 @@ export function AddUserContentModal({ collectionId, opened, onClose, ...props }:
   const saveCollectionItemsMutation = trpc.collection.bulkSaveItems.useMutation();
   const handleSubmitExisting = () => {
     setError('');
-    const data = { collectionId, imageIds: selected };
+    const data = { collectionId, imageIds: selected, tagId };
     // Manually check for input errors
     const results = bulkSaveCollectionItemsInput.safeParse(data);
     if (!results.success) {
@@ -157,6 +160,7 @@ export function AddUserContentModal({ collectionId, opened, onClose, ...props }:
             {error}
           </AlertWithIcon>
         )}
+
         <Button component={NextLink} href={`/posts/create?collectionId=${collectionId}`}>
           Create a new image post
         </Button>
@@ -189,6 +193,20 @@ export function AddUserContentModal({ collectionId, opened, onClose, ...props }:
             </ScrollArea.Autosize>
           </MasonryContainer>
         </MasonryProvider>
+        {(collection?.tags?.length ?? 0) > 0 && (
+          <Select
+            label="Please select what category of the contest you are participating in."
+            withAsterisk
+            placeholder="Select a category for your submission"
+            data={(collection?.tags ?? []).map((tag) => ({
+              value: tag.id.toString(),
+              label: tag.name,
+            }))}
+            onChange={(value) => setTagId(value ? Number(value) : null)}
+            value={tagId?.toString() ?? null}
+            clearable
+          />
+        )}
         <Group
           spacing="xs"
           position="right"
