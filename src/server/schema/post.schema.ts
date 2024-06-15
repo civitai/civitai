@@ -135,4 +135,5 @@ export const postEditQuerySchema = z.object({
   src: z.coerce.string().optional(),
   collections: numericStringArray().optional(),
   collectionId: z.coerce.number().optional(),
+  collectionTagId: z.coerce.number().optional(),
 });

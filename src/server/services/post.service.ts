@@ -25,7 +25,10 @@ import {
   postSelect,
 } from '~/server/selectors/post.selector';
 import { simpleTagSelect } from '~/server/selectors/tag.selector';
-import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
+import {
+  getCollectionById,
+  getUserCollectionPermissionsById,
+} from '~/server/services/collection.service';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import {
   deleteImageById,
@@ -848,9 +851,7 @@ export const getPostContestCollectionDetails = async ({ id }: GetByIdInput) => {
 
   if (!post || !post.collectionId) return [];
 
-  const collection = await dbRead.collection.findUnique({
-    where: { id: post.collectionId },
-  });
+  const collection = await getCollectionById({ input: { id: post.collectionId } });
 
   if (!collection || collection?.mode !== CollectionMode?.Contest) return [];
 
@@ -868,7 +869,14 @@ export const getPostContestCollectionDetails = async ({ id }: GetByIdInput) => {
       postId: isImageCollection ? undefined : id,
       imageId: isImageCollection ? { in: images.map((i) => i.id) } : undefined,
     },
-    select: { postId: true, imageId: true, status: true, createdAt: true, reviewedAt: true },
+    select: {
+      postId: true,
+      imageId: true,
+      status: true,
+      createdAt: true,
+      reviewedAt: true,
+      tag: true,
+    },
   });
 
   return items.map((item) => {

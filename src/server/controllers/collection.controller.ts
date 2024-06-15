@@ -474,7 +474,22 @@ export const getPermissionDetailsHandler = async ({
 
   const collections = await dbRead.collection.findMany({
     where: { id: { in: ids } },
-    select: { id: true, name: true, metadata: true, mode: true },
+    select: {
+      id: true,
+      name: true,
+      metadata: true,
+      mode: true,
+      tags: {
+        select: {
+          tag: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+        },
+      },
+    },
   });
 
   // Get permissions for each of these
@@ -490,6 +505,7 @@ export const getPermissionDetailsHandler = async ({
 
   return collections.map((c) => ({
     ...c,
+    tags: c.tags.map((t) => t.tag),
     metadata: (c.metadata ?? {}) as CollectionMetadataSchema,
     permissions: permissions.find((p) => p.collectionId === c.id),
   }));

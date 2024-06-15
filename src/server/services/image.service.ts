@@ -84,6 +84,7 @@ import { Flags } from '~/shared/utils';
 import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { removeEmpty } from '~/utils/object-helpers';
+import { collectionSelect } from '~/server/selectors/collection.selector';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -3043,9 +3044,18 @@ export const getImageContestCollectionDetails = async ({ id }: GetByIdInput) => 
       status: true,
       createdAt: true,
       reviewedAt: true,
-      collection: true,
+      collection: {
+        select: collectionSelect,
+      },
+      tag: true,
     },
   });
 
-  return items;
+  return items.map((i) => ({
+    ...i,
+    collection: {
+      ...i.collection,
+      tags: i.collection.tags.map((t) => t.tag),
+    },
+  }));
 };

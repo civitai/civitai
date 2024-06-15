@@ -33,7 +33,12 @@ export type CollectItemInput = z.infer<typeof collectionItemSchema>;
 export type AddCollectionItemInput = z.infer<typeof saveCollectionItemInputSchema>;
 export const saveCollectionItemInputSchema = collectionItemSchema
   .extend({
-    collectionIds: z.coerce.number().array(),
+    collections: z.array(
+      z.object({
+        collectionId: z.number(),
+        tagId: z.number().nullish(),
+      })
+    ),
     removeFromCollectionIds: z.coerce.number().array().optional(),
   })
   .refine(
