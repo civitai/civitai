@@ -1,8 +1,8 @@
 import { ActionIcon, Alert, Center, Group, GroupProps } from '@mantine/core';
-import { useLocalStorage } from '@mantine/hooks';
+import { useDidUpdate, useLocalStorage } from '@mantine/hooks';
 import { IconPlayerPauseFilled, IconPlayerPlayFilled } from '@tabler/icons-react';
 import { WavesurferProps, useWavesurfer } from '@wavesurfer/react';
-import { debounce, set, throttle } from 'lodash-es';
+import { throttle } from 'lodash-es';
 import { memo, useEffect, useRef, useState } from 'react';
 import WaveSurfer, { WaveSurferOptions } from 'wavesurfer.js';
 import { useUniversalPlayerContext } from '~/components/Player/Player';
@@ -23,7 +23,7 @@ function _EdgeAudio({
   const containerRef = useRef<HTMLDivElement>(null);
   const alreadyPlayed = useRef(false);
 
-  const [volume] = useLocalStorage({ key: 'player-volume', defaultValue: 1 });
+  // const [volume] = useLocalStorage({ key: 'player-volume', defaultValue: 1 });
 
   const { wavesurfer, isPlaying, isReady, currentTime } = useWs({
     container: containerRef.current as HTMLDivElement,
@@ -45,9 +45,6 @@ function _EdgeAudio({
     media,
     ...props,
   });
-
-  const [playing, setPlaying] = useState(false);
-  const [loadError, setLoadError] = useState(false);
 
   const handleTogglePlay: React.MouseEventHandler<HTMLButtonElement> = (e) => {
     e.stopPropagation();
@@ -96,23 +93,23 @@ function _EdgeAudio({
   //   ];
   // }, [duration, name, onAudioprocess, onPlay, onReady, peaks, src, volume, wavesurfer]);
 
-  useEffect(() => {
-    if (wavesurfer) wavesurfer.setVolume(volume);
-  }, [volume, wavesurfer]);
+  // useEffect(() => {
+  //   if (wavesurfer) wavesurfer.setVolume(volume);
+  // }, [volume, wavesurfer]);
 
   useEffect(() => {
-    return () => {
-      wavesurfer?.unAll();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    if (currentTime > 5 && !alreadyPlayed.current && onAudioprocess) {
+      onAudioprocess();
+      alreadyPlayed.current = true;
+    }
+  }, [currentTime, onAudioprocess]);
 
-  if (loadError)
-    return (
-      <Alert w="100%" color="red" radius="md">
-        <Center>Failed to load audio</Center>
-      </Alert>
-    );
+  // if (loadError)
+  //   return (
+  //     <Alert w="100%" color="red" radius="md">
+  //       <Center>Failed to load audio</Center>
+  //     </Alert>
+  //   );
 
   return (
     <Group spacing="sm" w="100%" pos="relative" noWrap {...wrapperProps}>
@@ -155,8 +152,7 @@ const useWs = ({ container, media, ...props }: WaveSurferOptions) => {
 
   const debouncedTimeUpdate = throttle(
     (time: number) => setState((prev) => ({ ...prev, currentTime: Math.floor(time) })),
-    1000,
-    { trailing: false }
+    1000
   );
 
   useEffect(() => {
@@ -180,7 +176,7 @@ const useWs = ({ container, media, ...props }: WaveSurferOptions) => {
       }),
 
       wavesurfer.on('ready', () => {
-        console.log('readied');
+        console.log('ready');
         setState((prev) => ({ ...prev, isPlaying: wavesurfer.isPlaying(), isReady: true }));
       }),
 

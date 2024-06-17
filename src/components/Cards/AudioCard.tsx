@@ -32,13 +32,13 @@ export function AudioCard({ data }: Props) {
               name={data.name}
               duration={metadata?.duration}
               peaks={metadata?.peaks}
-              // onAudioprocess={() =>
-              //   trackPlay({
-              //     imageId: data.id,
-              //     ownerId: data.user.id,
-              //     tags: data.tags?.map((t) => t.name) ?? [],
-              //   })
-              // }
+              onAudioprocess={() =>
+                trackPlay({
+                  imageId: data.id,
+                  ownerId: data.user.id,
+                  tags: data.tags?.map((t) => t.name) ?? [],
+                })
+              }
             />
             <Group spacing={4} noWrap>
               <Badge

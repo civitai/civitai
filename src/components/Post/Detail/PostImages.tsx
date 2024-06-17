@@ -116,7 +116,9 @@ export function PostImages({
                             name={image.name}
                             alt={
                               image.meta
-                                ? truncate(image.meta.prompt, { length: constants.altTruncateLength })
+                                ? truncate(image.meta.prompt, {
+                                    length: constants.altTruncateLength,
+                                  })
                                 : image.name ?? undefined
                             }
                             type={image.type}

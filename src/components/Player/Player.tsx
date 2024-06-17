@@ -60,6 +60,7 @@ export const useUniversalPlayerContext = () => useContext(UniversalPlayerContext
 
 export function UniversalPlayerProvider({ children }: { children: React.ReactNode }) {
   const { classes } = useStyles();
+  const [volume] = useLocalStorage({ key: 'player-volume', defaultValue: 1 });
 
   const audioRef = useRef<HTMLMediaElement | null>(null);
   const [currentTrack, setCurrentTrack] = useState<Track | null>(null);
@@ -71,6 +72,10 @@ export function UniversalPlayerProvider({ children }: { children: React.ReactNod
     audioRef.current.pause();
     audioRef.current.currentTime = 0;
   }, [setCurrentTrack]);
+
+  if (audioRef.current) {
+    audioRef.current.volume = volume;
+  }
 
   return (
     <UniversalPlayerContext.Provider
@@ -212,7 +217,6 @@ function VolumeControl() {
 
   const handleSetVolume = (value: number) => {
     if (!currentTrack) return;
-
     setVolume(value);
   };
 
