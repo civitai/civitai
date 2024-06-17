@@ -107,6 +107,7 @@ export function PostImages({
                           }
                           type={image.type}
                           width={width < maxWidth ? width : maxWidth}
+                          original={image.type === 'video'}
                           anim={safe}
                         />
                       )}
