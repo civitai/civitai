@@ -1,7 +1,7 @@
 import { TrainingStatus } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { isTrainingCustomModel } from '~/components/Training/Form/TrainingCommon';
-import { trainingSettings } from '~/components/Training/Form/TrainingSubmit';
+import { trainingSettings } from '~/components/Training/Form/TrainingParams';
 import { env } from '~/env/server.mjs';
 import { constants } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
@@ -346,6 +346,15 @@ export const createTrainingRequest = async ({
   const fileMetadata = modelVersion.fileMetadata || {};
 
   await withRetries(() =>
+    dbWrite.modelVersion.update({
+      where: { id: modelVersionId },
+      data: {
+        trainingStatus: TrainingStatus.Submitted,
+      },
+    })
+  );
+
+  await withRetries(() =>
     dbWrite.modelFile.update({
       where: { id: modelVersion.fileId },
       data: {
@@ -458,7 +467,7 @@ export const autoTagHandler = async ({
 export const getJobEstStartsHandler = async ({ userId }: { userId: number }) => {
   try {
     const modelData = await dbWrite.$queryRaw<{ id: number; job_id: string | null }[]>`
-      SELECT m.id,
+      SELECT mv.id,
              mf.metadata -> 'trainingResults' ->> 'jobId' as job_id
       FROM "ModelVersion" mv
              JOIN "Model" m ON m.id = mv."modelId"
@@ -471,14 +480,14 @@ export const getJobEstStartsHandler = async ({ userId }: { userId: number }) => 
 
     const returnData: { [key: number]: Date | undefined } = {};
     for (const md of modelData) {
-      const { id: mId, job_id: jobId } = md;
+      const { id: mvId, job_id: jobId } = md;
       if (!jobId) continue;
 
       const res = await getOrchestratorCaller(new Date()).getJobById({ id: jobId });
       if (!res.ok) continue;
       const { data } = res;
 
-      returnData[mId] = data?.serviceProviders?.['RunPods']?.queuePosition?.estimatedStartDate;
+      returnData[mvId] = data?.serviceProviders?.['RunPods']?.queuePosition?.estimatedStartDate;
     }
 
     return returnData;

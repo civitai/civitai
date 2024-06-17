@@ -68,6 +68,7 @@ dayjs.extend(utc);
 
 registerCustomProtocol('civitai', true);
 // registerCustomProtocol('urn', true);
+// TODO fix this from initializing again in dev
 linkifyInit();
 
 // type CustomNextPage = NextPage & {

@@ -2,12 +2,12 @@ import {
   ActionIcon,
   Box,
   Button,
+  createStyles,
   Group,
   Loader,
   Menu,
   ScrollArea,
   ThemeIcon,
-  createStyles,
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import {
@@ -27,13 +27,11 @@ import {
 import { useRouter } from 'next/router';
 import { useEffect, useRef, useState } from 'react';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
+import { useToggleCheckpointCoverageMutation } from '~/components/Model/model.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { containerQuery } from '~/utils/mantine-css-helpers';
-
-import { ModelById } from '~/types/router';
-import { useToggleCheckpointCoverageMutation } from '~/components/Model/model.utils';
+import type { ModelById } from '~/types/router';
 
 const useStyles = createStyles((theme) => ({
   scrollContainer: { position: 'relative' },
@@ -168,6 +166,7 @@ export function ModelVersionList({
       <Group spacing={4} noWrap>
         {versions.map((version) => {
           const active = selected === version.id;
+          const isTraining = !!version.trainingStatus;
           const missingFiles = !version.files.length;
           const missingPosts = !version.posts.length;
           const published = version.status === 'Published';
@@ -183,6 +182,12 @@ export function ModelVersionList({
               color={active ? 'blue' : 'gray'}
               onClick={() => {
                 if (showExtraIcons) {
+                  if (!published && isTraining) {
+                    return router.push(
+                      `/models/${version.modelId}/model-versions/${version.id}/wizard?step=1`
+                    );
+                  }
+
                   if (missingFiles)
                     return router.push(
                       `/models/${version.modelId}/model-versions/${version.id}/wizard?step=2`

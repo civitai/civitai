@@ -10,12 +10,12 @@ import {
 } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { CommandResourcesAdd, ResourceType } from '~/components/CivitaiLink/shared-types';
-import { BaseModel, BaseModelType, ModelFileType, constants } from '~/server/common/constants';
+import { BaseModel, BaseModelType, constants, ModelFileType } from '~/server/common/constants';
 import { ModelSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { Context } from '~/server/createContext';
-
 import { dbRead, dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
+import { dataForModelsCache } from '~/server/redis/caches';
 import { getInfiniteArticlesSchema } from '~/server/schema/article.schema';
 import { GetAllSchema, GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
 import {
@@ -29,6 +29,7 @@ import {
   DeleteModelSchema,
   FindResourcesToAssociateSchema,
   GetAllModelsOutput,
+  getAllModelsSchema,
   GetAssociatedResourcesInput,
   GetDownloadSchema,
   GetModelVersionsSchema,
@@ -42,7 +43,6 @@ import {
   ToggleModelLockInput,
   UnpublishModelSchema,
   UpdateGallerySettingsInput,
-  getAllModelsSchema,
 } from '~/server/schema/model.schema';
 import { modelsSearchIndex } from '~/server/search-index';
 import {
@@ -58,23 +58,23 @@ import { getImagesForModelVersion } from '~/server/services/image.service';
 import {
   deleteModelById,
   getDraftModelsByUserId,
+  getGallerySettingsByModelId,
   getModel,
-  getModelVersionsMicro,
   getModels,
+  getModelsRaw,
   getModelsWithImagesAndModelVersions,
+  getModelVersionsMicro,
   getTrainingModelsByUserId,
   getVaeFiles,
   permaDeleteModelById,
   publishModelById,
   restoreModelById,
+  toggleCheckpointCoverage,
   toggleLockModel,
   unpublishModelById,
   updateModelById,
   updateModelEarlyAccessDeadline,
   upsertModel,
-  getGallerySettingsByModelId,
-  toggleCheckpointCoverage,
-  getModelsRaw,
 } from '~/server/services/model.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { getCategoryTags } from '~/server/services/system-cache';
@@ -88,20 +88,18 @@ import {
 } from '~/server/utils/errorHandling';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
-import { getDownloadUrl } from '~/utils/delivery-worker';
-import { isDefined } from '~/utils/type-guards';
-import { redis } from '../redis/client';
-import {
-  deleteResourceDataCache,
-  getUnavailableResources,
-} from '../services/generation/generation.service';
-import { BountyDetailsSchema } from '../schema/bounty.schema';
 import {
   allBrowsingLevelsFlag,
   getIsSafeBrowsingLevel,
 } from '~/shared/constants/browsingLevel.constants';
-import { Flags } from '~/shared/utils';
-import { dataForModelsCache } from '~/server/redis/caches';
+import { getDownloadUrl } from '~/utils/delivery-worker';
+import { isDefined } from '~/utils/type-guards';
+import { redis } from '../redis/client';
+import { BountyDetailsSchema } from '../schema/bounty.schema';
+import {
+  deleteResourceDataCache,
+  getUnavailableResources,
+} from '../services/generation/generation.service';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
@@ -890,32 +888,70 @@ export const getMyTrainingModelsHandler = async ({
       userId,
       select: {
         id: true,
+        trainingDetails: true,
+        trainingStatus: true,
         name: true,
-        type: true,
         createdAt: true,
-        status: true,
         updatedAt: true,
-        modelVersions: {
+
+        model: {
           select: {
             id: true,
-            trainingDetails: true,
-            trainingStatus: true,
-            files: {
+            name: true,
+            status: true,
+            _count: {
               select: {
-                id: true,
-                url: true,
-                type: true,
-                metadata: true,
-                sizeKB: true,
+                modelVersions: true,
               },
-              where: { type: { equals: 'Training Data' } },
             },
           },
+        },
+
+        files: {
+          select: {
+            id: true,
+            url: true,
+            type: true,
+            metadata: true,
+            sizeKB: true,
+          },
+          where: { type: { equals: 'Training Data' } },
         },
       },
     });
   } catch (error) {
     throw throwDbError(error);
+  }
+};
+
+export const getAvailableTrainingModelsHandler = async ({
+  ctx,
+}: {
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    return await dbRead.model.findMany({
+      where: {
+        userId: ctx.user.id,
+        uploadType: ModelUploadType.Trained,
+        status: { notIn: [ModelStatus.Deleted] },
+      },
+      select: {
+        id: true,
+        name: true,
+        modelVersions: {
+          select: {
+            id: true,
+            trainingDetails: true,
+            baseModel: true,
+          },
+        },
+      },
+      orderBy: { updatedAt: 'desc' },
+    });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
   }
 };
 
@@ -1266,16 +1302,15 @@ export const getModelByHashesHandler = async ({ input }: { input: ModelByHashesI
   const modelsByHashes = await dbRead.$queryRaw<
     { userId: number; modelId: number; hash: string }[]
   >`
-      SELECT
-        m."userId",
-        m."id",
-        mfh."hash"
-      FROM "ModelFileHash" mfh
-      JOIN "ModelFile" mf ON mf."id" = mfh."fileId"
-      JOIN "ModelVersion" mv ON mv."id" = mf."modelVersionId"
-      JOIN "Model" m ON mv."modelId" = m.id
-      WHERE LOWER(mfh."hash") IN (${Prisma.join(hashes.map((h) => h.toLowerCase()))});
-    `;
+    SELECT m."userId",
+           m."id",
+           mfh."hash"
+    FROM "ModelFileHash" mfh
+           JOIN "ModelFile" mf ON mf."id" = mfh."fileId"
+           JOIN "ModelVersion" mv ON mv."id" = mf."modelVersionId"
+           JOIN "Model" m ON mv."modelId" = m.id
+    WHERE LOWER(mfh."hash") IN (${Prisma.join(hashes.map((h) => h.toLowerCase()))});
+  `;
 
   return modelsByHashes;
 };
