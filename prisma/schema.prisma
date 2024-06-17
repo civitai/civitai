@@ -258,6 +258,8 @@ model User {
   addedCosmeticShopSections  CosmeticShopSection[]
   addedCosmeticShopItems     CosmeticShopItem[]
   purchasedCosmetics         UserCosmeticShopPurchases[]
+  collaboratingOn            EntityCollaborator[]           @relation("entityCollaboratorParticipant")
+  collaborationsCreated      EntityCollaborator[]           @relation("entityCollaboratorCreator")
 }
 
 model CustomerSubscription {
@@ -2622,6 +2624,26 @@ model EntityAccess {
   addedAt      DateTime @default(now())
 
   @@id([accessToId, accessToType, accessorId, accessorType])
+}
+
+enum EntityCollaboratorStatus {
+  Pending
+  Approved
+  Rejected
+}
+
+model EntityCollaborator {
+  entityType EntityType
+  entityId   Int
+  userId     Int
+  user       User                     @relation("entityCollaboratorParticipant", fields: [userId], references: [id])
+  status     EntityCollaboratorStatus @default(Pending)
+  createdAt  DateTime                 @default(now())
+  createdBy  Int
+  creator    User                     @relation("entityCollaboratorCreator", fields: [createdBy], references: [id])
+
+  @@id([entityType, entityId, userId])
+  @@index([userId, entityType, entityId]) // Include status in the migration.
 }
 
 model Club {
