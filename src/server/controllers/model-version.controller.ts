@@ -1,6 +1,5 @@
 import { ModelStatus } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
-
 import { BaseModel, baseModelLicenses, BaseModelType, constants } from '~/server/common/constants';
 import { Context } from '~/server/createContext';
 import { eventEngine } from '~/server/events';
@@ -19,6 +18,7 @@ import {
 } from '~/server/schema/model-version.schema';
 import { DeclineReviewSchema, UnpublishModelSchema } from '~/server/schema/model.schema';
 import { ModelFileModel } from '~/server/selectors/modelFile.selector';
+import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { getStaticContent } from '~/server/services/content.service';
 import {
   addAdditionalLicensePermissions,
@@ -46,8 +46,6 @@ import { dbRead } from '../db/client';
 import { modelFileSelect } from '../selectors/modelFile.selector';
 import { getFilesByEntity } from '../services/file.service';
 import { createFile } from '../services/model-file.service';
-import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
-
 
 export const getModelVersionRunStrategiesHandler = ({ input: { id } }: { input: GetByIdInput }) => {
   try {
