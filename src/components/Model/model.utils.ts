@@ -1,8 +1,13 @@
 import { MetricTimeframe, ModelStatus } from '@prisma/client';
+import { isEqual } from 'lodash-es';
 import { useRouter } from 'next/router';
 import { useMemo, useState } from 'react';
 import { z } from 'zod';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
+import { useFiltersContext } from '~/providers/FiltersProvider';
+import { constants } from '~/server/common/constants';
 import { ModelSort } from '~/server/common/enums';
 import { periodModeSchema } from '~/server/schema/base.schema';
 import { GetAllModelsInput, ToggleCheckpointCoverageInput } from '~/server/schema/model.schema';
@@ -11,11 +16,6 @@ import { showErrorNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import { constants } from '~/server/common/constants';
-import { isEqual } from 'lodash-es';
-import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
-import { useFiltersContext } from '~/providers/FiltersProvider';
-import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 
 const modelQueryParamSchema = z
   .object({
@@ -123,7 +123,7 @@ export const useQueryModels = (
     type: 'models',
     data: flatData,
     showHidden: !!_filters.hidden,
-    showImageless: (_filters.status ?? []).includes(ModelStatus.Draft),
+    showImageless: (_filters.status ?? []).includes(ModelStatus.Draft) || _filters.pending,
     isRefetching: rest.isRefetching,
     hiddenTags: _filters.excludedTagIds,
   });

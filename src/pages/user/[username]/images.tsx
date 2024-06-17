@@ -1,11 +1,10 @@
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { MediaType, MetricTimeframe, ReviewReactions } from '@prisma/client';
 import { ImageSort } from '~/server/common/enums';
 import { useImageQueryParams } from '~/components/Image/image.utils';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { NotFound } from '~/components/AppLayout/NotFound';
-import React, { useMemo } from 'react';
+import React from 'react';
 import {
   Box,
   Chip,
@@ -15,7 +14,6 @@ import {
   SegmentedControlItem,
   SegmentedControlProps,
   Stack,
-  Tabs,
 } from '@mantine/core';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { constants } from '~/server/common/constants';
@@ -84,7 +82,6 @@ const useChipStyles = createStyles((theme) => ({
 export function UserImagesPage() {
   const currentUser = useCurrentUser();
   const { classes } = useChipStyles();
-  const features = useFeatureFlags();
 
   const {
     replace,
@@ -97,6 +94,7 @@ export function UserImagesPage() {
       withMeta = false,
       followed = undefined,
       fromPlatform = false,
+      baseModels = undefined,
       ...query
     },
   } = useImageQueryParams();
@@ -160,7 +158,7 @@ export function UserImagesPage() {
                   onChange={(x) => replace({ sort: x as ImageSort })}
                 />
                 <ImageFiltersDropdown
-                  query={{ ...query, period, types, withMeta, followed }}
+                  query={{ ...query, period, types, withMeta, followed, baseModels }}
                   onChange={(filters) => replace(filters)}
                   size="sm"
                   compact
@@ -179,6 +177,7 @@ export function UserImagesPage() {
                 reactions: viewingReactions ? reactions ?? availableReactions : undefined,
                 username: viewingReactions ? undefined : username,
                 followed,
+                baseModels,
                 pending: true,
               }}
               showEmptyCta={isSameUser}

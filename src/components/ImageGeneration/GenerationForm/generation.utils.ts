@@ -94,7 +94,7 @@ export const useDerivedGenerationState = () => {
     trainedWords,
     additionalResourcesCount,
     samplerCfgOffset,
-    isSDXL: baseModel === 'SDXL',
+    isSDXL: baseModel === 'SDXL' || baseModel === 'Pony',
     isLCM,
     unstableResources,
     isCalculatingCost,

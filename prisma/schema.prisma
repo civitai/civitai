@@ -2578,17 +2578,23 @@ model BountyEntryMetric {
   @@id([bountyEntryId, timeframe])
 }
 
+enum CsamReportType {
+  Image
+  TrainingData
+}
+
 model CsamReport {
-  id               Int       @id @default(autoincrement())
+  id               Int            @id @default(autoincrement())
   userId           Int?
-  createdAt        DateTime  @default(now())
+  createdAt        DateTime       @default(now())
   reportedById     Int
   reportSentAt     DateTime?
   archivedAt       DateTime?
   contentRemovedAt DateTime?
   reportId         Int?
-  details          Json      @default("{}")
-  images           Json      @default("[]")
+  details          Json           @default("{}")
+  images           Json           @default("[]")
+  type             CsamReportType @default(Image)
   // modelVersionIds  Int[]     @default([])
 }
 

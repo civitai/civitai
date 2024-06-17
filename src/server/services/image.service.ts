@@ -34,34 +34,48 @@ import { leakingContentCounter } from '~/server/prom/client';
 import { imagesForModelVersionsCache, tagIdsForImagesCache } from '~/server/redis/caches';
 import { GetByIdInput, UserPreferencesInput, getByIdSchema } from '~/server/schema/base.schema';
 import {
+  AddOrRemoveImageTechniquesOutput,
   AddOrRemoveImageToolsOutput,
   CreateImageSchema,
   GetEntitiesCoverImage,
   GetInfiniteImagesOutput,
   ImageEntityType,
+  imageMetaOutput,
   ImageRatingReviewOutput,
   ImageReviewQueueInput,
   ImageUploadProps,
   ReportCsamImagesInput,
   UpdateImageNsfwLevelOutput,
-  UpdateImageToolsOutput,
-  AddOrRemoveImageTechniquesOutput,
   UpdateImageTechniqueOutput,
-  imageMetaOutput,
+  UpdateImageToolsOutput,
 } from '~/server/schema/image.schema';
 import { articlesSearchIndex, imagesSearchIndex } from '~/server/search-index';
+import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
+import { ImageResourceHelperModel } from '~/server/selectors/image.selector';
 import { ImageV2Model } from '~/server/selectors/imagev2.selector';
 import { imageTagCompositeSelect, simpleTagSelect } from '~/server/selectors/tag.selector';
+import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
+import { trackModActivity } from '~/server/services/moderator.service';
 import { bustCachesForPost, updatePostNsfwLevel } from '~/server/services/post.service';
+import { bulkSetReportStatus } from '~/server/services/report.service';
 import { getModeratedTags, getTagsNeedingReview } from '~/server/services/system-cache';
+import { getVotableTags2 } from '~/server/services/tag.service';
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { getPeriods } from '~/server/utils/enum-helpers';
 import {
   throwAuthorizationError,
   throwBadRequestError,
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { getCursor } from '~/server/utils/pagination-helpers';
+import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { Flags } from '~/shared/utils';
 import { logToDb } from '~/utils/logging';
+import { promptWordReplace } from '~/utils/metadata/audit';
+import { removeEmpty } from '~/utils/object-helpers';
+import { baseS3Client } from '~/utils/s3-client';
 import { isDefined } from '~/utils/type-guards';
 import {
   GetImageInput,
@@ -1486,7 +1500,18 @@ export const getImagesForModelVersion = async ({
 };
 
 export async function getImagesForModelVersionCache(modelVersionIds: number[]) {
-  return await imagesForModelVersionsCache.fetch(modelVersionIds);
+  const images = await imagesForModelVersionsCache.fetch(modelVersionIds);
+  const tagsForImages = await tagIdsForImagesCache.fetch(Object.keys(images).map(Number));
+  return Object.keys(images).reduce(
+    (acc, imageId) => ({
+      ...acc,
+      [imageId]: {
+        ...images[imageId],
+        tags: tagsForImages[imageId]?.tags,
+      },
+    }),
+    images
+  );
 }
 export async function deleteImagesForModelVersionCache(modelVersionId: number) {
   await imagesForModelVersionsCache.bust(modelVersionId);

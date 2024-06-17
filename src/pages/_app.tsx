@@ -21,7 +21,7 @@ import React, { ReactElement, ReactNode } from 'react';
 import { AdsProvider } from '~/components/Ads/AdsProvider';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { BaseLayout } from '~/components/AppLayout/BaseLayout';
-import { InnerLayoutOptions } from '~/components/AppLayout/createPage';
+import { CustomNextPage, InnerLayoutOptions } from '~/components/AppLayout/createPage';
 import { BrowserRouterProvider } from '~/components/BrowserRouter/BrowserRouterProvider';
 import { BrowsingModeProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import ChadGPT from '~/components/ChadGPT/ChadGPT';
@@ -57,6 +57,8 @@ import { RegisterCatchNavigation } from '~/store/catch-navigation.store';
 import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 import { trpc } from '~/utils/trpc';
 import '~/styles/globals.css';
+import { FeedLayout } from '~/components/AppLayout/FeedLayout';
+import { FeatureLayout } from '~/components/AppLayout/FeatureLayout';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -66,12 +68,13 @@ dayjs.extend(utc);
 
 registerCustomProtocol('civitai', true);
 // registerCustomProtocol('urn', true);
+// TODO fix this from initializing again in dev
 linkifyInit();
 
-type CustomNextPage = NextPage & {
-  getLayout?: (page: ReactElement) => ReactNode;
-  options?: InnerLayoutOptions;
-};
+// type CustomNextPage = NextPage & {
+//   getLayout?: (page: ReactElement) => ReactNode;
+//   options?: InnerLayoutOptions;
+// };
 
 type CustomAppProps = {
   Component: CustomNextPage;
@@ -99,18 +102,20 @@ function MyApp(props: CustomAppProps) {
       const InnerLayout = Component.options?.InnerLayout ?? Component.options?.innerLayout;
       const withScrollArea = Component.options?.withScrollArea ?? true;
       return (
-        <AppLayout>
-          {/* <InnerLayout>
+        <FeatureLayout conditional={Component.options?.features}>
+          <AppLayout>
+            {/* <InnerLayout>
             {withScrollArea ? <ScrollAreaMain>{page}</ScrollAreaMain> : page}
           </InnerLayout> */}
-          {InnerLayout ? (
-            <InnerLayout>{page}</InnerLayout>
-          ) : withScrollArea ? (
-            <ScrollAreaMain>{page}</ScrollAreaMain>
-          ) : (
-            page
-          )}
-        </AppLayout>
+            {InnerLayout ? (
+              <InnerLayout>{page}</InnerLayout>
+            ) : withScrollArea ? (
+              <ScrollAreaMain>{page}</ScrollAreaMain>
+            ) : (
+              page
+            )}
+          </AppLayout>
+        </FeatureLayout>
       );
     });
 
