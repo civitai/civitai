@@ -32,7 +32,7 @@ export function ModelsInfinite({
   const modelFilters = useModelFilters();
   const currentUser = useCurrentUser();
 
-  const pending = filterOverrides.username === currentUser?.username;
+  const pending = currentUser !== null && filterOverrides.username === currentUser.username;
 
   const filters = removeEmpty({
     ...(disableStoreFilters ? filterOverrides : { ...modelFilters, ...filterOverrides }),
