@@ -543,14 +543,14 @@ export const getModelsRaw = async ({
       m."name",
       ${ifDetails`
         m."description",
-        m."poi",
-        m."minor",
         m."allowNoCredit",
         m."allowCommercialUse",
         m."allowDerivatives",
         m."allowDifferentLicense",
       `}
       m."type",
+      m."minor",
+      m."poi",
       m."nsfw",
       m."nsfwLevel",
       m."status",
