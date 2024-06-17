@@ -20,6 +20,7 @@ export const browsingLevels = [
 ] as const;
 
 export const browsingLevelLabels = {
+  0: '?',
   [NsfwLevel.PG]: 'PG',
   [NsfwLevel.PG13]: 'PG-13',
   [NsfwLevel.R]: 'R',

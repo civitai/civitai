@@ -41,9 +41,9 @@ export function ImageDetailComments({ imageId, userId }: ImageDetailCommentsProp
               </Stack>
             )}
             <Stack className={activeComment ? classes.rootCommentReplyInset : undefined}>
-              <CreateComment key={activeComment?.id} />
+              <CreateComment key={activeComment?.id} borderless />
               {data?.map((comment) => (
-                <Comment key={comment.id} comment={comment} />
+                <Comment key={comment.id} comment={comment} borderless />
               ))}
               {!!remaining && !showMore && (
                 <div className="flex justify-center">
@@ -53,7 +53,7 @@ export function ImageDetailComments({ imageId, userId }: ImageDetailCommentsProp
                 </div>
               )}
               {created.map((comment) => (
-                <Comment key={comment.id} comment={comment} />
+                <Comment key={comment.id} comment={comment} borderless />
               ))}
             </Stack>
           </Stack>

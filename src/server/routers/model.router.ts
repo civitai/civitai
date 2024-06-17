@@ -30,6 +30,7 @@ import {
   unpublishModelHandler,
   updateGallerySettingsHandler,
   upsertModelHandler,
+  getModelOwnerHandler,
 } from '~/server/controllers/model.controller';
 import { dbRead } from '~/server/db/client';
 import { applyUserPreferences, cacheIt, edgeCacheIt } from '~/server/middleware.trpc';
@@ -109,6 +110,7 @@ const skipEdgeCache = middleware(async ({ input, ctx, next }) => {
 
 export const modelRouter = router({
   getById: publicProcedure.input(getByIdSchema).query(getModelHandler),
+  getOwner: publicProcedure.input(getByIdSchema).query(getModelOwnerHandler),
   getAll: publicProcedure
     .input(getAllModelsSchema.extend({ page: z.never().optional() }))
     .use(skipEdgeCache)

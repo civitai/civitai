@@ -12,6 +12,7 @@ import { env } from '~/env/server.mjs';
 import { NsfwLevel, PostSort } from '~/server/common/enums';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { externalMetaSchema } from '~/server/schema/image.schema';
@@ -436,7 +437,8 @@ export const getPostsInfinite = async ({
 
 export type PostDetail = AsyncReturnType<typeof getPostDetail>;
 export const getPostDetail = async ({ id, user }: GetByIdInput & { user?: SessionUser }) => {
-  const post = await dbRead.post.findFirst({
+  const db = await getDbWithoutLag('post', id);
+  const post = await db.post.findFirst({
     where: {
       id,
       OR: user?.isModerator
@@ -484,7 +486,8 @@ async function combinePostEditImageData(images: PostImageEditSelect[], user: Ses
 
 export type PostImageEditable = AsyncReturnType<typeof getPostEditImages>[number];
 export const getPostEditImages = async ({ id, user }: GetByIdInput & { user: SessionUser }) => {
-  const images = await dbRead.image.findMany({
+  const db = await getDbWithoutLag('postImages', id);
+  const images = await db.image.findMany({
     where: { postId: id },
     select: editPostImageSelect,
   });
@@ -515,6 +518,8 @@ export const createPost = async ({
     data: { ...data, userId, tags: tagsToAdd.length > 0 ? { create: tagData } : undefined },
     select: postSelect,
   });
+  await preventReplicationLag('post', post.id);
+
   return {
     ...post,
     tags: post.tags.flatMap((x) => x.tag),
@@ -771,6 +776,7 @@ export const addPostMedia = async ({
     }
   }
 
+  await preventReplicationLag('postImages', props.postId);
   await bustCachesForPost(props.postId);
 
   return image;

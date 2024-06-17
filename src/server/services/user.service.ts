@@ -512,6 +512,8 @@ export async function setLeaderboardEligibility({ id, setTo }: { id: number; set
 
 /** Soft delete will ban the user, unsubscribe the user, and restrict access to the user's models/images  */
 export async function softDeleteUser({ id }: { id: number }) {
+  const user = await dbWrite.user.findFirst({ where: { id }, select: { isModerator: true } });
+  if (user?.isModerator) return;
   await dbWrite.model.updateMany({
     where: { userId: id },
     data: { status: 'UnpublishedViolation' },

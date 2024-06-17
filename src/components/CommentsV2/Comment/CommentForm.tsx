@@ -30,12 +30,14 @@ export const CommentForm = ({
   autoFocus,
   replyTo,
   replyToCommentId,
+  borderless,
 }: {
   comment?: { id: number; content: string };
   onCancel?: () => void;
   autoFocus?: boolean;
   replyTo?: SimpleUser;
   replyToCommentId?: number;
+  borderless?: boolean;
 }) => {
   const { classes, cx } = useStyles();
   const { expanded, toggleExpanded } = useRootThreadContext();
@@ -168,7 +170,7 @@ export const CommentForm = ({
           onFocus={!autoFocus ? () => setFocused(true) : undefined}
           onSuperEnter={() => form.handleSubmit(handleSubmit)()}
           classNames={{
-            root: 'border-none',
+            root: borderless ? 'border-none' : undefined,
             content: cx(classes.content, 'rounded-3xl'),
           }}
         />

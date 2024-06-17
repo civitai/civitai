@@ -586,6 +586,7 @@ function EditDetail() {
               entityId={media.id}
               entityType="image"
               tags={!!media.tags.length ? media.tags : undefined}
+              nsfwLevel={media.nsfwLevel}
               collapsible
               canAdd
             />

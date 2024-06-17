@@ -145,14 +145,6 @@ export const getAllUserCollectionsHandler = async ({
         ...input,
         userId: user.id,
       },
-      select: {
-        id: true,
-        name: true,
-        description: true,
-        image: true,
-        read: true,
-        userId: true,
-      },
     });
 
     return collections;

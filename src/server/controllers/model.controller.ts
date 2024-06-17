@@ -50,7 +50,7 @@ import {
   getAllModelsWithVersionsSelect,
   modelWithDetailsSelect,
 } from '~/server/selectors/model.selector';
-import { simpleUserSelect } from '~/server/selectors/user.selector';
+import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { getArticles } from '~/server/services/article.service';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { getDownloadFilename, getFilesByEntity } from '~/server/services/file.service';
@@ -358,10 +358,13 @@ export const upsertModelHandler = async ({
 }) => {
   try {
     const { id: userId } = ctx.user;
-    const { nsfw, poi } = input;
+    const { nsfw, poi, minor } = input;
 
     if (nsfw && poi)
       throw throwBadRequestError('Mature content depicting actual people is not permitted.');
+
+    if (nsfw && minor)
+      throw throwBadRequestError('Mature content depicting minors is not permitted.');
 
     // Check tags for multiple categories
     const { tagsOnModels } = input;
@@ -1492,4 +1495,10 @@ export async function toggleCheckpointCoverageHandler({
   } catch (error) {
     throw throwDbError(error);
   }
+}
+
+export async function getModelOwnerHandler({ input }: { input: GetByIdInput }) {
+  const model = await getModel({ ...input, select: { user: { select: userWithCosmeticsSelect } } });
+  if (!model) throw throwNotFoundError();
+  return model.user;
 }

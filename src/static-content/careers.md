@@ -28,5 +28,4 @@ In everything we do, we are guided by our core values:
 Civitai is in a phase of rapid expansion and we're looking for exceptional individuals to join our journey. Check out our latest openings and discover how you can contribute to the AI revolution.
 
 ### Open Positions
-- [Full Stack Developer](/content/careers/full-stack-dev)
-- [Back-end Developer](/content/careers/back-end-dev)
+- [Support Agent](/content/careers/support)

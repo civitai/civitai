@@ -42,3 +42,7 @@ export type IMAGE_MIME_TYPE = (typeof IMAGE_MIME_TYPE)[number];
 export const VIDEO_MIME_TYPE = [MIME_TYPES.mp4, MIME_TYPES.webm];
 export const AUDIO_MIME_TYPE = [MIME_TYPES.mp3, MIME_TYPES.wav];
 export const ZIP_MIME_TYPE = [MIME_TYPES.zip, MIME_TYPES.xZipCompressed, MIME_TYPES.xZipMultipart];
+
+export function getMimeTypeFromExt(ext: string) {
+  return MIME_TYPES[ext as keyof typeof MIME_TYPES];
+}
