@@ -70,7 +70,6 @@ import { collectionsSearchIndex } from '~/server/search-index';
 import { createNotification } from '~/server/services/notification.service';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
 import { collectionSelect } from '~/server/selectors/collection.selector';
-import { input } from '@tensorflow/tfjs';
 
 export type CollectionContributorPermissionFlags = {
   collectionId: number;
