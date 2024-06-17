@@ -3,24 +3,19 @@ import { CollectionMode } from '@prisma/client';
 import { useEffect, useMemo, useState } from 'react';
 import { useCollectionsForPostCreation } from '~/components/Collections/collection.utils';
 import { usePostEditParams, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
-import { useDebouncer } from '~/utils/debouncer';
-import { showErrorNotification } from '~/utils/notifications';
-import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 
 export const CollectionSelectDropdown = () => {
-  const { collections: queryCollectionIds, collectionId } = usePostEditParams();
-  const { post, updateCollection } = usePostEditStore((state) => ({
+  const { collections: queryCollectionIds, collectionId: queryCollectionId } = usePostEditParams();
+  const { post, updateCollection, collectionId, collectionTagId } = usePostEditStore((state) => ({
     post: state.post,
     updateCollection: state.updateCollection,
+    collectionId: state.collectionId,
+    collectionTagId: state.collectionTagId,
   }));
-  const [selectedCollectionId, setSelectedCollectionId] = useState<number | null>(
-    post?.collectionId ?? collectionId ?? null
-  );
-  const [tagId, setTagId] = useState<number | null>(null);
 
   const collectionIds = useMemo(() => {
-    return [...((queryCollectionIds as number[]) ?? []), collectionId, post?.collectionId].filter(
+    return [...((queryCollectionIds as number[]) ?? []), queryCollectionId, collectionId].filter(
       isDefined
     );
   }, [queryCollectionIds, collectionId, post]);
@@ -41,13 +36,10 @@ export const CollectionSelectDropdown = () => {
     : null;
 
   useEffect(() => {
-    updateCollection(selectedCollectionId ?? null, null);
-    setTagId(null);
-  }, [selectedCollectionId]); // eslint-disable-line
-
-  useEffect(() => {
-    updateCollection(selectedCollectionId ?? null, tagId ?? null);
-  }, [tagId]);
+    if (queryCollectionId && !collectionId) {
+      updateCollection(queryCollectionId);
+    }
+  }, [queryCollectionId]);
 
   const selectOpts = writeableCollections.map((collection) => ({
     value: collection.id.toString(),
@@ -66,9 +58,9 @@ export const CollectionSelectDropdown = () => {
           <Select
             label={isContestCollectionsOnly ? 'Contest Selection' : 'Select collection'}
             data={selectOpts}
-            value={selectedCollectionId ? selectedCollectionId.toString() : null}
+            value={collectionId ? collectionId.toString() : null}
             onChange={(value: string) =>
-              value ? setSelectedCollectionId(parseInt(value, 10)) : setSelectedCollectionId(null)
+              value ? updateCollection(parseInt(value, 10), null) : updateCollection(null, null)
             }
             disabled={!!post?.publishedAt}
             placeholder={`Add to ${isContestCollectionsOnly ? 'contest' : 'collection'}`}
@@ -88,8 +80,12 @@ export const CollectionSelectDropdown = () => {
                 value: tag.id.toString(),
                 label: tag.name,
               }))}
-              value={tagId ? tagId.toString() : null}
-              onChange={(value: string) => (value ? setTagId(parseInt(value, 10)) : setTagId(null))}
+              value={collectionTagId ? collectionTagId.toString() : null}
+              onChange={(value: string) =>
+                value
+                  ? updateCollection(collectionId as number, parseInt(value, 10))
+                  : updateCollection(collectionId as number, null)
+              }
               placeholder="Select category"
               radius="xl"
               clearable
