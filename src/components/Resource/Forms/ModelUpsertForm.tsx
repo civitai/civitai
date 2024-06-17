@@ -78,6 +78,7 @@ const commercialUseOptions: Array<{ value: CommercialUse; label: string }> = [
 const lockableProperties = ['nsfw', 'poi', 'minor', 'category', 'tags'];
 
 export function ModelUpsertForm({ model, children, onSubmit }: Props) {
+  console.log('model', model);
   const router = useRouter();
   const result = querySchema.safeParse(router.query);
   const currentUser = useCurrentUser();
