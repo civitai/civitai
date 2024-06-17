@@ -113,7 +113,6 @@ type ModelRaw = {
   type: ModelType;
   poi?: boolean;
   nsfw: boolean;
-  minor?: boolean;
   nsfwLevel: number;
   allowNoCredit?: boolean;
   allowCommercialUse?: CommercialUse[];
@@ -544,7 +543,6 @@ export const getModelsRaw = async ({
       ${ifDetails`
         m."description",
         m."poi",
-        m."minor",
         m."allowNoCredit",
         m."allowCommercialUse",
         m."allowDerivatives",
@@ -1253,7 +1251,7 @@ export const upsertModel = async (
   } else {
     const beforeUpdate = await dbRead.model.findUnique({
       where: { id },
-      select: { poi: true, userId: true, minor: true },
+      select: { poi: true, userId: true },
     });
     if (!beforeUpdate) return null;
 
@@ -1261,7 +1259,7 @@ export const upsertModel = async (
     if (!isOwner) return null;
 
     const result = await dbWrite.model.update({
-      select: { id: true, nsfwLevel: true, poi: true, minor: true },
+      select: { id: true, nsfwLevel: true, poi: true },
       where: { id },
       data: {
         ...data,
@@ -1298,11 +1296,8 @@ export const upsertModel = async (
     const poiChanged = beforeUpdate && result.poi !== beforeUpdate.poi;
     // A trigger now handles updating images to reflect the poi setting. We don't need to do it here.
 
-    // Handle Minor change
-    const minorChanged = beforeUpdate && result.minor !== beforeUpdate.minor;
-
     // Update search index if listing changes
-    if (tagsOnModels || poiChanged || minorChanged) {
+    if (tagsOnModels || poiChanged) {
       await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
     }
 
