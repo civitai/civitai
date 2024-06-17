@@ -91,7 +91,7 @@ export function PostImages({
                             position: 'absolute',
                             top: 0,
                             bottom: 0,
-                            aspectRatio: (image.width ?? 0) / (image.height ?? 0),
+                            aspectRatio: (image.width ?? 1) / (image.height ?? 1),
                           }}
                         >
                           <MediaHash {...image} />
