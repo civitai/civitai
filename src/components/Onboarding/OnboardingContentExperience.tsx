@@ -19,14 +19,14 @@ import { useOnboardingStepCompleteMutation } from '~/components/Onboarding/onboa
 import { useReferralsContext } from '~/components/Referrals/ReferralsProvider';
 import { StepperTitle } from '~/components/Stepper/StepperTitle';
 import { OnboardingSteps } from '~/server/common/enums';
+import { useReferralsContext } from '~/components/Referrals/ReferralsProvider';
 
 export function OnboardingContentExperience() {
   const { classes } = useStyles();
+  const { source } = useReferralsContext();
   const { next, isReturningUser } = useOnboardingWizardContext();
   const { mutate, isLoading } = useOnboardingStepCompleteMutation();
-  const { code, source } = useReferralsContext();
-
-  console.log(source);
+  const isProjectOdyssey = source === 'project_odyssey';
 
   const handleStepComplete = () => {
     mutate({ step: OnboardingSteps.BrowsingLevels }, { onSuccess: () => next() });
@@ -83,14 +83,20 @@ export function OnboardingContentExperience() {
           />
         )}
 
-        <Stack>
-          <ContentControls />
+        {!isProjectOdyssey ? (
+          <Stack>
+            <ContentControls />
 
-          <Stack spacing="xs" mt="sm">
-            <Title order={3}>Content Moderation</Title>
-            <MatureContentSettings />
+            <Stack spacing="xs" mt="sm">
+              <Title order={3}>Content Moderation</Title>
+              <MatureContentSettings />
+            </Stack>
           </Stack>
-        </Stack>
+        ) ? (
+          <Stack>
+            <Text>Since you're registering as part of Project Odyssey, we've simplified your Content Experience onboarding step. If you'd like to modify your Civitai Content Experience, you can do so from your account settings after completing onboarding.</Text>
+          </Stack>
+        )}
 
         <Group position="apart">
           <OnboardingAbortButton size="lg">Sign Out</OnboardingAbortButton>
