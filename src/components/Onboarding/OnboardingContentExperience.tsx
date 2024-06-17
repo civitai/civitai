@@ -92,9 +92,13 @@ export function OnboardingContentExperience() {
               <MatureContentSettings />
             </Stack>
           </Stack>
-        ) ? (
+        ) : (
           <Stack>
-            <Text>Since you're registering as part of Project Odyssey, we've simplified your Content Experience onboarding step. If you'd like to modify your Civitai Content Experience, you can do so from your account settings after completing onboarding.</Text>
+            <Text>
+              {`Since you're registering as part of Project Odyssey, we've simplified your Content
+              Experience onboarding step. If you'd like to modify your Civitai Content Experience,
+              you can do so from your account settings after completing onboarding.`}
+            </Text>
           </Stack>
         )}
 
