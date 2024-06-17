@@ -15,44 +15,56 @@ import {
   Title,
 } from '@mantine/core';
 import { closeModal, openConfirmModal } from '@mantine/modals';
+import { CsamReportType } from '@prisma/client';
 import { IconExternalLink, IconPhoto } from '@tabler/icons-react';
 import { uniqBy } from 'lodash-es';
 
 import { useEffect, useMemo } from 'react';
 import { z } from 'zod';
-import { useCsamContext } from '~/components/Csam/CsamProvider';
-import {
-  useCsamImageSelectStore,
-  useCsamModelVersionSelectStore,
-} from '~/components/Csam/useCsamImageSelect.store';
+import { useCsamImageSelectStore } from '~/components/Csam/useCsamImageSelect.store';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
-import { Stepper, useStepperContext } from '~/components/Stepper/Stepper';
 import { Form, InputCheckboxGroup, InputRadioGroup, useForm } from '~/libs/form';
+import { withController } from '~/libs/form/hoc/withController';
 import {
+  CsamReportDetails,
   csamCapabilitiesDictionary,
   csamContentsDictionary,
-  csamReportFormSchema,
+  csamReportDetails,
 } from '~/server/schema/csam.schema';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 
-export function CsamDetailsForm() {
-  const { userId, isInternal } = useCsamContext();
-  const { next } = useStepperContext();
+const schema = csamReportDetails.extend({ minorDepiction: z.enum(['real', 'non-real']) });
+
+export function CsamDetailsForm({
+  onPrevious,
+  onSuccess,
+  userId,
+  type,
+  defaultValues,
+}: {
+  onPrevious?: () => void;
+  onSuccess?: () => void;
+  userId: number;
+  type: CsamReportType;
+  defaultValues?: CsamReportDetails;
+}) {
   const form = useForm({
-    schema: csamReportFormSchema,
-    defaultValues: { origin: isInternal ? 'testing' : 'user' },
+    schema,
     shouldUnregister: false,
+    defaultValues,
   });
 
   const { mutate: createReport, isLoading } = trpc.csam.createReport.useMutation({
     onSuccess: () => {
       closeModal('csam-confirm');
-      next();
+      onSuccess?.();
     },
   });
 
-  const handleSubmit = (data: z.infer<typeof csamReportFormSchema>) => {
+  const imageIds = useCsamImageSelectStore.getState().getSelected(userId);
+
+  const handleSubmit = (data: z.infer<typeof schema>) => {
     openConfirmModal({
       modalId: 'csam-confirm',
       centered: true,
@@ -62,13 +74,10 @@ export function CsamDetailsForm() {
       confirmProps: { loading: isLoading },
       onConfirm: () => {
         createReport({
-          ...data,
+          type,
+          imageIds: type === 'Image' ? useCsamImageSelectStore.getState().getSelected(userId) : [],
           userId,
-          modelVersionIds: useCsamModelVersionSelectStore.getState().getSelected(userId),
-          images: useCsamImageSelectStore
-            .getState()
-            .getSelected(userId)
-            .map((id) => ({ id })),
+          details: data,
         });
       },
     });
@@ -83,7 +92,11 @@ export function CsamDetailsForm() {
         <Card>
           <Form id="csamForm" form={form} onSubmit={handleSubmit}>
             <Stack spacing="xl">
-              {!isInternal ? (
+              <InputRadioGroup name="minorDepiction" label="Minor depiction">
+                <Radio value="real" label="Real" />
+                <Radio value="non-real" label="Non-real" />
+              </InputRadioGroup>
+              {/* {!isInternal ? (
                 <InputRadioGroup name="minorDepiction" label="Minor depiction">
                   <Radio value="real" label="Real" />
                   <Radio value="non-real" label="Non-real" />
@@ -99,7 +112,7 @@ export function CsamDetailsForm() {
                     <Checkbox key={key} value={key} label={value} />
                   ))}
                 </InputCheckboxGroup>
-              )}
+              )} */}
 
               <InputCheckboxGroup
                 name="contents"
@@ -111,11 +124,17 @@ export function CsamDetailsForm() {
                   <Checkbox key={key} value={key} label={value} />
                 ))}
               </InputCheckboxGroup>
-              <Input.Wrapper label="Select the resources that you'd like to have referenced in this report">
-                <ModelVersionSelectList userId={userId} />
-              </Input.Wrapper>
+              {type === 'Image' && (
+                <Input.Wrapper label="Select the resources that you'd like to have referenced in this report">
+                  <InputModelVersionSelect name="modelVersionIds" imageIds={imageIds} />
+                </Input.Wrapper>
+              )}
               <Group position="right">
-                <Stepper.PreviousButton>Previous</Stepper.PreviousButton>
+                {onPrevious && (
+                  <Button variant="default" onClick={onPrevious} disabled={isLoading}>
+                    Previous
+                  </Button>
+                )}
                 <Button type="submit" loading={isLoading}>
                   Submit
                 </Button>
@@ -128,11 +147,19 @@ export function CsamDetailsForm() {
   );
 }
 
-function ModelVersionSelectList({ userId }: { userId: number }) {
+function ModelVersionSelectList({
+  value,
+  onChange,
+  imageIds,
+}: {
+  value?: number[];
+  onChange?: (value: number[]) => void;
+  imageIds: number[];
+}) {
   // const imageIds = userId ? useCsamImageSelectStore.getState().getSelected(userId) : [];
-  const imageIds = useCsamImageSelectStore((state) =>
-    Object.keys(state.selected[userId] ?? {}).map(Number)
-  );
+  // const imageIds = useCsamImageSelectStore((state) =>
+  //   Object.keys(state.selected[userId] ?? {}).map(Number)
+  // );
   const canFetchResources = !!imageIds.length;
   const { data: imageResources, isLoading } = trpc.csam.getImageResources.useQuery(
     { ids: imageIds },
@@ -143,11 +170,10 @@ function ModelVersionSelectList({ userId }: { userId: number }) {
 
   useEffect(() => {
     if (!resources.length) return;
-    const modelVersionIds = resources.map((x) => x.modelVersionId).filter(isDefined);
-    useCsamModelVersionSelectStore.getState().setSelected(userId, modelVersionIds);
-  }, [resources, userId]);
+    onChange?.(resources.map((x) => x.modelVersionId).filter(isDefined));
+  }, [resources]);
 
-  if (!canFetchResources) return null;
+  if (!canFetchResources) return <></>;
 
   if (isLoading)
     return (
@@ -160,57 +186,40 @@ function ModelVersionSelectList({ userId }: { userId: number }) {
 
   return (
     <Stack spacing="xs" mt="xs">
-      {resources.map((resource, i) => (
-        <ModelVersionSelectItem key={i} userId={userId} {...(resource as any)} />
-      ))}
+      {resources.map(({ modelName, modelId, modelVersionName, modelVersionId, imageId }, i) => {
+        const associatedCount = 0;
+        const checked = !!modelVersionId && value?.includes(modelVersionId);
+        function handleChange(checked: boolean) {
+          if (!modelVersionId) return;
+          if (checked) {
+            if (!value) onChange?.([modelVersionId]);
+            else if (!value.includes(modelVersionId)) onChange?.([...value, modelVersionId]);
+          } else onChange?.((value ?? []).filter((id) => id !== modelVersionId));
+        }
+        return (
+          <Card p={0} key={i}>
+            <Group align="center" spacing={4} noWrap>
+              <Checkbox
+                checked={checked}
+                onChange={(e) => handleChange(e.target.checked)}
+                label={`${modelName} - ${modelVersionName}`}
+              />
+              <Badge leftSection={<IconPhoto size={14} />}>{associatedCount}</Badge>
+              <Text
+                component="a"
+                href={`/models/${modelId}/${modelName}?modelVersionId=${modelVersionId}`}
+                target="_blank"
+                variant="link"
+                style={{ lineHeight: 1 }}
+              >
+                <IconExternalLink size={18} />
+              </Text>
+            </Group>
+          </Card>
+        );
+      })}
     </Stack>
   );
 }
 
-function ModelVersionSelectItem({
-  userId,
-  modelId,
-  modelName,
-  modelVersionId,
-  modelVersionName,
-  imageId,
-}: {
-  userId: number;
-  modelName: string;
-  modelId: number;
-  imageId: number;
-  modelVersionId: number;
-  modelVersionName: number;
-}) {
-  const checked = useCsamModelVersionSelectStore(
-    (state) => state.selected[userId]?.[modelVersionId] ?? false
-  );
-  const associatedCount = useCsamImageSelectStore(
-    (state) =>
-      Object.keys(state.selected[userId] ?? {})
-        .map(Number)
-        .filter((id) => id === imageId).length
-  );
-
-  return (
-    <Card p={0}>
-      <Group align="center" spacing={4} noWrap>
-        <Checkbox
-          checked={checked}
-          onChange={() => useCsamModelVersionSelectStore.getState().toggle(userId, modelVersionId)}
-          label={`${modelName} - ${modelVersionName}`}
-        />
-        <Badge leftSection={<IconPhoto size={14} />}>{associatedCount}</Badge>
-        <Text
-          component="a"
-          href={`/models/${modelId}/${modelName}?modelVersionId=${modelVersionId}`}
-          target="_blank"
-          variant="link"
-          style={{ lineHeight: 1 }}
-        >
-          <IconExternalLink size={18} />
-        </Text>
-      </Group>
-    </Card>
-  );
-}
+const InputModelVersionSelect = withController(ModelVersionSelectList);

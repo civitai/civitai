@@ -9,6 +9,7 @@ import { trpc } from '~/utils/trpc';
 
 const FeatureFlagsCtx = createContext<FeatureAccess>({} as FeatureAccess);
 
+export type UseFeatureFlagsReturn = ReturnType<typeof useFeatureFlags>;
 export const useFeatureFlags = () => {
   const features = useContext(FeatureFlagsCtx);
   const [toggled, setToggled] = useLocalStorage<Partial<FeatureAccess>>({

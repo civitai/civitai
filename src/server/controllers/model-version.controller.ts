@@ -13,6 +13,7 @@ import {
   ModelVersionsGeneratedImagesOnTimeframeSchema,
   ModelVersionUpsertInput,
   PublishVersionInput,
+  QueryModelVersionSchema,
   RecommendedSettingsSchema,
   TrainingDetailsObj,
 } from '~/server/schema/model-version.schema';
@@ -27,6 +28,7 @@ import {
   getVersionById,
   modelVersionGeneratedImagesOnTimeframe,
   publishModelVersionById,
+  queryModelVersions,
   toggleNotifyModelVersion,
   unpublishModelVersionById,
   upsertModelVersion,
@@ -44,6 +46,8 @@ import { dbRead } from '../db/client';
 import { modelFileSelect } from '../selectors/modelFile.selector';
 import { getFilesByEntity } from '../services/file.service';
 import { createFile } from '../services/model-file.service';
+import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+
 
 export const getModelVersionRunStrategiesHandler = ({ input: { id } }: { input: GetByIdInput }) => {
   try {
@@ -553,4 +557,45 @@ export async function getVersionLicenseHandler({ input }: { input: GetByIdInput 
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
   }
+}
+
+export async function queryModelVersionsForModeratorHandler({
+  input,
+  ctx,
+}: {
+  input: QueryModelVersionSchema;
+  ctx: Context;
+}) {
+  const { nextCursor, items } = await queryModelVersions({
+    user: ctx.user,
+    query: input,
+    select: {
+      id: true,
+      name: true,
+      meta: true,
+      trainingStatus: true,
+      createdAt: true,
+      model: {
+        select: {
+          id: true,
+          name: true,
+          userId: true,
+        },
+      },
+    },
+  });
+
+  return {
+    nextCursor,
+    items: items as Array<Omit<(typeof items)[number], 'meta'> & { meta: ModelVersionMeta }>,
+  };
+}
+
+export async function getModelVersionOwnerHandler({ input }: { input: GetByIdInput }) {
+  const version = await getVersionById({
+    ...input,
+    select: { model: { select: { user: { select: userWithCosmeticsSelect } } } },
+  });
+  if (!version) throw throwNotFoundError();
+  return version.model.user;
 }

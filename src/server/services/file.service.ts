@@ -135,7 +135,7 @@ export const getFileForModelVersion = async ({
   size?: ModelFileSize;
   fp?: ModelFileFp;
   user?: {
-    isModerator?: boolean;
+    isModerator?: boolean | null;
     id?: number;
     tier?: string;
     filePreferences?: UserFilePreferences;
@@ -173,7 +173,7 @@ export const getFileForModelVersion = async ({
     entityIds: [modelVersion?.id],
     entityType: 'ModelVersion',
     userId: user?.id,
-    isModerator: user?.isModerator,
+    isModerator: user?.isModerator ?? undefined,
   });
 
   if (!(entityAccess?.hasAccess ?? true)) {
