@@ -14,6 +14,7 @@ import {
 } from '~/server/common/constants';
 import { imageSchema } from '~/server/schema/image.schema';
 import {
+  TextToImageParams,
   textToImageParamsSchema,
   textToImageResourceSchema,
 } from '~/server/schema/orchestrator/textToImage.schema';
@@ -117,6 +118,7 @@ export const blockedRequest = (() => {
 // #endregion
 
 // #region [data formatter]
+const defaultValues = generation.defaultValues;
 function formatGenerationData({
   formData,
   data,
@@ -162,31 +164,6 @@ function formatGenerationData({
     })
     .slice(0, 9);
 
-  const sampler =
-    data.params.sampler && generation.samplers.includes(data.params.sampler as any)
-      ? data.params.sampler
-      : formData.sampler;
-
-  const returnData: PartialFormData = {
-    ...formData,
-    ...data.params,
-    baseModel,
-    model: checkpoint,
-    resources,
-    vae,
-    sampler,
-  };
-
-  const maxValueKeys = Object.keys(generation.maxValues);
-  for (const item of maxValueKeys) {
-    const key = item as keyof typeof generation.maxValues;
-    if (returnData[key])
-      returnData[key] = Math.min(returnData[key] ?? 0, generation.maxValues[key]);
-  }
-
-  const isSDXL = getIsSdxl(baseModel);
-  if (isSDXL) returnData.clipSkip = 2;
-
   // Look through data for Draft resource.
   // If we find them, toggle draft and remove the resource.
   const draftResourceId = draftMode[isSDXL ? 'sdxl' : 'sd1'].resourceId;
@@ -196,7 +173,37 @@ function formatGenerationData({
     returnData.resources?.splice(draftResourceIndex, 1);
   }
 
+  const returnData: PartialFormData = formatGenerationParams({
+    ...formData,
+    ...data.params,
+    baseModel,
+    model: checkpoint,
+    resources,
+    vae,
+  });
+
   return type === 'run' ? removeEmpty(returnData) : returnData;
+}
+
+function formatGenerationParams<T extends Partial<TextToImageParams>>(params: T) {
+  const { nsfw, quantity, ...data } = { ...params };
+
+  if (data.sampler) {
+    data.sampler = generation.samplers.includes(data.sampler as any)
+      ? data.sampler
+      : defaultValues.sampler;
+  }
+
+  const maxValueKeys = Object.keys(generation.maxValues);
+  for (const item of maxValueKeys) {
+    const key = item as keyof typeof generation.maxValues;
+    if (data[key]) data[key] = Math.min(data[key] ?? 0, generation.maxValues[key]);
+  }
+
+  const isSDXL = getIsSdxl(data.baseModel);
+  if (isSDXL) data.clipSkip = 2;
+
+  return data;
 }
 // #endregion
 
@@ -213,7 +220,6 @@ export function useGenerationForm() {
   return context;
 }
 
-const defaultValues = generation.defaultValues;
 export function GenerationFormProvider({ children }: { children: React.ReactNode }) {
   const input = useGenerationStore((state) => state.input);
   const storeData = useGenerationStore((state) => state.data);
@@ -242,8 +248,8 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
 
   useEffect(() => {
     if (storeData) {
-      const { resources, params } = storeData;
-      const formData: PartialFormData = { ...params };
+      const { resources, params = {} } = storeData;
+      const formData: PartialFormData = formatGenerationParams(params);
       if (!!resources?.length) formData.resources = resources;
       setValues(formData);
     } else if (responseData && !isFetching) {

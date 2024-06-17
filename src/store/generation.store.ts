@@ -45,23 +45,12 @@ export const useGenerationStore = create<GenerationState>()(
       setData: (data) =>
         set((state) => {
           state.view = 'generate';
-          if (
-            data.params?.sampler &&
-            !(generation.samplers as string[]).includes(data.params.sampler)
-          )
-            data.params.sampler = generation.defaultValues.sampler;
           state.data = data;
         }),
     })),
     { name: 'generation-store' }
   )
 );
-
-// useGenerationStore.subscribe((state) => {
-//   if ((state.view !== 'generate' || !state.opened) && !!state.data) {
-//     state.clearData();
-//   }
-// });
 
 const store = useGenerationStore.getState();
 export const generationPanel = {

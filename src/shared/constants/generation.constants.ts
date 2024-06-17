@@ -109,7 +109,7 @@ export const getBaseModelSet = (baseModel?: string) => {
   )?.[1];
 };
 
-export function getIsSdxl(baseModelSetType: BaseModelSetType) {
+export function getIsSdxl(baseModelSetType?: BaseModelSetType) {
   return (
     baseModelSetType === 'SDXL' ||
     baseModelSetType === 'Pony' ||

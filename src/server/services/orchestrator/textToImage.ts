@@ -420,7 +420,7 @@ export async function formatTextToImageResponses(
             height: input.height,
             seed: input.seed,
             clipSkip: input.clipSkip,
-            isDraft,
+            draft: isDraft,
           },
           resources,
           images,
