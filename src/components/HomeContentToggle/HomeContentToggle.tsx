@@ -12,6 +12,7 @@ import {
   Badge,
   Menu,
   Button,
+  keyframes,
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import {
@@ -26,9 +27,9 @@ import {
   IconMoneybag,
   IconPhoto,
   IconShoppingBag,
-  IconFlower,
   IconVideo,
   TablerIconsProps,
+  IconRainbow,
 } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
@@ -36,12 +37,14 @@ import { useState } from 'react';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
+import { isDefined } from '~/utils/type-guards';
 
 type HomeOption = {
   url: string;
   icon: (props: TablerIconsProps) => JSX.Element;
   highlight?: boolean;
   grouped?: boolean;
+  classes?: string[];
 };
 const homeOptions: Record<string, HomeOption> = {
   home: {
@@ -90,8 +93,9 @@ const homeOptions: Record<string, HomeOption> = {
   shop: {
     url: '/shop',
     // icon: (props: TablerIconsProps) => <IconShoppingBag {...props} />,
-    icon: (props: TablerIconsProps) => <IconFlower {...props} />,
+    icon: (props: TablerIconsProps) => <IconRainbow {...props} />,
     highlight: true,
+    classes: ['tabRainbow'],
   },
 };
 type HomeOptions = keyof typeof homeOptions;
@@ -203,6 +207,17 @@ type Props = {
   size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl';
 } & Omit<SegmentedControlProps, 'data' | 'value' | 'onChange'>;
 
+const rainbowTextAnimation = keyframes({
+  '0%': {
+    backgroundPosition: '0% 50%',
+  },
+  '50%': {
+    backgroundPosition: '100% 50%',
+  },
+  '100%': {
+    backgroundPosition: '0% 50%',
+  },
+});
 const useTabsStyles = createStyles((theme) => ({
   root: {
     overflow: 'auto hidden',
@@ -241,13 +256,7 @@ const useTabsStyles = createStyles((theme) => ({
   },
   tabHighlight: {
     backgroundColor: theme.fn.rgba(theme.colors.green[3], theme.colorScheme === 'dark' ? 0.1 : 0.3),
-    backgroundImage: `linear-gradient(90deg, ${theme.fn.rgba(
-      theme.colors.green[4],
-      0
-    )}, ${theme.fn.rgba(
-      theme.colors.green[4],
-      theme.colorScheme === 'dark' ? 0.1 : 0.2
-    )}, ${theme.fn.rgba(theme.colors.green[4], 0)})`,
+    backgroundImage: `linear-gradient(to left, violet, indigo, blue, green, yellow, orange, red);`,
     backgroundSize: '50px',
     backgroundPosition: '-300% 50%',
     backgroundRepeat: 'no-repeat',
@@ -256,6 +265,55 @@ const useTabsStyles = createStyles((theme) => ({
     willChange: 'background-position',
   },
 
+  tabRainbow: {
+    background: `linear-gradient(
+        90deg,
+        rgba(255, 0, 0, 1) 0%,
+        rgba(255, 154, 0, 1) 10%,
+        rgba(208, 222, 33, 1) 20%,
+        rgba(79, 220, 74, 1) 30%,
+        rgba(63, 218, 216, 1) 40%,
+        rgba(47, 201, 226, 1) 50%,
+        rgba(28, 127, 238, 1) 60%,
+        rgba(95, 21, 242, 1) 70%,
+        rgba(186, 12, 248, 1) 80%,
+        rgba(251, 7, 217, 1) 90%,
+        rgba(255, 0, 0, 1) 100%
+    ) 0/200%`,
+    animation: `${rainbowTextAnimation} 10s linear infinite`,
+    ':hover': {
+      background: `linear-gradient(
+        90deg,
+        rgba(255, 0, 0, 1) 0%,
+        rgba(255, 154, 0, 1) 10%,
+        rgba(208, 222, 33, 1) 20%,
+        rgba(79, 220, 74, 1) 30%,
+        rgba(63, 218, 216, 1) 40%,
+        rgba(47, 201, 226, 1) 50%,
+        rgba(28, 127, 238, 1) 60%,
+        rgba(95, 21, 242, 1) 70%,
+        rgba(186, 12, 248, 1) 80%,
+        rgba(251, 7, 217, 1) 90%,
+        rgba(255, 0, 0, 1) 100%
+    ) 0/200%`,
+    },
+    '&[data-active]': {
+      background: `linear-gradient(
+        90deg,
+        rgba(255, 0, 0, 1) 0%,
+        rgba(255, 154, 0, 1) 10%,
+        rgba(208, 222, 33, 1) 20%,
+        rgba(79, 220, 74, 1) 30%,
+        rgba(63, 218, 216, 1) 40%,
+        rgba(47, 201, 226, 1) 50%,
+        rgba(28, 127, 238, 1) 60%,
+        rgba(95, 21, 242, 1) 70%,
+        rgba(186, 12, 248, 1) 80%,
+        rgba(251, 7, 217, 1) 90%,
+        rgba(255, 0, 0, 1) 100%
+    ) 0/200%`,
+    },
+  },
   moreButton: {
     padding: '8px 10px 8px 16px',
     fontSize: 16,
@@ -310,7 +368,14 @@ export function HomeTabs({ sx, ...tabProps }: HomeTabProps) {
             <Tabs.Tab
               value={key}
               icon={value.icon({ size: 16 })}
-              className={value.highlight ? classes.tabHighlight : undefined}
+              className={cx(
+                value.classes
+                  ?.map((c) => {
+                    if (classes.hasOwnProperty(c)) return classes[c as keyof typeof classes];
+                    return null;
+                  })
+                  .filter(isDefined)
+              )}
             >
               <Group spacing={4} noWrap>
                 <Text className={classes.tabLabel} inline>
@@ -364,7 +429,14 @@ export function HomeTabs({ sx, ...tabProps }: HomeTabProps) {
                 <Menu.Item
                   component="a"
                   icon={value.icon({ size: 16 })}
-                  className={value.highlight ? classes.tabHighlight : undefined}
+                  className={cx(
+                    value.classes
+                      ?.map((c) => {
+                        if (classes.hasOwnProperty(c)) return classes[c as keyof typeof classes];
+                        return null;
+                      })
+                      .filter(isDefined)
+                  )}
                 >
                   <Group spacing={8} noWrap>
                     <Text tt="capitalize">{getDisplayName(key)}</Text>

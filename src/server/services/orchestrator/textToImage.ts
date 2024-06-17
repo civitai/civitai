@@ -162,6 +162,11 @@ export async function textToImage({
   const isPromptNsfw = includesNsfw(params.prompt);
   params.nsfw ??= isPromptNsfw !== false;
 
+  const hasMinorResource = resourceData.some((resource) => resource.model.minor);
+  if (hasMinorResource) {
+    params.nsfw = false;
+  }
+
   // Disable nsfw if the prompt contains poi/minor words
   const hasPoi = includesPoi(params.prompt) || resources.some((x) => x.model.poi);
   if (hasPoi || includesMinor(params.prompt)) params.nsfw = false;

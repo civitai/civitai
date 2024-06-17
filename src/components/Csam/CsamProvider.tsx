@@ -1,3 +1,4 @@
+import { CsamReportType } from '@prisma/client';
 import { createContext, useContext } from 'react';
 import { SimpleUser } from '~/server/selectors/user.selector';
 
@@ -5,6 +6,7 @@ type CsamState = {
   isInternal: boolean;
   userId: number;
   user?: SimpleUser;
+  type: CsamReportType;
 };
 const CsamContext = createContext<CsamState | null>(null);
 export const useCsamContext = () => {
@@ -13,11 +15,19 @@ export const useCsamContext = () => {
   return context;
 };
 
-export function CsamProvider({ children, user }: { children: React.ReactNode; user: SimpleUser }) {
+export function CsamProvider({
+  children,
+  user,
+  type,
+}: {
+  children: React.ReactNode;
+  user: SimpleUser;
+  type: CsamReportType;
+}) {
   const isInternal = user.id === -1;
 
   return (
-    <CsamContext.Provider value={{ userId: user.id, isInternal, user }}>
+    <CsamContext.Provider value={{ userId: user.id, isInternal, user, type }}>
       {children}
     </CsamContext.Provider>
   );

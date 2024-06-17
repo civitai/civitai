@@ -33,34 +33,48 @@ import { leakingContentCounter } from '~/server/prom/client';
 import { imagesForModelVersionsCache, tagIdsForImagesCache } from '~/server/redis/caches';
 import { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
 import {
+  AddOrRemoveImageTechniquesOutput,
   AddOrRemoveImageToolsOutput,
   CreateImageSchema,
   GetEntitiesCoverImage,
   GetInfiniteImagesOutput,
   ImageEntityType,
+  imageMetaOutput,
   ImageRatingReviewOutput,
   ImageReviewQueueInput,
   ImageUploadProps,
   ReportCsamImagesInput,
   UpdateImageNsfwLevelOutput,
-  UpdateImageToolsOutput,
-  AddOrRemoveImageTechniquesOutput,
   UpdateImageTechniqueOutput,
-  imageMetaOutput,
+  UpdateImageToolsOutput,
 } from '~/server/schema/image.schema';
 import { articlesSearchIndex, imagesSearchIndex } from '~/server/search-index';
+import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
+import { ImageResourceHelperModel } from '~/server/selectors/image.selector';
 import { ImageV2Model } from '~/server/selectors/imagev2.selector';
 import { imageTagCompositeSelect, simpleTagSelect } from '~/server/selectors/tag.selector';
+import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
+import { trackModActivity } from '~/server/services/moderator.service';
 import { bustCachesForPost, updatePostNsfwLevel } from '~/server/services/post.service';
+import { bulkSetReportStatus } from '~/server/services/report.service';
 import { getModeratedTags, getTagsNeedingReview } from '~/server/services/system-cache';
+import { getVotableTags2 } from '~/server/services/tag.service';
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { getPeriods } from '~/server/utils/enum-helpers';
 import {
   throwAuthorizationError,
   throwBadRequestError,
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { getCursor } from '~/server/utils/pagination-helpers';
+import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { Flags } from '~/shared/utils';
 import { logToDb } from '~/utils/logging';
+import { promptWordReplace } from '~/utils/metadata/audit';
+import { removeEmpty } from '~/utils/object-helpers';
+import { baseS3Client } from '~/utils/s3-client';
 import { isDefined } from '~/utils/type-guards';
 import {
   GetImageInput,
@@ -69,20 +83,6 @@ import {
   IngestImageInput,
   ingestImageSchema,
 } from './../schema/image.schema';
-import { ImageResourceHelperModel } from '~/server/selectors/image.selector';
-import { limitConcurrency } from '~/server/utils/concurrency-helpers';
-import { promptWordReplace } from '~/utils/metadata/audit';
-import { getCursor } from '~/server/utils/pagination-helpers';
-import { getPeriods } from '~/server/utils/enum-helpers';
-import { bulkSetReportStatus } from '~/server/services/report.service';
-import { baseS3Client } from '~/utils/s3-client';
-import { trackModActivity } from '~/server/services/moderator.service';
-import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
-import { getVotableTags2 } from '~/server/services/tag.service';
-import { Flags } from '~/shared/utils';
-import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
-import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
-import { removeEmpty } from '~/utils/object-helpers';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal

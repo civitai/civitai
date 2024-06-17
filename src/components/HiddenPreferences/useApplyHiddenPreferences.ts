@@ -173,6 +173,7 @@ function filterPreferences<
           return true;
         })
         .map(({ images, ...x }) => {
+          const isModelOwner = x.user.id === currentUser?.id;
           const filteredImages =
             images?.filter((i) => {
               const userId = i.userId;
@@ -198,7 +199,7 @@ function filterPreferences<
             hidden.noImages++;
           }
 
-          return sortedImages.length || showImageless
+          return sortedImages.length || showImageless || isModelOwner || isModerator
             ? {
                 ...x,
                 images: filteredImages,

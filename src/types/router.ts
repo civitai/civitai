@@ -12,6 +12,9 @@ export type MyTrainingModelGetAll = ModelRouter['getMyTrainingModels'];
 export type ModelGetAllPagedSimple = ModelRouter['getAllPagedSimple'];
 export type ModelGetAssociatedResourcesSimple = ModelRouter['getAssociatedResourcesSimple'];
 
+type ModelVersionRouter = RouterOutput['modelVersion'];
+export type ModelVersionById = ModelVersionRouter['getById'];
+
 type CommentRouter = RouterOutput['comment'];
 export type CommentGetReactions = CommentRouter['getReactions'];
 export type CommentGetAll = CommentRouter['getAll'];

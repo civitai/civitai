@@ -62,6 +62,7 @@ import { toolRouter } from '~/server/routers/tool.router';
 import { cosmeticShopRouter } from '~/server/routers/cosmetic-shop.router';
 import { techniqueRouter } from '~/server/routers/technique.router';
 import { orchestratorRouter } from '~/server/routers/orchestrator.router';
+import { modRouter } from '~/server/routers/moderator';
 
 export const appRouter = router({
   account: accountRouter,
@@ -126,6 +127,7 @@ export const appRouter = router({
   cosmeticShop: cosmeticShopRouter,
   technique: techniqueRouter,
   orchestrator: orchestratorRouter,
+  moderator: modRouter,
 });
 
 // export type definition of API

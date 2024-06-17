@@ -19,6 +19,7 @@ export const generationResourceSelect = Prisma.validator<Prisma.ModelVersionSele
       type: true,
       nsfw: true,
       poi: true,
+      minor: true,
     },
   },
 });
