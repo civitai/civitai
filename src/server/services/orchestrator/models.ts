@@ -1,7 +1,10 @@
-import { env } from '~/env/server.mjs';
 import { z } from 'zod';
 import { getModelByAirSchema } from '~/server/schema/orchestrator/models.schema';
-import { OrchestratorClient, getResourceDataWithAirs } from '~/server/services/orchestrator/common';
+import {
+  InternalOrchestratorClient,
+  OrchestratorClient,
+  getResourceDataWithAirs,
+} from '~/server/services/orchestrator/common';
 
 export async function getModel({
   token,
@@ -15,8 +18,7 @@ export async function getModel({
 export async function bustOrchestratorModelCache(versionIds: number[]) {
   const resources = await getResourceDataWithAirs(versionIds);
   if (!resources.length) return;
-  const token = env.ORCHESTRATOR_API_TOKEN ?? '';
-  const client = new OrchestratorClient(token);
+  const client = new InternalOrchestratorClient();
 
   await Promise.all(resources.map((resource) => client.models.deleteModel({ air: resource.air })));
 }
