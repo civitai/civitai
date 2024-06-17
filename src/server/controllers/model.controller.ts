@@ -15,7 +15,7 @@ import { ModelSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
-import { dataForModelsCache } from '~/server/redis/caches';
+import { dataForModelsCache, resourceDataCache } from '~/server/redis/caches';
 import { getInfiniteArticlesSchema } from '~/server/schema/article.schema';
 import { GetAllSchema, GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
 import {
@@ -97,13 +97,6 @@ import { isDefined } from '~/utils/type-guards';
 import { redis } from '../redis/client';
 import { getUnavailableResources } from '../services/generation/generation.service';
 import { BountyDetailsSchema } from '../schema/bounty.schema';
-import {
-  allBrowsingLevelsFlag,
-  getIsSafeBrowsingLevel,
-} from '~/shared/constants/browsingLevel.constants';
-import { Flags } from '~/shared/utils';
-import { resourceDataCache } from '~/server/redis/caches';
-import { dataForModelsCache } from '~/server/redis/caches';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
