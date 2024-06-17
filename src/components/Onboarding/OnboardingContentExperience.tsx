@@ -19,7 +19,6 @@ import { useOnboardingStepCompleteMutation } from '~/components/Onboarding/onboa
 import { useReferralsContext } from '~/components/Referrals/ReferralsProvider';
 import { StepperTitle } from '~/components/Stepper/StepperTitle';
 import { OnboardingSteps } from '~/server/common/enums';
-import { useReferralsContext } from '~/components/Referrals/ReferralsProvider';
 
 export function OnboardingContentExperience() {
   const { classes } = useStyles();
@@ -95,9 +94,9 @@ export function OnboardingContentExperience() {
         ) : (
           <Stack>
             <Text>
-              {`Since you're registering as part of Project Odyssey, we've simplified your Content
-              Experience onboarding step. If you'd like to modify your Civitai Content Experience,
-              you can do so from your account settings after completing onboarding.`}
+              Since you&apos;re registering as part of Project Odyssey, we&apos;ve simplified your
+              Content Experience onboarding step. If you&apos;d like to modify your Civitai Content
+              Experience, you can do so from your account settings after completing onboarding.
             </Text>
           </Stack>
         )}
