@@ -49,12 +49,12 @@ export default function ModelVersionEditPage() {
           version={modelVersion}
           onSubmit={handleClose}
         >
-          {({ loading }) => (
+          {({ loading, canSave }) => (
             <Group mt="xl" position="right">
               <Button variant="default" onClick={handleClose}>
                 Cancel
               </Button>
-              <Button type="submit" loading={loading}>
+              <Button type="submit" loading={loading} disabled={!canSave}>
                 Save
               </Button>
             </Group>

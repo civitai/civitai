@@ -1,4 +1,4 @@
-import { Card, Divider, Group, Input, Stack, Text, ThemeIcon } from '@mantine/core';
+import { Alert, Card, Divider, Group, Input, Stack, Text, ThemeIcon } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { Currency, ModelType, ModelVersionMonetizationType } from '@prisma/client';
 import { IconInfoCircle, IconQuestionMark } from '@tabler/icons-react';
@@ -88,6 +88,8 @@ const querySchema = z.object({
   bountyId: z.coerce.number().optional(),
 });
 
+const SD3_BANNED = true;
+
 export function ModelVersionUpsertForm({ model, version, children, onSubmit }: Props) {
   const features = useFeatureFlags();
   const router = useRouter();
@@ -158,6 +160,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
   ]) as number[];
   const { isDirty } = form.formState;
   const canMonetize = !model?.poi;
+  const canSave = SD3_BANNED && baseModel !== 'SD 3';
 
   const upsertVersionMutation = trpc.modelVersion.upsert.useMutation({
     onError(error) {
@@ -320,6 +323,23 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
               />
             )}
           </Group>
+          {SD3_BANNED && baseModel === 'SD 3' && (
+            <Alert color="yellow" title="Temporary Ban on SD3">
+              <Text>
+                Unfortunately due to a lack of clarity in the license associated with Stable
+                Diffusion 3, we have temporarily banned all SD3 derivative models.{' '}
+                <Text
+                  variant="link"
+                  td="underline"
+                  component="a"
+                  target="_blank"
+                  href="/articles/5732"
+                >
+                  Learn more
+                </Text>
+              </Text>
+            </Alert>
+          )}
           <InputRTE
             key="description"
             name="description"
@@ -594,7 +614,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
             />
           </Stack>
         </Stack>
-        {children({ loading: upsertVersionMutation.isLoading })}
+        {children({ loading: upsertVersionMutation.isLoading, canSave })}
       </Form>
     </>
   );
@@ -611,7 +631,7 @@ type VersionInput = Omit<ModelVersionUpsertInput, 'recommendedResources'> & {
 };
 type Props = {
   onSubmit: (version?: ModelVersionUpsertInput) => void;
-  children: (data: { loading: boolean }) => React.ReactNode;
+  children: (data: { loading: boolean; canSave: boolean }) => React.ReactNode;
   model?: Partial<ModelUpsertInput & { publishedAt: Date | null }>;
   version?: Partial<VersionInput>;
 };
