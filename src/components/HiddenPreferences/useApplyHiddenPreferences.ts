@@ -199,7 +199,7 @@ function filterPreferences<
             hidden.noImages++;
           }
 
-          return sortedImages.length || showImageless || isModelOwner || isModerator
+          return sortedImages.length || (showImageless && (isModelOwner || isModerator))
             ? {
                 ...x,
                 images: filteredImages,
