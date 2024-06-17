@@ -12,7 +12,7 @@ export async function getModel({
 }: z.output<typeof getModelByAirSchema> & { token: string }) {
   const client = new OrchestratorClient(token);
 
-  return await client.models.getModel(params);
+  return await client.resources.getResource(params);
 }
 
 export async function bustOrchestratorModelCache(versionIds: number[]) {
@@ -20,5 +20,7 @@ export async function bustOrchestratorModelCache(versionIds: number[]) {
   if (!resources.length) return;
   const client = new InternalOrchestratorClient();
 
-  await Promise.all(resources.map((resource) => client.models.deleteModel({ air: resource.air })));
+  await Promise.all(
+    resources.map((resource) => client.resources.invalidateResource({ air: resource.air }))
+  );
 }

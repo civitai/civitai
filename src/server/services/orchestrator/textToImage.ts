@@ -11,7 +11,7 @@ import {
 } from '~/server/services/orchestrator/common';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { includesMinor, includesNsfw, includesPoi } from '~/utils/metadata/audit';
-import { parseAIR, stringifyAIR } from '~/utils/string-helpers';
+import { parseAIR } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import {
   TextToImageStepTemplate,
@@ -42,7 +42,6 @@ import {
   textToImageWhatIfSchema,
 } from '~/server/schema/orchestrator/textToImage.schema';
 import { removeNulls } from '~/utils/object-helpers';
-import { ResourceData } from '~/server/redis/caches';
 import dayjs from 'dayjs';
 import { env } from '~/env/server.mjs';
 
