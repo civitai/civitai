@@ -78,6 +78,7 @@ const commercialUseOptions: Array<{ value: CommercialUse; label: string }> = [
 const lockableProperties = ['nsfw', 'poi', 'minor', 'category', 'tags'];
 
 export function ModelUpsertForm({ model, children, onSubmit }: Props) {
+  console.log('model', model);
   const router = useRouter();
   const result = querySchema.safeParse(router.query);
   const currentUser = useCurrentUser();
@@ -94,6 +95,7 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
     uploadType: model?.uploadType ?? 'Created',
     poi: model?.poi ?? false,
     nsfw: model?.nsfw ?? false,
+    minor: model?.minor ?? false,
     allowCommercialUse: model?.allowCommercialUse ?? [
       CommercialUse.Image,
       CommercialUse.RentCivit,
@@ -110,9 +112,10 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
   const queryUtils = trpc.useUtils();
 
   const [type, allowDerivatives] = form.watch(['type', 'allowDerivatives']);
-  const [nsfw, poi] = form.watch(['nsfw', 'poi']);
+  const [nsfw, poi, minor] = form.watch(['nsfw', 'poi', 'minor']);
   const allowCommercialUse = form.watch('allowCommercialUse');
   const hasPoiInNsfw = nsfw && poi;
+  const hasMinorInNsfw = nsfw && minor;
   const { isDirty, errors } = form.formState;
 
   const { data, isLoading: loadingCategories } = trpc.tag.getAll.useQuery({
@@ -446,6 +449,24 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                 </Alert>
                 <Text size="xs" color="dimmed" sx={{ lineHeight: 1.2 }}>
                   Please revise the content of this listing to ensure no actual person is depicted
+                  in an mature context out of respect for the individual.
+                </Text>
+              </>
+            )}
+            {hasMinorInNsfw && (
+              <>
+                <Alert color="red" pl={10}>
+                  <Group noWrap spacing={10}>
+                    <ThemeIcon color="red">
+                      <IconExclamationMark />
+                    </ThemeIcon>
+                    <Text size="xs" sx={{ lineHeight: 1.2 }}>
+                      Mature content depicting minors is not permitted.
+                    </Text>
+                  </Group>
+                </Alert>
+                <Text size="xs" color="dimmed" sx={{ lineHeight: 1.2 }}>
+                  Please revise the content of this listing to ensure no minors are depicted
                   in an mature context out of respect for the individual.
                 </Text>
               </>
