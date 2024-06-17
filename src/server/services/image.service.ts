@@ -84,20 +84,6 @@ import {
   IngestImageInput,
   ingestImageSchema,
 } from './../schema/image.schema';
-import { ImageResourceHelperModel } from '~/server/selectors/image.selector';
-import { limitConcurrency } from '~/server/utils/concurrency-helpers';
-import { promptWordReplace } from '~/utils/metadata/audit';
-import { getCursor } from '~/server/utils/pagination-helpers';
-import { getPeriods } from '~/server/utils/enum-helpers';
-import { bulkSetReportStatus } from '~/server/services/report.service';
-import { baseS3Client } from '~/utils/s3-client';
-import { trackModActivity } from '~/server/services/moderator.service';
-import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
-import { getVotableTags2 } from '~/server/services/tag.service';
-import { Flags } from '~/shared/utils';
-import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
-import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
-import { removeEmpty } from '~/utils/object-helpers';
 import { collectionSelect } from '~/server/selectors/collection.selector';
 // TODO.ingestion - logToDb something something 'axiom'
 
