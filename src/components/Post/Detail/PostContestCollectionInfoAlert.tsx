@@ -58,7 +58,7 @@ export const PostContestCollectionInfoAlert = ({
             </Button>
             <Button
               component={NextLink}
-              href={`/collection/${collectionItem.collection.id}`}
+              href={`/collections/${collectionItem.collection.id}`}
               compact
               variant="outline"
             >
@@ -75,7 +75,7 @@ export const PostContestCollectionInfoAlert = ({
       <Stack>
         <Text>
           This {itemLabel} is an entry in the{' '}
-          <Anchor href={`/collection/${collectionItem.collection.id}`}>{collectionName}</Anchor>{' '}
+          <Anchor href={`/collections/${collectionItem.collection.id}`}>{collectionName}</Anchor>{' '}
           contest.
         </Text>
       </Stack>

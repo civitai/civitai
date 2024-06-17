@@ -78,7 +78,7 @@ export const ImageContestCollectionDetails = ({
                 )}
 
                 <Anchor
-                  href={`/collection/${item.collection.id}`}
+                  href={`/collections/${item.collection.id}`}
                   className="text-center"
                   size="xs"
                 >
@@ -98,7 +98,7 @@ export const ImageContestCollectionDetails = ({
                 </Text>{' '}
                 contest.{' '}
               </Text>
-              <Anchor href={`/collection/${item.collection.id}`} className="text-center" size="xs">
+              <Anchor href={`/collections/${item.collection.id}`} className="text-center" size="xs">
                 View and vote on all contest entries
               </Anchor>
             </div>
