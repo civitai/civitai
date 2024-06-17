@@ -566,7 +566,7 @@ export const getImagesForBounties = async ({
 }) => {
   const imageOr: Prisma.Enumerable<Prisma.ImageWhereInput> = isModerator
     ? [{ ingestion: { notIn: [] } }]
-    : [{ ingestion: ImageIngestionStatus.Scanned, needsReview: null }];
+    : [{ ingestion: ImageIngestionStatus.Scanned, needsReview: null, hidden: null }];
   if (userId) imageOr.push({ userId });
 
   const connections = await dbRead.imageConnection.findMany({

@@ -8,9 +8,9 @@ import { useHiddenPreferencesContext } from '~/components/HiddenPreferences/Hidd
 import { useQueryHiddenPreferences } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
-  BrowsingLevel,
-  browsingLevelLabels,
   flagifyBrowsingLevel,
+  getBrowsingLevel,
+  getBrowsingLevelDetails,
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils';
 
@@ -29,6 +29,12 @@ export function ExplainHiddenImages({
   const totalHiddenByBrowsingLevel = hiddenByBrowsingLevel.length;
   const totalHiddenByTags = hiddenByTags.length;
   const showHiddenBrowsingLevels = totalHiddenByBrowsingLevel > 0 && !!currentUser?.showNsfw;
+  console.log({
+    hiddenByBrowsingLevel,
+    hiddenByTags,
+    totalHiddenByBrowsingLevel,
+    totalHiddenByTags,
+  });
 
   const handleShowAll = () => {
     const browsingLevelOverride = flagifyBrowsingLevel(
@@ -52,7 +58,7 @@ export function ExplainHiddenImages({
                 variant="outline"
                 classNames={classes}
               >
-                {browsingLevelLabels[browsingLevel as BrowsingLevel]}
+                {getBrowsingLevelDetails(browsingLevel).name}
               </Badge>
             ))}
           </Group>
@@ -80,7 +86,7 @@ export function ExplainHiddenImages({
   );
 }
 
-const useStyles = createStyles((theme) => ({
+const useStyles = createStyles(() => ({
   rightSection: {
     marginLeft: 10,
     paddingLeft: 10,
@@ -108,10 +114,10 @@ export function useExplainHiddenImages<
         }
       }
       if (!Flags.intersects(browsingLevel, image.nsfwLevel) && image.nsfwLevel !== browsingLevel) {
-        const dict =
-          image.nsfwLevel < browsingLevel ? browsingLevelBelowDict : browsingLevelAboveDict;
-        if (!dict[image.nsfwLevel]) dict[image.nsfwLevel] = 1;
-        else dict[image.nsfwLevel]++;
+        const imageLevel = getBrowsingLevel(image.nsfwLevel);
+        const dict = imageLevel < browsingLevel ? browsingLevelBelowDict : browsingLevelAboveDict;
+        if (!dict[imageLevel]) dict[imageLevel] = 1;
+        else dict[imageLevel]++;
       }
     }
 
@@ -129,7 +135,7 @@ export function useExplainHiddenImages<
     }));
 
     return {
-      hiddenBelowBrowsingLevel: hiddenBelowBrowsingLevel,
+      hiddenBelowBrowsingLevel,
       hiddenAboveBrowsingLevel,
       hiddenByTags,
       hasHidden:

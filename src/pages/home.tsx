@@ -23,8 +23,8 @@ import { EventHomeBlock } from '~/components/HomeBlocks/EventHomeBlock';
 import { Adunit } from '~/components/Ads/AdUnit';
 import { adsRegistry } from '~/components/Ads/adsRegistry';
 import {
-  publicBrowsingLevelsFlag,
-  sfwBrowsingLevelsFlag,
+  safeBrowsingLevels,
+  homePageBrowsingLevels,
 } from '~/shared/constants/browsingLevel.constants';
 import { BrowsingModeOverrideProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { isProd } from '~/env/other';
@@ -75,7 +75,7 @@ export default function Home() {
             },
           })}
         >
-          <BrowsingModeOverrideProvider browsingLevel={sfwBrowsingLevelsFlag}>
+          <BrowsingModeOverrideProvider browsingLevel={homePageBrowsingLevels}>
             {homeBlocks.map((homeBlock, i) => {
               const showAds = i % 2 === 0 && i > 0;
               switch (homeBlock.type) {
@@ -124,7 +124,7 @@ export default function Home() {
               }
             })}
           </BrowsingModeOverrideProvider>
-          <BrowsingModeOverrideProvider browsingLevel={publicBrowsingLevelsFlag}>
+          <BrowsingModeOverrideProvider browsingLevel={safeBrowsingLevels}>
             {env.NEXT_PUBLIC_UI_HOMEPAGE_IMAGES ? (
               <Box ref={ref}>
                 <MasonryContainer py={32}>

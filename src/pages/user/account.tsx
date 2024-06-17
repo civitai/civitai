@@ -41,7 +41,7 @@ export default function Account({ providers }: Props) {
           <SocialProfileCard />
           <SettingsCard />
           <ContentControlsCard />
-          <ModerationCard />
+          {/* <ModerationCard /> */}
           <AccountsCard providers={providers} />
           <StripeConnectCard />
           {currentUser?.subscriptionId && <SubscriptionCard />}

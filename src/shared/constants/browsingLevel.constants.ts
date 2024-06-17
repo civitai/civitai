@@ -9,66 +9,115 @@ export function flagifyBrowsingLevel(levels: number[]) {
   return Flags.arrayToInstance(levels);
 }
 
-export type BrowsingLevels = typeof browsingLevels;
-export type BrowsingLevel = BrowsingLevels[number];
-export const browsingLevels = [
-  NsfwLevel.PG,
-  NsfwLevel.PG13,
+// #region [nsfw levels]
+export const nsfwLevels = [NsfwLevel.PG, NsfwLevel.PG13, NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX];
+
+export const nsfwLevelLabels = {
+  [NsfwLevel.PG]: 'Safe',
+  [NsfwLevel.PG13]: 'LG (lightly graphic)',
+  [NsfwLevel.R]: 'MG (moderately graphic)',
+  [NsfwLevel.X]: 'FG (fairly graphic)',
+  [NsfwLevel.XXX]: 'VG (very graphic)',
+  [NsfwLevel.Blocked]: 'Blocked',
+};
+
+export const nsfwLevelDescriptions = {
+  [NsfwLevel.PG]: 'Content that can be viewed by anyone.',
+  [NsfwLevel.PG13]: 'Content that requires consideration before sharing in professional setting',
+  [NsfwLevel.R]: 'Content that contains some visually explicit scenes with moderate intensity',
+  [NsfwLevel.X]: 'Content that is noticeably more detailed and intense',
+  [NsfwLevel.XXX]:
+    'Content that is extensive and explicit, with a high level of graphic detail and intensity',
+};
+
+export function getNsfwLevelDetails(nsfwLevel: number) {
+  const name = nsfwLevelLabels[nsfwLevel as keyof typeof nsfwLevelLabels];
+  const description = nsfwLevelDescriptions[nsfwLevel as keyof typeof nsfwLevelDescriptions];
+  return { name, description };
+}
+// #endregion
+
+// #region [browsing levels]
+// browsing level groups
+export const safeBrowsingLevels = flagifyBrowsingLevel([NsfwLevel.PG]);
+export const nsfwBrowsingLevels = flagifyBrowsingLevel([NsfwLevel.PG13, NsfwLevel.R]);
+export const graphicBrowsingLevels = flagifyBrowsingLevel([NsfwLevel.X, NsfwLevel.XXX]);
+// all browsing levels
+export const allBrowsingLevelsFlag = flagifyBrowsingLevel([...nsfwLevels]);
+
+export function getVisibleBrowsingLevels(browsingLevel: number) {
+  return browsingLevels.filter(
+    (level) =>
+      !Flags.intersects(level, graphicBrowsingLevels) ||
+      Flags.intersects(browsingLevel, nsfwBrowsingLevels)
+  );
+}
+
+export function deriveBrowsingLevel(level: number) {
+  const hasNsfw = Flags.hasFlag(level, nsfwBrowsingLevels);
+  const hasGraphic = Flags.hasFlag(level, graphicBrowsingLevels);
+  if (!hasNsfw && hasGraphic) level = Flags.removeFlag(level, graphicBrowsingLevels);
+  return level;
+}
+
+export function getIsDefaultBrowsingLevel(instance: number, level: number) {
+  return instance === 0 && level === safeBrowsingLevels;
+}
+
+export const browsingLevels = [safeBrowsingLevels, nsfwBrowsingLevels, graphicBrowsingLevels];
+const browsingLevelDetails = {
+  [safeBrowsingLevels]: {
+    name: 'Safe',
+    description:
+      'Features no obvious or visually detailed scenes of explicit material, making it suitable for all audiences.',
+  },
+  [nsfwBrowsingLevels]: {
+    name: 'NSFW',
+    description:
+      ' Includes material that may not be acceptable for all audiences or all settings. ',
+  },
+  [graphicBrowsingLevels]: {
+    name: 'NSFW+',
+    description:
+      'Content that is extensive and explicit, with a high level of graphic detail and intensity. Viewer discretion advised.',
+  },
+};
+export function getBrowsingLevelDetails(level: number) {
+  return browsingLevelDetails[level] ?? {};
+}
+
+/** get browsing level based on nsfwLevel with safe default */
+export function getBrowsingLevel(nsfwLevel: number) {
+  return browsingLevels.find((level) => Flags.hasFlag(level, nsfwLevel)) ?? safeBrowsingLevels;
+}
+// #endregion
+
+// used on the home page to set the level of content we want to show
+export const homePageBrowsingLevels = flagifyBrowsingLevel([NsfwLevel.PG, NsfwLevel.PG13]);
+// used to draw the line on where we blur media content
+export const blurrableBrowsingLevels = flagifyBrowsingLevel([
   NsfwLevel.R,
   NsfwLevel.X,
   NsfwLevel.XXX,
-] as const;
-
-export const browsingLevelLabels = {
-  0: '?',
-  [NsfwLevel.PG]: 'PG',
-  [NsfwLevel.PG13]: 'PG-13',
-  [NsfwLevel.R]: 'R',
-  [NsfwLevel.X]: 'X',
-  [NsfwLevel.XXX]: 'XXX',
-  [NsfwLevel.Blocked]: 'Blocked',
-} as const;
-
-export const browsingLevelDescriptions = {
-  [NsfwLevel.PG]: 'Safe for work. No naughty stuff',
-  [NsfwLevel.PG13]: 'Revealing clothing, violence, or light gore',
-  [NsfwLevel.R]: 'Adult themes and situations, partial nudity, graphic violence, or death',
-  [NsfwLevel.X]: 'Graphic nudity, adult objects, or settings',
-  [NsfwLevel.XXX]: 'Overtly sexual or disturbing graphic content',
-} as const;
-
-// public browsing levels
-export const publicBrowsingLevelsArray: BrowsingLevel[] = [NsfwLevel.PG];
-export const publicBrowsingLevelsFlag = flagifyBrowsingLevel(publicBrowsingLevelsArray);
-
-export const sfwBrowsingLevelsArray: BrowsingLevel[] = [NsfwLevel.PG, NsfwLevel.PG13];
-export const sfwBrowsingLevelsFlag = flagifyBrowsingLevel(sfwBrowsingLevelsArray);
-
-// nsfw browsing levels
-export const nsfwBrowsingLevelsArray: BrowsingLevel[] = [NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX];
-export const nsfwBrowsingLevelsFlag = flagifyBrowsingLevel(nsfwBrowsingLevelsArray);
-
-// all browsing levels
-export const allBrowsingLevelsFlag = flagifyBrowsingLevel([...browsingLevels]);
+]);
 
 export function getIsPublicBrowsingLevel(level: number) {
-  const levels = parseBitwiseBrowsingLevel(level);
-  return levels.every((level) => publicBrowsingLevelsArray.includes(level));
+  return Flags.hasFlag(safeBrowsingLevels, level);
 }
 
 export function getIsSafeBrowsingLevel(level: number) {
-  return level !== 0 && !Flags.intersects(level, nsfwBrowsingLevelsFlag);
+  return level !== 0 && !Flags.intersects(level, blurrableBrowsingLevels);
 }
 
 export function hasPublicBrowsingLevel(level: number) {
-  return level !== 0 && Flags.intersects(publicBrowsingLevelsFlag, level);
+  return level !== 0 && Flags.intersects(safeBrowsingLevels, level);
 }
 
 export const browsingLevelOr = (array: (number | undefined)[]) => {
   for (const item of array) {
     if (!!item) return item;
   }
-  return publicBrowsingLevelsFlag;
+  return safeBrowsingLevels;
 };
 
 export enum NsfwLevelDeprecated {

@@ -68,7 +68,10 @@ export const getAllCollectionsInfiniteHandler = async ({
         type: true,
         userId: true,
         nsfwLevel: true,
-        image: { select: imageSelect },
+        image: {
+          select: imageSelect,
+          where: { hidden: null, needsReview: null, ingestion: 'Scanned' },
+        },
         mode: true,
       },
       user: ctx.user,

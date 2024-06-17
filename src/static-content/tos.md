@@ -97,6 +97,7 @@ ARBITRATION NOTICE. EXCEPT FOR CERTAIN KINDS OF DISPUTES DESCRIBED IN SECTION 18
 - (e) Content depicting the excrement of "scat" or fecal matter;
 - (f) Content falsely labeled as having been created or endorsed by another creator, or impersonates another creator on the Service.
   For additional information about how content is moderated, please review our Content Moderation Policy.
+- (g) Pornographic imagery without educational, documentary, scientific, or artistic value.
 
   Any content that violates one of the following terms above but has been self-censored using black bars, blurring, or other means may also be flagged or removed.
 

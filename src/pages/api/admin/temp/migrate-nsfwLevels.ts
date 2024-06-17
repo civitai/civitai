@@ -1,4 +1,4 @@
-import { CollectionItemStatus, ImageIngestionStatus, Prisma } from '@prisma/client';
+import { CollectionItemStatus, HiddenType, ImageIngestionStatus, Prisma } from '@prisma/client';
 import { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 import { dbRead } from '~/server/db/client';
@@ -6,7 +6,10 @@ import { dataProcessor } from '~/server/db/db-helpers';
 import { pgDbWrite } from '~/server/db/pgDb';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { invalidateAllSessions } from '~/server/utils/session-helpers';
-import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import {
+  blurrableBrowsingLevels,
+  graphicBrowsingLevels,
+} from '~/shared/constants/browsingLevel.constants';
 
 type MigrationType = z.infer<typeof migrationTypes>;
 const migrationTypes = z.enum([
@@ -63,18 +66,22 @@ export default WebhookEndpoint(async (req, res) => {
     //   type: 'bountyEntries',
     //   fn: migrateBountyEntries,
     // },
-    {
-      type: 'modelVersions',
-      fn: migrateModelVersions,
-    },
-    {
-      type: 'models',
-      fn: migrateModels,
-    },
+    // {
+    //   type: 'modelVersions',
+    //   fn: migrateModelVersions,
+    // },
+    // {
+    //   type: 'models',
+    //   fn: migrateModels,
+    // },
     // {
     //   type: 'collections',
     //   fn: migrateCollections,
     // },
+    {
+      type: 'images',
+      fn: migrateImagesHidden,
+    },
   ];
 
   const migrations = params.type
@@ -90,6 +97,48 @@ export default WebhookEndpoint(async (req, res) => {
   console.timeEnd('MIGRATION_TIMER');
   res.status(200).json({ finished: true });
 });
+
+async function migrateImagesHidden(req: NextApiRequest, res: NextApiResponse) {
+  const params = schema.parse(req.query);
+  await dataProcessor({
+    params,
+    runContext: res,
+    rangeFetcher: async (context) => {
+      if (params.after) {
+        const results = await dbRead.$queryRaw<{ start: number; end: number }[]>`
+        WITH dates AS (
+          SELECT
+          MIN("createdAt") as start,
+          MAX("createdAt") as end
+          FROM "Image" WHERE "createdAt" > ${params.after}
+        )
+        SELECT MIN(id) as start, MAX(id) as end
+        FROM "Image" i
+        JOIN dates d ON d.start = i."createdAt" OR d.end = i."createdAt";`;
+        return results[0];
+      }
+      const [{ max }] = await dbRead.$queryRaw<{ max: number }[]>(
+        Prisma.sql`SELECT MAX(id) "max" FROM "Image";`
+      );
+      return { ...context, end: max };
+    },
+    processor: async ({ start, end, cancelFns }) => {
+      const { cancel, result } = await pgDbWrite.cancellableQuery(Prisma.sql`
+        UPDATE "Image" i
+        SET hidden = CASE
+          WHEN i.meta->>'prompt' IS NULL THEN ${HiddenType.MissingMetadata}::"HiddenType"
+          ELSE NULL
+        END,
+        "hideMeta" = false
+        WHERE i.id BETWEEN ${start} AND ${end}
+          AND i."nsfwLevel" != 0 AND (i."nsfwLevel" & ${graphicBrowsingLevels}) != 0;
+      `);
+      cancelFns.push(cancel);
+      await result();
+      console.log(`Updated hidden images ${start} - ${end}`);
+    },
+  });
+}
 
 async function migrateImages(req: NextApiRequest, res: NextApiResponse) {
   const params = schema.parse(req.query);
@@ -263,7 +312,7 @@ async function migrateBounties(req: NextApiRequest, res: NextApiResponse) {
         )
         UPDATE "Bounty" b SET "nsfwLevel" = (
           CASE
-            WHEN b.nsfw = TRUE THEN ${nsfwBrowsingLevelsFlag}
+            WHEN b.nsfw = TRUE THEN ${blurrableBrowsingLevels}
             ELSE level."nsfwLevel"
           END
         )
@@ -354,7 +403,7 @@ async function migrateModelVersions(req: NextApiRequest, res: NextApiResponse) {
           SELECT
             mv.id,
             CASE
-              WHEN m.nsfw = TRUE THEN ${nsfwBrowsingLevelsFlag}
+              WHEN m.nsfw = TRUE THEN ${blurrableBrowsingLevels}
               WHEN m."userId" = -1 THEN (
                 SELECT COALESCE(bit_or(ranked."nsfwLevel"), 0) "nsfwLevel"
                 FROM (
@@ -440,7 +489,7 @@ async function migrateModels(req: NextApiRequest, res: NextApiResponse) {
         UPDATE "Model" m
         SET "nsfwLevel" = (
           CASE
-            WHEN m.nsfw = TRUE THEN ${nsfwBrowsingLevelsFlag}
+            WHEN m.nsfw = TRUE THEN ${blurrableBrowsingLevels}
             ELSE level."nsfwLevel"
           END
         )

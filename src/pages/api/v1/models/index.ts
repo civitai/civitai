@@ -13,7 +13,7 @@ import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { getNextPage, getPagination } from '~/server/utils/pagination-helpers';
 import {
   allBrowsingLevelsFlag,
-  publicBrowsingLevelsFlag,
+  safeBrowsingLevels,
 } from '~/shared/constants/browsingLevel.constants';
 import { booleanString } from '~/utils/zod-helpers';
 import { getUserBookmarkCollections } from '~/server/services/user.service';
@@ -60,7 +60,7 @@ export default MixedAuthEndpoint(async function handler(
 
   const parsedParams = modelsEndpointSchema.safeParse(req.query);
   if (!parsedParams.success) return res.status(400).json({ error: parsedParams.error });
-  const browsingLevel = !parsedParams.data.nsfw ? publicBrowsingLevelsFlag : allBrowsingLevelsFlag;
+  const browsingLevel = !parsedParams.data.nsfw ? safeBrowsingLevels : allBrowsingLevelsFlag;
 
   // Handle pagination
   const { limit, page, cursor, ...data } = parsedParams.data;

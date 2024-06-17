@@ -94,6 +94,5 @@ export const InputCheckbox = withWatcher(
     checked: field.value ?? false,
   }))
 );
-export const InputFlag = withWatcher(withController(FlagInput));
 export const InputSectionItems = withWatcher(withController(SectionItemsInput));
 export const InputCosmeticSelect = withWatcher(withController(CosmeticSelect));

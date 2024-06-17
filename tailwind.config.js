@@ -90,6 +90,18 @@ module.exports = {
           7: '#1C7ED6',
           8: '#1971C2',
           9: '#1864AB',
+        },
+        red: {
+          0: '#FFF5F5',
+          1: '#FFE3E3',
+          2: '#FFC9C9',
+          3: '#FFA8A8',
+          4: '#FF8787',
+          5: '#FF6B6B',
+          6: '#FA5252',
+          7: '#F03E3E',
+          8: '#E03131',
+          9: '#C92A2A',
         }
       }
     },
@@ -106,22 +118,22 @@ module.exports = {
         { values: theme('textShadow') },
 
       ),
-      addUtilities({
-        '.aspect-portrait': {
-          aspectRatio: '7 / 9'
-        },
-        '.card': {}
-      }),
-      addVariant('not-first', ({ modifySelectors, separator }) => {
-        modifySelectors(({ className }) => {
-          return `.${e(`not-first${separator}${className}`)}:not(:first-child)`
+        addUtilities({
+          '.aspect-portrait': {
+            aspectRatio: '7 / 9'
+          },
+          '.card': {}
+        }),
+        addVariant('not-first', ({ modifySelectors, separator }) => {
+          modifySelectors(({ className }) => {
+            return `.${e(`not-first${separator}${className}`)}:not(:first-child)`
+          })
+        }),
+        addVariant('not-last', ({ modifySelectors, separator }) => {
+          modifySelectors(({ className }) => {
+            return `.${e(`not-last${separator}${className}`)}:not(:last-child)`
+          })
         })
-      }),
-      addVariant('not-last', ({ modifySelectors, separator }) => {
-        modifySelectors(({ className }) => {
-          return `.${e(`not-last${separator}${className}`)}:not(:last-child)`
-        })
-      })
     }),
     // ...(process.env.NODE_ENV === 'production' ? { cssnano: {} } : {})
   ],

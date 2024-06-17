@@ -2,6 +2,7 @@ import { Alert, Container, Loader, Stack, ThemeIcon, Group, Button } from '@mant
 import { IconCheck, IconX } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
 import { z } from 'zod';
+import { NewsletterCallout } from '~/components/Account/NewsletterToggle';
 import { OnboardingAbortButton } from '~/components/Onboarding/OnboardingAbortButton';
 import { useOnboardingWizardContext } from '~/components/Onboarding/OnboardingWizard';
 import { useOnboardingStepCompleteMutation } from '~/components/Onboarding/onboarding.utils';
@@ -29,7 +30,8 @@ export function OnboardingProfile() {
   const { mutate, isLoading, error } = useOnboardingStepCompleteMutation();
 
   const debouncer = useDebouncer(500);
-  const [username, setUsername] = useState('');
+  const [username, setUsername] = useState(currentUser?.username ?? '');
+  const [email, setEmail] = useState(currentUser?.email ?? '');
   const [typing, setTyping] = useState(false);
   const { data: usernameAvailable, isRefetching: usernameAvailableLoading } =
     trpc.user.usernameAvailable.useQuery({ username }, { enabled: username.length >= 3 });
@@ -57,9 +59,17 @@ export function OnboardingProfile() {
           });
         }
       }
+      if (name === 'email' && value.email !== undefined) {
+        setEmail(value.email);
+      }
     });
     return () => subscription.unsubscribe();
   }, []);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    form.reset({ email: currentUser.email, username: currentUser.username });
+  }, [currentUser]);
 
   const buttonDisabled =
     !form.formState.isValid ||
@@ -105,6 +115,7 @@ export function OnboardingProfile() {
                 {error.data?.code === 'CONFLICT' ? 'That username is already taken' : error.message}
               </Alert>
             )}
+            <NewsletterCallout email={email} mt={'100px !important'} disabled={!email} />
             <Group position="apart">
               <OnboardingAbortButton size="lg">Sign Out</OnboardingAbortButton>
               <Button disabled={buttonDisabled} size="lg" type="submit" loading={isLoading}>

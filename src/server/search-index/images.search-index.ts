@@ -5,6 +5,7 @@ import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.sea
 import {
   CosmeticSource,
   CosmeticType,
+  HiddenType,
   ImageGenerationProcess,
   ImageIngestionStatus,
   MediaType,
@@ -116,6 +117,7 @@ type ImageForSearchIndex = {
   nsfwLevel: NsfwLevel;
   postId: number | null;
   needsReview: string | null;
+  hidden: HiddenType | null;
   hideMeta: boolean;
   index: number | null;
   scannedAt: Date | null;
@@ -162,6 +164,7 @@ const imageWhere = [
   Prisma.sql`i."tosViolation" = false`,
   Prisma.sql`i."type" = 'image'`,
   Prisma.sql`i."needsReview" IS NULL`,
+  Prisma.sql`i."hidden" IS NULL`,
   Prisma.sql`p."publishedAt" IS NOT NULL`,
   Prisma.sql`p."availability" != 'Private'::"Availability"`,
   Prisma.sql`p."availability" != 'Unsearchable'::"Availability"`,

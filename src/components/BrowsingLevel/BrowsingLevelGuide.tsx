@@ -3,8 +3,7 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { useHiddenPreferencesContext } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import {
   browsingLevels,
-  browsingLevelLabels,
-  browsingLevelDescriptions,
+  getBrowsingLevelDetails,
 } from '~/shared/constants/browsingLevel.constants';
 
 export default function BrowsingLevelGuide() {
@@ -16,14 +15,15 @@ export default function BrowsingLevelGuide() {
       <Stack>
         {browsingLevels.map((browsingLevel) => {
           const tags = moderatedTags.filter((x) => x.nsfwLevel === browsingLevel && !x.parentId);
+          const { name, description } = getBrowsingLevelDetails(browsingLevel);
           return (
             <Card withBorder key={browsingLevel}>
               <Card.Section withBorder inheritPadding py="xs">
-                <Text weight={500}>{browsingLevelLabels[browsingLevel]}</Text>
+                <Text weight={500}>{name}</Text>
               </Card.Section>
               <Card.Section withBorder inheritPadding py="xs">
                 <Stack>
-                  <Text>{browsingLevelDescriptions[browsingLevel]}</Text>
+                  <Text>{description}</Text>
                   {!!tags.length && (
                     <Group spacing="xs">
                       {tags.map((tag) => (

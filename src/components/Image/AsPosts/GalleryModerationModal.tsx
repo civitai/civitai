@@ -18,9 +18,8 @@ import { trpc } from '~/utils/trpc';
 import { useGallerySettings } from './gallery.utils';
 import {
   allBrowsingLevelsFlag,
-  browsingLevelDescriptions,
-  browsingLevelLabels,
   browsingLevels,
+  getBrowsingLevelDetails,
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
@@ -229,6 +228,7 @@ function BrowsingLevelsStacked({
       <Paper withBorder p={0} className={classes.root}>
         {browsingLevels.map((level) => {
           const isSelected = Flags.hasFlag(browsingLevel, level);
+          const { name, description } = getBrowsingLevelDetails(level);
           return (
             <Group
               position="apart"
@@ -238,14 +238,12 @@ function BrowsingLevelsStacked({
               className={cx({ [classes.active]: isSelected })}
               noWrap
             >
-              <Group noWrap>
-                <Text weight={700} w={50} ta="center">
-                  {browsingLevelLabels[level]}
+              <Stack spacing={4}>
+                <Text weight={700}>{name}</Text>
+                <Text lh={1.2} size="sm" ta="left">
+                  {description}
                 </Text>
-                <Text lh={1.2} size="sm" ta="left" sx={{ flex: '1 1' }}>
-                  {browsingLevelDescriptions[level]}
-                </Text>
-              </Group>
+              </Stack>
               <Text color="green" inline style={{ visibility: !isSelected ? 'hidden' : undefined }}>
                 <IconCheck />
               </Text>

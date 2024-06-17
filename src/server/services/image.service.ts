@@ -1,5 +1,6 @@
 import {
   Availability,
+  HiddenType,
   ImageGenerationProcess,
   ImageIngestionStatus,
   MediaType,
@@ -69,7 +70,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { getCursor } from '~/server/utils/pagination-helpers';
-import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { homePageBrowsingLevels } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils';
 import { logToDb } from '~/utils/logging';
 import { promptWordReplace } from '~/utils/metadata/audit';
@@ -467,6 +468,7 @@ type GetAllImagesRaw = {
   scannedAt: Date | null;
   ingestion: ImageIngestionStatus;
   needsReview: string | null;
+  hidden: HiddenType | null;
   userId: number;
   index: number | null;
   postId: number | null;
@@ -826,13 +828,15 @@ export const getAllImages = async ({
     if (isModerator) {
       AND.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`);
     } else if (userId) {
-      AND.push(Prisma.sql`(i."needsReview" IS NULL OR i."userId" = ${userId})`);
+      AND.push(
+        Prisma.sql`((i."needsReview" IS NULL AND i."hidden" IS NULL) OR i."userId" = ${userId})`
+      );
       AND.push(
         Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR (i."nsfwLevel" = 0 AND i."userId" = ${userId}))`
       );
     }
   } else {
-    AND.push(Prisma.sql`i."needsReview" IS NULL`);
+    AND.push(Prisma.sql`i."needsReview" IS NULL AND i."hidden" IS NULL`);
     AND.push(
       browsingLevel
         ? Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0 AND i."nsfwLevel" != 0`
@@ -1137,7 +1141,7 @@ export const getImage = async ({
     AND.push(
       Prisma.sql`(${Prisma.join(
         [
-          Prisma.sql`i."needsReview" IS NULL AND i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`,
+          Prisma.sql`(i."needsReview" IS NULL AND i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus")`,
           Prisma.sql`i."userId" = ${userId}`,
         ],
         ' OR '
@@ -1305,6 +1309,18 @@ export type ImagesForModelVersions = {
   sizeKB?: number;
 };
 
+type ImagesForModelVersionsParams = {
+  modelVersionIds: number | number[];
+  excludedTagIds?: number[];
+  excludedIds?: number[];
+  excludedUserIds?: number[];
+  imagesPerVersion?: number;
+  include?: Array<'meta' | 'tags'>;
+  user?: SessionUser;
+  pending?: boolean;
+  browsingLevel?: number;
+};
+
 export const getImagesForModelVersion = async ({
   modelVersionIds,
   excludedTagIds,
@@ -1315,17 +1331,7 @@ export const getImagesForModelVersion = async ({
   user,
   pending,
   browsingLevel,
-}: {
-  modelVersionIds: number | number[];
-  excludedTagIds?: number[];
-  excludedIds?: number[];
-  excludedUserIds?: number[];
-  imagesPerVersion?: number;
-  include?: Array<'meta' | 'tags'>;
-  user?: SessionUser;
-  pending?: boolean;
-  browsingLevel?: number;
-}) => {
+}: ImagesForModelVersionsParams) => {
   if (!Array.isArray(modelVersionIds)) modelVersionIds = [modelVersionIds];
   if (!modelVersionIds.length) return [] as ImagesForModelVersions[];
 
@@ -1360,13 +1366,15 @@ export const getImagesForModelVersion = async ({
     if (isModerator) {
       imageWhere.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`);
     } else if (userId) {
-      imageWhere.push(Prisma.sql`(i."needsReview" IS NULL OR i."userId" = ${userId})`);
+      imageWhere.push(
+        Prisma.sql`((i."needsReview" IS NULL AND i."hidden" IS NULL) OR i."userId" = ${userId})`
+      );
       imageWhere.push(
         Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR (i."nsfwLevel" = 0 AND i."userId" = ${userId}))`
       );
     }
   } else {
-    imageWhere.push(Prisma.sql`i."needsReview" IS NULL`);
+    imageWhere.push(Prisma.sql`i."needsReview" IS NULL AND i."hidden" IS NULL`);
     imageWhere.push(
       browsingLevel
         ? Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`
@@ -1490,6 +1498,28 @@ export async function getImagesForModelVersionCache(modelVersionIds: number[]) {
     images
   );
 }
+
+export async function getImagesForModelVersionCache2(
+  options: Omit<ImagesForModelVersionsParams, 'modelVersionIds'> & { modelVersionIds: number[] }
+) {
+  if (options.pending) {
+    const images = await getImagesForModelVersion(options);
+    const records: Record<
+      string,
+      { modelVersionId: number; images: AsyncReturnType<typeof getImagesForModelVersion> }
+    > = {};
+    for (const image of images) {
+      if (!records[image.modelVersionId])
+        records[image.modelVersionId] = { modelVersionId: image.modelVersionId, images: [] };
+      records[image.modelVersionId].images.push(image);
+    }
+
+    return records;
+  }
+
+  return imagesForModelVersionsCache.fetch(options.modelVersionIds);
+}
+
 export async function deleteImagesForModelVersionCache(modelVersionId: number) {
   await imagesForModelVersionsCache.bust(modelVersionId);
 }
@@ -1526,13 +1556,16 @@ export const getImagesForPosts = async ({
     if (isModerator) {
       imageWhere.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`);
     } else if (userId) {
-      imageWhere.push(Prisma.sql`(i."needsReview" IS NULL OR i."userId" = ${userId})`);
+      imageWhere.push(
+        Prisma.sql`((i."needsReview" IS NULL AND i."hidden" IS NULL) OR i."userId" = ${userId})`
+      );
       imageWhere.push(
         Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR (i."nsfwLevel" = 0 AND i."userId" = ${userId}))`
       );
     }
   } else {
     imageWhere.push(Prisma.sql`i."needsReview" IS NULL`);
+    imageWhere.push(Prisma.sql`i."hidden" IS NULL`);
     imageWhere.push(
       browsingLevel
         ? Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`
@@ -1786,7 +1819,7 @@ export const getImagesByEntity = async ({
 
   if (!isModerator) {
     const needsReviewOr = [
-      Prisma.sql`i."needsReview" IS NULL`,
+      Prisma.sql`(i."needsReview" IS NULL AND i."hidden" IS NULL)`,
       userId ? Prisma.sql`i."userId" = ${userId}` : null,
     ].filter(isDefined);
 
@@ -2044,6 +2077,7 @@ export const getEntityCoverImage = async ({
                   WHERE m."id" = e."entityId"
                       AND i."ingestion" = 'Scanned'
                       AND i."needsReview" IS NULL
+                      AND i."hidden" IS NULL
                   ) mi
                   WHERE mi.rn = 1
                 )
@@ -2059,6 +2093,7 @@ export const getEntityCoverImage = async ({
                   WHERE mv."id" = e."entityId"
                       AND i."ingestion" = 'Scanned'
                       AND i."needsReview" IS NULL
+                      AND i."hidden" IS NULL
                   ORDER BY mv.index, i."postId", i.index
                   ) mi
                   LIMIT 1
@@ -2069,6 +2104,7 @@ export const getEntityCoverImage = async ({
             WHERE i.id = e."entityId"
               AND i."ingestion" = 'Scanned'
               AND i."needsReview" IS NULL
+              AND i."hidden" IS NULL
           )
         WHEN e."entityType" = 'Article'
           THEN (
@@ -2081,6 +2117,7 @@ export const getEntityCoverImage = async ({
               WHERE a."id" = e."entityId"
                   AND i."ingestion" = 'Scanned'
                   AND i."needsReview" IS NULL
+                  AND i."hidden" IS NULL
             ) ai
             LIMIT 1
           )
@@ -2095,6 +2132,7 @@ export const getEntityCoverImage = async ({
               WHERE p."id" = e."entityId"
                   AND i."ingestion" = 'Scanned'
                   AND i."needsReview" IS NULL
+                  AND i."hidden" IS NULL
               ORDER BY i."postId", i.index
             ) pi
             LIMIT 1
@@ -2134,7 +2172,10 @@ export const getEntityCoverImage = async ({
       t."entityType"
     FROM targets t
     JOIN "Image" i ON i.id = t."imageId"
-    WHERE i."ingestion" = 'Scanned' AND i."needsReview" IS NULL`;
+    WHERE i."ingestion" = 'Scanned'
+      AND i."needsReview" IS NULL
+      AND i."hidden" IS NULL
+    `;
 
   let tagsVar: (VotableTagModel & { imageId: number })[] | undefined = [];
   if (include && include.includes('tags')) {
@@ -2532,7 +2573,7 @@ export async function get404Images() {
       AND c.name = '404 Contest'
       AND i."ingestion" = 'Scanned'
       AND i."needsReview" IS NULL
-      AND (i."nsfwLevel" & ${sfwBrowsingLevelsFlag}) != 0
+      AND (i."nsfwLevel" & ${homePageBrowsingLevels}) != 0
       AND ci.status = 'ACCEPTED';
   `;
 
@@ -2721,13 +2762,7 @@ export async function updateImageNsfwLevel({
 
 type ImageRatingRequestResponse = {
   id: number;
-  votes: {
-    [NsfwLevel.PG]: NsfwLevel.PG;
-    [NsfwLevel.PG13]: NsfwLevel.PG13;
-    [NsfwLevel.R]: NsfwLevel.R;
-    [NsfwLevel.X]: NsfwLevel.X;
-    [NsfwLevel.XXX]: NsfwLevel.XXX;
-  };
+  votes: Record<NsfwLevel, number>;
   url: string;
   nsfwLevel: number;
   nsfwLevelLocked: boolean;

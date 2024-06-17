@@ -4,15 +4,17 @@ import Router from 'next/router';
 import React, { createContext, useCallback, useContext } from 'react';
 import { create } from 'zustand';
 import { ConfirmDialog } from '~/components/Dialog/Common/ConfirmDialog';
-import { openSetBrowsingLevelModal } from '~/components/Dialog/dialog-registry';
+import { openSetNsfwLevelModal } from '~/components/Dialog/dialog-registry';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';
 import { NsfwLevel } from '~/server/common/enums';
 import {
-  browsingLevelLabels,
-  nsfwBrowsingLevelsFlag,
+  nsfwLevelLabels,
+  blurrableBrowsingLevels,
   getIsSafeBrowsingLevel,
+  getBrowsingLevelDetails,
+  getBrowsingLevel,
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils';
 import { useImageStore } from '~/store/image.store';
@@ -92,7 +94,7 @@ function useImageGuard({ image, connectId, connectType }: UseImageGuardProps) {
 
   const userId = image.userId ?? image.user?.id;
   const showUnprocessed = !nsfwLevel && (currentUser?.isModerator || userId === currentUser?.id);
-  const nsfw = Flags.hasFlag(nsfwBrowsingLevelsFlag, nsfwLevel);
+  const nsfw = Flags.hasFlag(blurrableBrowsingLevels, nsfwLevel);
   const shouldBlur = (currentUser?.blurNsfw ?? true) && !showUnprocessed;
   const safe = !nsfw ? true : !shouldBlur;
   const show = safe || (showConnect ?? showImage);
@@ -150,12 +152,14 @@ function ImageGuardContentInner({
   children: React.ReactNode;
 }) {
   const { classes } = useBadgeStyles({ browsingLevel });
+  const { name } = getBrowsingLevelDetails(getBrowsingLevel(browsingLevel));
+
   return (
     <>
       {!show && explain && (
         <BlurToggle>
           {(toggle) => (
-            <Center className="absolute left-1/2 top-1/2 z-20 flex -translate-x-1/2 -translate-y-[60%] flex-col text-white">
+            <Center className="absolute left-1/2 top-1/2 z-20 flex -translate-x-1/2 translate-y-[-60%] flex-col text-white">
               <Stack align="center" spacing="sm" w="100%">
                 <Text size="sm" className="shadow-black/50 text-shadow-sm">
                   This image is rated
@@ -166,7 +170,7 @@ function ImageGuardContentInner({
                   classNames={classes}
                   className="min-w-[32px] text-center shadow shadow-black/30"
                 >
-                  {browsingLevelLabels[browsingLevel as NsfwLevel]}
+                  {name}
                 </Badge>
                 <Button
                   onClick={toggle}
@@ -214,16 +218,21 @@ export function BrowsingLevelBadge({
   browsingLevel?: number;
 } & BadgeProps & { onClick?: () => void; sfwClassName?: string; nsfwClassName?: string }) {
   const { classes, cx } = useBadgeStyles({ browsingLevel });
-  const nsfw = Flags.hasFlag(nsfwBrowsingLevelsFlag, browsingLevel ?? NsfwLevel.XXX);
+  if (!browsingLevel) return null;
+
+  const nsfw = Flags.hasFlag(blurrableBrowsingLevels, browsingLevel);
 
   const badgeClass = cx(className, {
     [sfwClassName ? sfwClassName : '']: !nsfw,
     [nsfwClassName ? nsfwClassName : '']: nsfw,
   });
 
+  const imageBrowsingLevel = getBrowsingLevel(browsingLevel);
+  const { name } = getBrowsingLevelDetails(imageBrowsingLevel);
+
   return (
     <Badge classNames={classes} className={badgeClass} {...badgeProps}>
-      {browsingLevelLabels[browsingLevel as NsfwLevel]}
+      {name}
     </Badge>
   );
 }
@@ -263,6 +272,9 @@ function BlurToggle({
 
   if (safe) {
     const isOwnerOrModerator = currentUser?.isModerator || (userId && currentUser?.id === userId);
+    const imageBrowsingLevel = getBrowsingLevel(browsingLevel);
+    const { name } = getBrowsingLevelDetails(imageBrowsingLevel);
+
     return isOwnerOrModerator || alwaysVisible ? (
       <Badge
         classNames={classes}
@@ -272,14 +284,14 @@ function BlurToggle({
             ? (e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                openSetBrowsingLevelModal({ imageId, nsfwLevel: browsingLevel });
+                openSetNsfwLevelModal({ imageId, nsfwLevel: browsingLevel });
               }
             : undefined
         }
         color={!nsfw ? color : undefined}
         {...badgeProps}
       >
-        {browsingLevelLabels[browsingLevel]}
+        {name}
       </Badge>
     ) : null;
   }
@@ -353,9 +365,9 @@ const useBadgeStyles = createStyles((theme, params: { browsingLevel?: number }) 
       paddingLeft: 8,
       paddingRight: 8,
 
-      '& > span': {
-        lineHeight: 1,
-      },
+      // '& > span': {
+      //   lineHeight: 1,
+      // },
     },
   };
 });

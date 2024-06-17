@@ -1,8 +1,8 @@
 import React, { createContext, useContext, useDeferredValue, useEffect, useState } from 'react';
 import {
-  BrowsingLevel,
   allBrowsingLevelsFlag,
-  publicBrowsingLevelsFlag,
+  safeBrowsingLevels,
+  deriveBrowsingLevel,
 } from '~/shared/constants/browsingLevel.constants';
 import { useCookies } from '~/providers/CookiesProvider';
 import { Flags } from '~/shared/utils';
@@ -46,7 +46,7 @@ export function useBrowsingModeContext() {
       }),
     toggleBlurNsfw: (blurNsfw?: boolean) =>
       store.setState((state) => ({ blurNsfw: blurNsfw ?? !state.blurNsfw })),
-    toggleBrowsingLevel: (level: BrowsingLevel) => {
+    toggleBrowsingLevel: (level: number) => {
       store.setState((state) => {
         const instance = state.browsingLevel;
         const browsingLevel = !instance
@@ -155,11 +155,11 @@ export function BrowsingModeOverrideProvider({
 export function useBrowsingLevel() {
   const { browsingLevelOverride } = useBrowsingModeOverrideContext();
   const { useStore } = useBrowsingModeContext();
-  const browsingLevel = useStore((x) => x.browsingLevel);
+  const browsingLevel = useStore((x) => deriveBrowsingLevel(x.browsingLevel));
   const showNsfw = useStore((x) => x.showNsfw);
   if (browsingLevelOverride) return browsingLevelOverride;
-  if (!showNsfw) return publicBrowsingLevelsFlag;
-  return !browsingLevel ? publicBrowsingLevelsFlag : browsingLevel;
+  if (!showNsfw) return safeBrowsingLevels;
+  return !browsingLevel ? safeBrowsingLevels : browsingLevel;
 }
 
 export function useBrowsingLevelDebounced() {
@@ -168,8 +168,13 @@ export function useBrowsingLevelDebounced() {
   return useDeferredValue(debounced ?? browsingLevel);
 }
 
-export function useIsBrowsingLevelSelected(level: BrowsingLevel) {
+// export function useIsPublicBrowsingLevel() {
+//   const level = useBrowsingLevelDebounced();
+//   return getIsPublicBrowsingLevel(level);
+// }
+
+export function useIsBrowsingLevelSelected(level: number) {
   const { useStore } = useBrowsingModeContext();
-  const browsingLevel = useStore((x) => x.browsingLevel);
+  const browsingLevel = useStore((x) => deriveBrowsingLevel(x.browsingLevel));
   return Flags.hasFlag(browsingLevel, level);
 }

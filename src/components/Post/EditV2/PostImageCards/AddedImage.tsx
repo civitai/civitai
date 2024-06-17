@@ -10,6 +10,8 @@ import {
   LoadingOverlay,
   Menu,
   Text,
+  Tooltip,
+  Anchor,
 } from '@mantine/core';
 import { ImageIngestionStatus } from '@prisma/client';
 import {
@@ -22,10 +24,11 @@ import {
   IconPencil,
   IconPlus,
   IconTrash,
+  IconX,
 } from '@tabler/icons-react';
 import React, { createContext, useContext, useState } from 'react';
 import { ConfirmDialog } from '~/components/Dialog/Common/ConfirmDialog';
-import { openSetBrowsingLevelModal } from '~/components/Dialog/dialog-registry';
+import { openSetNsfwLevelModal } from '~/components/Dialog/dialog-registry';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { UnblockImage } from '~/components/Image/UnblockImage/UnblockImage';
@@ -50,6 +53,18 @@ import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { Popover, PopoverButton, PopoverPanel } from '@headlessui/react';
+import { Flags } from '~/shared/utils';
+import { graphicBrowsingLevels } from '~/shared/constants/browsingLevel.constants';
+import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
+import { Dropzone, FileWithPath } from '@mantine/dropzone';
+import { IconUpload } from '@tabler/icons-react';
+import { ImageMetaProps } from '~/server/schema/image.schema';
+import { getMetadata } from '~/utils/metadata';
+import { constants } from '~/server/common/constants';
+import { auditMetaData } from '~/utils/metadata/audit';
+import { ComfyNodes } from '~/components/ImageMeta/ImageMeta';
+import { isEmpty } from 'lodash-es';
+import { calculateSizeInMegabytes } from '~/utils/json-helpers';
 
 // #region [types]
 type SimpleMetaPropsKey = keyof typeof simpleMetaProps;
@@ -73,6 +88,7 @@ type State = {
   onEditMetaClick: () => void;
   isUpdating: boolean;
   toggleHidePrompt: () => void;
+  updateImageMeta: (meta: ImageMetaProps) => Promise<any>;
 };
 const AddedImageContext = createContext<State | null>(null);
 const useAddedImageContext = () => {
@@ -138,14 +154,20 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
   };
 
   const updateImageMutation = trpc.post.updateImage.useMutation({
-    onSuccess: (_, { id, hideMeta }) => {
+    onSuccess: (result, { id, hideMeta, meta }) => {
       updateImage(id, (image) => {
         image.hideMeta = hideMeta ?? false;
+        image.meta = (meta as ImageMetaProps) ?? image.meta;
+        image.hidden = result.hidden ?? null;
       });
     },
   });
   const toggleHidePrompt = () => {
     updateImageMutation.mutate({ id, hideMeta: !hideMeta });
+  };
+
+  const updateImageMeta = (meta: ImageMetaProps) => {
+    return updateImageMutation.mutateAsync({ id, meta });
   };
   // #endregion
 
@@ -161,6 +183,7 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
         onEditMetaClick: handleEditMetaClick,
         isUpdating: updateImageMutation.isLoading,
         toggleHidePrompt,
+        updateImageMeta,
       }}
     >
       <div className="overflow-hidden rounded-lg border border-gray-1 bg-gray-0 dark:border-dark-6 dark:bg-dark-8">
@@ -182,6 +205,7 @@ function Preview() {
     <div className="flex flex-col">
       <PostImage />
       {isBlocked && <TosViolationBanner />}
+      <HiddenImageBanner />
       <Accordion
         value={value}
         onChange={(value) => store.toggle(image.id, !!value)}
@@ -213,9 +237,10 @@ function EditDetail() {
     toggleHidePrompt,
   } = useAddedImageContext();
 
-  const { meta, hideMeta, resourceHelper: resources } = image;
+  const { meta, hideMeta, resourceHelper: resources, nsfwLevel } = image;
   const simpleMeta = Object.entries(simpleMetaProps).filter(([key]) => meta?.[key]);
   const hasSimpleMeta = !!simpleMeta.length;
+  const disableHideMeta = !!meta?.prompt && Flags.intersects(nsfwLevel, graphicBrowsingLevels);
 
   return (
     <div className="relative @container">
@@ -226,9 +251,7 @@ function EditDetail() {
             !showPreview ? '@sm:flex-nowrap @sm:gap-6' : ''
           }`}
         >
-          {/*
-      // #region [image]
-      */}
+          {/* #region [image] */}
           {(!showPreview || hasSimpleMeta) && (
             <div className={`flex w-full flex-col gap-3 ${!showPreview ? '@sm:w-4/12' : ''}`}>
               {!showPreview && <PostImage />}
@@ -265,15 +288,15 @@ function EditDetail() {
           {/* #endregion */}
 
           <div className={`flex w-full flex-1 flex-col gap-3 ${!showPreview ? '@sm:gap-4' : ''}`}>
-            {/*
-          // #region [TOS Violation]
-          */}
+            {/* #region [TOS Violation] */}
             {isBlocked && !showPreview && <TosViolationBanner />}
             {/* #endregion */}
 
-            {/*
-          // #region [prompt]
-          */}
+            {/* #region [Hidden Image] */}
+            {!showPreview && <HiddenImageBanner />}
+            {/* #endregion */}
+
+            {/* #region [prompt] */}
 
             <CustomCard className="flex flex-col gap-3">
               <div className="flex items-center justify-between">
@@ -293,18 +316,30 @@ function EditDetail() {
                       EDIT
                     </Button>
                     {meta?.prompt && (
-                      <Button
-                        variant={hideMeta ? 'filled' : 'light'}
-                        color="blue"
-                        compact
-                        size="sm"
-                        classNames={{ label: 'flex gap-1 text-sm' }}
-                        onClick={toggleHidePrompt}
-                        loading={isUpdating}
+                      <Tooltip
+                        label="Graphic images without the educational and scientific information provided by metadata is prohibited"
+                        width={300}
+                        disabled={!disableHideMeta}
+                        withinPortal
+                        multiline
                       >
-                        {hideMeta ? <IconEye size={16} /> : <IconEyeOff size={16} />}
-                        <span>{hideMeta ? 'SHOW' : 'HIDE'} PROMPT</span>
-                      </Button>
+                        {/* div is required to display the tooltip when button is disabled */}
+                        <div>
+                          <Button
+                            variant={hideMeta ? 'filled' : 'light'}
+                            color="blue"
+                            compact
+                            size="sm"
+                            classNames={{ label: 'flex gap-1 text-sm' }}
+                            onClick={toggleHidePrompt}
+                            loading={isUpdating}
+                            disabled={disableHideMeta}
+                          >
+                            {hideMeta ? <IconEye size={16} /> : <IconEyeOff size={16} />}
+                            <span>{hideMeta ? 'SHOW' : 'HIDE'} PROMPT</span>
+                          </Button>
+                        </div>
+                      </Tooltip>
                     )}
                   </div>
                 )}
@@ -333,9 +368,7 @@ function EditDetail() {
 
             {/* #endregion */}
 
-            {/*
-          // #region [resources]
-          */}
+            {/* #region [resources] */}
             {!!resources?.length && (
               <CustomCard className="flex flex-col gap-2">
                 <div className="flex items-center gap-2">
@@ -394,9 +427,7 @@ function EditDetail() {
             )}
             {/* #endregion */}
 
-            {/*
-          // #region [missing resources]
-          */}
+            {/* #region [missing resources] */}
             {!resources?.length && (
               <Alert className="rounded-lg" color="yellow">
                 <div className="flex flex-col gap-3">
@@ -433,9 +464,7 @@ function EditDetail() {
             )}
             {/* #endregion */}
 
-            {/*
-          // #region [tools]
-          */}
+            {/* #region [tools] */}
 
             <CustomCard className="flex flex-col gap-2">
               <div className="flex items-center justify-between">
@@ -491,9 +520,7 @@ function EditDetail() {
             </CustomCard>
             {/* #endregion */}
 
-            {/*
-          // #region [techniques]
-          */}
+            {/* #region [techniques] */}
 
             <CustomCard className="flex flex-col gap-2">
               <div className="flex items-center justify-between">
@@ -544,6 +571,10 @@ function EditDetail() {
             </CustomCard>
             {/* #endregion */}
 
+            {/* #region [comfy workflow] */}
+            {image.type === 'video' && <ComfyWorkflowCard />}
+            {/* #endregion */}
+
             {meta?.external && Object.keys(meta?.external).length > 0 && (
               <CustomCard className="flex flex-col gap-2">
                 <h3 className=" text-lg font-semibold leading-none text-dark-7 dark:text-gray-0 ">
@@ -554,9 +585,7 @@ function EditDetail() {
             )}
           </div>
         </div>
-        {/*
- // #region [tags]
- */}
+        {/* #region [tags] */}
         {(!!image.tags?.length || isScanned) && (
           <>
             <Divider />
@@ -615,9 +644,7 @@ function PostImage() {
         <BrowsingLevelBadge
           browsingLevel={nsfwLevel}
           size="lg"
-          onClick={
-            !isBlocked ? () => openSetBrowsingLevelModal({ imageId: id, nsfwLevel }) : undefined
-          }
+          onClick={!isBlocked ? () => openSetNsfwLevelModal({ imageId: id, nsfwLevel }) : undefined}
           className={`absolute left-2 top-2 z-20 ${!isBlocked ? 'cursor-pointer' : ''}`}
         />
       )}
@@ -702,5 +729,127 @@ function TosViolationBanner() {
         </Button>
       </div>
     </Alert>
+  );
+}
+
+function HiddenImageBanner() {
+  const { image } = useAddedImageContext();
+  const { showPreview } = usePostPreviewContext();
+  const { hidden, meta } = image;
+
+  if (!hidden || !!meta?.prompt) return null;
+
+  return (
+    <Alert
+      color="yellow"
+      className={`p-3 @container ${showPreview ? 'rounded-none' : 'rounded-lg'}`}
+      classNames={{ message: 'flex flex-col items-center justify-center' }}
+    >
+      {hidden === 'MissingMetadata' ? (
+        <>
+          <Text color="yellow" className="font-bold">
+            Missing educational information
+          </Text>
+          <Text>
+            Your image has been detected to include graphic content. Per our{' '}
+            <Anchor href="/content/tos" target="_blank" rel="nofollow noreferrer">
+              ToS
+            </Anchor>
+            , graphic content on Civitai is required to have artistic, educational or scientific
+            value. To have your image appear please include metadata. If your image has been marked
+            as graphic content in error, please change the rating and a moderator will review your
+            image shortly.
+          </Text>
+        </>
+      ) : (
+        <>
+          <Text color="yellow" className="font-bold">
+            Content hidden
+          </Text>
+          <Text>
+            Your image won&apos;t show up in the feed because it&apos;s marked as graphic content.
+            If your image has been marked as graphic content in error, please change the rating and
+            a moderator will review your image shortly.
+          </Text>
+        </>
+      )}
+    </Alert>
+  );
+}
+
+function ComfyWorkflowCard() {
+  const { image, updateImageMeta } = useAddedImageContext();
+
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const handleDrop = async (files: FileWithPath[]) => {
+    setError(null);
+    const [file] = files;
+
+    const meta = await getMetadata(file).catch(() => undefined);
+    const result = auditMetaData(meta, true);
+
+    if (!isEmpty(meta) && meta.comfy && result.success) {
+      const comfyFieldSize = calculateSizeInMegabytes(meta.comfy);
+      if (comfyFieldSize > 1) {
+        setError('Comfy metadata is too large. Please consider updating your workflow');
+        return;
+      }
+
+      setLoading(true);
+      await updateImageMeta(meta);
+      setLoading(false);
+    } else {
+      const { blockedFor } = result;
+      const message = blockedFor.length
+        ? `Blocked for: ${blockedFor.join(', ')}`
+        : 'An unexpected error occurred';
+
+      setError(message);
+    }
+  };
+
+  return (
+    <CustomCard className="flex flex-col gap-2">
+      <div className="flex items-center justify-between">
+        <h3 className=" text-lg font-semibold leading-none text-dark-7 dark:text-gray-0 ">
+          Comfy Workflow
+        </h3>
+        {image.meta && <ComfyNodes meta={image.meta} />}
+      </div>
+      <Dropzone
+        accept={IMAGE_MIME_TYPE}
+        maxFiles={1}
+        maxSize={constants.mediaUpload.maxImageFileSize}
+        onDrop={handleDrop}
+        className={error ? 'border-red-9' : ''}
+        loading={loading}
+      >
+        <Dropzone.Idle>
+          <div className="flex items-center justify-center gap-2">
+            <IconPlus size={24} />
+            <Text>Upload the image output from your comfy workflow</Text>
+          </div>
+        </Dropzone.Idle>
+        <Dropzone.Reject>
+          <div className="flex items-center justify-center gap-2">
+            <IconX size={24} />
+            <Text>Not allowed</Text>
+          </div>
+        </Dropzone.Reject>
+        <Dropzone.Accept>
+          <div className="flex items-center justify-center gap-2">
+            <IconUpload size={24} />
+            <Text>Drop image here</Text>
+          </div>
+        </Dropzone.Accept>
+      </Dropzone>
+      {error && (
+        <Text color="red" size="xs">
+          {error}
+        </Text>
+      )}
+    </CustomCard>
   );
 }

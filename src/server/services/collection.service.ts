@@ -1717,6 +1717,7 @@ export const getCollectionCoverImages = async ({
       WHERE i.id IN (SELECT "imageId" FROM target WHERE "imageId" IS NOT NULL)
         AND i."ingestion" = 'Scanned'
         AND i."needsReview" IS NULL
+        AND i."hidden" IS NULL
     ), postItemImage AS MATERIALIZED (
       SELECT * FROM (
           SELECT
@@ -1727,6 +1728,7 @@ export const getCollectionCoverImages = async ({
           WHERE i."postId" IN (SELECT "postId" FROM target WHERE "postId" IS NOT NULL)
             AND i."ingestion" = 'Scanned'
             AND i."needsReview" IS NULL
+            AND i."hidden" IS NULL
       ) t
       WHERE t.rn = 1
     ), modelItemImage AS MATERIALIZED (
@@ -1742,6 +1744,7 @@ export const getCollectionCoverImages = async ({
           WHERE m."id" IN (SELECT "modelId" FROM target WHERE "modelId" IS NOT NULL)
               AND i."ingestion" = 'Scanned'
               AND i."needsReview" IS NULL
+              AND i."hidden" IS NULL
       ) t
       WHERE t.rn = 1
     ), articleItemImage as MATERIALIZED (

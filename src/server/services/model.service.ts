@@ -53,6 +53,7 @@ import {
 import {
   getImagesForModelVersion,
   getImagesForModelVersionCache,
+  getImagesForModelVersionCache2,
   ImagesForModelVersions,
 } from '~/server/services/image.service';
 import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
@@ -975,31 +976,10 @@ export const getModelsWithImagesAndModelVersions = async ({
     .flatMap((m) => m.modelVersions)
     .map((m) => m.id);
 
-  let modelVersionImages: Record<
-    number,
-    { modelVersionId: number; images: ImagesForModelVersions[] }
-  > = {};
-  if (!!modelVersionIds.length) {
-    if (input.pending) {
-      const images = await getImagesForModelVersion({
-        modelVersionIds,
-        imagesPerVersion: 20,
-        pending: input.pending,
-        browsingLevel: input.browsingLevel,
-        user,
-      });
-      for (const image of images) {
-        if (!modelVersionImages[image.modelVersionId])
-          modelVersionImages[image.modelVersionId] = {
-            modelVersionId: image.modelVersionId,
-            images: [],
-          };
-        modelVersionImages[image.modelVersionId].images.push(image);
-      }
-    } else {
-      modelVersionImages = await getImagesForModelVersionCache(modelVersionIds);
-    }
-  }
+  const { user: _ignoredUser, ...getImagesParams } = input;
+  const modelVersionImages = !!modelVersionIds.length
+    ? await getImagesForModelVersionCache2({ ...getImagesParams, modelVersionIds })
+    : {};
 
   const { excludedTagIds, status } = input;
   const includeDrafts = status?.includes(ModelStatus.Draft);

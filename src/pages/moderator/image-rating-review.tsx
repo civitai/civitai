@@ -17,7 +17,7 @@ import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { getImageRatingRequests } from '~/server/services/image.service';
-import { browsingLevelLabels, browsingLevels } from '~/shared/constants/browsingLevel.constants';
+import { getNsfwLevelDetails, nsfwLevels } from '~/shared/constants/browsingLevel.constants';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -34,8 +34,8 @@ export default function ImageRatingReview() {
   const hasNextPage = !!data?.nextCursor;
 
   return (
-    <div className="p-4  flex flex-col gap-4">
-      <div className="flex justify-center gap-4 items-center">
+    <div className="flex  flex-col gap-4 p-4">
+      <div className="flex items-center justify-center gap-4">
         <Title>Image Rating Review</Title>
         <Select
           placeholder="Limit"
@@ -55,7 +55,7 @@ export default function ImageRatingReview() {
       ) : (
         <>
           <div
-            className="grid gap-6 justify-center"
+            className="grid justify-center gap-6"
             style={{ gridTemplateColumns: 'repeat(auto-fit, 300px' }}
           >
             {flatData?.map((item) => (
@@ -103,8 +103,8 @@ function ImageRatingCard(item: AsyncReturnType<typeof getImageRatingRequests>['i
       </NextLink>
       <div className="flex flex-col gap-4 p-4">
         <div className="grid gap-1" style={{ gridTemplateColumns: `min-content 1fr` }}>
-          {browsingLevels.map((level) => {
-            const votes = item.votes[level];
+          {nsfwLevels.map((level) => {
+            const votes = item.votes[level] ?? 0;
             const sections: { value: number; label?: string; color: MantineColor }[] = [];
             if (votes > 0) {
               const count = item.ownerVote > 0 ? votes - 1 : votes;
@@ -135,7 +135,7 @@ function ImageRatingCard(item: AsyncReturnType<typeof getImageRatingRequests>['i
                       : 'blue'
                   }
                 >
-                  {browsingLevelLabels[level]}
+                  {getNsfwLevelDetails(level).name}
                 </Button>
                 <Progress size={26} sections={sections} />
               </React.Fragment>

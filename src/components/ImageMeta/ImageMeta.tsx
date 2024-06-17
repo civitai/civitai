@@ -297,10 +297,12 @@ export function ImageMeta({
   );
 }
 
-function ComfyNodes({ meta }: { meta: ImageMetaProps }) {
+export function ComfyNodes({ meta }: { meta: ImageMetaProps }) {
   const { copied, copy } = useClipboard();
   const comfy = typeof meta.comfy === 'string' ? fromJson<ComfyMetaSchema>(meta.comfy) : meta.comfy;
   const { workflow } = comfy ?? {};
+
+  if (!workflow) return null;
 
   return (
     <Group

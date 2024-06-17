@@ -1,11 +1,12 @@
 import { Button, Modal, Text } from '@mantine/core';
+import { HiddenType } from '@prisma/client';
 import { useState } from 'react';
 import { z } from 'zod';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { Form, InputNumber, InputSelect, InputTextArea, useForm } from '~/libs/form';
 import { constants } from '~/server/common/constants';
 import { NsfwLevel } from '~/server/common/enums';
-import { baseImageMetaSchema } from '~/server/schema/image.schema';
+import { ImageMetaProps, baseImageMetaSchema } from '~/server/schema/image.schema';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { auditImageMeta } from '~/utils/media-preprocessors';
 import { trpc } from '~/utils/trpc';
@@ -23,30 +24,30 @@ export function ImageMetaModal({
   nsfwLevel?: number;
   updateImage: (
     id: number,
-    cb: (props: { meta?: z.infer<typeof baseImageMetaSchema> | null }) => void
+    cb: (props: {
+      meta?: z.infer<typeof baseImageMetaSchema> | null;
+      hidden?: HiddenType | null;
+    }) => void
   ) => void;
 }) {
   const dialog = useDialogContext();
   const [blockedFor, setBlockedFor] = useState(props.blockedFor);
 
-  const { mutate, isLoading } = trpc.post.updateImage.useMutation();
+  const { mutate, isLoading } = trpc.post.updateImage.useMutation({
+    onSuccess: (result, payload) => {
+      updateImage(id, (image) => {
+        image.meta = (payload.meta as ImageMetaProps) ?? image.meta;
+        image.hidden = result.hidden ?? null;
+      });
+      dialog.onClose();
+    },
+  });
   const form = useForm({ schema: baseImageMetaSchema, defaultValues: meta });
 
   const handleSubmit = async (data: z.infer<typeof baseImageMetaSchema>) => {
     const { blockedFor } = await auditImageMeta(data, !getIsSafeBrowsingLevel(nsfwLevel));
     setBlockedFor(blockedFor?.join(', '));
-    if (!blockedFor)
-      mutate(
-        { id, meta: { ...meta, ...data } },
-        {
-          onSuccess: () => {
-            updateImage(id, (image) => {
-              image.meta = { ...image.meta, ...data };
-            });
-            dialog.onClose();
-          },
-        }
-      );
+    if (!blockedFor) mutate({ id, meta: { ...meta, ...data } });
   };
 
   return (
@@ -73,7 +74,7 @@ export function ImageMetaModal({
           />
           <InputNumber name="seed" label="Seed" format="default" />
         </div>
-        <div className="flex justify-end mt-4">
+        <div className="mt-4 flex justify-end">
           <Button type="submit" loading={isLoading}>
             Save
           </Button>
