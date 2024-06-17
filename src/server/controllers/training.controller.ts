@@ -41,6 +41,7 @@ export const getModelData = async ({ input }: { input: GetByIdInput }) => {
             files: {
               select: {
                 id: true,
+                name: true,
                 url: true,
                 type: true,
                 metadata: true,
@@ -70,6 +71,21 @@ export async function handleApproveTrainingData({
   ctx: DeepNonNullable<Context>;
 }) {
   const modelVersionId = input.id;
+
+  const version = await dbWrite.modelVersion.findFirst({
+    where: { id: modelVersionId },
+    select: {
+      trainingStatus: true,
+    },
+  });
+  if (!version || version.trainingStatus !== TrainingStatus.Paused) {
+    logWebhook({
+      message: 'Could not find modelVersion of type "Paused"',
+      data: { modelVersionId, important: true },
+    });
+    throw throwNotFoundError('Could not find modelFile');
+  }
+
   logWebhook({ message: 'Approved training dataset', type: 'info', data: { modelVersionId } });
 
   try {
@@ -96,6 +112,21 @@ export async function handleDenyTrainingData({
   ctx: DeepNonNullable<Context>;
 }) {
   const modelVersionId = input.id;
+
+  const version = await dbWrite.modelVersion.findFirst({
+    where: { id: modelVersionId },
+    select: {
+      trainingStatus: true,
+    },
+  });
+  if (!version || version.trainingStatus !== TrainingStatus.Paused) {
+    logWebhook({
+      message: 'Could not find modelVersion of type "Paused"',
+      data: { modelVersionId, important: true },
+    });
+    throw throwNotFoundError('Could not find modelFile');
+  }
+
   logWebhook({
     message: 'Denied training dataset',
     type: 'info',

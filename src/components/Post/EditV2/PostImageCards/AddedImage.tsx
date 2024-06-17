@@ -463,6 +463,7 @@ function EditDetail() {
             {/* #endregion */}
 
             {/* #region [tools] */}
+            {/* TODO: Add tooltip for contests. */}
             <CustomCard className="flex flex-col gap-2">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">

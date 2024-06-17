@@ -1342,6 +1342,7 @@ enum TagTarget {
   Tag
   Article
   Bounty
+  Collection
 }
 
 enum TagType {
@@ -1385,6 +1386,7 @@ model Tag {
   tagsOnPostComposite  PostTag[]
   tagsOnPostVotes      TagsOnPostVote[]
   tagsOnBounties       TagsOnBounty[]
+  CollectionItem       CollectionItem[]
 
   @@unique([name])
 }
@@ -2323,6 +2325,8 @@ model CollectionItem {
   note         String?
   status       CollectionItemStatus @default(ACCEPTED)
   randomId     Int?
+  tagId        Int?
+  tag          Tag?                 @relation(fields: [tagId], references: [id], onDelete: SetNull)
 
   @@unique([collectionId, articleId, postId, imageId, modelId])
   @@index([addedById], type: Hash)
