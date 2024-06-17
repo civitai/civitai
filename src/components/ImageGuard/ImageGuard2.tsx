@@ -219,6 +219,7 @@ export function BrowsingLevelBadge({
 } & BadgeProps & { onClick?: () => void; sfwClassName?: string; nsfwClassName?: string }) {
   const { classes, cx } = useBadgeStyles({ browsingLevel });
   if (!browsingLevel) return null;
+
   const nsfw = Flags.hasFlag(blurrableBrowsingLevels, browsingLevel);
 
   const badgeClass = cx(className, {
@@ -226,9 +227,12 @@ export function BrowsingLevelBadge({
     [nsfwClassName ? nsfwClassName : '']: nsfw,
   });
 
+  const imageBrowsingLevel = getBrowsingLevel(browsingLevel);
+  const { name } = getBrowsingLevelDetails(imageBrowsingLevel);
+
   return (
     <Badge classNames={classes} className={badgeClass} {...badgeProps}>
-      {nsfwLevelLabels[browsingLevel as NsfwLevel]}
+      {name}
     </Badge>
   );
 }
@@ -268,6 +272,9 @@ function BlurToggle({
 
   if (safe) {
     const isOwnerOrModerator = currentUser?.isModerator || (userId && currentUser?.id === userId);
+    const nsfwLevel = getBrowsingLevel(browsingLevel);
+    const { name } = getBrowsingLevelDetails(nsfwLevel);
+
     return isOwnerOrModerator || alwaysVisible ? (
       <Badge
         classNames={classes}
@@ -284,7 +291,7 @@ function BlurToggle({
         color={!nsfw ? color : undefined}
         {...badgeProps}
       >
-        {nsfwLevelLabels[browsingLevel]}
+        {name}
       </Badge>
     ) : null;
   }
