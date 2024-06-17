@@ -272,8 +272,8 @@ function BlurToggle({
 
   if (safe) {
     const isOwnerOrModerator = currentUser?.isModerator || (userId && currentUser?.id === userId);
-    const nsfwLevel = getBrowsingLevel(browsingLevel);
-    const { name } = getBrowsingLevelDetails(nsfwLevel);
+    const imageBrowsingLevel = getBrowsingLevel(browsingLevel);
+    const { name } = getBrowsingLevelDetails(imageBrowsingLevel);
 
     return isOwnerOrModerator || alwaysVisible ? (
       <Badge
