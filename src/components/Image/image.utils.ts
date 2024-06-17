@@ -46,6 +46,7 @@ export const imagesQueryParamSchema = z
     followed: booleanString(),
     fromPlatform: booleanString(),
     notPublished: booleanString(),
+    collectionTagId: numericString(),
     baseModels: z.enum(constants.baseModels).array().optional(),
   })
   .partial();
@@ -190,3 +191,20 @@ export function useReportCsamImages(
 
   return { ...reportCsamImage, mutate };
 }
+
+export const useImageContestCollectionDetails = (
+  filters: { id: number },
+  options?: { enabled: boolean }
+) => {
+  const { data: collectionItems, ...rest } = trpc.image.getContestCollectionDetails.useQuery(
+    { ...filters },
+    {
+      ...options,
+    }
+  );
+
+  return {
+    collectionItems,
+    ...rest,
+  };
+};

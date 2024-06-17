@@ -16,6 +16,7 @@ import { NewsletterToggle } from '~/components/Account/NewsletterToggle';
 import { OnboardingAbortButton } from '~/components/Onboarding/OnboardingAbortButton';
 import { useOnboardingWizardContext } from '~/components/Onboarding/OnboardingWizard';
 import { useOnboardingStepCompleteMutation } from '~/components/Onboarding/onboarding.utils';
+import { useReferralsContext } from '~/components/Referrals/ReferralsProvider';
 import { StepperTitle } from '~/components/Stepper/StepperTitle';
 import { OnboardingSteps } from '~/server/common/enums';
 import { useReferralsContext } from '~/components/Referrals/ReferralsProvider';

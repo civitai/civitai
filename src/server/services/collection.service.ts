@@ -1,4 +1,4 @@
-import { truncate, uniq } from 'lodash-es';
+import { truncate, uniq, uniqBy } from 'lodash-es';
 import { dbWrite, dbRead } from '~/server/db/client';
 import {
   BulkSaveCollectionItemsInput,
@@ -26,6 +26,7 @@ import {
   MediaType,
   MetricTimeframe,
   Prisma,
+  TagTarget,
 } from '@prisma/client';
 import {
   throwAuthorizationError,
@@ -67,8 +68,11 @@ import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
 import { collectionsSearchIndex } from '~/server/search-index';
 import { createNotification } from '~/server/services/notification.service';
+import { isNotTag, isTag } from '~/server/schema/tag.schema';
+import { collectionSelect } from '~/server/selectors/collection.selector';
 
 export type CollectionContributorPermissionFlags = {
+  collectionId: number;
   read: boolean;
   write: boolean;
   writeReview: boolean;
@@ -120,6 +124,7 @@ export const getUserCollectionPermissionsById = async ({
   isModerator?: boolean;
 }) => {
   const permissions: CollectionContributorPermissionFlags = {
+    collectionId: id,
     read: false,
     write: false,
     writeReview: false,
@@ -333,12 +338,24 @@ export const getUserCollectionsWithPermissions = async <
         })
       : [];
 
+  const collectionTags = await dbRead.tagsOnCollection.findMany({
+    where: {
+      collectionId: {
+        in: collections.map((c) => c.id),
+      },
+    },
+    include: {
+      tag: true,
+    },
+  });
+
   // Return user collections first && add isOwner  property
   return collections
     .map((collection) => ({
       ...collection,
       isOwner: collection.userId === userId,
       image: images.find((i) => i.id === collection.imageId),
+      tags: collectionTags.filter((t) => t.collectionId === collection.id).map((t) => t.tag),
     }))
     .sort(({ userId: collectionUserId }) => (userId === collectionUserId ? -1 : 1));
 };
@@ -348,19 +365,8 @@ export const getCollectionById = async ({ input }: { input: GetByIdInput }) => {
   const collection = await dbRead.collection.findUnique({
     where: { id },
     select: {
-      id: true,
-      name: true,
-      description: true,
-      read: true,
-      write: true,
-      type: true,
+      ...collectionSelect,
       user: { select: userWithCosmeticsSelect },
-      nsfw: true,
-      nsfwLevel: true,
-      image: { select: imageSelect },
-      mode: true,
-      metadata: true,
-      availability: true,
     },
   });
   if (!collection) throw throwNotFoundError(`No collection with id ${id}`);
@@ -376,6 +382,9 @@ export const getCollectionById = async ({ input }: { input: GetByIdInput }) => {
         }
       : null,
     metadata: (collection.metadata ?? {}) as CollectionMetadataSchema,
+    tags: collection.tags.map((t) => ({
+      ...t.tag,
+    })),
   };
 };
 
@@ -387,19 +396,27 @@ const inputToCollectionType = {
 } as const;
 
 export const saveItemInCollections = async ({
-  input: { collectionIds, type, userId, isModerator, removeFromCollectionIds, ...input },
+  input: {
+    collections: upsertCollectionItems,
+    type,
+    userId,
+    isModerator,
+    removeFromCollectionIds,
+    ...input
+  },
 }: {
   input: AddCollectionItemInput & { userId: number; isModerator?: boolean };
 }) => {
   const itemKey = Object.keys(inputToCollectionType).find((key) => input.hasOwnProperty(key));
   if (!itemKey) throw throwBadRequestError(`We don't know the type of thing you're adding`);
   // Safeguard against duppes.
-  collectionIds = uniq(collectionIds);
+  upsertCollectionItems = uniqBy(upsertCollectionItems, 'collectionId');
   removeFromCollectionIds = uniq(removeFromCollectionIds);
 
   const collections = await dbRead.collection.findMany({
+    select: collectionSelect,
     where: {
-      id: { in: collectionIds },
+      id: { in: upsertCollectionItems.map((c) => c.collectionId) },
     },
   });
 
@@ -408,18 +425,35 @@ export const saveItemInCollections = async ({
     // check if all collections match the Model type
     const filteredCollections = collections.filter((c) => c.type === type || c.type == null);
 
-    if (filteredCollections.length !== collectionIds.length) {
+    if (filteredCollections.length !== upsertCollectionItems.length) {
       throw throwBadRequestError('Collection type mismatch');
     }
   }
 
   const data = (
     await Promise.all(
-      collectionIds.map(async (collectionId) => {
+      upsertCollectionItems.map(async (upsertCollection) => {
+        const { collectionId, tagId } = upsertCollection;
         const collection = collections.find((c) => c.id === collectionId);
 
         if (!collection) {
           return null;
+        }
+
+        if (collection.tags.length > 0 && !tagId) {
+          throw throwBadRequestError('Collection requires a tag');
+        }
+
+        if (collection.tags.length === 0 && tagId) {
+          throw throwBadRequestError('Provided tag is not part of this collection');
+        }
+
+        if (
+          collection.tags.length > 0 &&
+          tagId &&
+          !collection.tags.some((t) => t.tag.id === tagId)
+        ) {
+          throw throwBadRequestError('Provided tag is not part of this collection');
         }
 
         const metadata = (collection?.metadata ?? {}) as CollectionMetadataSchema;
@@ -474,6 +508,7 @@ export const saveItemInCollections = async ({
           reviewedById: permission.write ? userId : null,
           reviewedAt: permission.write ? new Date() : null,
           [itemKey]: input[itemKey as keyof typeof input],
+          tagId,
         };
       })
     )
@@ -486,22 +521,24 @@ export const saveItemInCollections = async ({
       dbWrite.$executeRaw`
       INSERT INTO "CollectionItem" ("collectionId", "addedById", "status", "randomId" , "${Prisma.raw(
         itemKey
-      )}")
+      )}", "tagId")
       SELECT
         v."collectionId",
         v."addedById",
         v."status",
         FLOOR(RANDOM() * 1000000000),
-        v."${Prisma.raw(itemKey)}"
+        v."${Prisma.raw(itemKey)}",
+        v."tagId"
       FROM jsonb_to_recordset(${JSON.stringify(data)}::jsonb) AS v(
         "collectionId" INTEGER,
         "addedById" INTEGER,
         "status" "CollectionItemStatus",
-        "${Prisma.raw(itemKey)}" INTEGER
+        "${Prisma.raw(itemKey)}" INTEGER,
+        "tagId" INTEGER
       )
       ON CONFLICT ("collectionId", "${Prisma.raw(itemKey)}")
         WHERE "${Prisma.raw(itemKey)}" IS NOT NULL
-        DO NOTHING;
+        DO UPDATE SET "tagId" = EXCLUDED."tagId";
     `
     );
   }
@@ -550,9 +587,10 @@ export const saveItemInCollections = async ({
   }
 
   // if we have items to remove, add a deleteMany mutation to the transaction
-
   await Promise.all(
-    collectionIds.map((collectionId) => homeBlockCacheBust(HomeBlockType.Collection, collectionId))
+    upsertCollectionItems.map((item) =>
+      homeBlockCacheBust(HomeBlockType.Collection, item.collectionId)
+    )
   );
 
   await dbWrite.$transaction(transactions);
@@ -579,6 +617,7 @@ export const upsertCollection = async ({
     nsfw,
     mode,
     metadata,
+    tags,
     ...collectionItem
   } = input;
 
@@ -634,6 +673,30 @@ export const upsertCollection = async ({
                     },
                   },
                 }
+            : undefined,
+          tags: tags
+            ? {
+                deleteMany: {
+                  tagId: {
+                    notIn: tags.filter(isTag).map((x) => x.id),
+                  },
+                },
+                connectOrCreate: tags.filter(isTag).map((tag) => ({
+                  where: { tagId_collectionId: { tagId: tag.id, collectionId: id as number } },
+                  create: { tagId: tag.id },
+                })),
+                create: tags.filter(isNotTag).map((tag) => {
+                  const name = tag.name.toLowerCase().trim();
+                  return {
+                    tag: {
+                      connectOrCreate: {
+                        where: { name },
+                        create: { name, target: [TagTarget.Collection] },
+                      },
+                    },
+                  };
+                }),
+              }
             : undefined,
         },
       });
@@ -729,6 +792,21 @@ export const upsertCollection = async ({
         },
       },
       items: { create: { ...collectionItem, imageId, addedById: userId } },
+      tags: tags
+        ? {
+            create: tags.map((tag) => {
+              const name = tag.name.toLowerCase().trim();
+              return {
+                tag: {
+                  connectOrCreate: {
+                    where: { name },
+                    create: { name, target: [TagTarget.Collection] },
+                  },
+                },
+              };
+            }),
+          }
+        : undefined,
     },
   });
 
@@ -1038,6 +1116,7 @@ export const getUserCollectionItemsByItem = async ({
     select: {
       collectionId: true,
       addedById: true,
+      tagId: true,
       collection: {
         select: {
           userId: true,
@@ -1313,7 +1392,7 @@ export function getContributorCount({ collectionIds: ids }: { collectionIds: num
   `;
 }
 
-const validateContestCollectionEntry = async ({
+export const validateContestCollectionEntry = async ({
   collectionId,
   userId,
   metadata,
@@ -1504,7 +1583,15 @@ const validateFeaturedCollectionEntry = async ({
 };
 
 export const bulkSaveItems = async ({
-  input: { userId, collectionId, articleIds = [], modelIds = [], imageIds = [], postIds = [] },
+  input: {
+    userId,
+    collectionId,
+    articleIds = [],
+    modelIds = [],
+    imageIds = [],
+    postIds = [],
+    tagId,
+  },
   permissions,
 }: {
   input: BulkSaveCollectionItemsInput & { userId: number };
@@ -1512,10 +1599,24 @@ export const bulkSaveItems = async ({
 }) => {
   const collection = await dbRead.collection.findUnique({
     where: { id: collectionId },
-    select: { type: true, metadata: true, name: true, userId: true, mode: true },
+    select: collectionSelect,
   });
 
   if (!collection) throw throwNotFoundError('No collection with id ' + collectionId);
+
+  if (collection.tags.length > 0 && !tagId) {
+    throw throwBadRequestError(
+      'It is required to tag your entry in order for it to be added to this collection'
+    );
+  }
+
+  if (collection.tags.length === 0 && tagId) {
+    throw throwBadRequestError('This collection does not support tagging entries');
+  }
+
+  if (collection.tags.length > 0 && tagId && !collection.tags.find((t) => t.tag.id === tagId)) {
+    throw throwBadRequestError('The tag provided is not allowed in this collection');
+  }
 
   if (!permissions.isContributor) {
     // Make sure to follow the collection
@@ -1556,6 +1657,7 @@ export const bulkSaveItems = async ({
     status: permissions.writeReview ? CollectionItemStatus.REVIEW : CollectionItemStatus.ACCEPTED,
     reviewedAt: permissions.write ? new Date() : null,
     reviewedById: permissions.write ? userId : null,
+    tagId,
   };
   let data: Prisma.CollectionItemCreateManyInput[] = [];
   if (

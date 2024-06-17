@@ -20,7 +20,7 @@ export type EdgeUrlProps = {
   optimized?: boolean;
   transcode?: boolean;
   type?: MediaType;
-  original?: true;
+  original?: boolean;
 };
 
 const typeExtensions: Record<MediaType, string> = {
@@ -38,7 +38,7 @@ export function getEdgeUrl(
     transcode,
     width,
     height,
-    original,
+    original = true,
     fit,
     blur,
     quality,

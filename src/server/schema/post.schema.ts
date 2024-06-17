@@ -7,7 +7,7 @@ import { imageMetaSchema } from '~/server/schema/image.schema';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
-import { commaDelimitedStringArray } from '~/utils/zod-helpers';
+import { commaDelimitedStringArray, numericStringArray } from '~/utils/zod-helpers';
 
 export type PostsFilterInput = z.infer<typeof postsFilterSchema>;
 export const postsFilterSchema = z.object({
@@ -61,6 +61,7 @@ export const postUpdateSchema = z.object({
   detail: z.string().nullish(),
   publishedAt: z.date().optional(),
   collectionId: z.number().nullish(),
+  collectionTagId: z.number().nullish(),
 });
 
 export type RemovePostTagInput = z.infer<typeof removePostTagSchema>;
@@ -133,4 +134,7 @@ export const postEditQuerySchema = z.object({
   clubId: z.coerce.number().optional(),
   reviewing: z.string().optional(),
   src: z.coerce.string().optional(),
+  collections: numericStringArray().optional(),
+  collectionId: z.coerce.number().optional(),
+  collectionTagId: z.coerce.number().optional(),
 });

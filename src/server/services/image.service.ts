@@ -1,5 +1,6 @@
 import {
   Availability,
+  CollectionMode,
   ImageGenerationProcess,
   ImageIngestionStatus,
   MediaType,
@@ -31,7 +32,7 @@ import { pgDbRead } from '~/server/db/pgDb';
 import { postMetrics } from '~/server/metrics';
 import { leakingContentCounter } from '~/server/prom/client';
 import { imagesForModelVersionsCache, tagIdsForImagesCache } from '~/server/redis/caches';
-import { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
+import { GetByIdInput, UserPreferencesInput, getByIdSchema } from '~/server/schema/base.schema';
 import {
   AddOrRemoveImageTechniquesOutput,
   AddOrRemoveImageToolsOutput,
@@ -83,6 +84,7 @@ import {
   IngestImageInput,
   ingestImageSchema,
 } from './../schema/image.schema';
+import { collectionSelect } from '~/server/selectors/collection.selector';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -528,6 +530,7 @@ export const getAllImages = async ({
   tools,
   techniques,
   baseModels,
+  collectionTagId,
 }: GetInfiniteImagesOutput & {
   userId?: number;
   user?: SessionUser;
@@ -662,6 +665,10 @@ export const getAllImages = async ({
     throw throwBadRequestError('Random sort requires a collectionId');
   }
 
+  if (collectionTagId && !collectionId) {
+    throw throwBadRequestError('collectionTagId requires a collectionId');
+  }
+
   // Filter to a specific collection and relevant status:
   if (collectionId) {
     const displayOwnedItems = userId
@@ -678,6 +685,7 @@ export const getAllImages = async ({
         ctcursor AS (
           SELECT ci."imageId", ci."randomId" FROM "CollectionItem" ci
             WHERE ci."collectionId" = ${collectionId}
+              ${Prisma.raw(collectionTagId ? ` AND ci."tagId" = ${collectionTagId}` : ``)}
               AND ci."imageId" = ${cursor}
             LIMIT 1
         ),
@@ -689,6 +697,7 @@ export const getAllImages = async ({
           FROM "CollectionItem" ci
           JOIN "Collection" c ON c.id = ci."collectionId"
           WHERE ci."collectionId" = ${collectionId}
+            ${Prisma.raw(collectionTagId ? ` AND ci."tagId" = ${collectionTagId}` : ``)}
             AND ci."imageId" IS NOT NULL
             AND (
               (
@@ -3039,3 +3048,32 @@ export async function getImageGenerationData({ id }: { id: number }) {
     generationProcess: image.generationProcess,
   };
 }
+
+export const getImageContestCollectionDetails = async ({ id }: GetByIdInput) => {
+  const items = await dbRead.collectionItem.findMany({
+    where: {
+      collection: {
+        mode: CollectionMode.Contest,
+      },
+      imageId: id,
+    },
+    select: {
+      imageId: true,
+      status: true,
+      createdAt: true,
+      reviewedAt: true,
+      collection: {
+        select: collectionSelect,
+      },
+      tag: true,
+    },
+  });
+
+  return items.map((i) => ({
+    ...i,
+    collection: {
+      ...i.collection,
+      tags: i.collection.tags.map((t) => t.tag),
+    },
+  }));
+};

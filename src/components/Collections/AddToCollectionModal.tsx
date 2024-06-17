@@ -5,6 +5,7 @@ import {
   Group,
   Loader,
   ScrollArea,
+  Select,
   Stack,
   Text,
   createStyles,
@@ -87,12 +88,10 @@ function CollectionListForm({
 }: Props & { onNewClick: VoidFunction; onSubmit: VoidFunction }) {
   const { note, ...target } = props;
   const { classes } = useCollectionListStyles();
-  const form = useForm({
-    schema: saveCollectionItemInputSchema,
-    defaultValues: { ...props, collectionIds: [] },
-    shouldUnregister: false,
-  });
   const queryUtils = trpc.useContext();
+  const [selectedCollections, setSelectedCollections] = useState<
+    { collectionId: number; tagId?: number | null }[]
+  >([]);
 
   const { data: collections = [], isLoading: loadingCollections } =
     trpc.collection.getAllUser.useQuery({
@@ -103,6 +102,7 @@ function CollectionListForm({
       ],
       type: props.type,
     });
+
   const { data: collectionItems = [], isLoading: loadingStatus } =
     trpc.collection.getUserCollectionItemsByItem.useQuery({
       ...target,
@@ -111,33 +111,27 @@ function CollectionListForm({
   // Ensures we don't present the user with a list of collections
   // before both things have loaded.
   const isLoading = loadingStatus || loadingCollections;
-
   const ownedCollections = collections.filter((collection) => collection.isOwner);
   const contributingCollections = collections.filter((collection) => !collection.isOwner);
 
-  // Needs to be outside the handleSubmit for it to pick up the right value for some reason :shrug:
-  const { isDirty } = form.formState;
-
   const addCollectionItemMutation = trpc.collection.saveItem.useMutation();
-  const handleSubmit = (data: AddCollectionItemInput) => {
-    if (!isDirty) return onSubmit();
-
+  const handleSubmit = () => {
     // We'll avoid re-adding the item into the collection if it already exists, so we must check for that.
     const existingCollectionIds = collectionItems.map((item) => item.collectionId);
 
-    const collectionIds = data.collectionIds.filter(
-      (collectionId) => !existingCollectionIds.includes(collectionId) && collectionId
+    const collections = selectedCollections.filter(
+      (c) => !existingCollectionIds.includes(c.collectionId) && c.collectionId
     );
     const removeFromCollectionIds = existingCollectionIds.filter(
-      (collectionId) => !data.collectionIds.includes(collectionId)
+      (collectionId) => !selectedCollections.some((c) => c.collectionId === collectionId)
     );
 
-    if (!collectionIds.length && !removeFromCollectionIds.length) {
+    if (!collections.length && !removeFromCollectionIds.length) {
       return onSubmit();
     }
 
     addCollectionItemMutation.mutate(
-      { ...data, collectionIds, removeFromCollectionIds },
+      { ...props, collections: selectedCollections, removeFromCollectionIds },
       {
         async onSuccess(_, { type }) {
           showNotification({
@@ -164,19 +158,17 @@ function CollectionListForm({
   useEffect(() => {
     if (collectionItems.length === 0) return;
 
-    const collectionIds = collectionItems.map((collectionItem) =>
-      collectionItem.collectionId.toString()
-    );
+    const existingSelectedCollections = collectionItems.map((collectionItem) => ({
+      collectionId: collectionItem.collectionId,
+      tagId: collectionItem.tagId,
+    }));
 
-    // Ignoring because CheckboxGroup only accepts string[] to
-    // keep track of the selected values but actual schema should be number[]
-    // @ts-ignore: See above
-    form.reset({ ...props, collectionIds });
+    setSelectedCollections(existingSelectedCollections);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [collectionItems, props.articleId, props.imageId, props.modelId, props.postId]);
 
   return (
-    <Form form={form} onSubmit={handleSubmit}>
+    <Stack>
       <Stack spacing="xl">
         <Stack spacing={4}>
           <Group spacing="xs" position="apart" noWrap>
@@ -201,27 +193,45 @@ function CollectionListForm({
             <>
               <ScrollArea.Autosize maxHeight={200}>
                 {ownedCollections.length > 0 ? (
-                  <InputCheckboxGroup name="collectionIds" orientation="vertical" spacing={4}>
+                  <Stack spacing={4}>
                     {ownedCollections.map((collection) => {
                       const Icon = collectionReadPrivacyData[collection.read].icon;
+                      const isSelected = selectedCollections.find(
+                        (c) => c.collectionId === collection.id
+                      );
 
                       return (
-                        <Checkbox
-                          key={collection.id}
-                          classNames={classes}
-                          value={collection.id.toString()}
-                          label={
-                            <Group spacing="xs" position="apart" w="100%" noWrap>
-                              <Text lineClamp={1} inherit>
-                                {collection.name}
-                              </Text>
-                              <Icon size={18} />
-                            </Group>
-                          }
-                        />
+                        <Stack key={collection.id} spacing="xs">
+                          <Checkbox
+                            classNames={classes}
+                            key={isSelected?.collectionId}
+                            checked={!!isSelected}
+                            onChange={(e) => {
+                              e.preventDefault();
+                              if (isSelected) {
+                                setSelectedCollections((curr) =>
+                                  curr.filter((c) => c.collectionId !== collection.id)
+                                );
+                              } else {
+                                setSelectedCollections((curr) => [
+                                  ...curr,
+                                  { collectionId: collection.id },
+                                ]);
+                              }
+                            }}
+                            label={
+                              <Group spacing="xs" position="apart" w="100%" noWrap>
+                                <Text lineClamp={1} inherit>
+                                  {collection.name}
+                                </Text>
+                                <Icon size={18} />
+                              </Group>
+                            }
+                          />
+                        </Stack>
                       );
                     })}
-                  </InputCheckboxGroup>
+                  </Stack>
                 ) : (
                   <Center py="xl">
                     <Text color="dimmed">{`You don't have any ${
@@ -236,31 +246,73 @@ function CollectionListForm({
                     Collections you contribute to
                   </Text>
                   <ScrollArea.Autosize maxHeight={200}>
-                    <InputCheckboxGroup name="collectionIds" orientation="vertical" spacing={4}>
+                    <Stack spacing={4}>
                       {contributingCollections.map((collection) => {
-                        const collectionItem = collectionItems.find(
-                          (item) => item.collectionId === collection.id
-                        );
                         const Icon = collectionReadPrivacyData[collection.read].icon;
+                        const selectedItem = selectedCollections.find(
+                          (c) => c.collectionId === collection.id
+                        );
 
                         return (
-                          <Checkbox
-                            key={collection.id}
-                            classNames={classes}
-                            value={collection.id.toString()}
-                            disabled={collectionItem && !collectionItem.canRemoveItem}
-                            label={
-                              <Group spacing="xs" position="apart" w="100%" noWrap>
-                                <Text lineClamp={1} inherit>
-                                  {collection.name}
-                                </Text>
-                                <Icon size={18} />
-                              </Group>
-                            }
-                          />
+                          <Stack key={collection.id} spacing={0}>
+                            <Checkbox
+                              classNames={classes}
+                              key={selectedItem?.collectionId}
+                              checked={!!selectedItem}
+                              onChange={(e) => {
+                                e.preventDefault();
+                                if (selectedItem) {
+                                  setSelectedCollections((curr) =>
+                                    curr.filter((c) => c.collectionId !== collection.id)
+                                  );
+                                } else {
+                                  setSelectedCollections((curr) => [
+                                    ...curr,
+                                    {
+                                      collectionId: collection.id,
+                                      tagId:
+                                        collection.tags?.length > 0 ? collection.tags[0].id : null,
+                                    },
+                                  ]);
+                                }
+                              }}
+                              label={
+                                <Group spacing="xs" position="apart" w="100%" noWrap>
+                                  <Text lineClamp={1} inherit>
+                                    {collection.name}
+                                  </Text>
+                                  <Icon size={18} />
+                                </Group>
+                              }
+                            />
+                            {selectedItem && collection.tags?.length > 0 && (
+                              <Select
+                                withAsterisk
+                                placeholder="Select a tag for your entry in the contest"
+                                size="xs"
+                                label="Tag your entry"
+                                value={selectedItem.tagId?.toString() ?? null}
+                                onChange={(value) => {
+                                  setSelectedCollections((curr) =>
+                                    curr.map((c) => {
+                                      if (c.collectionId === collection.id) {
+                                        return { ...c, tagId: value ? parseInt(value, 10) : null };
+                                      }
+                                      return c;
+                                    })
+                                  );
+                                }}
+                                clearable
+                                data={collection.tags.map((tag) => ({
+                                  value: tag.id.toString(),
+                                  label: tag.name,
+                                }))}
+                              />
+                            )}
+                          </Stack>
                         );
                       })}
-                    </InputCheckboxGroup>
+                    </Stack>
                   </ScrollArea.Autosize>
                 </>
               )}
@@ -269,12 +321,12 @@ function CollectionListForm({
         </Stack>
 
         <Group position="right">
-          <Button type="submit" loading={addCollectionItemMutation.isLoading}>
+          <Button loading={addCollectionItemMutation.isLoading} onClick={handleSubmit}>
             Save
           </Button>
         </Group>
       </Stack>
-    </Form>
+    </Stack>
   );
 }
 
