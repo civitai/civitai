@@ -1,6 +1,7 @@
 import {
   ModelStatus,
   ModelType,
+  ModelUploadType,
   ModelVersionMonetizationType,
   ModelVersionSponsorshipSettingsType,
   TrainingStatus,
@@ -8,11 +9,18 @@ import {
 import { v4 as uuidv4 } from 'uuid';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
+import { infiniteQuerySchema } from '~/server/schema/base.schema';
 
 import { imageSchema } from '~/server/schema/image.schema';
 import { modelFileSchema } from '~/server/schema/model-file.schema';
 import { ModelMeta } from '~/server/schema/model.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
+
+export type QueryModelVersionSchema = z.infer<typeof queryModelVersionsSchema>;
+export const queryModelVersionsSchema = infiniteQuerySchema.extend({
+  trainingStatus: z.nativeEnum(TrainingStatus).optional(),
+  // uploadType: z.nativeEnum(ModelUploadType).optional(),
+});
 
 export type RecipeModelInput = z.infer<typeof recipeModelSchema>;
 export const recipeModelSchema = z.object({
@@ -31,8 +39,8 @@ export const recipeSchema = z.object({
   multiplier: z.number(),
 });
 
-const trainingDetailsBaseModels15 = ['sd_1_5', 'anime', 'semi', 'realistic'] as const;
-const trainingDetailsBaseModelsXL = ['sdxl', 'pony'] as const;
+export const trainingDetailsBaseModels15 = ['sd_1_5', 'anime', 'semi', 'realistic'] as const;
+export const trainingDetailsBaseModelsXL = ['sdxl', 'pony'] as const;
 const trainingDetailsBaseModelCustom = z
   .string()
   .refine((value) => /^civitai:\d+@\d+$/.test(value ?? ''));
@@ -48,18 +56,28 @@ export type TrainingDetailsBaseModel =
   | TrainingDetailsBaseModelList
   | TrainingDetailsBaseModelCustom;
 
+export const optimizerTypes = ['AdamW8Bit', 'Adafactor', 'Prodigy'] as const;
+export const loraTypes = ['lora'] as const; // LoCon Lycoris", "LoHa Lycoris
+export const lrSchedulerTypes = [
+  'constant',
+  'cosine',
+  'cosine_with_restarts',
+  'constant_with_warmup',
+  'linear',
+] as const;
+
 export type TrainingDetailsParams = z.infer<typeof trainingDetailsParams>;
 export const trainingDetailsParams = z.object({
   unetLR: z.number(),
   textEncoderLR: z.number(),
-  optimizerType: z.string(), // TODO actually an enum
+  optimizerType: z.enum(optimizerTypes),
   networkDim: z.number(),
   networkAlpha: z.number(),
-  lrScheduler: z.string(), // TODO actually an enum
+  lrScheduler: z.enum(lrSchedulerTypes),
   maxTrainEpochs: z.number(),
   numRepeats: z.number(),
   resolution: z.number(),
-  loraType: z.string(), // TODO actually an enum
+  loraType: z.enum(loraTypes),
   enableBucket: z.boolean(),
   keepTokens: z.number(),
 

@@ -36,6 +36,7 @@ import {
 import { saveAs } from 'file-saver';
 import JSZip from 'jszip';
 import { isEqual } from 'lodash-es';
+import dynamic from 'next/dynamic';
 import React, { useEffect, useRef, useState } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
@@ -65,7 +66,7 @@ import {
 import { bytesToKB } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
-import dynamic from 'next/dynamic';
+
 const AutoTagModal = dynamic(() => import('./TrainingAutoTagModal').then((m) => m.AutoTagModal));
 
 const MAX_FILES_ALLOWED = 1000;
@@ -375,8 +376,23 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
           ],
         };
       });
-      // TODO [bw] don't invalidate, just update
+
       await queryUtils.model.getMyTrainingModels.invalidate();
+      // queryUtils.model.getMyTrainingModels.setInfiniteData(
+      //   {}, // fix this to have right filters
+      //   produce((old) => {
+      //     if (!old?.pages?.length) return;
+      //
+      //     for (const page of old.pages) {
+      //       for (const item of page.items) {
+      //         if (item.id === thisModelVersion.id) {
+      //           item.files[0].metadata = request.metadata!;
+      //           return;
+      //         }
+      //       }
+      //     }
+      //   })
+      // );
     },
   });
 
@@ -402,6 +418,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         versionToUpdate.files = [
           {
             id: response.id,
+            name: request.name!,
             url: request.url!,
             type: request.type!,
             metadata: request.metadata!,
@@ -418,11 +435,34 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
           ],
         };
       });
-      // TODO [bw] don't invalidate, just update
+
       await queryUtils.model.getMyTrainingModels.invalidate();
 
-      setZipping(false);
-      goNext(model.id, thisStep);
+      // queryUtils.model.getMyTrainingModels.setInfiniteData(
+      //   {}, // fix this to have limit and page?
+      //   produce((old) => {
+      //     if (!old?.pages?.length) return;
+      //
+      //     for (const page of old.pages) {
+      //       for (const item of page.items) {
+      //         if (item.id === thisModelVersion.id) {
+      //           item.files = [
+      //             {
+      //               id: response.id,
+      //               url: request.url!,
+      //               type: request.type!,
+      //               metadata: request.metadata!,
+      //               sizeKB: request.sizeKB!,
+      //             },
+      //           ];
+      //           return;
+      //         }
+      //       }
+      //     }
+      //   })
+      // );
+
+      goNext(model.id, thisStep, () => setZipping(false));
     },
     onError(error) {
       setZipping(false);

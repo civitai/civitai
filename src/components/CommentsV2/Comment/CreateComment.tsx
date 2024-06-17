@@ -13,6 +13,7 @@ type CreateCommentProps = {
   autoFocus?: boolean;
   replyToCommentId?: number;
   className?: string;
+  borderless?: boolean;
 };
 
 export function CreateComment({
@@ -20,6 +21,7 @@ export function CreateComment({
   autoFocus,
   replyToCommentId,
   className,
+  borderless,
 }: CreateCommentProps) {
   const currentUser = useCurrentUser();
   const { isLocked, isMuted, forceLocked } = useCommentsContext();
@@ -67,7 +69,12 @@ export function CreateComment({
   return (
     <Group align="flex-start" noWrap spacing="sm" className={className}>
       <UserAvatar user={currentUser} size={replyToCommentId ? 'sm' : 'md'} />
-      <CommentForm onCancel={onCancel} autoFocus={autoFocus} replyToCommentId={replyToCommentId} />
+      <CommentForm
+        onCancel={onCancel}
+        autoFocus={autoFocus}
+        replyToCommentId={replyToCommentId}
+        borderless={borderless}
+      />
     </Group>
   );
 }
