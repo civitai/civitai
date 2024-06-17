@@ -164,7 +164,7 @@ export const getUnreadMessagesForUserHandler = async ({
   try {
     const { id: userId } = ctx.user;
 
-    const unread = await dbWrite.$queryRaw<{ chatId: number; cnt: number }[]>`
+    const unread = await dbRead.$queryRaw<{ chatId: number; cnt: number }[]>`
       select memb."chatId"          as "chatId",
              count(msg.id)::integer as "cnt"
       from "ChatMember" memb
@@ -180,7 +180,7 @@ export const getUnreadMessagesForUserHandler = async ({
       group by memb."chatId"
     `;
 
-    const pending = await dbWrite.$queryRaw<{ chatId: number; cnt: number }[]>`
+    const pending = await dbRead.$queryRaw<{ chatId: number; cnt: number }[]>`
       select memb."chatId" as "chatId",
              1             as "cnt"
       from "ChatMember" memb

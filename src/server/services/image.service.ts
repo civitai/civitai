@@ -1477,7 +1477,18 @@ export const getImagesForModelVersion = async ({
 };
 
 export async function getImagesForModelVersionCache(modelVersionIds: number[]) {
-  return await imagesForModelVersionsCache.fetch(modelVersionIds);
+  const images = await imagesForModelVersionsCache.fetch(modelVersionIds);
+  const tagsForImages = await tagIdsForImagesCache.fetch(Object.keys(images).map(Number));
+  return Object.keys(images).reduce(
+    (acc, imageId) => ({
+      ...acc,
+      [imageId]: {
+        ...images[imageId],
+        tags: tagsForImages[imageId]?.tags,
+      },
+    }),
+    images
+  );
 }
 export async function deleteImagesForModelVersionCache(modelVersionId: number) {
   await imagesForModelVersionsCache.bust(modelVersionId);

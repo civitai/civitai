@@ -119,12 +119,12 @@ const CreateSteps = ({
             version={modelVersion ?? templateFields?.version ?? bountyFields?.version}
             onSubmit={goNext}
           >
-            {({ loading }) => (
+            {({ loading, canSave }) => (
               <Group mt="xl" position="right">
                 <Button variant="default" onClick={goBack}>
                   Back
                 </Button>
-                <Button type="submit" loading={loading}>
+                <Button type="submit" loading={loading} disabled={!canSave}>
                   Next
                 </Button>
               </Group>
@@ -237,12 +237,12 @@ const TrainSteps = ({
         <div className="container flex max-w-sm flex-col gap-3">
           <Title order={3}>Edit version</Title>
           <ModelVersionUpsertForm model={model} version={modelVersion} onSubmit={goNext}>
-            {({ loading }) => (
+            {({ loading, canSave }) => (
               <Group mt="xl" position="right">
                 <Button variant="default" onClick={goBack}>
                   Back
                 </Button>
-                <Button type="submit" loading={loading}>
+                <Button type="submit" loading={loading} disabled={!canSave}>
                   Next
                 </Button>
               </Group>

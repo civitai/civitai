@@ -15,6 +15,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { booleanString, numericString, numericStringArray } from '~/utils/zod-helpers';
+import { constants } from '~/server/common/constants';
 
 export const imagesQueryParamSchema = z
   .object({
@@ -45,6 +46,7 @@ export const imagesQueryParamSchema = z
     followed: booleanString(),
     fromPlatform: booleanString(),
     notPublished: booleanString(),
+    baseModels: z.enum(constants.baseModels).array().optional(),
   })
   .partial();
 

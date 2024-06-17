@@ -123,7 +123,7 @@ export const useQueryModels = (
     type: 'models',
     data: flatData,
     showHidden: !!_filters.hidden,
-    showImageless: (_filters.status ?? []).includes(ModelStatus.Draft),
+    showImageless: (_filters.status ?? []).includes(ModelStatus.Draft) || _filters.pending,
     isRefetching: rest.isRefetching,
     hiddenTags: _filters.excludedTagIds,
   });
