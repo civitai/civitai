@@ -619,7 +619,18 @@ export const getAllImages = async ({
   }
 
   if (targetUserId) {
-    AND.push(Prisma.sql`u."id" = ${targetUserId}`);
+    WITH.push(
+      Prisma.sql`collaboratingPosts AS (
+        SELECT "entityId" id FROM "EntityCollaborator"
+        WHERE "userId" = ${targetUserId}
+          AND "entityType" = 'Post'
+          AND "status" = 'ACCEPTED'
+        )`
+    );
+
+    AND.push(
+      Prisma.sql`(u."id" = ${targetUserId} OR p."id" IN (SELECT id FROM collaboratingPosts))`
+    );
     // Don't cache self queries
     if (targetUserId !== userId) {
       cacheTime = CacheTTL.day;
