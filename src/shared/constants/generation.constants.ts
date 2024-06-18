@@ -4,6 +4,7 @@ import { Sampler, draftMode } from '~/server/common/constants';
 import { BaseModel, BaseModelSetType, baseModelSets } from '~/server/common/constants';
 import { ResourceData } from '~/server/redis/caches';
 import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
+import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
 
 export const generationServiceCookie = {
   name: 'generation-service',
@@ -29,6 +30,64 @@ export const minorPositives = [{ id: 250708, triggerWord: 'safe_pos' }];
 export const allInjectedNegatives = [...safeNegatives, ...minorNegatives];
 export const allInjectedPositives = [...minorPositives];
 export const allInjectedIds = [...allInjectedNegatives, ...allInjectedPositives].map((x) => x.id);
+
+type InjectableResourceTypes = 'civit_nsfw' | 'safe_neg' | 'safe_pos' | 'draft_sdxl' | 'draft_sd1';
+export type InjectableResource = {
+  id: number;
+  triggerWord?: string;
+  triggerType?: 'negative' | 'positive';
+  sanitize?: (params: TextToImageParams) => Partial<TextToImageParams>;
+};
+
+const draftInjectableResources = [
+  {
+    id: 391999,
+    baseModelSetType: 'SDXL',
+    sanitize: () => ({
+      steps: 8,
+      cfgScale: 1,
+      sampler: 'Euler',
+    }),
+  },
+  {
+    id: 424706,
+    baseModelSetType: 'SD1',
+    sanitize: () => ({
+      steps: 6,
+      cfgScale: 1,
+      sampler: 'LCM',
+    }),
+  },
+];
+export const injectableResources = {
+  civit_nsfw: { id: 106916, triggerWord: 'civit_nsfw', triggerType: 'negative' },
+  safe_neg: { id: 250712, triggerWord: 'safe_neg', triggerType: 'negative' },
+  safe_pos: { id: 250708, triggerWord: 'safe_pos', triggerType: 'positive' },
+  draft_sdxl: {
+    id: 391999,
+    sanitize: () => ({
+      steps: 8,
+      cfgScale: 1,
+      sampler: 'Euler',
+    }),
+  },
+  draft_sd1: {
+    id: 424706,
+    sanitize: () => ({
+      steps: 6,
+      cfgScale: 1,
+      sampler: 'LCM',
+    }),
+  },
+};
+export const allInjectableResourceIds = Object.values(injectableResources).map((x) => x.id);
+
+export function getInjectablResources(baseModelSetType: BaseModelSetType) {
+  return {
+    ...injectableResources,
+    draft: draftInjectableResources.find((x) => x.baseModelSetType === baseModelSetType),
+  };
+}
 
 export const samplersToSchedulers: Record<Sampler, string> = {
   'Euler a': 'EulerA',
@@ -121,7 +180,14 @@ export function getDraftModeSettings(baseModelSetType: BaseModelSetType) {
   return draftMode[isSDXL ? 'sdxl' : 'sd1'];
 }
 
-export type GenerationResource = ReturnType<typeof formatGenerationResources>[number];
+export function getDraftModeInjectable(baseModelSetType: BaseModelSetType) {
+  const isSDXL = getIsSdxl(baseModelSetType);
+  return isSDXL ? injectableResources.draft_sdxl : injectableResources.draft_sd1;
+}
+
+export type GenerationResource = MakeUndefinedOptional<
+  ReturnType<typeof formatGenerationResources>[number]
+>;
 export function formatGenerationResources(resources: ResourceData[]) {
   return resources.map((resource) => {
     const settings = resource.settings as RecommendedSettingsSchema;
