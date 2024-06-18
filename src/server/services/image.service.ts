@@ -685,7 +685,7 @@ export const getAllImages = async ({
         ctcursor AS (
           SELECT ci."imageId", ci."randomId" FROM "CollectionItem" ci
             WHERE ci."collectionId" = ${collectionId}
-              ${Prisma.raw(collectionTagId ? ` AND ci."tagId" = ${collectionTagId}` : ``)}
+              ${collectionTagId ? ` AND ci."tagId" = ${collectionTagId}` : ``}
               AND ci."imageId" = ${cursor}
             LIMIT 1
         ),
