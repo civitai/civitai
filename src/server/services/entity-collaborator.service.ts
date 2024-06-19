@@ -1,10 +1,11 @@
 import { ChatMessageType, EntityType, Prisma, EntityCollaboratorStatus } from '@prisma/client';
 import dayjs from 'dayjs';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   GetEntityCollaboratorsInput,
+  RemoveEntityCollaboratorInput,
   UpsertEntityCollaboratorInput,
+  ActionEntityCollaboratorInviteInput,
 } from '~/server/schema/entity-collaborator.schema';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { createMessage, upsertChat } from '~/server/services/chat.service';
@@ -42,12 +43,10 @@ export const sendEntityCollaboratorInviteMessage = async ({
     throw throwBadRequestError('Unable to invite collaborator');
   }
 
-  const url = `/collaborations/${entityType}/${entityId}`;
-
   switch (entityType) {
     case EntityType.Post:
       const targetUrl = `/posts/${entityId}`;
-      const message = `${inviter.username} has invited ${invitee.username} to be posted as a collaborator on [this](${targetUrl}) post. Click [here](${url}) to accept or reject the invitation.`;
+      const message = `**${inviter.username}** has invited **${invitee.username}** to be posted as a collaborator on [this](${targetUrl}) post. The invitation can be accepted or rejected via the Post's link.`;
       // Confirm a chat exists:
       await createMessage({
         chatId: chat.id,
@@ -151,6 +150,8 @@ export const getEntityCollaborators = async ({
           user: {
             select: userWithCosmeticsSelect,
           },
+          entityId: true,
+          entityType: true,
           status: true,
         },
       });
@@ -178,4 +179,86 @@ export const getEntityCollaborators = async ({
     default:
       return [];
   }
+};
+
+export const removeEntityCollaborator = async ({
+  targetUserId,
+  entityId,
+  entityType,
+  isModerator,
+  userId,
+}: RemoveEntityCollaboratorInput & { userId: number; isModerator?: boolean }) => {
+  if (entityType !== EntityType.Post) {
+    throw throwBadRequestError('Only posts are currently supported for entity collaborators');
+  }
+
+  const entity = await dbRead.post.findUnique({ where: { id: entityId } });
+
+  if (!entity) {
+    throw throwBadRequestError('Entity not found');
+  }
+
+  const collaborator = await dbRead.entityCollaborator.findFirst({
+    where: { entityId, entityType, userId: targetUserId },
+  });
+
+  if (!collaborator) {
+    return true;
+  }
+
+  if (entity.userId !== userId && !isModerator) {
+    throw throwAuthorizationError('Only the owner of the post can remove collaborators');
+  }
+
+  await dbWrite.entityCollaborator.delete({
+    where: {
+      entityType_entityId_userId: {
+        entityId,
+        entityType,
+        userId: targetUserId,
+      },
+    },
+  });
+
+  return true;
+};
+
+export const actionEntityCollaborationInvite = async ({
+  entityId,
+  entityType,
+  status,
+  userId,
+}: ActionEntityCollaboratorInviteInput & { userId: number }) => {
+  const exists = await dbRead.entityCollaborator.findFirst({
+    where: { entityId, entityType, userId },
+  });
+
+  if (!exists) {
+    throw throwBadRequestError('Collaboration request not found');
+  }
+
+  await dbWrite.entityCollaborator.update({
+    where: {
+      entityType_entityId_userId: {
+        entityId,
+        entityType,
+        userId,
+      },
+    },
+    data: {
+      status,
+    },
+  });
+
+  return dbWrite.entityCollaborator.findFirst({
+    where: { entityId, entityType, userId },
+    select: {
+      entityId: true,
+      entityType: true,
+      status: true,
+      user: {
+        select: userWithCosmeticsSelect,
+      },
+    },
+  });
 };

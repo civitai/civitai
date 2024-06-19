@@ -1,4 +1,4 @@
-import { EntityType } from '@prisma/client';
+import { EntityCollaboratorStatus, EntityType } from '@prisma/client';
 import { z } from 'zod';
 
 export type UpsertEntityCollaboratorInput = z.infer<typeof upsertEntityCollaboratorInput>;
@@ -22,4 +22,12 @@ export const getEntityCollaboratorsInput = z.object({
   entityType: z.nativeEnum(EntityType),
 });
 
+export type ActionEntityCollaboratorInviteInput = z.infer<
+  typeof actionEntityCollaboratorInviteInput
+>;
+export const actionEntityCollaboratorInviteInput = z.object({
+  entityId: z.number(),
+  entityType: z.nativeEnum(EntityType),
+  status: z.nativeEnum(EntityCollaboratorStatus),
+});
 // TODO: Add end-point to send system message to user / new action type.

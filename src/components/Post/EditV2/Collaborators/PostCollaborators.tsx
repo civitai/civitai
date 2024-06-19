@@ -1,11 +1,10 @@
 import { Center, Loader, Stack, Text } from '@mantine/core';
 import { EntityType } from '@prisma/client';
-import { CreatorCardV2 } from '~/components/CreatorCard/CreatorCard';
+import { EntityCollaboratorList } from '~/components/EntityCollaborator/EntityCollaboratorList';
 import {
   useEntityCollaboratorsMutate,
   useGetEntityCollaborators,
 } from '~/components/EntityCollaborator/entityCollaborator.util';
-import { usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
 import { QuickSearchDropdown } from '~/components/Search/QuickSearchDropdown';
 import { SearchIndexDataMap } from '~/components/Search/search.utils2';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -14,14 +13,14 @@ import { PostDetailEditable } from '~/server/services/post.service';
 export const PostCollaboratorSelection = ({ post }: { post: PostDetailEditable }) => {
   const currentUser = useCurrentUser();
 
-  const { collaborators, isLoading: isLoadingCollaborators } = useGetEntityCollaborators({
+  const { collaborators } = useGetEntityCollaborators({
     entityType: EntityType.Post,
     entityId: post.id,
   });
 
   const { upsertEntityCollaborator, upsertingEntityCollaborator } = useEntityCollaboratorsMutate();
 
-  const isLoading = upsertingEntityCollaborator || isLoadingCollaborators;
+  const isLoading = upsertingEntityCollaborator;
 
   return (
     <Stack spacing="xs">
@@ -54,9 +53,9 @@ export const PostCollaboratorSelection = ({ post }: { post: PostDetailEditable }
         placeholder="Select users to collaborate with"
         filters={[
           { id: currentUser?.id },
-          ...collaborators.map((c) => {
-            id: c.user.id;
-          }),
+          ...collaborators.map((c) => ({
+            id: c.user.id,
+          })),
         ]
           .filter((x) => !!x?.id)
           .map((x) => `AND NOT id=${x.id}`)
@@ -71,10 +70,14 @@ export const PostCollaboratorSelection = ({ post }: { post: PostDetailEditable }
         </Center>
       )}
 
-      {collaborators.length > 0 &&
-        collaborators.map((collaborator) => (
-          <CreatorCardV2 key={collaborator.user.id} user={collaborator.user} withActions={false} />
-        ))}
+      <EntityCollaboratorList
+        entityId={post.id}
+        entityType={EntityType.Post}
+        isEntityOwner
+        creatorCardProps={{
+          statDisplayOverwrite: [],
+        }}
+      />
     </Stack>
   );
 };

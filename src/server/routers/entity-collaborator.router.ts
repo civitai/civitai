@@ -1,13 +1,13 @@
 import {
+  actionEntityCollaboratorInviteInput,
   getEntityCollaboratorsInput,
+  removeEntityCollaboratorInput,
   upsertEntityCollaboratorInput,
 } from '~/server/schema/entity-collaborator.schema';
 import {
-  toggleHiddenSchema,
-  toggleHiddenTagsSchema,
-} from '~/server/schema/user-preferences.schema';
-import {
+  actionEntityCollaborationInvite,
   getEntityCollaborators,
+  removeEntityCollaborator,
   upsertEntityCollaborator,
 } from '~/server/services/entity-collaborator.service';
 import { protectedProcedure, publicProcedure, router } from '~/server/trpc';
@@ -21,4 +21,15 @@ export const entityCollaboratorRouter = router({
     .query(({ input, ctx }) =>
       getEntityCollaborators({ ...input, userId: ctx.user?.id, isModerator: ctx.user?.isModerator })
     ),
+  remove: protectedProcedure
+    .input(removeEntityCollaboratorInput)
+    .mutation(({ input, ctx }) =>
+      removeEntityCollaborator({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
+    ),
+  action: protectedProcedure.input(actionEntityCollaboratorInviteInput).mutation(({ input, ctx }) =>
+    actionEntityCollaborationInvite({
+      ...input,
+      userId: ctx.user.id,
+    })
+  ),
 });

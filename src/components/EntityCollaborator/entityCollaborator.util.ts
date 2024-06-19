@@ -1,5 +1,7 @@
 import {
+  ActionEntityCollaboratorInviteInput,
   GetEntityCollaboratorsInput,
+  RemoveEntityCollaboratorInput,
   UpsertEntityCollaboratorInput,
 } from '~/server/schema/entity-collaborator.schema';
 import { showErrorNotification } from '~/utils/notifications';
@@ -52,12 +54,48 @@ export const useEntityCollaboratorsMutate = () => {
     },
   });
 
+  const removeEntityCollaboratorMutation = trpc.entityCollaborator.remove.useMutation({
+    onSuccess(_, input) {
+      queryUtils.entityCollaborator.get.invalidate({
+        entityId: input.entityId,
+        entityType: input.entityType,
+      });
+    },
+    onError(error) {
+      onError(error, 'Failed to remove collaborator.');
+    },
+  });
+
+  const actionEntityCollaboratorMutation = trpc.entityCollaborator.action.useMutation({
+    onSuccess(_, input) {
+      queryUtils.entityCollaborator.get.invalidate({
+        entityId: input.entityId,
+        entityType: input.entityType,
+      });
+    },
+    onError(error) {
+      onError(error, 'Failed to update collaboration status.');
+    },
+  });
+
   const handleUpsertEntityCollaborator = (input: UpsertEntityCollaboratorInput) => {
     return upsertEntityCollaboratorMutation.mutateAsync(input);
+  };
+
+  const handleRemoveEntityCollaborator = (input: RemoveEntityCollaboratorInput) => {
+    return removeEntityCollaboratorMutation.mutateAsync(input);
+  };
+
+  const handleActionRemoveEntityCollaborator = (input: ActionEntityCollaboratorInviteInput) => {
+    return actionEntityCollaboratorMutation.mutateAsync(input);
   };
 
   return {
     upsertEntityCollaborator: handleUpsertEntityCollaborator,
     upsertingEntityCollaborator: upsertEntityCollaboratorMutation.isLoading,
+    removeEntityCollaborator: handleRemoveEntityCollaborator,
+    removingEntityCollaborator: removeEntityCollaboratorMutation.isLoading,
+    actionEntityCollaborator: handleActionRemoveEntityCollaborator,
+    actioningEntityCollaborator: actionEntityCollaboratorMutation.isLoading,
   };
 };

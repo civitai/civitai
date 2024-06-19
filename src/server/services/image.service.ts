@@ -635,7 +635,7 @@ export const getAllImages = async ({
         SELECT "entityId" id FROM "EntityCollaborator"
         WHERE "userId" = ${targetUserId}
           AND "entityType" = 'Post'
-          AND "status" = 'ACCEPTED'
+          AND "status" = 'Approved'
         )`
     );
 
@@ -643,10 +643,12 @@ export const getAllImages = async ({
       Prisma.sql`(u."id" = ${targetUserId} OR p."id" IN (SELECT id FROM collaboratingPosts))`
     );
     // Don't cache self queries
-    if (targetUserId !== userId) {
-      cacheTime = CacheTTL.day;
-      cacheTags.push(`images-user:${targetUserId}`);
-    } else cacheTime = 0;
+    console.log('THIS IS ABOUT TO HAPPEN BUD!');
+    cacheTime = 0;
+    // if (targetUserId !== userId) {
+    //   cacheTime = CacheTTL.day;
+    //   cacheTags.push(`images-user:${targetUserId}`);
+    // } else cacheTime = 0;
   }
 
   // Filter only followed users
@@ -960,6 +962,8 @@ export const getAllImages = async ({
   // if (!env.IMAGE_QUERY_CACHING) cacheTime = 0;
   // const cacheable = queryCache(dbRead, 'getAllImages', 'v1');
   // const rawImages = await cacheable<GetAllImagesRaw[]>(query, { ttl: cacheTime, tag: cacheTags });
+
+  console.log(query.sql);
 
   const { rows: rawImages } = await pgDbRead.query<GetAllImagesRaw>(query);
 
