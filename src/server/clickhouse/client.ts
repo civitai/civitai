@@ -399,7 +399,11 @@ export class Tracker {
     return this.track('bountyEngagements', values);
   }
 
-  public prohibitedRequest(values: { prompt: string; source?: ProhibitedSources }) {
+  public prohibitedRequest(values: {
+    prompt: string;
+    negativePrompt: string;
+    source?: ProhibitedSources;
+  }) {
     return this.track('prohibitedRequests', values);
   }
 
