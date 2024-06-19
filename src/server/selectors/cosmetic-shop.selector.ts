@@ -10,6 +10,7 @@ export const cosmeticShopItemSelect = Prisma.validator<Prisma.CosmeticShopItemSe
   availableQuantity: true,
   title: true,
   description: true,
+  videoUrl: true,
   archivedAt: true,
   createdAt: true,
   cosmetic: {

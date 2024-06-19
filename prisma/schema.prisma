@@ -2061,6 +2061,7 @@ model CosmeticShopItem {
   meta              Json      @default("{}")
   title             String
   description       String?
+  videoUrl          String?
   archivedAt        DateTime?
 
   purchases UserCosmeticShopPurchases[]

@@ -142,6 +142,7 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
     'availableQuantity',
   ]);
   const { cosmetic, isLoading: isLoadingCosmetic } = useQueryCosmetic({ id: cosmeticId });
+  console.log("cosmetic", cosmetic)
 
   const { upsertShopItem, upsertingShopItem } = useMutateCosmeticShop();
 
@@ -165,7 +166,7 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
   };
 
   useEffect(() => {
-    if (!shopItem && cosmetic && (!title || !description)) {
+    if (!shopItem && cosmetic && (!title || !description || !videoUrl)) {
       // Resource changed, change our data. Fallback to current data if resource data is not available
       form.setValue('title', cosmetic.name || title);
       form.setValue('description', `<p>${cosmetic.description || description || ''}</p>`);
