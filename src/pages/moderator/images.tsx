@@ -305,7 +305,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
                     sx={{ position: 'relative', height: '100%', overflow: 'hidden' }}
                     onClick={() => toggleSelected(image.id)}
                   >
-                    <ImageGuard2.BlurToggle className="absolute top-2 left-2 z-10" />
+                    <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
                     {!safe ? (
                       <AspectRatio ratio={(image.width ?? 1) / (image.height ?? 1)}>
                         <MediaHash {...image} />
@@ -412,7 +412,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
           </Stack>
         )}
         {image.needsReview === 'minor' && (
-          <PromptHighlight prompt={image.meta?.prompt}>
+          <PromptHighlight prompt={image.meta?.prompt} negativePrompt={image.meta?.negativePrompt}>
             {({ includesInappropriate, html }) =>
               !includesInappropriate ? (
                 <></>

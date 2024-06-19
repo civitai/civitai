@@ -275,9 +275,12 @@ async function handleSuccess({ id, tags: incomingTags = [], source, context }: B
     const prompt = normalizeText(
       (image.meta as Prisma.JsonObject)?.['prompt'] as string | undefined
     );
+    const negativePrompt = normalizeText(
+      (image.meta as Prisma.JsonObject)?.['negativePrompt'] as string | undefined
+    );
 
     let reviewKey: string | null = null;
-    const inappropriate = includesInappropriate(prompt, nsfw);
+    const inappropriate = includesInappropriate({ prompt, negativePrompt }, nsfw);
     if (inappropriate !== false) reviewKey = inappropriate;
     if (!reviewKey && nsfw) {
       const [{ poi, minor }] = await dbWrite.$queryRaw<{ poi: boolean; minor: boolean }[]>`
