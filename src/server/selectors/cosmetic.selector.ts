@@ -29,7 +29,7 @@ export type SimpleCosmetic = Omit<
 };
 
 export type BadgeCosmetic = Omit<SimpleCosmetic, 'data'> & {
-  data: { url?: string; animated?: boolean };
+  data: { url?: string; animated?: boolean, videoUrl?: string };  
   entityImage?: ImageProps;
 };
 export type NamePlateCosmetic = Omit<SimpleCosmetic, 'data'> & {

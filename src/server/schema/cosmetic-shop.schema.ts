@@ -26,6 +26,7 @@ export const upsertCosmeticShopItemInput = z.object({
   id: z.number().optional(),
   title: z.string().max(255),
   description: z.string().nullish(),
+  videoUrl: z.string().nullish(),
   cosmeticId: z.number(),
   unitAmount: z.number(),
   availableFrom: z.date().nullish(),
