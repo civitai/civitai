@@ -5,7 +5,7 @@ import { WavesurferProps, useWavesurfer } from '@wavesurfer/react';
 import { throttle } from 'lodash-es';
 import { memo, useEffect, useRef, useState } from 'react';
 import WaveSurfer, { WaveSurferOptions } from 'wavesurfer.js';
-import { useUniversalPlayerContext } from '~/components/Player/Player';
+import { useAudioPlayerContext } from '~/components/AudioPlayer/AudioPlayer';
 import { AUDIO_SAMPLE_RATE } from '~/server/common/constants';
 
 function _EdgeAudio({
@@ -140,7 +140,7 @@ type WavesurferState = {
 };
 
 const useWs = ({ container, media, ...props }: WaveSurferOptions) => {
-  const { globalAudio } = useUniversalPlayerContext();
+  const { globalAudio, currentTrack } = useAudioPlayerContext();
   const [wavesurfer, setWavesurfer] = useState<WaveSurfer | null>(null);
   const [state, setState] = useState<WavesurferState>({
     isPlaying: false,
@@ -162,9 +162,9 @@ const useWs = ({ container, media, ...props }: WaveSurferOptions) => {
     setWavesurfer(ws);
 
     return () => {
-      if (globalAudio !== ws.getMediaElement()) ws.destroy();
+      if (globalAudio !== media) ws.destroy();
     };
-  }, [container, stringifiedProps]);
+  }, [container, stringifiedProps, globalAudio]);
 
   useEffect(() => {
     if (!wavesurfer) return;
@@ -172,7 +172,7 @@ const useWs = ({ container, media, ...props }: WaveSurferOptions) => {
     const subscriptions = [
       wavesurfer.on('load', () => {
         console.log('loaded');
-        setState({ isPlaying: true, isReady: true, error: null, currentTime: 0 });
+        setState({ isPlaying: false, isReady: false, error: null, currentTime: 0 });
       }),
 
       wavesurfer.on('ready', () => {
@@ -181,10 +181,12 @@ const useWs = ({ container, media, ...props }: WaveSurferOptions) => {
       }),
 
       wavesurfer.on('play', () => {
+        console.log('playing');
         setState((prev) => ({ ...prev, isPlaying: true }));
       }),
 
       wavesurfer.on('pause', () => {
+        console.log('pausing');
         setState((prev) => ({ ...prev, isPlaying: false }));
       }),
 
@@ -192,7 +194,7 @@ const useWs = ({ container, media, ...props }: WaveSurferOptions) => {
 
       wavesurfer.on('destroy', () => {
         console.log('destroyed');
-        setState({ isPlaying: false, isReady: true, error: null, currentTime: 0 });
+        setState({ isPlaying: false, isReady: false, error: null, currentTime: 0 });
       }),
 
       wavesurfer.on('error', (error) => {

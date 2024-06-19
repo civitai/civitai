@@ -59,7 +59,7 @@ import { trpc } from '~/utils/trpc';
 import '~/styles/globals.css';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { FeatureLayout } from '~/components/AppLayout/FeatureLayout';
-import { UniversalPlayerProvider } from '~/components/Player/Player';
+import { AudioPlayerProvider } from '~/components/AudioPlayer/AudioPlayer';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -139,7 +139,7 @@ function MyApp(props: CustomAppProps) {
             <RouterTransition />
             <UpdateRequiredWatcher />
             <ChadGPT isAuthed={!!session} />
-            <UniversalPlayerProvider>
+            <AudioPlayerProvider>
               <SessionProvider
                 session={session}
                 refetchOnWindowFocus={false}
@@ -191,7 +191,7 @@ function MyApp(props: CustomAppProps) {
                   </CookiesProvider>
                 </FeatureFlagsProvider>
               </SessionProvider>
-            </UniversalPlayerProvider>
+            </AudioPlayerProvider>
           </IsClientProvider>
         </PlausibleProvider>
         {/* </ErrorBoundary> */}

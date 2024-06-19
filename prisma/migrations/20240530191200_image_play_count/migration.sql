@@ -71,12 +71,12 @@ SELECT
 	MAX(IIF(timeframe = 'Week'::"MetricTimeframe", "tippedAmountCount", NULL::integer)) AS "tippedAmountCountWeek",
 	MAX(IIF(timeframe = 'Month'::"MetricTimeframe", "tippedAmountCount", NULL::integer)) AS "tippedAmountCountMonth",
 	MAX(IIF(timeframe = 'Year'::"MetricTimeframe", "tippedAmountCount", NULL::integer)) AS "tippedAmountCountYear",
-	MAX(IIF(timeframe = 'AllTime'::"MetricTimeframe", "tippedAmountCount", NULL::integer)) AS "tippedAmountCountAllTime"
+	MAX(IIF(timeframe = 'AllTime'::"MetricTimeframe", "tippedAmountCount", NULL::integer)) AS "tippedAmountCountAllTime",
 	MAX(IIF(timeframe = 'Day'::"MetricTimeframe", "viewCount", NULL::integer)) AS "viewCountDay",
 	MAX(IIF(timeframe = 'Week'::"MetricTimeframe", "viewCount", NULL::integer)) AS "viewCountWeek",
 	MAX(IIF(timeframe = 'Month'::"MetricTimeframe", "viewCount", NULL::integer)) AS "viewCountMonth",
 	MAX(IIF(timeframe = 'Year'::"MetricTimeframe", "viewCount", NULL::integer)) AS "viewCountYear",
-	MAX(IIF(timeframe = 'AllTime'::"MetricTimeframe", "viewCount", NULL::integer)) AS "viewCountAllTime"
+	MAX(IIF(timeframe = 'AllTime'::"MetricTimeframe", "viewCount", NULL::integer)) AS "viewCountAllTime",
 	MAX(IIF(timeframe = 'Day'::"MetricTimeframe", "playCount", NULL::integer)) AS "playCountDay",
 	MAX(IIF(timeframe = 'Week'::"MetricTimeframe", "playCount", NULL::integer)) AS "playCountWeek",
 	MAX(IIF(timeframe = 'Month'::"MetricTimeframe", "playCount", NULL::integer)) AS "playCountMonth",

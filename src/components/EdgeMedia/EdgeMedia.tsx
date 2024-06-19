@@ -3,7 +3,7 @@ import React, { useEffect, useRef } from 'react';
 import { EdgeUrlProps, useEdgeUrl } from '~/client-utils/cf-images-utils';
 import { EdgeAudio, EdgeAudioProps } from '~/components/EdgeMedia/EdgeAudio';
 import { EdgeVideo } from '~/components/EdgeMedia/EdgeVideo';
-import { useUniversalPlayerContext } from '~/components/Player/Player';
+import { useAudioPlayerContext } from '~/components/AudioPlayer/AudioPlayer';
 
 export type EdgeMediaProps = EdgeUrlProps &
   Omit<JSX.IntrinsicElements['img'], 'src' | 'srcSet' | 'ref' | 'width' | 'height' | 'metadata'> & {
@@ -44,7 +44,7 @@ export function EdgeMedia({
 }: EdgeMediaProps) {
   const { classes, cx } = useStyles({ maxWidth: width ?? undefined });
   // const currentUser = useCurrentUser();
-  const { globalAudio, currentTrack, setCurrentTrack } = useUniversalPlayerContext();
+  const { globalAudio, currentTrack, setCurrentTrack } = useAudioPlayerContext();
 
   const imgRef = useRef<HTMLImageElement>(null);
   if (fadeIn && imgRef.current?.complete) imgRef?.current?.style?.setProperty('opacity', '1');
