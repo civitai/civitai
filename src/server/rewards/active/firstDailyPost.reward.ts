@@ -4,7 +4,7 @@ export const firstDailyPostReward = createBuzzEvent({
   type: 'firstDailyPost',
   description: 'You made your first post of the day',
   triggerDescription: 'For the first image post you make each day',
-  tooltip: 'If your post does not include a safe image, you will recieve a reduced reward.',
+  tooltip: 'If your post does not include a safe image, you will receive a reduced reward.',
   awardAmount: 25,
   cap: 25,
   onDemand: true,
