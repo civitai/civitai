@@ -110,5 +110,10 @@
     "shota[c|k]on",
     "プレティーン",
     "ロリ"
+  ],
+  "negativeNouns": [
+    "developed",
+    "adult body",
+    "mature body"
   ]
 }

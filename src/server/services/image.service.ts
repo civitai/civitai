@@ -58,7 +58,11 @@ import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { bustCachesForPost, updatePostNsfwLevel } from '~/server/services/post.service';
 import { bulkSetReportStatus } from '~/server/services/report.service';
-import { getModeratedTags, getTagsNeedingReview } from '~/server/services/system-cache';
+import {
+  getBlockedTags,
+  getModeratedTags,
+  getTagsNeedingReview,
+} from '~/server/services/system-cache';
 import { getVotableTags2 } from '~/server/services/tag.service';
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
@@ -203,6 +207,13 @@ export const moderateImages = async ({
     if (changeTags) {
       const moderatedTags = await getModeratedTags();
       tagIds.push(...moderatedTags.map((x) => x.id));
+    }
+
+    // And blocked tags for Blocked Tag review
+    const removeBlockedTags = reviewType === 'tag';
+    if (removeBlockedTags) {
+      const blockedTags = await getBlockedTags();
+      tagIds.push(...blockedTags.map((x) => x.id));
     }
 
     await dbWrite.tagsOnImage.updateMany({
@@ -696,7 +707,7 @@ export const getAllImages = async ({
         ctcursor AS (
           SELECT ci."imageId", ci."randomId" FROM "CollectionItem" ci
             WHERE ci."collectionId" = ${collectionId}
-              ${Prisma.raw(collectionTagId ? ` AND ci."tagId" = ${collectionTagId}` : ``)}
+              ${collectionTagId ? ` AND ci."tagId" = ${collectionTagId}` : ``}
               AND ci."imageId" = ${cursor}
             LIMIT 1
         ),
@@ -2426,7 +2437,7 @@ export const getImageModerationReviewQueue = async ({
   const imageIds = rawImages.map((i) => i.id);
   let tagsVar: (VotableTagModel & { imageId: number })[] | undefined;
 
-  if (tagReview) {
+  if (tagReview || needsReview === 'tag') {
     const rawTags = await dbRead.imageTag.findMany({
       where: { imageId: { in: imageIds } },
       select: {

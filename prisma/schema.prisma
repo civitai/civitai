@@ -143,6 +143,12 @@ model BuzzWithdrawalRequest {
   history                     BuzzWithdrawalRequestHistory[]
 }
 
+enum RewardsEligibility {
+  Eligible
+  Ineligible
+  Protected
+}
+
 model User {
   id                      Int                   @id @default(autoincrement())
   name                    String?
@@ -169,6 +175,8 @@ model User {
   leaderboardShowcase     String?
   referral                UserReferral?
   excludeFromLeaderboards Boolean               @default(false)
+  rewardsEligibility      RewardsEligibility    @default(Eligible)
+  eligibilityChangedAt    DateTime?
 
   profile          UserProfile?
   profilePictureId Int?               @unique

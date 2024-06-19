@@ -70,6 +70,8 @@ export const constants = {
     'Playground v2',
     'PixArt a',
     'PixArt E',
+    'Hunyuan 1',
+    'Lumina',
     'Other',
   ],
   hiddenBaseModels: [
@@ -376,6 +378,10 @@ export const baseModelSetTypes = [
   'SDXLDistilled',
   'SCascade',
   'Pony',
+  'PixArtA',
+  'PixArtE',
+  'Lumina',
+  'HyDit1',
   'ODOR',
 ] as const;
 export type BaseModelSetType = (typeof baseModelSetTypes)[number];
@@ -385,6 +391,10 @@ export const baseModelSets: Record<BaseModelSetType, BaseModel[]> = {
   SD3: ['SD 3'],
   SDXL: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM', 'SDXL Lightning', 'SDXL Hyper', 'SDXL Turbo'],
   SDXLDistilled: ['SDXL Distilled'],
+  PixArtA: ['PixArt a'],
+  PixArtE: ['PixArt E'],
+  Lumina: ['Lumina'],
+  HyDit1: ['Hunyuan 1'],
   SCascade: ['Stable Cascade'],
   Pony: ['Pony'],
   ODOR: ['ODOR'],
@@ -434,6 +444,14 @@ export const baseLicenses: Record<string, LicenseDetails> = {
     notice:
       'This Stability AI Model is licensed under the Stability AI Non-Commercial Research Community License, Copyright (c) Stability AI Ltd. All Rights Reserved.',
   },
+  'hunyuan community': {
+    url: 'https://github.com/Tencent/HunyuanDiT/blob/main/LICENSE.txt',
+    name: 'Tencent Hunyuan Community License Agreement',
+  },
+  'apache 2.0': {
+    url: 'https://huggingface.co/datasets/choosealicense/licenses/blob/main/markdown/apache-2.0.md',
+    name: 'Apache 2.0',
+  },
 };
 
 export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = {
@@ -457,8 +475,10 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   SVD: baseLicenses['svd'],
   'SVD XT': baseLicenses['svd'],
   'Playground v2': baseLicenses['playground v2'],
-  'PixArt a': baseLicenses['agpl'],
-  'PixArt E': baseLicenses['agpl'],
+  'PixArt a': baseLicenses['openrail++'],
+  'PixArt E': baseLicenses['openrail++'],
+  'Hunyuan 1': baseLicenses['hunyuan community'],
+  Lumina: baseLicenses['apache 2.0'],
   'Stable Cascade': baseLicenses['SAI NC RC'],
   Pony: baseLicenses['openrail++'],
   ODOR: undefined,

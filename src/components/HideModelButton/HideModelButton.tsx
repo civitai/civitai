@@ -1,3 +1,4 @@
+import { trpc } from '~/utils/trpc';
 import { Button, ButtonProps, Menu } from '@mantine/core';
 import { IconEye, IconEyeOff } from '@tabler/icons-react';
 import { MouseEventHandler } from 'react';
@@ -9,6 +10,7 @@ import { showSuccessNotification } from '~/utils/notifications';
 
 export function HideModelButton({ modelId, as = 'button', onToggleHide, ...props }: Props) {
   const currentUser = useCurrentUser();
+  const utils = trpc.useUtils();
 
   const models = useHiddenPreferencesData().hiddenModels;
   const hiddenModels = models.filter((x) => x.hidden);
@@ -19,6 +21,7 @@ export function HideModelButton({ modelId, as = 'button', onToggleHide, ...props
   const handleHideClick: MouseEventHandler<HTMLElement> = async (e) => {
     e.preventDefault();
     e.stopPropagation();
+    if (!alreadyHiding) await utils.model.getAll.invalidate({ hidden: true }, { exact: false });
     toggleHiddenMutation.mutateAsync({ kind: 'model', data: [{ id: modelId }] }).then(() => {
       showSuccessNotification({
         title: `Model ${alreadyHiding ? 'unhidden' : 'hidden'}`,

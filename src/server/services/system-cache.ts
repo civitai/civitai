@@ -190,6 +190,24 @@ export async function getTagsNeedingReview() {
   return tags;
 }
 
+export async function getBlockedTags() {
+  const cachedTags = await redis.get(REDIS_KEYS.SYSTEM.TAGS_BLOCKED);
+  if (cachedTags) return JSON.parse(cachedTags) as { id: number; name: string }[];
+
+  log('getting blocked tags');
+  const tags = await dbWrite.tag.findMany({
+    where: { nsfwLevel: NsfwLevel.Blocked },
+    select: { id: true, name: true },
+  });
+
+  await redis.set(REDIS_KEYS.SYSTEM.TAGS_BLOCKED, JSON.stringify(tags), {
+    EX: SYSTEM_CACHE_EXPIRY,
+  });
+
+  log('got blocked tags');
+  return tags;
+}
+
 export async function getHomeExcludedTags() {
   const cachedTags = await redis.get(REDIS_KEYS.SYSTEM.HOME_EXCLUDED_TAGS);
   if (cachedTags) return JSON.parse(cachedTags) as { id: number; name: string }[];

@@ -63,6 +63,7 @@ import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useMergedRef } from '@mantine/hooks';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
+import { NsfwLevel } from '~/server/common/enums';
 
 type StoreState = {
   selected: Record<number, boolean>;
@@ -103,6 +104,7 @@ const useStore = create<StoreState>()(
 const ImageReviewType = {
   minor: 'Minors',
   poi: 'POI',
+  tag: 'Blocked Tags',
   reported: 'Reported',
   csam: 'CSAM',
 } as const;
@@ -305,7 +307,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
                     sx={{ position: 'relative', height: '100%', overflow: 'hidden' }}
                     onClick={() => toggleSelected(image.id)}
                   >
-                    <ImageGuard2.BlurToggle className="absolute top-2 left-2 z-10" />
+                    <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
                     {!safe ? (
                       <AspectRatio ratio={(image.width ?? 1) / (image.height ?? 1)}>
                         <MediaHash {...image} />
@@ -412,7 +414,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
           </Stack>
         )}
         {image.needsReview === 'minor' && (
-          <PromptHighlight prompt={image.meta?.prompt}>
+          <PromptHighlight prompt={image.meta?.prompt} negativePrompt={image.meta?.negativePrompt}>
             {({ includesInappropriate, html }) =>
               !includesInappropriate ? (
                 <></>
@@ -432,6 +434,19 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
                   {name}
                 </Badge>
               ))}
+            </Group>
+          </Card.Section>
+        )}
+        {image.needsReview === 'tag' && !!image.tags && (
+          <Card.Section p="xs">
+            <Group spacing={4}>
+              {image.tags
+                .filter((x) => x.nsfwLevel === NsfwLevel.Blocked)
+                .map(({ name }) => (
+                  <Badge key={name} size="sm">
+                    {name}
+                  </Badge>
+                ))}
             </Group>
           </Card.Section>
         )}

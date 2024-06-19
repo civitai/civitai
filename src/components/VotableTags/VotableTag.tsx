@@ -321,7 +321,7 @@ function TagContexDropdown({ tagId, name }: { tagId: number; name: string }) {
   return (
     <>
       <Menu.Item onClick={() => mutate({ kind: 'tag', data: [{ id: tagId, name }] })}>
-        {isHidden ? 'Unhide' : 'Hide'} images with this tag
+        {isHidden ? 'Unhide' : 'Hide'} content with this tag
       </Menu.Item>
     </>
   );

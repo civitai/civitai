@@ -35,11 +35,18 @@ import {
 } from '~/server/utils/errorHandling';
 import { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '../db/client';
-import { firstDailyPostReward, imagePostedToModelReward } from '~/server/rewards';
+import {
+  firstDailyPostReward,
+  firstDailyPostNsfwReward,
+  imagePostedToModelReward,
+} from '~/server/rewards';
 import { eventEngine } from '~/server/events';
 import dayjs from 'dayjs';
 import { hasEntityAccess } from '../services/common.service';
-import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import {
+  getIsSafeBrowsingLevel,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import {
   CollectionMetadataSchema,
   getCollectionPermissionDetails,
@@ -51,6 +58,8 @@ import {
   validateContestCollectionEntry,
 } from '~/server/services/collection.service';
 import { CollectionMode, CollectionType } from '@prisma/client';
+import { NsfwLevel } from '~/server/common/enums';
+import { Flags } from '~/shared/utils';
 
 export const getPostsInfiniteHandler = async ({
   input,
@@ -89,7 +98,10 @@ export const createPostHandler = async ({
     });
 
     if (isPublished && !isScheduled) {
-      await firstDailyPostReward.apply(
+      const reward = Flags.intersects(post.nsfwLevel, sfwBrowsingLevelsFlag)
+        ? firstDailyPostReward
+        : firstDailyPostNsfwReward;
+      await reward.apply(
         {
           postId: post.id,
           posterId: post.user.id,
@@ -134,6 +146,7 @@ export const updatePostHandler = async ({
         publishedAt: true,
         collectionId: true,
         id: true,
+        nsfwLevel: true,
       },
     });
 
@@ -298,7 +311,10 @@ export const updatePostHandler = async ({
       }
 
       // Give reward for first post of the day
-      await firstDailyPostReward.apply(
+      const reward = Flags.intersects(updatedPost.nsfwLevel, sfwBrowsingLevelsFlag)
+        ? firstDailyPostReward
+        : firstDailyPostNsfwReward;
+      await reward.apply(
         {
           postId: updatedPost.id,
           posterId: updatedPost.userId,

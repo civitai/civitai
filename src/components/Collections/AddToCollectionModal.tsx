@@ -77,8 +77,9 @@ export { openAddToCollectionModal };
 export default Modal;
 
 const useCollectionListStyles = createStyles((theme) => ({
-  body: { alignItems: 'center', paddingTop: theme.spacing.xs, paddingBottom: theme.spacing.xs },
+  body: { alignItems: 'center' },
   labelWrapper: { flex: 1 },
+  contentWrap: { paddingTop: theme.spacing.xs, paddingBottom: theme.spacing.xs },
 }));
 
 function CollectionListForm({
@@ -196,19 +197,19 @@ function CollectionListForm({
                   <Stack spacing={4}>
                     {ownedCollections.map((collection) => {
                       const Icon = collectionReadPrivacyData[collection.read].icon;
-                      const isSelected = selectedCollections.find(
+                      const selectedItem = selectedCollections.find(
                         (c) => c.collectionId === collection.id
                       );
 
                       return (
-                        <Stack key={collection.id} spacing="xs">
+                        <Stack key={collection.id} className={classes.contentWrap} spacing={0}>
                           <Checkbox
                             classNames={classes}
-                            key={isSelected?.collectionId}
-                            checked={!!isSelected}
+                            key={selectedItem?.collectionId}
+                            checked={!!selectedItem}
                             onChange={(e) => {
                               e.preventDefault();
-                              if (isSelected) {
+                              if (selectedItem) {
                                 setSelectedCollections((curr) =>
                                   curr.filter((c) => c.collectionId !== collection.id)
                                 );
@@ -228,6 +229,31 @@ function CollectionListForm({
                               </Group>
                             }
                           />
+                          {selectedItem && collection.tags?.length > 0 && (
+                            <Select
+                              withAsterisk
+                              placeholder="Select a tag for your entry in the contest"
+                              size="xs"
+                              label="Tag your entry"
+                              value={selectedItem.tagId?.toString() ?? null}
+                              onChange={(value) => {
+                                setSelectedCollections((curr) =>
+                                  curr.map((c) => {
+                                    if (c.collectionId === collection.id) {
+                                      return { ...c, tagId: value ? parseInt(value, 10) : null };
+                                    }
+                                    return c;
+                                  })
+                                );
+                              }}
+                              clearable
+                              autoFocus
+                              data={collection.tags.map((tag) => ({
+                                value: tag.id.toString(),
+                                label: tag.name,
+                              }))}
+                            />
+                          )}
                         </Stack>
                       );
                     })}
@@ -254,7 +280,7 @@ function CollectionListForm({
                         );
 
                         return (
-                          <Stack key={collection.id} spacing={0}>
+                          <Stack key={collection.id} className={classes.contentWrap} spacing={0}>
                             <Checkbox
                               classNames={classes}
                               key={selectedItem?.collectionId}
@@ -303,6 +329,7 @@ function CollectionListForm({
                                   );
                                 }}
                                 clearable
+                                autoFocus
                                 data={collection.tags.map((tag) => ({
                                   value: tag.id.toString(),
                                   label: tag.name,
