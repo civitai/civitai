@@ -2641,14 +2641,15 @@ enum EntityCollaboratorStatus {
 }
 
 model EntityCollaborator {
-  entityType EntityType
-  entityId   Int
-  userId     Int
-  user       User                     @relation("entityCollaboratorParticipant", fields: [userId], references: [id])
-  status     EntityCollaboratorStatus @default(Pending)
-  createdAt  DateTime                 @default(now())
-  createdBy  Int
-  creator    User                     @relation("entityCollaboratorCreator", fields: [createdBy], references: [id])
+  entityType        EntityType
+  entityId          Int
+  userId            Int
+  user              User                     @relation("entityCollaboratorParticipant", fields: [userId], references: [id])
+  status            EntityCollaboratorStatus @default(Pending)
+  createdAt         DateTime                 @default(now())
+  createdBy         Int
+  creator           User                     @relation("entityCollaboratorCreator", fields: [createdBy], references: [id])
+  lastMessageSentAt DateTime?
 
   @@id([entityType, entityId, userId])
   @@index([userId, entityType, entityId]) // Include status in the migration.

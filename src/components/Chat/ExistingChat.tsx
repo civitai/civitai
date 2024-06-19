@@ -43,8 +43,10 @@ import type { IntermediateRepresentation, OptFn, Opts } from 'linkifyjs';
 import { throttle } from 'lodash-es';
 import Link from 'next/link';
 import React, { ReactElement, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
 import { ChatActions } from '~/components/Chat/ChatActions';
 import { useChatContext } from '~/components/Chat/ChatProvider';
+import { getLinkHref, linkifyOptions } from '~/components/Chat/util';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
@@ -52,6 +54,7 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { env } from '~/env/client.mjs';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import { constants } from '~/server/common/constants';
 import { SignalMessages } from '~/server/common/enums';
 import { isTypingOutput } from '~/server/schema/chat.schema';
 import { ChatAllMessages } from '~/types/router';
@@ -760,36 +763,10 @@ function ChatInputBox({
   );
 }
 
-// TODO disable just "image.civitai.com" with nothing else
-const civRegex = new RegExp(
-  `^(?:https?://)?(?:image\\.)?(?:${(env.NEXT_PUBLIC_BASE_URL ?? 'civitai.com')
-    .replace(/^https?:\/\//, '')
-    .replace(/\./g, '\\.')}|civitai\\.com)`
-);
-const externalRegex = /^(?:https?:\/\/)?(?:www\.)?(github\.com|twitter\.com|x\.com)/;
-// const airRegex = /^(?:urn:air:\w+:\w+:)?civitai:(?<mId>\d+)@(?<mvId>\d+)$/i;
-export const airRegex = /^civitai:(?<mId>\d+)@(?<mvId>\d+)$/i;
-
-function getLinkHref(href: string | undefined) {
-  if (!href) return;
-
-  if (externalRegex.test(href)) return href;
-
-  let newHref: string;
-  const airMatch = href.match(airRegex);
-  if (airMatch && airMatch.groups) {
-    const { mId, mvId } = airMatch.groups;
-    newHref = `/models/${mId}?modelVersionId=${mvId}`;
-  } else {
-    newHref = href.replace(civRegex, '') || '/';
-  }
-  return newHref;
-}
-
 const EmbedLink = ({ href, title }: { href?: string; title: string }) => {
   if (!href) return <Title order={6}>{title}</Title>;
 
-  if (externalRegex.test(href)) {
+  if (constants.chat.externalRegex.test(href)) {
     return (
       <Anchor href={href} target="_blank" rel="noopener noreferrer" variant="link">
         <Title order={6}>{title}</Title>
@@ -802,45 +779,6 @@ const EmbedLink = ({ href, title }: { href?: string; title: string }) => {
       <Title order={6}>{title}</Title>
     </Anchor>
   );
-};
-const renderLink: OptFn<(ir: IntermediateRepresentation) => ReactElement | undefined> = ({
-  attributes,
-  content,
-}) => {
-  const { href, ...props }: { href?: string } = attributes;
-
-  const modHref = getLinkHref(href);
-  if (!modHref) return;
-
-  if (externalRegex.test(modHref)) {
-    return (
-      <Anchor
-        href={modHref}
-        target="_blank"
-        rel="noopener noreferrer"
-        variant="link"
-        sx={{ textDecoration: 'underline', color: 'unset' }}
-        {...props}
-      >
-        {content}
-      </Anchor>
-    );
-  }
-
-  return (
-    <Link href={modHref} passHref {...props}>
-      <Text variant="link" component="a" sx={{ textDecoration: 'underline', color: 'unset' }}>
-        {content}
-      </Text>
-    </Link>
-  );
-};
-const validateLink = {
-  url: (value: string) => civRegex.test(value) || airRegex.test(value) || externalRegex.test(value),
-};
-export const linkifyOptions: Opts = {
-  render: renderLink,
-  validate: validateLink,
 };
 
 const EmbedMessage = ({ content }: { content: string }) => {
@@ -937,6 +875,8 @@ function DisplayMessages({
             ? replyData[replyIds.indexOf(c.referenceMessageId)]
             : undefined;
 
+        const isSystemChat = c.userId === -1;
+
         return (
           <PStack
             component={motion.div}
@@ -948,9 +888,9 @@ function DisplayMessages({
             animate={{ y: 0, opacity: 1 }}
             transition={{ type: 'spring', duration: 0.4 }}
           >
-            {c.userId === -1 && c.contentType === ChatMessageType.Embed ? (
+            {isSystemChat && c.contentType === ChatMessageType.Embed ? (
               <EmbedMessage content={c.content} />
-            ) : c.userId === -1 ? (
+            ) : isSystemChat ? (
               // <Group align="center" position="center">
               //   <Text size="xs">{formatDate(c.createdAt)}</Text>
               //   ...Text (below)
@@ -964,7 +904,13 @@ function DisplayMessages({
                   border: '1px solid gray',
                 }}
               >
-                {c.content}
+                <ReactMarkdown
+                  allowedElements={['a']}
+                  unwrapDisallowed
+                  className="markdown-content"
+                >
+                  {c.content}
+                </ReactMarkdown>
               </Text>
             ) : (
               <>
