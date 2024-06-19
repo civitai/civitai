@@ -640,7 +640,7 @@ export const getAllImages = async ({
     );
 
     AND.push(
-      Prisma.sql`(u."id" = ${targetUserId} OR p."id" IN (SELECT id FROM collaboratingPosts))`
+      Prisma.sql`(u."id" = ${targetUserId} OR i."postId" IN (SELECT id FROM collaboratingPosts))`
     );
     // Don't cache self queries
     console.log('THIS IS ABOUT TO HAPPEN BUD!');
@@ -962,8 +962,6 @@ export const getAllImages = async ({
   // if (!env.IMAGE_QUERY_CACHING) cacheTime = 0;
   // const cacheable = queryCache(dbRead, 'getAllImages', 'v1');
   // const rawImages = await cacheable<GetAllImagesRaw[]>(query, { ttl: cacheTime, tag: cacheTags });
-
-  console.log(query.sql);
 
   const { rows: rawImages } = await pgDbRead.query<GetAllImagesRaw>(query);
 
