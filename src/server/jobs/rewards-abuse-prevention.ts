@@ -56,7 +56,7 @@ export const rewardsAbusePrevention = createJob(
         type: 'system-announcement',
         details: {
           message: 'Your Buzz rewards have been disabled due to suspicious activity.',
-          url: '/user/buzz-dashboard',
+          url: '/articles/5799',
         },
       });
       usersDisabled += affected.length;

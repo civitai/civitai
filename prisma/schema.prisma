@@ -3341,6 +3341,11 @@ model UserStat {
   downloadCountMonth       Int
   downloadCountYear        Int
   downloadCountAllTime     Int
+  generationCountDay       Int
+  generationCountWeek      Int
+  generationCountMonth     Int
+  generationCountYear      Int
+  generationCountAllTime   Int
   ratingCountDay           Int
   ratingCountWeek          Int
   ratingCountMonth         Int
