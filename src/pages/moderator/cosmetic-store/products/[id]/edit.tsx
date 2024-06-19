@@ -49,7 +49,6 @@ export default function ProductEdit({
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const router = useRouter();
   const { cosmeticShopItem, isLoading } = useQueryCosmeticShopItem({ id });
-  console.log("cosmeticShopItem", cosmeticShopItem)
 
   const handleCancel = () => {
     router.push('/moderator/cosmetic-store/products');

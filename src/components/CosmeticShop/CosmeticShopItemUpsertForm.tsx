@@ -142,8 +142,6 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
     'availableQuantity',
   ]);
   const { cosmetic, isLoading: isLoadingCosmetic } = useQueryCosmetic({ id: cosmeticId });
-  console.log("cosmetic", cosmetic)
-
   const { upsertShopItem, upsertingShopItem } = useMutateCosmeticShop();
 
   const handleSubmit = async (data: z.infer<typeof formSchema>) => {
@@ -234,7 +232,7 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
             withAsterisk
             stickyToolbar
           />
-           <InputText
+          <InputText
             name="videoUrl"
             label="Video Tutorial"
             description="The link to the YouTube video that walks through how this badge was made :D"
