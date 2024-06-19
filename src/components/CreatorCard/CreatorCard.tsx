@@ -195,6 +195,7 @@ export const CreatorCardV2 = ({
       thumbsUpCountAllTime: 0,
       followerCountAllTime: 0,
       reactionCountAllTime: 0,
+      generationCountAllTime: 0,
     },
     publicSettings: {
       creatorCardStatsPreferences: [],
@@ -300,6 +301,9 @@ export const CreatorCardV2 = ({
                     }
                     reactions={
                       displayStats.includes('reactions') ? stats.reactionCountAllTime : null
+                    }
+                    generations={
+                      displayStats.includes('generations') ? stats.generationCountAllTime : null
                     }
                     colorOverrides={backgroundImage?.data}
                   />

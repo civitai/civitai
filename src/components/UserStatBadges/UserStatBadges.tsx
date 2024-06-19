@@ -1,14 +1,24 @@
-import { Badge, BadgeProps, Box, Group, MantineSize, Text, useMantineTheme } from '@mantine/core';
+import {
+  Badge,
+  BadgeProps,
+  Box,
+  Group,
+  MantineSize,
+  Text,
+  Tooltip,
+  useMantineTheme,
+} from '@mantine/core';
 import {
   IconUpload,
   IconUsers,
   IconDownload,
   IconChecks,
   IconMoodSmile,
+  IconBrush,
 } from '@tabler/icons-react';
 
 import { IconBadge } from '~/components/IconBadge/IconBadge';
-import { abbreviateNumber } from '~/utils/number-helpers';
+import { abbreviateNumber, numberWithCommas } from '~/utils/number-helpers';
 import { StatTooltip } from '~/components/Tooltips/StatTooltip';
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -151,24 +161,26 @@ const BadgedIcon = ({
   ...props
 }: {
   label: string;
-  value: number | string;
+  value: number;
   icon: React.ReactNode;
   textSize?: MantineSize;
 } & Omit<BadgeProps, 'leftSection'>) => (
   <Group spacing={0} noWrap sx={{ position: 'relative' }}>
-    <Box pos="relative" sx={{ zIndex: 2, overflow: 'hidden' }} h={32}>
-      <Image src="/images/base-badge.png" alt={`${label} - ${value}`} width={32} height={32} />
-      <Box
-        style={{
-          top: '50%',
-          left: '50%',
-          position: 'absolute',
-          transform: 'translate(-50%, -50%)',
-        }}
-      >
-        {icon}
+    <Tooltip label={label}>
+      <Box pos="relative" sx={{ zIndex: 2, overflow: 'hidden' }} h={32}>
+        <Image src="/images/base-badge.png" alt={`${label} - ${value}`} width={32} height={32} />
+        <Box
+          style={{
+            top: '50%',
+            left: '50%',
+            position: 'absolute',
+            transform: 'translate(-50%, -50%)',
+          }}
+        >
+          {icon}
+        </Box>
       </Box>
-    </Box>
+    </Tooltip>
     <IconBadge
       size={size}
       color="dark.6"
@@ -182,8 +194,8 @@ const BadgedIcon = ({
       }}
       {...props}
     >
-      <Text size={textSize} inline>
-        {value}
+      <Text size={textSize} inline title={numberWithCommas(value ?? 0)}>
+        {abbreviateNumber(value ?? 0)}
       </Text>
     </IconBadge>
   </Group>
@@ -194,52 +206,52 @@ export function UserStatBadgesV2({
   favorites,
   uploads,
   downloads,
+  generations,
   answers,
   reactions,
 }: Props) {
   return (
     <Group spacing={4} noWrap>
       {uploads != null ? (
-        <BadgedIcon
-          icon={<IconUpload size={18} color="white" />}
-          label="Uploads"
-          value={abbreviateNumber(uploads)}
-        />
+        <BadgedIcon icon={<IconUpload size={18} color="white" />} label="Uploads" value={uploads} />
       ) : null}
       {reactions != null ? (
         <BadgedIcon
           icon={<IconMoodSmile size={18} color="white" />}
           label="Reactions"
-          value={abbreviateNumber(reactions)}
+          value={reactions}
         />
       ) : null}
       {followers != null ? (
         <BadgedIcon
           icon={<IconUsers size={18} color="white" />}
           label="Followers"
-          value={abbreviateNumber(followers)}
+          value={followers}
         />
       ) : null}
       {favorites != null ? (
         <BadgedIcon
           icon={<ThumbsUpIcon size={18} color="white" />}
           label="Likes"
-          value={abbreviateNumber(favorites)}
+          value={favorites}
         />
       ) : null}
       {downloads != null ? (
         <BadgedIcon
           icon={<IconDownload size={18} color="white" />}
           label="Downloads"
-          value={abbreviateNumber(downloads)}
+          value={downloads}
+        />
+      ) : null}
+      {generations != null ? (
+        <BadgedIcon
+          icon={<IconBrush size={18} color="white" />}
+          label="Generations"
+          value={generations}
         />
       ) : null}
       {answers != null && answers > 0 ? (
-        <BadgedIcon
-          icon={<IconChecks size={18} color="white" />}
-          label="Answers"
-          value={abbreviateNumber(answers)}
-        />
+        <BadgedIcon icon={<IconChecks size={18} color="white" />} label="Answers" value={answers} />
       ) : null}
     </Group>
   );
@@ -251,6 +263,7 @@ type Props = {
   uploads?: number | null;
   favorites?: number | null;
   downloads?: number | null;
+  generations?: number | null;
   answers?: number | null;
   reactions?: number | null;
   username?: string | null;

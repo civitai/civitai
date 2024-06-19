@@ -108,6 +108,7 @@ export const getUserCreator = async ({
           thumbsUpCountAllTime: true,
           followerCountAllTime: true,
           reactionCountAllTime: true,
+          generationCountAllTime: true,
         },
       },
       rank: {
