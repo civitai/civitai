@@ -1,5 +1,5 @@
-import { WorkflowEvent, WorkflowStepJobEvent } from '@civitai/client';
-import { InfiniteData } from '@tanstack/react-query';
+import { Workflow, WorkflowEvent, WorkflowStepJobEvent } from '@civitai/client';
+import { InfiniteData, QueryKey } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';
 import { useEffect, useMemo } from 'react';
@@ -7,10 +7,17 @@ import { z } from 'zod';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { SignalMessages } from '~/server/common/enums';
-import { TextToImageWorkflowImageMetadataSchema } from '~/server/schema/orchestrator/textToImage.schema';
+import {
+  TextToImageStepImageMetadata,
+  TextToImageStepMetadata,
+} from '~/server/schema/orchestrator/textToImage.schema';
 import { workflowQuerySchema } from '~/server/schema/orchestrator/workflows.schema';
 import { NormalizedTextToImageResponse } from '~/server/services/orchestrator';
 import { workflowCompletedStatuses } from '~/server/services/orchestrator/constants';
+import {
+  UpdateWorkflowStepParams,
+  WorkflowStepMetadata,
+} from '~/server/services/orchestrator/orchestrator.schema';
 import { getTextToImageRequests } from '~/server/services/orchestrator/textToImage';
 import { createDebouncer } from '~/utils/debouncer';
 import { showErrorNotification } from '~/utils/notifications';
@@ -19,6 +26,13 @@ import { queryClient, trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 
 type InfiniteTextToImageRequests = InfiniteData<AsyncReturnType<typeof getTextToImageRequests>>;
+type WorkflowBase = {
+  id: string;
+  steps: Array<{ name: string; metadata: WorkflowStepMetadata }>;
+};
+type InfiniteWorkflows = InfiniteData<{
+  items: Array<WorkflowBase>;
+}>;
 
 export function useGetTextToImageRequests(
   input?: z.input<typeof workflowQuerySchema>,
@@ -33,10 +47,10 @@ export function useGetTextToImageRequests(
   const flatData = useMemo(
     () =>
       data?.pages.flatMap((x) =>
-        (x.items ?? [])
-          .map((response) => {
-            const images = [...response.images]
-              .filter((image) => !response.metadata?.images?.[image.id]?.hidden)
+        (x.items ?? []).map((response) => {
+          const steps = response.steps.map((step) => {
+            const images = step.images
+              .filter((image) => !step.metadata?.images?.[image.id]?.hidden)
               .sort((a, b) => {
                 if (a.completed !== b.completed) {
                   if (!b.completed) return 1;
@@ -48,23 +62,23 @@ export function useGetTextToImageRequests(
                   return 0;
                 }
               });
-            return { ...response, images };
-            // return !!images.length ? { ...response, images } : null;
-          })
-          .filter(isDefined)
+            return { ...step, images };
+          });
+          return { ...response, steps };
+        })
       ) ?? [],
     [data]
   );
 
   // useEffect(() => console.log({ flatData }), [flatData]);
+  const steps = useMemo(() => flatData.flatMap((x) => x.steps), [flatData]);
 
-  return { data: flatData, ...rest };
+  return { data: flatData, steps, ...rest };
 }
 
 export function useGetTextToImageRequestsImages(input?: z.input<typeof workflowQuerySchema>) {
-  const { data, ...rest } = useGetTextToImageRequests(input);
-  const images = useMemo(() => data.flatMap((x) => x.images), [data]);
-  return { requests: data, images, ...rest };
+  const { data, steps, ...rest } = useGetTextToImageRequests(input);
+  return { requests: data, steps, ...rest };
 }
 
 function updateTextToImageRequests(cb: (data: InfiniteTextToImageRequests) => void) {
@@ -121,22 +135,17 @@ export function useCancelTextToImageRequest() {
       updateTextToImageRequests((old) => {
         for (const page of old.pages) {
           for (const item of page.items.filter((x) => x.id === workflowId)) {
-            for (const image of item.images.filter(
-              (x) => !workflowCompletedStatuses.includes(x.status)
-            )) {
-              image.status = 'canceled';
-            }
-            if (item.images.some((x) => x.status === 'canceled')) {
-              item.status = 'canceled';
+            for (const step of item.steps) {
+              for (const image of step.images.filter(
+                (x) => !workflowCompletedStatuses.includes(x.status)
+              )) {
+                image.status = 'canceled';
+              }
+              if (step.images.some((x) => x.status === 'canceled')) {
+                item.status = 'canceled';
+              }
             }
           }
-          // const index = page.items.findIndex((x) => x.id === workflowId);
-          // if (index > -1) {
-          //   page.items[index].images = page.items[index].images.filter((x) =>
-          //     workflowCompletedStatuses.includes(x.status)
-          //   );
-          //   if (!page.items[index].images.length) page.items.splice(index, 1);
-          // }
         }
       });
     },
@@ -149,105 +158,161 @@ export function useCancelTextToImageRequest() {
   });
 }
 
-export function useUpdateTextToImageWorkflows(options?: { onSuccess?: () => void }) {
-  const queryKey = getQueryKey(trpc.orchestrator.getTextToImageRequests);
-  const { mutate, isLoading } = trpc.orchestrator.updateManyTextToImageWorkflows.useMutation({
-    onSuccess: (_, { workflows }) => {
-      updateTextToImageRequests((old) => {
+function updateWorkflowQueries<TData extends InfiniteWorkflows>(
+  queryKey: QueryKey,
+  cb: (data: TData) => void
+) {
+  queryClient.setQueriesData({ queryKey, exact: false }, (state) =>
+    produce(state, (old?: TData) => {
+      if (!old) return;
+      cb(old);
+    })
+  );
+}
+
+export function useUpdateWorkflowSteps({
+  queryKey,
+  onSuccess,
+}: {
+  onSuccess?: () => void;
+  queryKey: QueryKey;
+}) {
+  const { mutate, isLoading } = trpc.orchestrator.steps.update.useMutation({
+    onSuccess: (_, { data }) => {
+      updateWorkflowQueries(queryKey, (old) => {
         for (const page of old.pages) {
-          for (const item of page.items) {
-            const workflow = workflows.find((x) => x.workflowId === item.id);
-            if (workflow) {
-              item.metadata = { ...item.metadata, ...workflow.metadata };
+          for (const workflow of page.items) {
+            for (const step of workflow.steps) {
+              const current = data.find(
+                (x) => x.workflowId === workflow.id && x.stepName === step.name
+              );
+              if (current) {
+                const { $type, ...metadata } = current.metadata;
+                step.metadata = { ...step.metadata, ...metadata };
+              }
             }
           }
         }
       });
-      options?.onSuccess?.();
+      onSuccess?.();
     },
     onError: (error) => {
       showErrorNotification({
-        title: 'An error occurred',
+        title: 'Failed to update workflow step',
         error: new Error(error.message),
       });
     },
   });
 
-  function updateWorkflows(
-    args: Array<
-      {
-        workflowId: string;
-        imageId: string;
-      } & TextToImageWorkflowImageMetadataSchema
-    >
-  ) {
-    const workflows: NormalizedTextToImageResponse[] = [];
-    const allQueriesData = queryClient.getQueriesData<InfiniteTextToImageRequests>({
+  function updateSteps(args: UpdateWorkflowStepParams[]) {
+    // gets current workflow data from query cache
+    const allQueriesData = queryClient.getQueriesData<InfiniteWorkflows>({
       queryKey,
       exact: false,
     });
+
+    const reduced = args.reduce<
+      Record<string, Array<{ name: string; metadata: WorkflowStepMetadata }>>
+    >((acc, { workflowId, stepName, metadata }) => {
+      if (!acc[workflowId]) acc[workflowId] = [];
+      acc[workflowId].push({ name: stepName, metadata });
+      return acc;
+    }, {});
+    const workflowsToUpdateCount = Object.keys(reduced).length;
+
+    // add workflows from query cache to an array for quick reference
+    const workflows: WorkflowBase[] = [];
     loop: for (const [, queryData] of allQueriesData) {
       for (const page of queryData?.pages ?? []) {
-        for (const item of page.items) {
-          if (args.some((x) => x.workflowId === item.id)) {
-            workflows.push(item);
-            if (workflows.length === args.length) break loop;
-          }
+        for (const workflow of page.items) {
+          const match = reduced[workflow.id];
+          if (match) workflows.push(workflow);
+          if (workflows.length === workflowsToUpdateCount) break loop;
         }
       }
     }
 
-    const data = args.map((props) => {
-      const { workflowId, imageId, hidden, feedback, comments } = props;
-      const workflow = workflows.find((x) => x.id === workflowId);
-      return produce({ ...workflow?.metadata?.images?.[imageId], workflowId, imageId }, (draft) => {
-        if (comments) draft.comments = comments;
-        if (hidden) draft.hidden = hidden;
-        if (feedback) draft.feedback = draft.feedback !== feedback ? feedback : undefined;
-      });
-    });
-
-    const workflowData = workflows.map((workflow) => {
-      const toUpdate = data.filter((x) => x.workflowId === workflow.id);
-      return {
-        workflowId: workflow.id,
-        imageCount: workflow.images.length,
-        metadata: deepOmit({
-          ...workflow.metadata,
-          images: produce(workflow.metadata?.images ?? {}, (draft) => {
-            for (const { imageId, workflowId, ...rest } of toUpdate) {
-              draft[imageId] = { ...draft[imageId], ...rest };
-            }
-          }),
-        }),
-      };
-    });
-
-    mutate({ workflows: workflowData });
-  }
-
-  function hideImages(args: Array<{ workflowId: string; imageIds: string[] }>) {
+    // get updated metadata values
     const data = args
-      .map(({ workflowId, imageIds }) =>
-        imageIds.map((imageId) => ({ workflowId, imageId, hidden: true }))
-      )
-      .flat();
-    updateWorkflows(data);
+      .map(({ workflowId, stepName, metadata: { $type, ...metadata } }) => {
+        const workflow = workflows.find((x) => x.id === workflowId);
+        const step = workflow?.steps.find((x) => x.name === stepName);
+
+        // this step should have all the currently cached step metadata
+        if (step) {
+          return {
+            workflowId,
+            stepName,
+            metadata: produce(step.metadata, (draft) => {
+              switch ($type) {
+                case 'textToImage': {
+                  // handle image updates
+                  Object.keys(metadata.images ?? {}).map((imageId) => {
+                    const { comments, hidden, feedback } = metadata.images?.[imageId] ?? {};
+                    const images = draft.images ?? {};
+                    if (comments) images[imageId].comments = comments;
+                    if (hidden) images[imageId].hidden = hidden;
+                    if (feedback)
+                      images[imageId].feedback =
+                        images[imageId].feedback !== feedback ? feedback : undefined;
+                    draft.images = images;
+                  });
+                  break;
+                }
+              }
+            }),
+          };
+        }
+      })
+      .filter(isDefined);
+
+    mutate({ data });
   }
 
-  function toggleFeedback(args: {
-    workflowId: string;
-    imageId: string;
-    feedback: 'liked' | 'disliked';
-  }) {
-    updateWorkflows([args]);
+  return { updateSteps, isLoading };
+}
+
+export function useUpdateTextToImageStepMetadata(options?: { onSuccess?: () => void }) {
+  const queryKey = getQueryKey(trpc.orchestrator.getTextToImageRequests);
+  const { updateSteps, isLoading } = useUpdateWorkflowSteps({
+    queryKey,
+    onSuccess: options?.onSuccess,
+  });
+
+  function updateImages(
+    args: Array<{
+      workflowId: string;
+      stepName: string;
+      imageIds: string[];
+      hidden?: boolean;
+      feedback?: 'liked' | 'disliked';
+      comments?: string;
+    }>
+  ) {
+    const data = args.map(
+      ({
+        workflowId,
+        stepName,
+        imageIds,
+        hidden,
+        feedback,
+        comments,
+      }): UpdateWorkflowStepParams => {
+        const images: Record<string, TextToImageStepImageMetadata> = {};
+        for (const imageId of imageIds) {
+          images[imageId] = {};
+          if (hidden) images[imageId].hidden = true;
+          if (feedback) images[imageId].feedback = feedback;
+          if (comments) images[imageId].comments = comments;
+        }
+
+        return { workflowId, stepName, metadata: { $type: 'textToImage', images } };
+      }
+    );
+    updateSteps(data);
   }
 
-  function addComment(args: { workflowId: string; imageId: string; comments: string }) {
-    updateWorkflows([args]);
-  }
-
-  return { hideImages, toggleFeedback, addComment, isLoading };
+  return { updateImages, isLoading };
 }
 
 type CustomJobEvent = Omit<WorkflowStepJobEvent, '$type'> & { $type: 'job'; completed?: Date };
@@ -289,26 +354,28 @@ function updateFromEvents() {
             delete signalWorkflowEventsDictionary[item.id];
         }
 
-        // get all jobIds associated with images
-        const imageJobIds = [...new Set(item.images.map((x) => x.jobId))];
-        // get any pending events associated with imageJobIds
-        const jobEventIds = Object.keys(signalJobEventsDictionary).filter((jobId) =>
-          imageJobIds.includes(jobId)
-        );
+        for (const step of item.steps) {
+          // get all jobIds associated with images
+          const imageJobIds = [...new Set(step.images.map((x) => x.jobId))];
+          // get any pending events associated with imageJobIds
+          const jobEventIds = Object.keys(signalJobEventsDictionary).filter((jobId) =>
+            imageJobIds.includes(jobId)
+          );
 
-        for (const jobId of jobEventIds) {
-          const signalEvent = signalJobEventsDictionary[jobId];
-          if (!signalEvent) continue;
-          const { status } = signalEvent;
-          const images = item.images.filter((x) => x.jobId === jobId);
-          for (const image of images) {
-            image.status = signalEvent.status!;
-            image.completed = signalEvent.completed;
-          }
+          for (const jobId of jobEventIds) {
+            const signalEvent = signalJobEventsDictionary[jobId];
+            if (!signalEvent) continue;
+            const { status } = signalEvent;
+            const images = step.images.filter((x) => x.jobId === jobId);
+            for (const image of images) {
+              image.status = signalEvent.status!;
+              image.completed = signalEvent.completed;
+            }
 
-          if (status === signalJobEventsDictionary[jobId].status) {
-            delete signalJobEventsDictionary[jobId];
-            if (!Object.keys(signalJobEventsDictionary).length) break;
+            if (status === signalJobEventsDictionary[jobId].status) {
+              delete signalJobEventsDictionary[jobId];
+              if (!Object.keys(signalJobEventsDictionary).length) break;
+            }
           }
         }
       }

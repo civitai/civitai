@@ -1,10 +1,15 @@
 import { WorkflowStatus } from '@civitai/client';
 import { MantineColor } from '@mantine/core';
-import { Sampler, draftMode } from '~/server/common/constants';
+import { Sampler, generation } from '~/server/common/constants';
 import { BaseModel, BaseModelSetType, baseModelSets } from '~/server/common/constants';
 import { ResourceData } from '~/server/redis/caches';
+import { GenerationLimits } from '~/server/schema/generation.schema';
 import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
+
+export const WORKFLOW_TAGS = {
+  TEXT_TO_IMAGE: 'textToImage',
+};
 
 export const generationServiceCookie = {
   name: 'generation-service',
@@ -22,24 +27,21 @@ export const generationStatusColors: Record<WorkflowStatus, MantineColor> = {
   canceled: 'gray',
 };
 
-export const workflowPendingStatuses: WorkflowStatus[] = ['unassigned', 'preparing', 'scheduled'];
+export const orchestratorPendingStatuses: WorkflowStatus[] = [
+  'unassigned',
+  'preparing',
+  'scheduled',
+];
 
-export const safeNegatives = [{ id: 106916, triggerWord: 'civit_nsfw' }];
-export const minorNegatives = [{ id: 250712, triggerWord: 'safe_neg' }];
-export const minorPositives = [{ id: 250708, triggerWord: 'safe_pos' }];
-export const allInjectedNegatives = [...safeNegatives, ...minorNegatives];
-export const allInjectedPositives = [...minorPositives];
-export const allInjectedIds = [...allInjectedNegatives, ...allInjectedPositives].map((x) => x.id);
-
-type InjectableResourceTypes = 'civit_nsfw' | 'safe_neg' | 'safe_pos' | 'draft_sdxl' | 'draft_sd1';
 export type InjectableResource = {
   id: number;
   triggerWord?: string;
   triggerType?: 'negative' | 'positive';
+  baseModelSetType?: BaseModelSetType;
   sanitize?: (params: TextToImageParams) => Partial<TextToImageParams>;
 };
 
-const draftInjectableResources = [
+export const draftInjectableResources = [
   {
     id: 391999,
     baseModelSetType: 'SDXL',
@@ -48,7 +50,7 @@ const draftInjectableResources = [
       cfgScale: 1,
       sampler: 'Euler',
     }),
-  },
+  } as InjectableResource,
   {
     id: 424706,
     baseModelSetType: 'SD1',
@@ -57,34 +59,25 @@ const draftInjectableResources = [
       cfgScale: 1,
       sampler: 'LCM',
     }),
-  },
+  } as InjectableResource,
 ];
-export const injectableResources = {
-  civit_nsfw: { id: 106916, triggerWord: 'civit_nsfw', triggerType: 'negative' },
-  safe_neg: { id: 250712, triggerWord: 'safe_neg', triggerType: 'negative' },
-  safe_pos: { id: 250708, triggerWord: 'safe_pos', triggerType: 'positive' },
-  draft_sdxl: {
-    id: 391999,
-    sanitize: () => ({
-      steps: 8,
-      cfgScale: 1,
-      sampler: 'Euler',
-    }),
-  },
-  draft_sd1: {
-    id: 424706,
-    sanitize: () => ({
-      steps: 6,
-      cfgScale: 1,
-      sampler: 'LCM',
-    }),
-  },
+const baseInjectableResources = {
+  civit_nsfw: {
+    id: 106916,
+    triggerWord: 'civit_nsfw',
+    triggerType: 'negative',
+  } as InjectableResource,
+  safe_neg: { id: 250712, triggerWord: 'safe_neg', triggerType: 'negative' } as InjectableResource,
+  safe_pos: { id: 250708, triggerWord: 'safe_pos', triggerType: 'positive' } as InjectableResource,
 };
-export const allInjectableResourceIds = Object.values(injectableResources).map((x) => x.id);
+export const allInjectableResourceIds = [
+  ...Object.values(baseInjectableResources),
+  ...draftInjectableResources,
+].map((x) => x.id);
 
 export function getInjectablResources(baseModelSetType: BaseModelSetType) {
   return {
-    ...injectableResources,
+    ...baseInjectableResources,
     draft: draftInjectableResources.find((x) => x.baseModelSetType === baseModelSetType),
   };
 }
@@ -175,15 +168,6 @@ export function getIsSdxl(baseModelSetType?: BaseModelSetType) {
     baseModelSetType === 'SDXLDistilled'
   );
 }
-export function getDraftModeSettings(baseModelSetType: BaseModelSetType) {
-  const isSDXL = getIsSdxl(baseModelSetType);
-  return draftMode[isSDXL ? 'sdxl' : 'sd1'];
-}
-
-export function getDraftModeInjectable(baseModelSetType: BaseModelSetType) {
-  const isSDXL = getIsSdxl(baseModelSetType);
-  return isSDXL ? injectableResources.draft_sdxl : injectableResources.draft_sd1;
-}
 
 export type GenerationResource = MakeUndefinedOptional<
   ReturnType<typeof formatGenerationResources>[number]
@@ -205,5 +189,35 @@ export function formatGenerationResources(resources: ResourceData[]) {
       covered: resource.covered,
     };
   });
+}
+
+export function sanitizeTextToImageParams<T extends Partial<TextToImageParams>>(
+  params: T,
+  limits?: GenerationLimits
+) {
+  if (params.sampler) {
+    params.sampler = generation.samplers.includes(params.sampler as any)
+      ? params.sampler
+      : generation.defaultValues.sampler;
+  }
+
+  const maxValueKeys = Object.keys(generation.maxValues);
+  for (const item of maxValueKeys) {
+    const key = item as keyof typeof generation.maxValues;
+    if (params[key]) params[key] = Math.min(params[key] ?? 0, generation.maxValues[key]);
+  }
+
+  // handle SDXL ClipSkip
+  // I was made aware that SDXL only works with clipSkip 2
+  // if that's not the case anymore, we can rollback to just setting
+  // this for Pony resources -Manuel
+  const isSDXL = getIsSdxl(params.baseModel);
+  if (isSDXL) params.clipSkip = 2;
+
+  if (limits) {
+    if (params.steps) params.steps = Math.min(params.steps, limits.steps);
+    if (params.quantity) params.quantity = Math.min(params.quantity, limits.quantity);
+  }
+  return params;
 }
 // #endregion

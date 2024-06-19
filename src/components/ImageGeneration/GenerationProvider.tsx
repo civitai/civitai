@@ -62,7 +62,7 @@ export function useGenerationContext<T>(selector: (state: GenerationState) => T)
 export function GenerationProvider({ children }: { children: React.ReactNode }) {
   const storeRef = useRef<GenerationStore>();
   const { connected } = useSignalContext();
-  const { data: requests, isLoading } = useGetTextToImageRequests();
+  const { data: requests, steps, isLoading } = useGetTextToImageRequests();
   const generationStatus = useGenerationStatus();
 
   // #region [queue state]
@@ -106,20 +106,24 @@ export function GenerationProvider({ children }: { children: React.ReactNode }) 
     const store = storeRef.current;
     if (!store) return;
     const { limits, available } = generationStatus;
-    const queuedRequests = queued.map((request) => ({
-      id: request.id,
-      complete: request.images.filter((x) => x.status === 'succeeded').length,
-      processing: request.images.filter((x) => x.status === 'processing').length,
-      quantity: request.params.quantity,
-      status: request.status,
-    }));
+    const queuedRequests = queued.map((request) => {
+      const images = request.steps.flatMap((s) => s.images);
+      const quantity = request.steps.reduce((acc, step) => acc + step.params.quantity, 0);
+      return {
+        id: request.id,
+        complete: images.filter((x) => x.status === 'succeeded').length,
+        processing: images.filter((x) => x.status === 'processing').length,
+        quantity: quantity,
+        status: request.status,
+      };
+    });
 
     const queueStatus = queuedRequests.some((x) => x.status === 'processing')
       ? 'processing'
       : queuedRequests[0]?.status;
 
     const requestsRemaining = limits.queue - queuedRequests.length;
-    const images = queued
+    const images = steps
       .flatMap((x) =>
         x.images.map((image) => (image.completed ? { ...image, completed: image.completed } : null))
       )
@@ -139,7 +143,7 @@ export function GenerationProvider({ children }: { children: React.ReactNode }) 
         canGenerate: requestsRemaining > 0 && available && !isLoading,
       };
     });
-  }, [queued, generationStatus, isLoading]);
+  }, [queued, steps, generationStatus, isLoading]);
 
   useEffect(() => {
     const store = storeRef.current;

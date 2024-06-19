@@ -46,6 +46,7 @@ export async function submitWorkflow({
     if (error instanceof ApiError) {
       console.log('-------ERROR-------');
       console.dir({ error }, { depth: null });
+      console.dir({ params }, { depth: null });
       console.log('-------END ERROR-------');
       switch (error.status) {
         case 400:

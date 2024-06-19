@@ -4,8 +4,8 @@ import { IconInfoCircle, IconSquareOff, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { generationImageSelect } from '~/components/ImageGeneration/utils/generationImage.select';
 import {
-  useGetTextToImageRequestsImages,
-  useUpdateTextToImageWorkflows,
+  useGetTextToImageRequestsImages as useGetTextToImageRequestsSteps,
+  useUpdateTextToImageStepMetadata,
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { generationPanel } from '~/store/generation.store';
 import { orchestratorMediaTransmitter } from '~/store/post-image-transmitter.store';
@@ -91,13 +91,17 @@ export function GeneratedImagesBuzzPrompt() {
 
 export const useGeneratedImageActions = () => {
   const router = useRouter();
-  const { images } = useGetTextToImageRequestsImages();
+  const { steps } = useGetTextToImageRequestsSteps();
 
   const selected = generationImageSelect.useSelection();
+  // const [workflowId, stepName, imageId] = selected.split(':')
   const deselect = () => generationImageSelect.setSelected([]);
 
   const createPostMutation = trpc.post.create.useMutation();
-  const updateWorkflows = useUpdateTextToImageWorkflows({ onSuccess: () => deselect() });
+  const { updateImages, isLoading } = useUpdateTextToImageStepMetadata({
+    onSuccess: () => deselect(),
+  });
+  // const updateWorkflows = useUpdateTextToImageWorkflows({ onSuccess: () => deselect() });
 
   const deleteSelectedImages = () => {
     openConfirmModal({
@@ -105,15 +109,23 @@ export const useGeneratedImageActions = () => {
       children: 'Are you sure that you want to delete the selected images?',
       labels: { cancel: 'Cancel', confirm: 'Yes, delete them' },
       confirmProps: { color: 'red' },
-      onConfirm: () => updateWorkflows.hideImages(selected),
+      onConfirm: () => {
+        updateImages(
+          selected.map((value) => {
+            const [workflowId, stepName, imageId] = value.split(':');
+            return { workflowId, stepName, imageId, hidden: true };
+          })
+        );
+      },
       zIndex: constants.imageGeneration.drawerZIndex + 2,
       centered: true,
     });
   };
 
-  const isMutating = updateWorkflows.isLoading || createPostMutation.isLoading;
+  const isMutating = isLoading || createPostMutation.isLoading;
 
   const postSelectedImages = async () => {
+    const images = steps.flatMap((x) => x.images);
     const imageIds = selected.flatMap((x) => x.imageIds);
     const urls = images
       .filter((x) => imageIds.includes(x.id))

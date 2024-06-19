@@ -341,24 +341,6 @@ export const activeBaseModels = constants.baseModels.filter(
   (model) => !constants.hiddenBaseModels.includes(model)
 );
 
-export const draftMode = {
-  sdxl: {
-    steps: 8,
-    cfgScale: 1,
-    sampler: 'Euler',
-    resourceId: 391999,
-    // baseModel: 'SDXL Lightning',
-  },
-  sd1: {
-    steps: 6,
-    cfgScale: 1,
-    sampler: 'LCM',
-    resourceId: 424706,
-    // baseModel: 'SD 1.5',
-    // type: 'LORA',
-  },
-} as const;
-
 export const zipModelFileTypes: ModelFileFormat[] = ['Core ML', 'Diffusers', 'ONNX'];
 export type ZipModelFileType = (typeof zipModelFileTypes)[number];
 

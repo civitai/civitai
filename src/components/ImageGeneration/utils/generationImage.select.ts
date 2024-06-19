@@ -1,6 +1,7 @@
 import { useCallback } from 'react';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
+import { createSelectStore } from '~/store/select.store';
 
 type Selected = Record<string, Record<string, boolean>>;
 const useStore = create<{
@@ -57,10 +58,12 @@ const getSelected = () => {
   return mapSelected(selected);
 };
 
-export const generationImageSelect = {
-  useSelection,
-  useIsSelected,
-  setSelected: useStore.getState().setSelected,
-  toggle: useStore.getState().toggle,
-  getSelected,
-};
+// export const generationImageSelect = {
+//   useSelection,
+//   useIsSelected,
+//   setSelected: useStore.getState().setSelected,
+//   toggle: useStore.getState().toggle,
+//   getSelected,
+// };
+
+export const generationImageSelect = createSelectStore<string>();

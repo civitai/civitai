@@ -5,22 +5,18 @@ import { TypeOf, z } from 'zod';
 import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { UsePersistFormReturn, usePersistForm } from '~/libs/form/hooks/usePersistForm';
-import {
-  BaseModel,
-  constants,
-  draftMode,
-  generation,
-  getGenerationConfig,
-} from '~/server/common/constants';
+import { BaseModel, constants, generation, getGenerationConfig } from '~/server/common/constants';
 import { imageSchema } from '~/server/schema/image.schema';
 import {
-  TextToImageParams,
   textToImageParamsSchema,
   textToImageResourceSchema,
 } from '~/server/schema/orchestrator/textToImage.schema';
 import { userTierSchema } from '~/server/schema/user.schema';
 import { GenerationData } from '~/server/services/generation/generation.service';
-import { getBaseModelSetType, getIsSdxl } from '~/shared/constants/generation.constants';
+import {
+  getBaseModelSetType,
+  sanitizeTextToImageParams,
+} from '~/shared/constants/generation.constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
 import { useGenerationStore } from '~/store/generation.store';
@@ -119,27 +115,17 @@ export const blockedRequest = (() => {
 
 // #region [data formatter]
 const defaultValues = generation.defaultValues;
-function formatGenerationData({
-  formData,
-  data,
-  versionId,
-  type,
-}: {
-  formData: PartialFormData;
-  data: GenerationData;
-  /** pass the versionId to specify the resource to use when deriving the baseModel */
-  versionId?: number;
-  type: 'default' | 'run' | 'remix';
-}): PartialFormData {
+function formatGenerationData(data: GenerationData): PartialFormData {
+  const { quantity, ...params } = data.params;
   // check for new model in resources, otherwise use stored model
-  let checkpoint = data.resources.find((x) => x.modelType === 'Checkpoint') ?? formData.model;
-  let vae = data.resources.find((x) => x.modelType === 'VAE') ?? formData.vae;
+  let checkpoint = data.resources.find((x) => x.modelType === 'Checkpoint');
+  let vae = data.resources.find((x) => x.modelType === 'VAE');
 
   // use versionId to set the resource we want to use to derive the baseModel
   // (ie, a lora is used to derive the baseModel instead of the checkpoint)
-  const baseResource = versionId ? data.resources.find((x) => x.id === versionId) : checkpoint;
+  const baseResource = checkpoint ?? data.resources[0];
   const baseModel = getBaseModelSetType(
-    baseResource ? baseResource.baseModel : data.params.baseModel ?? formData.baseModel
+    baseResource ? baseResource.baseModel : data.params.baseModel
   );
 
   const config = getGenerationConfig(baseModel);
@@ -149,9 +135,7 @@ function formatGenerationData({
   // if current vae doesn't match baseModel, set vae to undefined
   if (getBaseModelSetType(vae?.modelType) !== baseModel) vae = undefined;
   // filter out any additional resources that don't belong
-  const resources = (
-    type === 'remix' ? data.resources : [...(formData.resources ?? []), ...data.resources]
-  )
+  const resources = data.resources
     .filter((resource) => {
       if (resource.modelType === 'Checkpoint' || resource.modelType === 'VAE') return false;
       const baseModelSetKey = getBaseModelSetType(resource.baseModel);
@@ -164,53 +148,27 @@ function formatGenerationData({
     })
     .slice(0, 9);
 
-  // Look through data for Draft resource.
-  // If we find them, toggle draft and remove the resource.
-  const draftResourceId = draftMode[isSDXL ? 'sdxl' : 'sd1'].resourceId;
-  const draftResourceIndex = returnData.resources?.findIndex((x) => x.id === draftResourceId) ?? -1;
-  if (draftResourceIndex !== -1) {
-    returnData.draft = true;
-    returnData.resources?.splice(draftResourceIndex, 1);
-  }
-
-  const returnData: PartialFormData = formatGenerationParams({
-    ...formData,
-    ...data.params,
+  return {
+    ...params,
     baseModel,
     model: checkpoint,
     resources,
     vae,
-  });
-
-  return type === 'run' ? removeEmpty(returnData) : returnData;
+  };
 }
 
-function formatGenerationParams<T extends Partial<TextToImageParams>>(params: T) {
-  const { nsfw, quantity, ...data } = { ...params };
-
-  if (data.sampler) {
-    data.sampler = generation.samplers.includes(data.sampler as any)
-      ? data.sampler
-      : defaultValues.sampler;
-  }
-
-  const maxValueKeys = Object.keys(generation.maxValues);
-  for (const item of maxValueKeys) {
-    const key = item as keyof typeof generation.maxValues;
-    if (data[key]) data[key] = Math.min(data[key] ?? 0, generation.maxValues[key]);
-  }
-
-  const isSDXL = getIsSdxl(data.baseModel);
-  if (isSDXL) data.clipSkip = 2;
-
-  return data;
-}
 // #endregion
 
 // #region [Provider]
 type GenerationFormProps = Omit<UsePersistFormReturn<TypeOf<typeof formSchema>>, 'reset'> & {
   setValues: (data: PartialFormData) => void;
   reset: () => void;
+  // metadata?: {
+  //   remix?: {
+  //     imageId?: number;
+  //     versionId?: number;
+  //   };
+  // };
 };
 
 const GenerationFormContext = createContext<GenerationFormProps | null>(null);
@@ -246,48 +204,61 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
     storage: localStorage,
   });
 
+  // #region [effects]
   useEffect(() => {
     if (storeData) {
-      const { resources, params = {} } = storeData;
-      const formData: PartialFormData = formatGenerationParams(params);
-      if (!!resources?.length) formData.resources = resources;
-      setValues(formData);
+      const data = formatGenerationData(storeData);
+      setValues(data);
     } else if (responseData && !isFetching) {
-      const runType = !input ? 'default' : input.type === 'modelVersion' ? 'run' : 'remix';
-      const formData =
-        runType === 'default'
-          ? form.getValues()
-          : formatGenerationData({
-              formData: form.getValues(),
-              data: responseData ?? { resources: [], params: {} },
-              versionId: input?.type === 'modelVersion' ? input?.id : undefined,
-              type: runType,
-            });
-      setValues(formData);
+      if (!input) return;
+      const runType = input.type === 'modelVersion' ? 'run' : 'remix';
+      const formData = form.getValues();
+      const resources =
+        runType === 'remix'
+          ? responseData.resources
+          : [...(formData.resources ?? []), ...responseData.resources];
+
+      const data = formatGenerationData({ ...responseData, resources });
+
+      setValues(runType === 'run' ? removeEmpty(data) : data);
     }
   }, [responseData, status, currentUser, storeData, isFetching, input]); // eslint-disable-line
 
+  useEffect(() => {
+    const subscription = form.watch((watchedValues, { name }) => {
+      if (
+        name !== 'baseModel' &&
+        watchedValues.model &&
+        getBaseModelSetType(watchedValues.model.baseModel) !== watchedValues.baseModel
+      ) {
+        form.setValue('baseModel', getBaseModelSetType(watchedValues.model.baseModel));
+      }
+    });
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, []);
+  // #endregion
+
   function setValues(data: PartialFormData) {
-    const limited = handleUserLimits(data);
+    // don't overwrite quantity
+    const { quantity, ...params } = data;
+    const limited = sanitizeTextToImageParams(params, status.limits);
     for (const [key, value] of Object.entries(limited)) {
       form.setValue(key as keyof PartialFormData, value);
     }
   }
 
-  function handleUserLimits(data: PartialFormData): PartialFormData {
-    if (!status) return data;
-    if (data.steps) data.steps = Math.min(data.steps, status.limits.steps);
-    if (data.quantity) data.quantity = Math.min(data.quantity, status.limits.quantity);
-    return data;
-  }
-
   function getDefaultValues(overrides: DeepPartialFormData): PartialFormData {
-    return handleUserLimits({
-      ...defaultValues,
-      nsfw: overrides.nsfw ?? false,
-      quantity: overrides.quantity ?? defaultValues.quantity,
-      tier: currentUser?.tier ?? 'free',
-    });
+    return sanitizeTextToImageParams(
+      {
+        ...defaultValues,
+        nsfw: overrides.nsfw ?? false,
+        quantity: overrides.quantity ?? defaultValues.quantity,
+        tier: currentUser?.tier ?? 'free',
+      },
+      status.limits
+    );
   }
 
   function reset() {

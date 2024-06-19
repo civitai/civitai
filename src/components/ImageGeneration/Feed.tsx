@@ -9,7 +9,7 @@ import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 
 export function Feed() {
   const { classes } = useStyles();
-  const { requests, images, isLoading, fetchNextPage, hasNextPage, isRefetching, isError } =
+  const { requests, steps, isLoading, fetchNextPage, hasNextPage, isRefetching, isError } =
     useGetTextToImageRequestsImages();
 
   if (isError)
@@ -26,7 +26,7 @@ export function Feed() {
       </Center>
     );
 
-  if (!images.length)
+  if (!steps.flatMap((x) => x.images).length)
     return (
       <Center h="100%">
         <Stack spacing="xs" align="center" py="16">
@@ -56,16 +56,23 @@ export function Feed() {
     <ScrollArea scrollRestore={{ key: 'feed' }} className="flex flex-col gap-2 px-3">
       {/* <GeneratedImagesBuzzPrompt /> */}
       <div className={classes.grid}>
-        {images
-          .map((image) => {
-            const request = requests.find((request) =>
-              request.images?.some((x) => x.id === image.id)
-            );
-            if (!request) return null;
+        {steps.map((step) =>
+          step.images
+            .map((image) => {
+              const request = requests.find((request) => request.id === image.workflowId);
+              if (!request) return null;
 
-            return <GeneratedImage key={image.jobId} request={request} image={image} />;
-          })
-          .filter(isDefined)}
+              return (
+                <GeneratedImage
+                  key={`${image.workflowId}_${image.id}`}
+                  request={request}
+                  step={step}
+                  image={image}
+                />
+              );
+            })
+            .filter(isDefined)
+        )}
       </div>
       {hasNextPage && (
         <InViewLoader loadFn={fetchNextPage} loadCondition={!isRefetching}>

@@ -2,12 +2,7 @@ import { CivitaiClient } from '@civitai/client';
 import { resourceDataCache } from '~/server/redis/caches';
 import { REDIS_KEYS, redis } from '~/server/redis/client';
 import { GenerationStatus, generationStatusSchema } from '~/server/schema/generation.schema';
-import {
-  allInjectedIds,
-  minorNegatives,
-  minorPositives,
-  safeNegatives,
-} from '~/shared/constants/generation.constants';
+import { allInjectableResourceIds } from '~/shared/constants/generation.constants';
 import { stringifyAIR } from '~/utils/string-helpers';
 import { env } from '~/env/server.mjs';
 
@@ -49,23 +44,16 @@ export async function getResourceDataWithAirs(versionIds: number[]) {
   }));
 }
 
-export async function getResourceDataWithInjects(modelVersionIds: number[]) {
-  const ids = [...modelVersionIds, ...allInjectedIds];
-  const allResources = await getResourceDataWithAirs(ids);
-
-  function getInjected(injected: Array<{ id: number; triggerWord: string }>) {
-    return allResources
-      .filter((x) => injected.some((y) => y.id === x.id))
-      .map((resource) => ({
-        ...resource,
-        ...injected.find((x) => x.id === resource.id),
-      }));
-  }
+export async function getResourceDataWithInjects<T extends AirResourceData>(
+  modelVersionIds: number[],
+  cb?: (resource: AirResourceData) => T
+) {
+  const ids = [...modelVersionIds, ...allInjectableResourceIds];
+  const results = await getResourceDataWithAirs(ids);
+  const allResources = (cb ? results.map(cb) : results) as T[];
 
   return {
-    resources: allResources.filter((x) => !allInjectedIds.includes(x.id)),
-    safeNegatives: getInjected(safeNegatives),
-    minorNegatives: getInjected(minorNegatives),
-    minorPositives: getInjected(minorPositives),
+    resources: allResources.filter((x) => !allInjectableResourceIds.includes(x.id)),
+    injectable: allResources.filter((x) => allInjectableResourceIds.includes(x.id)),
   };
 }

@@ -28,7 +28,6 @@ import {
   BaseModel,
   baseModelSets,
   BaseModelSetType,
-  draftMode,
   getGenerationConfig,
   Sampler,
 } from '~/server/common/constants';
@@ -344,31 +343,31 @@ const baseModelToOrchestration: Record<BaseModelSetType, string | undefined> = {
 //   return true;
 // }
 
-const getDraftStateFromInputForOrchestrator = ({
-  baseModel,
-  quantity,
-  steps,
-  cfgScale,
-  sampler,
-}: {
-  baseModel?: string;
-  quantity: number;
-  steps: number;
-  cfgScale: number;
-  sampler: string;
-}) => {
-  // Fix other params
-  const isSDXL = baseModel === 'SDXL' || baseModel === 'Pony';
-  const draftModeSettings = draftMode[isSDXL ? 'sdxl' : 'sd1'];
+// const getDraftStateFromInputForOrchestrator = ({
+//   baseModel,
+//   quantity,
+//   steps,
+//   cfgScale,
+//   sampler,
+// }: {
+//   baseModel?: string;
+//   quantity: number;
+//   steps: number;
+//   cfgScale: number;
+//   sampler: string;
+// }) => {
+//   // Fix other params
+//   const isSDXL = baseModel === 'SDXL' || baseModel === 'Pony';
+//   const draftModeSettings = draftMode[isSDXL ? 'sdxl' : 'sd1'];
 
-  if (quantity % 4 !== 0) quantity = Math.ceil(quantity / 4) * 4;
-  steps = draftModeSettings.steps;
-  cfgScale = draftModeSettings.cfgScale;
-  sampler = draftModeSettings.sampler;
-  const resourceId = draftModeSettings.resourceId;
+//   if (quantity % 4 !== 0) quantity = Math.ceil(quantity / 4) * 4;
+//   steps = draftModeSettings.steps;
+//   cfgScale = draftModeSettings.cfgScale;
+//   sampler = draftModeSettings.sampler;
+//   const resourceId = draftModeSettings.resourceId;
 
-  return { quantity, steps, cfgScale, sampler, resourceId };
-};
+//   return { quantity, steps, cfgScale, sampler, resourceId };
+// };
 
 // export const createGenerationRequest = async ({
 //   userId,

@@ -44,19 +44,31 @@ import { generationPanel, generationStore } from '~/store/generation.store';
 import { formatDateMin } from '~/utils/date-helpers';
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
-import { NormalizedTextToImageResponse } from '~/server/services/orchestrator';
+import {
+  NormalizedTextToImageResponse,
+  NormalizedTextToImageStep,
+} from '~/server/services/orchestrator';
 import { WorkflowStatus } from '@civitai/client';
+import { orchestratorPendingStatuses } from '~/shared/constants/generation.constants';
 
-const PENDING_STATUSES: WorkflowStatus[] = ['unassigned', 'preparing', 'scheduled'];
-const FAILED_STATUSES: WorkflowStatus[] = ['failed', 'expired'];
+// const FAILED_STATUSES: WorkflowStatus[] = ['failed', 'expired'];
 // const PENDING_STATUSES = [GenerationRequestStatus.Pending, GenerationRequestStatus.Processing];
-const PENDING_PROCESSING_STATUSES: WorkflowStatus[] = [...PENDING_STATUSES, 'processing'];
+const PENDING_PROCESSING_STATUSES: WorkflowStatus[] = [
+  ...orchestratorPendingStatuses,
+  'processing',
+];
 const LONG_DELAY_TIME = 5; // minutes
 const EXPIRY_TIME = 10; // minutes
 const delayTimeouts = new Map<string, NodeJS.Timeout>();
 
 // export function QueueItem({ data: request, index }: { data: Generation.Request; index: number }) {
-export function QueueItem({ request }: Props) {
+export function QueueItem({
+  request,
+  step,
+}: {
+  request: NormalizedTextToImageResponse;
+  step: NormalizedTextToImageStep;
+}) {
   const { classes, cx } = useStyle();
 
   const generationStatus = useGenerationStatus();
@@ -65,15 +77,9 @@ export function QueueItem({ request }: Props) {
   const { copied, copy } = useClipboard();
 
   const [showDelayedMessage, setShowDelayedMessage] = useState(false);
-  const { status, params } = request;
-  // const { isDraft } = params;
-  // const status = request.status ?? GenerationRequestStatus.Pending;
-  // const isDraft = request.sequential ?? false;
-  // const pendingProcessing =
-  //   PENDING_STATUSES.includes(status) &&
-  //   (isDraft
-  //     ? request.images?.every((x) => !x.status)
-  //     : request.images?.some((x) => !x.status || x.status === 'Started'));
+  const { status } = request;
+  const { params, images, resources, cost } = step;
+
   const pendingProcessing = status && PENDING_PROCESSING_STATUSES.includes(status);
   const processing = status === 'processing';
   // const failed = status && FAILED_STATUSES.includes(status);
@@ -106,18 +112,17 @@ export function QueueItem({ request }: Props) {
   const handleCancel = () => cancelMutation.mutate({ workflowId: request.id });
 
   const handleCopy = () => {
-    copy(request.images?.map((x) => x.jobId).join('\n'));
+    copy(images.map((x) => x.jobId).join('\n'));
   };
 
   const handleGenerate = () => {
-    const { resources, params } = request;
+    const { resources, params } = step;
     generationStore.setData({ resources, params: { ...params, seed: undefined } });
   };
 
-  const { prompt, ...details } = request.params;
-  const images = request.images;
+  const { prompt, ...details } = params;
 
-  const hasUnstableResources = request.resources.some((x) => unstableResources.includes(x.id));
+  const hasUnstableResources = resources.some((x) => unstableResources.includes(x.id));
   const overwriteStatusLabel =
     hasUnstableResources && status === 'failed'
       ? `${status} - Potentially caused by unstable resources`
@@ -127,14 +132,14 @@ export function QueueItem({ request }: Props) {
 
   // TODO - verify this
   const refunded = Math.ceil(
-    !!request.cost
-      ? (request.cost / params.quantity) *
-          (params.quantity - (request.images?.filter((x) => x.status === 'succeeded').length ?? 0))
+    !!cost
+      ? (cost / params.quantity) *
+          (params.quantity - (images.filter((x) => x.status === 'succeeded').length ?? 0))
       : 0
   );
-  const cost = !!request.cost ? request.cost - refunded : 0;
-  const completedCount = request.images.filter((x) => x.status === 'succeeded').length;
-  const processingCount = request.images.filter((x) => x.status === 'processing').length;
+  const actualCost = !!cost ? cost - refunded : 0;
+  const completedCount = images.filter((x) => x.status === 'succeeded').length;
+  const processingCount = images.filter((x) => x.status === 'processing').length;
 
   return (
     <Card withBorder px="xs">
@@ -142,7 +147,7 @@ export function QueueItem({ request }: Props) {
         <div className="flex justify-between">
           <div className="flex items-center gap-1">
             <GenerationStatusBadge
-              status={request.status}
+              status={request.status} // todo - update to use step status
               complete={completedCount}
               processing={processingCount}
               quantity={params.quantity}
@@ -153,10 +158,10 @@ export function QueueItem({ request }: Props) {
             <Text size="xs" color="dimmed">
               {formatDateMin(request.createdAt)}
             </Text>
-            {!!cost &&
+            {!!actualCost &&
               dayjs(request.createdAt).toDate() >=
                 constants.buzz.generationBuzzChargingStartDate && (
-                <CurrencyBadge unitAmount={cost} currency={Currency.BUZZ} size="xs" />
+                <CurrencyBadge unitAmount={actualCost} currency={Currency.BUZZ} size="xs" />
               )}
             <ButtonTooltip {...tooltipProps} label="Copy Job IDs">
               <ActionIcon size="md" p={4} radius={0} onClick={handleCopy}>
@@ -214,12 +219,12 @@ export function QueueItem({ request }: Props) {
             {prompt}
           </Text>
         </ContentClamp>
-        <Collection items={request.resources} limit={3} renderItem={ResourceBadge} grouped />
+        <Collection items={resources} limit={3} renderItem={ResourceBadge} grouped />
         {(!!images?.length || processing) && (
           <div className={classes.grid}>
-            {processing && <GenerationPlaceholder request={request} />}
+            {processing && <GenerationPlaceholder width={params.width} height={params.height} />}
             {images.map((image) => (
-              <GeneratedImage key={image.jobId} image={image} request={request} />
+              <GeneratedImage key={image.id} image={image} request={request} step={step} />
             ))}
           </div>
         )}
@@ -241,11 +246,6 @@ export function QueueItem({ request }: Props) {
     </Card>
   );
 }
-
-type Props = {
-  request: NormalizedTextToImageResponse;
-  // id: number;
-};
 
 const useStyle = createStyles((theme) => ({
   stopped: {

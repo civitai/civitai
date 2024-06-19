@@ -7,10 +7,7 @@ import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { createLogger } from '~/utils/logging';
 import { templateHandler } from '~/server/db/pgDb';
 import { executeRefresh, snippets } from '~/server/metrics/metric-helpers';
-import {
-  allInjectedNegatives,
-  allInjectedPositives,
-} from '~/shared/constants/generation.constants';
+import { allInjectableResourceIds } from '~/shared/constants/generation.constants';
 
 const log = createLogger('metrics:model');
 const BATCH_SIZE = 1000;
@@ -157,7 +154,7 @@ async function getDownloadTasks(ctx: ModelMetricContext) {
   return tasks;
 }
 
-const injectedVersionIds = [...allInjectedNegatives, ...allInjectedPositives].map((x) => x.id);
+const injectedVersionIds = allInjectableResourceIds;
 async function getGenerationTasks(ctx: ModelMetricContext) {
   const generated = await ctx.ch.$query<{ modelVersionId: number }>`
     SELECT DISTINCT modelVersionId

@@ -43,28 +43,28 @@ import { containerQuery } from '~/utils/mantine-css-helpers';
 import {
   NormalizedTextToImageImage,
   NormalizedTextToImageResponse,
+  NormalizedTextToImageStep,
 } from '~/server/services/orchestrator';
-import { useUpdateTextToImageWorkflows } from '~/components/ImageGeneration/utils/generationRequestHooks';
+import { useUpdateTextToImageStepMetadata } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { TextToImageQualityFeedbackModal } from '~/components/Modals/GenerationQualityFeedbackModal';
 
 export function GeneratedImage({
   image,
   request,
+  step,
 }: {
   image: NormalizedTextToImageImage;
   request: NormalizedTextToImageResponse;
+  step: NormalizedTextToImageStep;
 }) {
   const { classes } = useStyles();
   const { ref, inView } = useInView({ rootMargin: '600px' });
-  const selected = generationImageSelect.useIsSelected({
-    workflowId: request.id,
-    imageId: image.id,
-  });
+  const selected = generationImageSelect.useIsSelected(`${request.id}:${step.name}:${image.id}`);
   const toggleSelect = (checked?: boolean) =>
-    generationImageSelect.toggle({ workflowId: request.id, imageId: image.id }, checked);
+    generationImageSelect.toggle(`${request.id}:${step.name}:${image.id}`, checked);
   const { copied, copy } = useClipboard();
 
-  const { hideImages, toggleFeedback, isLoading } = useUpdateTextToImageWorkflows();
+  const { updateImages, isLoading } = useUpdateTextToImageStepMetadata();
 
   const handleImageClick = () => {
     if (!image || !available) return;
@@ -75,14 +75,14 @@ export function GeneratedImage({
   };
 
   const handleGenerate = () => {
-    const { resources, params } = request;
+    const { resources, params } = step;
     generationStore.setData({ resources, params: { ...params, seed: undefined } });
   };
 
   const handleGenerateWithSeed = () => {
     generationStore.setData({
-      ...request,
-      params: { ...request.params, seed: image.seed ?? request.params.seed },
+      ...step,
+      params: { ...step.params, seed: image.seed ?? step.params.seed },
     });
   };
 
@@ -93,7 +93,15 @@ export function GeneratedImage({
         'Are you sure that you want to delete this image? This is a destructive action and cannot be undone.',
       labels: { cancel: 'Cancel', confirm: 'Yes, delete it' },
       confirmProps: { color: 'red' },
-      onConfirm: () => hideImages([{ workflowId: request.id, imageIds: [image.id] }]),
+      onConfirm: () =>
+        updateImages([
+          {
+            workflowId: request.id,
+            stepName: step.name,
+            imageIds: [image.id],
+            hidden: true,
+          },
+        ]),
       zIndex: constants.imageGeneration.drawerZIndex + 2,
       centered: true,
     });
@@ -101,7 +109,7 @@ export function GeneratedImage({
 
   const imageRef = useRef<HTMLImageElement>(null);
 
-  const feedback = request.metadata?.images?.[image.id]?.feedback;
+  const feedback = step.metadata?.images?.[image.id]?.feedback;
   const badFeedbackSelected = feedback === 'disliked';
   const goodFeedbackSelected = feedback === 'liked';
   const available = image.status === 'succeeded';
@@ -113,17 +121,25 @@ export function GeneratedImage({
         props: {
           workflowId: request.id,
           imageId: image.id,
-          comments: request.metadata?.images?.[image.id]?.comments,
+          comments: step.metadata?.images?.[image.id]?.comments,
+          stepName: step.name,
         },
       });
     }
-    toggleFeedback({ workflowId: request.id, imageId: image.id, feedback: newFeedback });
+    updateImages([
+      {
+        workflowId: request.id,
+        stepName: step.name,
+        imageIds: [image.id],
+        feedback: newFeedback,
+      },
+    ]);
   }
 
   if (!available) return <></>;
 
   return (
-    <AspectRatio ratio={request.params.width / request.params.height} ref={ref}>
+    <AspectRatio ratio={step.params.width / step.params.height} ref={ref}>
       {inView && (
         <>
           <Card
@@ -257,7 +273,7 @@ export function GeneratedImage({
                   </ActionIcon>
                 </Group>
                 <ImageMetaPopover
-                  meta={request.params}
+                  meta={step.params}
                   zIndex={constants.imageGeneration.drawerZIndex + 1}
                   hideSoftware
                 >
@@ -280,11 +296,11 @@ export function GeneratedImage({
   );
 }
 
-export function GenerationPlaceholder({ request }: { request: NormalizedTextToImageResponse }) {
+export function GenerationPlaceholder({ width, height }: { width: number; height: number }) {
   const { classes } = useStyles();
 
   return (
-    <AspectRatio ratio={request.params.width / request.params.height}>
+    <AspectRatio ratio={width / height}>
       <Card p={0} className={classes.imageWrapper}>
         <Box className={classes.innerGlow} />
         <Center className={classes.centeredAbsolute} p="xs">

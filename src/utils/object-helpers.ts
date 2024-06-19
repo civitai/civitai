@@ -1,6 +1,6 @@
 import { isArray, isNil, omitBy, isNull, isObject } from 'lodash-es';
 
-export function removeEmpty<T extends Record<string, unknown>>(obj: T): T {
+export function removeEmpty<T extends Record<string, unknown>>(obj: T): MakeUndefinedOptional<T> {
   return omitBy<T>(obj, (value) => isNil(value) || (isArray(value) && !value.length)) as T;
 }
 

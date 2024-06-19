@@ -3,7 +3,7 @@ import { workflowQuerySchema, workflowIdSchema } from './../schema/orchestrator/
 import {
   textToImageSchema,
   textToImageWhatIfSchema,
-  textToImageWorkflowUpdateSchema,
+  textToImageStepUpdateSchema,
 } from '~/server/schema/orchestrator/textToImage.schema';
 import {
   createTextToImage,
@@ -21,6 +21,8 @@ import { getEncryptedCookie, setEncryptedCookie } from '~/server/utils/cookie-en
 import { getTemporaryUserApiKey } from '~/server/services/api-key.service';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
+import { updateWorkflowStepSchema } from '~/server/services/orchestrator/orchestrator.schema';
+import { updateWorkflowSteps } from '~/server/services/orchestrator/workflowSteps';
 
 const orchestratorMiddleware = middleware(async ({ ctx, next }) => {
   if (!ctx.user) throw throwAuthorizationError();
@@ -56,6 +58,14 @@ export const orchestratorRouter = router({
     .mutation(({ ctx, input }) => cancelWorkflow({ ...input, token: ctx.token })),
   // #endregion
 
+  // #region [steps]
+  steps: router({
+    update: orchestratorProcedure
+      .input(z.object({ data: updateWorkflowStepSchema.array() }))
+      .mutation(({ ctx, input }) => updateWorkflowSteps({ input: input.data, token: ctx.token })),
+  }),
+  // #endregion
+
   // #region [textToImage]
   getTextToImageRequests: orchestratorProcedure
     .input(workflowQuerySchema)
@@ -79,8 +89,8 @@ export const orchestratorRouter = router({
         throw e;
       }
     }),
-  updateManyTextToImageWorkflows: orchestratorProcedure
-    .input(z.object({ workflows: textToImageWorkflowUpdateSchema.array() }))
+  updateManyTextToImageWorkflows: orchestratorProcedure // tODO - remove
+    .input(z.object({ workflows: textToImageStepUpdateSchema.array() }))
     .mutation(({ ctx, input }) => updateTextToImageWorkflow({ ...input, token: ctx.token })),
   // #endregion
 

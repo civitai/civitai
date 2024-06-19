@@ -5,7 +5,6 @@ import { Sampler, getGenerationConfig } from '~/server/common/constants';
 import { extModeration } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
 import {
-  AirResourceData,
   getGenerationStatus,
   getResourceDataWithInjects,
 } from '~/server/services/orchestrator/common';
@@ -14,6 +13,7 @@ import { includesMinor, includesNsfw, includesPoi } from '~/utils/metadata/audit
 import { parseAIR } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import {
+  TextToImageInput,
   TextToImageStepTemplate,
   WorkflowStatus,
   WorkflowTemplate,
@@ -21,11 +21,15 @@ import {
   type Scheduler,
 } from '@civitai/client';
 import {
+  InjectableResource,
+  WORKFLOW_TAGS,
+  draftInjectableResources,
   formatGenerationResources,
   getBaseModelSetType,
-  getDraftModeSettings,
+  getInjectablResources,
   getIsSdxl,
   samplersToSchedulers,
+  sanitizeTextToImageParams,
 } from '~/shared/constants/generation.constants';
 import { TextToImageResponse } from '~/server/services/orchestrator/types';
 import { SignalMessages } from '~/server/common/enums';
@@ -36,8 +40,8 @@ import {
   updateManyWorkflows,
 } from '~/server/services/orchestrator/workflows';
 import {
-  TextToImageWorkflowMetadata,
-  TextToImageWorkflowUpdateSchema,
+  TextToImageStepParamsMetadata,
+  TextToImageStepUpdateSchema,
   textToImageSchema,
   textToImageWhatIfSchema,
 } from '~/server/schema/orchestrator/textToImage.schema';
@@ -52,57 +56,29 @@ export async function textToImage({
   ...input
 }: z.input<typeof textToImageSchema> & { user: SessionUser; whatIf?: boolean; token: string }) {
   const parsedInput = textToImageSchema.parse(input);
-  const { params } = parsedInput;
+  const { tags, metadata: workflowMetadata } = parsedInput;
 
   const status = await getGenerationStatus();
   if (!status.available && !user.isModerator)
     throw throwBadRequestError('Generation is currently disabled');
 
   const limits = status.limits[user.tier ?? 'free'];
-  if (params.quantity > limits.quantity) params.quantity = limits.quantity;
-  if (params.steps > limits.steps) params.steps = limits.steps;
+  const params = sanitizeTextToImageParams(parsedInput.params, limits);
+
   if (parsedInput.resources.length > limits.resources)
     throw throwBadRequestError('You have exceed the number of allowed resources.');
 
-  // handle draft mode
-  const draftModeSettings = getDraftModeSettings(params.baseModel);
-  if (params.draft) {
-    // Fix quantity
-    if (params.quantity % 4 !== 0) params.quantity = Math.ceil(params.quantity / 4) * 4;
-    // Fix other params
-    params.steps = draftModeSettings.steps;
-    params.cfgScale = draftModeSettings.cfgScale;
-    params.sampler = draftModeSettings.sampler;
-    // Add speed up resources
-    parsedInput.resources.push({
-      strength: 1,
-      id: draftModeSettings.resourceId,
-      // baseModel: draftModeSettings.baseModel,
-    });
-  }
-
   const resourceDataWithInjects = await getResourceDataWithInjects(
-    parsedInput.resources.map((x) => x.id)
-  );
-
-  const {
-    resources: resourceData,
-    safeNegatives,
-    minorNegatives,
-    minorPositives,
-  } = resourceDataWithInjects;
-
-  type ResourceData = ReturnType<typeof airify>[number];
-  // TODO - rename
-  function airify(resources: AirResourceData[]) {
-    return resources.map((resource) => ({
+    parsedInput.resources.map((x) => x.id),
+    (resource) => ({
       ...resource,
       ...parsedInput.resources.find((x) => x.id === resource.id),
       triggerWord: resource.trainedWords?.[0],
-    }));
-  }
+    })
+  );
 
-  const resources = airify(resourceData);
+  type ResourceData = (typeof resources)[number];
+  const { resources, injectable: allInjectable } = resourceDataWithInjects;
 
   // #region [error handling]
   // handle missing checkpoint
@@ -115,15 +91,15 @@ export async function textToImage({
     );
 
   // handle missing draft resource
-  if (params.draft && !resources.map((x) => x.id).includes(draftModeSettings.resourceId))
+  const allInjectableIds = allInjectable.map((x) => x.id);
+  if (params.draft && !draftInjectableResources.some((x) => allInjectableIds.includes(x.id)))
     throw throwBadRequestError(`Draft mode is currently disabled for ${params.baseModel} models`);
 
-  // TODO - ensure that draft mode models are included in the `GenerationCoverage` view
   // handle missing coverage
-  if (!resources.every((x) => !!x.covered || x.id === draftModeSettings.resourceId))
+  if (!resources.every((x) => !!x.covered))
     throw throwBadRequestError(
       `Some of your resources are not available for generation: ${resources
-        .filter((x) => !(!!x.covered || x.id === draftModeSettings.resourceId))
+        .filter((x) => !x.covered)
         .map((x) => x.air)
         .join(', ')}`
     );
@@ -149,7 +125,7 @@ export async function textToImage({
     additionalNetworks[resource.air] = {
       type: resource.model.type,
       strength: resource.strength,
-      triggerWord: resource.triggerWord,
+      triggerWord: resource.trainedWords?.[0],
     };
   }
 
@@ -157,56 +133,73 @@ export async function textToImage({
     addAdditionalNetwork(resource);
   }
 
-  // Set nsfw to true if the prompt contains nsfw words
-  const isPromptNsfw = includesNsfw(params.prompt);
-  params.nsfw ??= isPromptNsfw !== false;
-
-  const hasMinorResource = resourceData.some((resource) => resource.model.minor);
-  if (hasMinorResource) {
-    params.nsfw = false;
-  }
+  const hasMinorResource = resources.some((resource) => resource.model.minor);
+  if (hasMinorResource) params.nsfw = false;
 
   // Disable nsfw if the prompt contains poi/minor words
   const hasPoi = includesPoi(params.prompt) || resources.some((x) => x.model.poi);
   if (hasPoi || includesMinor(params.prompt)) params.nsfw = false;
 
-  const negativePrompts = [params.negativePrompt ?? ''];
-  if (!params.nsfw && status.sfwEmbed) {
-    for (const resource of airify(safeNegatives)) {
-      addAdditionalNetwork(resource);
-      if (resource.triggerWord) negativePrompts.unshift(resource.triggerWord);
-    }
-  }
+  // Set nsfw to true if the prompt contains nsfw words
+  const isPromptNsfw = includesNsfw(params.prompt);
+  params.nsfw ??= isPromptNsfw !== false;
 
-  // Inject fallback minor safety nets
-  const positivePrompts = [params.prompt];
+  const stepMetadata: TextToImageStepParamsMetadata = {};
+  if (params.nsfw) stepMetadata.nsfw = true;
+  if (params.draft) stepMetadata.draft = true;
+
+  const injectableResources = getInjectablResources(params.baseModel);
+
+  const injectable: InjectableResource[] = [];
+  if (params.draft && injectableResources.draft) {
+    injectable.push(injectableResources.draft);
+  }
   if (isPromptNsfw && status.minorFallback) {
-    for (const resource of airify(minorPositives)) {
-      addAdditionalNetwork(resource);
-      if (resource.triggerWord) positivePrompts.unshift(resource.triggerWord);
-    }
-    for (const resource of airify(minorNegatives)) {
-      addAdditionalNetwork(resource);
-      if (resource.triggerWord) negativePrompts.unshift(resource.triggerWord);
-    }
+    injectable.push(injectableResources.safe_pos);
+    injectable.push(injectableResources.safe_neg);
+  }
+  if (!params.nsfw && status.sfwEmbed) {
+    injectable.push(injectableResources.civit_nsfw);
   }
 
-  // handle SDXL ClipSkip
-  // I was made aware that SDXL only works with clipSkip 2
-  // if that's not the case anymore, we can rollback to just setting
-  // this for Pony resources -Manuel
-  if (getIsSdxl(params.baseModel)) params.clipSkip = 2;
+  const positivePrompts = [params.prompt];
+  const negativePrompts = [params.negativePrompt];
+  for (const item of injectable) {
+    const resource = allInjectable.find((x) => x.id === item.id);
+    if (!resource) continue;
+
+    addAdditionalNetwork(resource);
+
+    const triggerWord = resource.trainedWords?.[0];
+    if (triggerWord) {
+      if (item.triggerType === 'negative') negativePrompts.unshift(triggerWord);
+      if (item.triggerType === 'positive') positivePrompts.unshift(triggerWord);
+    }
+
+    if (item.sanitize) {
+      const sanitized = item.sanitize(params);
+      for (const key in sanitized) {
+        const _key = key as keyof TextToImageStepParamsMetadata;
+        // only assign to step metadata if no value has already been assigned
+        if (!stepMetadata[_key]) Object.assign(stepMetadata, { [_key]: params[_key] });
+        Object.assign(params, { [_key]: sanitized[_key] });
+      }
+    }
+  }
 
   // adjust quantity/batchSize for draft mode
   let quantity = params.quantity;
   let batchSize = 1;
   if (params.draft) {
-    quantity = Math.ceil(params.quantity / 4);
+    // quantity = Math.ceil(params.quantity / 4) * 4;
+    quantity = Math.ceil(params.quantity / 4); // TODO - test
     batchSize = 4;
   }
 
+  const metadata = Object.keys(stepMetadata).length ? { params: stepMetadata } : undefined;
   const step: TextToImageStepTemplate = {
     $type: 'textToImage',
+    metadata,
     input: {
       model: checkpoint.air,
       quantity,
@@ -226,7 +219,9 @@ export async function textToImage({
   };
 
   const requestBody: WorkflowTemplate = {
+    tags: [WORKFLOW_TAGS.TEXT_TO_IMAGE, ...tags],
     steps: [step],
+    metadata: workflowMetadata,
     callbacks: !whatIf
       ? [
           {
@@ -291,7 +286,6 @@ export async function whatIfTextToImage({
       }
     }
   }
-  // console.dir(workflow, { depth: null });
 
   return {
     cost: Math.ceil(cost),
@@ -302,11 +296,11 @@ export async function whatIfTextToImage({
 }
 
 export async function getTextToImageRequests(
-  props: Omit<Parameters<typeof queryWorkflows>[0], 'jobType'> & { token: string }
+  props: Parameters<typeof queryWorkflows>[0] & { token: string }
 ) {
   const { nextCursor, items } = await queryWorkflows({
     ...props,
-    jobType: ['textToImage'],
+    tags: [WORKFLOW_TAGS.TEXT_TO_IMAGE, ...(props.tags ?? [])],
   });
 
   return {
@@ -319,12 +313,12 @@ export async function updateTextToImageWorkflow({
   workflows,
   token,
 }: {
-  workflows: TextToImageWorkflowUpdateSchema[];
+  workflows: TextToImageStepUpdateSchema[];
   token: string;
 }) {
   const { toDelete, toUpdate } = workflows.reduce<{
     toDelete: string[];
-    toUpdate: Omit<TextToImageWorkflowUpdateSchema, 'imageCount'>[];
+    toUpdate: Omit<TextToImageStepUpdateSchema, 'imageCount'>[];
   }>(
     (acc, { workflowId, metadata, imageCount }) => {
       if (Object.values(metadata.images ?? {}).filter((x) => x.hidden).length === imageCount)
@@ -343,109 +337,110 @@ export async function formatTextToImageResponses(
   workflows: TextToImageResponse[],
   resources?: AsyncReturnType<typeof getResourceDataWithInjects>
 ) {
-  const {
-    resources: resourcesData,
-    safeNegatives,
-    minorNegatives,
-    minorPositives,
-  } = resources ?? (await getResourceDataWithInjects(getAirs(workflows).map((x) => x.version)));
+  const textToImageAirs = getTextToImageAirs(
+    workflows.flatMap((x) => x.steps.flatMap((s) => s.input))
+  );
+  const { resources: resourcesData, injectable: allInjectable } =
+    resources ?? (await getResourceDataWithInjects(textToImageAirs.map((x) => x.version)));
 
-  return workflows
-    .map((workflow) => {
-      const steps = workflow.steps;
-      if (!steps) throw new Error(`no steps in workflow: ${workflow.id}`);
+  // TODO - abstract this in a way that it can be more reusable
+  return workflows.map((workflow) => {
+    const steps = workflow.steps;
+    if (!steps) throw new Error(`no steps in workflow: ${workflow.id}`);
 
-      const airs = getAirs([workflow]);
+    const formattedSteps = steps.map((step) => {
+      const airs = getTextToImageAirs([step.input]);
       const versionIds = airs.map((x) => x.version);
-      const requestResources = resourcesData.filter((x) => versionIds.includes(x.id));
-      const checkpoint = requestResources.find((x) => x.model.type === 'Checkpoint');
+      const stepResources = resourcesData.filter((x) => versionIds.includes(x.id));
+
+      const resources = formatGenerationResources(stepResources);
+
+      const checkpoint = stepResources.find((x) => x.model.type === 'Checkpoint');
       const baseModel = getBaseModelSetType(checkpoint?.baseModel);
+      const injectable = getInjectablResources(baseModel);
 
-      const resources = formatGenerationResources(requestResources);
+      const { input, output, jobs, metadata } = step;
+      // const input = { ...step.input, ...step.metadata?.params };
+      const images =
+        output?.images
+          ?.map((image, i) => {
+            const seed = step.input.seed;
+            const job = jobs?.find((x) => x.id === image.jobId);
+            if (!job) return null;
+            return {
+              workflowId: workflow.id,
+              jobId: job.id,
+              id: image.id,
+              status: job.status ?? ('unassignend' as WorkflowStatus),
+              seed: seed ? seed + i : undefined,
+              completed: job.completedAt ? new Date(job.completedAt) : undefined,
+              url: image.url,
+            };
+          })
+          .filter(isDefined) ?? [];
 
-      return steps.map((step) => {
-        const { input, output, jobs } = step;
-        const images =
-          output?.images
-            ?.map((image, i) => {
-              const seed = step.input.seed;
-              const job = jobs?.find((x) => x.id === image.jobId);
-              if (!job) return null;
-              return {
-                workflowId: workflow.id,
-                jobId: job.id,
-                id: image.id,
-                status: job.status ?? ('unassignend' as WorkflowStatus),
-                seed: seed ? seed + i : undefined,
-                completed: job.completedAt ? new Date(job.completedAt) : undefined,
-                url: image.url,
-              };
-            })
-            .filter(isDefined) ?? [];
-
-        let negativePrompt = input.negativePrompt ?? '';
-        for (const { triggerWord } of [...safeNegatives, ...minorNegatives]) {
-          negativePrompt = negativePrompt.replace(`${triggerWord}, `, '');
+      let prompt = input.prompt ?? '';
+      let negativePrompt = input.negativePrompt ?? '';
+      for (const item of Object.values(injectable).filter(isDefined)) {
+        const resource = allInjectable.find((x) => x.id === item.id);
+        if (!resource) continue;
+        const triggerWord = resource.trainedWords?.[0];
+        if (triggerWord) {
+          if (item?.triggerType === 'negative')
+            negativePrompt = negativePrompt.replace(`${triggerWord}, `, '');
+          if (item?.triggerType === 'positive') prompt = prompt.replace(`${triggerWord}, `, '');
         }
+      }
 
-        let prompt = input.prompt ?? '';
-        for (const { triggerWord } of [...minorPositives]) {
-          prompt = prompt.replace(`${triggerWord}, `, '');
-        }
+      let quantity = input.quantity ?? 1;
+      if (metadata?.params?.draft) {
+        quantity *= 4;
+      }
 
-        const draftModeSettings = baseModel ? getDraftModeSettings(baseModel) : undefined;
-        const isDraft = draftModeSettings
-          ? !!resources.find((x) => x.id === draftModeSettings.resourceId)
-          : false;
-
-        let quantity = input.quantity ?? 1;
-        if (isDraft) {
-          quantity *= 4;
-        }
-
-        return removeNulls({
-          id: workflow.id as string,
-          status: workflow.status ?? ('unassignend' as WorkflowStatus),
-          createdAt: workflow.createdAt ? new Date(workflow.createdAt) : new Date(),
-          params: {
-            baseModel,
-            prompt,
-            negativePrompt,
-            quantity,
-            controlNets: input.controlNets,
-            scheduler: input.scheduler,
-            steps: input.steps,
-            cfgScale: input.cfgScale,
-            width: input.width,
-            height: input.height,
-            seed: input.seed,
-            clipSkip: input.clipSkip,
-            draft: isDraft,
-          },
-          resources,
-          images,
-          cost: Math.ceil(
-            workflow.steps
-              ?.flatMap((x) => x.jobs ?? [])
-              ?.reduce((acc, job) => acc + (job.cost ?? 0), 0)
-          ),
-          metadata: workflow.metadata as TextToImageWorkflowMetadata | undefined,
-        });
+      return removeNulls({
+        $type: 'textToImage',
+        name: step.name,
+        params: {
+          baseModel,
+          prompt,
+          negativePrompt,
+          quantity,
+          controlNets: input.controlNets,
+          scheduler: input.scheduler,
+          steps: input.steps,
+          cfgScale: input.cfgScale,
+          width: input.width,
+          height: input.height,
+          seed: input.seed,
+          clipSkip: input.clipSkip,
+          // draft: input.draft,
+          // nsfw: input.nsfw,
+        },
+        resources,
+        images,
+        cost: step.jobs?.reduce((acc, job) => acc + (job.cost ?? 0), 0),
+        status: step.status,
+        metadata: metadata,
       });
-    })
-    .flat();
+    });
+
+    return {
+      id: workflow.id as string,
+      status: workflow.status ?? ('unassignend' as WorkflowStatus),
+      createdAt: workflow.createdAt ? new Date(workflow.createdAt) : new Date(),
+      totalCost: Math.ceil(
+        workflow.steps?.flatMap((x) => x.jobs ?? [])?.reduce((acc, job) => acc + (job.cost ?? 0), 0)
+      ),
+      steps: formattedSteps,
+    };
+  });
 }
 
-// TODO - do I need to support keys not in an air format? probably yes
-// force return air from orchestrator?
-function getAirs(workflows: TextToImageResponse[]) {
+function getTextToImageAirs(inputs: TextToImageInput[]) {
   return Object.keys(
-    workflows.reduce<Record<string, boolean>>((acc, workflow) => {
-      for (const step of workflow.steps.flat() ?? []) {
-        const { input } = step;
-        acc[input.model] = true;
-        for (const key in input.additionalNetworks ?? {}) acc[key] = true;
-      }
+    inputs.reduce<Record<string, boolean>>((acc, input) => {
+      acc[input.model] = true;
+      for (const key in input.additionalNetworks ?? {}) acc[key] = true;
       return acc;
     }, {})
   ).map((air) => parseAIR(air));

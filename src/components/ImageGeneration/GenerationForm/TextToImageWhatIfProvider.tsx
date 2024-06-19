@@ -46,7 +46,7 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
     setTimeout(() => setEnabled(true), 150);
   }, []);
 
-  const [debounced] = useDebouncedValue(query, 50);
+  const [debounced] = useDebouncedValue(query, 100);
 
   const result = trpc.orchestrator.textToImageWhatIf.useQuery(
     debounced.success ? debounced.data : ({} as any),

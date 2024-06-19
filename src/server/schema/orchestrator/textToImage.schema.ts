@@ -3,6 +3,7 @@ import { baseModelSetTypes, generation } from '~/server/common/constants';
 import { workflowUpdateSchema } from '~/server/schema/orchestrator/workflows.schema';
 import { stripChecksAndEffects } from '~/utils/zod-helpers';
 
+// #region [step input]
 export type TextToImageParams = z.infer<typeof textToImageParamsSchema>;
 export const textToImageParamsSchema = z.object({
   prompt: z
@@ -34,28 +35,49 @@ export const textToImageResourceSchema = z.object({
 export const textToImageWhatIfSchema = stripChecksAndEffects(textToImageParamsSchema).extend({
   resources: z.number().array().min(1),
 });
+// #endregion
 
-export const textToImageSchema = z.object({
-  params: textToImageParamsSchema,
-  resources: textToImageResourceSchema.array().min(1, 'You must select at least one resource'),
+// #region [step metadata]
+export type TextToImageStepParamsMetadata = z.infer<typeof textToImageStepParamsMetadataSchema>;
+const textToImageStepParamsMetadataSchema = z.object({
+  nsfw: z.boolean().optional(),
+  draft: z.boolean().optional(),
+  steps: z.number().optional(),
+  cfgScale: z.number().optional(),
+  sampler: z.string().optional(),
 });
 
-export type TextToImageWorkflowImageMetadataSchema = z.infer<
-  typeof textToImageWorkflowImageMetadataSchema
->;
-export const textToImageWorkflowImageMetadataSchema = z.object({
+export type TextToImageStepRemixMetadata = z.infer<typeof textToImageStepRemixMetadataSchema>;
+const textToImageStepRemixMetadataSchema = z.object({
+  versionId: z.number().optional(),
+  imageId: z.number().optional(),
+});
+
+export type TextToImageStepImageMetadata = z.infer<typeof textToImageStepImageMetadataSchema>;
+const textToImageStepImageMetadataSchema = z.object({
   hidden: z.boolean().optional(),
   feedback: z.enum(['liked', 'disliked']).optional(),
   comments: z.string().optional(),
 });
 
-export type TextToImageWorkflowMetadata = z.infer<typeof textToImageWorkflowMetadataSchema>;
-export const textToImageWorkflowMetadataSchema = z.object({
-  images: z.record(z.string(), textToImageWorkflowImageMetadataSchema).optional(),
+export type TextToImageStepMetadata = z.infer<typeof textToImageStepMetadataSchema>;
+export const textToImageStepMetadataSchema = z.object({
+  $type: z.literal('textToImage'),
+  params: textToImageStepParamsMetadataSchema.optional(),
+  remix: textToImageStepRemixMetadataSchema.optional(),
+  images: z.record(z.string(), textToImageStepImageMetadataSchema).optional(),
+});
+// #endregion
+
+export type TextToImageStepUpdateSchema = z.infer<typeof textToImageStepUpdateSchema>;
+export const textToImageStepUpdateSchema = workflowUpdateSchema.extend({
+  imageCount: z.number().default(0),
+  metadata: textToImageStepMetadataSchema,
 });
 
-export type TextToImageWorkflowUpdateSchema = z.infer<typeof textToImageWorkflowUpdateSchema>;
-export const textToImageWorkflowUpdateSchema = workflowUpdateSchema.extend({
-  imageCount: z.number().default(0),
-  metadata: textToImageWorkflowMetadataSchema,
+export const textToImageSchema = z.object({
+  params: textToImageParamsSchema,
+  resources: textToImageResourceSchema.array().min(1, 'You must select at least one resource'),
+  tags: z.string().array().default([]),
+  metadata: textToImageStepMetadataSchema.optional(),
 });

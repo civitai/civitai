@@ -10,13 +10,13 @@ export type GenerationPanelView = 'queue' | 'generate' | 'feed';
 type GenerationState = {
   opened: boolean;
   view: GenerationPanelView;
-  data?: Partial<GenerationData>;
+  data?: GenerationData;
   input?: GetGenerationDataInput;
   // used to populate form with model/image generation data
   open: (input?: GetGenerationDataInput) => Promise<void>;
   close: () => void;
   setView: (view: GenerationPanelView) => void;
-  setData: (args: Partial<GenerationData>) => void;
+  setData: (args: GenerationData) => void;
 };
 
 export const useGenerationStore = create<GenerationState>()(

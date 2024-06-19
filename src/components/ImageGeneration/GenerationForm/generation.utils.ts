@@ -6,7 +6,6 @@ import {
   generationConfig,
   getGenerationConfig,
   samplerOffsets,
-  draftMode,
 } from '~/server/common/constants';
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';

@@ -1,7 +1,7 @@
 import OneKeyMap from '@essentials/one-key-map';
 import trieMemoize from 'trie-memoize';
 import { Alert, Center, Loader, Stack, Text } from '@mantine/core';
-import { IconCalendar, IconClock, IconInbox } from '@tabler/icons-react';
+import { IconCalendar, IconInbox } from '@tabler/icons-react';
 
 import { QueueItem } from '~/components/ImageGeneration/QueueItem';
 import { useGetTextToImageRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
@@ -63,11 +63,13 @@ export function Queue() {
             More news soon
           </Text>
         </Text>
-        {data.map((request) => (
-          <div key={request.id} id={request.id.toString()}>
-            {createRenderElement(QueueItem, request.id, request)}
-          </div>
-        ))}
+        {data.map((request) =>
+          request.steps.map((step) => (
+            <div key={request.id} id={request.id.toString()}>
+              {createRenderElement(QueueItem, request.id, request, step)}
+            </div>
+          ))
+        )}
         {hasNextPage && (
           <InViewLoader loadFn={fetchNextPage} loadCondition={!isRefetching}>
             <Center sx={{ height: 60 }}>
@@ -82,6 +84,8 @@ export function Queue() {
 
 // supposedly ~5.5x faster than createElement without the memo
 const createRenderElement = trieMemoize(
-  [OneKeyMap, {}, WeakMap],
-  (RenderComponent, index, request) => <RenderComponent index={index} request={request} />
+  [OneKeyMap, {}, WeakMap, WeakMap],
+  (RenderComponent, index, request, step) => (
+    <RenderComponent index={index} request={request} step={step} />
+  )
 );

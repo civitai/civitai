@@ -18,8 +18,7 @@ import {
   useMantineTheme,
   LoadingOverlay,
 } from '@mantine/core';
-import { useWatch } from 'react-hook-form';
-import { getHotkeyHandler, useDebouncedValue, useLocalStorage } from '@mantine/hooks';
+import { getHotkeyHandler, useLocalStorage } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
 import { ModelType } from '@prisma/client';
 import { IconPlus } from '@tabler/icons-react';
@@ -59,15 +58,9 @@ import {
 } from '~/libs/form';
 import { Watch } from '~/libs/form/components/Watch';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import {
-  generation,
-  generationConfig,
-  getGenerationConfig,
-  samplerOffsets,
-} from '~/server/common/constants';
+import { generation, getGenerationConfig, samplerOffsets } from '~/server/common/constants';
 import { imageGenerationSchema } from '~/server/schema/image.schema';
-import { textToImageWhatIfSchema } from '~/server/schema/orchestrator/textToImage.schema';
-import { getBaseModelSetType, getIsSdxl } from '~/shared/constants/generation.constants';
+import { getIsSdxl } from '~/shared/constants/generation.constants';
 import { generationPanel } from '~/store/generation.store';
 import { parsePromptMetadata } from '~/utils/metadata';
 import { showErrorNotification } from '~/utils/notifications';
@@ -81,7 +74,7 @@ import {
   useGenerationForm,
   blockedRequest,
 } from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { create } from 'zustand';
 import {
@@ -113,21 +106,6 @@ export function GenerationFormContent() {
   const status = useGenerationStatus();
 
   const form = useGenerationForm();
-
-  useEffect(() => {
-    const subscription = form.watch((watchedValues, { name }) => {
-      if (
-        name !== 'baseModel' &&
-        watchedValues.model &&
-        getBaseModelSetType(watchedValues.model.baseModel) !== watchedValues.baseModel
-      ) {
-        form.setValue('baseModel', getBaseModelSetType(watchedValues.model.baseModel));
-      }
-    });
-    return () => {
-      subscription.unsubscribe();
-    };
-  }, []);
 
   const { unstableResources: allUnstableResources } = useUnstableResources();
   const [opened, setOpened] = useState(false);
@@ -206,7 +184,8 @@ export function GenerationFormContent() {
     async function performTransaction() {
       if (!params.baseModel) throw new Error('could not find base model');
       try {
-        await mutateAsync({ resources, params });
+        // TODO - get remix info here
+        await mutateAsync({ resources, params, metadata: { $type: 'textToImage', remix: {} } });
       } catch (e) {
         const error = e as Error;
         if (error.message.startsWith('Your prompt was flagged')) {
