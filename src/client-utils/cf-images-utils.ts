@@ -38,7 +38,7 @@ export function getEdgeUrl(
     transcode,
     width,
     height,
-    original = true,
+    original,
     fit,
     blur,
     quality,

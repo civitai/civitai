@@ -128,7 +128,13 @@ export const moveAsset = async ({
     throw throwBadRequestError('Failed to move asset. Please try selecting the file again.');
   }
 
-  const result = response.data?.jobs?.[0]?.result;
+  const thisJob = response.data?.jobs?.[0];
+
+  if (!thisJob || thisJob.lastEvent?.type !== 'Succeeded') {
+    throw throwBadRequestError('Failed to move asset. Please try selecting the file again.');
+  }
+
+  const result = thisJob.result;
   if (!result || !result.found) {
     throw throwBadRequestError('Failed to move asset. Please try selecting the file again.');
   }
