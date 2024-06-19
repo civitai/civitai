@@ -59,6 +59,10 @@ export const rewardsAbusePrevention = createJob(
       });
     });
     await limitConcurrency(tasks, 3);
+
+    return {
+      usersDisabled: usersToDisable.length,
+    };
   }
 );
 
