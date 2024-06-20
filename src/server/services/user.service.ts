@@ -109,7 +109,7 @@ export const getUserCreator = async ({
           followerCountAllTime: true,
           reactionCountAllTime: true,
           uploadCountAllTime: true,
-          generationCountAllTime: true,
+          // generationCountAllTime: true,
         },
       },
       rank: {
