@@ -18,6 +18,7 @@ import { UpdateWorkflowStepParams } from '~/server/services/orchestrator/orchest
 import { getTextToImageRequests } from '~/server/services/orchestrator/textToImage';
 import { createDebouncer } from '~/utils/debouncer';
 import { showErrorNotification } from '~/utils/notifications';
+import { removeEmpty } from '~/utils/object-helpers';
 import { queryClient, trpc } from '~/utils/trpc';
 
 type InfiniteTextToImageRequests = InfiniteData<AsyncReturnType<typeof getTextToImageRequests>>;
@@ -157,39 +158,40 @@ export function useUpdateTextToImageStepMetadata(options?: { onSuccess?: () => v
     args: Array<{
       workflowId: string;
       stepName: string;
-      imageIds: string[];
+      imageId: string;
       hidden?: boolean;
       feedback?: 'liked' | 'disliked';
       comments?: string;
+      postId?: number;
     }>
   ) {
-    const data = args.map(
-      ({
-        workflowId,
-        stepName,
-        imageIds,
-        hidden,
-        feedback,
-        comments,
-      }): UpdateWorkflowStepParams => {
-        const images: Record<string, TextToImageStepImageMetadata> = {};
-        for (const imageId of imageIds) {
-          images[imageId] = {};
-          if (hidden) images[imageId].hidden = true;
-          if (feedback) images[imageId].feedback = feedback;
-          if (comments) images[imageId].comments = comments;
-        }
-
-        return { $type: 'textToImage', workflowId, stepName, metadata: { images } };
-      }
+    const data = args.reduce<Extract<UpdateWorkflowStepParams, { $type: 'textToImage' }>[]>(
+      (acc, { workflowId, stepName, imageId, ...metadata }) => {
+        const index = acc.findIndex((x) => x.workflowId === workflowId && x.stepName === stepName);
+        const toUpdate: Extract<UpdateWorkflowStepParams, { $type: 'textToImage' }> =
+          index > -1
+            ? acc[index]
+            : {
+                $type: 'textToImage',
+                workflowId,
+                stepName,
+                metadata: {},
+              };
+        const images = toUpdate.metadata.images ?? {};
+        images[imageId] = { ...images[imageId], ...removeEmpty(metadata) };
+        toUpdate.metadata.images = images;
+        if (index > -1) acc[index] = toUpdate;
+        else acc.push(toUpdate);
+        return acc;
+      },
+      []
     );
+
     updateSteps<TextToImageStepMetadata>(data, (draft, metadata) => {
       Object.keys(metadata.images ?? {}).map((imageId) => {
-        const { comments, hidden, feedback } = metadata.images?.[imageId] ?? {};
+        const { feedback, ...rest } = metadata.images?.[imageId] ?? {};
         const images = draft.images ?? {};
-        if (!images[imageId]) images[imageId] = {};
-        if (comments) images[imageId].comments = comments;
-        if (hidden) images[imageId].hidden = hidden;
+        images[imageId] = { ...images[imageId], ...removeEmpty(rest) };
         if (feedback)
           images[imageId].feedback = images[imageId].feedback !== feedback ? feedback : undefined;
         draft.images = images;

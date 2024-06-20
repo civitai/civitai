@@ -101,10 +101,10 @@ export const useGeneratedImageActions = () => {
   // const [workflowId, stepName, imageId] = selected.split(':')
   const deselect = () => generationImageSelect.setSelected([]);
 
-  const createPostMutation = trpc.post.create.useMutation();
   const { updateImages, isLoading } = useUpdateTextToImageStepMetadata({
     onSuccess: () => deselect(),
   });
+  const createPostMutation = trpc.post.create.useMutation();
   // const updateWorkflows = useUpdateTextToImageWorkflows({ onSuccess: () => deselect() });
 
   const deleteSelectedImages = () => {
@@ -118,7 +118,7 @@ export const useGeneratedImageActions = () => {
           selected2.map(({ workflowId, stepName, imageId }) => ({
             workflowId,
             stepName,
-            imageIds: [imageId],
+            imageId,
             hidden: true,
           }))
         );
@@ -141,6 +141,7 @@ export const useGeneratedImageActions = () => {
       const key = 'generator';
       orchestratorMediaTransmitter.setUrls(key, urls);
       const post = await createPostMutation.mutateAsync({});
+      // updateImages({}) // tODO
       const pathname = `/posts/${post.id}/edit?src=${key}`;
       await router.push(pathname);
       generationPanel.close();

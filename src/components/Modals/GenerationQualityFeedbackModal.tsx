@@ -62,7 +62,7 @@ export function TextToImageQualityFeedbackModal({
         {
           workflowId,
           stepName,
-          imageIds: [imageId],
+          imageId,
           comments: data.message,
         },
       ]);

@@ -93,7 +93,7 @@ export function GeneratedImage({
           {
             workflowId: request.id,
             stepName: step.name,
-            imageIds: [image.id],
+            imageId: image.id,
             hidden: true,
           },
         ]),
@@ -125,7 +125,7 @@ export function GeneratedImage({
       {
         workflowId: request.id,
         stepName: step.name,
-        imageIds: [image.id],
+        imageId: image.id,
         feedback: newFeedback,
       },
     ]);

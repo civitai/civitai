@@ -41,6 +41,7 @@ export async function submitWorkflow({
   const client = new OrchestratorClient(token);
   // console.log({ token });
   // console.log(JSON.stringify(params));
+  // TODO - add company identifier to beginning of `tags` - 'civitai'
 
   return await client.workflows.submitWorkflow(params).catch((error) => {
     if (error instanceof ApiError) {
