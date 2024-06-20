@@ -59,6 +59,11 @@ const textToImageStepImageMetadataSchema = z.object({
   comments: z.string().optional(),
 });
 
+/**
+  - params is to keep track of properties that are potentially lost when submitting generation data.
+  - remix to track the id of the resource or image used to initialize the generation
+  - images to track comments, feedback, hidden, etc...
+*/
 export type TextToImageStepMetadata = z.infer<typeof textToImageStepMetadataSchema>;
 export const textToImageStepMetadataSchema = z.object({
   params: textToImageStepParamsMetadataSchema.optional(),

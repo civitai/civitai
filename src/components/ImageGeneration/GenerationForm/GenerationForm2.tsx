@@ -184,7 +184,6 @@ export function GenerationFormContent() {
     async function performTransaction() {
       if (!params.baseModel) throw new Error('could not find base model');
       try {
-        // TODO - get remix info here
         await mutateAsync({ resources, params, metadata });
       } catch (e) {
         const error = e as Error;
