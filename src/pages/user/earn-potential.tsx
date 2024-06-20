@@ -51,10 +51,12 @@ export default function EarnPotential() {
   const generationDetails: DescriptionTableProps['items'] = [
     {
       label: 'Gen Count',
+      info: 'The number of generations using your resources in the last 30 days',
       value: numberWithCommas(potential?.jobs),
     },
     {
       label: 'Avg. Price',
+      info: 'The average price of jobs generated using your resources in the last 30 days',
       value: (
         <CurrencyBadge
           unitAmount={potential?.avg_job_cost ?? 0}
@@ -65,23 +67,28 @@ export default function EarnPotential() {
     },
     {
       label: 'Avg. Share of Rewards',
+      info: 'The average share of the Creator Rewards you would have received for each job generated using your resources in the last 30 days',
       value: formatToLeastDecimals((potential?.avg_ownership ?? 0) * 100, 1) + '%',
     },
     {
       label: 'Potential Rewards (25%)',
+      info: 'We give 25% of the Buzz spent in the generator to Creators. You get your share of this based on the resources you provide. This is an estimate of your potential earnings based on the use of your resources in the Civitai generator over the last 30 days.',
       value: <CurrencyBadge unitAmount={potential?.total_comp ?? 0} {...currencyBadgeProps} />,
     },
     {
       label: 'Potential Tips (25%)',
+      info: 'We include a 25% tip by default in the generator. This tip is then distributed to Creators based on the resources they provide. This is an estimate of your potential earnings based on the use of your resources in the Civitai generator over the last 30 days.',
       value: <CurrencyBadge unitAmount={potential?.total_tips ?? 0} {...currencyBadgeProps} />,
     },
     {
-      label: 'Total Potential Earnings',
+      label: 'Potential Generation Earnings',
+      info: 'This is the sum of the Potential Rewards and Potential Tips you could have earned in the last 30 days.',
       value: (
         <CurrencyBadge
           unitAmount={potential?.total ?? 0}
           {...currencyBadgeProps}
-          sx={{ fontWeight: 900 }}
+          size="lg"
+          sx={{ fontWeight: 900, fontSize: 16 }}
         />
       ),
     },
@@ -89,11 +96,13 @@ export default function EarnPotential() {
 
   const earlyAccessDetails: DescriptionTableProps['items'] = [
     {
-      label: 'Users',
+      label: 'Potential Users',
+      info: 'The number of unique users who have used your resources in the last 30 days',
       value: numberWithCommas(potential?.users ?? 0),
     },
     {
       label: 'Access Price',
+      info: 'The amount you want to charge for early access to your resources',
       value: (
         <NumberInput
           value={earlyAccessPrice}
@@ -107,6 +116,7 @@ export default function EarnPotential() {
     },
     {
       label: 'Resource Count',
+      info: 'The number of resources you plan to put into early access',
       value: (
         <NumberInput
           value={earlyAccessResources}
@@ -120,6 +130,7 @@ export default function EarnPotential() {
     },
     {
       label: 'Purchase Rate',
+      info: 'The percentage of users who will purchase early access to your resources',
       value: (
         <NumberInput
           value={earlyAccessRatio}
@@ -132,12 +143,14 @@ export default function EarnPotential() {
       ),
     },
     {
-      label: 'Potential Earnings',
+      label: 'Potential Early Access Earnings',
+      info: 'This is an estimate based on the potential users, access price, resource count, and purchase rate you chose.',
       value: (
         <CurrencyBadge
           unitAmount={earlyAccessPotential}
           {...currencyBadgeProps}
-          sx={{ fontWeight: 900 }}
+          size="lg"
+          sx={{ fontWeight: 900, fontSize: 16 }}
         />
       ),
     },
