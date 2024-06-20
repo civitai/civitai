@@ -415,19 +415,12 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                   disabled={isLocked('nsfw')}
                   description={isLockedDescription('category')}
                 />
-                <Group spacing={4} noWrap>
-                  <InputCheckbox
-                    name="minor"
-                    label="Cannot be used for NSFW generation"
-                    disabled={isLocked('minor')}
-                    description={isLockedDescription('minor')}
-                  />
-                  <InfoPopover size="xs" iconProps={{ size: 14 }} width="fit-content">
-                    <Text size={"xs"}>
-                      Depicts a minor
-                    </Text>
-                  </InfoPopover>
-                </Group>
+                <InputCheckbox
+                  name="minor"
+                  label="Cannot be used for NSFW generation"
+                  disabled={isLocked('minor')}
+                  description={isLockedDescription('minor')}
+                />
               </Stack>
             </Paper>
             {currentUser?.isModerator && (
