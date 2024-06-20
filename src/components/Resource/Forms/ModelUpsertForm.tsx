@@ -231,13 +231,12 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                       color="blue"
                       styles={(theme) => ({
                         root: {
-                          border: `1px solid ${
-                            errors.checkpointType
-                              ? theme.colors.red[theme.fn.primaryShade()]
-                              : theme.colorScheme === 'dark'
+                          border: `1px solid ${errors.checkpointType
+                            ? theme.colors.red[theme.fn.primaryShade()]
+                            : theme.colorScheme === 'dark'
                               ? theme.colors.dark[4]
                               : theme.colors.gray[4]
-                          }`,
+                            }`,
                           background: 'none',
                           height: 36,
                         },
@@ -416,12 +415,19 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                   disabled={isLocked('nsfw')}
                   description={isLockedDescription('category')}
                 />
-                <InputCheckbox
-                  name="minor"
-                  label="Depicts a minor"
-                  disabled={isLocked('minor')}
-                  description={isLockedDescription('minor')}
-                />
+                <Group spacing={4} noWrap>
+                  <InputCheckbox
+                    name="minor"
+                    label="Cannot be used for NSFW generation"
+                    disabled={isLocked('minor')}
+                    description={isLockedDescription('minor')}
+                  />
+                  <InfoPopover size="xs" iconProps={{ size: 14 }} width="fit-content">
+                    <Text size={"xs"}>
+                      Depicts a minor
+                    </Text>
+                  </InfoPopover>
+                </Group>
               </Stack>
             </Paper>
             {currentUser?.isModerator && (
@@ -451,7 +457,7 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                 </Text>
               </>
             )}
-             {hasMinorInNsfw && (
+            {hasMinorInNsfw && (
               <>
                 <Alert color="red" pl={10}>
                   <Group noWrap spacing={10}>
