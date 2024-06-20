@@ -59,6 +59,7 @@ export function OnboardingBuzz() {
       : { code: '', source: '', showInput: false }
   );
   const [debouncedUserReferralCode] = useDebouncedValue(userReferral.code, 300);
+  const isProjectOdyssey = source === 'project_odyssey';
 
   const {
     data: referrer,
@@ -94,7 +95,10 @@ export function OnboardingBuzz() {
   };
 
   const showReferral =
-    !!currentUser && !currentUser.referral && checkUserCreatedAfterBuzzLaunch(currentUser);
+    !isProjectOdyssey &&
+    !!currentUser &&
+    !currentUser.referral &&
+    checkUserCreatedAfterBuzzLaunch(currentUser);
 
   return (
     <Container size="sm" px={0}>
