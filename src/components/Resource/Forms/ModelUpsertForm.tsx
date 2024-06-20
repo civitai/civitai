@@ -75,7 +75,7 @@ const commercialUseOptions: Array<{ value: CommercialUse; label: string }> = [
   { value: CommercialUse.Sell, label: 'Sell this model or merges' },
 ];
 
-const lockableProperties = ['nsfw', 'poi', 'minor', 'category', 'tags', 'minor'];
+const lockableProperties = ['nsfw', 'poi', 'minor', 'category', 'tags'];
 
 export function ModelUpsertForm({ model, children, onSubmit }: Props) {
   const router = useRouter();
