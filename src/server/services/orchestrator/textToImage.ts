@@ -334,8 +334,6 @@ export async function formatTextToImageResponses(
       const injectable = getInjectablResources(baseModel);
 
       const { input, output, jobs, metadata } = step;
-      console.log({ metadata });
-      // const input = { ...step.input, ...step.metadata?.params };
       const images =
         output?.images
           ?.map((image, i) => {
@@ -388,8 +386,6 @@ export async function formatTextToImageResponses(
           height: input.height,
           seed: input.seed,
           clipSkip: input.clipSkip,
-          // draft: input.draft,
-          // nsfw: input.nsfw,
         },
         resources,
         images,

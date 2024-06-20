@@ -2,7 +2,6 @@ import {
   ActionIcon,
   AspectRatio,
   Box,
-  Button,
   Card,
   Center,
   Checkbox,
@@ -11,27 +10,24 @@ import {
   Menu,
   Stack,
   Text,
-  ThemeIcon,
   createStyles,
 } from '@mantine/core';
-import { useClipboard, usePrevious } from '@mantine/hooks';
+import { useClipboard } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import {
   IconArrowsShuffle,
-  IconBan,
   IconCheck,
   IconDotsVertical,
   IconHourglass,
   IconInfoCircle,
   IconInfoHexagon,
-  IconPlayerPlayFilled,
   IconPlayerTrackNextFilled,
   IconThumbDown,
   IconThumbUp,
   IconTrash,
   IconWindowMaximize,
 } from '@tabler/icons-react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { GeneratedImageLightbox } from '~/components/ImageGeneration/GeneratedImageLightbox';
 import { generationImageSelect } from '~/components/ImageGeneration/utils/generationImage.select';
