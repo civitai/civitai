@@ -1,3 +1,4 @@
+import { deepOmit } from '~/utils/object-helpers';
 import { $OpenApiTs } from '@civitai/client';
 
 import { OrchestratorClient } from '~/server/services/orchestrator/common';
@@ -19,18 +20,18 @@ export async function getWorkflowStep({
 export async function updateWorkflowSteps({
   input,
   token,
-}: UpdateWorkflowStepParams & {
+}: {
   input: UpdateWorkflowStepParams[];
   token: string;
 }) {
   const client = new OrchestratorClient(token);
 
   await Promise.all(
-    input.map(({ workflowId, stepName, metadata: { $type, ...metadata } }) =>
+    input.map(({ workflowId, stepName, metadata }) =>
       client.workflowSteps.updateWorkflowStep({
         workflowId,
         stepName,
-        requestBody: { metadata },
+        requestBody: { metadata: deepOmit(metadata) },
       })
     )
   );

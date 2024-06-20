@@ -1,4 +1,4 @@
-import { Workflow, WorkflowEvent, WorkflowStepJobEvent } from '@civitai/client';
+import { WorkflowEvent, WorkflowStepJobEvent } from '@civitai/client';
 import { InfiniteData, QueryKey } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';
@@ -12,27 +12,19 @@ import {
   TextToImageStepMetadata,
 } from '~/server/schema/orchestrator/textToImage.schema';
 import { workflowQuerySchema } from '~/server/schema/orchestrator/workflows.schema';
-import { NormalizedTextToImageResponse } from '~/server/services/orchestrator';
 import { workflowCompletedStatuses } from '~/server/services/orchestrator/constants';
 import {
+  IWorkflow,
+  IWorkflowsInfinite,
   UpdateWorkflowStepParams,
-  WorkflowStepMetadata,
 } from '~/server/services/orchestrator/orchestrator.schema';
 import { getTextToImageRequests } from '~/server/services/orchestrator/textToImage';
 import { createDebouncer } from '~/utils/debouncer';
 import { showErrorNotification } from '~/utils/notifications';
-import { deepOmit } from '~/utils/object-helpers';
 import { queryClient, trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 
 type InfiniteTextToImageRequests = InfiniteData<AsyncReturnType<typeof getTextToImageRequests>>;
-type WorkflowBase = {
-  id: string;
-  steps: Array<{ name: string; metadata: WorkflowStepMetadata }>;
-};
-type InfiniteWorkflows = InfiniteData<{
-  items: Array<WorkflowBase>;
-}>;
 
 export function useGetTextToImageRequests(
   input?: z.input<typeof workflowQuerySchema>,
@@ -158,7 +150,7 @@ export function useCancelTextToImageRequest() {
   });
 }
 
-function updateWorkflowQueries<TData extends InfiniteWorkflows>(
+function updateWorkflowQueries<TData extends IWorkflowsInfinite>(
   queryKey: QueryKey,
   cb: (data: TData) => void
 ) {
@@ -187,8 +179,7 @@ export function useUpdateWorkflowSteps({
                 (x) => x.workflowId === workflow.id && x.stepName === step.name
               );
               if (current) {
-                const { $type, ...metadata } = current.metadata;
-                step.metadata = { ...step.metadata, ...metadata };
+                step.metadata = { ...step.metadata, ...current.metadata };
               }
             }
           }
@@ -206,22 +197,23 @@ export function useUpdateWorkflowSteps({
 
   function updateSteps(args: UpdateWorkflowStepParams[]) {
     // gets current workflow data from query cache
-    const allQueriesData = queryClient.getQueriesData<InfiniteWorkflows>({
+    const allQueriesData = queryClient.getQueriesData<IWorkflowsInfinite>({
       queryKey,
       exact: false,
     });
 
-    const reduced = args.reduce<
-      Record<string, Array<{ name: string; metadata: WorkflowStepMetadata }>>
-    >((acc, { workflowId, stepName, metadata }) => {
-      if (!acc[workflowId]) acc[workflowId] = [];
-      acc[workflowId].push({ name: stepName, metadata });
-      return acc;
-    }, {});
+    const reduced = args.reduce<Record<string, UpdateWorkflowStepParams[]>>(
+      (acc, { $type, workflowId, stepName, metadata }) => {
+        if (!acc[workflowId]) acc[workflowId] = [];
+        acc[workflowId].push({ $type, workflowId, stepName, metadata });
+        return acc;
+      },
+      {}
+    );
     const workflowsToUpdateCount = Object.keys(reduced).length;
 
     // add workflows from query cache to an array for quick reference
-    const workflows: WorkflowBase[] = [];
+    const workflows: IWorkflow[] = [];
     loop: for (const [, queryData] of allQueriesData) {
       for (const page of queryData?.pages ?? []) {
         for (const workflow of page.items) {
@@ -234,16 +226,17 @@ export function useUpdateWorkflowSteps({
 
     // get updated metadata values
     const data = args
-      .map(({ workflowId, stepName, metadata: { $type, ...metadata } }) => {
+      .map(({ $type, workflowId, stepName, metadata }) => {
         const workflow = workflows.find((x) => x.id === workflowId);
         const step = workflow?.steps.find((x) => x.name === stepName);
 
         // this step should have all the currently cached step metadata
         if (step) {
           return {
+            $type,
             workflowId,
             stepName,
-            metadata: produce(step.metadata, (draft) => {
+            metadata: produce(step.metadata as TextToImageStepMetadata, (draft) => {
               switch ($type) {
                 case 'textToImage': {
                   // handle image updates
@@ -306,7 +299,7 @@ export function useUpdateTextToImageStepMetadata(options?: { onSuccess?: () => v
           if (comments) images[imageId].comments = comments;
         }
 
-        return { workflowId, stepName, metadata: { $type: 'textToImage', images } };
+        return { $type: 'textToImage', workflowId, stepName, metadata: { images } };
       }
     );
     updateSteps(data);

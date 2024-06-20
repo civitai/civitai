@@ -27,22 +27,15 @@ import {
   formatGenerationResources,
   getBaseModelSetType,
   getInjectablResources,
-  getIsSdxl,
   samplersToSchedulers,
   sanitizeTextToImageParams,
 } from '~/shared/constants/generation.constants';
 import { TextToImageResponse } from '~/server/services/orchestrator/types';
 import { SignalMessages } from '~/server/common/enums';
-import {
-  deleteManyWorkflows,
-  queryWorkflows,
-  submitWorkflow,
-  updateManyWorkflows,
-} from '~/server/services/orchestrator/workflows';
+import { queryWorkflows, submitWorkflow } from '~/server/services/orchestrator/workflows';
 import {
   TextToImageStepParamsMetadata,
-  TextToImageStepUpdateSchema,
-  textToImageSchema,
+  textToImageCreateSchema,
   textToImageWhatIfSchema,
 } from '~/server/schema/orchestrator/textToImage.schema';
 import { removeNulls } from '~/utils/object-helpers';
@@ -54,8 +47,12 @@ export async function textToImage({
   whatIf,
   token,
   ...input
-}: z.input<typeof textToImageSchema> & { user: SessionUser; whatIf?: boolean; token: string }) {
-  const parsedInput = textToImageSchema.parse(input);
+}: z.input<typeof textToImageCreateSchema> & {
+  user: SessionUser;
+  whatIf?: boolean;
+  token: string;
+}) {
+  const parsedInput = textToImageCreateSchema.parse(input);
   const { tags, metadata: workflowMetadata } = parsedInput;
 
   const status = await getGenerationStatus();
@@ -242,7 +239,7 @@ export async function textToImage({
 }
 
 export async function createTextToImage(
-  args: z.input<typeof textToImageSchema> & { user: SessionUser; token: string }
+  args: z.input<typeof textToImageCreateSchema> & { user: SessionUser; token: string }
 ) {
   const { workflow, resourceDataWithInjects } = await textToImage(args);
 
@@ -307,29 +304,6 @@ export async function getTextToImageRequests(
     items: await formatTextToImageResponses(items as TextToImageResponse[]),
     nextCursor,
   };
-}
-
-export async function updateTextToImageWorkflow({
-  workflows,
-  token,
-}: {
-  workflows: TextToImageStepUpdateSchema[];
-  token: string;
-}) {
-  const { toDelete, toUpdate } = workflows.reduce<{
-    toDelete: string[];
-    toUpdate: Omit<TextToImageStepUpdateSchema, 'imageCount'>[];
-  }>(
-    (acc, { workflowId, metadata, imageCount }) => {
-      if (Object.values(metadata.images ?? {}).filter((x) => x.hidden).length === imageCount)
-        acc.toDelete.push(workflowId);
-      else acc.toUpdate.push({ workflowId, metadata });
-      return acc;
-    },
-    { toDelete: [], toUpdate: [] }
-  );
-  if (toDelete.length) await deleteManyWorkflows({ workflowIds: toDelete, token });
-  if (toUpdate.length) await updateManyWorkflows({ workflows: toUpdate, token });
 }
 
 // #region [helper methods]

@@ -1,6 +1,5 @@
 import { z } from 'zod';
 import { baseModelSetTypes, generation } from '~/server/common/constants';
-import { workflowUpdateSchema } from '~/server/schema/orchestrator/workflows.schema';
 import { stripChecksAndEffects } from '~/utils/zod-helpers';
 
 // #region [step input]
@@ -62,20 +61,13 @@ const textToImageStepImageMetadataSchema = z.object({
 
 export type TextToImageStepMetadata = z.infer<typeof textToImageStepMetadataSchema>;
 export const textToImageStepMetadataSchema = z.object({
-  $type: z.literal('textToImage'),
   params: textToImageStepParamsMetadataSchema.optional(),
   remix: textToImageStepRemixMetadataSchema.optional(),
   images: z.record(z.string(), textToImageStepImageMetadataSchema).optional(),
 });
 // #endregion
 
-export type TextToImageStepUpdateSchema = z.infer<typeof textToImageStepUpdateSchema>;
-export const textToImageStepUpdateSchema = workflowUpdateSchema.extend({
-  imageCount: z.number().default(0),
-  metadata: textToImageStepMetadataSchema,
-});
-
-export const textToImageSchema = z.object({
+export const textToImageCreateSchema = z.object({
   params: textToImageParamsSchema,
   resources: textToImageResourceSchema.array().min(1, 'You must select at least one resource'),
   tags: z.string().array().default([]),

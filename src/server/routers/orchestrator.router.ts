@@ -1,15 +1,13 @@
 import { z } from 'zod';
 import { workflowQuerySchema, workflowIdSchema } from './../schema/orchestrator/workflows.schema';
 import {
-  textToImageSchema,
+  textToImageCreateSchema,
   textToImageWhatIfSchema,
-  textToImageStepUpdateSchema,
 } from '~/server/schema/orchestrator/textToImage.schema';
 import {
   createTextToImage,
   whatIfTextToImage,
   getTextToImageRequests,
-  updateTextToImageWorkflow,
 } from '~/server/services/orchestrator/textToImage';
 import { cancelWorkflow, deleteWorkflow } from '~/server/services/orchestrator/workflows';
 import { guardedProcedure, middleware, protectedProcedure, router } from '~/server/trpc';
@@ -75,7 +73,7 @@ export const orchestratorRouter = router({
     .use(edgeCacheIt({ ttl: CacheTTL.hour }))
     .query(({ input, ctx }) => whatIfTextToImage({ ...input, user: ctx.user, token: ctx.token })),
   createTextToImage: orchestratorGuardedProcedure
-    .input(textToImageSchema)
+    .input(textToImageCreateSchema)
     .mutation(async ({ ctx, input }) => {
       try {
         return await createTextToImage({ ...input, user: ctx.user, token: ctx.token });
@@ -89,9 +87,6 @@ export const orchestratorRouter = router({
         throw e;
       }
     }),
-  updateManyTextToImageWorkflows: orchestratorProcedure // tODO - remove
-    .input(z.object({ workflows: textToImageStepUpdateSchema.array() }))
-    .mutation(({ ctx, input }) => updateTextToImageWorkflow({ ...input, token: ctx.token })),
   // #endregion
 
   // #region [image training]

@@ -185,7 +185,7 @@ export function GenerationFormContent() {
       if (!params.baseModel) throw new Error('could not find base model');
       try {
         // TODO - get remix info here
-        await mutateAsync({ resources, params, metadata: { $type: 'textToImage', remix: {} } });
+        await mutateAsync({ resources, params, metadata: { remix: {} } });
       } catch (e) {
         const error = e as Error;
         if (error.message.startsWith('Your prompt was flagged')) {
