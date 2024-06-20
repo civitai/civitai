@@ -116,8 +116,7 @@ export function QueueItem({
   };
 
   const handleGenerate = () => {
-    const { resources, params } = step;
-    generationStore.setData({ resources, params: { ...params, seed: undefined } });
+    generationStore.setData({ ...step, params: { ...step.params, seed: undefined } });
   };
 
   const { prompt, ...details } = params;

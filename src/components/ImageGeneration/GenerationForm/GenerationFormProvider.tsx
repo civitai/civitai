@@ -10,6 +10,7 @@ import { imageSchema } from '~/server/schema/image.schema';
 import {
   textToImageParamsSchema,
   textToImageResourceSchema,
+  textToImageStepMetadataSchema,
 } from '~/server/schema/orchestrator/textToImage.schema';
 import { userTierSchema } from '~/server/schema/user.schema';
 import { GenerationData } from '~/server/services/generation/generation.service';
@@ -69,6 +70,7 @@ const formSchema = textToImageParamsSchema
           });
         }
       }),
+    metadata: textToImageStepMetadataSchema.optional(),
   })
   .refine(
     (data) => {
@@ -154,6 +156,8 @@ function formatGenerationData(data: GenerationData): PartialFormData {
     model: checkpoint,
     resources,
     vae,
+    metadata: data.metadata,
+    ...data.metadata?.params,
   };
 }
 

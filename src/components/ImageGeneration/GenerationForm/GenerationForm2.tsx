@@ -176,7 +176,7 @@ export function GenerationFormContent() {
     const { cost } = useCostStore.getState();
     if (!cost) return;
 
-    const { model, resources: additionalResources, vae, ...params } = data;
+    const { model, resources: additionalResources, vae, metadata, ...params } = data;
     const resources = [model, ...additionalResources, vae]
       .filter(isDefined)
       .filter((x) => x.covered !== false);
@@ -185,7 +185,7 @@ export function GenerationFormContent() {
       if (!params.baseModel) throw new Error('could not find base model');
       try {
         // TODO - get remix info here
-        await mutateAsync({ resources, params, metadata: { remix: {} } });
+        await mutateAsync({ resources, params, metadata });
       } catch (e) {
         const error = e as Error;
         if (error.message.startsWith('Your prompt was flagged')) {

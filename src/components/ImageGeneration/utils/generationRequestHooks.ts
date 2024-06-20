@@ -187,6 +187,7 @@ export function useUpdateTextToImageStepMetadata(options?: { onSuccess?: () => v
       Object.keys(metadata.images ?? {}).map((imageId) => {
         const { comments, hidden, feedback } = metadata.images?.[imageId] ?? {};
         const images = draft.images ?? {};
+        if (!images[imageId]) images[imageId] = {};
         if (comments) images[imageId].comments = comments;
         if (hidden) images[imageId].hidden = hidden;
         if (feedback)

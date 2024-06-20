@@ -53,7 +53,7 @@ export async function textToImage({
   token: string;
 }) {
   const parsedInput = textToImageCreateSchema.parse(input);
-  const { tags, metadata: workflowMetadata } = parsedInput;
+  const { tags, metadata = {} } = parsedInput;
 
   const status = await getGenerationStatus();
   if (!status.available && !user.isModerator)
@@ -193,7 +193,8 @@ export async function textToImage({
     batchSize = 4;
   }
 
-  const metadata = Object.keys(stepMetadata).length ? { params: stepMetadata } : undefined;
+  if (Object.keys(stepMetadata).length) metadata.params = stepMetadata;
+
   const step: TextToImageStepTemplate = {
     $type: 'textToImage',
     metadata,
@@ -218,7 +219,6 @@ export async function textToImage({
   const requestBody: WorkflowTemplate = {
     tags: [WORKFLOW_TAGS.TEXT_TO_IMAGE, ...tags],
     steps: [step],
-    metadata: workflowMetadata,
     callbacks: !whatIf
       ? [
           {
@@ -334,6 +334,7 @@ export async function formatTextToImageResponses(
       const injectable = getInjectablResources(baseModel);
 
       const { input, output, jobs, metadata } = step;
+      console.log({ metadata });
       // const input = { ...step.input, ...step.metadata?.params };
       const images =
         output?.images

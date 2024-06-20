@@ -75,8 +75,7 @@ export function GeneratedImage({
   };
 
   const handleGenerate = () => {
-    const { resources, params } = step;
-    generationStore.setData({ resources, params: { ...params, seed: undefined } });
+    generationStore.setData({ ...step, params: { ...step.params, seed: undefined } });
   };
 
   const handleGenerateWithSeed = () => {

@@ -1,7 +1,6 @@
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
-import { generation } from '~/server/common/constants';
 import { GetGenerationDataInput } from '~/server/schema/generation.schema';
 import { GenerationData } from '~/server/services/generation/generation.service';
 
