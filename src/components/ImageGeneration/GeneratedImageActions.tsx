@@ -94,6 +94,10 @@ export const useGeneratedImageActions = () => {
   const { steps } = useGetTextToImageRequestsSteps();
 
   const selected = generationImageSelect.useSelection();
+  const selected2 = selected.map((value) => {
+    const [workflowId, stepName, imageId] = value.split(':');
+    return { workflowId, stepName, imageId };
+  });
   // const [workflowId, stepName, imageId] = selected.split(':')
   const deselect = () => generationImageSelect.setSelected([]);
 
@@ -111,10 +115,12 @@ export const useGeneratedImageActions = () => {
       confirmProps: { color: 'red' },
       onConfirm: () => {
         updateImages(
-          selected.map((value) => {
-            const [workflowId, stepName, imageId] = value.split(':');
-            return { workflowId, stepName, imageId, hidden: true };
-          })
+          selected2.map(({ workflowId, stepName, imageId }) => ({
+            workflowId,
+            stepName,
+            imageIds: [imageId],
+            hidden: true,
+          }))
         );
       },
       zIndex: constants.imageGeneration.drawerZIndex + 2,
@@ -126,7 +132,7 @@ export const useGeneratedImageActions = () => {
 
   const postSelectedImages = async () => {
     const images = steps.flatMap((x) => x.images);
-    const imageIds = selected.flatMap((x) => x.imageIds);
+    const imageIds = selected2.map((x) => x.imageId);
     const urls = images
       .filter((x) => imageIds.includes(x.id))
       .map((x) => x.url)

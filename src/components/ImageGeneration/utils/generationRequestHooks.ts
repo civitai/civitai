@@ -1,9 +1,10 @@
 import { WorkflowEvent, WorkflowStepJobEvent } from '@civitai/client';
-import { InfiniteData, QueryKey } from '@tanstack/react-query';
+import { InfiniteData } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';
 import { useEffect, useMemo } from 'react';
 import { z } from 'zod';
+import { useUpdateWorkflowSteps } from '~/components/Orchestrator/hooks/workflowStepHooks';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { SignalMessages } from '~/server/common/enums';
@@ -13,16 +14,11 @@ import {
 } from '~/server/schema/orchestrator/textToImage.schema';
 import { workflowQuerySchema } from '~/server/schema/orchestrator/workflows.schema';
 import { workflowCompletedStatuses } from '~/server/services/orchestrator/constants';
-import {
-  IWorkflow,
-  IWorkflowsInfinite,
-  UpdateWorkflowStepParams,
-} from '~/server/services/orchestrator/orchestrator.schema';
+import { UpdateWorkflowStepParams } from '~/server/services/orchestrator/orchestrator.schema';
 import { getTextToImageRequests } from '~/server/services/orchestrator/textToImage';
 import { createDebouncer } from '~/utils/debouncer';
 import { showErrorNotification } from '~/utils/notifications';
 import { queryClient, trpc } from '~/utils/trpc';
-import { isDefined } from '~/utils/type-guards';
 
 type InfiniteTextToImageRequests = InfiniteData<AsyncReturnType<typeof getTextToImageRequests>>;
 
@@ -150,121 +146,6 @@ export function useCancelTextToImageRequest() {
   });
 }
 
-function updateWorkflowQueries<TData extends IWorkflowsInfinite>(
-  queryKey: QueryKey,
-  cb: (data: TData) => void
-) {
-  queryClient.setQueriesData({ queryKey, exact: false }, (state) =>
-    produce(state, (old?: TData) => {
-      if (!old) return;
-      cb(old);
-    })
-  );
-}
-
-export function useUpdateWorkflowSteps({
-  queryKey,
-  onSuccess,
-}: {
-  onSuccess?: () => void;
-  queryKey: QueryKey;
-}) {
-  const { mutate, isLoading } = trpc.orchestrator.steps.update.useMutation({
-    onSuccess: (_, { data }) => {
-      updateWorkflowQueries(queryKey, (old) => {
-        for (const page of old.pages) {
-          for (const workflow of page.items) {
-            for (const step of workflow.steps) {
-              const current = data.find(
-                (x) => x.workflowId === workflow.id && x.stepName === step.name
-              );
-              if (current) {
-                step.metadata = { ...step.metadata, ...current.metadata };
-              }
-            }
-          }
-        }
-      });
-      onSuccess?.();
-    },
-    onError: (error) => {
-      showErrorNotification({
-        title: 'Failed to update workflow step',
-        error: new Error(error.message),
-      });
-    },
-  });
-
-  function updateSteps(args: UpdateWorkflowStepParams[]) {
-    // gets current workflow data from query cache
-    const allQueriesData = queryClient.getQueriesData<IWorkflowsInfinite>({
-      queryKey,
-      exact: false,
-    });
-
-    const reduced = args.reduce<Record<string, UpdateWorkflowStepParams[]>>(
-      (acc, { $type, workflowId, stepName, metadata }) => {
-        if (!acc[workflowId]) acc[workflowId] = [];
-        acc[workflowId].push({ $type, workflowId, stepName, metadata });
-        return acc;
-      },
-      {}
-    );
-    const workflowsToUpdateCount = Object.keys(reduced).length;
-
-    // add workflows from query cache to an array for quick reference
-    const workflows: IWorkflow[] = [];
-    loop: for (const [, queryData] of allQueriesData) {
-      for (const page of queryData?.pages ?? []) {
-        for (const workflow of page.items) {
-          const match = reduced[workflow.id];
-          if (match) workflows.push(workflow);
-          if (workflows.length === workflowsToUpdateCount) break loop;
-        }
-      }
-    }
-
-    // get updated metadata values
-    const data = args
-      .map(({ $type, workflowId, stepName, metadata }) => {
-        const workflow = workflows.find((x) => x.id === workflowId);
-        const step = workflow?.steps.find((x) => x.name === stepName);
-
-        // this step should have all the currently cached step metadata
-        if (step) {
-          return {
-            $type,
-            workflowId,
-            stepName,
-            metadata: produce(step.metadata as TextToImageStepMetadata, (draft) => {
-              switch ($type) {
-                case 'textToImage': {
-                  // handle image updates
-                  Object.keys(metadata.images ?? {}).map((imageId) => {
-                    const { comments, hidden, feedback } = metadata.images?.[imageId] ?? {};
-                    const images = draft.images ?? {};
-                    if (comments) images[imageId].comments = comments;
-                    if (hidden) images[imageId].hidden = hidden;
-                    if (feedback)
-                      images[imageId].feedback =
-                        images[imageId].feedback !== feedback ? feedback : undefined;
-                    draft.images = images;
-                  });
-                  break;
-                }
-              }
-            }),
-          };
-        }
-      })
-      .filter(isDefined);
-
-    mutate({ data });
-  }
-
-  return { updateSteps, isLoading };
-}
-
 export function useUpdateTextToImageStepMetadata(options?: { onSuccess?: () => void }) {
   const queryKey = getQueryKey(trpc.orchestrator.getTextToImageRequests);
   const { updateSteps, isLoading } = useUpdateWorkflowSteps({
@@ -302,7 +183,17 @@ export function useUpdateTextToImageStepMetadata(options?: { onSuccess?: () => v
         return { $type: 'textToImage', workflowId, stepName, metadata: { images } };
       }
     );
-    updateSteps(data);
+    updateSteps<TextToImageStepMetadata>(data, (draft, metadata) => {
+      Object.keys(metadata.images ?? {}).map((imageId) => {
+        const { comments, hidden, feedback } = metadata.images?.[imageId] ?? {};
+        const images = draft.images ?? {};
+        if (comments) images[imageId].comments = comments;
+        if (hidden) images[imageId].hidden = hidden;
+        if (feedback)
+          images[imageId].feedback = images[imageId].feedback !== feedback ? feedback : undefined;
+        draft.images = images;
+      });
+    });
   }
 
   return { updateImages, isLoading };

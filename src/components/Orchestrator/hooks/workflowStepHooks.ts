@@ -1,8 +1,9 @@
 import { QueryKey } from '@tanstack/react-query';
 import produce from 'immer';
+import { WritableDraft } from 'immer/dist/internal';
 import { updateQueries } from '~/hooks/trpcHelpers';
-import { TextToImageStepMetadata } from '~/server/schema/orchestrator/textToImage.schema';
 import {
+  IWorkflow,
   IWorkflowsInfinite,
   UpdateWorkflowStepParams,
 } from '~/server/services/orchestrator/orchestrator.schema';
@@ -43,7 +44,10 @@ export function useUpdateWorkflowSteps<TData extends IWorkflowsInfinite>({
     },
   });
 
-  function updateSteps(args: UpdateWorkflowStepParams[]) {
+  function updateSteps<T extends UpdateWorkflowStepParams['metadata']>(
+    args: UpdateWorkflowStepParams[],
+    cb: (draft: WritableDraft<T>, metadata: T) => void
+  ) {
     // gets current workflow data from query cache
     const allQueriesData = queryClient.getQueriesData<IWorkflowsInfinite>({
       queryKey,
@@ -84,24 +88,10 @@ export function useUpdateWorkflowSteps<TData extends IWorkflowsInfinite>({
             $type,
             workflowId,
             stepName,
-            metadata: produce(step.metadata as TextToImageStepMetadata, (draft) => {
-              switch ($type) {
-                case 'textToImage': {
-                  // handle image updates
-                  Object.keys(metadata.images ?? {}).map((imageId) => {
-                    const { comments, hidden, feedback } = metadata.images?.[imageId] ?? {};
-                    const images = draft.images ?? {};
-                    if (comments) images[imageId].comments = comments;
-                    if (hidden) images[imageId].hidden = hidden;
-                    if (feedback)
-                      images[imageId].feedback =
-                        images[imageId].feedback !== feedback ? feedback : undefined;
-                    draft.images = images;
-                  });
-                  break;
-                }
-              }
-            }),
+            metadata: produce(
+              (step.metadata ?? {}) as UpdateWorkflowStepParams['metadata'],
+              (draft) => cb(draft as any, metadata as any)
+            ),
           };
         }
       })
