@@ -160,7 +160,7 @@ export default function ArticleDetailsPage({
                 onClick={() => toggle(ArticleEngagementType.Favorite)}
               >
                 <Text className={classes.badgeText}>
-                  {abbreviateNumber(article.stats?.favoriteCountAllTime ?? 0)}
+                  {abbreviateNumber(article.stats?.collectedCountAllTime ?? 0)}
                 </Text>
               </IconBadge>
             );
