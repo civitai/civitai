@@ -228,7 +228,8 @@ export function ModelVersionWizard({ data }: Props) {
 
   const hasFiles = modelVersion && !!modelVersion.files?.length;
 
-  const postId = modelVersion?.posts?.[0]?.id;
+  // Filter to posts belonging to the owner of the model
+  const postId = modelVersion?.posts?.filter((post) => post.userId === modelData?.user.id)?.[0]?.id;
   const isTraining = modelData?.uploadType === ModelUploadType.Trained;
 
   useEffect(() => {
