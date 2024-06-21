@@ -264,16 +264,7 @@ function ReactionBadge({
         <Text sx={{ fontSize: '1.2em', lineHeight: 1.1 }}>
           {constants.availableReactions[reaction]}
         </Text>
-        {!hideReactionCount && (
-          <Text
-            sx={(theme) => ({
-              color: !hasReacted ? 'white' : undefined,
-            })}
-            inherit
-          >
-            {count}
-          </Text>
-        )}
+        {!hideReactionCount && <Text inherit>{count}</Text>}
       </Group>
     </Button>
   );
