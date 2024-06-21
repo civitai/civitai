@@ -46,6 +46,7 @@ import { clearVaultItems } from '~/server/jobs/clear-vault-items';
 import { jobQueueJobs } from '~/server/jobs/job-queue';
 import { nextauthCleanup } from '~/server/jobs/next-auth-cleanup';
 import { countReviewImages } from '~/server/jobs/count-review-images';
+import { rewardsAbusePrevention } from '~/server/jobs/rewards-abuse-prevention';
 
 export const jobs: Job[] = [
   scanFilesJob,
@@ -82,6 +83,7 @@ export const jobs: Job[] = [
   ...csamJobs,
   resourceGenerationAvailability,
   cacheCleanup,
+  rewardsAbusePrevention,
   nextauthCleanup,
   applyTagRules,
   processCreatorProgramEarlyAccessRewards,

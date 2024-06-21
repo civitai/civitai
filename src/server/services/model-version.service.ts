@@ -14,6 +14,7 @@ import {
   ModelVersionUpsertInput,
   ModelVersionsGeneratedImagesOnTimeframeSchema,
   PublishVersionInput,
+  QueryModelVersionSchema,
   UpsertExplorationPromptInput,
 } from '~/server/schema/model-version.schema';
 import { ModelMeta, UnpublishModelSchema } from '~/server/schema/model.schema';
@@ -360,8 +361,8 @@ export const publishModelVersionById = async ({
       await tx.$executeRaw`
         UPDATE "Post"
         SET
-          "publishedAt" = CASE 
-            WHEN "metadata"->>'prevPublishedAt' IS NOT NULL 
+          "publishedAt" = CASE
+            WHEN "metadata"->>'prevPublishedAt' IS NOT NULL
             THEN to_timestamp("metadata"->>'prevPublishedAt', 'YYYY-MM-DD"T"HH24:MI:SS.MS')
             ELSE ${publishedAt}
           END,
@@ -433,7 +434,7 @@ export const unpublishModelVersionById = async ({
 
       await tx.$executeRaw`
         UPDATE "Post"
-        SET 
+        SET
           "metadata" = "metadata" || jsonb_build_object(
             'unpublishedAt', ${unpublishedAt},
             'unpublishedBy', ${user.id},
@@ -761,4 +762,36 @@ You agree to the following with respect to the Model (each a “Permission”):
   license += additionalCommercialRestrictions;
 
   return license;
+}
+
+export async function queryModelVersions<TSelect extends Prisma.ModelVersionSelect & { id: true }>({
+  user,
+  query,
+  select,
+}: {
+  user?: SessionUser;
+  query: QueryModelVersionSchema;
+  select: TSelect;
+}) {
+  const { cursor, limit, trainingStatus } = query;
+  const AND: Prisma.Enumerable<Prisma.ModelVersionWhereInput> = [];
+  if (trainingStatus) AND.push({ trainingStatus });
+
+  const where: Prisma.ModelVersionWhereInput = { AND };
+
+  const items = await dbRead.modelVersion.findMany({
+    where,
+    cursor: cursor ? { id: cursor } : undefined,
+    take: limit + 1,
+    select: select,
+    orderBy: { id: 'desc' },
+  });
+
+  let nextCursor: number | undefined;
+  if (items.length > limit) {
+    const nextItem = (items as { id: number }[]).pop();
+    nextCursor = nextItem?.id;
+  }
+
+  return { items, nextCursor };
 }

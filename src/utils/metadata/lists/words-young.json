@@ -43,6 +43,7 @@
     "son"
   ],
   "nouns": [
+    "young looking",
     "extremely young",
     "mini girl",
     "mini boy",
@@ -89,7 +90,8 @@
     "stripling",
     "\\w*youngster\\w*",
     "\\w*youngling\\w*",
-    "\\w*ki+d\\w*",
+    "\\w*kid",
+    "kid\\w*",
     "\\w*kiddo\\w*",
     "\\w*ba+b+ y\\w*",
     "\\w*ba+bies\\w*",
@@ -104,9 +106,16 @@
     "\\w*nin[o|a]\\w*",
     "\\w*l+oli+e?",
     "l+oli[c|k]on",
+    "1 shota",
+    "one shota",
     "shota",
     "shota[c|k]on",
     "プレティーン",
     "ロリ"
+  ],
+  "negativeNouns": [
+    "developed",
+    "adult body",
+    "mature body"
   ]
 }

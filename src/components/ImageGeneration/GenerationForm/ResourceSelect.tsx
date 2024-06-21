@@ -7,7 +7,7 @@ import { openResourceSelectModal } from '~/components/ImageGeneration/Generation
 import { withController } from '~/libs/form/hoc/withController';
 import { Generation } from '~/server/services/generation/generation.types';
 
-function ResourceSelect({
+export const ResourceSelect = ({
   value,
   onChange,
   buttonLabel,
@@ -25,7 +25,7 @@ function ResourceSelect({
   options?: ResourceSelectOptions;
   allowRemove?: boolean;
   isTraining?: boolean;
-} & Omit<InputWrapperProps, 'children'> & { disabled?: boolean }) {
+} & Omit<InputWrapperProps, 'children'> & { disabled?: boolean }) => {
   const types = options.resources?.map((x) => x.type);
   const _value = types && value && !types.includes(value.modelType) ? undefined : value;
 
@@ -81,7 +81,7 @@ function ResourceSelect({
       )}
     </Input.Wrapper>
   );
-}
+};
 
 const InputResourceSelect = withController(ResourceSelect, ({ field }) => ({
   value: field.value,

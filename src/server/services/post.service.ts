@@ -1,7 +1,9 @@
 import {
   Availability,
   CollectionContributorPermission,
+  CollectionMode,
   CollectionReadConfiguration,
+  CollectionType,
   Prisma,
   TagTarget,
   TagType,
@@ -11,6 +13,7 @@ import { env } from '~/env/server.mjs';
 import { PostSort } from '~/server/common/enums';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { externalMetaSchema } from '~/server/schema/image.schema';
@@ -22,7 +25,10 @@ import {
   postSelect,
 } from '~/server/selectors/post.selector';
 import { simpleTagSelect } from '~/server/selectors/tag.selector';
-import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
+import {
+  getCollectionById,
+  getUserCollectionPermissionsById,
+} from '~/server/services/collection.service';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import {
   deleteImageById,
@@ -435,7 +441,8 @@ export const getPostsInfinite = async ({
 
 export type PostDetail = AsyncReturnType<typeof getPostDetail>;
 export const getPostDetail = async ({ id, user }: GetByIdInput & { user?: SessionUser }) => {
-  const post = await dbRead.post.findFirst({
+  const db = await getDbWithoutLag('post', id);
+  const post = await db.post.findFirst({
     where: {
       id,
       OR: user?.isModerator
@@ -480,7 +487,8 @@ async function combinePostEditImageData(images: PostImageEditSelect[], user: Ses
 
 export type PostImageEditable = AsyncReturnType<typeof getPostEditImages>[number];
 export const getPostEditImages = async ({ id, user }: GetByIdInput & { user: SessionUser }) => {
-  const images = await dbRead.image.findMany({
+  const db = await getDbWithoutLag('postImages', id);
+  const images = await db.image.findMany({
     where: { postId: id },
     select: editPostImageSelect,
   });
@@ -511,6 +519,8 @@ export const createPost = async ({
     data: { ...data, userId, tags: tagsToAdd.length > 0 ? { create: tagData } : undefined },
     select: postSelect,
   });
+  await preventReplicationLag('post', post.id);
+
   return {
     ...post,
     tags: post.tags.flatMap((x) => x.tag),
@@ -531,6 +541,7 @@ export const updatePost = async ({
       detail: !!data.detail ? (data.detail.length > 0 ? data.detail : null) : undefined,
     },
   });
+  await preventReplicationLag('post', post.id);
 
   return post;
 };
@@ -760,6 +771,7 @@ export const addPostImage = async ({
     }
   }
 
+  await preventReplicationLag('postImages', props.postId);
   await bustCachesForPost(props.postId);
 
   return image;
@@ -830,4 +842,48 @@ export const updatePostNsfwLevel = async (ids: number | number[]) => {
     -- Update post NSFW level
     SELECT update_post_nsfw_levels(ARRAY[${ids.join(',')}]);
   `);
+};
+
+export const getPostContestCollectionDetails = async ({ id }: GetByIdInput) => {
+  const post = await dbRead.post.findUnique({
+    where: { id },
+    select: { collectionId: true, userId: true },
+  });
+
+  if (!post || !post.collectionId) return [];
+
+  const collection = await getCollectionById({ input: { id: post.collectionId } });
+
+  if (!collection || collection?.mode !== CollectionMode?.Contest) return [];
+
+  const isImageCollection = collection.type === CollectionType.Image;
+
+  const images = isImageCollection
+    ? await dbRead.image.findMany({
+        where: { postId: id },
+      })
+    : [];
+
+  const items = await dbRead.collectionItem.findMany({
+    where: {
+      collectionId: post.collectionId,
+      postId: isImageCollection ? undefined : id,
+      imageId: isImageCollection ? { in: images.map((i) => i.id) } : undefined,
+    },
+    select: {
+      postId: true,
+      imageId: true,
+      status: true,
+      createdAt: true,
+      reviewedAt: true,
+      tag: true,
+    },
+  });
+
+  return items.map((item) => {
+    return {
+      ...item,
+      collection,
+    };
+  });
 };

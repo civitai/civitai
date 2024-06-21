@@ -18,6 +18,7 @@ import { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.type
 import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { ImageSort } from '~/server/common/enums';
+import { GetInfiniteImagesInput } from '~/server/schema/image.schema';
 import { ImageGetInfinite } from '~/types/router';
 import { removeEmpty } from '~/utils/object-helpers';
 
@@ -39,6 +40,7 @@ type ImageFilters = {
   fromPlatform?: boolean;
   pending?: boolean;
   tools?: number[];
+  baseModels?: GetInfiniteImagesInput['baseModels'];
 };
 
 type ImagesInfiniteProps = {

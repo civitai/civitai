@@ -1,5 +1,6 @@
 import { ModelType, ReviewReactions } from '@prisma/client';
 import { PlayFabClient, PlayFabServer } from 'playfab-sdk';
+import { isDev } from '~/env/other';
 import { env } from '~/env/server.mjs';
 import { LoginWithCustomID, WritePlayerEvent } from '~/server/playfab/client-wrapper';
 import { redis } from '~/server/redis/client';
@@ -11,7 +12,7 @@ const log = createLogger('playfab', 'yellow');
 let initialized = false;
 function initializePlayfab() {
   if (!env.PLAYFAB_SECRET_KEY || !env.PLAYFAB_TITLE_ID) {
-    console.error('Playfab not initialized, missing secret key or title id');
+    if (!isDev) console.error('Playfab not initialized, missing secret key or title id');
     return;
   }
 

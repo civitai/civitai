@@ -160,8 +160,6 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
 
     const files = await getFilesByEntity({ id: bounty.id, type: 'Bounty' });
 
-    console.log(bounty)
-
     return {
       ...bounty,
       details: bounty.details as BountyDetailsSchema,
@@ -353,7 +351,11 @@ export const upsertBountyHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
-    const bounty = await upsertBounty({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator ?? false });
+    const bounty = await upsertBounty({
+      ...input,
+      userId: ctx.user.id,
+      isModerator: ctx.user.isModerator ?? false,
+    });
     if (!bounty) throw throwNotFoundError(`No bounty with id ${input.id}`);
 
     if (input.id) ctx.track.bounty({ type: 'Update', bountyId: input.id }).catch(handleLogError);

@@ -5,7 +5,6 @@ import { useRouter } from 'next/router';
 
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
-import { ModelVersionUpsertForm } from '~/components/Resource/Forms/ModelVersionUpsertForm';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 import { useClubContributorStatus } from '~/components/Club/club.utils';

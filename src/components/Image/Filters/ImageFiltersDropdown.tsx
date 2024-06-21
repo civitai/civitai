@@ -186,8 +186,8 @@ export function ImageFiltersDropdown({
         <Divider label="Base model" labelProps={{ weight: 'bold', size: 'sm' }} />
         <Chip.Group
           spacing={8}
-          value={(mergedFilters.baseModels as string[]) ?? []}
-          onChange={(baseModels: BaseModel[]) => setFilters({ baseModels })}
+          value={mergedFilters.baseModels ?? []}
+          onChange={(baseModels: BaseModel[]) => handleChange({ baseModels })}
           multiple
           my={4}
         >

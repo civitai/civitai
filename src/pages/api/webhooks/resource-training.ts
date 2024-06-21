@@ -6,6 +6,7 @@ import { SignalMessages } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { trainingCompleteEmail, trainingFailEmail } from '~/server/email/templates';
 import { logToAxiom } from '~/server/logging/client';
+import { TrainingUpdateSignalSchema } from '~/server/schema/signals.schema';
 import { refundTransaction } from '~/server/services/buzz.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { withRetries } from '~/server/utils/errorHandling';
@@ -230,7 +231,7 @@ export async function updateRecords(
       start_time:
         trainingResults.start_time ||
         (start_time ? new Date(start_time * 1000).toISOString() : null),
-      end_time: end_time && new Date(end_time * 1000).toISOString(),
+      end_time: end_time ? new Date(end_time * 1000).toISOString() : null,
     },
   };
 
@@ -272,12 +273,18 @@ export async function updateRecords(
   if (!model || !model.user) return;
 
   try {
+    const bodyData: TrainingUpdateSignalSchema = {
+      modelId: model.id,
+      modelVersionId: modelVersion.id,
+      status,
+      fileMetadata: metadata,
+    };
     await fetch(
       `${env.SIGNALS_ENDPOINT}/users/${model.user.id}/signals/${SignalMessages.TrainingUpdate}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ modelId: model.id, status, fileMetadata: metadata }),
+        body: JSON.stringify(bodyData),
       }
     );
   } catch (e: unknown) {
@@ -290,6 +297,7 @@ export async function updateRecords(
   if (status === TrainingStatus.InReview) {
     await trainingCompleteEmail.send({
       model,
+      mName: modelVersion.name,
       user: model.user,
     });
   } else if (
@@ -298,6 +306,7 @@ export async function updateRecords(
   ) {
     await trainingFailEmail.send({
       model,
+      mName: modelVersion.name,
       user: model.user,
     });
   }

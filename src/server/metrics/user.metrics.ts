@@ -140,7 +140,7 @@ async function getModelTasks(ctx: MetricProcessorRunContext) {
       CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
       WHERE "userId" IN (${ids})
         AND (
-          (mv."publishedAt" > '${ctx.lastUpdate}' AND mv."status" = 'Published')
+          mv."status" = 'Published'
           OR (mv."publishedAt" <= '${ctx.lastUpdate}' AND mv."status" = 'Scheduled')
         )
       GROUP BY "userId", tf.timeframe

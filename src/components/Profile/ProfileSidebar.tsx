@@ -261,6 +261,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
           followers={stats.followerCountAllTime}
           favorites={stats.thumbsUpCountAllTime}
           downloads={stats.downloadCountAllTime}
+          generations={stats.generationCountAllTime}
         />
       )}
 

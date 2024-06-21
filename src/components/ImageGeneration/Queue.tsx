@@ -58,7 +58,10 @@ export function Queue() {
       <Stack>
         <Text size="xs" color="dimmed" my={-10}>
           <IconCalendar size={14} style={{ display: 'inline', marginTop: -3 }} strokeWidth={2} />{' '}
-          Generated images are only retained for 30 days.
+          Starting soon we will be applying a 30-day retention policy.{' '}
+          <Text variant="link" td="underline" component="a" target="_blank" href="/articles/5604">
+            More news soon
+          </Text>
         </Text>
         {requests.map((request) => (
           <div key={request.id} id={request.id.toString()}>

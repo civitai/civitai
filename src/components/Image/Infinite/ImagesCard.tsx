@@ -291,10 +291,10 @@ const useStyles = createStyles((theme, _, getRef) => {
     },
     reactions: {
       borderRadius: theme.radius.sm,
-      background: theme.fn.rgba(
-        theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-        0.6
-      ),
+      background:
+        theme.colorScheme === 'dark'
+          ? theme.fn.rgba(theme.colors.dark[6], 0.6)
+          : theme.colors.gray[0],
       // backdropFilter: 'blur(5px) saturate(160%)',
       boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
       padding: 4,

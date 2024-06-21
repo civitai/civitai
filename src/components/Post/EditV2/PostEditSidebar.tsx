@@ -18,6 +18,7 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { SchedulePostModal } from '~/components/Post/EditV2/SchedulePostModal';
 import { ConfirmDialog } from '~/components/Dialog/Common/ConfirmDialog';
 import { removeEmpty } from '~/utils/object-helpers';
+import { showErrorNotification } from '~/utils/notifications';
 
 export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
   // #region [state]
@@ -25,12 +26,15 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
   const params = usePostEditParams();
   const { returnUrl, afterPublish } = params;
   const [deleted, setDeleted] = useState(false);
-  const [updatePost, isReordering, hasImages, showReorder] = usePostEditStore((state) => [
-    state.updatePost,
-    state.isReordering,
-    state.images.filter((x) => x.type === 'added').length > 0,
-    state.images.length > 1,
-  ]);
+  const [updatePost, isReordering, hasImages, showReorder, collectionId, collectionTagId] =
+    usePostEditStore((state) => [
+      state.updatePost,
+      state.isReordering,
+      state.images.filter((x) => x.type === 'added').length > 0,
+      state.images.length > 1,
+      state.collectionId,
+      state.collectionTagId,
+    ]);
   const canPublish = hasImages && !isReordering;
   const todayRef = useRef(new Date());
   const canSchedule = post.publishedAt && post.publishedAt.getTime() > new Date().getTime();
@@ -42,12 +46,19 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
     predicate: (mutation) => mutation.options.mutationKey?.flat().includes('post') ?? false,
     exact: false,
   });
+  const publishLabel = collectionId ? 'Submit' : 'Publish';
   // #endregion
 
   // #region [publish post]
   const publish = (publishedAt = new Date()) =>
     updatePostMutation.mutate(
-      { id: post.id ?? 0, title: !post.title ? params.postTitle : undefined, publishedAt },
+      {
+        id: post.id ?? 0,
+        title: !post.title ? params.postTitle : undefined,
+        publishedAt,
+        collectionId,
+        collectionTagId,
+      },
       {
         onSuccess: async (_, post) => {
           const { id, publishedAt } = post;
@@ -60,6 +71,12 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
             // if (returnUrl) router.push(returnUrl);
             // else router.push(`/user/${currentUser.username}/posts`);
           }
+        },
+        onError: (error) => {
+          showErrorNotification({
+            title: 'There was an error while trying to publish your post',
+            error,
+          });
         },
       }
     );
@@ -94,8 +111,8 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
 
   return (
     <>
-      <div className="flex flex-col gap-0 5">
-        <div className="flex justify-between items-center">
+      <div className="5 flex flex-col gap-0">
+        <div className="flex items-center justify-between">
           <Title size="sm">POST</Title>
           <Badge color={mutating > 0 ? 'yellow' : 'green'} size="lg">
             {mutating > 0 ? 'Saving' : 'Saved'}
@@ -107,7 +124,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
             <>
               Your post is currently{' '}
               <Tooltip
-                label="Click the Publish button to make your post Public to share with the Civitai community for comments and reactions."
+                label={`Click the ${publishLabel} button to make your post Public to share with the Civitai community for comments and reactions.`}
                 {...tooltipProps}
               >
                 <Text component="span" underline>
@@ -142,26 +159,36 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
           width={260}
           withArrow
         >
-          <Button.Group>
+          {collectionId ? (
             <Button
-              disabled={!canPublish}
+              disabled={!canPublish || !!mutating}
               onClick={() => handlePublish()}
               loading={updatePostMutation.isLoading}
-              className="flex-1"
             >
-              Publish
+              {publishLabel}
             </Button>
-            <Tooltip label="Schedule Publish" withArrow>
+          ) : (
+            <Button.Group>
               <Button
-                variant="outline"
+                disabled={!canPublish || !!mutating}
+                onClick={() => handlePublish()}
                 loading={updatePostMutation.isLoading}
-                onClick={handleScheduleClick}
-                disabled={!canPublish}
+                className="flex-1"
               >
-                <IconClock size={20} />
+                {publishLabel}
               </Button>
-            </Tooltip>
-          </Button.Group>
+              <Tooltip label="Schedule Publish" withArrow>
+                <Button
+                  variant="outline"
+                  loading={updatePostMutation.isLoading}
+                  onClick={handleScheduleClick}
+                  disabled={!canPublish || !!mutating}
+                >
+                  <IconClock size={20} />
+                </Button>
+              </Tooltip>
+            </Button.Group>
+          )}
         </Tooltip>
       ) : (
         <Button.Group>

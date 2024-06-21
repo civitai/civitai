@@ -48,6 +48,7 @@ export const generationResourceSchema = z.object({
   minStrength: z.number().optional(),
   maxStrength: z.number().optional(),
   image: imageSchema.pick({ url: true }).optional(),
+  minor: z.boolean().optional(),
 
   // navigation props
   covered: z.boolean().optional(),
@@ -98,30 +99,35 @@ export const blockedRequest = (() => {
   };
 })();
 
+function promptAuditRefiner(
+  data: { prompt: string; negativePrompt?: string },
+  ctx: z.RefinementCtx
+) {
+  const { blockedFor, success } = auditPrompt(data.prompt, data.negativePrompt);
+  if (!success) {
+    let message = `Blocked for: ${blockedFor.join(', ')}`;
+    const count = blockedRequest.increment();
+    const status = blockedRequest.status();
+    if (status === 'warned') {
+      message += `. If you continue to attempt blocked prompts, your account will be sent for review.`;
+    } else if (status === 'notified') {
+      message += `. Your account has been sent for review. If you continue to attempt blocked prompts, your generation permissions will be revoked.`;
+    }
+
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['prompt'],
+      message,
+      params: { count },
+    });
+  }
+}
+
 const sharedGenerationParamsSchema = z.object({
   prompt: z
     .string()
     .nonempty('Prompt cannot be empty')
-    .max(1500, 'Prompt cannot be longer than 1500 characters')
-    .superRefine((val, ctx) => {
-      const { blockedFor, success } = auditPrompt(val);
-      if (!success) {
-        let message = `Blocked for: ${blockedFor.join(', ')}`;
-        const count = blockedRequest.increment();
-        const status = blockedRequest.status();
-        if (status === 'warned') {
-          message += `. If you continue to attempt blocked prompts, your account will be sent for review.`;
-        } else if (status === 'notified') {
-          message += `. Your account has been sent for review. If you continue to attempt blocked prompts, your generation permissions will be revoked.`;
-        }
-
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message,
-          params: { count },
-        });
-      }
-    }),
+    .max(1500, 'Prompt cannot be longer than 1500 characters'),
   negativePrompt: z.string().max(1000, 'Prompt cannot be longer than 1000 characters').optional(),
   cfgScale: z.coerce.number().min(1).max(30),
   sampler: z
@@ -202,6 +208,7 @@ export const generateFormSchema = generationFormShapeSchema
     vae: generationResourceSchema.optional(),
     tier: userTierSchema.optional().default('free'),
   })
+  .superRefine(promptAuditRefiner)
   .refine(
     (data) => {
       // Check if resources are at limit based on tier
@@ -224,7 +231,7 @@ export const createGenerationRequestSchema = z.object({
     })
     .array()
     .min(1, 'You must select at least one resource'),
-  params: sharedGenerationParamsSchema,
+  params: sharedGenerationParamsSchema.superRefine(promptAuditRefiner),
 });
 
 export type GenerationRequestTestRunSchema = z.infer<typeof generationRequestTestRunSchema>;

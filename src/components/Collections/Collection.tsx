@@ -13,6 +13,7 @@ import {
   createStyles,
   Menu,
   Popover,
+  Select,
 } from '@mantine/core';
 import { Availability, CollectionMode, CollectionType, MetricTimeframe } from '@prisma/client';
 import {
@@ -60,7 +61,10 @@ import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
 import { formatDate } from '~/utils/date-helpers';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { isCollectionSubsmissionPeriod } from '~/components/Collections/collection.utils';
+import {
+  isCollectionSubsmissionPeriod,
+  useCollection,
+} from '~/components/Collections/collection.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 import { containerQuery } from '~/utils/mantine-css-helpers';
@@ -68,6 +72,7 @@ import { truncate } from 'lodash-es';
 import { ImageContextMenuProvider } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { removeTags } from '~/utils/string-helpers';
+import { useRouter } from 'next/router';
 
 const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
   const { set, ...query } = useModelQueryParams();
@@ -159,6 +164,7 @@ const ImageCollection = ({
         period: MetricTimeframe.AllTime,
         sort,
         collectionId: collection.id,
+        collectionTagId: query.collectionTagId,
       }
     : {
         ...query,
@@ -214,6 +220,7 @@ const ImageCollection = ({
                   value={sort}
                   onChange={(x) => replace({ sort: x as ImageSort })}
                 />
+
                 <PeriodFilter
                   type="images"
                   value={period}
@@ -222,6 +229,19 @@ const ImageCollection = ({
               </Group>
               <ImageCategories />
             </>
+          )}
+          {isContestCollection && collection.tags.length > 0 && (
+            <Select
+              label="Collection Categories"
+              value={query.collectionTagId?.toString() ?? null}
+              onChange={(x) => replace({ collectionTagId: x ? parseInt(x, 10) : undefined })}
+              placeholder="All"
+              data={collection.tags.map((tag) => ({
+                value: tag.id.toString(),
+                label: tag.name,
+              }))}
+              clearable
+            />
           )}
           <ReactionSettingsProvider settings={{ hideReactionCount: isContestCollection }}>
             <ImagesInfinite
@@ -360,10 +380,9 @@ export function Collection({
   const { classes } = useStyles();
   const [opened, setOpened] = useState(false);
   const currentUser = useCurrentUser();
+  const router = useRouter();
 
-  const { data: { collection, permissions } = {}, isLoading } = trpc.collection.getById.useQuery({
-    id: collectionId,
-  });
+  const { collection, permissions, isLoading } = useCollection(collectionId);
 
   if (!isLoading && !collection) {
     return (
@@ -540,7 +559,13 @@ export function Collection({
                           color="blue"
                           variant="subtle"
                           radius="xl"
-                          onClick={() => setOpened(true)}
+                          onClick={() => {
+                            if (!!metadata.existingEntriesDisabled) {
+                              router.push(`/posts/create?collectionId=${collection.id}`);
+                            } else {
+                              setOpened(true);
+                            }
+                          }}
                         >
                           <IconCirclePlus />
                         </ActionIcon>

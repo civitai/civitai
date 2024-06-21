@@ -1,6 +1,7 @@
 import { cacheIt, edgeCacheIt } from './../middleware.trpc';
 import {
   getEntitiesCoverImageHandler,
+  getImageContestCollectionDetailsHandler,
   getImageHandler,
   getImageResourcesHandler,
   getImagesAsPostsInfiniteHandler,
@@ -177,5 +178,11 @@ export const imageRouter = router({
   updateTechniques: protectedProcedure
     .input(updateImageTechniqueSchema)
     .mutation(({ input, ctx }) => updateImageTechniques({ ...input, user: ctx.user })),
+  // #endregion
+
+  // #region [collections]
+  getContestCollectionDetails: publicProcedure
+    .input(getByIdSchema)
+    .query(({ input }) => getImageContestCollectionDetailsHandler({ input })),
   // #endregion
 });
