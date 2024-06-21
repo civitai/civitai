@@ -16,7 +16,7 @@ import {
   Paper,
   Center,
 } from '@mantine/core';
-import { Availability, CollectionType } from '@prisma/client';
+import { Availability, CollectionType, EntityType } from '@prisma/client';
 import { IconPhotoOff } from '@tabler/icons-react';
 import { IconDotsVertical, IconBookmark, IconShare3 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
@@ -29,6 +29,7 @@ import { TipBuzzButton } from '~/components/Buzz/TipBuzzButton';
 import { ChatUserButton } from '~/components/Chat/ChatUserButton';
 import { Collection } from '~/components/Collection/Collection';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
+import { useGetEntityCollaborators } from '~/components/EntityCollaborator/entityCollaborator.util';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
 import {
   ExplainHiddenImages,
@@ -88,6 +89,10 @@ export function PostDetailContent({ postId }: Props) {
       enabled: !!post?.collectionId,
     }
   );
+  const { collaborators: postCollaborators } = useGetEntityCollaborators({
+    entityId: postId,
+    entityType: EntityType.Post,
+  });
 
   const hiddenExplained = useExplainHiddenImages(unfilteredImages);
 
@@ -119,8 +124,6 @@ export function PostDetailContent({ postId }: Props) {
   const relatedResource =
     post.modelVersion?.id &&
     postResources.find((resource) => resource.modelVersionId === post.modelVersionId);
-
-  const postCollectionItem = collectionItems?.find((item) => item.postId === post.id);
 
   return (
     <>
@@ -245,28 +248,30 @@ export function PostDetailContent({ postId }: Props) {
                   </PostControls>
                 </Group>
               </Group>
-              <Group spacing="xl" mt="sm">
-                <UserAvatar
-                  user={post.user}
-                  avatarProps={{ size: 32 }}
-                  size="md"
-                  subTextSize="sm"
-                  textSize="md"
-                  withUsername
-                  linkToProfile
-                />
-                <Group spacing={8} noWrap>
-                  <TipBuzzButton
-                    toUserId={post.user.id}
-                    entityId={post.id}
-                    entityType="Post"
+              <Stack>
+                <Group spacing="xl" mt="sm">
+                  <UserAvatar
+                    user={post.user}
+                    avatarProps={{ size: 32 }}
                     size="md"
-                    compact
+                    subTextSize="sm"
+                    textSize="md"
+                    withUsername
+                    linkToProfile
                   />
-                  <ChatUserButton user={post.user} size="md" compact />
-                  <FollowUserButton userId={post.user.id} size="md" compact />
+                  <Group spacing={8} noWrap>
+                    <TipBuzzButton
+                      toUserId={post.user.id}
+                      entityId={post.id}
+                      entityType="Post"
+                      size="md"
+                      compact
+                    />
+                    <ChatUserButton user={post.user} size="md" compact />
+                    <FollowUserButton userId={post.user.id} size="md" compact />
+                  </Group>
                 </Group>
-              </Group>
+              </Stack>
             </Stack>
             {!imagesLoading && !unfilteredImages?.length ? (
               <Alert>Unable to load images</Alert>

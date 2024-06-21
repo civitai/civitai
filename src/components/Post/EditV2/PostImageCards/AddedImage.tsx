@@ -446,8 +446,8 @@ function EditDetail() {
                   Contest tip!
                 </h3>
                 <Text mt="md">
-                  Tagging the tools you used may make you elegible for Sponsoded Awards. For
-                  example, in Project Odyssey, The Evelen Labs has a sponsored $500 USD cash prize.
+                  Tagging the tools you used may make you elegible for Sponsored Awards. For
+                  example, in Project Odyssey, ElevenLabs has a sponsored $500 USD cash prize.
                 </Text>
               </Alert>
             )}

@@ -640,7 +640,9 @@ export const getAllImages = async ({
     );
 
     AND.push(
-      Prisma.sql`(u."id" = ${targetUserId} OR i."postId" IN (SELECT id FROM collaboratingPosts))`
+      // TOOD: Due to performance reasons we cannot add this here yet. Will need to revise with other teams.
+      // Prisma.sql`(u."id" = ${targetUserId} OR i."postId" IN (SELECT id FROM collaboratingPosts))`
+      Prisma.sql`u."id" = ${targetUserId}`
     );
     // Don't cache self queries
     console.log('THIS IS ABOUT TO HAPPEN BUD!');

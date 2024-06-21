@@ -57,9 +57,10 @@ import {
   getUserCollectionPermissionsById,
   validateContestCollectionEntry,
 } from '~/server/services/collection.service';
-import { CollectionMode, CollectionType } from '@prisma/client';
+import { CollectionMode, CollectionType, EntityType } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
 import { Flags } from '~/shared/utils';
+import { sendMessagesToCollaborators } from '~/server/services/entity-collaborator.service';
 
 export const getPostsInfiniteHandler = async ({
   input,
@@ -159,6 +160,7 @@ export const updatePostHandler = async ({
       throw throwBadRequestError('Cannot schedule a post in a collection');
     }
 
+    console.log(input);
     if (post && input.publishedAt && input.collectionId) {
       // Confirm & Validate in the case of a contest collection
       // That a submission can be made. We only do this as the user publishes
@@ -233,6 +235,14 @@ export const updatePostHandler = async ({
 
       const isScheduled = dayjs(updatedPost.publishedAt).isAfter(dayjs().add(10, 'minutes')); // Publishing more than 10 minutes in the future
       const tags = postTags.map((x) => x.tagName);
+
+      if (!isScheduled) {
+        await sendMessagesToCollaborators({
+          entityId: updatedPost.id,
+          entityType: EntityType.Post,
+          userId: ctx.user.id,
+        });
+      }
 
       // Technically, collectionPosts cannot be scheduled.
       if (!!updatedPost?.collectionId && !isScheduled) {

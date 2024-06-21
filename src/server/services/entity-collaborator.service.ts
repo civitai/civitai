@@ -262,3 +262,48 @@ export const actionEntityCollaborationInvite = async ({
     },
   });
 };
+
+export const sendMessagesToCollaborators = async ({
+  entityId,
+  entityType,
+  userId,
+}: {
+  entityId: number;
+  entityType: EntityType;
+  userId: number;
+}) => {
+  if (entityType !== EntityType.Post) {
+    throw throwBadRequestError('Only posts are currently supported for entity collaborators');
+  }
+
+  const validCollaborators = await dbRead.entityCollaborator.findMany({
+    where: {
+      entityId,
+      entityType,
+      status: EntityCollaboratorStatus.Approved,
+      AND: {
+        OR: [
+          {
+            lastMessageSentAt: null,
+          },
+          {
+            lastMessageSentAt: { lte: dayjs().subtract(1, 'day').toDate() },
+          },
+        ],
+      },
+    },
+  });
+
+  await Promise.all(
+    validCollaborators.map((c) =>
+      sendEntityCollaboratorInviteMessage({
+        entityId,
+        entityType,
+        targetUserId: c.userId,
+        userId,
+      })
+    )
+  );
+
+  return;
+};
