@@ -142,7 +142,6 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
     'availableQuantity',
   ]);
   const { cosmetic, isLoading: isLoadingCosmetic } = useQueryCosmetic({ id: cosmeticId });
-  console.log('cosmetic', cosmetic);
   const { upsertShopItem, upsertingShopItem } = useMutateCosmeticShop();
 
   const handleSubmit = async (data: z.infer<typeof formSchema>) => {

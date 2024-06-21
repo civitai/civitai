@@ -98,8 +98,6 @@ export function ProfileSidebar({ username, className }: { username: string; clas
   const [enlargedBadge, setEnlargedBadge] = useState<number | null>(null);
   const sizeOpts = mapSize[isMobile ? 'mobile' : 'desktop'];
 
-  console.log("user", user)
-
   const badges = useMemo(
     () =>
       !user
