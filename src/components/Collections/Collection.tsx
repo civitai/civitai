@@ -238,8 +238,9 @@ const ImageCollection = ({
               placeholder="All"
               data={collection.tags.map((tag) => ({
                 value: tag.id.toString(),
-                label: getDisplayName(tag.name),
+                label: capitalize(tag.name),
               }))}
+              tt="capitalize"
               clearable
             />
           )}

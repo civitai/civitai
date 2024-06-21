@@ -98,6 +98,7 @@ export const CollectionSelectDropdown = () => {
                 height: 32,
               },
             }}
+            tt="capitalize"
           />
           {selectedCollection && selectedCollection.tags.length > 0 && !post?.publishedAt && (
             <Select
@@ -121,6 +122,7 @@ export const CollectionSelectDropdown = () => {
                   height: 32,
                 },
               }}
+              tt="capitalize"
             />
           )}
         </Group>
