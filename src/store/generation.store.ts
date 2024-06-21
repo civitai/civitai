@@ -16,6 +16,7 @@ type GenerationState = {
   close: () => void;
   setView: (view: GenerationPanelView) => void;
   setData: (args: GenerationData) => void;
+  clearData: () => void;
 };
 
 export const useGenerationStore = create<GenerationState>()(
@@ -46,6 +47,10 @@ export const useGenerationStore = create<GenerationState>()(
           state.view = 'generate';
           state.data = data;
         }),
+      clearData: () =>
+        set((state) => {
+          state.data = undefined;
+        }),
     })),
     { name: 'generation-store' }
   )
@@ -60,4 +65,5 @@ export const generationPanel = {
 
 export const generationStore = {
   setData: store.setData,
+  clearData: store.clearData,
 };

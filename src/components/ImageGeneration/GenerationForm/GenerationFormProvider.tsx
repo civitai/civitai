@@ -20,7 +20,7 @@ import {
 } from '~/shared/constants/generation.constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
-import { useGenerationStore } from '~/store/generation.store';
+import { generationStore, useGenerationStore } from '~/store/generation.store';
 import { auditPrompt } from '~/utils/metadata/audit';
 import { defaultsByTier } from '~/server/schema/generation.schema';
 
@@ -226,6 +226,10 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
 
       setValues(runType === 'run' ? removeEmpty(data) : data);
     }
+
+    return () => {
+      generationStore.clearData();
+    };
   }, [responseData, status, currentUser, storeData, isFetching, input]); // eslint-disable-line
 
   useEffect(() => {

@@ -49,7 +49,10 @@ import {
   NormalizedTextToImageStep,
 } from '~/server/services/orchestrator';
 import { WorkflowStatus } from '@civitai/client';
-import { orchestratorPendingStatuses } from '~/shared/constants/generation.constants';
+import {
+  orchestratorPendingStatuses,
+  orchestratorRefundableStatuses,
+} from '~/shared/constants/generation.constants';
 
 // const FAILED_STATUSES: WorkflowStatus[] = ['failed', 'expired'];
 // const PENDING_STATUSES = [GenerationRequestStatus.Pending, GenerationRequestStatus.Processing];
@@ -133,7 +136,8 @@ export function QueueItem({
   const refunded = Math.ceil(
     !!cost
       ? (cost / params.quantity) *
-          (params.quantity - (images.filter((x) => x.status === 'succeeded').length ?? 0))
+          (params.quantity -
+            (images.filter((x) => !orchestratorRefundableStatuses.includes(x.status)).length ?? 0))
       : 0
   );
   const actualCost = !!cost ? cost - refunded : 0;

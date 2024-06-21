@@ -38,7 +38,7 @@ import {
   textToImageCreateSchema,
   textToImageWhatIfSchema,
 } from '~/server/schema/orchestrator/textToImage.schema';
-import { removeNulls } from '~/utils/object-helpers';
+import { deepOmit, removeNulls } from '~/utils/object-helpers';
 import dayjs from 'dayjs';
 import { env } from '~/env/server.mjs';
 
@@ -193,11 +193,11 @@ export async function textToImage({
     batchSize = 4;
   }
 
-  if (Object.keys(stepMetadata).length) metadata.params = stepMetadata;
+  metadata.params = stepMetadata;
 
   const step: TextToImageStepTemplate = {
     $type: 'textToImage',
-    metadata,
+    metadata: deepOmit(metadata),
     input: {
       model: checkpoint.air,
       quantity,
@@ -370,6 +370,10 @@ export async function formatTextToImageResponses(
         quantity *= 4;
       }
 
+      const cost = step.jobs
+        ? Math.ceil(step.jobs.reduce((acc, job) => acc + (job.cost ?? 0), 0))
+        : 0;
+
       return removeNulls({
         $type: 'textToImage',
         name: step.name,
@@ -386,10 +390,12 @@ export async function formatTextToImageResponses(
           height: input.height,
           seed: input.seed,
           clipSkip: input.clipSkip,
+          draft: metadata?.params?.draft ?? false,
+          nsfw: metadata?.params?.nsfw ?? false,
         },
         resources,
         images,
-        cost: step.jobs?.reduce((acc, job) => acc + (job.cost ?? 0), 0),
+        cost,
         status: step.status,
         metadata: metadata,
       });
