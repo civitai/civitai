@@ -1,5 +1,6 @@
 import {
   ActionIcon,
+  Anchor,
   Box,
   Button,
   Divider,
@@ -324,21 +325,15 @@ export function ProfileSidebar({ username, className }: { username: string; clas
                       <Text size="sm" align="center" weight={500}>
                         {award.name}
                       </Text>
-                      {award.videoUrl && <Button
-                        component="a"
-                        variant="subtle"
+                      {award.videoUrl && <Anchor
+                        href={award.videoUrl}
                         size="xs"
                         opacity={0.9}
                         mt={4}
-                        sx={{
-                          '&:hover': {
-                            backgroundColor: 'transparent',
-                            textDecoration: 'underline',
-                          },
-                        }}
+                        target="_blank"
                       >
-                        How it was made <IconExternalLink size={14} style={{ marginLeft: 4 }} />
-                      </Button>}
+                        <span style={{ display: 'flex', alignItems: 'center' }}>How it was made <IconExternalLink size={14} style={{ marginLeft: 4 }} /></span>
+                      </Anchor>}
                     </Stack>
                   </Popover.Dropdown>
                 </Popover>

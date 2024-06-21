@@ -65,17 +65,13 @@ export const upsertCosmetic = async (input: UpsertCosmeticInput) => {
     throw new Error('ID is required to update the video URL');
   }
 
-  console.log(`Updating cosmetic with ID: ${id}, videoUrl: ${videoUrl}`);
-
   try {
     const result = await dbWrite.cosmetic.update({
       where: { id },
       data: { videoUrl },
     });
-    console.log('Update result:', result);
     return result;
   } catch (error) {
-    console.error('Error updating cosmetic:', error);
     throw new Error('Failed to update cosmetic');
   }
 };
@@ -87,6 +83,7 @@ export const upsertCosmeticShopItem = async ({
   availableFrom,
   id,
   archived,
+  videoUrl,
   ...cosmeticShopItem
 }: UpsertCosmeticShopItemInput & { userId: number }) => {
   const existingItem = id
@@ -116,26 +113,24 @@ export const upsertCosmeticShopItem = async ({
     throw new Error('Cannot set available quantity to less than the amount of purchases');
   }
 
-  if (id) {
-    return dbWrite.cosmeticShopItem.update({
+  const data = {
+    ...cosmeticShopItem,
+    availableQuantity,
+    availableTo,
+    availableFrom,
+    archivedAt: archived ? new Date() : null,
+  };
+
+  const item = id
+    ? await dbWrite.cosmeticShopItem.update({
       where: { id },
-      data: {
-        ...cosmeticShopItem,
-        availableQuantity,
-        availableTo,
-        availableFrom,
-        archivedAt: archived ? new Date() : null,
-      },
+      data,
       select: cosmeticShopItemSelect,
-    });
-  } else {
-    return dbWrite.cosmeticShopItem.create({
+    })
+    : await dbWrite.cosmeticShopItem.create({
       data: {
-        ...cosmeticShopItem,
-        availableQuantity,
+        ...data,
         addedById: userId,
-        availableTo,
-        availableFrom,
         meta: {
           ...(cosmeticShopItem.meta ?? {}),
           purchases: 0,
@@ -143,7 +138,15 @@ export const upsertCosmeticShopItem = async ({
       },
       select: cosmeticShopItemSelect,
     });
+
+  if (videoUrl) {
+    await upsertCosmetic({
+      id: item.cosmeticId,
+      videoUrl,
+    });
   }
+
+  return item;
 };
 
 export const getShopSections = async (input: GetAllCosmeticShopSections) => {
