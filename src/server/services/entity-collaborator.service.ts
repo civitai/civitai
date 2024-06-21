@@ -280,7 +280,7 @@ export const sendMessagesToCollaborators = async ({
     where: {
       entityId,
       entityType,
-      status: EntityCollaboratorStatus.Approved,
+      status: EntityCollaboratorStatus.Pending,
       AND: {
         OR: [
           {
