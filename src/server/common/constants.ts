@@ -207,9 +207,9 @@ export const constants = {
   maxTrainingRetries: 2,
   mediaUpload: {
     maxImageFileSize: 50 * 1024 ** 2, // 50MB
-    maxVideoFileSize: 500 * 1024 ** 2, // 500MB
+    maxVideoFileSize: 750 * 1024 ** 2, // 750MB
     maxVideoDimension: 3840,
-    maxVideoDurationSeconds: 200,
+    maxVideoDurationSeconds: 245,
   },
   bounties: {
     engagementTypes: ['active', 'favorite', 'tracking', 'supporter', 'awarded'],

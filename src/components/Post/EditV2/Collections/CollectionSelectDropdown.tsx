@@ -5,7 +5,7 @@ import { useCollectionsForPostCreation } from '~/components/Collections/collecti
 import { usePostEditParams, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
 import { isDefined } from '~/utils/type-guards';
 
-export const CollectionSelectDropdown = () => {
+export const useCollectionsForPostEditor = () => {
   const { collections: queryCollectionIds, collectionId: queryCollectionId } = usePostEditParams();
   const { post, updateCollection, collectionId, collectionTagId } = usePostEditStore((state) => ({
     post: state.post,
@@ -20,7 +20,28 @@ export const CollectionSelectDropdown = () => {
     );
   }, [queryCollectionIds, collectionId, post]);
 
+  useEffect(() => {
+    if (queryCollectionId && !collectionId) {
+      updateCollection(queryCollectionId);
+    }
+  }, [queryCollectionId]);
+
   const { collections = [] } = useCollectionsForPostCreation({ collectionIds });
+
+  return {
+    post,
+    collections,
+    updateCollection,
+    collectionId,
+    collectionTagId,
+    collectionIds,
+    activeCollection: collections.find((c) => c.id === collectionId),
+  };
+};
+
+export const CollectionSelectDropdown = () => {
+  const { post, collections, updateCollection, collectionId, collectionTagId, collectionIds } =
+    useCollectionsForPostEditor();
   const writeableCollections = useMemo(() => {
     return collections.filter(
       (collection) => collection.permissions?.write || collection.permissions?.writeReview
@@ -34,12 +55,6 @@ export const CollectionSelectDropdown = () => {
   const selectedCollection = collectionId
     ? writeableCollections.find((c) => c.id === collectionId)
     : null;
-
-  useEffect(() => {
-    if (queryCollectionId && !collectionId) {
-      updateCollection(queryCollectionId);
-    }
-  }, [queryCollectionId]);
 
   const selectOpts = writeableCollections.map((collection) => ({
     value: collection.id.toString(),
