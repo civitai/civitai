@@ -41,12 +41,12 @@ export function PostsCard({
               <>
                 {image.meta && 'civitaiResources' in (image.meta as object) && <OnsiteIndicator />}
 
-                <ImageGuard2.BlurToggle className="absolute top-2 left-2 z-10" />
+                <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
                 {safe && (
                   <ImageContextMenu
                     image={image}
                     context="post"
-                    className="absolute top-2 right-2 z-10"
+                    className="absolute right-2 top-2 z-10"
                     additionalMenuItems={
                       isOwner ? (
                         <AddArtFrameMenuItem
@@ -119,10 +119,10 @@ const useStyles = createStyles((theme) => ({
     bottom: 6,
     left: 6,
     borderRadius: theme.radius.sm,
-    background: theme.fn.rgba(
-      theme.colorScheme === 'dark' ? theme.colors.dark[9] : theme.colors.gray[0],
-      0.8
-    ),
+    background:
+      theme.colorScheme === 'dark'
+        ? theme.fn.rgba(theme.colors.dark[6], 0.6)
+        : theme.colors.gray[0],
     // backdropFilter: 'blur(13px) saturate(160%)',
     boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
     padding: 4,
