@@ -6,8 +6,8 @@ export const encouragementReward = createBuzzEvent({
   description: 'For encouraging others to post content',
   triggerDescription: 'For each unique reaction you give',
   tooltip: 'If you react to the same thing multiple times, you will not get more rewards.',
-  awardAmount: 1,
-  cap: 50,
+  awardAmount: 2,
+  cap: 100,
   onDemand: true,
   getKey: async (input: ReactionEvent) => {
     if (input.ownerId === input.reactorId) return false;

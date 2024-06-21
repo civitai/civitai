@@ -739,7 +739,14 @@ export const RECAPTCHA_ACTIONS = {
 
 export type RecaptchaAction = keyof typeof RECAPTCHA_ACTIONS;
 
-export const creatorCardStats = ['followers', 'likes', 'uploads', 'downloads', 'reactions'];
+export const creatorCardStats = [
+  'followers',
+  'likes',
+  'uploads',
+  'downloads',
+  'generations',
+  'reactions',
+];
 export const creatorCardStatsDefaults = ['followers', 'likes'];
 export const creatorCardMaxStats = 3;
 

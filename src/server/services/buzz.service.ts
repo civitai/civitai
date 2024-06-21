@@ -690,7 +690,6 @@ export async function getEarnPotential({ userId, username }: GetEarnPotentialSch
       WHERE arrayExists(x -> x IN (SELECT id FROM user_resources), resourcesUsed)
       AND createdAt > subtractDays(now(), 30)
       AND modelVersionId NOT IN (250708, 250712, 106916) -- Exclude models that are not eligible for compensation
-      SETTINGS use_skip_indexes = 1
     ), resource_ownership AS (
       SELECT
         rj.*,
@@ -705,12 +704,12 @@ export async function getEarnPotential({ userId, username }: GetEarnPotentialSch
         job_cost * ${CREATOR_COMP_PERCENT} as creator_comp,
         CEIL(job_cost * ${TIP_PERCENT}) as full_tip,
         count(modelVersionId) as resource_count,
-        countIf(isOwner = 1) as owned_resource_count,
+        countIf(isOwner) as owned_resource_count,
         owned_resource_count/resource_count as owned_ratio,
         full_tip * owned_ratio as tip,
-        creator_comp * if(MAX(isBaseModel) = 1, .25, 0) as base_model_comp,
-        creator_comp * .75 * owned_ratio as resource_comp,
-        if(MAX(isBaseModel) = 1, .25, 0) + .75 * owned_ratio as full_ratio,
+        creator_comp * if(MAX(isBaseModel) = 1, 0.25, 0) as base_model_comp,
+        creator_comp * 0.75 * owned_ratio as resource_comp,
+        if(MAX(isBaseModel) = 1, 0.25, 0) + 0.75 * owned_ratio as full_ratio,
         base_model_comp + resource_comp as total_comp,
         total_comp + tip as total
       FROM resource_ownership

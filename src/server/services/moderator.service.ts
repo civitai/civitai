@@ -37,6 +37,11 @@ type ImpersonateModActivity = {
   activity: 'on' | 'off'; // off is currently not used
 };
 
+type UserModActivity = {
+  entityType: 'user';
+  activity: 'setRewardsEligibility';
+};
+
 type ModActivity = {
   entityId?: number | number[];
 } & (
@@ -47,6 +52,7 @@ type ModActivity = {
   | ReportModActivity
   | ArticleModActivity
   | ImpersonateModActivity
+  | UserModActivity
 );
 
 export async function trackModActivity(userId: number, input: ModActivity) {

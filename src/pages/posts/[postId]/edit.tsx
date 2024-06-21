@@ -6,6 +6,7 @@ import { getLoginLink } from '~/utils/login-helpers';
 import { dbRead } from '~/server/db/client';
 import { z } from 'zod';
 import { getDbWithoutLag } from '~/server/db/db-helpers';
+import { Meta } from '~/components/Meta/Meta';
 
 const paramsSchema = z.object({
   postId: z.coerce.number(),
@@ -27,7 +28,7 @@ export const getServerSideProps = createServerSideProps({
     }
 
     const postId = parsedParams.data.postId;
-    const db = await getDbWithoutLag('postImages', postId);
+    const db = await getDbWithoutLag('post', postId);
     const post = await db.post.findUnique({ where: { id: postId }, select: { userId: true } });
     const isOwner = post?.userId === session.user?.id;
     if (!isOwner && !session.user?.isModerator) return { notFound: true };
@@ -39,9 +40,12 @@ export const getServerSideProps = createServerSideProps({
 export default createPage(
   function PostEditPage() {
     return (
-      <div className="container max-w-lg">
-        <PostEdit />
-      </div>
+      <>
+        <Meta deIndex />
+        <div className="container max-w-lg">
+          <PostEdit />
+        </div>
+      </>
     );
   },
   { InnerLayout: PostEditLayout }

@@ -24,7 +24,7 @@ export const rewardsAbusePrevention = createJob(
         sum(awardAmount) as awarded
       FROM buzzEvents be
       WHERE createdDate > subtractDays(now(), 1)
-      AND be.toUserId = be.byUserId
+      AND be.type IN (${abuseLimits.award_types.map((type) => `'${type}'`)})
       AND ip NOT IN (${abuseLimits.excludedIps.map((ip) => `'${ip}'`)})
       AND awardAmount > 0
       GROUP BY ip
@@ -36,16 +36,18 @@ export const rewardsAbusePrevention = createJob(
     `);
 
     const usersToDisable = abusers?.map((abuser) => abuser.user_ids).flat() ?? [];
+    let usersDisabled = 0;
     const tasks = chunk(usersToDisable, 500).map((chunk) => async () => {
-      const affected = await dbWrite.$queryRaw<{ id: number }[]>`
-        UPDATE "User"
+      const affected = await dbWrite.$queryRawUnsafe<{ id: number }[]>(`
+        UPDATE "User" u
         SET "rewardsEligibility" = 'Ineligible'::"RewardsEligibility",
             "eligibilityChangedAt" = NOW()
-        WHERE "id" IN (${Prisma.join(usersToDisable)})
+        WHERE "id" IN (${usersToDisable.join(',')})
         AND "rewardsEligibility" != 'Protected'::"RewardsEligibility"
         AND "rewardsEligibility" != 'Ineligible'::"RewardsEligibility"
+        ${abuseLimits.user_conditions ? `AND ${abuseLimits.user_conditions.join(' AND ')}` : ''}
         RETURNING "id";
-      `;
+      `);
 
       await userMultipliersCache.bust(affected.map((user) => user.id));
       await createNotification({
@@ -54,11 +56,16 @@ export const rewardsAbusePrevention = createJob(
         type: 'system-announcement',
         details: {
           message: 'Your Buzz rewards have been disabled due to suspicious activity.',
-          url: '/user/buzz-dashboard',
+          url: '/articles/5799',
         },
       });
+      usersDisabled += affected.length;
     });
     await limitConcurrency(tasks, 3);
+
+    return {
+      usersDisabled,
+    };
   }
 );
 
@@ -73,4 +80,6 @@ const abuseLimitsSchema = z.object({
   awarded: z.number().default(3000),
   user_count: z.number().default(10),
   excludedIps: z.string().array().default(['1.1.1.1', '']),
+  award_types: z.string().array().default(['dailyBoost']),
+  user_conditions: z.string().array().optional(),
 });

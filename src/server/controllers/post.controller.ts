@@ -35,11 +35,7 @@ import {
 } from '~/server/utils/errorHandling';
 import { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '../db/client';
-import {
-  firstDailyPostReward,
-  firstDailyPostNsfwReward,
-  imagePostedToModelReward,
-} from '~/server/rewards';
+import { firstDailyPostReward, imagePostedToModelReward } from '~/server/rewards';
 import { eventEngine } from '~/server/events';
 import dayjs from 'dayjs';
 import { hasEntityAccess } from '../services/common.service';
@@ -99,10 +95,7 @@ export const createPostHandler = async ({
     });
 
     if (isPublished && !isScheduled) {
-      const reward = Flags.intersects(post.nsfwLevel, sfwBrowsingLevelsFlag)
-        ? firstDailyPostReward
-        : firstDailyPostNsfwReward;
-      await reward.apply(
+      await firstDailyPostReward.apply(
         {
           postId: post.id,
           posterId: post.user.id,
@@ -321,10 +314,7 @@ export const updatePostHandler = async ({
       }
 
       // Give reward for first post of the day
-      const reward = Flags.intersects(updatedPost.nsfwLevel, sfwBrowsingLevelsFlag)
-        ? firstDailyPostReward
-        : firstDailyPostNsfwReward;
-      await reward.apply(
+      await firstDailyPostReward.apply(
         {
           postId: updatedPost.id,
           posterId: updatedPost.userId,

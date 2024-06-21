@@ -42,6 +42,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'createdAt',
     'stats.commentCount',
     'stats.favoriteCount',
+    'stats.collectedCount',
     'stats.viewCount',
     'stats.tippedAmountCount',
   ]);
@@ -84,6 +85,7 @@ const transformData = async ({
         stats: stats
           ? {
               favoriteCount: stats.favoriteCountAllTime,
+              collectedCount: stats.collectedCountAllTime,
               commentCount: stats.commentCountAllTime,
               likeCount: stats.likeCountAllTime,
               dislikeCount: stats.dislikeCountAllTime,
@@ -116,6 +118,7 @@ const articleSelect = {
   stats: {
     select: {
       favoriteCountAllTime: true,
+      collectedCountAllTime: true,
       commentCountAllTime: true,
       likeCountAllTime: true,
       dislikeCountAllTime: true,

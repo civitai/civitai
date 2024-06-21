@@ -100,14 +100,13 @@ type MoveAssetRow = {
 export const moveAsset = async ({
   url,
   modelVersionId,
-  modelId,
   userId,
 }: MoveAssetInput & { userId: number }) => {
   const urlMatch = url.match(assetUrlRegex);
   if (!urlMatch || !urlMatch.groups) throw throwBadRequestError('Invalid URL');
   const { jobId, assetName } = urlMatch.groups;
 
-  const { url: destinationUri } = await getPutUrl(`model/${modelId}/${assetName}`);
+  const { url: destinationUri } = await getPutUrl(`modelVersion/${modelVersionId}/${assetName}`);
 
   const reqBody: Orchestrator.Training.CopyAssetJobPayload = {
     jobId,

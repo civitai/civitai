@@ -3257,6 +3257,11 @@ model ArticleStat {
   favoriteCountMonth       Int     @default(0)
   favoriteCountYear        Int     @default(0)
   favoriteCountAllTime     Int     @default(0)
+  collectedCountDay        Int     @default(0)
+  collectedCountWeek       Int     @default(0)
+  collectedCountMonth      Int     @default(0)
+  collectedCountYear       Int     @default(0)
+  collectedCountAllTime    Int     @default(0)
   hideCountDay             Int     @default(0)
   hideCountWeek            Int     @default(0)
   hideCountMonth           Int     @default(0)
@@ -3364,6 +3369,11 @@ model UserStat {
   downloadCountMonth       Int
   downloadCountYear        Int
   downloadCountAllTime     Int
+  generationCountDay       Int
+  generationCountWeek      Int
+  generationCountMonth     Int
+  generationCountYear      Int
+  generationCountAllTime   Int
   ratingCountDay           Int
   ratingCountWeek          Int
   ratingCountMonth         Int

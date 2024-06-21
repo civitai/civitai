@@ -11,7 +11,7 @@ export function Meta<TImage extends { nsfwLevel: number; url: string }>({
   images,
   imageUrl,
 }: {
-  title: string;
+  title?: string;
   description?: string;
   links?: React.LinkHTMLAttributes<HTMLLinkElement>[];
   schema?: object;
