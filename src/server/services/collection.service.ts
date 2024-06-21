@@ -202,7 +202,7 @@ export const getUserCollectionPermissionsById = async ({
     permissions.write = true;
   }
 
-  if (isModerator) {
+  if (isModerator && !permissions.isOwner) {
     permissions.manage = true;
     permissions.read = true;
     // Makes sure that moderators' stuff still needs to be reviewed.
@@ -212,7 +212,7 @@ export const getUserCollectionPermissionsById = async ({
 
   const [contributorItem] = collection.contributors;
 
-  if (!contributorItem) {
+  if (!contributorItem || permissions.isOwner) {
     return permissions;
   }
 
@@ -463,7 +463,7 @@ export const saveItemInCollections = async ({
           id: collectionId,
         });
 
-        if (!permission.isContributor) {
+        if (!permission.isContributor && !permission.isOwner) {
           // Make sure to follow the collection
           return addContributorToCollection({
             targetUserId: userId,
