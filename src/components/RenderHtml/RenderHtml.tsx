@@ -7,6 +7,7 @@ import { useMemo } from 'react';
 
 import { needsColorSwap, sanitizeHtml } from '~/utils/html-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+import { isDefined } from '~/utils/type-guards';
 
 const useStyles = createStyles((theme) => ({
   htmlRenderer: {
@@ -95,7 +96,13 @@ export function RenderHtml({ html, withMentions = false, ...props }: Props) {
             const dataType = attribs['data-type'];
             const isMention = dataType === 'mention';
             const style = attribs['style'];
-            const hexColor = style?.match(/color:#([0-9a-f]{6})/)?.[1];
+            let hexColor = style?.match(/color:#([0-9a-f]{6})/)?.[1];
+            const [, r, g, b] = style?.match(/color:rgba?\((\d+), (\d+), (\d+),? ?(\d+)?\)/) ?? [];
+            const rgbColors = [r, g, b].filter(isDefined).map((color) => parseInt(color, 10));
+
+            if (rgbColors.length === 3)
+              hexColor = rgbColors.map((color) => color.toString(16)).join('');
+
             const needsSwap = hexColor
               ? needsColorSwap({ hexColor, colorScheme: theme.colorScheme, threshold: 0.2 })
               : false;
