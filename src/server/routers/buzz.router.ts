@@ -18,8 +18,9 @@ import {
   getUserBuzzTransactionsSchema,
   userBuzzTransactionInputSchema,
   clubTransactionSchema,
+  getEarnPotentialSchema,
 } from '~/server/schema/buzz.schema';
-import { claimBuzz, getClaimStatus } from '~/server/services/buzz.service';
+import { claimBuzz, getClaimStatus, getEarnPotential } from '~/server/services/buzz.service';
 import { isFlagProtected, protectedProcedure, router } from '~/server/trpc';
 
 export const buzzRouter = router({
@@ -63,4 +64,9 @@ export const buzzRouter = router({
     .mutation(({ input, ctx }) => claimBuzz({ ...input, userId: ctx.user.id })),
   getUserMultipliers: protectedProcedure.query(getUserMultipliersHandler),
   claimDailyBoostReward: protectedProcedure.mutation(claimDailyBoostRewardHandler),
+  getEarnPotential: protectedProcedure.input(getEarnPotentialSchema).query(({ input, ctx }) => {
+    if (!ctx.user.isModerator) input.userId = ctx.user.id;
+    if (!input.username && !input.userId) input.userId = ctx.user.id;
+    return getEarnPotential(input);
+  }),
 });

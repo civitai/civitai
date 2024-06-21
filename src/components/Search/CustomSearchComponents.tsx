@@ -212,6 +212,7 @@ export function ChipRefinementList({ title, ...props }: RefinementListProps & { 
             {items.map((item) => (
               <Chip
                 size="sm"
+                tt="capitalize"
                 key={item.value}
                 checked={item.isRefined}
                 onClick={() => refine(item.value)}

@@ -51,8 +51,8 @@ export function ToggleArticleEngagement({
             { id: articleId },
             produce((article) => {
               if (!article?.stats) return;
-              const favoriteCount = article.stats.favoriteCountAllTime;
-              article.stats.favoriteCountAllTime += !isToggled ? 1 : favoriteCount > 0 ? -1 : 0;
+              const favoriteCount = article.stats.collectedCountAllTime;
+              article.stats.collectedCountAllTime += !isToggled ? 1 : favoriteCount > 0 ? -1 : 0;
             })
           );
         }
@@ -89,8 +89,8 @@ export function ToggleArticleEngagement({
           { id: articleId },
           produce((article) => {
             if (!article?.stats) return;
-            const favoriteCount = article.stats.favoriteCountAllTime;
-            article.stats.favoriteCountAllTime += !isToggled ? 1 : favoriteCount > 0 ? -1 : 0;
+            const favoriteCount = article.stats.collectedCountAllTime;
+            article.stats.collectedCountAllTime += !isToggled ? 1 : favoriteCount > 0 ? -1 : 0;
           })
         );
 

@@ -80,7 +80,11 @@ export const orchestratorRouter = router({
       } catch (e) {
         if (e instanceof TRPCError && e.message.startsWith('Your prompt was flagged')) {
           await reportProhibitedRequestHandler({
-            input: { prompt: input.params.prompt, source: 'External' },
+            input: {
+              prompt: input.params.prompt,
+              negativePrompt: input.params.negativePrompt,
+              source: 'External',
+            },
             ctx,
           });
         }

@@ -147,6 +147,7 @@ export const REDIS_KEYS = {
     SYSTEM_TAGS: 'system:tags',
     PERMISSIONS: 'system:permissions',
     TAGS_NEEDING_REVIEW: 'system:tags-needing-review',
+    TAGS_BLOCKED: 'system:tags-blocked',
     HOME_EXCLUDED_TAGS: 'system:home-excluded-tags',
     NOTIFICATION_COUNTS: 'system:notification-counts',
   },

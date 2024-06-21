@@ -195,6 +195,8 @@ export const CreatorCardV2 = ({
       thumbsUpCountAllTime: 0,
       followerCountAllTime: 0,
       reactionCountAllTime: 0,
+      generationCountAllTime: 0,
+      uploadCountAllTime: 0,
     },
     publicSettings: {
       creatorCardStatsPreferences: [],
@@ -228,7 +230,6 @@ export const CreatorCardV2 = ({
 
   const badge = cosmetics.find(({ cosmetic }) => cosmetic?.type === CosmeticType.Badge)?.cosmetic;
   const stats = creator?.stats;
-  const { models: uploads } = creator?._count ?? { models: 0 };
   const displayStats = data
     ? startDisplayOverwrite ??
       ((data.publicSettings ?? {}) as UserPublicSettingsSchema)?.creatorCardStatsPreferences ??
@@ -290,7 +291,7 @@ export const CreatorCardV2 = ({
                 <RankBadge size="md" rank={creator.rank} />
                 {stats && displayStats.length > 0 && (
                   <UserStatBadgesV2
-                    uploads={displayStats.includes('uploads') ? uploads : null}
+                    uploads={displayStats.includes('uploads') ? stats.uploadCountAllTime : null}
                     followers={
                       displayStats.includes('followers') ? stats.followerCountAllTime : null
                     }
@@ -300,6 +301,9 @@ export const CreatorCardV2 = ({
                     }
                     reactions={
                       displayStats.includes('reactions') ? stats.reactionCountAllTime : null
+                    }
+                    generations={
+                      displayStats.includes('generations') ? stats.generationCountAllTime : null
                     }
                     colorOverrides={backgroundImage?.data}
                   />

@@ -9,6 +9,7 @@ import {
   getAllImages,
   getEntityCoverImage,
   getImage,
+  getImageContestCollectionDetails,
   getImageDetail,
   getImageModerationReviewQueue,
   getImageResources,
@@ -486,6 +487,21 @@ export const getModeratorReviewQueueHandler = async ({
 }) => {
   try {
     return await getImageModerationReviewQueue({
+      ...input,
+    });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+export const getImageContestCollectionDetailsHandler = async ({
+  input,
+}: {
+  input: GetByIdInput;
+}) => {
+  try {
+    return await getImageContestCollectionDetails({
       ...input,
     });
   } catch (error) {

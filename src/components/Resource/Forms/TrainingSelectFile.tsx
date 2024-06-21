@@ -242,7 +242,6 @@ export default function TrainingSelectFile({
       {
         url: fileUrl,
         modelVersionId: modelVersion.id,
-        modelId: model.id,
       },
       {
         onSuccess: (data) => {

@@ -39,6 +39,7 @@ function getClickHouse() {
     clickhouse_settings: {
       async_insert: 1,
       wait_for_async_insert: 0,
+      output_format_json_quote_64bit_integers: 0, // otherwise they come as strings
     },
   }) as CustomClickHouseClient;
 
@@ -56,7 +57,7 @@ function getClickHouse() {
       query,
       format: 'JSONEachRow',
     });
-    const data = (await response?.json()) as T[];
+    const data = await response?.json<T>();
     return data;
   };
 
@@ -399,7 +400,11 @@ export class Tracker {
     return this.track('bountyEngagements', values);
   }
 
-  public prohibitedRequest(values: { prompt: string; source?: ProhibitedSources }) {
+  public prohibitedRequest(values: {
+    prompt: string;
+    negativePrompt: string;
+    source?: ProhibitedSources;
+  }) {
     return this.track('prohibitedRequests', values);
   }
 

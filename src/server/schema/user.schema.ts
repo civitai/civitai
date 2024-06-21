@@ -182,6 +182,7 @@ export type ProhibitedSources = z.infer<typeof prohibitedSources>;
 export type ReportProhibitedRequestInput = z.infer<typeof reportProhibitedRequestSchema>;
 export const reportProhibitedRequestSchema = z.object({
   prompt: z.string().optional(),
+  negativePrompt: z.string().optional(),
   source: prohibitedSources.optional(),
 });
 

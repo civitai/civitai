@@ -1,5 +1,6 @@
 import { TRPCError } from '@trpc/server';
 import { env } from '~/env/server.mjs';
+import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
 import { userMultipliersCache } from '~/server/redis/caches';
@@ -8,6 +9,7 @@ import {
   CompleteStripeBuzzPurchaseTransactionInput,
   CreateBuzzTransactionInput,
   GetBuzzTransactionResponse,
+  GetEarnPotentialSchema,
   GetUserBuzzAccountResponse,
   GetUserBuzzAccountSchema,
   getUserBuzzTransactionsResponse,
@@ -25,7 +27,7 @@ import {
 import { getServerStripe } from '~/server/utils/get-server-stripe';
 import { stripTime } from '~/utils/date-helpers';
 import { QS } from '~/utils/qs';
-import { getUsers } from './user.service';
+import { getUserByUsername, getUsers } from './user.service';
 
 type AccountType = 'User';
 
@@ -651,4 +653,78 @@ export async function claimBuzz({ id, userId }: BuzzClaimRequest) {
     details: claimStatus.details,
     claimedAt: new Date(),
   } as BuzzClaimResult;
+}
+
+type EarnPotential = {
+  users: number;
+  jobs: number;
+  avg_job_cost: number;
+  avg_ownership: number;
+  total_comp: number;
+  total_tips: number;
+  total: number;
+};
+const CREATOR_COMP_PERCENT = 0.25;
+const TIP_PERCENT = 0.25;
+export async function getEarnPotential({ userId, username }: GetEarnPotentialSchema) {
+  if (!clickhouse) return;
+  if (!userId && !username) return;
+  if (!userId && username) {
+    const user = await getUserByUsername({ username, select: { id: true } });
+    if (!user) return;
+    userId = user.id;
+  }
+
+  const [potential] = await clickhouse.$query<EarnPotential>`
+    WITH user_resources AS (
+      SELECT
+        mv.id as id,
+        m.type = 'Checkpoint' as is_base_model
+      FROM civitai_pg.Model m
+      JOIN civitai_pg.ModelVersion mv ON mv.modelId = m.id
+      WHERE m.userId = ${userId}
+    ), resource_jobs AS (
+      SELECT
+      arrayJoin(resourcesUsed) AS modelVersionId, createdAt, jobCost, jobId, userId
+      FROM orchestration.textToImageJobs
+      WHERE arrayExists(x -> x IN (SELECT id FROM user_resources), resourcesUsed)
+      AND createdAt > subtractDays(now(), 30)
+      AND modelVersionId NOT IN (250708, 250712, 106916) -- Exclude models that are not eligible for compensation
+    ), resource_ownership AS (
+      SELECT
+        rj.*,
+        rj.modelVersionId IN (SELECT id FROM user_resources WHERE is_base_model) as isBaseModel,
+        rj.modelVersionId IN (SELECT id FROM user_resources) as isOwner
+      FROM resource_jobs rj
+    ), data AS (
+      SELECT
+        jobId,
+        userId,
+        CEIL(MAX(jobCost)) as job_cost,
+        job_cost * ${CREATOR_COMP_PERCENT} as creator_comp,
+        CEIL(job_cost * ${TIP_PERCENT}) as full_tip,
+        count(modelVersionId) as resource_count,
+        countIf(isOwner) as owned_resource_count,
+        owned_resource_count/resource_count as owned_ratio,
+        full_tip * owned_ratio as tip,
+        creator_comp * if(MAX(isBaseModel) = 1, 0.25, 0) as base_model_comp,
+        creator_comp * 0.75 * owned_ratio as resource_comp,
+        if(MAX(isBaseModel) = 1, 0.25, 0) + 0.75 * owned_ratio as full_ratio,
+        base_model_comp + resource_comp as total_comp,
+        total_comp + tip as total
+      FROM resource_ownership
+      GROUP BY jobId, userId
+    )
+    SELECT
+      uniq(userId) as users,
+      count(jobId) as jobs,
+      if(isNaN(avg(job_cost)), 0, avg(job_cost)) as avg_job_cost,
+      if(isNaN(avg(full_ratio)), 0, avg(full_ratio)) as avg_ownership,
+      floor(SUM(total_comp)) as total_comp,
+      floor(SUM(tip)) as total_tips,
+      floor(SUM(total)) as total
+    FROM data;
+  `;
+
+  return potential;
 }

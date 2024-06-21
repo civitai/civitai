@@ -38,7 +38,7 @@ export function CsamImageSelection({ onNext }: { onNext: () => void }) {
     hasNextPage,
     isRefetching,
   } = useQueryImages(
-    { username: user?.username ?? undefined, sort: ImageSort.Newest, include: [] },
+    { username: user?.username ?? undefined, sort: ImageSort.Newest, include: [], pending: true },
     { applyHiddenPreferences: false, enabled: !!user }
   );
 

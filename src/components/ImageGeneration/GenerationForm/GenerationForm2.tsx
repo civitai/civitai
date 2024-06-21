@@ -205,7 +205,8 @@ export function GenerationFormContent() {
       const status = blockedRequest.status();
       setPromptWarning(promptError.message);
       if (status === 'notified' || status === 'muted') {
-        const isBlocked = await reportProhibitedRequest({ prompt: prompt as any });
+        const { prompt, negativePrompt } = form.getValues();
+        const isBlocked = await reportProhibitedRequest({ prompt, negativePrompt });
         if (isBlocked) currentUser?.refresh();
       }
     } else {

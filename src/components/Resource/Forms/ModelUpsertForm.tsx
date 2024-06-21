@@ -451,7 +451,7 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                 </Text>
               </>
             )}
-             {hasMinorInNsfw && (
+            {hasMinorInNsfw && (
               <>
                 <Alert color="red" pl={10}>
                   <Group noWrap spacing={10}>
@@ -464,8 +464,8 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                   </Group>
                 </Alert>
                 <Text size="xs" color="dimmed" sx={{ lineHeight: 1.2 }}>
-                  Please revise the content of this listing to ensure no minors are depicted
-                  in an mature context out of respect for the individual.
+                  Please revise the content of this listing to ensure no minors are depicted in an
+                  mature context out of respect for the individual.
                 </Text>
               </>
             )}

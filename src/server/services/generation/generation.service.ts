@@ -322,6 +322,10 @@ const baseModelToOrchestration: Record<BaseModelSetType, string | undefined> = {
   SDXLDistilled: 'SDXL_Distilled',
   SCascade: 'SCascade',
   Pony: 'SDXL',
+  Lumina: 'Lumina',
+  HyDit1: 'HyDit1',
+  PixArtA: 'PixArtA',
+  PixArtE: 'PixArtE',
   ODOR: undefined,
 };
 

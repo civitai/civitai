@@ -43,6 +43,7 @@
     "son"
   ],
   "nouns": [
+    "young looking",
     "extremely young",
     "mini girl",
     "mini boy",
@@ -110,5 +111,10 @@
     "shota[c|k]on",
     "プレティーン",
     "ロリ"
+  ],
+  "negativeNouns": [
+    "developed",
+    "adult body",
+    "mature body"
   ]
 }

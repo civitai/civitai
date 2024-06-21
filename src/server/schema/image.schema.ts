@@ -212,7 +212,7 @@ export const imageModerationSchema = z.object({
   ids: z.number().array(),
   needsReview: z.string().nullish(),
   reviewAction: z.enum(['delete', 'removeName', 'mistake']).optional(),
-  reviewType: z.enum(['minor', 'poi', 'reported', 'csam', 'blocked']),
+  reviewType: z.enum(['minor', 'poi', 'reported', 'csam', 'blocked', 'tag']),
 });
 export type ImageModerationSchema = z.infer<typeof imageModerationSchema>;
 
@@ -268,6 +268,7 @@ export const getInfiniteImagesSchema = baseQuerySchema
     postId: z.number().optional(),
     postIds: z.number().array().optional(),
     collectionId: z.number().optional(),
+    collectionTagId: z.number().optional(),
     modelId: z.number().optional(),
     modelVersionId: z.number().optional(),
     imageId: z.number().optional(),

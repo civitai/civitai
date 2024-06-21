@@ -143,6 +143,12 @@ model BuzzWithdrawalRequest {
   history                     BuzzWithdrawalRequestHistory[]
 }
 
+enum RewardsEligibility {
+  Eligible
+  Ineligible
+  Protected
+}
+
 model User {
   id                      Int                   @id @default(autoincrement())
   name                    String?
@@ -169,6 +175,8 @@ model User {
   leaderboardShowcase     String?
   referral                UserReferral?
   excludeFromLeaderboards Boolean               @default(false)
+  rewardsEligibility      RewardsEligibility    @default(Eligible)
+  eligibilityChangedAt    DateTime?
 
   profile          UserProfile?
   profilePictureId Int?               @unique
@@ -1341,6 +1349,7 @@ enum TagTarget {
   Tag
   Article
   Bounty
+  Collection
 }
 
 enum TagType {
@@ -1384,6 +1393,7 @@ model Tag {
   tagsOnPostComposite  PostTag[]
   tagsOnPostVotes      TagsOnPostVote[]
   tagsOnBounties       TagsOnBounty[]
+  CollectionItem       CollectionItem[]
 
   @@unique([name])
 }
@@ -2330,6 +2340,8 @@ model CollectionItem {
   note         String?
   status       CollectionItemStatus @default(ACCEPTED)
   randomId     Int?
+  tagId        Int?
+  tag          Tag?                 @relation(fields: [tagId], references: [id], onDelete: SetNull)
 
   @@unique([collectionId, articleId, postId, imageId, modelId])
   @@index([addedById], type: Hash)
@@ -3230,6 +3242,11 @@ model ArticleStat {
   favoriteCountMonth       Int     @default(0)
   favoriteCountYear        Int     @default(0)
   favoriteCountAllTime     Int     @default(0)
+  collectedCountDay        Int     @default(0)
+  collectedCountWeek       Int     @default(0)
+  collectedCountMonth      Int     @default(0)
+  collectedCountYear       Int     @default(0)
+  collectedCountAllTime    Int     @default(0)
   hideCountDay             Int     @default(0)
   hideCountWeek            Int     @default(0)
   hideCountMonth           Int     @default(0)
@@ -3337,6 +3354,11 @@ model UserStat {
   downloadCountMonth       Int
   downloadCountYear        Int
   downloadCountAllTime     Int
+  generationCountDay       Int
+  generationCountWeek      Int
+  generationCountMonth     Int
+  generationCountYear      Int
+  generationCountAllTime   Int
   ratingCountDay           Int
   ratingCountWeek          Int
   ratingCountMonth         Int
