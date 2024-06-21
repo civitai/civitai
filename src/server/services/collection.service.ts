@@ -202,7 +202,7 @@ export const getUserCollectionPermissionsById = async ({
     permissions.write = true;
   }
 
-  if (isModerator && collection.write !== CollectionWriteConfiguration.Private) {
+  if (isModerator && !permissions.isOwner) {
     permissions.manage = true;
     permissions.read = true;
     // Makes sure that moderators' stuff still needs to be reviewed.
