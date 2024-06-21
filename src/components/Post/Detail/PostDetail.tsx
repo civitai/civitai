@@ -15,9 +15,10 @@ import {
   useMantineTheme,
   Paper,
   Center,
+  Tooltip,
 } from '@mantine/core';
-import { Availability, CollectionType, EntityType } from '@prisma/client';
-import { IconPhotoOff } from '@tabler/icons-react';
+import { Availability, CollectionType, EntityCollaboratorStatus, EntityType } from '@prisma/client';
+import { IconCheck, IconPhotoOff, IconTrash, IconX } from '@tabler/icons-react';
 import { IconDotsVertical, IconBookmark, IconShare3 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
 import Link from 'next/link';
@@ -29,7 +30,10 @@ import { TipBuzzButton } from '~/components/Buzz/TipBuzzButton';
 import { ChatUserButton } from '~/components/Chat/ChatUserButton';
 import { Collection } from '~/components/Collection/Collection';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
-import { useGetEntityCollaborators } from '~/components/EntityCollaborator/entityCollaborator.util';
+import {
+  useEntityCollaboratorsMutate,
+  useGetEntityCollaborators,
+} from '~/components/EntityCollaborator/entityCollaborator.util';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
 import {
   ExplainHiddenImages,
@@ -58,6 +62,7 @@ import { toStringList } from '~/utils/array-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import { Fragment } from 'react';
 
 type Props = { postId: number };
 
@@ -89,6 +94,16 @@ export function PostDetailContent({ postId }: Props) {
       enabled: !!post?.collectionId,
     }
   );
+
+  const isOwnerOrMod = currentUser?.id === post?.user.id || currentUser?.isModerator;
+
+  const {
+    removeEntityCollaborator,
+    removingEntityCollaborator,
+    actionEntityCollaborator,
+    actioningEntityCollaborator,
+  } = useEntityCollaboratorsMutate();
+
   const { collaborators: postCollaborators } = useGetEntityCollaborators({
     entityId: postId,
     entityType: EntityType.Post,
@@ -248,8 +263,8 @@ export function PostDetailContent({ postId }: Props) {
                   </PostControls>
                 </Group>
               </Group>
-              <Stack>
-                <Group spacing="xl" mt="sm">
+              <Group mt="sm">
+                <Group spacing="xl">
                   <UserAvatar
                     user={post.user}
                     avatarProps={{ size: 32 }}
@@ -271,7 +286,76 @@ export function PostDetailContent({ postId }: Props) {
                     <FollowUserButton userId={post.user.id} size="md" compact />
                   </Group>
                 </Group>
-              </Stack>
+                {postCollaborators.length > 0 &&
+                  postCollaborators.map((collaborator) => {
+                    return (
+                      <Group key={collaborator.user.id} spacing={4} noWrap>
+                        <UserAvatar
+                          user={collaborator.user}
+                          avatarProps={{ size: 32 }}
+                          size="md"
+                          subTextSize="sm"
+                          textSize="md"
+                          withUsername
+                          linkToProfile
+                        />
+                        <Group spacing={4} noWrap>
+                          {collaborator.user.id === currentUser?.id &&
+                            collaborator.status === EntityCollaboratorStatus.Pending && (
+                              <Fragment key={collaborator.user.id}>
+                                <Tooltip label="Accept collaboration">
+                                  <ActionIcon
+                                    onClick={() => {
+                                      actionEntityCollaborator({
+                                        entityId: postId,
+                                        entityType: EntityType.Post,
+                                        status: EntityCollaboratorStatus.Approved,
+                                      });
+                                    }}
+                                    loading={actioningEntityCollaborator}
+                                  >
+                                    <IconCheck size={20} />
+                                  </ActionIcon>
+                                </Tooltip>
+                                <Tooltip label="Reject collaboration">
+                                  <ActionIcon
+                                    onClick={() => {
+                                      actionEntityCollaborator({
+                                        entityId: postId,
+                                        entityType: EntityType.Post,
+                                        status: EntityCollaboratorStatus.Rejected,
+                                      });
+                                    }}
+                                    loading={actioningEntityCollaborator}
+                                  >
+                                    <IconX size={20} />
+                                  </ActionIcon>
+                                </Tooltip>
+                              </Fragment>
+                            )}
+
+                          {isOwnerOrMod && (
+                            <Tooltip label="Remove collaborator">
+                              <ActionIcon
+                                onClick={() => {
+                                  removeEntityCollaborator({
+                                    entityId: postId,
+                                    entityType: EntityType.Post,
+                                    targetUserId: collaborator.user.id,
+                                  });
+                                }}
+                                loading={removingEntityCollaborator}
+                                color="red"
+                              >
+                                <IconTrash size={20} />
+                              </ActionIcon>
+                            </Tooltip>
+                          )}
+                        </Group>
+                      </Group>
+                    );
+                  })}
+              </Group>
             </Stack>
             {!imagesLoading && !unfilteredImages?.length ? (
               <Alert>Unable to load images</Alert>
