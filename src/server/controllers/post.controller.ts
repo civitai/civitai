@@ -239,6 +239,7 @@ export const updatePostHandler = async ({
 
       // Technically, collectionPosts cannot be scheduled.
       if (!!updatedPost?.collectionId && !isScheduled) {
+        console.log('Adding post to collection...');
         // Create the relevant collectionItem:
         const collection = await getCollectionById({
           input: {
@@ -263,8 +264,8 @@ export const updatePostHandler = async ({
             permissions,
           });
         } else if (collection.type === CollectionType.Image) {
-          // get all images with this postId:
-          const images = await dbRead.image.findMany({
+          // get all images with this postId. We're using DB write in case there's some lag.
+          const images = await dbWrite.image.findMany({
             where: {
               postId: updatedPost.id,
             },

@@ -1,8 +1,10 @@
 import { Divider, Group, Select, Stack, Text, Alert, Anchor } from '@mantine/core';
 import { CollectionMode } from '@prisma/client';
+import { capitalize } from 'lodash';
 import { useEffect, useMemo, useState } from 'react';
 import { useCollectionsForPostCreation } from '~/components/Collections/collection.utils';
 import { usePostEditParams, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
+import { getDisplayName } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 
 export const useCollectionsForPostEditor = () => {
@@ -15,9 +17,12 @@ export const useCollectionsForPostEditor = () => {
   }));
 
   const collectionIds = useMemo(() => {
-    return [...((queryCollectionIds as number[]) ?? []), queryCollectionId, collectionId].filter(
-      isDefined
-    );
+    return [
+      ...((queryCollectionIds as number[]) ?? []),
+      queryCollectionId,
+      collectionId,
+      post?.collectionId,
+    ].filter(isDefined);
   }, [queryCollectionIds, collectionId, post]);
 
   useEffect(() => {
@@ -25,6 +30,12 @@ export const useCollectionsForPostEditor = () => {
       updateCollection(queryCollectionId);
     }
   }, [queryCollectionId]);
+
+  useEffect(() => {
+    if (!collectionId && post?.collectionId) {
+      updateCollection(post.collectionId);
+    }
+  }, [post?.collectionId, collectionId]);
 
   const { collections = [] } = useCollectionsForPostCreation({ collectionIds });
 
@@ -58,7 +69,7 @@ export const CollectionSelectDropdown = () => {
 
   const selectOpts = writeableCollections.map((collection) => ({
     value: collection.id.toString(),
-    label: collection.name,
+    label: getDisplayName(collection.name),
   }));
 
   if (!writeableCollections.length || !collectionIds.length) {
@@ -93,7 +104,7 @@ export const CollectionSelectDropdown = () => {
               label="Select Entry Category"
               data={selectedCollection.tags.map((tag) => ({
                 value: tag.id.toString(),
-                label: tag.name,
+                label: capitalize(tag.name),
               }))}
               value={collectionTagId ? collectionTagId.toString() : null}
               onChange={(value: string) =>
