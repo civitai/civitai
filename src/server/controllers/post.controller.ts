@@ -153,7 +153,6 @@ export const updatePostHandler = async ({
       throw throwBadRequestError('Cannot schedule a post in a collection');
     }
 
-    console.log(input);
     if (post && input.publishedAt && input.collectionId) {
       // Confirm & Validate in the case of a contest collection
       // That a submission can be made. We only do this as the user publishes
@@ -239,7 +238,6 @@ export const updatePostHandler = async ({
 
       // Technically, collectionPosts cannot be scheduled.
       if (!!updatedPost?.collectionId && !isScheduled) {
-        console.log('Adding post to collection...');
         // Create the relevant collectionItem:
         const collection = await getCollectionById({
           input: {
