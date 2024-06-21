@@ -1,5 +1,5 @@
 import { ReviewReactions } from '@prisma/client';
-import { AugmentedPool, templateHandler } from '~/server/db/pgDb';
+import { AugmentedPool, templateHandler } from '~/server/db/db-helpers';
 import { JobContext } from '~/server/jobs/job';
 import { MetricProcessorRunContext } from '~/server/metrics/base.metrics';
 
