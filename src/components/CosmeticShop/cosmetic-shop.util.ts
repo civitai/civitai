@@ -10,6 +10,7 @@ import {
   GetShopInput,
   PurchaseCosmeticShopItemInput,
   UpdateCosmeticShopSectionsOrderInput,
+  UpsertCosmeticInput,
   UpsertCosmeticShopItemInput,
   UpsertCosmeticShopSectionInput,
 } from '~/server/schema/cosmetic-shop.schema';
@@ -114,6 +115,15 @@ export const useMutateCosmeticShop = () => {
     }
   };
 
+  const upsertCosmeticMutation = trpc.cosmeticShop.upsertCosmetic.useMutation({
+    async onSuccess() {
+      await queryUtils.cosmeticShop.getShopItemsPaged.invalidate();
+    },
+    onError(error) {
+      onError(error, 'Failed to update or create the cosmetic');
+    },
+  });
+
   const upsertShopItemMutation = trpc.cosmeticShop.upsertShopItem.useMutation({
     async onSuccess() {
       await queryUtils.cosmeticShop.getShopItemsPaged.invalidate();
@@ -216,6 +226,10 @@ export const useMutateCosmeticShop = () => {
     },
   });
 
+  const handleUpsertCosmetic = (data: UpsertCosmeticInput) => {
+    return upsertCosmeticMutation.mutateAsync(data);
+  };
+
   const handleUpsertShopItem = (data: UpsertCosmeticShopItemInput) => {
     return upsertShopItemMutation.mutateAsync(data);
   };
@@ -236,6 +250,8 @@ export const useMutateCosmeticShop = () => {
   };
 
   return {
+    upsertCosmetic: handleUpsertCosmetic,
+    upsertingCosmetic: upsertCosmeticMutation.isLoading,
     upsertShopItem: handleUpsertShopItem,
     upsertingShopItem: upsertShopItemMutation.isLoading,
     upsertShopSection: handleUpsertShopSection,

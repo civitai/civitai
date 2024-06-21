@@ -97,14 +97,16 @@ export function ProfileSidebar({ username, className }: { username: string; clas
   const [enlargedBadge, setEnlargedBadge] = useState<number | null>(null);
   const sizeOpts = mapSize[isMobile ? 'mobile' : 'desktop'];
 
+  console.log("user", user)
+
   const badges = useMemo(
     () =>
       !user
         ? []
         : user.cosmetics
-            .map((c) => c.cosmetic)
-            .filter((c) => c.type === CosmeticType.Badge && !!c.data)
-            .reverse(),
+          .map((c) => c.cosmetic)
+          .filter((c) => c.type === CosmeticType.Badge && !!c.data)
+          .reverse(),
     [user]
   );
 
@@ -322,7 +324,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
                       <Text size="sm" align="center" weight={500}>
                         {award.name}
                       </Text>
-                     {award.videoUrl && <Button
+                      {award.videoUrl && <Button
                         component="a"
                         variant="subtle"
                         size="xs"

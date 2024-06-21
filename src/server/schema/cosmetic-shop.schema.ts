@@ -21,6 +21,12 @@ export const cosmeticShopItemMeta = z.object({
   purchases: z.number().default(0),
 });
 
+export type UpsertCosmeticInput = z.infer<typeof upsertCosmeticInput>;
+export const upsertCosmeticInput = z.object({
+  id: z.number().optional(),
+  videoUrl: z.string().nullish(),
+});
+
 export type UpsertCosmeticShopItemInput = z.infer<typeof upsertCosmeticShopItemInput>;
 export const upsertCosmeticShopItemInput = z.object({
   id: z.number().optional(),

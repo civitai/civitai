@@ -142,15 +142,23 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
     'availableQuantity',
   ]);
   const { cosmetic, isLoading: isLoadingCosmetic } = useQueryCosmetic({ id: cosmeticId });
-  const { upsertShopItem, upsertingShopItem } = useMutateCosmeticShop();
+  console.log('cosmetic', cosmetic);
+  const { upsertShopItem, upsertingShopItem, upsertCosmetic, upsertingCosmetic } = useMutateCosmeticShop();
 
   const handleSubmit = async (data: z.infer<typeof formSchema>) => {
     try {
+      const { videoUrl, ...shopItemData } = data;
+
       await upsertShopItem({
-        ...data,
+        ...shopItemData,
         availableQuantity: data.availableQuantity ?? null, // Ensures we clear it out
         availableFrom: data.availableFrom ?? null, // Ensures we clear it out
         availableTo: data.availableTo ?? null, // Ensures we clear it out
+      });
+
+      await upsertCosmetic({
+        id: cosmeticId,
+        videoUrl,
       });
 
       if (!data.id) {
@@ -329,7 +337,7 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
           <Group position="right">
             {onCancel && (
               <Button
-                loading={upsertingShopItem}
+                loading={upsertingShopItem || upsertingCosmetic}
                 onClick={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
@@ -340,7 +348,7 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
                 Cancel
               </Button>
             )}
-            <Button loading={upsertingShopItem} type="submit">
+            <Button loading={upsertingShopItem || upsertingCosmetic} type="submit">
               Save
             </Button>
           </Group>
