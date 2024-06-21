@@ -129,6 +129,7 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
         ...((shopItem?.meta as MixedObject) ?? {}),
       },
       archived: shopItem?.archivedAt !== null,
+      videoUrl: shopItem?.cosmetic?.videoUrl ?? '',
     },
     shouldUnregister: false,
   });
@@ -152,7 +153,6 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
         availableQuantity: data.availableQuantity ?? null, // Ensures we clear it out
         availableFrom: data.availableFrom ?? null, // Ensures we clear it out
         availableTo: data.availableTo ?? null, // Ensures we clear it out
-        videoUrl: data.videoUrl ?? null,
       });
 
       if (!data.id) {
