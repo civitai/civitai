@@ -11,7 +11,7 @@ import {
   Menu,
   Text,
 } from '@mantine/core';
-import { ImageIngestionStatus } from '@prisma/client';
+import { CollectionMode, ImageIngestionStatus } from '@prisma/client';
 import {
   IconArrowBackUp,
   IconChevronDown,
@@ -50,6 +50,7 @@ import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { Popover, PopoverButton, PopoverPanel } from '@headlessui/react';
+import { useCollectionsForPostEditor } from '~/components/Post/EditV2/Collections/CollectionSelectDropdown';
 
 // #region [types]
 type SimpleMetaPropsKey = keyof typeof simpleMetaProps;
@@ -87,6 +88,7 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
   // #region [state]
   const { showPreview } = usePostPreviewContext();
   const storedImage = useImageStore(image);
+
   const [updateImage, setImages] = usePostEditStore((state) => [
     state.updateImage,
     state.setImages,
@@ -212,6 +214,7 @@ function EditDetail() {
     isUpdating,
     toggleHidePrompt,
   } = useAddedImageContext();
+  const { activeCollection } = useCollectionsForPostEditor();
 
   const { meta, hideMeta, resourceHelper: resources } = image;
   const simpleMeta = Object.entries(simpleMetaProps).filter(([key]) => meta?.[key]);
@@ -437,7 +440,18 @@ function EditDetail() {
           // #region [tools]
           */}
 
-            {/* TODO: Add tooltip for contests. */}
+            {activeCollection?.mode === CollectionMode.Contest && (
+              <Alert radius="md">
+                <h3 className=" text-lg font-semibold leading-none text-dark-7 dark:text-gray-0 ">
+                  Contest tip!
+                </h3>
+                <Text mt="md">
+                  Tagging the tools you used may make you elegible for Sponsored Awards. For
+                  example, in Project Odyssey, ElevenLabs has a sponsored $500 USD cash prize.
+                </Text>
+              </Alert>
+            )}
+
             <CustomCard className="flex flex-col gap-2">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">

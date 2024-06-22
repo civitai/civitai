@@ -68,10 +68,10 @@ import {
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 import { containerQuery } from '~/utils/mantine-css-helpers';
-import { truncate } from 'lodash-es';
+import { capitalize, truncate } from 'lodash-es';
 import { ImageContextMenuProvider } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
-import { removeTags } from '~/utils/string-helpers';
+import { getDisplayName, removeTags } from '~/utils/string-helpers';
 import { useRouter } from 'next/router';
 
 const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
@@ -238,8 +238,9 @@ const ImageCollection = ({
               placeholder="All"
               data={collection.tags.map((tag) => ({
                 value: tag.id.toString(),
-                label: tag.name,
+                label: capitalize(tag.name),
               }))}
+              tt="capitalize"
               clearable
             />
           )}

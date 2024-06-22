@@ -14,7 +14,7 @@ import {
   UnstyledButton,
   useMantineTheme,
 } from '@mantine/core';
-import { Availability, CollectionType } from '@prisma/client';
+import { Availability, CollectionType, EntityType } from '@prisma/client';
 import {
   IconAlertTriangle,
   IconBolt,
@@ -66,6 +66,7 @@ import { InteractiveTipBuzzButton } from '~/components/Buzz/InteractiveTipBuzzBu
 import { DownloadImage } from '~/components/Image/DownloadImage';
 import { ImageContestCollectionDetails } from '~/components/Image/DetailV2/ImageContestCollectionDetails';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { EntityCollaboratorList } from '~/components/EntityCollaborator/EntityCollaboratorList';
 
 const sharedBadgeProps: Partial<Omit<BadgeProps, 'children'>> = {
   variant: 'filled',
@@ -360,6 +361,15 @@ export function ImageDetail2() {
                 tipBuzzEntityType="Image"
                 className="rounded-xl"
               />
+              {image.postId && (
+                <EntityCollaboratorList
+                  entityId={image.postId}
+                  entityType={EntityType.Post}
+                  creatorCardProps={{
+                    className: 'rounded-xl',
+                  }}
+                />
+              )}
               {image.needsReview && (
                 <AlertWithIcon
                   icon={<IconAlertTriangle />}

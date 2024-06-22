@@ -630,12 +630,27 @@ export const getAllImages = async ({
   }
 
   if (targetUserId) {
-    AND.push(Prisma.sql`u."id" = ${targetUserId}`);
+    WITH.push(
+      Prisma.sql`collaboratingPosts AS (
+        SELECT "entityId" id FROM "EntityCollaborator"
+        WHERE "userId" = ${targetUserId}
+          AND "entityType" = 'Post'
+          AND "status" = 'Approved'
+        )`
+    );
+
+    AND.push(
+      // TOOD: Due to performance reasons we cannot add this here yet. Will need to revise with other teams.
+      // Prisma.sql`(u."id" = ${targetUserId} OR i."postId" IN (SELECT id FROM collaboratingPosts))`
+      Prisma.sql`u."id" = ${targetUserId}`
+    );
     // Don't cache self queries
-    if (targetUserId !== userId) {
-      cacheTime = CacheTTL.day;
-      cacheTags.push(`images-user:${targetUserId}`);
-    } else cacheTime = 0;
+    console.log('THIS IS ABOUT TO HAPPEN BUD!');
+    cacheTime = 0;
+    // if (targetUserId !== userId) {
+    //   cacheTime = CacheTTL.day;
+    //   cacheTags.push(`images-user:${targetUserId}`);
+    // } else cacheTime = 0;
   }
 
   // Filter only followed users
