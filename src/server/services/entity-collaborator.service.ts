@@ -47,7 +47,7 @@ export const sendEntityCollaboratorInviteMessage = async ({
   switch (entityType) {
     case EntityType.Post:
       const targetUrl = `/posts/${entityId}`;
-      const message = `**${inviter.username}** invited **${invitee.username}** to be posted as a collaborator on [this](${targetUrl}) post. The invitation can be accepted or rejected via the Post's link.`;
+      const message = `**${inviter.username}** invited **${invitee.username}** to be included as a collaborator on [this](${targetUrl}) post. The invitation can be accepted or rejected via the Post's link.`;
       // Confirm a chat exists:
       await createMessage({
         chatId: chat.id,
@@ -113,8 +113,18 @@ export const upsertEntityCollaborator = async ({
     );
   }
 
-  const newRecord = await dbWrite.entityCollaborator.create({
-    data: {
+  const newRecord = await dbWrite.entityCollaborator.upsert({
+    where: {
+      entityType_entityId_userId: {
+        entityId,
+        entityType,
+        userId: targetUserId,
+      },
+    },
+    update: {
+      lastMessageSentAt: sendMessage ? new Date() : undefined,
+    },
+    create: {
       entityId,
       entityType,
       userId: targetUserId,
