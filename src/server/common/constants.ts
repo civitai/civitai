@@ -349,6 +349,9 @@ export const constants = {
     ),
     externalRegex: /^(?:https?:\/\/)?(?:www\.)?(github\.com|twitter\.com|x\.com)/,
   },
+  entityCollaborators: {
+    maxCollaborators: 10,
+  },
 } as const;
 export const activeBaseModels = constants.baseModels.filter(
   (model) => !constants.hiddenBaseModels.includes(model)

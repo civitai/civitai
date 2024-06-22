@@ -909,7 +909,7 @@ function DisplayMessages({
                   unwrapDisallowed
                   className="markdown-content"
                 >
-                  {c.content}
+                  {c.content.replace(currentUser?.username ?? '', 'You')}
                 </ReactMarkdown>
               </Text>
             ) : (

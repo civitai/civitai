@@ -1,5 +1,6 @@
 import { ChatMessageType, EntityType, Prisma, EntityCollaboratorStatus } from '@prisma/client';
 import dayjs from 'dayjs';
+import { constants } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
   GetEntityCollaboratorsInput,
@@ -46,7 +47,7 @@ export const sendEntityCollaboratorInviteMessage = async ({
   switch (entityType) {
     case EntityType.Post:
       const targetUrl = `/posts/${entityId}`;
-      const message = `**${inviter.username}** has invited **${invitee.username}** to be posted as a collaborator on [this](${targetUrl}) post. The invitation can be accepted or rejected via the Post's link.`;
+      const message = `**${inviter.username}** invited **${invitee.username}** to be posted as a collaborator on [this](${targetUrl}) post. The invitation can be accepted or rejected via the Post's link.`;
       // Confirm a chat exists:
       await createMessage({
         chatId: chat.id,
@@ -100,6 +101,16 @@ export const upsertEntityCollaborator = async ({
       });
     }
     return existingRecord;
+  }
+
+  const totalCollaborators = await dbRead.entityCollaborator.count({
+    where: { entityId, entityType },
+  });
+
+  if (totalCollaborators >= constants.entityCollaborators.maxCollaborators) {
+    throw throwBadRequestError(
+      `You can only have up to ${constants.entityCollaborators.maxCollaborators} collaborators`
+    );
   }
 
   const newRecord = await dbWrite.entityCollaborator.create({
