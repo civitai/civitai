@@ -466,7 +466,7 @@ export const saveItemInCollections = async ({
 
         if (!permission.isContributor && !permission.isOwner) {
           // Make sure to follow the collection
-          return addContributorToCollection({
+          await addContributorToCollection({
             targetUserId: userId,
             userId: userId,
             collectionId,
@@ -1619,7 +1619,7 @@ export const bulkSaveItems = async ({
     throw throwBadRequestError('The tag provided is not allowed in this collection');
   }
 
-  if (!permissions.isContributor && !permission.isOwner) {
+  if (!permissions.isContributor && !permissions.isOwner) {
     // Make sure to follow the collection
     await addContributorToCollection({
       targetUserId: userId,
