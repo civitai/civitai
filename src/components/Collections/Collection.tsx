@@ -71,7 +71,7 @@ import { containerQuery } from '~/utils/mantine-css-helpers';
 import { capitalize, truncate } from 'lodash-es';
 import { ImageContextMenuProvider } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
-import { getDisplayName, removeTags } from '~/utils/string-helpers';
+import { removeTags } from '~/utils/string-helpers';
 import { useRouter } from 'next/router';
 
 const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
@@ -238,10 +238,15 @@ const ImageCollection = ({
               placeholder="All"
               data={collection.tags.map((tag) => ({
                 value: tag.id.toString(),
-                label: capitalize(tag.name),
+                label: tag.name,
               }))}
               tt="capitalize"
               clearable
+              styles={{
+                input: {
+                  textTransform: 'capitalize',
+                },
+              }}
             />
           )}
           <ReactionSettingsProvider settings={{ hideReactionCount: isContestCollection }}>
