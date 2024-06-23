@@ -445,10 +445,20 @@ function EditDetail() {
                 <h3 className=" text-lg font-semibold leading-none text-dark-7 dark:text-gray-0 ">
                   Contest tip!
                 </h3>
-                <Text mt="md">
-                  Tagging the tools you used may make you elegible for Sponsored Awards. For
-                  example, in Project Odyssey, ElevenLabs has a sponsored $500 USD cash prize.
-                </Text>
+                {activeCollection.name.toLower().includes('odyssey') ? (
+                  <Text mt="md">
+                    If you&rsquo;re participating in Project Odyssey, make sure to add the tags for
+                    the AI Filmmaking tools you used. This will make you eligible for the Sponsor
+                    Company Awards (cash prize of $500) from our Premier Sponsors such as Civitai,
+                    ElevenLabs, ThinkDiffusion, Morph Studio, LensGo, Domo AI, DeepMake, and Neural
+                    Frames! Do not tag a tool you did not use to make your project.
+                  </Text>
+                ) : (
+                  <Text mt="md">
+                    Tagging the tools you used may make you elegible for Sponsored Awards. For
+                    example, in Project Odyssey, ElevenLabs has a sponsored $500 USD cash prize.
+                  </Text>
+                )}
               </Alert>
             )}
 

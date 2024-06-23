@@ -189,7 +189,7 @@ export const updatePostHandler = async ({
         const postIds = collection.type === CollectionType.Post ? [input.id] : [];
         const images =
           collection.type === CollectionType.Image
-            ? await dbRead.image.findMany({
+            ? await dbWrite.image.findMany({
                 where: {
                   postId: post.id,
                 },
