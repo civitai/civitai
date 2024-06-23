@@ -70,6 +70,7 @@ import { collectionsSearchIndex } from '~/server/search-index';
 import { createNotification } from '~/server/services/notification.service';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
 import { collectionSelect } from '~/server/selectors/collection.selector';
+import permission from '~/pages/api/admin/permission';
 
 export type CollectionContributorPermissionFlags = {
   collectionId: number;
@@ -1618,9 +1619,9 @@ export const bulkSaveItems = async ({
     throw throwBadRequestError('The tag provided is not allowed in this collection');
   }
 
-  if (!permissions.isContributor) {
+  if (!permissions.isContributor && !permission.isOwner) {
     // Make sure to follow the collection
-    return addContributorToCollection({
+    await addContributorToCollection({
       targetUserId: userId,
       userId: userId,
       collectionId,
