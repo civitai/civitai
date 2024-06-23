@@ -445,7 +445,7 @@ function EditDetail() {
                 <h3 className=" text-lg font-semibold leading-none text-dark-7 dark:text-gray-0 ">
                   Contest tip!
                 </h3>
-                {activeCollection.name.toLower().includes('odyssey') ? (
+                {activeCollection.name.toLowerCase().includes('odyssey') ? (
                   <Text mt="md">
                     If you&rsquo;re participating in Project Odyssey, make sure to add the tags for
                     the AI Filmmaking tools you used. This will make you eligible for the Sponsor

@@ -237,7 +237,7 @@ export const updatePostHandler = async ({
       }
 
       // Technically, collectionPosts cannot be scheduled.
-      if (!!updatedPost?.collectionId && !isScheduled) {
+      if (!!updatedPost?.collectionId) {
         // Create the relevant collectionItem:
         const collection = await getCollectionById({
           input: {
@@ -289,6 +289,7 @@ export const updatePostHandler = async ({
       }
 
       if (isScheduled) tags.push('scheduled');
+
       await ctx.track.post({
         type: 'Publish',
         nsfw: !getIsSafeBrowsingLevel(updatedPost.nsfwLevel),
