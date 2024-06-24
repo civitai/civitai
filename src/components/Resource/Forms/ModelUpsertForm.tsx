@@ -231,13 +231,12 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                       color="blue"
                       styles={(theme) => ({
                         root: {
-                          border: `1px solid ${
-                            errors.checkpointType
-                              ? theme.colors.red[theme.fn.primaryShade()]
-                              : theme.colorScheme === 'dark'
+                          border: `1px solid ${errors.checkpointType
+                            ? theme.colors.red[theme.fn.primaryShade()]
+                            : theme.colorScheme === 'dark'
                               ? theme.colors.dark[4]
                               : theme.colors.gray[4]
-                          }`,
+                            }`,
                           background: 'none',
                           height: 36,
                         },
@@ -418,7 +417,7 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                 />
                 <InputCheckbox
                   name="minor"
-                  label="Depicts a minor"
+                  label="Cannot be used for NSFW generation"
                   disabled={isLocked('minor')}
                   description={isLockedDescription('minor')}
                 />
@@ -451,7 +450,7 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                 </Text>
               </>
             )}
-             {hasMinorInNsfw && (
+            {hasMinorInNsfw && (
               <>
                 <Alert color="red" pl={10}>
                   <Group noWrap spacing={10}>
@@ -464,8 +463,8 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                   </Group>
                 </Alert>
                 <Text size="xs" color="dimmed" sx={{ lineHeight: 1.2 }}>
-                  Please revise the content of this listing to ensure no minors are depicted
-                  in an mature context out of respect for the individual.
+                  Please revise the content of this listing to ensure no minors are depicted in an
+                  mature context out of respect for the individual.
                 </Text>
               </>
             )}

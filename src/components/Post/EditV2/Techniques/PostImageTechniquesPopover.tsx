@@ -92,6 +92,7 @@ export function ImageTechniquesPopover({
       onChange={handleSetValue}
       options={options}
       loading={loadingTechniques}
+      showSelected={showSelected}
       renderOption={({ selected, label }) => (
         <>
           <span>{label}</span>

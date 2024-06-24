@@ -60,6 +60,7 @@ type ArticleRaw = {
   stats:
     | {
         favoriteCount: number;
+        collectedCount: number;
         commentCount: number;
         likeCount: number;
         dislikeCount: number;
@@ -293,7 +294,7 @@ export const getArticles = async ({
 
     let orderBy = `a."publishedAt" DESC NULLS LAST`;
     if (sort === ArticleSort.MostBookmarks)
-      orderBy = `rank."favoriteCount${period}Rank" ASC NULLS LAST, ${orderBy}`;
+      orderBy = `rank."collectedCount${period}Rank" ASC NULLS LAST, ${orderBy}`;
     else if (sort === ArticleSort.MostComments)
       orderBy = `rank."commentCount${period}Rank" ASC NULLS LAST, ${orderBy}`;
     else if (sort === ArticleSort.MostReactions)
@@ -364,6 +365,7 @@ export const getArticles = async ({
         ${Prisma.raw(`
         jsonb_build_object(
           'favoriteCount', stats."favoriteCount${period}",
+          'collectedCount', stats."collectedCount${period}",
           'commentCount', stats."commentCount${period}",
           'likeCount', stats."likeCount${period}",
           'dislikeCount', stats."dislikeCount${period}",

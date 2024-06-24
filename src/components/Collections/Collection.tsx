@@ -68,7 +68,7 @@ import {
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 import { containerQuery } from '~/utils/mantine-css-helpers';
-import { truncate } from 'lodash-es';
+import { capitalize, truncate } from 'lodash-es';
 import { ImageContextMenuProvider } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { removeTags } from '~/utils/string-helpers';
@@ -240,7 +240,13 @@ const ImageCollection = ({
                 value: tag.id.toString(),
                 label: tag.name,
               }))}
+              tt="capitalize"
               clearable
+              styles={{
+                input: {
+                  textTransform: 'capitalize',
+                },
+              }}
             />
           )}
           <ReactionSettingsProvider settings={{ hideReactionCount: isContestCollection }}>

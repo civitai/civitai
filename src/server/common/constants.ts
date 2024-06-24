@@ -14,6 +14,7 @@ import { ModelSort } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
 import { Generation } from '~/server/services/generation/generation.types';
 import { ArticleSort, CollectionSort, ImageSort, PostSort, QuestionSort } from './enums';
+import { env } from '~/env/client.mjs';
 
 export const constants = {
   modelFilterDefaults: {
@@ -206,9 +207,9 @@ export const constants = {
   maxTrainingRetries: 2,
   mediaUpload: {
     maxImageFileSize: 50 * 1024 ** 2, // 50MB
-    maxVideoFileSize: 500 * 1024 ** 2, // 500MB
+    maxVideoFileSize: 750 * 1024 ** 2, // 750MB
     maxVideoDimension: 3840,
-    maxVideoDurationSeconds: 200,
+    maxVideoDurationSeconds: 245,
   },
   bounties: {
     engagementTypes: ['active', 'favorite', 'tracking', 'supporter', 'awarded'],
@@ -337,6 +338,19 @@ export const constants = {
   },
   modelGallery: {
     maxPinnedPosts: 10,
+  },
+  chat: {
+    airRegex: /^civitai:(?<mId>\d+)@(?<mvId>\d+)$/i,
+    // TODO disable just "image.civitai.com" with nothing else
+    civRegex: new RegExp(
+      `^(?:https?://)?(?:image\\.)?(?:${(env.NEXT_PUBLIC_BASE_URL ?? 'civitai.com')
+        .replace(/^https?:\/\//, '')
+        .replace(/\./g, '\\.')}|civitai\\.com)`
+    ),
+    externalRegex: /^(?:https?:\/\/)?(?:www\.)?(github\.com|twitter\.com|x\.com)/,
+  },
+  entityCollaborators: {
+    maxCollaborators: 15,
   },
 } as const;
 export const activeBaseModels = constants.baseModels.filter(

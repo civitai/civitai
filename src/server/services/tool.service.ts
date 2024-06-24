@@ -9,6 +9,8 @@ export async function getAllTools() {
       icon: true,
       type: true,
       priority: true,
+      domain: true,
+      description: true,
     },
     where: { enabled: true },
   });

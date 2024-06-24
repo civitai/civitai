@@ -70,6 +70,7 @@ import { collectionsSearchIndex } from '~/server/search-index';
 import { createNotification } from '~/server/services/notification.service';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
 import { collectionSelect } from '~/server/selectors/collection.selector';
+import permission from '~/pages/api/admin/permission';
 
 export type CollectionContributorPermissionFlags = {
   collectionId: number;
@@ -202,7 +203,7 @@ export const getUserCollectionPermissionsById = async ({
     permissions.write = true;
   }
 
-  if (isModerator) {
+  if (isModerator && !permissions.isOwner) {
     permissions.manage = true;
     permissions.read = true;
     // Makes sure that moderators' stuff still needs to be reviewed.
@@ -212,7 +213,7 @@ export const getUserCollectionPermissionsById = async ({
 
   const [contributorItem] = collection.contributors;
 
-  if (!contributorItem) {
+  if (!contributorItem || permissions.isOwner) {
     return permissions;
   }
 
@@ -463,9 +464,9 @@ export const saveItemInCollections = async ({
           id: collectionId,
         });
 
-        if (!permission.isContributor) {
+        if (!permission.isContributor && !permission.isOwner) {
           // Make sure to follow the collection
-          return addContributorToCollection({
+          await addContributorToCollection({
             targetUserId: userId,
             userId: userId,
             collectionId,
@@ -1618,9 +1619,9 @@ export const bulkSaveItems = async ({
     throw throwBadRequestError('The tag provided is not allowed in this collection');
   }
 
-  if (!permissions.isContributor) {
+  if (!permissions.isContributor && !permissions.isOwner) {
     // Make sure to follow the collection
-    return addContributorToCollection({
+    await addContributorToCollection({
       targetUserId: userId,
       userId: userId,
       collectionId,

@@ -39,6 +39,7 @@ type ImageFilters = {
   hidden?: boolean;
   fromPlatform?: boolean;
   pending?: boolean;
+  tools?: number[];
   baseModels?: GetInfiniteImagesInput['baseModels'];
 };
 
