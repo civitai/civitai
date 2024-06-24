@@ -277,6 +277,7 @@ function ResourceSelectCard({
   index: number;
   data: SearchIndexDataMap['models'][number];
 }) {
+  console.log('data', data);
   const currentUser = useCurrentUser();
   const { ref, inView } = useInView({ rootMargin: '600px' });
   const { onSelect, canGenerate, isTraining, resources } = useResourceSelectContext();
@@ -517,8 +518,8 @@ function ResourceSelectCard({
                         alt={
                           image.meta
                             ? truncate((image.meta as ImageMetaProps).prompt, {
-                                length: constants.altTruncateLength,
-                              })
+                              length: constants.altTruncateLength,
+                            })
                             : image.name ?? undefined
                         }
                         type={image.type}

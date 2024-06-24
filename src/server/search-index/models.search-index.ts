@@ -91,6 +91,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   const filterableAttributes = [
     'hashes',
     'nsfwLevel',
+    'minor',
     'type',
     'checkpointType',
     'tags.name',
@@ -143,6 +144,7 @@ const modelSelect = {
   name: true,
   type: true,
   nsfwLevel: true,
+  minor: true,
   status: true,
   createdAt: true,
   lastVersionAt: true,
@@ -220,6 +222,8 @@ const transformData = async ({
   images: Awaited<ReturnType<typeof getImagesForModelVersion>>;
   tagsOnImages: TagsOnImages[];
 }) => {
+  console.log('Sample model data:', JSON.stringify(models[0], null, 2));
+
   const modelCategories = await getCategoryTags('model');
   const modelCategoriesIds = modelCategories.map((category) => category.id);
 
@@ -240,6 +244,7 @@ const transformData = async ({
   const indexReadyRecords = models
     .map((modelRecord) => {
       const { user, modelVersions, tagsOnModels, hashes, ...model } = modelRecord;
+      console.log('indexReadyRecords', model);
 
       const metrics = modelRecord.metrics[0] ?? {};
 
@@ -356,12 +361,11 @@ export const modelsSearchIndex = createSearchIndexUpdateProcessor({
       SELECT MIN(id) as "startId", MAX(id) as "endId" FROM "Model"
       WHERE status = ${ModelStatus.Published}::"ModelStatus"
           AND availability != ${Availability.Unsearchable}::"Availability"
-      ${
-        lastUpdatedAt
-          ? Prisma.sql`
+      ${lastUpdatedAt
+        ? Prisma.sql`
         AND "createdAt" >= ${lastUpdatedAt}
       `
-          : Prisma.sql``
+        : Prisma.sql``
       };
     `;
 
@@ -412,12 +416,12 @@ export const modelsSearchIndex = createSearchIndexUpdateProcessor({
         id:
           batch.type === 'update'
             ? {
-                in: batch.ids,
-              }
+              in: batch.ids,
+            }
             : {
-                gte: batch.startId,
-                lte: batch.endId,
-              },
+              gte: batch.startId,
+              lte: batch.endId,
+            },
       },
     });
 
@@ -442,10 +446,10 @@ export const modelsSearchIndex = createSearchIndexUpdateProcessor({
     const modelVersionIds = models.flatMap((m) => m.modelVersions.map((m) => m.id));
     const images = !!modelVersionIds.length
       ? await getImagesForModelVersion({
-          modelVersionIds,
-          imagesPerVersion: 10,
-          browsingLevel: NsfwLevel.PG + NsfwLevel.PG13 + NsfwLevel.R + NsfwLevel.X + NsfwLevel.XXX, // Avoid blocked.
-        })
+        modelVersionIds,
+        imagesPerVersion: 10,
+        browsingLevel: NsfwLevel.PG + NsfwLevel.PG13 + NsfwLevel.R + NsfwLevel.X + NsfwLevel.XXX, // Avoid blocked.
+      })
       : [];
 
     const imageIds = images.map((image) => image.id);
@@ -453,21 +457,21 @@ export const modelsSearchIndex = createSearchIndexUpdateProcessor({
     const tagsOnImages = !imageIds.length
       ? []
       : await db.tagsOnImage.findMany({
-          select: {
-            imageId: true,
-            tag: {
-              select: {
-                id: true,
-                name: true,
-              },
+        select: {
+          imageId: true,
+          tag: {
+            select: {
+              id: true,
+              name: true,
             },
           },
-          where: {
-            imageId: {
-              in: imageIds,
-            },
+        },
+        where: {
+          imageId: {
+            in: imageIds,
           },
-        });
+        },
+      });
 
     return {
       models,

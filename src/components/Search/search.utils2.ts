@@ -14,6 +14,7 @@ import { ReverseSearchIndexKey, reverseSearchIndexMap } from '~/components/Searc
 // #region [transformers]
 type ModelsTransformed = ReturnType<typeof modelsTransform>;
 function modelsTransform(items: Hit<ModelSearchIndexRecord>[]) {
+  console.log('items', items);
   return items.map((item) => ({
     ...item,
     nsfwLevel: flagifyBrowsingLevel(item.nsfwLevel),

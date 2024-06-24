@@ -116,6 +116,12 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
     defaultValues,
   });
 
+  const selectedModel = form.watch('model');
+  const selectedResources = form.watch('resources');
+  console.log('Selected Model:', selectedModel);
+  console.log('Selected Resources:', selectedResources);
+
+
   const { limits, ...status } = useGenerationStatus();
 
   function getSteps(steps: number, limit: number) {
@@ -949,9 +955,8 @@ const useStyles = createStyles((theme) => ({
   generationContainer: {},
   generationArea: {
     borderRadius: theme.radius.md,
-    boxShadow: `inset 0 2px ${
-      theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[2]
-    }`,
+    boxShadow: `inset 0 2px ${theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[2]
+      }`,
   },
   generateButtonContainer: {
     width: '100%',
@@ -1032,9 +1037,8 @@ const useStyles = createStyles((theme) => ({
 
     '&[data-active]': {
       borderRadius: '0 !important',
-      borderBottom: `1px solid ${
-        theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[2]
-      }`,
+      borderBottom: `1px solid ${theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[2]
+        }`,
     },
   },
   accordionContent: {
