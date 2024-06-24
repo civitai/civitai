@@ -30,7 +30,7 @@ import {
 import { useEffect, useRef } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { GeneratedImageLightbox } from '~/components/ImageGeneration/GeneratedImageLightbox';
-import { generationImageSelect } from '~/components/ImageGeneration/utils/generationImage.select';
+import { orchestratorImageSelect } from '~/components/ImageGeneration/utils/generationImage.select';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { useInView } from '~/hooks/useInView';
 import { constants } from '~/server/common/constants';
@@ -55,9 +55,21 @@ export function GeneratedImage({
 }) {
   const { classes } = useStyles();
   const { ref, inView } = useInView({ rootMargin: '600px' });
-  const selected = generationImageSelect.useIsSelected(`${request.id}:${step.name}:${image.id}`);
+  const selected = orchestratorImageSelect.useIsSelected({
+    workflowId: request.id,
+    stepName: step.name,
+    imageId: image.id,
+  });
+
   const toggleSelect = (checked?: boolean) =>
-    generationImageSelect.toggle(`${request.id}:${step.name}:${image.id}`, checked);
+    orchestratorImageSelect.toggle(
+      {
+        workflowId: request.id,
+        stepName: step.name,
+        imageId: image.id,
+      },
+      checked
+    );
   const { copied, copy } = useClipboard();
 
   const { updateImages, isLoading } = useUpdateTextToImageStepMetadata();

@@ -1,11 +1,10 @@
-import { ActionIcon, Text, Tooltip, MantineNumberSize, Button } from '@mantine/core';
+import { ActionIcon, Text, Tooltip, MantineNumberSize, Button, Checkbox } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { IconInfoCircle, IconSquareOff, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import { generationImageSelect } from '~/components/ImageGeneration/utils/generationImage.select';
+import { orchestratorImageSelect } from '~/components/ImageGeneration/utils/generationImage.select';
 import {
   useGetTextToImageRequests,
-  useGetTextToImageRequestsImages as useGetTextToImageRequestsSteps,
   useUpdateTextToImageStepMetadata,
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { generationPanel } from '~/store/generation.store';
@@ -26,19 +25,41 @@ export function GeneratedImageActions({
   const { selected, deselect, isMutating, deleteSelectedImages, postSelectedImages } =
     useGeneratedImageActions();
 
-  const hasSelected = !!selected.length;
-  if (!hasSelected) return null;
+  const imagesCount = images.length;
+  const selectedCount = selected.length;
+
+  const allChecked = imagesCount === selectedCount;
+  const indeterminate = selectedCount > 0 && !allChecked;
+
+  const handleCheckboxClick = (checked: boolean) => {
+    if (!checked) orchestratorImageSelect.setSelected([]);
+    else
+      orchestratorImageSelect.setSelected(
+        images.map(({ workflowId, stepName, id }) => ({ workflowId, stepName, imageId: id }))
+      );
+  };
+
+  const hasSelected = !!selectedCount;
+  if (!hasSelected)
+    return (
+      <Checkbox
+        checked={allChecked}
+        indeterminate={indeterminate}
+        onChange={(e) => handleCheckboxClick(e.currentTarget.checked)}
+      />
+    );
 
   return (
     <div className="flex items-center justify-between gap-2">
       <div className="flex items-center">
-        <Text color="dimmed" weight={500} inline>
+        <Checkbox
+          checked={allChecked}
+          indeterminate={indeterminate}
+          onChange={(e) => handleCheckboxClick(e.currentTarget.checked)}
+        />
+        {/* <Text color="dimmed" weight={500} inline>
           {selected.length} Selected
-        </Text>
-
-        <ActionIcon size={actionIconSize} variant="transparent">
-          <IconInfoCircle size={iconSize} />
-        </ActionIcon>
+        </Text> */}
       </div>
       <div className="flex gap-2">
         <Tooltip label="Deselect all">
@@ -94,15 +115,10 @@ export function GeneratedImagesBuzzPrompt() {
 
 export const useGeneratedImageActions = () => {
   const router = useRouter();
-  const { steps } = useGetTextToImageRequestsSteps();
+  const { images } = useGetTextToImageRequests();
 
-  const selected = generationImageSelect.useSelection();
-  const selected2 = selected.map((value) => {
-    const [workflowId, stepName, imageId] = value.split(':');
-    return { workflowId, stepName, imageId };
-  });
-  // const [workflowId, stepName, imageId] = selected.split(':')
-  const deselect = () => generationImageSelect.setSelected([]);
+  const selected = orchestratorImageSelect.useSelection();
+  const deselect = () => orchestratorImageSelect.setSelected([]);
 
   const { updateImages, isLoading } = useUpdateTextToImageStepMetadata({
     onSuccess: () => deselect(),
@@ -118,7 +134,7 @@ export const useGeneratedImageActions = () => {
       confirmProps: { color: 'red' },
       onConfirm: () => {
         updateImages(
-          selected2.map(({ workflowId, stepName, imageId }) => ({
+          selected.map(({ workflowId, stepName, imageId }) => ({
             workflowId,
             stepName,
             imageId,
@@ -134,8 +150,7 @@ export const useGeneratedImageActions = () => {
   const isMutating = isLoading || createPostMutation.isLoading;
 
   const postSelectedImages = async () => {
-    const images = steps.flatMap((x) => x.images);
-    const imageIds = selected2.map((x) => x.imageId);
+    const imageIds = selected.map((x) => x.imageId);
     const urls = images
       .filter((x) => imageIds.includes(x.id))
       .map((x) => x.url)

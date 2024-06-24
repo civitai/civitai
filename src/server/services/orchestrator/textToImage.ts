@@ -343,7 +343,8 @@ export async function formatTextToImageResponses(
             const job = jobs?.find((x) => x.id === image.jobId);
             if (!job) return null;
             return {
-              workflowId: workflow.id,
+              workflowId: workflow.id as string,
+              stepName: step.name ?? '$0',
               jobId: job.id,
               id: image.id,
               status: job.status ?? ('unassignend' as WorkflowStatus),

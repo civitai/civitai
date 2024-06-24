@@ -58,9 +58,7 @@ export function useGetTextToImageRequests(
 
   // useEffect(() => console.log({ flatData }), [flatData]);
   const steps = useMemo(() => flatData.flatMap((x) => x.steps), [flatData]);
-  const images = useMemo(() => {
-    steps.flatMap((x) => x.images);
-  }, [steps]);
+  const images = useMemo(() => steps.flatMap((x) => x.images), [steps]);
 
   return { data: flatData, steps, images, ...rest };
 }
