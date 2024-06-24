@@ -16,28 +16,24 @@ export function ToolBanner() {
 
   if (!data || !selected) return null;
 
+  const hasHeader = !!selected.metadata?.header;
+
   return (
     <div
-      className="relative -mt-4 mb-3 overflow-hidden bg-gray-1 px-3 py-6 dark:bg-dark-9"
+      className="relative -mt-4 mb-4 overflow-hidden bg-gray-1 px-3 py-6 dark:bg-dark-9"
       style={
-        selected.metadata?.header
+        hasHeader
           ? {
               color: theme.white,
             }
           : undefined
       }
     >
-      {selected.metadata?.header && (
+      {hasHeader && (
         <div className="z-1 absolute left-0 top-0 size-full origin-center">
           <EdgeMedia
-            src={selected.metadata.header}
-            style={{
-              objectFit: 'cover',
-              height: 'auto',
-              opacity: 0.4,
-              minWidth: '100%',
-              minHeight: '100%',
-            }}
+            src={selected.metadata.header as string}
+            className="h-auto min-h-full w-full min-w-full object-cover opacity-40"
             fadeIn={false}
           />
         </div>
