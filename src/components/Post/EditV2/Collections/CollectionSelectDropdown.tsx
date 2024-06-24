@@ -1,6 +1,5 @@
 import { Divider, Group, Select, Stack, Text, Alert, Anchor } from '@mantine/core';
 import { CollectionMode } from '@prisma/client';
-import { capitalize } from 'lodash';
 import { useEffect, useMemo, useState } from 'react';
 import { useCollectionsForPostCreation } from '~/components/Collections/collection.utils';
 import { usePostEditParams, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
@@ -105,7 +104,7 @@ export const CollectionSelectDropdown = () => {
               label="Select Entry Category"
               data={selectedCollection.tags.map((tag) => ({
                 value: tag.id.toString(),
-                label: capitalize(tag.name),
+                label: tag.name,
               }))}
               value={collectionTagId ? collectionTagId.toString() : null}
               onChange={(value: string) =>
@@ -120,6 +119,7 @@ export const CollectionSelectDropdown = () => {
               styles={{
                 input: {
                   height: 32,
+                  textTransform: 'capitalize',
                 },
               }}
               tt="capitalize"
