@@ -61,10 +61,10 @@ export async function submitWorkflow({
     query,
   });
   if (!data) {
-    console.log('-------ERROR-------');
-    console.dir({ error }, { depth: null });
-    console.dir({ body, query }, { depth: null });
-    console.log('-------END ERROR-------');
+    // console.log('-------ERROR-------');
+    // console.dir({ error }, { depth: null });
+    // console.dir({ body, query }, { depth: null });
+    // console.log('-------END ERROR-------');
     switch (error.status) {
       case 400:
         throw throwBadRequestError(); // TODO - better error handling
