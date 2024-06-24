@@ -1,4 +1,4 @@
-import { CivitaiClient } from '@civitai/client';
+import { createCivitaiClient } from '@civitai/client';
 import { resourceDataCache } from '~/server/redis/caches';
 import { REDIS_KEYS, redis } from '~/server/redis/client';
 import { GenerationStatus, generationStatusSchema } from '~/server/schema/generation.schema';
@@ -6,20 +6,30 @@ import { allInjectableResourceIds } from '~/shared/constants/generation.constant
 import { stringifyAIR } from '~/utils/string-helpers';
 import { env } from '~/env/server.mjs';
 
-export class OrchestratorClient extends CivitaiClient {
-  constructor(token: string) {
-    // super({ env: 'dev', auth: token });
-    super({ env: env.ORCHESTRATOR_MODE === 'dev' ? 'dev' : 'prod', auth: token });
-  }
+// export class OrchestratorClient extends CivitaiClient {
+//   constructor(token: string) {
+//     // super({ env: 'dev', auth: token });
+//     super({ env: env.ORCHESTRATOR_MODE === 'dev' ? 'dev' : 'prod', auth: token });
+//   }
+// }
+
+// /** Used to perform orchestrator operations with the system user account */
+// export class InternalOrchestratorClient extends OrchestratorClient {
+//   constructor() {
+//     const token = env.ORCHESTRATOR_API_TOKEN;
+//     super(token);
+//   }
+// }
+
+export function createOrchestratorClient(token: string) {
+  return createCivitaiClient({
+    env: env.ORCHESTRATOR_MODE === 'dev' ? 'dev' : 'prod',
+    auth: token,
+  });
 }
 
 /** Used to perform orchestrator operations with the system user account */
-export class InternalOrchestratorClient extends OrchestratorClient {
-  constructor() {
-    const token = env.ORCHESTRATOR_API_TOKEN;
-    super(token);
-  }
-}
+export const internalOrchestratorClient = createOrchestratorClient(env.ORCHESTRATOR_API_TOKEN);
 
 export async function getGenerationStatus() {
   const status = generationStatusSchema.parse(

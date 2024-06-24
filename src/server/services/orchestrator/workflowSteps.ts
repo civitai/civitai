@@ -1,20 +1,23 @@
 import { deepOmit } from '~/utils/object-helpers';
-import { $OpenApiTs } from '@civitai/client';
+import {
+  $OpenApiTs,
+  getWorkflowStep as clientGetWorkflowStep,
+  updateWorkflowStep,
+} from '@civitai/client';
 
-import { OrchestratorClient } from '~/server/services/orchestrator/common';
+import { createOrchestratorClient } from '~/server/services/orchestrator/common';
 import { UpdateWorkflowStepParams } from '~/server/services/orchestrator/orchestrator.schema';
 
 export async function getWorkflowStep({
   token,
-  ...params
+  path,
 }: $OpenApiTs['/v2/consumer/workflows/{workflowId}/steps/{stepName}']['get']['req'] & {
   token: string;
 }) {
-  const client = new OrchestratorClient(token);
-
-  const step = await client.workflowSteps.getWorkflowStep(params);
-
-  return step;
+  const client = createOrchestratorClient(token);
+  const { data } = await clientGetWorkflowStep({ client, path });
+  if (!data) throw new Error('failed to get workflow step');
+  return data;
 }
 
 export async function updateWorkflowSteps({
@@ -24,14 +27,17 @@ export async function updateWorkflowSteps({
   input: UpdateWorkflowStepParams[];
   token: string;
 }) {
-  const client = new OrchestratorClient(token);
+  const client = createOrchestratorClient(token);
 
   await Promise.all(
     input.map(({ workflowId, stepName, metadata }) =>
-      client.workflowSteps.updateWorkflowStep({
-        workflowId,
-        stepName,
-        requestBody: { metadata: deepOmit(metadata) },
+      updateWorkflowStep({
+        client,
+        body: { metadata: deepOmit(metadata) },
+        path: {
+          workflowId,
+          stepName,
+        },
       })
     )
   );

@@ -742,10 +742,6 @@ export function GenerationFormContent() {
                     );
                   }}
                 </Watch>
-
-                {currentUser?.isModerator && (
-                  <InputSwitch name="staging" label="Test Mode" labelPosition="left" />
-                )}
               </div>
             </Accordion.Panel>
           </Accordion.Item>

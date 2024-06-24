@@ -216,7 +216,7 @@ export async function textToImage({
     },
   };
 
-  const requestBody: WorkflowTemplate = {
+  const body: WorkflowTemplate = {
     tags: [WORKFLOW_TAGS.TEXT_TO_IMAGE, ...tags],
     steps: [step],
     callbacks: !whatIf
@@ -230,9 +230,11 @@ export async function textToImage({
   };
 
   const workflow = (await submitWorkflow({
-    whatif: whatIf,
-    requestBody,
     token,
+    body,
+    query: {
+      whatif: whatIf,
+    },
   })) as TextToImageResponse;
 
   return { workflow, resourceDataWithInjects };

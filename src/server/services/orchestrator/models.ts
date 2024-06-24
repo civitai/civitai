@@ -1,26 +1,31 @@
+import { getResource, invalidateResource } from '@civitai/client';
 import { z } from 'zod';
 import { getModelByAirSchema } from '~/server/schema/orchestrator/models.schema';
 import {
-  InternalOrchestratorClient,
-  OrchestratorClient,
+  createOrchestratorClient,
   getResourceDataWithAirs,
+  internalOrchestratorClient,
 } from '~/server/services/orchestrator/common';
 
 export async function getModel({
   token,
-  ...params
+  air,
 }: z.output<typeof getModelByAirSchema> & { token: string }) {
-  const client = new OrchestratorClient(token);
+  const client = createOrchestratorClient(token);
 
-  return await client.resources.getResource(params);
+  return await getResource({ client, path: { air } });
 }
 
 export async function bustOrchestratorModelCache(versionIds: number[]) {
   const resources = await getResourceDataWithAirs(versionIds);
   if (!resources.length) return;
-  const client = new InternalOrchestratorClient();
 
   await Promise.all(
-    resources.map((resource) => client.resources.invalidateResource({ air: resource.air }))
+    resources.map((resource) =>
+      invalidateResource({
+        client: internalOrchestratorClient,
+        path: { air: resource.air },
+      })
+    )
   );
 }

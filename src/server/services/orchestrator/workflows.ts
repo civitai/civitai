@@ -1,11 +1,18 @@
-import { $OpenApiTs, ApiError } from '@civitai/client';
+import {
+  $OpenApiTs,
+  queryWorkflows as clientQueryWorkflows,
+  getWorkflow as clientGetWorkflow,
+  submitWorkflow as clientSubmitWorkflow,
+  updateWorkflow as clientUpdateWorkflow,
+  deleteWorkflow as clientDeleteWorkflow,
+} from '@civitai/client';
 import { z } from 'zod';
 import {
   workflowQuerySchema,
   workflowIdSchema,
   workflowUpdateSchema,
 } from '~/server/schema/orchestrator/workflows.schema';
-import { OrchestratorClient } from '~/server/services/orchestrator/common';
+import { createOrchestratorClient } from '~/server/services/orchestrator/common';
 import {
   throwAuthorizationError,
   throwBadRequestError,
@@ -14,71 +21,81 @@ import {
 
 export async function queryWorkflows({
   token,
-  ...params
+  ...query
 }: z.output<typeof workflowQuerySchema> & { token: string }) {
-  const client = new OrchestratorClient(token);
+  const client = createOrchestratorClient(token);
 
-  const { next, items = [] } = await client.workflows.queryWorkflows(params);
-
-  // console.dir(items, { depth: null });
+  const { data, error } = await clientQueryWorkflows({
+    client,
+    query: { ...query, tags: ['civitai', ...(query.tags ?? [])] },
+  });
+  if (!data) throw error;
+  const { next, items = [] } = data;
 
   return { nextCursor: next, items };
 }
 
 export async function getWorkflow({
   token,
-  ...params
+  path,
+  query,
 }: $OpenApiTs['/v2/consumer/workflows/{workflowId}']['get']['req'] & { token: string }) {
-  const client = new OrchestratorClient(token);
+  const client = createOrchestratorClient(token);
+  const { data, error } = await clientGetWorkflow({ client, path, query });
+  if (!data) throw error;
 
-  return await client.workflows.getWorkflow(params);
+  return data;
 }
 
 export async function submitWorkflow({
   token,
-  ...params
+  body,
+  query,
 }: $OpenApiTs['/v2/consumer/workflows']['post']['req'] & { token: string }) {
-  const client = new OrchestratorClient(token);
-  // console.log({ token });
-  // console.log(JSON.stringify(params));
-  // TODO - add company identifier to beginning of `tags` - 'civitai'
+  const client = createOrchestratorClient(token);
+  if (!body) throw throwBadRequestError();
 
-  return await client.workflows.submitWorkflow(params).catch((error) => {
-    if (error instanceof ApiError) {
-      console.log('-------ERROR-------');
-      console.dir({ error }, { depth: null });
-      console.dir({ params }, { depth: null });
-      console.log('-------END ERROR-------');
-      switch (error.status) {
-        case 400:
-          throw throwBadRequestError(); // TODO - better error handling
-        case 401:
-          throw throwAuthorizationError();
-        case 403:
-          throw throwInsufficientFundsError();
-        default:
-          throw error;
-      }
-    } else throw error;
+  const { data, error } = await clientSubmitWorkflow({
+    client,
+    body: { ...body, tags: ['civitai', ...(body.tags ?? [])] },
+    query,
   });
+  if (!data) {
+    console.log('-------ERROR-------');
+    console.dir({ error }, { depth: null });
+    console.dir({ body, query }, { depth: null });
+    console.log('-------END ERROR-------');
+    switch (error.status) {
+      case 400:
+        throw throwBadRequestError(); // TODO - better error handling
+      case 401:
+        throw throwAuthorizationError();
+      case 403:
+        throw throwInsufficientFundsError();
+      default:
+        throw error;
+    }
+  }
+
+  return data;
 }
 
 export async function cancelWorkflow({
   workflowId,
   token,
 }: z.infer<typeof workflowIdSchema> & { token: string }) {
-  const client = new OrchestratorClient(token);
+  const client = createOrchestratorClient(token);
 
-  await client.workflows.updateWorkflow({ workflowId, requestBody: { status: 'canceled' } });
+  await clientUpdateWorkflow({ client, path: { workflowId }, body: { status: 'canceled' } });
 }
 
 export async function deleteWorkflow({
   workflowId,
   token,
 }: z.infer<typeof workflowIdSchema> & { token: string }) {
-  const client = new OrchestratorClient(token);
+  const client = createOrchestratorClient(token);
 
-  await client.workflows.deleteWorkflow({ workflowId });
+  await clientDeleteWorkflow({ client, path: { workflowId } });
 }
 
 export async function deleteManyWorkflows({
@@ -88,10 +105,10 @@ export async function deleteManyWorkflows({
   workflowIds: string[];
   token: string;
 }) {
-  const client = new OrchestratorClient(token);
+  const client = createOrchestratorClient(token);
 
   await Promise.all(
-    workflowIds.map((workflowId) => client.workflows.deleteWorkflow({ workflowId }))
+    workflowIds.map((workflowId) => clientDeleteWorkflow({ client, path: { workflowId } }))
   );
 }
 
@@ -100,9 +117,9 @@ export async function updateWorkflow({
   metadata,
   token,
 }: z.infer<typeof workflowUpdateSchema> & { token: string }) {
-  const client = new OrchestratorClient(token);
+  const client = createOrchestratorClient(token);
 
-  await client.workflows.updateWorkflow({ workflowId, requestBody: { metadata } });
+  await clientUpdateWorkflow({ client, path: { workflowId }, body: { metadata } });
 }
 
 export async function updateManyWorkflows({
@@ -112,11 +129,11 @@ export async function updateManyWorkflows({
   workflows: z.infer<typeof workflowUpdateSchema>[];
   token: string;
 }) {
-  const client = new OrchestratorClient(token);
+  const client = createOrchestratorClient(token);
 
   await Promise.all(
     workflows.map(({ workflowId, metadata }) =>
-      client.workflows.updateWorkflow({ workflowId, requestBody: { metadata } })
+      clientUpdateWorkflow({ client, path: { workflowId }, body: { metadata } })
     )
   );
 }
