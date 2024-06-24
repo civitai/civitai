@@ -68,7 +68,7 @@ export default MixedAuthEndpoint(async function handler(
         ELSE 
           NULL
         END
-      ) AS "freeTrialLimit",
+      ) AS "freeTrialLimit"
     FROM "ModelVersion" mv
     JOIN "Model" m ON m.id = mv."modelId"
     WHERE ${Prisma.join(where, ' AND ')}
