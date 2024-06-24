@@ -275,7 +275,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
           </Text>
           <Group spacing="xs">
             {(showAllBadges ? badges : badges.slice(0, sizeOpts.badgeCount)).map((award) => {
-              const data = (award.data ?? {}) as { url?: string; animated?: boolean; videoUrl?: string };
+              const data = (award.data ?? {}) as BadgeCosmetic['data'];
               const url = (data.url ?? '') as string;
               const isEnlarged = enlargedBadge === award.id;
 
