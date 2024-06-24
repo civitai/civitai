@@ -8,10 +8,7 @@ import { useUpdateWorkflowSteps } from '~/components/Orchestrator/hooks/workflow
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { SignalMessages } from '~/server/common/enums';
-import {
-  TextToImageStepImageMetadata,
-  TextToImageStepMetadata,
-} from '~/server/schema/orchestrator/textToImage.schema';
+import { TextToImageStepMetadata } from '~/server/schema/orchestrator/textToImage.schema';
 import { workflowQuerySchema } from '~/server/schema/orchestrator/workflows.schema';
 import { workflowCompletedStatuses } from '~/server/services/orchestrator/constants';
 import { UpdateWorkflowStepParams } from '~/server/services/orchestrator/orchestrator.schema';
@@ -61,8 +58,11 @@ export function useGetTextToImageRequests(
 
   // useEffect(() => console.log({ flatData }), [flatData]);
   const steps = useMemo(() => flatData.flatMap((x) => x.steps), [flatData]);
+  const images = useMemo(() => {
+    steps.flatMap((x) => x.images);
+  }, [steps]);
 
-  return { data: flatData, steps, ...rest };
+  return { data: flatData, steps, images, ...rest };
 }
 
 export function useGetTextToImageRequestsImages(input?: z.input<typeof workflowQuerySchema>) {

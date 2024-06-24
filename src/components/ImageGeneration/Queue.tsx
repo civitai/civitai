@@ -9,18 +9,14 @@ import { generationPanel } from '~/store/generation.store';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { formatDate } from '~/utils/date-helpers';
-import { useSessionStorage } from '@mantine/hooks';
-import { useState } from 'react';
+import { useSchedulerDownloadingStore } from '~/store/scheduler-download.store';
 
 export function Queue() {
   const { data, isLoading, fetchNextPage, hasNextPage, isRefetching, isError } =
     useGetTextToImageRequests();
 
-  // const [downloading, setDownloading] = useSessionStorage({
-  //   key: 'scheduler-downloading',
-  //   defaultValue: false,
-  // });
-  const [downloading, setDownloading] = useState(false);
+  const { downloading } = useSchedulerDownloadingStore();
+  const handleSetDownloading = () => useSchedulerDownloadingStore.setState({ downloading: true });
 
   if (isError)
     return (
@@ -54,7 +50,7 @@ export function Queue() {
         href="/api/generation/history"
         download
         disabled={downloading}
-        onClick={() => setDownloading(true)}
+        onClick={handleSetDownloading}
       >
         Download past images
       </Button>
@@ -101,7 +97,7 @@ export function Queue() {
               component="a"
               href="/api/generation/history"
               download
-              onClick={() => setDownloading(true)}
+              onClick={handleSetDownloading}
             >
               Download images created before {formatDate(new Date('6-24-2024'))}
             </Text>

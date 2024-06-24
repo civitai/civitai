@@ -141,6 +141,7 @@ export enum SignalMessages {
   ChatTypingStatus = 'chat:typing-status',
   OrchestratorUpdate = 'orchestrator-job:status-update',
   TextToImageUpdate = 'orchestrator:text-to-image-update',
+  SchedulerDownload = 'scheduler:download',
 }
 
 export enum BountySort {

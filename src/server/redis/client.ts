@@ -173,9 +173,11 @@ export const REDIS_KEYS = {
   COUNTERS: {
     REDEMPTION_ATTEMPTS: 'counters:redemption-attempts',
     EMAIL_VERIFICATIONS: 'counters:email-verifications',
+    HISTORY_DOWNLOADS: 'counters:history-downloads',
   },
   LIMITS: {
     EMAIL_VERIFICATIONS: 'limits:email-verifications',
+    HISTORY_DOWNLOADS: 'limits:history-downloads',
   },
   LIVE_NOW: 'live-now',
 } as const;

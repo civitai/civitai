@@ -9,9 +9,11 @@ import {
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { SignalMessages } from '~/server/common/enums';
 import { imageStore } from '~/store/image.store';
+import { useSchedulerDownloadSignal } from '~/store/scheduler-download.store';
 
 export function SignalsRegistrar() {
   useTextToImageSignalUpdate();
+  useSchedulerDownloadSignal();
 
   useBuzzSignalUpdate();
 

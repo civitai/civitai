@@ -4,6 +4,7 @@ import { IconInfoCircle, IconSquareOff, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { generationImageSelect } from '~/components/ImageGeneration/utils/generationImage.select';
 import {
+  useGetTextToImageRequests,
   useGetTextToImageRequestsImages as useGetTextToImageRequestsSteps,
   useUpdateTextToImageStepMetadata,
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
@@ -21,6 +22,7 @@ export function GeneratedImageActions({
   actionIconSize?: MantineNumberSize;
   iconSize?: number;
 }) {
+  const { images } = useGetTextToImageRequests();
   const { selected, deselect, isMutating, deleteSelectedImages, postSelectedImages } =
     useGeneratedImageActions();
 
