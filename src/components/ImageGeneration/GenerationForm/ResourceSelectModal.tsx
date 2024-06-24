@@ -277,7 +277,6 @@ function ResourceSelectCard({
   index: number;
   data: SearchIndexDataMap['models'][number];
 }) {
-  console.log('data', data);
   const currentUser = useCurrentUser();
   const { ref, inView } = useInView({ rootMargin: '600px' });
   const { onSelect, canGenerate, isTraining, resources } = useResourceSelectContext();

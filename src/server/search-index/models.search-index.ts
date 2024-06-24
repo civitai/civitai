@@ -222,8 +222,6 @@ const transformData = async ({
   images: Awaited<ReturnType<typeof getImagesForModelVersion>>;
   tagsOnImages: TagsOnImages[];
 }) => {
-  console.log('Sample model data:', JSON.stringify(models[0], null, 2));
-
   const modelCategories = await getCategoryTags('model');
   const modelCategoriesIds = modelCategories.map((category) => category.id);
 
@@ -244,8 +242,6 @@ const transformData = async ({
   const indexReadyRecords = models
     .map((modelRecord) => {
       const { user, modelVersions, tagsOnModels, hashes, ...model } = modelRecord;
-      console.log('indexReadyRecords', model);
-
       const metrics = modelRecord.metrics[0] ?? {};
 
       const weightedRating =

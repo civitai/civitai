@@ -116,11 +116,8 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
     defaultValues,
   });
 
-  const selectedModel = form.watch('model');
   const selectedResources = form.watch('resources');
-  console.log('Selected Model:', selectedModel);
-  console.log('Selected Resources:', selectedResources);
-
+  const hasMinorResource = selectedResources.some(resource => resource.minor);
 
   const { limits, ...status } = useGenerationStatus();
 
@@ -572,7 +569,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
             <InputSegmentedControl name="aspectRatio" data={getAspectRatioControls(baseModel)} />
           </Stack>
           <Group position="apart" my="xs">
-            <InputSwitch name="nsfw" label="Mature content" labelPosition="left" />
+            <InputSwitch name="nsfw" label="Mature content" labelPosition="left" disabled={hasMinorResource} checked={hasMinorResource ? false : undefined}/>
             {features.draftMode && (
               <InputSwitch
                 name="draft"
