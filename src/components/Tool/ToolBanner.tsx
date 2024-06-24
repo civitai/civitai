@@ -1,5 +1,6 @@
-import { Button, Title, Text } from '@mantine/core';
-import { useEffect, useState } from 'react';
+import { Button, Title, Text, useMantineTheme } from '@mantine/core';
+import { IconExternalLink } from '@tabler/icons-react';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useImageQueryParams } from '~/components/Image/image.utils';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { trpc } from '~/utils/trpc';
@@ -11,17 +12,59 @@ export function ToolBanner() {
 
   const { data } = trpc.tool.getAll.useQuery(undefined, { enabled: !!toolIds?.length });
   const selected = data?.find((x) => x.id === selectedId);
+  const theme = useMantineTheme();
 
   if (!data || !selected) return null;
 
   return (
-    <div className="-mt-4 mb-3 bg-gray-1 px-3 py-6 dark:bg-dark-9">
+    <div
+      className="relative -mt-4 mb-3 overflow-hidden bg-gray-1 px-3 py-6 dark:bg-dark-9"
+      style={
+        selected.metadata?.header
+          ? {
+              color: theme.white,
+            }
+          : undefined
+      }
+    >
+      {selected.metadata?.header && (
+        <div className="z-1 absolute left-0 top-0 size-full origin-center">
+          <EdgeMedia
+            src={selected.metadata.header}
+            style={{
+              objectFit: 'cover',
+              height: 'auto',
+              opacity: 0.4,
+              minWidth: '100%',
+              minHeight: '100%',
+            }}
+            fadeIn={false}
+          />
+        </div>
+      )}
       <MasonryContainer>
         <div className="flex max-w-md flex-col gap-2">
           <div className="flex justify-between gap-3">
-            <Title order={2} className="font-semibold">
-              {selected.name}
-            </Title>
+            <div className="flex flex-col gap-2">
+              {selected.icon && <EdgeMedia width={75} src={selected.icon} />}
+              <div className="flex items-center gap-8">
+                <Title order={2} className="font-semibold">
+                  {selected.name}
+                </Title>
+                {selected.domain && (
+                  <Button
+                    color="blue"
+                    radius="xl"
+                    target="_blank"
+                    rightIcon={<IconExternalLink size={18} />}
+                    component="a"
+                    href={selected.domain}
+                  >
+                    Visit
+                  </Button>
+                )}
+              </div>
+            </div>
             {/* <div className="flex flex-wrap gap-1">
               {data
                 .filter((tool) => toolIds?.includes(tool.id))
