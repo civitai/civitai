@@ -35,6 +35,7 @@ export function ToolBanner() {
             src={selected.metadata.header as string}
             className="h-auto min-h-full w-full min-w-full object-cover opacity-40"
             fadeIn={false}
+            original
           />
         </div>
       )}
@@ -55,6 +56,7 @@ export function ToolBanner() {
                     rightIcon={<IconExternalLink size={18} />}
                     component="a"
                     href={selected.domain}
+                    rel="nofollow noreferrer"
                   >
                     Visit
                   </Button>
