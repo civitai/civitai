@@ -1,5 +1,6 @@
 import {
   ActionIcon,
+  Anchor,
   AspectRatio,
   Button,
   Center,
@@ -12,6 +13,7 @@ import {
   Paper,
   Progress,
   ScrollArea,
+  Select,
   SimpleGrid,
   Stack,
   Text,
@@ -38,19 +40,22 @@ import {
   bulkSaveCollectionItemsInput,
 } from '~/server/schema/collection.schema';
 import { ImageGetInfinite } from '~/types/router';
-import { showErrorNotification } from '~/utils/notifications';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
 import { truncate } from 'lodash-es';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
+import { NextLink } from '@mantine/next';
+import { useCollection } from './collection.utils';
 
 export function AddUserContentModal({ collectionId, opened, onClose, ...props }: Props) {
   const currentUser = useCurrentUser();
   const queryUtils = trpc.useUtils();
-
+  const { collection } = useCollection(collectionId);
   const selected = useStore((state) => Object.keys(state.selected).map(Number));
   const deselectAll = useStore((state) => state.deselectAll);
   const [error, setError] = useState('');
+  const [tagId, setTagId] = useState<number | null>(null);
 
   const { files, uploadToCF, removeImage, resetFiles } = useCFImageUpload();
 
@@ -84,9 +89,23 @@ export function AddUserContentModal({ collectionId, opened, onClose, ...props }:
     addSimpleImagePostCollectionMutation.mutate(
       { collectionId, images: filteredImages },
       {
-        onSuccess: async () => {
+        onSuccess: async (data) => {
           handleClose();
+          showSuccessNotification({
+            autoClose: 10000, // 10s
+            title: 'Your media has been successfully added to this collection.',
+            message: (
+              <Stack>
+                <Text>
+                  <Anchor href={`/posts/${data.post.id}/edit`}>Click here</Anchor> to add tags and
+                  descriptions to your images.
+                </Text>
+              </Stack>
+            ),
+          });
           await queryUtils.image.getInfinite.invalidate();
+          await queryUtils.collection.getById.invalidate({ id: collectionId });
+          await queryUtils.collection.getAllUser.invalidate();
         },
         onError(error) {
           showErrorNotification({
@@ -101,7 +120,7 @@ export function AddUserContentModal({ collectionId, opened, onClose, ...props }:
   const saveCollectionItemsMutation = trpc.collection.bulkSaveItems.useMutation();
   const handleSubmitExisting = () => {
     setError('');
-    const data = { collectionId, imageIds: selected };
+    const data = { collectionId, imageIds: selected, tagId };
     // Manually check for input errors
     const results = bulkSaveCollectionItemsInput.safeParse(data);
     if (!results.success) {
@@ -141,120 +160,52 @@ export function AddUserContentModal({ collectionId, opened, onClose, ...props }:
             {error}
           </AlertWithIcon>
         )}
-        {addSimpleImagePostCollectionMutation.isLoading ? (
-          <Center py="xl" h="250px">
-            <Stack align="center">
-              <Loader />
-              <Text color="dimmed">
-                Adding images to the collection. This may take a few seconds
-              </Text>
-            </Stack>
-          </Center>
-        ) : (
-          <>
-            <ImageDropzone
-              label="Drop or click to select your images to add to this collection"
-              onDrop={handleDropImages}
-              count={files.length}
-              accept={[...IMAGE_MIME_TYPE, ...VIDEO_MIME_TYPE]}
-            />
-            {files.length > 0 ? (
-              <SimpleGrid
-                spacing="sm"
-                breakpoints={[
-                  { minWidth: 'xs', cols: 1 },
-                  { minWidth: 'sm', cols: 3 },
-                  { minWidth: 'md', cols: 4 },
-                ]}
-              >
-                {files
-                  .slice()
-                  .reverse()
-                  .map((file) => (
-                    <Paper
-                      key={file.url}
-                      radius="sm"
-                      p={0}
-                      sx={{ position: 'relative', overflow: 'hidden', height: 332 }}
-                      withBorder
-                    >
-                      {file.status === 'success' ? (
-                        <>
-                          <EdgeMedia
-                            placeholder="empty"
-                            src={file.url}
-                            alt={file.name ?? undefined}
-                            style={{ objectFit: 'cover', height: '100%' }}
-                          />
-                          <div style={{ position: 'absolute', top: 12, right: 12 }}>
-                            <ActionIcon
-                              variant="filled"
-                              size="lg"
-                              color="red"
-                              onClick={() => removeImage(file.url)}
-                            >
-                              <IconTrash size={26} strokeWidth={2.5} />
-                            </ActionIcon>
-                          </div>
-                          {file.type === 'image' && (
-                            <div style={{ position: 'absolute', bottom: 12, right: 12 }}>
-                              <ImageMetaPopover meta={file.meta}>
-                                <ActionIcon variant="light" color="dark" size="lg">
-                                  <IconInfoCircle color="white" strokeWidth={2.5} size={26} />
-                                </ActionIcon>
-                              </ImageMetaPopover>
-                            </div>
-                          )}
-                        </>
-                      ) : (
-                        <>
-                          <MediaHash {...file} />
-                          <Progress
-                            size="xl"
-                            value={file.progress}
-                            label={`${Math.floor(file.progress)}%`}
-                            color={file.progress < 100 ? 'blue' : 'green'}
-                            striped
-                            animate
-                          />
-                        </>
-                      )}
-                    </Paper>
-                  ))}
-              </SimpleGrid>
-            ) : (
-              <>
-                <Divider label="or select from your library" labelPosition="center" />
-                <MasonryProvider
-                  columnWidth={constants.cardSizes.image}
-                  maxColumnCount={4}
-                  maxSingleColumnWidth={450}
-                >
-                  <MasonryContainer m={0} p={0}>
-                    <ScrollArea.Autosize maxHeight="500px">
-                      {currentUser && (
-                        <ImagesInfinite
-                          filters={{
-                            collectionId: undefined,
-                            username: currentUser.username,
-                            period: 'AllTime',
-                            sort: ImageSort.Newest,
-                            hidden: undefined,
-                            types: undefined,
-                            withMeta: undefined,
-                            followed: undefined,
-                            fromPlatform: undefined,
-                          }}
-                          renderItem={SelectableImageCard}
-                          nextPageLoaderOptions={{ root: undefined }}
-                        />
-                      )}
-                    </ScrollArea.Autosize>
-                  </MasonryContainer>
-                </MasonryProvider>
-              </>
-            )}
-          </>
+
+        <Button component={NextLink} href={`/posts/create?collectionId=${collectionId}`}>
+          Create a new image post
+        </Button>
+
+        <Divider label="or select from your library" labelPosition="center" />
+        <MasonryProvider
+          columnWidth={constants.cardSizes.image}
+          maxColumnCount={4}
+          maxSingleColumnWidth={450}
+        >
+          <MasonryContainer m={0} p={0}>
+            <ScrollArea.Autosize maxHeight="500px">
+              {currentUser && (
+                <ImagesInfinite
+                  filters={{
+                    collectionId: undefined,
+                    username: currentUser.username,
+                    period: 'AllTime',
+                    sort: ImageSort.Newest,
+                    hidden: undefined,
+                    types: undefined,
+                    withMeta: undefined,
+                    followed: undefined,
+                    fromPlatform: undefined,
+                  }}
+                  renderItem={SelectableImageCard}
+                  nextPageLoaderOptions={{ root: undefined }}
+                />
+              )}
+            </ScrollArea.Autosize>
+          </MasonryContainer>
+        </MasonryProvider>
+        {(collection?.tags?.length ?? 0) > 0 && (
+          <Select
+            label="Please select what category of the contest you are participating in."
+            withAsterisk
+            placeholder="Select a category for your submission"
+            data={(collection?.tags ?? []).map((tag) => ({
+              value: tag.id.toString(),
+              label: tag.name,
+            }))}
+            onChange={(value) => setTagId(value ? Number(value) : null)}
+            value={tagId?.toString() ?? null}
+            clearable
+          />
         )}
         <Group
           spacing="xs"
@@ -301,7 +252,7 @@ function SelectableImageCard({ data: image }: { data: ImageGetInfinite[number] }
         <ImageGuard2 image={image}>
           {(safe) => (
             <>
-              <ImageGuard2.BlurToggle className="absolute top-2 left-2 z-10" />
+              <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
               {!safe ? (
                 <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>
                   <MediaHash {...image} />

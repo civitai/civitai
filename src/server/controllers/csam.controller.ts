@@ -1,0 +1,39 @@
+import { ReportStatus } from '@prisma/client';
+import { handleDenyTrainingData } from '~/server/controllers/training.controller';
+import { Context } from '~/server/createContext';
+import { CsamReportSchema } from '~/server/schema/csam.schema';
+import { createCsamReport } from '~/server/services/csam.service';
+import { bulkSetReportStatus } from '~/server/services/report.service';
+import { softDeleteUser } from '~/server/services/user.service';
+
+export async function createCsamReportHandler({
+  input,
+  ctx,
+}: {
+  input: CsamReportSchema;
+  ctx: DeepNonNullable<Context>;
+}) {
+  const { userId, imageIds = [], details, type } = input;
+  const reportedById = ctx.user.id;
+  await createCsamReport({ ...input, reportedById });
+
+  // Resolve reports concerning csam images
+  if (type === 'Image' && !!imageIds.length) {
+    await bulkSetReportStatus({
+      ids: imageIds,
+      status: ReportStatus.Actioned,
+      userId: reportedById,
+    });
+  }
+
+  // there should not be any reports for type 'TrainingData'
+  const modelVersionIds = details?.modelVersionIds ?? [];
+  if (type === 'TrainingData' && !!modelVersionIds.length) {
+    const modelVersionId = modelVersionIds[0];
+    await handleDenyTrainingData({ input: { id: modelVersionId }, ctx });
+  }
+
+  if (userId !== -1) {
+    await softDeleteUser({ id: userId });
+  }
+}

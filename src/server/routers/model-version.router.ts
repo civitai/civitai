@@ -13,6 +13,7 @@ import {
   getVersionLicenseHandler,
   modelVersionEarlyAccessPurchaseHandler,
   modelVersionDonationGoalsHandler,
+  getModelVersionOwnerHandler,
 } from '~/server/controllers/model-version.controller';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
@@ -70,6 +71,7 @@ const isOwnerOrModerator = middleware(async ({ ctx, input, next }) => {
 
 export const modelVersionRouter = router({
   getById: publicProcedure.input(getModelVersionSchema).query(getModelVersionHandler),
+  getOwner: publicProcedure.input(getByIdSchema).query(getModelVersionOwnerHandler),
   getRunStrategies: publicProcedure.input(getByIdSchema).query(getModelVersionRunStrategiesHandler),
   getExplorationPromptsById: publicProcedure
     .input(getByIdSchema)

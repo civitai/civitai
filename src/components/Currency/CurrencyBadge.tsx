@@ -5,6 +5,7 @@ import {
   ButtonProps,
   Group,
   Loader,
+  MantineSize,
   MantineTheme,
   useMantineTheme,
 } from '@mantine/core';
@@ -19,6 +20,14 @@ type Props = BadgeProps & {
   formatter?: (value: number) => string;
   displayCurrency?: boolean;
   loading?: boolean;
+};
+
+const iconSize: Record<MantineSize, number> = {
+  xs: 12,
+  sm: 14,
+  md: 16,
+  lg: 18,
+  xl: 20,
 };
 
 export function CurrencyBadge({
@@ -54,7 +63,7 @@ export function CurrencyBadge({
       {...badgeProps}
     >
       <Group spacing={4} noWrap>
-        <Icon size={14} fill="currentColor" />
+        <Icon size={iconSize[badgeProps.size ?? 'sm']} fill="currentColor" />
         {loading && <Loader size="xs" variant="dots" color={colorString} />}
         {!loading && (
           <>

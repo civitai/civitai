@@ -15,11 +15,12 @@ import { SessionUser } from 'next-auth';
 
 import { env } from '~/env/server.mjs';
 import { BaseModel, BaseModelType, CacheTTL } from '~/server/common/constants';
-import { ModelSort, NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { ModelSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
 import { requestScannerTasks } from '~/server/jobs/scan-files';
+import { dataForModelsCache } from '~/server/redis/caches';
 import { redis } from '~/server/redis/client';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import {
@@ -36,6 +37,7 @@ import {
 } from '~/server/schema/model.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
 import { imagesSearchIndex, modelsSearchIndex } from '~/server/search-index';
+import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import { associatedResourceSelect } from '~/server/selectors/model.selector';
 import { modelFileSelect } from '~/server/selectors/modelFile.selector';
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
@@ -43,14 +45,17 @@ import {
   getAvailableCollectionItemsFilterForUser,
   getUserCollectionPermissionsById,
 } from '~/server/services/collection.service';
+import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import {
   getUnavailableResources,
   prepareModelInOrchestrator,
 } from '~/server/services/generation/generation.service';
 import {
-  getImagesForModelVersionCache,
   getImagesForModelVersion,
+  getImagesForModelVersionCache,
+  ImagesForModelVersions,
 } from '~/server/services/image.service';
+import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
 import { getCategoryTags } from '~/server/services/system-cache';
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
@@ -67,6 +72,7 @@ import {
   getPagingData,
 } from '~/server/utils/pagination-helpers';
 import { decreaseDate, isFutureDate } from '~/utils/date-helpers';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { prepareFile } from '~/utils/file-helpers';
 import { fromJson, toJson } from '~/utils/json-helpers';
 import { getS3Client } from '~/utils/s3-utils';
@@ -77,15 +83,6 @@ import {
   SetAssociatedResourcesInput,
   SetModelsCategoryInput,
 } from './../schema/model.schema';
-import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
-import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
-import {
-  BadgeCosmetic,
-  ContentDecorationCosmetic,
-  WithClaimKey,
-} from '~/server/selectors/cosmetic.selector';
-import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
-import { dataForModelsCache } from '~/server/redis/caches';
 import { publishModelVersionsWithEarlyAccess } from '~/server/services/model-version.service';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
@@ -113,6 +110,7 @@ type ModelRaw = {
   description?: string | null;
   type: ModelType;
   poi?: boolean;
+  minor?: boolean;
   nsfw: boolean;
   nsfwLevel: number;
   allowNoCredit?: boolean;
@@ -543,13 +541,14 @@ export const getModelsRaw = async ({
       m."name",
       ${ifDetails`
         m."description",
-        m."poi",
         m."allowNoCredit",
         m."allowCommercialUse",
         m."allowDerivatives",
         m."allowDifferentLicense",
       `}
       m."type",
+      m."minor",
+      m."poi",
       m."nsfw",
       m."nsfwLevel",
       m."status",
@@ -977,9 +976,31 @@ export const getModelsWithImagesAndModelVersions = async ({
     .flatMap((m) => m.modelVersions)
     .map((m) => m.id);
 
-  const modelVersionImages = !!modelVersionIds.length
-    ? await getImagesForModelVersionCache(modelVersionIds)
-    : {};
+  let modelVersionImages: Record<
+    number,
+    { modelVersionId: number; images: ImagesForModelVersions[] }
+  > = {};
+  if (!!modelVersionIds.length) {
+    if (input.pending) {
+      const images = await getImagesForModelVersion({
+        modelVersionIds,
+        imagesPerVersion: 20,
+        pending: input.pending,
+        browsingLevel: input.browsingLevel,
+        user,
+      });
+      for (const image of images) {
+        if (!modelVersionImages[image.modelVersionId])
+          modelVersionImages[image.modelVersionId] = {
+            modelVersionId: image.modelVersionId,
+            images: [],
+          };
+        modelVersionImages[image.modelVersionId].images.push(image);
+      }
+    } else {
+      modelVersionImages = await getImagesForModelVersionCache(modelVersionIds);
+    }
+  }
 
   const { excludedTagIds, status } = input;
   const includeDrafts = status?.includes(ModelStatus.Draft);
@@ -1248,7 +1269,7 @@ export const upsertModel = async (
   } else {
     const beforeUpdate = await dbRead.model.findUnique({
       where: { id },
-      select: { poi: true, userId: true },
+      select: { poi: true, userId: true, minor: true },
     });
     if (!beforeUpdate) return null;
 
@@ -1256,7 +1277,7 @@ export const upsertModel = async (
     if (!isOwner) return null;
 
     const result = await dbWrite.model.update({
-      select: { id: true, nsfwLevel: true, poi: true },
+      select: { id: true, nsfwLevel: true, poi: true, minor: true },
       where: { id },
       data: {
         ...data,
@@ -1293,8 +1314,11 @@ export const upsertModel = async (
     const poiChanged = beforeUpdate && result.poi !== beforeUpdate.poi;
     // A trigger now handles updating images to reflect the poi setting. We don't need to do it here.
 
+    // Handle Minor change
+    const minorChanged = beforeUpdate && result.minor !== beforeUpdate.minor;
+
     // Update search index if listing changes
-    if (tagsOnModels || poiChanged) {
+    if (tagsOnModels || poiChanged || minorChanged) {
       await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
     }
 
@@ -1522,7 +1546,7 @@ export const getDraftModelsByUserId = async <TSelect extends Prisma.ModelSelect>
   return getPagingData({ items, count }, take, page);
 };
 
-export const getTrainingModelsByUserId = async <TSelect extends Prisma.ModelSelect>({
+export const getTrainingModelsByUserId = async <TSelect extends Prisma.ModelVersionSelect>({
   userId,
   select,
   page,
@@ -1532,20 +1556,23 @@ export const getTrainingModelsByUserId = async <TSelect extends Prisma.ModelSele
   select: TSelect;
 }) => {
   const { take, skip } = getPagination(limit, page);
-  const where: Prisma.ModelFindManyArgs['where'] = {
-    userId,
-    status: { notIn: [ModelStatus.Published, ModelStatus.Deleted] },
-    uploadType: { equals: ModelUploadType.Trained },
+  const where: Prisma.ModelVersionFindManyArgs['where'] = {
+    status: { in: [ModelStatus.Draft, ModelStatus.Training] },
+    model: {
+      userId,
+      status: { notIn: [ModelStatus.Deleted] },
+      uploadType: { equals: ModelUploadType.Trained },
+    },
   };
 
-  const items = await dbRead.model.findMany({
+  const items = await dbRead.modelVersion.findMany({
     select,
     skip,
     take,
     where,
     orderBy: { updatedAt: 'desc' },
   });
-  const count = await dbRead.model.count({ where });
+  const count = await dbRead.modelVersion.count({ where });
 
   return getPagingData({ items, count }, take, page);
 };

@@ -190,6 +190,9 @@ export function ModelCard({ data, forceInView }: Props) {
   const isArchived = data.mode === ModelModifier.Archived;
   const onSite = !!data.version.trainingStatus;
 
+  const isPOI = data.poi;
+  const isMinor = data.minor;
+
   const thumbsUpCount = data.rank?.thumbsUpCount ?? 0;
   const thumbsDownCount = data.rank?.thumbsDownCount ?? 0;
   const totalCount = thumbsUpCount + thumbsDownCount;
@@ -225,6 +228,28 @@ export function ModelCard({ data, forceInView }: Props) {
                       >
                         <Group spacing={4}>
                           <ImageGuard2.BlurToggle className={classes.chip} />
+                          {currentUser?.isModerator && isPOI && (
+                            <Badge
+                              className={cx(classes.infoChip, classes.chip, classes.forMod)}
+                              variant="light"
+                              radius="xl"
+                            >
+                              <Text color="white" size="xs" transform="capitalize">
+                                POI
+                              </Text>
+                            </Badge>
+                          )}
+                          {currentUser?.isModerator && isMinor && (
+                            <Badge
+                              className={cx(classes.infoChip, classes.chip, classes.forMod)}
+                              variant="light"
+                              radius="xl"
+                            >
+                              <Text color="white" size="xs" transform="capitalize">
+                                Minor
+                              </Text>
+                            </Badge>
+                          )}
                           <Badge
                             className={cx(classes.infoChip, classes.chip)}
                             variant="light"
@@ -233,6 +258,7 @@ export function ModelCard({ data, forceInView }: Props) {
                             <Text color="white" size="xs" transform="capitalize">
                               {getDisplayName(data.type)}
                             </Text>
+
                             {isSDXL && (
                               <>
                                 <Divider orientation="vertical" />
@@ -357,8 +383,8 @@ export function ModelCard({ data, forceInView }: Props) {
                             alt={
                               image.meta
                                 ? truncate((image.meta as ImageMetaProps).prompt, {
-                                    length: 125,
-                                  })
+                                  length: 125,
+                                })
                                 : undefined
                             }
                             type={image.type}
@@ -398,37 +424,37 @@ export function ModelCard({ data, forceInView }: Props) {
                     {(!!data.rank.downloadCount ||
                       !!data.rank.collectedCount ||
                       !!data.rank.tippedAmountCount) && (
-                      <Badge
-                        className={cx(classes.statChip, classes.chip)}
-                        variant="light"
-                        radius="xl"
-                      >
-                        <Group spacing={2}>
-                          <IconDownload size={14} strokeWidth={2.5} />
-                          <Text size="xs">{abbreviateNumber(data.rank.downloadCount)}</Text>
-                        </Group>
-                        <Group spacing={2}>
-                          <IconBookmark size={14} strokeWidth={2.5} />
-                          <Text size="xs">{abbreviateNumber(data.rank.collectedCount)}</Text>
-                        </Group>
-                        <Group spacing={2}>
-                          <IconMessageCircle2 size={14} strokeWidth={2.5} />
-                          <Text size="xs">{abbreviateNumber(data.rank.commentCount)}</Text>
-                        </Group>
-                        <InteractiveTipBuzzButton
-                          toUserId={data.user.id}
-                          entityType={'Model'}
-                          entityId={data.id}
+                        <Badge
+                          className={cx(classes.statChip, classes.chip)}
+                          variant="light"
+                          radius="xl"
                         >
                           <Group spacing={2}>
-                            <IconBolt size={14} strokeWidth={2.5} />
-                            <Text size="xs" tt="uppercase">
-                              {abbreviateNumber(data.rank.tippedAmountCount + tippedAmount)}
-                            </Text>
+                            <IconDownload size={14} strokeWidth={2.5} />
+                            <Text size="xs">{abbreviateNumber(data.rank.downloadCount)}</Text>
                           </Group>
-                        </InteractiveTipBuzzButton>
-                      </Badge>
-                    )}
+                          <Group spacing={2}>
+                            <IconBookmark size={14} strokeWidth={2.5} />
+                            <Text size="xs">{abbreviateNumber(data.rank.collectedCount)}</Text>
+                          </Group>
+                          <Group spacing={2}>
+                            <IconMessageCircle2 size={14} strokeWidth={2.5} />
+                            <Text size="xs">{abbreviateNumber(data.rank.commentCount)}</Text>
+                          </Group>
+                          <InteractiveTipBuzzButton
+                            toUserId={data.user.id}
+                            entityType={'Model'}
+                            entityId={data.id}
+                          >
+                            <Group spacing={2}>
+                              <IconBolt size={14} strokeWidth={2.5} />
+                              <Text size="xs" tt="uppercase">
+                                {abbreviateNumber(data.rank.tippedAmountCount + tippedAmount)}
+                              </Text>
+                            </Group>
+                          </InteractiveTipBuzzButton>
+                        </Badge>
+                      )}
                     {!data.locked && !!data.rank.thumbsUpCount && (
                       <Badge
                         className={cx(classes.statChip, classes.chip)}

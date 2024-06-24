@@ -94,10 +94,16 @@ export const imageGenerationSchema = z.object({
 export const imageMetaSchema = imageGenerationSchema.partial().passthrough();
 export const imageMetaOutput = imageGenerationSchema
   .extend({
-    comfy: z.preprocess(
-      (value) => (typeof value === 'string' ? JSON.parse(value) : value),
-      comfyMetaSchema.optional()
-    ),
+    comfy: z.preprocess((value) => {
+      if (typeof value !== 'string') return value;
+      try {
+        let rVal = value.replace('"workflow": undefined', '"workflow": {}');
+        rVal = rVal.replace('[NaN]', '[]');
+        return JSON.parse(rVal);
+      } catch {
+        return {};
+      }
+    }, comfyMetaSchema.optional()),
     controlNets: z.string().array().optional(),
     software: z.coerce.string().optional(),
     civitaiResources: z.any().optional(),
@@ -212,7 +218,7 @@ export const imageModerationSchema = z.object({
   ids: z.number().array(),
   needsReview: z.string().nullish(),
   reviewAction: z.enum(['delete', 'removeName', 'mistake']).optional(),
-  reviewType: z.enum(['minor', 'poi', 'reported', 'csam', 'blocked']),
+  reviewType: z.enum(['minor', 'poi', 'reported', 'csam', 'blocked', 'tag']),
 });
 export type ImageModerationSchema = z.infer<typeof imageModerationSchema>;
 
@@ -268,6 +274,7 @@ export const getInfiniteImagesSchema = baseQuerySchema
     postId: z.number().optional(),
     postIds: z.number().array().optional(),
     collectionId: z.number().optional(),
+    collectionTagId: z.number().optional(),
     modelId: z.number().optional(),
     modelVersionId: z.number().optional(),
     imageId: z.number().optional(),

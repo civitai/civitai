@@ -97,7 +97,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
     defaultValue: window?.localStorage?.getItem('review-generation-terms') === 'true',
   });
   const [opened, setOpened] = useState(false);
-  const { nsfw, quantity, prompt } = useGenerationFormStore.getState();
+  const { nsfw, quantity, prompt, negativePrompt } = useGenerationFormStore.getState();
   const defaultValues = {
     ...generation.defaultValues,
     // nsfw: nsfw ?? currentUser?.showNsfw,
@@ -234,7 +234,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
       const status = blockedRequest.status();
       setPromptWarning(promptError.message);
       if (status === 'notified' || status === 'muted') {
-        const isBlocked = await reportProhibitedRequest({ prompt });
+        const isBlocked = await reportProhibitedRequest({ prompt, negativePrompt });
         if (isBlocked) currentUser?.refresh();
       }
     } else {

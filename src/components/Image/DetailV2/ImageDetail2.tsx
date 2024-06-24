@@ -14,7 +14,7 @@ import {
   UnstyledButton,
   useMantineTheme,
 } from '@mantine/core';
-import { Availability, CollectionType } from '@prisma/client';
+import { Availability, CollectionType, EntityType } from '@prisma/client';
 import {
   IconAlertTriangle,
   IconBolt,
@@ -64,6 +64,9 @@ import { ImageExternalMeta } from '~/components/Image/DetailV2/ImageExternalMeta
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { InteractiveTipBuzzButton } from '~/components/Buzz/InteractiveTipBuzzButton';
 import { DownloadImage } from '~/components/Image/DownloadImage';
+import { ImageContestCollectionDetails } from '~/components/Image/DetailV2/ImageContestCollectionDetails';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { EntityCollaboratorList } from '~/components/EntityCollaborator/EntityCollaboratorList';
 
 const sharedBadgeProps: Partial<Omit<BadgeProps, 'children'>> = {
   variant: 'filled',
@@ -96,6 +99,7 @@ const maxIndicators = 20;
 
 export function ImageDetail2() {
   const theme = useMantineTheme();
+  const currentUser = useCurrentUser();
   const {
     images,
     image: image,
@@ -357,6 +361,15 @@ export function ImageDetail2() {
                 tipBuzzEntityType="Image"
                 className="rounded-xl"
               />
+              {image.postId && (
+                <EntityCollaboratorList
+                  entityId={image.postId}
+                  entityType={EntityType.Post}
+                  creatorCardProps={{
+                    className: 'rounded-xl',
+                  }}
+                />
+              )}
               {image.needsReview && (
                 <AlertWithIcon
                   icon={<IconAlertTriangle />}
@@ -386,6 +399,10 @@ export function ImageDetail2() {
               <ImageGenerationData imageId={image.id} />
               <ImageProcess imageId={image.id} />
               <ImageExternalMeta imageId={image.id} />
+              <ImageContestCollectionDetails
+                imageId={image.id}
+                isOwner={image.user.id === currentUser?.id}
+              />
             </div>
           </ScrollArea>
         </div>

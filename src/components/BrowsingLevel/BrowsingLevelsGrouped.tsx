@@ -1,6 +1,5 @@
 import { Chip, Group, GroupProps, createStyles } from '@mantine/core';
 import {
-  useBrowsingLevel,
   useBrowsingModeContext,
   useIsBrowsingLevelSelected,
 } from '~/components/BrowsingLevel/BrowsingLevelProvider';

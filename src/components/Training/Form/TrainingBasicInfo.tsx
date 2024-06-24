@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { goNext } from '~/components/Training/Form/TrainingCommon';
 import { Form, InputRadioGroup, InputText, useForm } from '~/libs/form';
 import { BaseModel, constants } from '~/server/common/constants';
-import { TrainingDetailsObj } from '~/server/schema/model-version.schema';
+import { ModelVersionUpsertInput, TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import { TrainingModelData } from '~/types/router';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { showErrorNotification } from '~/utils/notifications';
@@ -137,21 +137,14 @@ export function TrainingFormBasic({ model }: { model?: TrainingModelData }) {
         };
       });
 
-      // TODO [bw] don't invalidate, just update
-      await queryUtils.model.getMyTrainingModels.invalidate();
-      // queryUtils.model.getMyTrainingModels.setData({}, (old) => {
-      //   if (!old) return old;
-      //
-      //   return {};
-      // });
-
-      const versionMutateData = {
+      const versionMutateData: ModelVersionUpsertInput = {
         ...(versionId && { id: versionId }),
         modelId: modelId,
         name: modelName,
         baseModel: thisModelVersion
           ? (thisModelVersion.baseModel as BaseModel)
-          : ('SD 1.5' as const), // TODO [bw] this is not really correct, but it needs something there
+          : ('SD 1.5' as const), // this is not really correct, but it needs something there
+        trainedWords: [],
         trainingStatus: TrainingStatus.Pending,
         trainingDetails: { type: trainingModelType as tmTypes },
       };
@@ -200,10 +193,9 @@ export function TrainingFormBasic({ model }: { model?: TrainingModelData }) {
             }
           });
 
-          // TODO [bw] don't invalidate, just update
           await queryUtils.model.getMyTrainingModels.invalidate();
-          setAwaitInvalidate(false);
-          goNext(modelId, thisStep);
+
+          goNext(modelId, thisStep, () => setAwaitInvalidate(false));
         },
         onError: (error) => {
           // should we "roll back" the model creation here?

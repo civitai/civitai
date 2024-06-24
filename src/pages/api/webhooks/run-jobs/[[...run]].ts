@@ -47,6 +47,7 @@ import { jobQueueJobs } from '~/server/jobs/job-queue';
 import { nextauthCleanup } from '~/server/jobs/next-auth-cleanup';
 import { countReviewImages } from '~/server/jobs/count-review-images';
 import { processingEngingEarlyAccess } from '~/server/jobs/process-ending-early-access';
+import { rewardsAbusePrevention } from '~/server/jobs/rewards-abuse-prevention';
 
 export const jobs: Job[] = [
   scanFilesJob,
@@ -83,6 +84,7 @@ export const jobs: Job[] = [
   ...csamJobs,
   resourceGenerationAvailability,
   cacheCleanup,
+  rewardsAbusePrevention,
   nextauthCleanup,
   applyTagRules,
   processCreatorProgramEarlyAccessRewards,

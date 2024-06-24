@@ -4,13 +4,14 @@ import {
   Alert,
   Badge,
   Button,
+  Card,
   Divider,
   Loader,
   LoadingOverlay,
   Menu,
   Text,
 } from '@mantine/core';
-import { ImageIngestionStatus } from '@prisma/client';
+import { CollectionMode, ImageIngestionStatus } from '@prisma/client';
 import {
   IconArrowBackUp,
   IconChevronDown,
@@ -48,6 +49,8 @@ import { PostImageTechnique } from '~/components/Post/EditV2/Techniques/PostImag
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { Popover, PopoverButton, PopoverPanel } from '@headlessui/react';
+import { useCollectionsForPostEditor } from '~/components/Post/EditV2/Collections/CollectionSelectDropdown';
 
 // #region [types]
 type SimpleMetaPropsKey = keyof typeof simpleMetaProps;
@@ -85,6 +88,7 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
   // #region [state]
   const { showPreview } = usePostPreviewContext();
   const storedImage = useImageStore(image);
+
   const [updateImage, setImages] = usePostEditStore((state) => [
     state.updateImage,
     state.setImages,
@@ -210,6 +214,7 @@ function EditDetail() {
     isUpdating,
     toggleHidePrompt,
   } = useAddedImageContext();
+  const { activeCollection } = useCollectionsForPostEditor();
 
   const { meta, hideMeta, resourceHelper: resources } = image;
   const simpleMeta = Object.entries(simpleMetaProps).filter(([key]) => meta?.[key]);
@@ -435,6 +440,28 @@ function EditDetail() {
           // #region [tools]
           */}
 
+            {activeCollection?.mode === CollectionMode.Contest && (
+              <Alert radius="md">
+                <h3 className=" text-lg font-semibold leading-none text-dark-7 dark:text-gray-0 ">
+                  Contest tip!
+                </h3>
+                {activeCollection.name.toLowerCase().includes('odyssey') ? (
+                  <Text mt="md">
+                    If you&rsquo;re participating in Project Odyssey, make sure to add the tags for
+                    the AI Filmmaking tools you used. This will make you eligible for the Sponsor
+                    Company Awards (cash prize of $500) from our Premier Sponsors such as Civitai,
+                    ElevenLabs, ThinkDiffusion, Morph Studio, LensGo, Domo AI, DeepMake, and Neural
+                    Frames! Do not tag a tool you did not use to make your project.
+                  </Text>
+                ) : (
+                  <Text mt="md">
+                    Tagging the tools you used may make you elegible for Sponsored Awards. For
+                    example, in Project Odyssey, ElevenLabs has a sponsored $500 USD cash prize.
+                  </Text>
+                )}
+              </Alert>
+            )}
+
             <CustomCard className="flex flex-col gap-2">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
@@ -452,8 +479,10 @@ function EditDetail() {
                     image.
                   </InfoPopover>
                 </div>
-                <ImageToolsPopover image={image}>
-                  <Button
+                <Popover>
+                  <PopoverButton
+                    as={Button}
+                    // @ts-ignore eslint-disable-next-line
                     variant="light"
                     color="blue"
                     compact
@@ -464,8 +493,15 @@ function EditDetail() {
                   >
                     <IconPlus size={16} />
                     <span>TOOL</span>
-                  </Button>
-                </ImageToolsPopover>
+                  </PopoverButton>
+                  <PopoverPanel className="[--anchor-gap:4px]" anchor="top start" focus>
+                    {({ close }) => (
+                      <Card p={0} withBorder>
+                        <ImageToolsPopover image={image} onSuccess={close} />
+                      </Card>
+                    )}
+                  </PopoverPanel>
+                </Popover>
               </div>
               {!!image.tools?.length && (
                 <ul className="flex flex-col">
@@ -494,8 +530,10 @@ function EditDetail() {
                     <IconInfoCircle />
                   </ActionIcon> */}
                 </div>
-                <ImageTechniquesPopover image={image}>
-                  <Button
+                <Popover>
+                  <PopoverButton
+                    as={Button}
+                    // @ts-ignore eslint-disable-next-line
                     variant="light"
                     color="blue"
                     compact
@@ -506,8 +544,15 @@ function EditDetail() {
                   >
                     <IconPlus size={16} />
                     <span>TOOL</span>
-                  </Button>
-                </ImageTechniquesPopover>
+                  </PopoverButton>
+                  <PopoverPanel className="[--anchor-gap:4px]" anchor="top start" focus>
+                    {({ close }) => (
+                      <Card p={0} withBorder>
+                        <ImageTechniquesPopover image={image} onSuccess={close} />
+                      </Card>
+                    )}
+                  </PopoverPanel>
+                </Popover>
               </div>
               {!!image.techniques.length && (
                 <ul className="flex flex-col">
@@ -544,6 +589,7 @@ function EditDetail() {
               entityId={image.id}
               entityType="image"
               tags={!!image.tags.length ? image.tags : undefined}
+              nsfwLevel={image.nsfwLevel}
               collapsible
               canAdd
             />

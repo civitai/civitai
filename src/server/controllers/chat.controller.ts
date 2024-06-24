@@ -4,7 +4,6 @@ import dayjs from 'dayjs';
 import { find as findLinks } from 'linkifyjs';
 import { uniq } from 'lodash-es';
 import { unfurl } from 'unfurl.js';
-import { airRegex, linkifyOptions } from '~/components/Chat/ExistingChat';
 import { env } from '~/env/server.mjs';
 import { SignalMessages } from '~/server/common/enums';
 import { Context } from '~/server/createContext';
@@ -22,71 +21,23 @@ import {
   UpdateMessageInput,
   UserSettingsChat,
 } from '~/server/schema/chat.schema';
+import { latestChat, singleChatSelect } from '~/server/selectors/chat.selector';
 import { profileImageSelect } from '~/server/selectors/image.selector';
-import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import {
+  createMessage,
+  maxChats,
+  maxChatsPerDay,
+  maxUsersPerChat,
+  upsertChat,
+} from '~/server/services/chat.service';
 import { getUserSettings, setUserSetting } from '~/server/services/user.service';
+import { getChatHash } from '~/server/utils/chat';
 import {
   throwBadRequestError,
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { ChatAllMessages, ChatCreateChat } from '~/types/router';
-
-const maxChats = 200;
-const maxChatsPerDay = 10;
-const maxUsersPerChat = 10;
-
-const singleChatSelect = {
-  id: true,
-  createdAt: true,
-  hash: true,
-  ownerId: true,
-  chatMembers: {
-    // where: { status: { in: [ChatMemberStatus.Joined, ChatMemberStatus.Invited] } },
-    select: {
-      id: true,
-      userId: true,
-      isOwner: true,
-      isMuted: true,
-      status: true,
-      lastViewedMessageId: true,
-      createdAt: true,
-      // TODO do we need these datetimes in the frontend?
-      // joinedAt: true,
-      // leftAt: true,
-      // kickedAt: true,
-      // unkickedAt: true,
-      user: {
-        select: {
-          ...userWithCosmeticsSelect,
-          id: true,
-          username: true,
-          isModerator: true,
-          deletedAt: true,
-          image: true,
-          profilePicture: {
-            select: profileImageSelect,
-          },
-        },
-      },
-    },
-  },
-};
-
-const latestChat = {
-  messages: {
-    orderBy: { createdAt: Prisma.SortOrder.desc },
-    take: 1,
-    select: {
-      createdAt: true,
-      content: true,
-      contentType: true,
-    },
-    where: {
-      contentType: { not: ChatMessageType.Embed },
-    },
-  },
-};
 
 /**
  * Get user chat settings
@@ -164,7 +115,7 @@ export const getUnreadMessagesForUserHandler = async ({
   try {
     const { id: userId } = ctx.user;
 
-    const unread = await dbWrite.$queryRaw<{ chatId: number; cnt: number }[]>`
+    const unread = await dbRead.$queryRaw<{ chatId: number; cnt: number }[]>`
       select memb."chatId"          as "chatId",
              count(msg.id)::integer as "cnt"
       from "ChatMember" memb
@@ -180,7 +131,7 @@ export const getUnreadMessagesForUserHandler = async ({
       group by memb."chatId"
     `;
 
-    const pending = await dbWrite.$queryRaw<{ chatId: number; cnt: number }[]>`
+    const pending = await dbRead.$queryRaw<{ chatId: number; cnt: number }[]>`
       select memb."chatId" as "chatId",
              1             as "cnt"
       from "ChatMember" memb
@@ -221,22 +172,6 @@ export const createChatHandler = async ({
       throw throwBadRequestError('Creator must be in the chat');
     }
 
-    dedupedUserIds.sort((a, b) => a - b);
-    const hash = dedupedUserIds.join('-');
-
-    const existing = await dbWrite.chat.findFirst({
-      where: { hash },
-      select: {
-        ...singleChatSelect,
-        ...latestChat,
-      },
-      // select: { id: true },
-    });
-
-    if (!!existing) {
-      return existing;
-    }
-
     const modInfo = await dbRead.user.findFirst({
       where: { id: userId },
       select: {
@@ -244,109 +179,19 @@ export const createChatHandler = async ({
         subscriptionId: true,
       },
     });
+
+    // TODO add check for CustomerSubscription = active/trialing
     const isModerator = modInfo?.isModerator === true;
-    const isSupporter = !!modInfo?.subscriptionId; // TODO add check for CustomerSubscription = active/trialing
-    const canBypassLimits = isModerator || isSupporter;
+    const isSupporter = !!modInfo?.subscriptionId;
 
-    const totalForUser = await dbWrite.chat.count({
-      where: { ownerId: userId },
+    const chat = await upsertChat({
+      userId,
+      userIds: dedupedUserIds,
+      isModerator,
+      isSupporter,
     });
 
-    if (totalForUser >= maxChats && !canBypassLimits) {
-      throw throwBadRequestError(`Cannot have more than ${maxChats} chats`);
-    }
-
-    // - limit chats per day, resetting at beginning of each day (not rolling)
-    const totalTodayForUser = await dbWrite.chat.count({
-      where: { ownerId: userId, createdAt: { gte: dayjs().startOf('date').toDate() } },
-    });
-
-    if (totalTodayForUser >= maxChatsPerDay && !canBypassLimits) {
-      throw throwBadRequestError(`Cannot create more than ${maxChatsPerDay} chats per day`);
-    }
-
-    const usersExist = await dbRead.user.count({
-      where: { id: { in: dedupedUserIds } },
-    });
-
-    if (usersExist !== dedupedUserIds.length) {
-      // could probably tell them which users here
-      throw throwBadRequestError(
-        `Some requested users do not exist (${usersExist}/${dedupedUserIds.length})`
-      );
-    }
-
-    const createdChat = await dbWrite.$transaction(async (tx) => {
-      const newChat = await tx.chat.create({
-        data: { hash, ownerId: userId },
-        select: { id: true, createdAt: true },
-      });
-
-      await tx.chatMember.createMany({
-        data: dedupedUserIds.map((u) => ({
-          userId: u,
-          chatId: newChat.id,
-          isOwner: u === userId,
-          status: u === userId || isModerator ? ChatMemberStatus.Joined : ChatMemberStatus.Invited,
-          joinedAt: u === userId || isModerator ? newChat.createdAt : undefined,
-        })),
-      });
-
-      return newChat;
-    });
-
-    if (isModerator) {
-      for (const cmId of dedupedUserIds) {
-        fetch(`${env.SIGNALS_ENDPOINT}/users/${cmId}/groups`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(`chat:${createdChat.id}`),
-        }).catch();
-      }
-    } else {
-      // - add self to group
-      fetch(`${env.SIGNALS_ENDPOINT}/users/${userId}/groups`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(`chat:${createdChat.id}`),
-      }).catch();
-    }
-
-    // I don't like the idea of querying after an insert, but it's just easier than merging all the data together
-    const insertedChat = await dbWrite.chat.findFirst({
-      where: {
-        id: createdChat.id,
-      },
-      select: {
-        ...singleChatSelect,
-        ...latestChat,
-      },
-    });
-    if (!insertedChat) {
-      throw throwBadRequestError('Chat creation failed.');
-    }
-
-    if (isModerator) {
-      fetch(
-        `${env.SIGNALS_ENDPOINT}/groups/chat:${insertedChat.id}/signals/${SignalMessages.ChatNewRoom}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(insertedChat as ChatCreateChat),
-        }
-      ).catch();
-    } else {
-      // - sending new chat room signal without being part of the group
-      for (const cmId of dedupedUserIds) {
-        fetch(`${env.SIGNALS_ENDPOINT}/users/${cmId}/signals/${SignalMessages.ChatNewRoom}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(insertedChat as ChatCreateChat),
-        }).catch();
-      }
-    }
-
-    return insertedChat;
+    return chat;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -546,18 +391,16 @@ export const modifyUserHandler = async ({
       });
 
       if (status !== ChatMemberStatus.Ignored) {
-        await createMessageFn({
-          input: {
-            chatId: existing.chat.id,
-            contentType: ChatMessageType.Markdown,
-            content: `${existing.user.username} ${
-              status === ChatMemberStatus.Joined
-                ? 'joined'
-                : status === ChatMemberStatus.Left
-                ? 'left'
-                : 'was kicked'
-            }`,
-          },
+        await createMessage({
+          chatId: existing.chat.id,
+          contentType: ChatMessageType.Markdown,
+          content: `${existing.user.username} ${
+            status === ChatMemberStatus.Joined
+              ? 'joined'
+              : status === ChatMemberStatus.Left
+              ? 'left'
+              : 'was kicked'
+          }`,
           userId: -1,
         });
       }
@@ -731,165 +574,6 @@ export const getMessageByIdHandler = async ({
 };
 
 /**
- * Create a message (direct)
- */
-export const createMessageFn = async ({
-  input,
-  userId,
-  muted,
-}: {
-  input: CreateMessageInput;
-  userId: number;
-  muted?: boolean;
-}) => {
-  const chat = await dbWrite.chat.findFirst({
-    where: {
-      id: input.chatId,
-      // chatMembers: { some: { userId } } // TODO if enabling, remove "includes" check below
-    },
-    select: {
-      chatMembers: {
-        select: {
-          userId: true,
-          status: true,
-          isOwner: true,
-          user: {
-            select: {
-              isModerator: true,
-            },
-          },
-        },
-      },
-    },
-  });
-
-  if (!chat) {
-    throw throwBadRequestError(`Could not find chat with id: (${input.chatId})`);
-  }
-
-  if (userId !== -1) {
-    const thisMember = chat.chatMembers.find((cm) => cm.userId === userId);
-    if (!thisMember) {
-      throw throwBadRequestError(`Not a member of this chat`);
-    }
-    if (!['Invited', 'Joined'].includes(thisMember.status)) {
-      throw throwBadRequestError(`Unable to post in this chat`);
-    }
-
-    if (muted) {
-      const owner = chat.chatMembers.find((cm) => cm.isOwner === true);
-      const isModeratorChat = owner?.user?.isModerator === true;
-      if (!isModeratorChat) {
-        throw throwBadRequestError(`Unable to post in this chat`);
-      }
-    }
-  }
-
-  if (input.referenceMessageId) {
-    const existingReference = await dbWrite.chatMessage.count({
-      where: { id: input.referenceMessageId },
-    });
-    if (existingReference === 0) {
-      throw throwBadRequestError(`Reference message does not exist: (${input.referenceMessageId})`);
-    }
-  }
-
-  const resp = await dbWrite.chatMessage.create({
-    data: { ...input, userId },
-  });
-
-  fetch(
-    `${env.SIGNALS_ENDPOINT}/groups/chat:${input.chatId}/signals/${SignalMessages.ChatNewMessage}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(resp as ChatAllMessages[number]),
-    }
-  ).catch();
-
-  if (userId !== -1) {
-    const links = findLinks(input.content, linkifyOptions);
-    for (let { href } of links) {
-      if (!href) continue;
-      try {
-        const airMatch = href.match(airRegex);
-        if (airMatch && airMatch.groups) {
-          const { mId, mvId } = airMatch.groups;
-          href = `${env.NEXTAUTH_URL}/models/${mId}?modelVersionId=${mvId}`;
-        }
-
-        if (/^(?:https?:\/\/)?image./.test(href)) {
-          dbWrite.chatMessage
-            .create({
-              data: {
-                chatId: input.chatId,
-                content: JSON.stringify({ image: href, href }),
-                contentType: ChatMessageType.Embed,
-                userId: -1,
-                referenceMessageId: resp.id,
-              },
-            })
-            .then((embedResp) => {
-              fetch(
-                `${env.SIGNALS_ENDPOINT}/groups/chat:${input.chatId}/signals/${SignalMessages.ChatNewMessage}`,
-                {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify(embedResp as ChatAllMessages[number]),
-                }
-              ).catch();
-            });
-        } else {
-          unfurl(href)
-            .then(async (hrefData) => {
-              const embedData = {
-                title: hrefData.title ?? hrefData.open_graph?.title ?? null,
-                description: hrefData.description ?? hrefData.open_graph?.description ?? null,
-                image: hrefData.open_graph?.images?.[0]?.url ?? hrefData.favicon ?? null,
-                href,
-              };
-              const embedMsg = JSON.stringify(embedData);
-
-              const embedResp = await dbWrite.chatMessage.create({
-                data: {
-                  chatId: input.chatId,
-                  content: embedMsg,
-                  contentType: ChatMessageType.Embed,
-                  userId: -1,
-                  referenceMessageId: resp.id,
-                },
-              });
-
-              fetch(
-                `${env.SIGNALS_ENDPOINT}/groups/chat:${input.chatId}/signals/${SignalMessages.ChatNewMessage}`,
-                {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify(embedResp as ChatAllMessages[number]),
-                }
-              ).catch();
-            })
-            .catch();
-        }
-      } catch (e: unknown) {
-        logToAxiom(
-          {
-            name: (e as Error)?.name,
-            message: (e as Error)?.message,
-            stack: (e as Error)?.stack,
-            path: 'chat.createChat',
-            user: userId,
-          },
-          'civitai-prod'
-        ).catch();
-      }
-    }
-  }
-
-  return resp;
-};
-
-/**
  * Create a message
  */
 export const createMessageHandler = async ({
@@ -901,7 +585,7 @@ export const createMessageHandler = async ({
 }) => {
   try {
     const { id: userId, muted } = ctx.user;
-    return await createMessageFn({ input, userId, muted });
+    return await createMessage({ ...input, userId, muted });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

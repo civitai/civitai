@@ -15,6 +15,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { booleanString, numericString, numericStringArray } from '~/utils/zod-helpers';
+import { constants } from '~/server/common/constants';
 
 export const imagesQueryParamSchema = z
   .object({
@@ -45,6 +46,12 @@ export const imagesQueryParamSchema = z
     followed: booleanString(),
     fromPlatform: booleanString(),
     notPublished: booleanString(),
+    tools: numericStringArray(),
+    collectionTagId: numericString(),
+    baseModels: z
+      .union([z.enum(constants.baseModels).array(), z.enum(constants.baseModels)])
+      .transform((val) => (Array.isArray(val) ? val : [val]))
+      .optional(),
   })
   .partial();
 
@@ -188,3 +195,20 @@ export function useReportCsamImages(
 
   return { ...reportCsamImage, mutate };
 }
+
+export const useImageContestCollectionDetails = (
+  filters: { id: number },
+  options?: { enabled: boolean }
+) => {
+  const { data: collectionItems, ...rest } = trpc.image.getContestCollectionDetails.useQuery(
+    { ...filters },
+    {
+      ...options,
+    }
+  );
+
+  return {
+    collectionItems,
+    ...rest,
+  };
+};

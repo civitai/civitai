@@ -4,7 +4,6 @@ import {
   Group,
   Stack,
   Text,
-  ThemeIcon,
   Title,
   Tooltip,
   TooltipProps,
@@ -25,7 +24,6 @@ import {
   IconCalendarDue,
   IconExclamationMark,
   IconInfoCircle,
-  IconQuestionMark,
   IconTrash,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
@@ -48,7 +46,6 @@ import {
   InputTags,
   InputText,
   useForm,
-  InputFlag,
   InputMultiSelect,
 } from '~/libs/form';
 import { upsertBountyInputSchema } from '~/server/schema/bounty.schema';
@@ -70,7 +67,7 @@ import { numberWithCommas } from '~/utils/number-helpers';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { useBuzzTransaction } from '../Buzz/buzz.utils';
 import { DaysFromNow } from '../Dates/DaysFromNow';
-import { stripTime } from '~/utils/date-helpers';
+import { endOfDay, startOfDay } from '~/utils/date-helpers';
 import { BountyGetById } from '~/types/router';
 import { BaseFileSchema } from '~/server/schema/file.schema';
 import { containerQuery } from '~/utils/mantine-css-helpers';
@@ -215,9 +212,11 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
       entryLimit: bounty?.entryLimit ?? 1,
       files: (bounty?.files as BaseFileSchema[]) ?? [],
       expiresAt: bounty
-        ? dayjs(stripTime(bounty.expiresAt)).utc().toDate()
+        ? dayjs(endOfDay(bounty.expiresAt)).add(1, 'day').toDate()
         : dayjs().add(7, 'day').endOf('day').toDate(),
-      startsAt: bounty ? dayjs(stripTime(bounty.startsAt)).toDate() : new Date(),
+      startsAt: bounty
+        ? dayjs(startOfDay(bounty.startsAt)).add(1, 'day').toDate()
+        : startOfDay(new Date()),
       details: bounty?.details ?? { baseModel: 'SD 1.5' },
       ownRights:
         !!bounty &&
@@ -581,9 +580,10 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                         label="Start Date"
                         placeholder="Select a start date"
                         icon={<IconCalendar size={16} />}
-                        withAsterisk
                         minDate={minStartDate}
                         maxDate={maxStartDate}
+                        clearable={false}
+                        withAsterisk
                       />
                       <InputDatePicker
                         className={classes.fluid}
@@ -591,22 +591,26 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                         label="Deadline"
                         placeholder="Select an end date"
                         icon={<IconCalendarDue size={16} />}
-                        withAsterisk
                         minDate={minExpiresDate}
                         maxDate={maxExpiresDate}
+                        dateParser={(dateString) => new Date(Date.parse(dateString))}
+                        clearable={false}
+                        withAsterisk
                       />
                     </Group>
-                    <Text weight={590}>
-                      With the selected dates, your bounty will expire{' '}
-                      <Text weight="bold" color="red.5" span>
-                        <DaysFromNow date={stripTime(expiresAt)} inUtc />
+                    {expiresAt && (
+                      <Text weight={590}>
+                        With the selected dates, your bounty will expire{' '}
+                        <Text weight="bold" color="red.5" span>
+                          <DaysFromNow date={endOfDay(expiresAt)} inUtc />
+                        </Text>
+                        . All times are in{' '}
+                        <Text weight="bold" color="red.5" span>
+                          UTC
+                        </Text>
+                        .
                       </Text>
-                      . All times are in{' '}
-                      <Text weight="bold" color="red.5" span>
-                        UTC
-                      </Text>
-                      .
-                    </Text>
+                    )}
                   </Stack>
                 )}
 

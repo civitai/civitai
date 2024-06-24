@@ -212,11 +212,11 @@ export const updateCommentReportStatusByReason = ({
   status: ReportStatus;
 }) => {
   return dbWrite.$queryRaw<{ id: number; userId: number }[]>`
-    UPDATE "Report" r SET status = ${status}
+    UPDATE "Report" r SET status = ${status}::"ReportStatus"
     FROM "CommentReport" c
     WHERE c."reportId" = r.id
       AND c."commentId" = ${id}
-      AND r.reason = ${reason}
+      AND r.reason = ${reason}::"ReportReason"
     RETURNING id, "userId"
   `;
 };

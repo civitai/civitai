@@ -7,6 +7,7 @@ import {
   useMantineTheme,
   Badge,
   Title,
+  Button,
 } from '@mantine/core';
 import { useQueryImages } from '~/components/Image/image.utils';
 import { InViewLoader } from '~/components/InView/InViewLoader';
@@ -21,13 +22,12 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useInView } from '~/hooks/useInView';
 import { useCsamImageSelectStore } from '~/components/Csam/useCsamImageSelect.store';
 import { useCsamContext } from '~/components/Csam/CsamProvider';
-import { Stepper } from '~/components/Stepper/Stepper';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { ImageSort } from '~/server/common/enums';
 
-export function CsamImageSelection() {
+export function CsamImageSelection({ onNext }: { onNext: () => void }) {
   const { userId, user } = useCsamContext();
 
   // TODO - get all images for user, don't use this util unless we provide a way to get all images regardless of ingestion status
@@ -38,7 +38,7 @@ export function CsamImageSelection() {
     hasNextPage,
     isRefetching,
   } = useQueryImages(
-    { username: user?.username ?? undefined, sort: ImageSort.Newest, include: [] },
+    { username: user?.username ?? undefined, sort: ImageSort.Newest, include: [], pending: true },
     { applyHiddenPreferences: false, enabled: !!user }
   );
 
@@ -101,7 +101,9 @@ export function CsamImageSelection() {
             <Badge>
               Selected: <SelectedCount />
             </Badge>
-            <Stepper.NextButton disabled={!hasSelected}>Next</Stepper.NextButton>
+            <Button disabled={!hasSelected} onClick={onNext}>
+              Next
+            </Button>
           </Group>
         </MasonryContainer>
       </Card>

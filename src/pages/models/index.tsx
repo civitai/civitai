@@ -4,6 +4,7 @@ import { setPageOptions } from '~/components/AppLayout/AppLayout';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
 import { IsClient } from '~/components/IsClient/IsClient';
+import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { Meta } from '~/components/Meta/Meta';
 import { EarlyAccessHighlight } from '~/components/Model/EarlyAccessHighlight/EarlyAccessHighlight';
 import { ModelsInfinite } from '~/components/Model/Infinite/ModelsInfinite';
@@ -31,32 +32,24 @@ export default function ModelsPage() {
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/models`, rel: 'canonical' }]}
       />
 
-      {username && typeof username === 'string' && <Title>Models by {username}</Title>}
-      <Stack spacing="xs">
-        <Announcements
-          sx={() => ({
-            marginBottom: -35,
-            [containerQuery.smallerThan('md')]: {
-              marginBottom: -5,
-            },
-          })}
-        />
-        <IsClient>
-          <EarlyAccessHighlight />
-          <Group noWrap spacing="xs">
-            <Button
-              variant="filled"
-              color={earlyAccess ? 'blue' : 'green'}
-              onClick={() => setFilters({ earlyAccess: !earlyAccess })}
-              compact
-            >
-              <Text tt="uppercase">Early Access</Text>
-            </Button>
+      <MasonryContainer>
+        {username && typeof username === 'string' && <Title>Models by {username}</Title>}
+        <Stack spacing="xs">
+          <Announcements
+            sx={() => ({
+              marginBottom: -35,
+              [containerQuery.smallerThan('md')]: {
+                marginBottom: -5,
+              },
+            })}
+          />
+          <IsClient>
+            <EarlyAccessHighlight />
             <CategoryTags />
-          </Group>
-          <ModelsInfinite filters={queryFilters} showEof showAds />
-        </IsClient>
-      </Stack>
+            <ModelsInfinite filters={queryFilters} showEof showAds />
+          </IsClient>
+        </Stack>
+      </MasonryContainer>
     </>
   );
 }

@@ -16,6 +16,7 @@ import { NewsletterToggle } from '~/components/Account/NewsletterToggle';
 import { OnboardingAbortButton } from '~/components/Onboarding/OnboardingAbortButton';
 import { useOnboardingWizardContext } from '~/components/Onboarding/OnboardingWizard';
 import { useOnboardingStepCompleteMutation } from '~/components/Onboarding/onboarding.utils';
+import { useReferralsContext } from '~/components/Referrals/ReferralsProvider';
 import { StepperTitle } from '~/components/Stepper/StepperTitle';
 import { OnboardingSteps } from '~/server/common/enums';
 
@@ -23,6 +24,8 @@ export function OnboardingContentExperience() {
   const { classes } = useStyles();
   const { next, isReturningUser } = useOnboardingWizardContext();
   const { mutate, isLoading } = useOnboardingStepCompleteMutation();
+  const { source } = useReferralsContext();
+  const isProjectOdyssey = source === 'project_odyssey';
 
   const handleStepComplete = () => {
     mutate({ step: OnboardingSteps.BrowsingLevels }, { onSuccess: () => next() });
@@ -79,14 +82,24 @@ export function OnboardingContentExperience() {
           />
         )}
 
-        <Stack>
-          <ContentControls />
+        {!isProjectOdyssey ? (
+          <Stack>
+            <ContentControls />
 
-          <Stack spacing="xs" mt="sm">
-            <Title order={3}>Content Moderation</Title>
-            <MatureContentSettings />
+            <Stack spacing="xs" mt="sm">
+              <Title order={3}>Content Moderation</Title>
+              <MatureContentSettings />
+            </Stack>
           </Stack>
-        </Stack>
+        ) : (
+          <Stack>
+            <Text>
+              Since you&apos;re registering as part of Project Odyssey, we&apos;ve simplified your
+              Content Experience onboarding step. If you&apos;d like to modify your Civitai Content
+              Experience, you can do so from your account settings after completing onboarding.
+            </Text>
+          </Stack>
+        )}
 
         <Group position="apart">
           <OnboardingAbortButton size="lg">Sign Out</OnboardingAbortButton>

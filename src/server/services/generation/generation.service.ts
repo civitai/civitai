@@ -391,6 +391,10 @@ const baseModelToOrchestration: Record<BaseModelSetType, string | undefined> = {
   SDXLDistilled: 'SDXL_Distilled',
   SCascade: 'SCascade',
   Pony: 'SDXL',
+  Lumina: 'Lumina',
+  HyDit1: 'HyDit1',
+  PixArtA: 'PixArtA',
+  PixArtE: 'PixArtE',
   ODOR: undefined,
 };
 
@@ -690,6 +694,11 @@ export const createGenerationRequest = async ({
   // Set nsfw to true if the prompt contains nsfw words
   const isPromptNsfw = includesNsfw(params.prompt);
   nsfw ??= isPromptNsfw !== false;
+
+  const hasMinorResource = resourceData.some((resource) => resource.model.minor);
+  if (hasMinorResource) {
+    nsfw = false;
+  }
 
   // Disable nsfw if the prompt contains minor words
   // POI is handled via SPMs within the worker

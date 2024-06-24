@@ -94,7 +94,7 @@ export const useDerivedGenerationState = () => {
     trainedWords,
     additionalResourcesCount,
     samplerCfgOffset,
-    isSDXL: baseModel === 'SDXL',
+    isSDXL: baseModel === 'SDXL' || baseModel === 'Pony',
     isLCM,
     unstableResources,
     isCalculatingCost,
@@ -226,6 +226,8 @@ export const getFormData = (
 ) => {
   const state = useGenerationFormStore.getState();
   let formData = { ...state, ...params };
+  if (state.negativePrompt && !params?.negativePrompt)
+    formData.negativePrompt = params?.negativePrompt;
 
   formData.model = resources.find((x) => x.modelType === 'Checkpoint') ?? formData.model;
 

@@ -1,6 +1,7 @@
 import { RecaptchaEnterpriseServiceClient } from '@google-cloud/recaptcha-enterprise';
 import { env } from '~/env/server.mjs';
 import { isDev } from '../../env/other';
+import { throwBadRequestError } from '~/server/utils/errorHandling';
 
 export async function createRecaptchaAssesment({
   token,
@@ -34,17 +35,17 @@ export async function createRecaptchaAssesment({
   const [response] = await client.createAssessment(request);
 
   if (!response || !response.tokenProperties || !response.riskAnalysis) {
-    throw new Error('No response from reCAPTCHA service');
+    throw throwBadRequestError('No response from reCAPTCHA service');
   }
 
   // Check if the token is valid.
   if (!response.tokenProperties?.valid) {
-    throw new Error(`Recaptcha failed: ${response.tokenProperties?.invalidReason}`);
+    throw throwBadRequestError(`Recaptcha failed: ${response.tokenProperties?.invalidReason}`);
   }
 
   if (response.tokenProperties.action === recaptchaAction) {
     return response.riskAnalysis.score;
   } else {
-    throw new Error('Provided token does not match performed action');
+    throw throwBadRequestError('Provided token does not match performed action');
   }
 }

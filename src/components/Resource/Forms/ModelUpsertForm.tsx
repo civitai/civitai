@@ -58,6 +58,9 @@ const schema = modelUpsertSchema
   })
   .refine((data) => !(data.nsfw && data.poi), {
     message: 'Mature content depicting actual people is not permitted.',
+  })
+  .refine((data) => !(data.nsfw && data.minor), {
+    message: 'Mature content depicting minors is not permitted.',
   });
 const querySchema = z.object({
   category: z.preprocess(parseNumericString, z.number().optional()),
@@ -72,7 +75,7 @@ const commercialUseOptions: Array<{ value: CommercialUse; label: string }> = [
   { value: CommercialUse.Sell, label: 'Sell this model or merges' },
 ];
 
-const lockableProperties = ['nsfw', 'poi', 'category', 'tags'];
+const lockableProperties = ['nsfw', 'poi', 'minor', 'category', 'tags'];
 
 export function ModelUpsertForm({ model, children, onSubmit }: Props) {
   const router = useRouter();
@@ -107,8 +110,10 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
   const queryUtils = trpc.useUtils();
 
   const [type, allowDerivatives] = form.watch(['type', 'allowDerivatives']);
-  const [nsfw, poi] = form.watch(['nsfw', 'poi']);
+  const [nsfw, poi, minor] = form.watch(['nsfw', 'poi', 'minor']);
+  const allowCommercialUse = form.watch('allowCommercialUse');
   const hasPoiInNsfw = nsfw && poi;
+  const hasMinorInNsfw = nsfw && minor;
   const { isDirty, errors } = form.formState;
 
   const { data, isLoading: loadingCategories } = trpc.tag.getAll.useQuery({
@@ -226,13 +231,12 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                       color="blue"
                       styles={(theme) => ({
                         root: {
-                          border: `1px solid ${
-                            errors.checkpointType
-                              ? theme.colors.red[theme.fn.primaryShade()]
-                              : theme.colorScheme === 'dark'
+                          border: `1px solid ${errors.checkpointType
+                            ? theme.colors.red[theme.fn.primaryShade()]
+                            : theme.colorScheme === 'dark'
                               ? theme.colors.dark[4]
                               : theme.colors.gray[4]
-                          }`,
+                            }`,
                           background: 'none',
                           height: 36,
                         },
@@ -348,11 +352,45 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                         Select all permissions you would like to apply to your model.
                       </Text>
                     </Stack>
-                    <InputCheckboxGroup spacing="xs" name="allowCommercialUse">
+                    <Checkbox.Group
+                      spacing="xs"
+                      value={allowCommercialUse}
+                      defaultValue={defaultValues.allowCommercialUse}
+                      onChange={(v: CommercialUse[]) => {
+                        if (v.includes(CommercialUse.Sell)) {
+                          const deduped = new Set([
+                            ...v,
+                            CommercialUse.RentCivit,
+                            CommercialUse.Rent,
+                          ]);
+                          form.setValue('allowCommercialUse', Array.from(deduped), {
+                            shouldDirty: true,
+                          });
+                        } else if (v.includes(CommercialUse.Rent)) {
+                          const deduped = new Set([...v, CommercialUse.RentCivit]);
+                          form.setValue('allowCommercialUse', Array.from(deduped), {
+                            shouldDirty: true,
+                          });
+                        } else {
+                          form.setValue('allowCommercialUse', v, { shouldDirty: true });
+                        }
+                      }}
+                    >
                       {commercialUseOptions.map(({ value, label }) => (
-                        <Checkbox key={value} value={value} label={label} />
+                        <Checkbox
+                          key={value}
+                          value={value}
+                          label={label}
+                          disabled={
+                            (value === CommercialUse.RentCivit &&
+                              (allowCommercialUse?.includes(CommercialUse.Sell) ||
+                                allowCommercialUse?.includes(CommercialUse.Rent))) ||
+                            (value === CommercialUse.Rent &&
+                              allowCommercialUse?.includes(CommercialUse.Sell))
+                          }
+                        />
                       ))}
-                    </InputCheckboxGroup>
+                    </Checkbox.Group>
                   </Stack>
                 </ContainerGrid.Col>
               </ContainerGrid>
@@ -376,6 +414,12 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                   label="Is intended to produce mature themes"
                   disabled={isLocked('nsfw')}
                   description={isLockedDescription('category')}
+                />
+                <InputCheckbox
+                  name="minor"
+                  label="Cannot be used for NSFW generation"
+                  disabled={isLocked('minor')}
+                  description={isLockedDescription('minor')}
                 />
               </Stack>
             </Paper>
@@ -403,6 +447,24 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                 <Text size="xs" color="dimmed" sx={{ lineHeight: 1.2 }}>
                   Please revise the content of this listing to ensure no actual person is depicted
                   in an mature context out of respect for the individual.
+                </Text>
+              </>
+            )}
+            {hasMinorInNsfw && (
+              <>
+                <Alert color="red" pl={10}>
+                  <Group noWrap spacing={10}>
+                    <ThemeIcon color="red">
+                      <IconExclamationMark />
+                    </ThemeIcon>
+                    <Text size="xs" sx={{ lineHeight: 1.2 }}>
+                      Mature content depicting minors is not permitted.
+                    </Text>
+                  </Group>
+                </Alert>
+                <Text size="xs" color="dimmed" sx={{ lineHeight: 1.2 }}>
+                  Please revise the content of this listing to ensure no minors are depicted in an
+                  mature context out of respect for the individual.
                 </Text>
               </>
             )}

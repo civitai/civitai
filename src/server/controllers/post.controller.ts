@@ -23,6 +23,7 @@ import {
   getPostTags,
   getPostsInfinite,
   getPostResources,
+  getPostContestCollectionDetails,
 } from './../services/post.service';
 import { TRPCError } from '@trpc/server';
 import { PostCreateInput } from '~/server/schema/post.schema';
@@ -30,6 +31,7 @@ import {
   throwDbError,
   throwNotFoundError,
   throwAuthorizationError,
+  throwBadRequestError,
 } from '~/server/utils/errorHandling';
 import { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '../db/client';
@@ -37,7 +39,24 @@ import { firstDailyPostReward, imagePostedToModelReward } from '~/server/rewards
 import { eventEngine } from '~/server/events';
 import dayjs from 'dayjs';
 import { hasEntityAccess } from '../services/common.service';
-import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import {
+  getIsSafeBrowsingLevel,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
+import {
+  CollectionMetadataSchema,
+  getCollectionPermissionDetails,
+} from '~/server/schema/collection.schema';
+import {
+  bulkSaveItems,
+  getCollectionById,
+  getUserCollectionPermissionsById,
+  validateContestCollectionEntry,
+} from '~/server/services/collection.service';
+import { CollectionMode, CollectionType, EntityType } from '@prisma/client';
+import { NsfwLevel } from '~/server/common/enums';
+import { Flags } from '~/shared/utils';
+import { sendMessagesToCollaborators } from '~/server/services/entity-collaborator.service';
 
 export const getPostsInfiniteHandler = async ({
   input,
@@ -106,7 +125,7 @@ export const createPostHandler = async ({
 };
 
 export const updatePostHandler = async ({
-  input,
+  input: { collectionTagId, ...input },
   ctx,
 }: {
   input: PostUpdateInput;
@@ -119,8 +138,76 @@ export const updatePostHandler = async ({
       },
       select: {
         publishedAt: true,
+        collectionId: true,
+        id: true,
+        nsfwLevel: true,
       },
     });
+
+    if (
+      input.publishedAt &&
+      !post?.publishedAt &&
+      post?.collectionId &&
+      dayjs(input.publishedAt).isAfter(dayjs().add(10, 'minutes'))
+    ) {
+      throw throwBadRequestError('Cannot schedule a post in a collection');
+    }
+
+    if (post && input.publishedAt && input.collectionId) {
+      // Confirm & Validate in the case of a contest collection
+      // That a submission can be made. We only do this as the user publishes
+      // Because images are ready only at this point.
+
+      // Check if user has access to the collection
+      const permissions = await getUserCollectionPermissionsById({
+        id: input.collectionId,
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+      });
+
+      if (!permissions.write && !permissions.writeReview) {
+        throw throwAuthorizationError('You cannot post to this collection');
+      }
+
+      const collection = await getCollectionById({
+        input: {
+          id: input.collectionId,
+        },
+      });
+
+      if (collection.type !== CollectionType.Post && collection.type !== CollectionType.Image) {
+        throw throwBadRequestError(
+          'The collection you are trying to select is not a post or image collection'
+        );
+      }
+
+      if (collection.tags.length > 0 && !collectionTagId) {
+        throw throwBadRequestError('You must select a tag for this collection');
+      }
+
+      if (collection.mode === CollectionMode.Contest) {
+        const postIds = collection.type === CollectionType.Post ? [input.id] : [];
+        const images =
+          collection.type === CollectionType.Image
+            ? await dbWrite.image.findMany({
+                where: {
+                  postId: post.id,
+                },
+                select: {
+                  id: true,
+                },
+              })
+            : [];
+
+        await validateContestCollectionEntry({
+          metadata: collection.metadata as CollectionMetadataSchema,
+          collectionId: collection.id,
+          userId: ctx.user.id,
+          postIds,
+          imageIds: images.map((i) => i.id),
+        });
+      }
+    }
 
     const updatedPost = await updatePost({
       ...input,
@@ -137,9 +224,72 @@ export const updatePostHandler = async ({
           tagName: true,
         },
       });
+
       const isScheduled = dayjs(updatedPost.publishedAt).isAfter(dayjs().add(10, 'minutes')); // Publishing more than 10 minutes in the future
       const tags = postTags.map((x) => x.tagName);
+
+      if (!isScheduled) {
+        await sendMessagesToCollaborators({
+          entityId: updatedPost.id,
+          entityType: EntityType.Post,
+          userId: ctx.user.id,
+        });
+      }
+
+      // Technically, collectionPosts cannot be scheduled.
+      if (!!updatedPost?.collectionId) {
+        // Create the relevant collectionItem:
+        const collection = await getCollectionById({
+          input: {
+            id: updatedPost.collectionId,
+          },
+        });
+
+        const permissions = await getUserCollectionPermissionsById({
+          id: updatedPost.collectionId,
+          userId: ctx.user.id,
+          isModerator: ctx.user.isModerator,
+        });
+
+        if (collection.type === CollectionType.Post) {
+          await bulkSaveItems({
+            input: {
+              collectionId: updatedPost.collectionId,
+              postIds: [updatedPost.id],
+              userId: ctx.user.id,
+              tagId: collectionTagId,
+            },
+            permissions,
+          });
+        } else if (collection.type === CollectionType.Image) {
+          // get all images with this postId. We're using DB write in case there's some lag.
+          const images = await dbWrite.image.findMany({
+            where: {
+              postId: updatedPost.id,
+            },
+            select: {
+              id: true,
+            },
+          });
+
+          if (!images.length) {
+            throw throwBadRequestError('No images found for this post');
+          }
+
+          await bulkSaveItems({
+            input: {
+              collectionId: updatedPost.collectionId,
+              imageIds: images.map((i) => i.id),
+              userId: ctx.user.id,
+              tagId: collectionTagId,
+            },
+            permissions,
+          });
+        }
+      }
+
       if (isScheduled) tags.push('scheduled');
+
       await ctx.track.post({
         type: 'Publish',
         nsfw: !getIsSafeBrowsingLevel(updatedPost.nsfwLevel),
@@ -355,6 +505,22 @@ export const getPostResourcesHandler = async ({ input }: { input: GetByIdInput }
     const resources = await getPostResources({ ...input });
 
     return resources.filter((x) => x.name !== 'vae');
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+// #endregion
+
+// #region [post for collections]
+export const getPostContestCollectionDetailsHandler = async ({
+  input,
+}: {
+  input: GetByIdInput;
+}) => {
+  try {
+    const items = await getPostContestCollectionDetails({ ...input });
+    return items;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

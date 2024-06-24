@@ -223,3 +223,35 @@ export const useSystemCollections = () => {
     groupedCollections,
   };
 };
+
+export const useCollectionsForPostCreation = ({
+  collectionIds = [],
+}: {
+  collectionIds?: number[];
+}) => {
+  const { data: collections = [], ...other } = trpc.collection.getPermissionDetails.useQuery(
+    {
+      ids: collectionIds,
+    },
+    {
+      enabled: collectionIds?.length > 0,
+    }
+  );
+
+  return {
+    collections,
+    ...other,
+  };
+};
+
+export const useCollection = (collectionId: number) => {
+  const { data: { collection, permissions } = {}, ...rest } = trpc.collection.getById.useQuery({
+    id: collectionId,
+  });
+
+  return {
+    collection,
+    permissions,
+    ...rest,
+  };
+};

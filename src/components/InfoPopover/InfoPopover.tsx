@@ -14,7 +14,7 @@ export const InfoPopover = forwardRef<HTMLButtonElement, Props>(
     const Popover = type === 'hover' ? HoverCard : MantinePopover;
 
     return (
-      <Popover width={300} {...popoverProps}>
+      <Popover width={300} {...popoverProps} shadow="sm">
         <Popover.Target>
           <ActionIcon ref={ref} {...buttonProps} size={size} variant={variant}>
             <Text color="dimmed" inline>

@@ -36,6 +36,7 @@ import {
 import { saveAs } from 'file-saver';
 import JSZip from 'jszip';
 import { isEqual } from 'lodash-es';
+import dynamic from 'next/dynamic';
 import React, { useEffect, useRef, useState } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
@@ -65,7 +66,7 @@ import {
 import { bytesToKB } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
-import dynamic from 'next/dynamic';
+
 const AutoTagModal = dynamic(() => import('./TrainingAutoTagModal').then((m) => m.AutoTagModal));
 
 const MAX_FILES_ALLOWED = 1000;
@@ -100,6 +101,8 @@ const imageExts: { [key: string]: string } = {
   webp: 'image/webp',
 };
 
+const minWidth = 256;
+const minHeight = 256;
 const maxWidth = 2048;
 const maxHeight = 2048;
 
@@ -145,7 +148,8 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
   const [loadingZip, setLoadingZip] = useState<boolean>(false);
   const [modelFileId, setModelFileId] = useState<number | undefined>(undefined);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
-  const showImgResize = useRef(false);
+  const showImgResizeDown = useRef<number>(0);
+  const showImgResizeUp = useRef<number>(0);
 
   const theme = useMantineTheme();
   const { classes, cx } = useStyles();
@@ -221,19 +225,37 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     const imgUrl = URL.createObjectURL(data);
     const img = await createImage(imgUrl);
     let { width, height } = img;
-    if (width <= maxWidth && height <= maxHeight) return imgUrl;
 
-    if (width > height) {
-      if (width > maxWidth) {
-        height = height * (maxWidth / width);
-        width = maxWidth;
-        showImgResize.current = true;
+    // both w and h must be less than the max
+    const goodMax = width <= maxWidth && height <= maxHeight;
+    // one of h and w must be more than the min
+    const goodMin = width >= minWidth || height >= minHeight;
+
+    if (goodMax && goodMin) return imgUrl;
+
+    if (!goodMax) {
+      if (width > height) {
+        if (width > maxWidth) {
+          height = height * (maxWidth / width);
+          width = maxWidth;
+          showImgResizeDown.current += 1;
+        }
+      } else {
+        if (height > maxHeight) {
+          width = width * (maxHeight / height);
+          height = maxHeight;
+          showImgResizeDown.current += 1;
+        }
       }
-    } else {
-      if (height > maxHeight) {
-        width = width * (maxHeight / height);
-        height = maxHeight;
-        showImgResize.current = true;
+    } else if (!goodMin) {
+      if (width > height) {
+        height = height * (minWidth / width);
+        width = minWidth;
+        showImgResizeUp.current += 1;
+      } else {
+        width = width * (minHeight / height);
+        height = minHeight;
+        showImgResizeUp.current += 1;
       }
     }
 
@@ -251,6 +273,29 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         else resolve(URL.createObjectURL(file));
       }, type);
     });
+  };
+
+  const showResizeWarnings = () => {
+    if (showImgResizeDown.current) {
+      showWarningNotification({
+        title: `${showImgResizeDown.current} image${
+          showImgResizeDown.current === 1 ? '' : 's'
+        } resized down`,
+        message: `Max image dimensions are ${maxWidth}w and ${maxHeight}h.`,
+        autoClose: false,
+      });
+      showImgResizeDown.current = 0;
+    }
+    if (showImgResizeUp.current) {
+      showWarningNotification({
+        title: `${showImgResizeUp.current} image${
+          showImgResizeUp.current === 1 ? '' : 's'
+        } resized up`,
+        message: `Min image dimensions are ${minWidth}w or ${minHeight}h.`,
+        autoClose: false,
+      });
+      showImgResizeUp.current = 0;
+    }
   };
 
   const handleZip = async (f: FileWithPath, showNotif = true) => {
@@ -288,14 +333,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
       })
     );
 
-    if (showImgResize.current) {
-      showWarningNotification({
-        title: 'Some images resized',
-        message: `Max allowed image dimensions are ${maxWidth}x${maxHeight}.`,
-        autoClose: 5000,
-      });
-      showImgResize.current = false;
-    }
+    showResizeWarnings();
 
     if (showNotif) {
       if (parsedFiles.length > 0) {
@@ -333,14 +371,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
       })
     );
 
-    if (showImgResize.current) {
-      showWarningNotification({
-        title: 'Some images resized',
-        message: `Max allowed image dimensions are ${maxWidth}x${maxHeight}.`,
-        autoClose: 5000,
-      });
-      showImgResize.current = false;
-    }
+    showResizeWarnings();
 
     const filteredFiles = newFiles.flat().filter(isDefined);
     if (filteredFiles.length > MAX_FILES_ALLOWED - imageList.length) {
@@ -375,8 +406,23 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
           ],
         };
       });
-      // TODO [bw] don't invalidate, just update
+
       await queryUtils.model.getMyTrainingModels.invalidate();
+      // queryUtils.model.getMyTrainingModels.setInfiniteData(
+      //   {}, // fix this to have right filters
+      //   produce((old) => {
+      //     if (!old?.pages?.length) return;
+      //
+      //     for (const page of old.pages) {
+      //       for (const item of page.items) {
+      //         if (item.id === thisModelVersion.id) {
+      //           item.files[0].metadata = request.metadata!;
+      //           return;
+      //         }
+      //       }
+      //     }
+      //   })
+      // );
     },
   });
 
@@ -402,6 +448,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         versionToUpdate.files = [
           {
             id: response.id,
+            name: request.name!,
             url: request.url!,
             type: request.type!,
             metadata: request.metadata!,
@@ -418,11 +465,34 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
           ],
         };
       });
-      // TODO [bw] don't invalidate, just update
+
       await queryUtils.model.getMyTrainingModels.invalidate();
 
-      setZipping(false);
-      goNext(model.id, thisStep);
+      // queryUtils.model.getMyTrainingModels.setInfiniteData(
+      //   {}, // fix this to have limit and page?
+      //   produce((old) => {
+      //     if (!old?.pages?.length) return;
+      //
+      //     for (const page of old.pages) {
+      //       for (const item of page.items) {
+      //         if (item.id === thisModelVersion.id) {
+      //           item.files = [
+      //             {
+      //               id: response.id,
+      //               url: request.url!,
+      //               type: request.type!,
+      //               metadata: request.metadata!,
+      //               sizeKB: request.sizeKB!,
+      //             },
+      //           ];
+      //           return;
+      //         }
+      //       }
+      //     }
+      //   })
+      // );
+
+      goNext(model.id, thisStep, () => setZipping(false));
     },
     onError(error) {
       setZipping(false);

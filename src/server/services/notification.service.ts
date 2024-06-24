@@ -153,12 +153,22 @@ export const deleteUserNotificationSetting = async ({
   return dbWrite.userNotificationSettings.deleteMany({ where: { type: { in: type }, userId } });
 };
 
-export const createNotification = async (data: Prisma.NotificationCreateArgs['data']) => {
-  const userNotificationSettings = await dbWrite.userNotificationSettings.findFirst({
-    where: { userId: data.userId, type: data.type },
+export const createNotification = async (
+  data: Omit<Prisma.NotificationCreateArgs['data'], 'userId'> & {
+    userId?: number;
+    userIds?: number[];
+  }
+) => {
+  if (!data.userIds) data.userIds = [];
+  if (data.userId) data.userIds.push(data.userId);
+  if (data.userIds.length === 0) return;
+
+  const userNotificationSettings = await dbWrite.userNotificationSettings.findMany({
+    where: { userId: { in: data.userIds }, type: data.type },
   });
+  const targets = data.userIds.filter((x) => !userNotificationSettings.some((y) => y.userId === x));
   // If the user has this notification type disabled, don't create a notification.
-  if (!!userNotificationSettings?.disabledAt) return;
+  if (targets.length === 0) return;
 
   const notificationTable =
     (await redis.hGet(REDIS_KEYS.SYSTEM.FEATURES, 'notificationTable')) ?? 'Notification';
@@ -168,12 +178,17 @@ export const createNotification = async (data: Prisma.NotificationCreateArgs['da
     INSERT INTO ${Prisma.raw(
       `"${notificationTable}"`
     )} ("id", "userId", "type", "details", "category")
-    VALUES (
-      ${data.id},
-      ${data.userId},
+    SELECT
+      CONCAT(u.id, ':', ${data.id}),
+      u.id,
       ${data.type},
       ${JSON.stringify(data.details)}::jsonb,
       ${data.category}::"NotificationCategory"
+    FROM "User" u
+    WHERE u.id IN (${Prisma.join(targets)})
+    AND NOT EXISTS (
+      SELECT 1 FROM "UserNotificationSettings" uns
+      WHERE uns."userId" = u.id AND uns."type" = ${data.type}
     )
     ON CONFLICT ("id") DO NOTHING
     RETURNING "userId", category

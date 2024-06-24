@@ -58,6 +58,7 @@ type CommentProps = Omit<GroupProps, 'children'> & {
   viewOnly?: boolean;
   highlight?: boolean;
   resourceOwnerId?: number;
+  borderless?: boolean;
 };
 
 export function Comment({ comment, resourceOwnerId, ...groupProps }: CommentProps) {
@@ -72,6 +73,7 @@ export function CommentContent({
   comment,
   viewOnly,
   highlight: highlightProp,
+  borderless,
   ...groupProps
 }: CommentProps) {
   const { expanded, toggleExpanded, setRootThread } = useRootThreadContext();
@@ -262,6 +264,7 @@ export function CommentContent({
               onCancel={() => setReplying(false)}
               replyToCommentId={comment.id}
               className={classes.replyInset}
+              borderless={borderless}
             />
           </Box>
         )}

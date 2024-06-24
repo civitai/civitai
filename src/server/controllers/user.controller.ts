@@ -316,7 +316,7 @@ export const completeOnboardingHandler = async ({
     if (isComplete && changed && onboardingCompletedCounter) onboardingCompletedCounter.inc();
   } catch (e) {
     const err = e as Error;
-    if (!err.message.includes('constraint failed')) onboardingErrorCounter.inc();
+    if (!err.message.includes('constraint failed')) onboardingErrorCounter?.inc();
     if (e instanceof TRPCError) throw e;
     throw throwDbError(e);
   }
@@ -1098,6 +1098,7 @@ export const reportProhibitedRequestHandler = async ({
 }) => {
   await ctx.track.prohibitedRequest({
     prompt: input.prompt ?? '{error capturing prompt}',
+    negativePrompt: input.negativePrompt ?? '{error capturing negativePrompt}',
     source: input.source,
   });
   if (ctx.user.isModerator) return false;

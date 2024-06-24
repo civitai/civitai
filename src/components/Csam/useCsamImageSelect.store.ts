@@ -34,4 +34,3 @@ const createSelectStore = () =>
   );
 
 export const useCsamImageSelectStore = createSelectStore();
-export const useCsamModelVersionSelectStore = createSelectStore();

@@ -435,7 +435,7 @@ const { openModal, Modal } = createContextModal({
                       cosmeticOverwrites={cosmeticOverwrites}
                       useEquippedCosmetics={false}
                       style={{ width: '100%', maxWidth: '500px' }}
-                      startDisplayOverwrite={creatorCardStatsPreferences}
+                      statDisplayOverwrite={creatorCardStatsPreferences}
                     />
                   </Stack>
                 ) : (

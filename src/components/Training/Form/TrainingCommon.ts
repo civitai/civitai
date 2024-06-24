@@ -8,8 +8,8 @@ import { MAX_TAGS, MIN_THRESHOLD } from '~/components/Training/Form/TrainingAuto
 import { getCaptionAsList } from '~/components/Training/Form/TrainingImages';
 import { SignalMessages } from '~/server/common/enums';
 import { Orchestrator } from '~/server/http/orchestrator/orchestrator.types';
-import { TrainingUpdateSignalSchema } from '~/server/schema/signals.schema';
-import { AutoTagResponse, TagDataResponse } from '~/server/services/training.service';
+import type { TrainingUpdateSignalSchema } from '~/server/schema/signals.schema';
+import type { AutoTagResponse, TagDataResponse } from '~/server/services/training.service';
 import { defaultTrainingState, trainingStore, useTrainingImageStore } from '~/store/training.store';
 import { MyTrainingModelGetAll } from '~/types/router';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -18,29 +18,55 @@ import { isDefined } from '~/utils/type-guards';
 
 export const basePath = '/models/train';
 export const maxSteps = 3;
+export const blockedCustomModels = ['civitai:53761@285757'];
+
+/**
+ * Computes the number of decimal points in a given input using magic math
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const getPrecision = (n: any) => {
+  if (!isFinite(n)) return 0;
+  const e = 1;
+  let p = 0;
+  while (Math.round(n * e) / e !== n) {
+    n *= 10;
+    p++;
+  }
+  return p;
+};
+
+export const minsToHours = (n: number) => {
+  if (!n) return 'Unknown';
+
+  const hours = Math.floor(n / 60);
+  const minutes = Math.floor(n % 60);
+
+  const h = hours > 0 ? `${hours} hour${hours === 1 ? '' : 's'}, ` : '';
+  const m = `${minutes} min${minutes === 1 ? '' : 's'}`;
+
+  return `${h}${m}`;
+};
 
 // these could use the current route to determine?
-export const goNext = (modelId: number | undefined, step: number) => {
+export const goNext = (modelId: number | undefined, step: number, cb?: VoidFunction) => {
   if (modelId && step < maxSteps)
     Router.replace(`${basePath}?modelId=${modelId}&step=${step + 1}`, undefined, {
       shallow: true,
       scroll: true,
-    });
+    }).then(() => cb?.());
 };
 export const goBack = (modelId: number | undefined, step: number) => {
   if (modelId && step > 1)
     Router.replace(`${basePath}?modelId=${modelId}&step=${step - 1}`, undefined, {
       shallow: true,
       scroll: true,
-    });
+    }).then();
 };
 
 export const isTrainingCustomModel = (m: string | null) => {
   if (!m) return false;
   return m.startsWith('civitai:');
 };
-
-export const blockedCustomModels = ['civitai:53761@285757'];
 
 export const useTrainingSignals = () => {
   const queryClient = useQueryClient();
@@ -53,8 +79,7 @@ export const useTrainingSignals = () => {
       queryClient.setQueriesData(
         { queryKey, exact: false },
         produce((old: MyTrainingModelGetAll | undefined) => {
-          const model = old?.items?.find((x) => x.id == updated.modelId);
-          const mv = model?.modelVersions[0];
+          const mv = old?.items?.find((x) => x.id == updated.modelVersionId);
           if (mv) {
             mv.trainingStatus = updated.status;
             const mFile = mv.files[0];
@@ -70,7 +95,7 @@ export const useTrainingSignals = () => {
         { id: updated.modelId },
         produce((old) => {
           if (!old) return old;
-          const mv = old.modelVersions[0];
+          const mv = old.modelVersions.find((x) => x.id == updated.modelVersionId);
           if (mv) {
             mv.trainingStatus = updated.status;
             const mFile = mv.files.find((f) => f.type === 'Training Data');

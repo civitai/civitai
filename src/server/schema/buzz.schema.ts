@@ -34,6 +34,12 @@ export const getUserBuzzAccountSchema = z.object({
   accountType: z.enum(buzzAccountTypes).optional(),
 });
 
+export type GetEarnPotentialSchema = z.infer<typeof getEarnPotentialSchema>;
+export const getEarnPotentialSchema = z.object({
+  userId: z.number().min(0).optional(),
+  username: z.string().optional(),
+});
+
 export type GetUserBuzzAccountResponse = z.infer<typeof getUserBuzzAccountResponse>;
 export const getUserBuzzAccountResponse = z.object({
   // This is the user id
