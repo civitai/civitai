@@ -28,6 +28,10 @@ export const generationStatusColors: Record<WorkflowStatus, MantineColor> = {
 };
 
 export const orchestratorRefundableStatuses: WorkflowStatus[] = ['failed', 'expired', 'canceled'];
+export const orchestratorCompletedStatuses: WorkflowStatus[] = [
+  ...orchestratorRefundableStatuses,
+  'succeeded',
+];
 export const orchestratorPendingStatuses: WorkflowStatus[] = [
   'unassigned',
   'preparing',

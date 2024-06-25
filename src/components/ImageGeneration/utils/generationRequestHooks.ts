@@ -10,9 +10,9 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { SignalMessages } from '~/server/common/enums';
 import { TextToImageStepMetadata } from '~/server/schema/orchestrator/textToImage.schema';
 import { workflowQuerySchema } from '~/server/schema/orchestrator/workflows.schema';
-import { workflowCompletedStatuses } from '~/server/services/orchestrator/constants';
 import { UpdateWorkflowStepParams } from '~/server/services/orchestrator/orchestrator.schema';
 import { getTextToImageRequests } from '~/server/services/orchestrator/textToImage';
+import { orchestratorCompletedStatuses } from '~/shared/constants/generation.constants';
 import { createDebouncer } from '~/utils/debouncer';
 import { showErrorNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -124,7 +124,7 @@ export function useCancelTextToImageRequest() {
           for (const item of page.items.filter((x) => x.id === workflowId)) {
             for (const step of item.steps) {
               for (const image of step.images.filter(
-                (x) => !workflowCompletedStatuses.includes(x.status)
+                (x) => !orchestratorCompletedStatuses.includes(x.status)
               )) {
                 image.status = 'canceled';
               }

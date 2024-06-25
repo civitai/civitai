@@ -6,21 +6,6 @@ import { allInjectableResourceIds } from '~/shared/constants/generation.constant
 import { stringifyAIR } from '~/utils/string-helpers';
 import { env } from '~/env/server.mjs';
 
-// export class OrchestratorClient extends CivitaiClient {
-//   constructor(token: string) {
-//     // super({ env: 'dev', auth: token });
-//     super({ env: env.ORCHESTRATOR_MODE === 'dev' ? 'dev' : 'prod', auth: token });
-//   }
-// }
-
-// /** Used to perform orchestrator operations with the system user account */
-// export class InternalOrchestratorClient extends OrchestratorClient {
-//   constructor() {
-//     const token = env.ORCHESTRATOR_API_TOKEN;
-//     super(token);
-//   }
-// }
-
 export function createOrchestratorClient(token: string) {
   return createCivitaiClient({
     env: env.ORCHESTRATOR_MODE === 'dev' ? 'dev' : 'prod',
