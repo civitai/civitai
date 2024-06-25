@@ -15,7 +15,7 @@ import React from 'react';
 // import { z } from 'zod';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { EdgeMedia, shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia';
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
@@ -52,6 +52,7 @@ import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
 import { IconNose } from '~/components/SVG/IconNose';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
+import { VideoMetadata } from '~/server/schema/media.schema';
 
 const IMAGE_CARD_WIDTH = 450;
 
@@ -380,8 +381,8 @@ export function ModelCard({ data, forceInView }: Props) {
                             alt={
                               image.meta
                                 ? truncate((image.meta as ImageMetaProps).prompt, {
-                                  length: 125,
-                                })
+                                    length: 125,
+                                  })
                                 : undefined
                             }
                             type={image.type}
@@ -394,6 +395,10 @@ export function ModelCard({ data, forceInView }: Props) {
                             className={classes.image}
                             // loading="lazy"
                             wrapperProps={{ style: { height: '100%', width: '100%' } }}
+                            anim={shouldAnimateByDefault({
+                              type: image.type,
+                              metadata: image.metadata as VideoMetadata,
+                            })}
                             contain
                           />
                         </div>
@@ -421,37 +426,37 @@ export function ModelCard({ data, forceInView }: Props) {
                     {(!!data.rank.downloadCount ||
                       !!data.rank.collectedCount ||
                       !!data.rank.tippedAmountCount) && (
-                        <Badge
-                          className={cx(classes.statChip, classes.chip)}
-                          variant="light"
-                          radius="xl"
+                      <Badge
+                        className={cx(classes.statChip, classes.chip)}
+                        variant="light"
+                        radius="xl"
+                      >
+                        <Group spacing={2}>
+                          <IconDownload size={14} strokeWidth={2.5} />
+                          <Text size="xs">{abbreviateNumber(data.rank.downloadCount)}</Text>
+                        </Group>
+                        <Group spacing={2}>
+                          <IconBookmark size={14} strokeWidth={2.5} />
+                          <Text size="xs">{abbreviateNumber(data.rank.collectedCount)}</Text>
+                        </Group>
+                        <Group spacing={2}>
+                          <IconMessageCircle2 size={14} strokeWidth={2.5} />
+                          <Text size="xs">{abbreviateNumber(data.rank.commentCount)}</Text>
+                        </Group>
+                        <InteractiveTipBuzzButton
+                          toUserId={data.user.id}
+                          entityType={'Model'}
+                          entityId={data.id}
                         >
                           <Group spacing={2}>
-                            <IconDownload size={14} strokeWidth={2.5} />
-                            <Text size="xs">{abbreviateNumber(data.rank.downloadCount)}</Text>
+                            <IconBolt size={14} strokeWidth={2.5} />
+                            <Text size="xs" tt="uppercase">
+                              {abbreviateNumber(data.rank.tippedAmountCount + tippedAmount)}
+                            </Text>
                           </Group>
-                          <Group spacing={2}>
-                            <IconBookmark size={14} strokeWidth={2.5} />
-                            <Text size="xs">{abbreviateNumber(data.rank.collectedCount)}</Text>
-                          </Group>
-                          <Group spacing={2}>
-                            <IconMessageCircle2 size={14} strokeWidth={2.5} />
-                            <Text size="xs">{abbreviateNumber(data.rank.commentCount)}</Text>
-                          </Group>
-                          <InteractiveTipBuzzButton
-                            toUserId={data.user.id}
-                            entityType={'Model'}
-                            entityId={data.id}
-                          >
-                            <Group spacing={2}>
-                              <IconBolt size={14} strokeWidth={2.5} />
-                              <Text size="xs" tt="uppercase">
-                                {abbreviateNumber(data.rank.tippedAmountCount + tippedAmount)}
-                              </Text>
-                            </Group>
-                          </InteractiveTipBuzzButton>
-                        </Badge>
-                      )}
+                        </InteractiveTipBuzzButton>
+                      </Badge>
+                    )}
                     {!data.locked && !!data.rank.thumbsUpCount && (
                       <Badge
                         className={cx(classes.statChip, classes.chip)}

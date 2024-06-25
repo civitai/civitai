@@ -3,12 +3,16 @@ import { IconBrush, IconInfoCircle } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
 import { FeedCard } from '~/components/Cards/FeedCard';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { EdgeMedia, shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { DEFAULT_EDGE_IMAGE_WIDTH, constants } from '~/server/common/constants';
+import {
+  DEFAULT_EDGE_IMAGE_WIDTH,
+  MAX_ANIMATION_DURATION_SECONDS,
+  constants,
+} from '~/server/common/constants';
 import HoverActionButton from './components/HoverActionButton';
 import { generationPanel } from '~/store/generation.store';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -22,6 +26,7 @@ import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { ImagesInfiniteModel } from '~/server/services/image.service';
 import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
+import { VideoMetadata } from '~/server/schema/media.schema';
 
 function UnroutedImageCard({ data }: Props) {
   const { classes: sharedClasses, cx } = useCardStyles({
@@ -101,6 +106,10 @@ function UnroutedImageCard({ data }: Props) {
                       width={imageWidth}
                       className={sharedClasses.image}
                       wrapperProps={{ style: { height: '100%', width: '100%' } }}
+                      anim={shouldAnimateByDefault({
+                        type: data.type,
+                        metadata: data.metadata as VideoMetadata,
+                      })}
                       loading="lazy"
                       contain
                     />

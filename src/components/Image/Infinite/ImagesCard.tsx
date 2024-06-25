@@ -16,7 +16,7 @@ import { ImageIngestionStatus, CosmeticType } from '@prisma/client';
 import { IconInfoCircle, IconBrush, IconAlertTriangle, IconClock2 } from '@tabler/icons-react';
 import { useMemo } from 'react';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { EdgeMedia, shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia';
 import { useImagesContext } from '~/components/Image/Providers/ImagesProvider';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
@@ -38,6 +38,7 @@ import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMen
 import { getIsPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
 import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
+import { VideoMetadata } from '~/server/schema/media.schema';
 
 export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height: number }) {
   const { ref, inView } = useInView({ rootMargin: '200% 0px' });
@@ -160,6 +161,10 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                                 })
                               : image.name ?? undefined
                           }
+                          anim={shouldAnimateByDefault({
+                            type: image.type,
+                            metadata: image.metadata as VideoMetadata,
+                          })}
                           type={image.type}
                           width={450}
                           placeholder="empty"

@@ -24,7 +24,7 @@ import { useBountyEngagement } from '~/components/Bounty/bounty.utils';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { EdgeMedia, shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
@@ -36,6 +36,7 @@ import { DaysFromNow } from '../Dates/DaysFromNow';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { constants } from '~/server/common/constants';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
+import { VideoMetadata } from '~/server/schema/media.schema';
 
 const IMAGE_CARD_WIDTH = 450;
 
@@ -144,6 +145,10 @@ export function BountyCard({ data }: Props) {
                         : undefined
                     }
                     type={image.type}
+                    anim={shouldAnimateByDefault({
+                      type: image.type,
+                      metadata: image.metadata as VideoMetadata,
+                    })}
                     width={IMAGE_CARD_WIDTH}
                     className={classes.image}
                   />

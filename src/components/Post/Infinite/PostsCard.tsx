@@ -1,6 +1,6 @@
 import { AspectRatio, createStyles } from '@mantine/core';
 
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { EdgeMedia, shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
 import { PostsInfiniteModel } from '~/server/services/post.service';
@@ -16,6 +16,7 @@ import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuIte
 import { CosmeticEntity } from '@prisma/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
+import { VideoMetadata } from '~/server/schema/media.schema';
 
 export function PostsCard({
   data: { images, id, stats, imageCount, cosmetic, user },
@@ -81,6 +82,10 @@ export function PostsCard({
                             })
                           : image.name ?? undefined
                       }
+                      anim={shouldAnimateByDefault({
+                        type: image.type,
+                        metadata: image.metadata as VideoMetadata,
+                      })}
                       type={image.type}
                       width={450}
                       placeholder="empty"

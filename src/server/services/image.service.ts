@@ -89,6 +89,7 @@ import {
   ingestImageSchema,
 } from './../schema/image.schema';
 import { collectionSelect } from '~/server/selectors/collection.selector';
+import { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -508,7 +509,7 @@ type GetAllImagesRaw = {
   viewCount: number;
   cursorId?: string;
   type: MediaType;
-  metadata: Prisma.JsonValue;
+  metadata: ImageMetadata | VideoMetadata | null;
   baseModel?: string;
   availability: Availability;
 };
@@ -1048,7 +1049,7 @@ export const getAllImages = async ({
 
   const now = new Date();
   const images: Array<
-    Omit<ImageV2Model, 'nsfwLevel'> & {
+    Omit<ImageV2Model, 'nsfwLevel' | 'metadata'> & {
       meta: ImageMetaProps | null; // TODO - don't fetch meta
       hideMeta: boolean; // TODO - remove references to this. Instead, use `hasMeta`
       hasMeta: boolean;
@@ -1060,6 +1061,7 @@ export const getAllImages = async ({
       availability?: Availability;
       nsfwLevel: NsfwLevel;
       cosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
+      metadata: ImageMetadata | VideoMetadata | null;
     }
   > = rawImages
     .filter((x) => {
@@ -1602,7 +1604,7 @@ export const getImagesForPosts = async ({
       commentCount: number;
       tippedAmountCount: number;
       type: MediaType;
-      metadata: Prisma.JsonValue;
+      metadata: ImageMetadata | VideoMetadata | null;
       meta?: Prisma.JsonValue;
       reactions?: ReviewReactions[];
     }[]
@@ -1794,7 +1796,7 @@ type GetImageConnectionRaw = {
   userId: number;
   index: number;
   type: MediaType;
-  metadata: Prisma.JsonValue;
+  metadata: ImageMetadata | VideoMetadata;
   entityId: number;
 };
 
