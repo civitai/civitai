@@ -169,36 +169,16 @@ export async function createBuzzTransaction({
     toAccountId = userId;
   }
 
-  if (entityType && entityId && ['Post', 'Image'].includes(entityType)) {
-    // Get collaborators. For the time being, only posts & images are supported.
-    const collaboratorEntityType = EntityType.Post; // For posts & images, we refer to the post directly.
-    const collaboratorEntityId =
-      entityType === 'Post'
-        ? entityId
-        : (await dbRead.image.findUnique({ where: { id: entityId } }))?.postId;
-
-    if (collaboratorEntityId && collaboratorEntityType) {
-      const collaborators = await dbRead.entityCollaborator.findMany({
-        where: {
-          entityId: collaboratorEntityId,
-          entityType: collaboratorEntityType,
-          status: EntityCollaboratorStatus.Approved,
-        },
-        select: {
-          userId: true,
-        },
-      });
-
-      collaboratorIds.push(...collaborators.map((c) => c.userId));
-    }
-  }
-
   if (toAccountId === undefined) {
     throw throwBadRequestError('No target account provided');
   }
 
   if (toAccountId === payload.fromAccountId) {
     throw throwBadRequestError('You cannot send buzz to the same account');
+  }
+
+  if (amount <= 0) {
+    throw throwBadRequestError('Invalid amount');
   }
 
   const account = await getUserBuzzAccount({
@@ -251,70 +231,6 @@ export async function createBuzzTransaction({
     }
   }
 
-  // TODO.transaction - move this outside of transaction
-  if (payload.type === TransactionType.Tip && toAccountId !== 0) {
-    const fromUser = await dbRead.user.findUnique({
-      where: { id: payload.fromAccountId },
-      select: { username: true },
-    });
-
-    await createNotification({
-      type: 'tip-received',
-      userId: toAccountId,
-      category: 'Buzz',
-      details: {
-        amount: amount,
-        user: fromUser?.username,
-        fromUserId: payload.fromAccountId,
-        message: payload.description,
-        entityId,
-        entityType,
-      },
-    });
-  }
-
-  if (entityId && entityType) {
-    // Store this action in the DB:
-    const existingRecord = await dbRead.buzzTip.findUnique({
-      where: {
-        entityType_entityId_fromUserId: {
-          entityId,
-          entityType,
-          fromUserId: payload.fromAccountId,
-        },
-      },
-      select: {
-        amount: true,
-      },
-    });
-
-    if (existingRecord) {
-      // Update it:
-      await dbWrite.buzzTip.update({
-        where: {
-          entityType_entityId_fromUserId: {
-            entityId,
-            entityType,
-            fromUserId: payload.fromAccountId,
-          },
-        },
-        data: {
-          amount: existingRecord.amount + amount,
-        },
-      });
-    } else {
-      await dbWrite.buzzTip.create({
-        data: {
-          amount,
-          entityId,
-          entityType,
-          toUserId: toAccountId,
-          fromUserId: payload.fromAccountId,
-        },
-      });
-    }
-  }
-
   const data: { transactionId: string } = await response.json();
 
   if (collaboratorIds.length > 0) {
@@ -334,6 +250,81 @@ export async function createBuzzTransaction({
   }
 
   return data;
+}
+
+export async function upsertBuzzTip({
+  amount,
+  entityId,
+  entityType,
+  fromAccountId,
+  toAccountId,
+  description,
+}: Pick<CreateBuzzTransactionInput, 'amount' | 'toAccountId' | 'description'> & {
+  entityId: number;
+  entityType: string;
+  toAccountId: number;
+  fromAccountId: number;
+}) {
+  // Store this action in the DB:
+  const existingRecord = await dbRead.buzzTip.findUnique({
+    where: {
+      entityType_entityId_fromUserId: {
+        entityId,
+        entityType,
+        fromUserId: fromAccountId,
+      },
+    },
+    select: {
+      amount: true,
+    },
+  });
+
+  if (existingRecord) {
+    // Update it:
+    await dbWrite.buzzTip.update({
+      where: {
+        entityType_entityId_fromUserId: {
+          entityId,
+          entityType,
+          fromUserId: fromAccountId,
+        },
+      },
+      data: {
+        amount: existingRecord.amount + amount,
+      },
+    });
+  } else {
+    await dbWrite.buzzTip.create({
+      data: {
+        amount,
+        entityId,
+        entityType,
+        toUserId: toAccountId,
+        fromUserId: fromAccountId,
+      },
+    });
+  }
+
+  if (toAccountId !== 0) {
+    const fromUser = await dbRead.user.findUnique({
+      where: { id: fromAccountId },
+      select: { username: true },
+    });
+
+    await createNotification({
+      type: 'tip-received',
+      userId: toAccountId,
+      category: 'Buzz',
+      details: {
+        amount: amount,
+        user: fromUser?.username,
+        fromUserId: fromAccountId,
+        message: description,
+        entityId,
+        entityType,
+      },
+    });
+  }
 }
 
 export async function createBuzzTransactionMany(

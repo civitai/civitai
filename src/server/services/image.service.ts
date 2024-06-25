@@ -280,6 +280,12 @@ export const getImageDetail = async ({ id }: GetByIdInput) => {
   });
 };
 
+export const getImageById = async ({ id }: GetByIdInput) => {
+  return await dbRead.image.findUnique({
+    where: { id },
+  });
+};
+
 export const ingestImageById = async ({ id }: GetByIdInput) => {
   const image = await dbRead.image.findUnique({
     where: { id },
