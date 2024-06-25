@@ -28,7 +28,6 @@ import { getServerStripe } from '~/server/utils/get-server-stripe';
 import { stripTime } from '~/utils/date-helpers';
 import { QS } from '~/utils/qs';
 import { getUserByUsername, getUsers } from './user.service';
-import { EntityCollaboratorStatus, EntityType } from '@prisma/client';
 
 type AccountType = 'User';
 

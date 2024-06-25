@@ -126,6 +126,10 @@ export async function createBuzzTipTransactionHandler({
     if (fromAccountId === input.toAccountId)
       throw throwBadRequestError('You cannot send buzz to the same account');
 
+    if (input.toAccountId === -1) {
+      throw throwBadRequestError('You cannot send buzz to the system account');
+    }
+
     const { entityType, entityId } = input;
     let targetUserIds: number[] = [input.toAccountId].filter(isDefined);
 
