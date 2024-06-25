@@ -151,8 +151,6 @@ export async function createBuzzTransaction({
   fromAccountType?: BuzzAccountType;
   insufficientFundsErrorMsg?: string;
 }) {
-  const collaboratorIds: number[] = [];
-
   if (entityType && entityId && toAccountId === undefined) {
     const [{ userId } = { userId: undefined }] = await dbRead.$queryRawUnsafe<
       [{ userId?: number }]
@@ -191,21 +189,12 @@ export async function createBuzzTransaction({
     throw throwInsufficientFundsError(insufficientFundsErrorMsg);
   }
 
-  if (collaboratorIds.length > 0) {
-    amount = Math.floor(amount / (collaboratorIds.length + 1));
-
-    if (amount === 0) {
-      throw throwBadRequestError('Amount too low to split between collaborators');
-    }
-  }
-
   const body = JSON.stringify({
     ...payload,
     details: {
       ...(details ?? {}),
       entityId: entityId ?? details?.entityId,
       entityType: entityType ?? details?.entityType,
-      collaboratorIds,
     },
     amount,
     toAccountId,
