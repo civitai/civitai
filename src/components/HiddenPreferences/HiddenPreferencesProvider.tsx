@@ -36,7 +36,7 @@ export const HiddenPreferencesProvider = ({ children }: { children: ReactNode })
     );
 
     return {
-      hiddenUsers: new Map(data.hiddenUsers.map((x) => [x.id, true])),
+      hiddenUsers: new Map([...data.hiddenUsers, ...data.blockedUsers].map((x) => [x.id, true])),
       hiddenModels: new Map(data.hiddenModels.map((x) => [x.id, true])),
       hiddenTags: tags,
       hiddenImages: images,

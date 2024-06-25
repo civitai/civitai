@@ -2,7 +2,6 @@ import { TagEngagementType, UserEngagementType } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
 
 import { dbWrite } from '~/server/db/client';
-import { userBlockedUsersCache } from '~/server/redis/caches';
 import { REDIS_KEYS, redis } from '~/server/redis/client';
 import { ToggleHiddenSchemaOutput } from '~/server/schema/user-preferences.schema';
 import { getModeratedTags } from '~/server/services/system-cache';
@@ -213,7 +212,6 @@ interface HiddenUser extends HiddenPreferenceBase {
   id: number;
   username?: string | null;
   hidden: boolean;
-  blocked?: boolean;
 }
 
 interface HiddenModel extends HiddenPreferenceBase {
@@ -360,16 +358,12 @@ export async function getAllHiddenForUser({
       ? await getAllHiddenForUserFresh({ userId })
       : await getAllHiddenForUsersCached({ userId });
 
-  console.log({ blockedUsers });
-
   const result = {
     hiddenImages: [...images.map((id) => ({ id, hidden: true })), ...implicitImages],
-    hiddenModels: [...models.map((id) => ({ id, hidden: true }))],
-    hiddenUsers: [
-      ...users.map((user) => ({ ...user, hidden: true })),
-      ...blockedUsers.map((x) => ({ id: x, blocked: true })),
-    ],
+    hiddenModels: models.map((id) => ({ id, hidden: true })),
+    hiddenUsers: users.map((user) => ({ ...user, hidden: true })),
     hiddenTags: [...hiddenTags.map((tag) => ({ ...tag, hidden: true })), ...moderatedTags],
+    blockedUsers: blockedUsers.map((user) => ({ ...user, hidden: true })),
   } as HiddenPreferenceTypes;
   return result;
 }

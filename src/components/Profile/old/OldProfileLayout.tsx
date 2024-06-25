@@ -164,7 +164,8 @@ export const UserContextMenu = ({ username }: { username: string }) => {
       });
     },
   });
-  const { hiddenUsers } = useHiddenPreferencesData();
+  const { blockedUsers } = useHiddenPreferencesData();
+  const alreadyBlocked = blockedUsers.some((u) => u.id === user?.id && !!u.hidden);
   const toggleHiddenMutation = useToggleHiddenPreferences();
 
   const theme = useMantineTheme();
@@ -187,7 +188,6 @@ export const UserContextMenu = ({ username }: { username: string }) => {
   };
   const handleToggleBlock = () => {
     if (user) {
-      const alreadyBlocked = hiddenUsers.some((u) => u.id === user.id && !!u.blocked);
       if (alreadyBlocked)
         toggleHiddenMutation.mutate({
           kind: 'blockedUser',
@@ -376,7 +376,7 @@ export const UserContextMenu = ({ username }: { username: string }) => {
               color="red"
               onClick={handleToggleBlock}
             >
-              Block user
+              {alreadyBlocked ? 'Unblock user' : 'Block user'}
             </Menu.Item>
           )}
           {isSameUser && (

@@ -645,7 +645,6 @@ export const getAllImages = async ({
       Prisma.sql`u."id" = ${targetUserId}`
     );
     // Don't cache self queries
-    console.log('THIS IS ABOUT TO HAPPEN BUD!');
     cacheTime = 0;
     // if (targetUserId !== userId) {
     //   cacheTime = CacheTTL.day;
