@@ -34,8 +34,9 @@ import { getDisplayName, slugit } from '~/utils/string-helpers';
 import { BountyContextMenu } from '../Bounty/BountyContextMenu';
 import { DaysFromNow } from '../Dates/DaysFromNow';
 import { ImageMetaProps } from '~/server/schema/image.schema';
-import { constants } from '~/server/common/constants';
+import { constants, MAX_ANIMATION_DURATION_SECONDS } from '~/server/common/constants';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
+import { VideoMetadata } from '~/server/schema/media.schema';
 
 const IMAGE_CARD_WIDTH = 450;
 
@@ -97,6 +98,8 @@ export function BountyCard({ data }: Props) {
       ? expiredBadge
       : countdownBadge;
 
+  const videoMetadata = image.type === 'video' ? (image.metadata as VideoMetadata | null) : null;
+
   return (
     <FeedCard href={`/bounties/${id}/${slugit(name)}`} aspectRatio="square">
       <div className={classes.root}>
@@ -144,6 +147,13 @@ export function BountyCard({ data }: Props) {
                         : undefined
                     }
                     type={image.type}
+                    anim={
+                      image.type === 'video' &&
+                      videoMetadata?.duration &&
+                      videoMetadata.duration > MAX_ANIMATION_DURATION_SECONDS
+                        ? false
+                        : undefined
+                    }
                     width={IMAGE_CARD_WIDTH}
                     className={classes.image}
                   />

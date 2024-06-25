@@ -9,13 +9,14 @@ import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { OnsiteIndicator } from '~/components/Image/Indicators/OnsiteIndicator';
 import { useInView } from '~/hooks/useInView';
 import { truncate } from 'lodash-es';
-import { constants } from '~/server/common/constants';
+import { MAX_ANIMATION_DURATION_SECONDS, constants } from '~/server/common/constants';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
 import { CosmeticEntity } from '@prisma/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
+import { VideoMetadata } from '~/server/schema/media.schema';
 
 export function PostsCard({
   data: { images, id, stats, imageCount, cosmetic, user },
@@ -31,6 +32,7 @@ export function PostsCard({
 
   const image = images[0];
   const isOwner = currentUser?.id === user.id;
+  const videoMetadata = image.type === 'video' ? (image.metadata as VideoMetadata | null) : null;
 
   return (
     <MasonryCard withBorder shadow="sm" p={0} height={height} ref={ref} frameDecoration={cosmetic}>
@@ -80,6 +82,13 @@ export function PostsCard({
                               length: constants.altTruncateLength,
                             })
                           : image.name ?? undefined
+                      }
+                      anim={
+                        image.type === 'video' &&
+                        videoMetadata?.duration &&
+                        videoMetadata.duration > MAX_ANIMATION_DURATION_SECONDS
+                          ? false
+                          : undefined
                       }
                       type={image.type}
                       width={450}

@@ -2,12 +2,17 @@ import { useCardStyles } from '~/components/Cards/Cards.styles';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { DEFAULT_EDGE_IMAGE_WIDTH, constants } from '~/server/common/constants';
+import {
+  DEFAULT_EDGE_IMAGE_WIDTH,
+  MAX_ANIMATION_DURATION_SECONDS,
+  constants,
+} from '~/server/common/constants';
 import { ImageProps } from '~/components/ImageViewer/ImageViewer';
 import { IconCategory, IconPhoto } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
+import { VideoMetadata } from '~/server/schema/media.schema';
 
 export function GenericImageCard({
   image: image,
@@ -60,6 +65,8 @@ export function GenericImageCard({
     }
   })();
 
+  const videoMetadata = image.type === 'video' ? (image.metadata as VideoMetadata | null) : null;
+
   return (
     <FeedCard
       href={disabled ? undefined : url}
@@ -79,8 +86,8 @@ export function GenericImageCard({
                 <>
                   {!disabled && (
                     <>
-                      <ImageGuard2.BlurToggle className="absolute top-2 left-2 z-10" />
-                      <ImageContextMenu image={image} className="absolute top-2 right-2 z-10" />
+                      <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
+                      <ImageContextMenu image={image} className="absolute right-2 top-2 z-10" />
                     </>
                   )}
                   {safe ? (
@@ -97,6 +104,13 @@ export function GenericImageCard({
                         originalAspectRatio > 1
                           ? DEFAULT_EDGE_IMAGE_WIDTH * originalAspectRatio
                           : DEFAULT_EDGE_IMAGE_WIDTH
+                      }
+                      anim={
+                        image.type === 'video' &&
+                        videoMetadata?.duration &&
+                        videoMetadata.duration > MAX_ANIMATION_DURATION_SECONDS
+                          ? false
+                          : undefined
                       }
                       placeholder="empty"
                       className={sharedClasses.image}

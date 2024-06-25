@@ -11,12 +11,13 @@ import { IconPhoto } from '@tabler/icons-react';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { truncate } from 'lodash-es';
-import { constants } from '~/server/common/constants';
+import { MAX_ANIMATION_DURATION_SECONDS, constants } from '~/server/common/constants';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
 import { CosmeticEntity } from '@prisma/client';
+import { VideoMetadata } from '~/server/schema/media.schema';
 
 const IMAGE_CARD_WIDTH = 332;
 
@@ -27,6 +28,7 @@ export function PostCard({ data }: Props) {
 
   const image = data.images[0];
   const isOwner = currentUser?.id === data.user.id;
+  const videoMetadata = image.type === 'video' ? (image.metadata as VideoMetadata | null) : null;
 
   return (
     <FeedCard href={`/posts/${data.id}`} aspectRatio="square" frameDecoration={data.cosmetic}>
@@ -72,6 +74,13 @@ export function PostCard({ data }: Props) {
                       image.meta
                         ? truncate(image.meta.prompt, { length: constants.altTruncateLength })
                         : image.name ?? undefined
+                    }
+                    anim={
+                      image.type === 'video' &&
+                      videoMetadata?.duration &&
+                      videoMetadata.duration > MAX_ANIMATION_DURATION_SECONDS
+                        ? false
+                        : undefined
                     }
                     type={image.type}
                     width={IMAGE_CARD_WIDTH}

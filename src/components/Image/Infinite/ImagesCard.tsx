@@ -31,13 +31,14 @@ import { OnsiteIndicator } from '~/components/Image/Indicators/OnsiteIndicator';
 import { useInView } from '~/hooks/useInView';
 import { HolidayFrame } from '~/components/Decorations/HolidayFrame';
 import { truncate } from 'lodash-es';
-import { constants } from '~/server/common/constants';
+import { MAX_ANIMATION_DURATION_SECONDS, constants } from '~/server/common/constants';
 import { useImageStore } from '~/store/image.store';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { getIsPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
 import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
+import { VideoMetadata } from '~/server/schema/media.schema';
 
 export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height: number }) {
   const { ref, inView } = useInView({ rootMargin: '200% 0px' });
@@ -68,6 +69,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
   ) as (typeof image.user.cosmetics)[number] & {
     data?: { lights?: number; upgradedLights?: number };
   };
+  const videoMetadata = image.type === 'video' ? (image.metadata as VideoMetadata | null) : null;
 
   return (
     <HolidayFrame {...cardDecoration}>
@@ -159,6 +161,13 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                                   length: constants.altTruncateLength,
                                 })
                               : image.name ?? undefined
+                          }
+                          anim={
+                            image.type === 'video' &&
+                            videoMetadata?.duration &&
+                            videoMetadata.duration > MAX_ANIMATION_DURATION_SECONDS
+                              ? false
+                              : undefined
                           }
                           type={image.type}
                           width={450}
