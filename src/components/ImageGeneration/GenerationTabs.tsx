@@ -78,7 +78,7 @@ export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean })
             />
           </div>
         </div>
-        {view !== 'generate' && <GeneratedImageActions />}
+        {view !== 'generate' && !isGeneratePage && <GeneratedImageActions />}
       </div>
       <View />
     </GenerationProvider>
