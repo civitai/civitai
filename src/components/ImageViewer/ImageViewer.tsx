@@ -51,7 +51,7 @@ export interface ImageProps {
   user?: SimpleUser;
   cosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
   tags?: Array<{ id: number }> | number[];
-  metadata?: ImageMetadata | VideoMetadata | null;
+  metadata?: MixedObject | null;
 }
 
 type ImageViewerState = {

@@ -145,8 +145,8 @@ export function ProfileHeader({ username }: { username: string }) {
                   />
                 )}
                 <div className={classes.coverImageNSFWActions}>
-                  <ImageGuard2.BlurToggle className="absolute top-2 left-2 z-10" />
-                  <ImageContextMenu image={image} className="absolute top-2 right-2 z-10" />
+                  <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
+                  <ImageContextMenu image={image} className="absolute right-2 top-2 z-10" />
                 </div>
               </>
             )}

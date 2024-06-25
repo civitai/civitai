@@ -2045,7 +2045,7 @@ type GetEntityImageRaw = {
   userId: number;
   index: number;
   type: MediaType;
-  metadata: Prisma.JsonValue;
+  metadata: MixedObject | null;
   entityId: number;
   entityType: string;
 };
