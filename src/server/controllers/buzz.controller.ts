@@ -131,7 +131,7 @@ export async function createBuzzTipTransactionHandler({
     }
 
     const { entityType, entityId } = input;
-    let targetUserIds: number[] = [input.toAccountId].filter(isDefined);
+    let targetUserIds: number[] = input.toAccountId ? [input.toAccountId] : [];
 
     if ((entityType === 'Post' || entityType === 'Image') && entityId) {
       // May have contributros, check this...
@@ -149,6 +149,14 @@ export async function createBuzzTipTransactionHandler({
 
         targetUserIds = [...new Set([...targetUserIds, ...collaboratorIds])].filter(isDefined);
       }
+    }
+
+    if (targetUserIds.length === 0) {
+      throw throwBadRequestError('No valid target users found');
+    }
+
+    if (targetUserIds.includes(fromAccountId)) {
+      throw throwBadRequestError('You cannot send buzz to the same account');
     }
 
     const amount = Math.floor(input.amount / targetUserIds.length);

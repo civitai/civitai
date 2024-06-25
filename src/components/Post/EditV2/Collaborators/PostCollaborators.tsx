@@ -30,8 +30,8 @@ export const PostCollaboratorSelection = ({ post }: { post: PostDetailEditable }
       </Text>
       <Text size="sm" color="dimmed">
         Invite your teammates or collaborators to be shown on this post and get credit for it. If
-        they accept the invite, they it will be shown on their profile in addition to yours. Tipped
-        Buzz will be split equally. A maximum of {constants.entityCollaborators.maxCollaborators}
+        they accept the invite, it will be shown on their profile in addition to yours. Tipped Buzz
+        will be split equally. A maximum of {constants.entityCollaborators.maxCollaborators}
         collaborators can be invited.
       </Text>
       <QuickSearchDropdown
