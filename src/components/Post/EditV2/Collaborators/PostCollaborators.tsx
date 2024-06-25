@@ -26,12 +26,13 @@ export const PostCollaboratorSelection = ({ post }: { post: PostDetailEditable }
   return (
     <Stack spacing="xs">
       <Text size="lg" weight={500}>
-        Invite collaborators
+        Invite Collaborators
       </Text>
       <Text size="sm" color="dimmed">
-        If they accept, their user will be shown in the post &amp; image details accordingly. This
-        post &amp; images will also be shown in their profile. A maximum of{' '}
-        {constants.entityCollaborators.maxCollaborators} collaborators can be added.
+        Invite your teammates or collaborators to be shown on this post and get credit for it. If
+        they accept the invite, they it will be shown on their profile in addition to yours. Tipped
+        Buzz will be split equally. A maximum of {constants.entityCollaborators.maxCollaborators}
+        collaborators can be invited.
       </Text>
       <QuickSearchDropdown
         disableInitialSearch
@@ -52,7 +53,7 @@ export const PostCollaboratorSelection = ({ post }: { post: PostDetailEditable }
         dropdownItemLimit={25}
         showIndexSelect={false}
         startingIndex="users"
-        placeholder="Select users to collaborate with"
+        placeholder="Select community members to invite as a collaborator"
         filters={[
           { id: currentUser?.id },
           ...collaborators.map((c) => ({

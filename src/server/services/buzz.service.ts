@@ -28,6 +28,7 @@ import { getServerStripe } from '~/server/utils/get-server-stripe';
 import { stripTime } from '~/utils/date-helpers';
 import { QS } from '~/utils/qs';
 import { getUserByUsername, getUsers } from './user.service';
+import { EntityCollaboratorStatus, EntityType } from '@prisma/client';
 
 type AccountType = 'User';
 
@@ -150,6 +151,8 @@ export async function createBuzzTransaction({
   fromAccountType?: BuzzAccountType;
   insufficientFundsErrorMsg?: string;
 }) {
+  const collaboratorIds: number[] = [];
+
   if (entityType && entityId && toAccountId === undefined) {
     const [{ userId } = { userId: undefined }] = await dbRead.$queryRawUnsafe<
       [{ userId?: number }]
@@ -164,6 +167,30 @@ export async function createBuzzTransaction({
     }
 
     toAccountId = userId;
+  }
+
+  if (entityType && entityId && ['Post', 'Image'].includes(entityType)) {
+    // Get collaborators. For the time being, only posts & images are supported.
+    const collaboratorEntityType = EntityType.Post; // For posts & images, we refer to the post directly.
+    const collaboratorEntityId =
+      entityType === 'Post'
+        ? entityId
+        : (await dbRead.image.findUnique({ where: { id: entityId } }))?.postId;
+
+    if (collaboratorEntityId && collaboratorEntityType) {
+      const collaborators = await dbRead.entityCollaborator.findMany({
+        where: {
+          entityId: collaboratorEntityId,
+          entityType: collaboratorEntityType,
+          status: EntityCollaboratorStatus.Approved,
+        },
+        select: {
+          userId: true,
+        },
+      });
+
+      collaboratorIds.push(...collaborators.map((c) => c.userId));
+    }
   }
 
   if (toAccountId === undefined) {
@@ -184,12 +211,21 @@ export async function createBuzzTransaction({
     throw throwInsufficientFundsError(insufficientFundsErrorMsg);
   }
 
+  if (collaboratorIds.length > 0) {
+    amount = Math.floor(amount / (collaboratorIds.length + 1));
+
+    if (amount === 0) {
+      throw throwBadRequestError('Amount too low to split between collaborators');
+    }
+  }
+
   const body = JSON.stringify({
     ...payload,
     details: {
       ...(details ?? {}),
       entityId: entityId ?? details?.entityId,
       entityType: entityType ?? details?.entityType,
+      collaboratorIds,
     },
     amount,
     toAccountId,
@@ -280,6 +316,22 @@ export async function createBuzzTransaction({
   }
 
   const data: { transactionId: string } = await response.json();
+
+  if (collaboratorIds.length > 0) {
+    const transactions = collaboratorIds.map((userId) => ({
+      ...payload,
+      details: {
+        ...(details ?? {}),
+        entityId: entityId ?? details?.entityId,
+        entityType: entityType ?? details?.entityType,
+      },
+      amount,
+      toAccountId: userId,
+      externalTransactionId: `collaborator-${userId}-${data.transactionId}`,
+    }));
+
+    await createBuzzTransactionMany(transactions);
+  }
 
   return data;
 }
