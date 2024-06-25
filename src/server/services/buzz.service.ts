@@ -174,6 +174,10 @@ export async function createBuzzTransaction({
     throw throwBadRequestError('You cannot send buzz to the same account');
   }
 
+  if (amount <= 0) {
+    throw throwBadRequestError('Invalid amount');
+  }
+
   const account = await getUserBuzzAccount({
     accountId: payload.fromAccountId,
     accountType: payload.fromAccountType,
@@ -215,10 +219,67 @@ export async function createBuzzTransaction({
     }
   }
 
-  // TODO.transaction - move this outside of transaction
-  if (payload.type === TransactionType.Tip && toAccountId !== 0) {
+  const data: { transactionId: string } = await response.json();
+
+  return data;
+}
+
+export async function upsertBuzzTip({
+  amount,
+  entityId,
+  entityType,
+  fromAccountId,
+  toAccountId,
+  description,
+}: Pick<CreateBuzzTransactionInput, 'amount' | 'toAccountId' | 'description'> & {
+  entityId: number;
+  entityType: string;
+  toAccountId: number;
+  fromAccountId: number;
+}) {
+  // Store this action in the DB:
+  const existingRecord = await dbRead.buzzTip.findUnique({
+    where: {
+      entityType_entityId_fromUserId: {
+        entityId,
+        entityType,
+        fromUserId: fromAccountId,
+      },
+    },
+    select: {
+      amount: true,
+    },
+  });
+
+  if (existingRecord) {
+    // Update it:
+    await dbWrite.buzzTip.update({
+      where: {
+        entityType_entityId_fromUserId: {
+          entityId,
+          entityType,
+          fromUserId: fromAccountId,
+        },
+      },
+      data: {
+        amount: existingRecord.amount + amount,
+      },
+    });
+  } else {
+    await dbWrite.buzzTip.create({
+      data: {
+        amount,
+        entityId,
+        entityType,
+        toUserId: toAccountId,
+        fromUserId: fromAccountId,
+      },
+    });
+  }
+
+  if (toAccountId !== 0) {
     const fromUser = await dbRead.user.findUnique({
-      where: { id: payload.fromAccountId },
+      where: { id: fromAccountId },
       select: { username: true },
     });
 
@@ -229,59 +290,13 @@ export async function createBuzzTransaction({
       details: {
         amount: amount,
         user: fromUser?.username,
-        fromUserId: payload.fromAccountId,
-        message: payload.description,
+        fromUserId: fromAccountId,
+        message: description,
         entityId,
         entityType,
       },
     });
   }
-
-  if (entityId && entityType) {
-    // Store this action in the DB:
-    const existingRecord = await dbRead.buzzTip.findUnique({
-      where: {
-        entityType_entityId_fromUserId: {
-          entityId,
-          entityType,
-          fromUserId: payload.fromAccountId,
-        },
-      },
-      select: {
-        amount: true,
-      },
-    });
-
-    if (existingRecord) {
-      // Update it:
-      await dbWrite.buzzTip.update({
-        where: {
-          entityType_entityId_fromUserId: {
-            entityId,
-            entityType,
-            fromUserId: payload.fromAccountId,
-          },
-        },
-        data: {
-          amount: existingRecord.amount + amount,
-        },
-      });
-    } else {
-      await dbWrite.buzzTip.create({
-        data: {
-          amount,
-          entityId,
-          entityType,
-          toUserId: toAccountId,
-          fromUserId: payload.fromAccountId,
-        },
-      });
-    }
-  }
-
-  const data: { transactionId: string } = await response.json();
-
-  return data;
 }
 
 export async function createBuzzTransactionMany(
