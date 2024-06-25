@@ -1,12 +1,8 @@
 import { useCardStyles } from '~/components/Cards/Cards.styles';
 import { FeedCard } from '~/components/Cards/FeedCard';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { EdgeMedia, shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
-import {
-  DEFAULT_EDGE_IMAGE_WIDTH,
-  MAX_ANIMATION_DURATION_SECONDS,
-  constants,
-} from '~/server/common/constants';
+import { DEFAULT_EDGE_IMAGE_WIDTH, constants } from '~/server/common/constants';
 import { ImageProps } from '~/components/ImageViewer/ImageViewer';
 import { IconCategory, IconPhoto } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
@@ -65,8 +61,6 @@ export function GenericImageCard({
     }
   })();
 
-  const videoMetadata = image.type === 'video' ? (image.metadata as VideoMetadata | null) : null;
-
   return (
     <FeedCard
       href={disabled ? undefined : url}
@@ -105,13 +99,10 @@ export function GenericImageCard({
                           ? DEFAULT_EDGE_IMAGE_WIDTH * originalAspectRatio
                           : DEFAULT_EDGE_IMAGE_WIDTH
                       }
-                      anim={
-                        image.type === 'video' &&
-                        videoMetadata?.duration &&
-                        videoMetadata.duration > MAX_ANIMATION_DURATION_SECONDS
-                          ? false
-                          : undefined
-                      }
+                      anim={shouldAnimateByDefault({
+                        type: image.type,
+                        metadata: image.metadata as VideoMetadata,
+                      })}
                       placeholder="empty"
                       className={sharedClasses.image}
                       wrapperProps={{ style: { height: '100%', width: '100%' } }}

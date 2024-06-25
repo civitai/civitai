@@ -16,7 +16,7 @@ import { ImageIngestionStatus, CosmeticType } from '@prisma/client';
 import { IconInfoCircle, IconBrush, IconAlertTriangle, IconClock2 } from '@tabler/icons-react';
 import { useMemo } from 'react';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { EdgeMedia, shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia';
 import { useImagesContext } from '~/components/Image/Providers/ImagesProvider';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
@@ -31,7 +31,7 @@ import { OnsiteIndicator } from '~/components/Image/Indicators/OnsiteIndicator';
 import { useInView } from '~/hooks/useInView';
 import { HolidayFrame } from '~/components/Decorations/HolidayFrame';
 import { truncate } from 'lodash-es';
-import { MAX_ANIMATION_DURATION_SECONDS, constants } from '~/server/common/constants';
+import { constants } from '~/server/common/constants';
 import { useImageStore } from '~/store/image.store';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
@@ -69,7 +69,6 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
   ) as (typeof image.user.cosmetics)[number] & {
     data?: { lights?: number; upgradedLights?: number };
   };
-  const videoMetadata = image.type === 'video' ? (image.metadata as VideoMetadata | null) : null;
 
   return (
     <HolidayFrame {...cardDecoration}>
@@ -162,13 +161,10 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                                 })
                               : image.name ?? undefined
                           }
-                          anim={
-                            image.type === 'video' &&
-                            videoMetadata?.duration &&
-                            videoMetadata.duration > MAX_ANIMATION_DURATION_SECONDS
-                              ? false
-                              : undefined
-                          }
+                          anim={shouldAnimateByDefault({
+                            type: image.type,
+                            metadata: image.metadata as VideoMetadata,
+                          })}
                           type={image.type}
                           width={450}
                           placeholder="empty"

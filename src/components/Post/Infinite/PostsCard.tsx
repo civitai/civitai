@@ -1,6 +1,6 @@
 import { AspectRatio, createStyles } from '@mantine/core';
 
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { EdgeMedia, shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
 import { PostsInfiniteModel } from '~/server/services/post.service';
@@ -9,7 +9,7 @@ import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { OnsiteIndicator } from '~/components/Image/Indicators/OnsiteIndicator';
 import { useInView } from '~/hooks/useInView';
 import { truncate } from 'lodash-es';
-import { MAX_ANIMATION_DURATION_SECONDS, constants } from '~/server/common/constants';
+import { constants } from '~/server/common/constants';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
@@ -32,7 +32,6 @@ export function PostsCard({
 
   const image = images[0];
   const isOwner = currentUser?.id === user.id;
-  const videoMetadata = image.type === 'video' ? (image.metadata as VideoMetadata | null) : null;
 
   return (
     <MasonryCard withBorder shadow="sm" p={0} height={height} ref={ref} frameDecoration={cosmetic}>
@@ -83,13 +82,10 @@ export function PostsCard({
                             })
                           : image.name ?? undefined
                       }
-                      anim={
-                        image.type === 'video' &&
-                        videoMetadata?.duration &&
-                        videoMetadata.duration > MAX_ANIMATION_DURATION_SECONDS
-                          ? false
-                          : undefined
-                      }
+                      anim={shouldAnimateByDefault({
+                        type: image.type,
+                        metadata: image.metadata as VideoMetadata,
+                      })}
                       type={image.type}
                       width={450}
                       placeholder="empty"

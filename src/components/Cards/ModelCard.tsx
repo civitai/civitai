@@ -15,7 +15,7 @@ import React from 'react';
 // import { z } from 'zod';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { EdgeMedia, shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia';
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
@@ -24,12 +24,7 @@ import { ReportMenuItem } from '~/components/MenuItems/ReportMenuItem';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import {
-  BaseModel,
-  MAX_ANIMATION_DURATION_SECONDS,
-  baseModelSets,
-  constants,
-} from '~/server/common/constants';
+import { BaseModel, baseModelSets, constants } from '~/server/common/constants';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { aDayAgo } from '~/utils/date-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
@@ -209,7 +204,6 @@ export function ModelCard({ data, forceInView }: Props) {
 
   // Small hack to prevent blurry landscape images
   const originalAspectRatio = image && image.width && image.height ? image.width / image.height : 1;
-  const videoMetadata = image.type === 'video' ? (image.metadata as VideoMetadata | null) : null;
 
   return (
     <FeedCard
@@ -401,13 +395,10 @@ export function ModelCard({ data, forceInView }: Props) {
                             className={classes.image}
                             // loading="lazy"
                             wrapperProps={{ style: { height: '100%', width: '100%' } }}
-                            anim={
-                              image.type === 'video' &&
-                              videoMetadata?.duration &&
-                              videoMetadata.duration > MAX_ANIMATION_DURATION_SECONDS
-                                ? false
-                                : undefined
-                            }
+                            anim={shouldAnimateByDefault({
+                              type: image.type,
+                              metadata: image.metadata as VideoMetadata,
+                            })}
                             contain
                           />
                         </div>

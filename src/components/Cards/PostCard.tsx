@@ -2,7 +2,7 @@ import { Group, Stack, Text, UnstyledButton } from '@mantine/core';
 import React from 'react';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { EdgeMedia, shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { PostsInfiniteModel } from '~/server/services/post.service';
@@ -11,7 +11,7 @@ import { IconPhoto } from '@tabler/icons-react';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { truncate } from 'lodash-es';
-import { MAX_ANIMATION_DURATION_SECONDS, constants } from '~/server/common/constants';
+import { constants } from '~/server/common/constants';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -28,7 +28,6 @@ export function PostCard({ data }: Props) {
 
   const image = data.images[0];
   const isOwner = currentUser?.id === data.user.id;
-  const videoMetadata = image.type === 'video' ? (image.metadata as VideoMetadata | null) : null;
 
   return (
     <FeedCard href={`/posts/${data.id}`} aspectRatio="square" frameDecoration={data.cosmetic}>
@@ -75,13 +74,10 @@ export function PostCard({ data }: Props) {
                         ? truncate(image.meta.prompt, { length: constants.altTruncateLength })
                         : image.name ?? undefined
                     }
-                    anim={
-                      image.type === 'video' &&
-                      videoMetadata?.duration &&
-                      videoMetadata.duration > MAX_ANIMATION_DURATION_SECONDS
-                        ? false
-                        : undefined
-                    }
+                    anim={shouldAnimateByDefault({
+                      type: image.type,
+                      metadata: image.metadata as VideoMetadata,
+                    })}
                     type={image.type}
                     width={IMAGE_CARD_WIDTH}
                     placeholder="empty"

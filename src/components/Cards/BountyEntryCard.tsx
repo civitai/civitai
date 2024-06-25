@@ -2,7 +2,7 @@ import { createStyles, Group, keyframes, Stack, Text, UnstyledButton } from '@ma
 import React from 'react';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { EdgeMedia, shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useRouter } from 'next/router';
 import { BountyGetEntries } from '~/types/router';
@@ -15,7 +15,7 @@ import { IconFiles } from '@tabler/icons-react';
 import { openBountyEntryFilesModal } from '~/components/Bounty/BountyEntryFilesModal';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { truncate } from 'lodash-es';
-import { constants, MAX_ANIMATION_DURATION_SECONDS } from '~/server/common/constants';
+import { constants } from '~/server/common/constants';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { VideoMetadata } from '~/server/schema/media.schema';
 
@@ -51,7 +51,6 @@ export function BountyEntryCard({ data, currency, renderActions }: Props) {
   const reactions = data?.reactions ?? [];
   const stats = data?.stats ?? null;
   const isAwarded = awardedUnitAmountTotal > 0;
-  const videoMetadata = image.type === 'video' ? (image.metadata as VideoMetadata | null) : null;
 
   return (
     <FeedCard
@@ -149,13 +148,10 @@ export function BountyEntryCard({ data, currency, renderActions }: Props) {
                       width={IMAGE_CARD_WIDTH}
                       className={classes.image}
                       wrapperProps={{ style: { height: 'calc(100% - 60px)' } }}
-                      anim={
-                        image.type === 'video' &&
-                        videoMetadata?.duration &&
-                        videoMetadata.duration > MAX_ANIMATION_DURATION_SECONDS
-                          ? false
-                          : undefined
-                      }
+                      anim={shouldAnimateByDefault({
+                        type: image.type,
+                        metadata: image.metadata as VideoMetadata,
+                      })}
                     />
                   ) : (
                     <MediaHash {...image} />

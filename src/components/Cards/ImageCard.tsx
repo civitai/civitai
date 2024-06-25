@@ -3,7 +3,7 @@ import { IconBrush, IconInfoCircle } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
 import { FeedCard } from '~/components/Cards/FeedCard';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { EdgeMedia, shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { Reactions } from '~/components/Reaction/Reactions';
@@ -47,8 +47,6 @@ function UnroutedImageCard({ data }: Props) {
     originalAspectRatio > 1
       ? DEFAULT_EDGE_IMAGE_WIDTH * originalAspectRatio
       : DEFAULT_EDGE_IMAGE_WIDTH;
-
-  const videoMetadata = data.type === 'video' ? (data.metadata as VideoMetadata | null) : null;
 
   return (
     <HolidayFrame {...cardDecoration}>
@@ -108,13 +106,10 @@ function UnroutedImageCard({ data }: Props) {
                       width={imageWidth}
                       className={sharedClasses.image}
                       wrapperProps={{ style: { height: '100%', width: '100%' } }}
-                      anim={
-                        data.type === 'video' &&
-                        videoMetadata?.duration &&
-                        videoMetadata.duration > MAX_ANIMATION_DURATION_SECONDS
-                          ? false
-                          : undefined
-                      }
+                      anim={shouldAnimateByDefault({
+                        type: data.type,
+                        metadata: data.metadata as VideoMetadata,
+                      })}
                       loading="lazy"
                       contain
                     />

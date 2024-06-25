@@ -29,7 +29,7 @@ import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { EdgeMedia, shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia';
 import { useImagesAsPostsInfiniteContext } from '~/components/Image/AsPosts/ImagesAsPostsInfinite';
 import { useGallerySettings } from '~/components/Image/AsPosts/gallery.utils';
 import { OnsiteIndicator } from '~/components/Image/Indicators/OnsiteIndicator';
@@ -39,7 +39,7 @@ import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useInView } from '~/hooks/useInView';
-import { MAX_ANIMATION_DURATION_SECONDS, constants } from '~/server/common/constants';
+import { constants } from '~/server/common/constants';
 import { ImagesAsPostModel } from '~/server/controllers/image.controller';
 import { generationPanel } from '~/store/generation.store';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -72,7 +72,6 @@ export function ImagesAsPostsCard({
   const currentModelVersionId = filters.modelVersionId as number;
 
   const image = data.images[0];
-  const videoMetadata = image.type === 'video' ? (image.metadata as VideoMetadata | null) : null;
 
   const [embla, setEmbla] = useState<Embla | null>(null);
   const [slidesInView, setSlidesInView] = useState<number[]>([]);
@@ -349,13 +348,10 @@ export function ImagesAsPostsCard({
                                 placeholder="empty"
                                 className={classes.image}
                                 wrapperProps={{ style: { zIndex: 1 } }}
-                                anim={
-                                  image.type === 'video' &&
-                                  videoMetadata?.duration &&
-                                  videoMetadata.duration > MAX_ANIMATION_DURATION_SECONDS
-                                    ? false
-                                    : undefined
-                                }
+                                anim={shouldAnimateByDefault({
+                                  type: image.type,
+                                  metadata: image.metadata as VideoMetadata,
+                                })}
                                 fadeIn
                               />
                             )}
@@ -428,9 +424,6 @@ export function ImagesAsPostsCard({
                     }}
                   >
                     {data.images.map((image, index) => {
-                      const videoMetadata =
-                        image.type === 'video' ? (image.metadata as VideoMetadata | null) : null;
-
                       return (
                         <Carousel.Slide key={image.id}>
                           {slidesInView.includes(index) && (
@@ -495,13 +488,10 @@ export function ImagesAsPostsCard({
                                           placeholder="empty"
                                           className={classes.image}
                                           wrapperProps={{ style: { zIndex: 1 } }}
-                                          anim={
-                                            image.type === 'video' &&
-                                            videoMetadata?.duration &&
-                                            videoMetadata.duration > MAX_ANIMATION_DURATION_SECONDS
-                                              ? false
-                                              : undefined
-                                          }
+                                          anim={shouldAnimateByDefault({
+                                            type: image.type,
+                                            metadata: image.metadata as VideoMetadata,
+                                          })}
                                           fadeIn
                                         />
                                       )}

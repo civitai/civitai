@@ -1,7 +1,10 @@
 import { createStyles, Text } from '@mantine/core';
+import { MediaType } from '@prisma/client';
 import React, { useEffect, useRef } from 'react';
 import { EdgeUrlProps, useEdgeUrl } from '~/client-utils/cf-images-utils';
 import { EdgeVideo } from '~/components/EdgeMedia/EdgeVideo';
+import { MAX_ANIMATION_DURATION_SECONDS } from '~/server/common/constants';
+import { VideoMetadata } from '~/server/schema/media.schema';
 
 export type EdgeMediaProps = EdgeUrlProps &
   Omit<JSX.IntrinsicElements['img'], 'src' | 'srcSet' | 'ref' | 'width' | 'height' | 'metadata'> & {
@@ -102,3 +105,15 @@ const useStyles = createStyles((theme, params: { maxWidth?: number }) => ({
     transition: theme.other.fadeIn,
   },
 }));
+
+export function shouldAnimateByDefault({
+  type,
+  metadata,
+}: {
+  type: MediaType;
+  metadata?: Pick<VideoMetadata, 'duration'> | null;
+}) {
+  if (type !== 'video' || !metadata || !metadata.duration) return undefined;
+
+  return metadata.duration <= MAX_ANIMATION_DURATION_SECONDS;
+}
