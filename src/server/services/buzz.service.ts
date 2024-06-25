@@ -222,22 +222,6 @@ export async function createBuzzTransaction({
 
   const data: { transactionId: string } = await response.json();
 
-  if (collaboratorIds.length > 0) {
-    const transactions = collaboratorIds.map((userId) => ({
-      ...payload,
-      details: {
-        ...(details ?? {}),
-        entityId: entityId ?? details?.entityId,
-        entityType: entityType ?? details?.entityType,
-      },
-      amount,
-      toAccountId: userId,
-      externalTransactionId: `collaborator-${userId}-${data.transactionId}`,
-    }));
-
-    await createBuzzTransactionMany(transactions);
-  }
-
   return data;
 }
 
