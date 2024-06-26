@@ -225,10 +225,10 @@ export function QueueItem({
         <Collection items={resources} limit={3} renderItem={ResourceBadge} grouped />
         {(!!images?.length || processing) && (
           <div className={classes.grid}>
-            {processing && <GenerationPlaceholder width={params.width} height={params.height} />}
             {images.map((image) => (
               <GeneratedImage key={image.id} image={image} request={request} step={step} />
             ))}
+            {processing && <GenerationPlaceholder width={params.width} height={params.height} />}
           </div>
         )}
       </div>

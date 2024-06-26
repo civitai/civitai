@@ -35,19 +35,20 @@ export function useGetTextToImageRequests(
       data?.pages.flatMap((x) =>
         (x.items ?? []).map((response) => {
           const steps = response.steps.map((step) => {
-            const images = step.images
-              .filter((image) => !step.metadata?.images?.[image.id]?.hidden)
-              .sort((a, b) => {
-                if (a.completed !== b.completed) {
-                  if (!b.completed) return 1;
-                  if (!a.completed) return -1;
-                  return b.completed.getTime() - a.completed.getTime();
-                } else {
-                  if (a.id < b.id) return -1;
-                  if (a.id > b.id) return 1;
-                  return 0;
-                }
-              });
+            const images = step.images.filter(
+              (image) => !step.metadata?.images?.[image.id]?.hidden
+            );
+            // .sort((a, b) => {
+            //   if (a.completed !== b.completed) {
+            //     if (!b.completed) return 1;
+            //     if (!a.completed) return -1;
+            //     return b.completed.getTime() - a.completed.getTime();
+            //   } else {
+            //     if (a.id < b.id) return -1;
+            //     if (a.id > b.id) return 1;
+            //     return 0;
+            //   }
+            // });
             return { ...step, images };
           });
           return { ...response, steps };
