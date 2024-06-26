@@ -30,7 +30,7 @@ export const PostContestCollectionInfoAlert = ({
           {collectionItem.status === CollectionItemStatus.REVIEW ? (
             <Stack>
               <Text>
-                Thank you for your submission to the {collectionName} contest!. We will review your
+                Thank you for your submission to the {collectionName} contest! We will review your
                 submission and let you know if it is accepted so that it appears in the contest
                 collection within 24 to 48 hours.
               </Text>
