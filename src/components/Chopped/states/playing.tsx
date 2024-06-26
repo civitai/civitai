@@ -75,9 +75,11 @@ import { resizeImage } from '~/utils/image-utils';
 
 export function Playing() {
   const roundNumber = useChoppedStore((state) => state.game!.round + 1);
-  const roundStatus = useChoppedStore((state) => state.game!.rounds[state.game!.round].status);
+  const roundStatus = useChoppedStore(
+    (state) => state.game!.rounds[state.game!.round.toString()].status
+  );
   const theme = useChoppedStore((state) => {
-    const round = state.game!.rounds[state.game!.round];
+    const round = state.game!.rounds[state.game!.round.toString()];
     return state.global.themes.find((theme) => theme.id === round.themeId)!;
   });
 
@@ -190,6 +192,8 @@ function PlayerList() {
 
 function RoundSubmissions({ theme }: RoundProps) {
   const { submitImage } = useChoppedServer();
+  const user = useChoppedStore((state) => state.game?.users.find((x) => x.id === state.userId));
+  const spectating = user?.status === 'viewer' || user?.status === 'eliminated';
   const [submittedImage, setSubmittedImage] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState(false);
   const submit = async () => {
@@ -197,6 +201,17 @@ function RoundSubmissions({ theme }: RoundProps) {
     setSubmitted(true);
     submitImage(submittedImage);
   };
+
+  if (spectating)
+    return (
+      <Alert radius="sm" color="green" sx={{ zIndex: 10 }}>
+        <Group spacing="xs" noWrap position="center">
+          <Text size="md" weight={500}>
+            Spectating
+          </Text>
+        </Group>
+      </Alert>
+    );
 
   return (
     <Stack align="center">
@@ -232,7 +247,7 @@ function RoundSubmissions({ theme }: RoundProps) {
 
 function SubmissionCountdown(props: BoxProps) {
   const { start, end } = useChoppedStore((state) => {
-    const round = state.game!.rounds[state.game!.round];
+    const round = state.game!.rounds[state.game!.round.toString()];
     return {
       start: round.submissionsOpenedAt!,
       end: round.submissionsOpenedAt! + round.duration * 1000,
@@ -345,8 +360,9 @@ function RoundJudging({ theme }: RoundProps) {
   const isHost = useIsHost();
   const pendingCount = useChoppedStore(
     (state) =>
-      state.game!.rounds[state.game!.round].submissions.filter((x) => x.judgeStatus !== 'complete')
-        .length
+      state.game!.rounds[state.game!.round.toString()].submissions.filter(
+        (x) => x.judgeStatus !== 'complete'
+      ).length
   );
 
   return (
@@ -422,14 +438,13 @@ function RoundShowing({ theme }: RoundProps) {
   const isHost = useIsHost();
   const userId = useChoppedUserId();
   const server = useChoppedServer();
-  const { submission, judge } = useChoppedStore((state) => {
-    const round = state.game!.rounds[state.game!.round];
-    const submissionId = round.showcaseIds?.[(round.showcaseIds?.length ?? 1) - 1];
-    const submission = round.submissions.find((s) => s.id === submissionId)!;
-    const judge = state.global.judges.find((j) => j.id === submission?.judgeId)!;
+  const { submission } = useChoppedStore((state) => {
+    const round = state.game!.rounds[state.game!.round.toString()];
+    const showcaseId = Object.keys(round.showcaseIds)[0];
+    const submission = round.submissions.find((x) => x.id === showcaseId)!;
+    console.log({ showcaseId, submission });
     return {
       submission,
-      judge,
     };
   });
 
@@ -466,7 +481,7 @@ function RoundShowing({ theme }: RoundProps) {
 function RoundDeciding({ theme }: RoundProps) {
   // the backend will automatically progress from here when it's ready
   const decision = useChoppedStore((state) => {
-    const round = state.game!.rounds[state.game!.round];
+    const round = state.game!.rounds[state.game!.round.toString()];
     return {
       type: round.decisionType,
       needed: round.decisionsNeeded,
@@ -490,12 +505,10 @@ function RoundAwarding({ theme }: RoundProps) {
   const isHost = useIsHost();
   const server = useChoppedServer();
   const { decisionType, submissions, ...comment } = useChoppedStore((state) => {
-    const round = state.game!.rounds[state.game!.round];
+    const round = state.game!.rounds[state.game!.round.toString()];
     return {
       decisionType: round.decisionType,
-      submissions: round.submissions.filter((submission) =>
-        round.decisionUsers.includes(submission.userId)
-      ),
+      submissions: round.submissions.filter((submission) => round.decisionUsers[submission.userId]),
       judgeId: round.judgeId!,
       text: round.judgeDecisionText!,
       audio: round.judgeDecisionAudio!,

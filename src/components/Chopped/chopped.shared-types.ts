@@ -48,7 +48,7 @@ export type GameState = {
   round: number;
   status: 'setup' | 'joining' | 'playing' | 'complete';
   judgeIds: string[]; // list of judgeIds
-  rounds: Round[];
+  rounds: Record<string, Round>;
   users: User[];
   hostId: string; // userId
   includeAudio: boolean;
@@ -77,14 +77,14 @@ export type Round = {
   duration: number; // seconds
   submissions: Submission[];
   submissionsOpenedAt?: number; // timestamp
-  showcaseIds?: string[]; // the submission Ids to display (shuffled and popped)
+  showcaseIds: Record<string, boolean>; // the submission Ids to display (shuffled and popped)
   judgeId?: string;
   judgeStatus?: JudgeStatus;
   judgeDecisionText?: string;
   judgeDecisionAudio?: string;
   decisionType: 'elimination' | 'winner';
   decisionsNeeded: number; // how many people to eliminate or win
-  decisionUsers: string[]; // list of userIds
+  decisionUsers: Record<string, boolean>; // list of userIds
 };
 export type RoundStatus = Round['status'];
 

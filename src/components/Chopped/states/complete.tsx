@@ -34,14 +34,14 @@ import { ChoppedLayout } from '~/components/Chopped/chopped.components';
 
 export function Complete() {
   const submissions = useChoppedStore((state) =>
-    state.game!.rounds.flatMap((round) =>
-      round.submissions.sort((a, b) => (b.judgeScore ?? 0) - (a.judgeScore ?? 0))
-    )
+    Object.values(state.game!.rounds)
+      .reverse()
+      .flatMap((round) =>
+        [...round.submissions].sort((a, b) => (b.judgeScore ?? 0) - (a.judgeScore ?? 0))
+      )
   );
 
-  function handleClick() {
-    // TODO.chopped - play again - update player state?
-  }
+  // TODO.chopped - carousel auto play
 
   return (
     <ChoppedLayout

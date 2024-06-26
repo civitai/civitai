@@ -331,6 +331,7 @@ export function ChoppedJudgeComment({
   audio?: string;
   onContinue?: () => Promise<void>;
 }) {
+  const isHost = useIsHost();
   const judge = useChoppedStore((state) => state.global!.judges.find((j) => j.id === judgeId)!);
   const autoplay = useChoppedStore((state) => state.autoplayAudio);
   const { play, stop, playing } = useBase64Audio(audio!, autoplay);
@@ -369,7 +370,7 @@ export function ChoppedJudgeComment({
           </div>
         </div>
       </div>
-      {onContinue && (
+      {onContinue && isHost && (
         <Button size="lg" fullWidth onClick={onContinue}>
           Continue
         </Button>
