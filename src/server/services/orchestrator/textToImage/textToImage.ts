@@ -368,8 +368,16 @@ export async function formatTextToImageResponses(
         }
       }
 
+      // infer draft from resources if not included in meta params
+      const isDraft =
+        metadata?.params?.draft ??
+        (injectable.draft ? versionIds.includes(injectable.draft.id) : false);
+
+      // infer nsfw from resources if not included in meta params
+      const isNsfw = metadata?.params?.nsfw ?? !versionIds.includes(injectable.civit_nsfw.id);
+
       let quantity = input.quantity ?? 1;
-      if (metadata?.params?.draft) {
+      if (isDraft) {
         quantity *= 4;
       }
 
@@ -393,8 +401,8 @@ export async function formatTextToImageResponses(
           height: input.height,
           seed: input.seed,
           clipSkip: input.clipSkip,
-          draft: metadata?.params?.draft ?? false,
-          nsfw: metadata?.params?.nsfw ?? false,
+          draft: isDraft,
+          nsfw: isNsfw,
         },
         resources,
         images,
