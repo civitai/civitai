@@ -202,15 +202,15 @@ export const getGenerationResources = async (
         FROM "ModelVersion" mv
         JOIN "Model" m ON m.id = mv."modelId"
         ${Prisma.raw(
-        supported
-          ? `JOIN "GenerationCoverage" gc ON gc."modelVersionId" = mv.id AND gc.covered = true`
-          : ''
-      )}
+          supported
+            ? `JOIN "GenerationCoverage" gc ON gc."modelVersionId" = mv.id AND gc.covered = true`
+            : ''
+        )}
         ${Prisma.raw(
-        orderBy.startsWith('mm')
-          ? `JOIN "ModelMetric" mm ON mm."modelId" = m.id AND mm.timeframe = 'AllTime'`
-          : ''
-      )}
+          orderBy.startsWith('mm')
+            ? `JOIN "ModelMetric" mm ON mm."modelId" = m.id AND mm.timeframe = 'AllTime'`
+            : ''
+        )}
         WHERE ${Prisma.join(sqlAnd, ' AND ')}
         ORDER BY ${Prisma.raw(orderBy)}
         LIMIT ${take}
@@ -221,10 +221,10 @@ export const getGenerationResources = async (
         FROM "ModelVersion" mv
         JOIN "Model" m ON m.id = mv."modelId"
         ${Prisma.raw(
-        supported
-          ? `JOIN "GenerationCoverage" gc ON gc."modelVersionId" = mv.id AND gc.covered = true`
-          : ''
-      )}
+          supported
+            ? `JOIN "GenerationCoverage" gc ON gc."modelVersionId" = mv.id AND gc.covered = true`
+            : ''
+        )}
         WHERE ${Prisma.join(sqlAnd, ' AND ')}
       `;
       const [{ count }] = rowCount;
@@ -262,8 +262,8 @@ const formatGenerationRequests = async (requests: Generation.Api.RequestProps[])
   const checkpoint = modelVersions.find((x) => x.model.type === 'Checkpoint');
   const baseModel = checkpoint
     ? (baseModelSetsEntries.find(([, v]) =>
-      v.includes(checkpoint.baseModel as BaseModel)
-    )?.[0] as BaseModelSetType)
+        v.includes(checkpoint.baseModel as BaseModel)
+      )?.[0] as BaseModelSetType)
     : undefined;
 
   // const alternativesAvailable =
@@ -880,7 +880,7 @@ export const getGenerationData = async (
     case 'modelVersion':
       return await getResourceGenerationData({ modelVersionId: props.id });
     case 'modelVersions':
-      return await getMultipleResourceGenerationData({ versionIds: props.ids })
+      return await getMultipleResourceGenerationData({ versionIds: props.ids });
     case 'random':
       return await getRandomGenerationData(props.includeResources);
   }
@@ -924,7 +924,7 @@ export const getResourceGenerationData = async ({
 };
 
 const getMultipleResourceGenerationData = async ({ versionIds }: { versionIds: number[] }) => {
-  if (!versionIds.length) throw new Error('missing version ids')
+  if (!versionIds.length) throw new Error('missing version ids');
   const resources = await dbRead.modelVersion.findMany({
     where: { id: { in: versionIds } },
     select: {
@@ -933,7 +933,7 @@ const getMultipleResourceGenerationData = async ({ versionIds }: { versionIds: n
       vaeId: true,
     },
   });
-  const checkpoint = resources.find(x => x.baseModel === 'Checkpoint');
+  const checkpoint = resources.find((x) => x.baseModel === 'Checkpoint');
   if (checkpoint?.vaeId) {
     const vae = await dbRead.modelVersion.findFirst({
       where: { id: checkpoint.vaeId },
@@ -943,9 +943,9 @@ const getMultipleResourceGenerationData = async ({ versionIds }: { versionIds: n
   }
   return {
     resources: resources.map(mapGenerationResource),
-    params: {}
-  }
-}
+    params: {},
+  };
+};
 
 type ResourceUsedRow = Generation.Resource & { covered: boolean; hash?: string; strength?: number };
 const defaultCheckpointData: Partial<Record<BaseModelSetType, ResourceUsedRow>> = {};
@@ -1029,8 +1029,8 @@ const getImageGenerationData = async (id: number): Promise<Generation.Data> => {
   const model = deduped.find((x) => x.modelType === 'Checkpoint');
   const baseModel = model
     ? (baseModelSetsEntries.find(([, v]) =>
-      v.includes(model.baseModel as BaseModel)
-    )?.[0] as BaseModelSetType)
+        v.includes(model.baseModel as BaseModel)
+      )?.[0] as BaseModelSetType)
     : undefined;
 
   // Clean-up bad values
@@ -1043,9 +1043,9 @@ const getImageGenerationData = async (id: number): Promise<Generation.Data> => {
     resources: !model
       ? []
       : deduped.map((resource) => ({
-        ...resource,
-        strength: resource.strength ?? 1,
-      })),
+          ...resource,
+          strength: resource.strength ?? 1,
+        })),
     params: {
       ...meta,
       clipSkip,

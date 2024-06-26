@@ -266,7 +266,7 @@ export const getGenerationDataSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('model'), id: z.coerce.number() }),
   z.object({ type: z.literal('modelVersion'), id: z.coerce.number() }),
   z.object({ type: z.literal('random'), includeResources: z.boolean().optional() }),
-  z.object({ type: z.literal('modelVersions'), ids: numericStringArray().optional() })
+  z.object({ type: z.literal('modelVersions'), ids: numericStringArray() }),
 ]);
 
 export type BulkDeleteGeneratedImagesInput = z.infer<typeof bulkDeleteGeneratedImagesSchema>;
