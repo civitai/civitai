@@ -1,12 +1,18 @@
 import { Tooltip, ActionIcon, CloseButton, SegmentedControl } from '@mantine/core';
-import { IconArrowsDiagonal, IconBrush, IconGridDots, TablerIconsProps } from '@tabler/icons-react';
+import {
+  Icon,
+  IconArrowsDiagonal,
+  IconBrush,
+  IconGridDots,
+  IconProps,
+  IconClockHour9,
+} from '@tabler/icons-react';
 import { Feed } from './Feed';
 import { Queue } from './Queue';
 import { GenerationPanelView, generationPanel, useGenerationStore } from '~/store/generation.store';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import React, { useEffect } from 'react';
+import React, { ForwardRefExoticComponent, RefAttributes, useEffect } from 'react';
 import { useRouter } from 'next/router';
-import { IconClockHour9 } from '@tabler/icons-react';
 import { GeneratedImageActions } from '~/components/ImageGeneration/GeneratedImageActions';
 import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvider';
 import { GenerationForm2 } from '~/components/ImageGeneration/GenerationForm/GenerationForm2';
@@ -88,7 +94,7 @@ export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean })
 type Tabs = Record<
   GenerationPanelView,
   {
-    Icon: (props: TablerIconsProps) => JSX.Element;
+    Icon: ForwardRefExoticComponent<IconProps & RefAttributes<Icon>>;
     label: string;
     Component: React.FC;
   }

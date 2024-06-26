@@ -17,6 +17,8 @@ import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMen
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
 import { CosmeticEntity } from '@prisma/client';
+import { VideoMetadata } from '~/server/schema/media.schema';
+import { shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
 
 const IMAGE_CARD_WIDTH = 332;
 
@@ -73,6 +75,7 @@ export function PostCard({ data }: Props) {
                         ? truncate(image.meta.prompt, { length: constants.altTruncateLength })
                         : image.name ?? undefined
                     }
+                    anim={shouldAnimateByDefault(image)}
                     type={image.type}
                     width={IMAGE_CARD_WIDTH}
                     placeholder="empty"

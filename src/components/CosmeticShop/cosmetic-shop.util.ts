@@ -15,7 +15,7 @@ import {
 } from '~/server/schema/cosmetic-shop.schema';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import { numericStringArray, stringArray } from '~/utils/zod-helpers';
+import { stringArray } from '~/utils/zod-helpers';
 
 export const useQueryCosmeticShopItemsPaged = (
   filters?: Partial<GetPaginatedCosmeticShopItemInput>,

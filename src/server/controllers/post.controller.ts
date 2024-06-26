@@ -53,9 +53,10 @@ import {
   getUserCollectionPermissionsById,
   validateContestCollectionEntry,
 } from '~/server/services/collection.service';
-import { CollectionMode, CollectionType } from '@prisma/client';
+import { CollectionMode, CollectionType, EntityType } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
 import { Flags } from '~/shared/utils';
+import { sendMessagesToCollaborators } from '~/server/services/entity-collaborator.service';
 
 export const getPostsInfiniteHandler = async ({
   input,
@@ -188,7 +189,7 @@ export const updatePostHandler = async ({
         const postIds = collection.type === CollectionType.Post ? [input.id] : [];
         const images =
           collection.type === CollectionType.Image
-            ? await dbRead.image.findMany({
+            ? await dbWrite.image.findMany({
                 where: {
                   postId: post.id,
                 },
@@ -227,8 +228,16 @@ export const updatePostHandler = async ({
       const isScheduled = dayjs(updatedPost.publishedAt).isAfter(dayjs().add(10, 'minutes')); // Publishing more than 10 minutes in the future
       const tags = postTags.map((x) => x.tagName);
 
+      if (!isScheduled) {
+        await sendMessagesToCollaborators({
+          entityId: updatedPost.id,
+          entityType: EntityType.Post,
+          userId: ctx.user.id,
+        });
+      }
+
       // Technically, collectionPosts cannot be scheduled.
-      if (!!updatedPost?.collectionId && !isScheduled) {
+      if (!!updatedPost?.collectionId) {
         // Create the relevant collectionItem:
         const collection = await getCollectionById({
           input: {
@@ -253,8 +262,8 @@ export const updatePostHandler = async ({
             permissions,
           });
         } else if (collection.type === CollectionType.Image) {
-          // get all images with this postId:
-          const images = await dbRead.image.findMany({
+          // get all images with this postId. We're using DB write in case there's some lag.
+          const images = await dbWrite.image.findMany({
             where: {
               postId: updatedPost.id,
             },
@@ -280,6 +289,7 @@ export const updatePostHandler = async ({
       }
 
       if (isScheduled) tags.push('scheduled');
+
       await ctx.track.post({
         type: 'Publish',
         nsfw: !getIsSafeBrowsingLevel(updatedPost.nsfwLevel),

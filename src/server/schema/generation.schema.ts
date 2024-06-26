@@ -5,6 +5,7 @@ import { userTierSchema } from '~/server/schema/user.schema';
 import { auditPrompt } from '~/utils/metadata/audit';
 import { imageSchema } from './image.schema';
 import { GenerationRequestStatus } from '~/server/common/enums';
+import { numericStringArray } from '~/utils/zod-helpers';
 // export type GetGenerationResourceInput = z.infer<typeof getGenerationResourceSchema>;
 // export const getGenerationResourceSchema = z.object({
 //   type: z.nativeEnum(ModelType),
@@ -264,6 +265,7 @@ export const getGenerationDataSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('image'), id: z.coerce.number() }),
   z.object({ type: z.literal('modelVersion'), id: z.coerce.number() }),
   // z.object({ type: z.literal('random'), includeResources: z.boolean().optional() }),
+  z.object({ type: z.literal('modelVersions'), ids: numericStringArray() }),
 ]);
 
 export type BulkDeleteGeneratedImagesInput = z.infer<typeof bulkDeleteGeneratedImagesSchema>;

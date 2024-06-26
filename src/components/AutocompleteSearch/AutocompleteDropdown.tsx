@@ -16,13 +16,13 @@ import {
   IconCurrencyDollar,
   IconHash,
   IconSearch,
-  TablerIconsProps,
+  IconProps,
 } from '@tabler/icons-react';
 
 export type FilterIndex = 'models' | 'users' | 'tags' | 'articles';
 export type FilterIdentifier = FilterIndex | 'all';
 
-export function FilterIcon({ type, ...props }: TablerIconsProps & { type: FilterIdentifier }) {
+export function FilterIcon({ type, ...props }: IconProps & { type: FilterIdentifier }) {
   return {
     models: <IconCurrencyDollar {...props} />,
     users: <IconAt {...props} />,

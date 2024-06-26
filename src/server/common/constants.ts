@@ -9,11 +9,13 @@ import {
   ModelVersionSponsorshipSettingsType,
   ReviewReactions,
 } from '@prisma/client';
-import { IconBolt, IconCurrencyDollar, TablerIconsProps } from '@tabler/icons-react';
+import { Icon, IconBolt, IconCurrencyDollar, IconProps } from '@tabler/icons-react';
 import { ModelSort } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
 import { ArticleSort, CollectionSort, ImageSort, PostSort, QuestionSort } from './enums';
 import { GenerationResource } from '~/shared/constants/generation.constants';
+import { env } from '~/env/client.mjs';
+import { ForwardRefExoticComponent, RefAttributes } from 'react';
 
 export const constants = {
   modelFilterDefaults: {
@@ -206,9 +208,9 @@ export const constants = {
   maxTrainingRetries: 2,
   mediaUpload: {
     maxImageFileSize: 50 * 1024 ** 2, // 50MB
-    maxVideoFileSize: 500 * 1024 ** 2, // 500MB
+    maxVideoFileSize: 750 * 1024 ** 2, // 750MB
     maxVideoDimension: 3840,
-    maxVideoDurationSeconds: 200,
+    maxVideoDurationSeconds: 245,
   },
   bounties: {
     engagementTypes: ['active', 'favorite', 'tracking', 'supporter', 'awarded'],
@@ -338,6 +340,19 @@ export const constants = {
   modelGallery: {
     maxPinnedPosts: 10,
   },
+  chat: {
+    airRegex: /^civitai:(?<mId>\d+)@(?<mvId>\d+)$/i,
+    // TODO disable just "image.civitai.com" with nothing else
+    civRegex: new RegExp(
+      `^(?:https?://)?(?:image\\.)?(?:${(env.NEXT_PUBLIC_BASE_URL ?? 'civitai.com')
+        .replace(/^https?:\/\//, '')
+        .replace(/\./g, '\\.')}|civitai\\.com)`
+    ),
+    externalRegex: /^(?:https?:\/\/)?(?:www\.)?(github\.com|twitter\.com|x\.com)/,
+  },
+  entityCollaborators: {
+    maxCollaborators: 15,
+  },
 } as const;
 export const activeBaseModels = constants.baseModels.filter(
   (model) => !constants.hiddenBaseModels.includes(model)
@@ -350,6 +365,7 @@ export const POST_IMAGE_LIMIT = 20;
 export const POST_TAG_LIMIT = 5;
 export const CAROUSEL_LIMIT = 20;
 export const DEFAULT_EDGE_IMAGE_WIDTH = 450;
+export const MAX_ANIMATION_DURATION_SECONDS = 30;
 
 export type BaseModelType = (typeof constants.baseModelTypes)[number];
 
@@ -683,7 +699,7 @@ export const modelVersionSponsorshipSettingsTypeOptions: Record<
 export const CurrencyConfig: Record<
   Currency,
   {
-    icon: (props: TablerIconsProps) => JSX.Element;
+    icon: ForwardRefExoticComponent<IconProps & RefAttributes<Icon>>;
     color: (theme: MantineTheme) => string;
     fill?: (theme: MantineTheme) => string | string;
   }

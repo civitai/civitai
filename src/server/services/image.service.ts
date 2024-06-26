@@ -89,6 +89,7 @@ import {
   ingestImageSchema,
 } from './../schema/image.schema';
 import { collectionSelect } from '~/server/selectors/collection.selector';
+import { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -277,6 +278,12 @@ export const getImageDetail = async ({ id }: GetByIdInput) => {
         },
       },
     },
+  });
+};
+
+export const getImageById = async ({ id }: GetByIdInput) => {
+  return await dbRead.image.findUnique({
+    where: { id },
   });
 };
 
@@ -502,7 +509,7 @@ type GetAllImagesRaw = {
   viewCount: number;
   cursorId?: string;
   type: MediaType;
-  metadata: Prisma.JsonValue;
+  metadata: ImageMetadata | VideoMetadata | null;
   baseModel?: string;
   availability: Availability;
 };
@@ -630,12 +637,27 @@ export const getAllImages = async ({
   }
 
   if (targetUserId) {
-    AND.push(Prisma.sql`u."id" = ${targetUserId}`);
+    WITH.push(
+      Prisma.sql`collaboratingPosts AS (
+        SELECT "entityId" id FROM "EntityCollaborator"
+        WHERE "userId" = ${targetUserId}
+          AND "entityType" = 'Post'
+          AND "status" = 'Approved'
+        )`
+    );
+
+    AND.push(
+      // TOOD: Due to performance reasons we cannot add this here yet. Will need to revise with other teams.
+      // Prisma.sql`(u."id" = ${targetUserId} OR i."postId" IN (SELECT id FROM collaboratingPosts))`
+      Prisma.sql`u."id" = ${targetUserId}`
+    );
     // Don't cache self queries
-    if (targetUserId !== userId) {
-      cacheTime = CacheTTL.day;
-      cacheTags.push(`images-user:${targetUserId}`);
-    } else cacheTime = 0;
+    console.log('THIS IS ABOUT TO HAPPEN BUD!');
+    cacheTime = 0;
+    // if (targetUserId !== userId) {
+    //   cacheTime = CacheTTL.day;
+    //   cacheTags.push(`images-user:${targetUserId}`);
+    // } else cacheTime = 0;
   }
 
   // Filter only followed users
@@ -819,20 +841,20 @@ export const getAllImages = async ({
     );
   }
 
-  // if (!!tools?.length) {
-  //   AND.push(Prisma.sql`i.id IN (
-  //     SELECT "imageId"
-  //     FROM "ImageTool"
-  //     WHERE "imageId" = i.id AND "toolId" IN (${Prisma.join(tools)})
-  //   )`);
-  // }
-  // if (!!techniques?.length) {
-  //   AND.push(Prisma.sql`i.id IN (
-  //     SELECT "imageId"
-  //     FROM "ImageTechnique"
-  //     WHERE "imageId" = i.id AND "techniqueId" IN (${Prisma.join(techniques)})
-  //   )`);
-  // }
+  if (!!tools?.length) {
+    AND.push(Prisma.sql`EXISTS (
+      SELECT 1
+      FROM "ImageTool" it
+      WHERE it."imageId" = i.id AND it."toolId" IN (${Prisma.join(tools)})
+    )`);
+  }
+  if (!!techniques?.length) {
+    AND.push(Prisma.sql`EXISTS (
+      SELECT 1
+      FROM "ImageTechnique" it
+      WHERE it."imageId" = i.id AND it."techniqueId" IN (${Prisma.join(techniques)})
+    )`);
+  }
 
   if (baseModels?.length) {
     AND.push(Prisma.sql`EXISTS (
@@ -1027,7 +1049,7 @@ export const getAllImages = async ({
 
   const now = new Date();
   const images: Array<
-    Omit<ImageV2Model, 'nsfwLevel'> & {
+    Omit<ImageV2Model, 'nsfwLevel' | 'metadata'> & {
       meta: ImageMetaProps | null; // TODO - don't fetch meta
       hideMeta: boolean; // TODO - remove references to this. Instead, use `hasMeta`
       hasMeta: boolean;
@@ -1039,6 +1061,7 @@ export const getAllImages = async ({
       availability?: Availability;
       nsfwLevel: NsfwLevel;
       cosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
+      metadata: ImageMetadata | VideoMetadata | null;
     }
   > = rawImages
     .filter((x) => {
@@ -1581,7 +1604,7 @@ export const getImagesForPosts = async ({
       commentCount: number;
       tippedAmountCount: number;
       type: MediaType;
-      metadata: Prisma.JsonValue;
+      metadata: ImageMetadata | VideoMetadata | null;
       meta?: Prisma.JsonValue;
       reactions?: ReviewReactions[];
     }[]
@@ -1773,7 +1796,7 @@ type GetImageConnectionRaw = {
   userId: number;
   index: number;
   type: MediaType;
-  metadata: Prisma.JsonValue;
+  metadata: ImageMetadata | VideoMetadata;
   entityId: number;
 };
 
@@ -2022,7 +2045,7 @@ type GetEntityImageRaw = {
   userId: number;
   index: number;
   type: MediaType;
-  metadata: Prisma.JsonValue;
+  metadata: MixedObject | null;
   entityId: number;
   entityType: string;
 };

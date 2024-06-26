@@ -70,6 +70,7 @@ import { collectionsSearchIndex } from '~/server/search-index';
 import { createNotification } from '~/server/services/notification.service';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
 import { collectionSelect } from '~/server/selectors/collection.selector';
+import permission from '~/pages/api/admin/permission';
 
 export type CollectionContributorPermissionFlags = {
   collectionId: number;
@@ -202,7 +203,7 @@ export const getUserCollectionPermissionsById = async ({
     permissions.write = true;
   }
 
-  if (isModerator) {
+  if (isModerator && !permissions.isOwner) {
     permissions.manage = true;
     permissions.read = true;
     // Makes sure that moderators' stuff still needs to be reviewed.
@@ -212,7 +213,7 @@ export const getUserCollectionPermissionsById = async ({
 
   const [contributorItem] = collection.contributors;
 
-  if (!contributorItem) {
+  if (!contributorItem || permissions.isOwner) {
     return permissions;
   }
 
@@ -463,9 +464,9 @@ export const saveItemInCollections = async ({
           id: collectionId,
         });
 
-        if (!permission.isContributor) {
+        if (!permission.isContributor && !permission.isOwner) {
           // Make sure to follow the collection
-          return addContributorToCollection({
+          await addContributorToCollection({
             targetUserId: userId,
             userId: userId,
             collectionId,
@@ -634,7 +635,13 @@ export const upsertCollection = async ({
     // Get current collection values for comparison
     const currentCollection = await dbWrite.collection.findUnique({
       where: { id },
-      select: { id: true, mode: true, image: { select: { id: true } } },
+      select: {
+        id: true,
+        read: true,
+        mode: true,
+        createdAt: true,
+        image: { select: { id: true } },
+      },
     });
     if (!currentCollection) throw throwNotFoundError(`No collection with id ${id}`);
 
@@ -710,18 +717,25 @@ export const upsertCollection = async ({
       return updated;
     });
 
-    if (input.read === CollectionReadConfiguration.Public) {
+    if (
+      input.read === CollectionReadConfiguration.Public &&
+      currentCollection.read !== input.read
+    ) {
       // Set publishedAt for all post belonging to this collection if changing privacy to public
-      await dbWrite.post.updateMany({
-        where: { collectionId: updated.id },
-        data: { publishedAt: new Date() },
-      });
-    } else if (!updated.mode) {
-      // otherwise set publishedAt to null
-      await dbWrite.post.updateMany({
-        where: { collectionId: updated.id },
-        data: { publishedAt: null },
-      });
+      await dbWrite.$queryRaw`
+        UPDATE "Post" SET
+          "publishedAt" = COALESCE(DATE("metadata"->>'prevPublishedAt'), ${currentCollection.createdAt}, NOW()),
+          "metadata" = jsonb_set("metadata", '{prevPublishedAt}', NULL)
+        WHERE "collectionId" = ${updated.id}
+      `;
+    } else if (!updated.mode && input.read !== CollectionReadConfiguration.Public) {
+      // otherwise set publishedAt to null when no mode is setup.
+      await dbWrite.$queryRaw`
+        UPDATE "Post" SET
+          "publishedAt" = NULL,
+          "metadata" = jsonb_set("metadata", '{prevPublishedAt}', to_jsonb("publishedAt"))
+        WHERE "collectionId" = ${updated.id}
+      `;
     }
 
     // Update contributors:
@@ -1618,9 +1632,9 @@ export const bulkSaveItems = async ({
     throw throwBadRequestError('The tag provided is not allowed in this collection');
   }
 
-  if (!permissions.isContributor) {
+  if (!permissions.isContributor && !permissions.isOwner) {
     // Make sure to follow the collection
-    return addContributorToCollection({
+    await addContributorToCollection({
       targetUserId: userId,
       userId: userId,
       collectionId,

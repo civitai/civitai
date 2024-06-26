@@ -19,9 +19,11 @@ type AppLayoutProps = {
 export function AppLayout({
   children,
   renderSearchComponent,
+  withFooter = true,
 }: {
   children: React.ReactNode;
   renderSearchComponent?: (opts: RenderSearchComponentProps) => React.ReactElement;
+  withFooter?: boolean
 }) {
   const { classes } = useStyles();
   const user = useCurrentUser();
@@ -63,7 +65,7 @@ export function AppLayout({
           <AssistantButton />
         </FloatingActionButton2>
       </main>
-      <AppFooter fixed={false} />
+      {withFooter && <AppFooter fixed={false} />}
       {/* Disabling because this is popping in too frequently */}
       {/* <NewsletterDialog /> */}
     </>

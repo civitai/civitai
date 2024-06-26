@@ -660,6 +660,8 @@ export const getGenerationData = async (props: GetGenerationDataInput): Promise<
       return await getImageGenerationData(props.id);
     case 'modelVersion':
       return await getResourceGenerationData({ modelVersionId: props.id });
+    case 'modelVersions':
+      return await getMultipleResourceGenerationData({ versionIds: props.ids });
     default:
       throw new Error('unsupported generation data type');
   }
@@ -687,6 +689,20 @@ export const getResourceGenerationData = async ({ modelVersionId }: { modelVersi
         versionId: resource.id,
       },
     },
+  };
+};
+
+const getMultipleResourceGenerationData = async ({ versionIds }: { versionIds: number[] }) => {
+  if (!versionIds.length) throw new Error('missing version ids');
+  const resources = await resourceDataCache.fetch(versionIds);
+  const checkpoint = resources.find((x) => x.baseModel === 'Checkpoint');
+  if (checkpoint?.vaeId) {
+    const [vae] = await resourceDataCache.fetch([checkpoint.vaeId]);
+    if (vae) resources.push({ ...vae, vaeId: null });
+  }
+  return {
+    resources: uniqBy(formatGenerationResources(resources), 'id'),
+    params: {},
   };
 };
 

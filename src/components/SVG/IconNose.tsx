@@ -1,11 +1,6 @@
-import { TablerIconsProps } from '@tabler/icons-react';
+import { IconProps } from '@tabler/icons-react';
 
-export function IconNose({
-  size = 24,
-  color = 'currentColor',
-  stroke = 2,
-  ...props
-}: TablerIconsProps) {
+export function IconNose({ size = 24, color = 'currentColor', stroke = 2, ...props }: IconProps) {
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"

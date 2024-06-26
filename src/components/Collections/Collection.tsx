@@ -44,7 +44,7 @@ import { useModelQueryParams } from '~/components/Model/model.utils';
 import PostsInfinite from '~/components/Post/Infinite/PostsInfinite';
 import { usePostQueryParams } from '~/components/Post/post.utils';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { constants } from '~/server/common/constants';
+import { MAX_ANIMATION_DURATION_SECONDS, constants } from '~/server/common/constants';
 import { CollectionByIdModel } from '~/types/router';
 import { trpc } from '~/utils/trpc';
 import { ArticleSort, ImageSort, ModelSort, PostSort } from '~/server/common/enums';
@@ -68,11 +68,12 @@ import {
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 import { containerQuery } from '~/utils/mantine-css-helpers';
-import { truncate } from 'lodash-es';
+import { capitalize, truncate } from 'lodash-es';
 import { ImageContextMenuProvider } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { removeTags } from '~/utils/string-helpers';
 import { useRouter } from 'next/router';
+import { VideoMetadata } from '~/server/schema/media.schema';
 
 const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
   const { set, ...query } = useModelQueryParams();
@@ -240,7 +241,13 @@ const ImageCollection = ({
                 value: tag.id.toString(),
                 label: tag.name,
               }))}
+              tt="capitalize"
               clearable
+              styles={{
+                input: {
+                  textTransform: 'capitalize',
+                },
+              }}
             />
           )}
           <ReactionSettingsProvider settings={{ hideReactionCount: isContestCollection }}>

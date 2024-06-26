@@ -36,6 +36,8 @@ import { DaysFromNow } from '../Dates/DaysFromNow';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { constants } from '~/server/common/constants';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
+import { VideoMetadata } from '~/server/schema/media.schema';
+import { shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
 
 const IMAGE_CARD_WIDTH = 450;
 
@@ -144,6 +146,7 @@ export function BountyCard({ data }: Props) {
                         : undefined
                     }
                     type={image.type}
+                    anim={shouldAnimateByDefault(image)}
                     width={IMAGE_CARD_WIDTH}
                     className={classes.image}
                   />

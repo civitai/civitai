@@ -36,36 +36,31 @@ export default function EventsPage() {
         description="Test your AI Art Skills by participating in our community events."
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/events`, rel: 'canonical' }]}
       />
-      <MasonryProvider
-        columnWidth={constants.cardSizes.image}
-        maxColumnCount={7}
-        maxSingleColumnWidth={450}
-      >
-        <MasonryContainer>
-          <Stack spacing="xs">
-            <Announcements
-              sx={() => ({
-                marginBottom: -35,
-                [containerQuery.smallerThan('md')]: {
-                  marginBottom: -5,
-                },
-              })}
+
+      <MasonryContainer>
+        <Stack spacing="xs">
+          <Announcements
+            sx={() => ({
+              marginBottom: -35,
+              [containerQuery.smallerThan('md')]: {
+                marginBottom: -5,
+              },
+            })}
+          />
+          {isLoading ? (
+            <Center p="xl">
+              <Loader size="xl" />
+            </Center>
+          ) : (
+            <MasonryGrid
+              data={articles}
+              render={ArticleCard}
+              itemId={(x) => x.id}
+              empty={<NoContent />}
             />
-            {isLoading ? (
-              <Center p="xl">
-                <Loader size="xl" />
-              </Center>
-            ) : (
-              <MasonryGrid
-                data={articles}
-                render={ArticleCard}
-                itemId={(x) => x.id}
-                empty={<NoContent />}
-              />
-            )}
-          </Stack>
-        </MasonryContainer>
-      </MasonryProvider>
+          )}
+        </Stack>
+      </MasonryContainer>
     </>
   );
 }

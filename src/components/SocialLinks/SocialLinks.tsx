@@ -1,5 +1,6 @@
 import { ActionIcon, ActionIconProps } from '@mantine/core';
 import {
+  Icon,
   IconBrandDiscord,
   IconBrandGithub,
   IconBrandInstagram,
@@ -8,8 +9,9 @@ import {
   IconBrandTwitch,
   IconBrandX,
   IconBrandYoutube,
-  TablerIconsProps,
+  IconProps,
 } from '@tabler/icons-react';
+import { ForwardRefExoticComponent, RefAttributes } from 'react';
 import { useIsLive } from '~/hooks/useIsLive';
 
 const defaultProps: ActionIconProps = {
@@ -31,7 +33,10 @@ type Props = ActionIconProps & {
   include?: SocialOption[];
 };
 
-const SocialIcons: Record<SocialOption, (props: TablerIconsProps) => JSX.Element> = {
+const SocialIcons: Record<
+  SocialOption,
+  ForwardRefExoticComponent<IconProps & RefAttributes<Icon>>
+> = {
   github: IconBrandGithub,
   discord: IconBrandDiscord,
   twitter: IconBrandX,

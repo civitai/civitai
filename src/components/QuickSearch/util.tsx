@@ -4,7 +4,7 @@ import {
   IconCurrencyDollar,
   IconHash,
   IconSearch,
-  TablerIconsProps,
+  IconProps,
 } from '@tabler/icons-react';
 import React from 'react';
 import { isDefined } from '~/utils/type-guards';
@@ -21,7 +21,7 @@ type MatchedFilter = {
   description?: string;
 };
 
-export function FilterIcon({ type, ...props }: TablerIconsProps & { type: FilterIdentifier }) {
+export function FilterIcon({ type, ...props }: IconProps & { type: FilterIdentifier }) {
   return {
     models: <IconCurrencyDollar {...props} />,
     users: <IconAt {...props} />,

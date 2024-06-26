@@ -18,6 +18,7 @@ import { enterFall, jelloVertical } from '~/libs/animations';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { showErrorNotification } from '~/utils/notifications';
+import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 
 const querySchema = z.object({ id: z.string() });
@@ -92,7 +93,7 @@ export default function ClaimBuzzPage({ id }: { id: string }) {
             my="lg"
           >
             <Text size={64} weight={500} ml={-30}>
-              ⚡{claim.details.amount}
+              ⚡{numberWithCommas(claim.details.amount)}
             </Text>
           </Center>
           <Title order={1} align="center" mb={5}>

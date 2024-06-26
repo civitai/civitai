@@ -1,5 +1,5 @@
 import { ActionIcon, ActionIconProps, Text, Tooltip } from '@mantine/core';
-import { IconHelpCircle, TablerIconsProps } from '@tabler/icons-react';
+import { IconHelpCircle, IconProps } from '@tabler/icons-react';
 import { forwardRef } from 'react';
 
 export const HelpButton = forwardRef<HTMLButtonElement, Props>(
@@ -21,6 +21,6 @@ HelpButton.displayName = 'HelpButton';
 
 type Props = Omit<
   React.HTMLAttributes<HTMLButtonElement> &
-    ActionIconProps & { iconProps?: TablerIconsProps; tooltip?: string },
+    ActionIconProps & { iconProps?: IconProps; tooltip?: string },
   'children'
 >;

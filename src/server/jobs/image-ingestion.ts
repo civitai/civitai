@@ -34,7 +34,7 @@ export const ingestImages = createJob('ingest-images', '0 * * * *', async () => 
     return;
   }
 
-  await sendImagesForScanSingle(images);
+  await sendImagesForScanBulk(images);
 });
 
 async function sendImagesForScanSingle(images: IngestImageInput[]) {
