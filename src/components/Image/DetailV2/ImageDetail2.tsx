@@ -30,7 +30,7 @@ import {
   IconLayoutSidebarRightExpand,
   IconPhoto,
   IconShare3,
-  TablerIconsProps,
+  IconProps,
 } from '@tabler/icons-react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -89,7 +89,7 @@ const sharedActionIconProps: Partial<Omit<ActionIconProps, 'children'>> = {
   className: 'h-9 w-9 rounded-full',
 };
 
-const sharedIconProps: TablerIconsProps = {
+const sharedIconProps: IconProps = {
   size: 18,
   stroke: 2,
   color: 'white',
@@ -382,13 +382,8 @@ export function ImageDetail2() {
                   {`This image won't be visible to other users until it's reviewed by our moderators.`}
                 </AlertWithIcon>
               )}
-              <VotableTags
-                entityType="image"
-                entityId={image.id}
-                canAdd
-                collapsible
-                nsfwLevel={image.nsfwLevel}
-              />
+              <ImageProcess imageId={image.id} />
+              <ImageGenerationData imageId={image.id} />
               <Card className="flex flex-col gap-3 rounded-xl">
                 <Text className="flex items-center gap-2 text-xl font-semibold">
                   <IconBrandWechat />
@@ -396,13 +391,18 @@ export function ImageDetail2() {
                 </Text>
                 <ImageDetailComments imageId={image.id} userId={image.user.id} />
               </Card>
-              <ImageGenerationData imageId={image.id} />
-              <ImageProcess imageId={image.id} />
-              <ImageExternalMeta imageId={image.id} />
               <ImageContestCollectionDetails
                 imageId={image.id}
                 isOwner={image.user.id === currentUser?.id}
               />
+              <VotableTags
+                entityType="image"
+                entityId={image.id}
+                canAdd
+                collapsible
+                nsfwLevel={image.nsfwLevel}
+              />
+              <ImageExternalMeta imageId={image.id} />
             </div>
           </ScrollArea>
         </div>

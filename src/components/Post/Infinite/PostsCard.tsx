@@ -16,6 +16,8 @@ import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuIte
 import { CosmeticEntity } from '@prisma/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
+import { VideoMetadata } from '~/server/schema/media.schema';
+import { shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
 
 export function PostsCard({
   data: { images, id, stats, imageCount, cosmetic, user },
@@ -81,6 +83,7 @@ export function PostsCard({
                             })
                           : image.name ?? undefined
                       }
+                      anim={shouldAnimateByDefault(image)}
                       type={image.type}
                       width={450}
                       placeholder="empty"

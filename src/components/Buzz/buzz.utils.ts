@@ -85,7 +85,7 @@ export const useBuzzTransaction = (opts?: {
   const tipUserMutation = trpc.buzz.tipUser.useMutation({
     onError(error) {
       showErrorNotification({
-        title: 'Error tipping user',
+        title: 'Looks like there was an error sending your tip.',
         error: new Error(error.message),
       });
     },

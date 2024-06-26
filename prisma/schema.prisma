@@ -3072,6 +3072,7 @@ model Tool {
   imageTools  ImageTool[]
   priority    Int?
   description String?
+  metadata    Json        @default("{}")
 }
 
 model ImageTool {

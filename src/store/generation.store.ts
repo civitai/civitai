@@ -37,11 +37,11 @@ export const useGenerationStore = create<GenerationState>()(
         if (!input) return;
         const data = await getGenerationData(input);
         const type =
-          input.type === 'model' || input.type === 'modelVersion'
+          input.type === 'model' || input.type === 'modelVersion' || input.type === 'modelVersions'
             ? 'run'
             : input.type === 'image'
-            ? 'remix'
-            : 'random';
+              ? 'remix'
+              : 'random';
         if (data) get().setData({ type, data: { ...data } });
       },
       close: () =>
@@ -100,7 +100,7 @@ export const generationStore = {
 const dictionary: Record<string, Generation.Data> = {};
 const getGenerationData = async (input: GetGenerationDataInput) => {
   try {
-    const key = input.type !== 'random' ? `${input.type}_${input.id}` : undefined;
+    const key = input.type !== 'random' ? `${input.type}_${input.type === 'modelVersions' ? input.ids.join('_') : input.id}` : undefined;
     if (key && dictionary[key]) return dictionary[key];
     else {
       const response = await fetch(`/api/generation/data?${QS.stringify(input)}`);
