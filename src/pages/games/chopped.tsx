@@ -29,12 +29,16 @@ import { getRandom, shuffle } from '~/utils/array-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { createPage } from '~/components/AppLayout/createPage';
-import { ChoppedLayout } from '~/components/Chopped/chopped.components';
+import { ChoppedLayout, ChoppedErrorBoundary } from '~/components/Chopped/chopped.components';
 
 export default function Chopped() {
   const gameStatus = useChoppedStore((state) => state.game?.status ?? 'landing');
   const StateComponent = gameStates[gameStatus];
-  return <StateComponent />;
+  return (
+    <ChoppedErrorBoundary>
+      <StateComponent />
+    </ChoppedErrorBoundary>
+  );
 }
 
 const gameStates: Record<GameState['status'] | 'landing', React.FC> = {
@@ -44,8 +48,6 @@ const gameStates: Record<GameState['status'] | 'landing', React.FC> = {
   playing: Playing,
   complete: Complete,
 };
-
-
 
 // export default createPage(Chopped, { withScrollArea: false, withFooter: false })
 // export default createPage(Chopped, { layout: ({ children }) => <main className="size-full">{children}</main> })

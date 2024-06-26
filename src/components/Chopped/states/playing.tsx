@@ -75,18 +75,18 @@ function RoundPending({ theme, roundNumber }: RoundProps) {
             <Text size={40}>🎉</Text>
             <Stack align="center" spacing={0}>
               <Text>Invite others to join!</Text>
-              <Text className="uppercase font-bold text-xl">{gameCode}</Text>
+              <Text className="text-xl font-bold uppercase">{gameCode}</Text>
             </Stack>
             <Text size={40}>🎉</Text>
           </Group>
         </Alert>
       )}
       <div
-        className="relative flex flex-col justify-center items-center"
+        className="relative flex flex-col items-center justify-center"
         style={{ minHeight: 400 }}
       >
         <Text
-          className="absolute top-1/2 -ml-2 -mt-2 -translate-y-1/2 text-8xl font-extrabold uppercase tracking-widest text-white text-center opacity-0 transition-opacity duration-500 ease-in-out"
+          className="absolute top-1/2 -ml-2 -mt-2 -translate-y-1/2 text-center text-8xl font-extrabold uppercase tracking-widest text-white opacity-0 transition-opacity duration-500 ease-in-out"
           size={48}
           weight="bold"
           style={{
@@ -106,7 +106,7 @@ function RoundPending({ theme, roundNumber }: RoundProps) {
           Start Round
         </Button>
       ) : (
-        <Alert color="blue" className="text-center self-center">
+        <Alert color="blue" className="self-center text-center">
           <span className="text-xl">Waiting for the host to start the round</span>
         </Alert>
       )}
@@ -215,7 +215,7 @@ function SubmissionCountdown(props: BoxProps) {
   }, [end]);
 
   return (
-    <Box {...props} className="flex flex-col items-center relative">
+    <Box {...props} className="relative flex flex-col items-center">
       <Progress
         className="w-full"
         value={(timeRemaining / duration) * 100}
@@ -226,7 +226,7 @@ function SubmissionCountdown(props: BoxProps) {
       <Text
         size="lg"
         align="center"
-        className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 leading-none font-bold"
+        className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 font-bold leading-none"
       >
         {timeRemaining <= 0 ? "Time's up!" : numberWithCommas(Math.floor(timeRemaining / 1000))}
       </Text>
@@ -268,7 +268,7 @@ function SubmissionDropzone({
       maxFiles={1}
     >
       <div
-        className={`flex min-h-[200] w-full max-w-md flex-col flex-nowrap justify-center rounded-lg border-4 border-dashed border-gray-400 p-8 text-center text-2xl font-extrabold uppercase transition-colors duration-300 ease-in-out hover:border-gray-200 cursor-pointer`}
+        className={`flex min-h-[200] w-full max-w-md cursor-pointer flex-col flex-nowrap justify-center rounded-lg border-4 border-dashed border-gray-400 p-8 text-center text-2xl font-extrabold uppercase transition-colors duration-300 ease-in-out hover:border-gray-200`}
       >
         {!minimized && (
           <span className="-mb-1 leading-none tracking-widest opacity-40">Drop your</span>
@@ -369,7 +369,7 @@ function JudgeDecision({
   type: JudgeThinkType;
 }) {
   return (
-    <div className="relative max-w-[400px] rounded-md overflow-hidden shadow-lg shadow-black">
+    <div className="relative max-w-[400px] overflow-hidden rounded-md shadow-lg shadow-black">
       <EdgeMedia src={judge.avatar} width={400} />
       <ChoppedJudgeReaction
         score={score}
@@ -406,7 +406,7 @@ function RoundShowing({ theme }: RoundProps) {
     : undefined;
 
   return (
-    <div className="flex flex-col items-center gap-4 relative">
+    <div className="relative flex flex-col items-center gap-4">
       <ChoppedUserSubmission submission={submission} />
       <ChoppedJudgeComment
         judgeId={submission.judgeId!}
@@ -472,12 +472,12 @@ function RoundAwarding({ theme }: RoundProps) {
 
   return (
     <div className="flex flex-col items-center gap-4">
-      <div className="flex flex-wrap justify-center items-center -m-2">
+      <div className="-m-2 flex flex-wrap items-center justify-center">
         {submissions.map((submission) => (
           <div
             className={`relative ${
               submissions.length === 1 ? 'w-80' : 'w-1/2'
-            } p-2 flex justify-center`}
+            } flex justify-center p-2`}
             key={submission.id}
           >
             <ChoppedUserSubmission submission={submission} decisionType={decisionType} />
