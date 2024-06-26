@@ -382,6 +382,13 @@ export function ImageDetail2() {
                   {`This image won't be visible to other users until it's reviewed by our moderators.`}
                 </AlertWithIcon>
               )}
+              <VotableTags
+                entityType="image"
+                entityId={image.id}
+                canAdd
+                collapsible
+                nsfwLevel={image.nsfwLevel}
+              />
               <ImageProcess imageId={image.id} />
               <ImageGenerationData imageId={image.id} />
               <Card className="flex flex-col gap-3 rounded-xl">
@@ -394,13 +401,6 @@ export function ImageDetail2() {
               <ImageContestCollectionDetails
                 imageId={image.id}
                 isOwner={image.user.id === currentUser?.id}
-              />
-              <VotableTags
-                entityType="image"
-                entityId={image.id}
-                canAdd
-                collapsible
-                nsfwLevel={image.nsfwLevel}
               />
               <ImageExternalMeta imageId={image.id} />
             </div>
