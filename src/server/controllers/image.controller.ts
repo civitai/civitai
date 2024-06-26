@@ -42,6 +42,8 @@ import { Flags } from '~/shared/utils';
 import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
 import { imagesSearchIndex } from '~/server/search-index';
 import { reportAcceptedReward } from '~/server/rewards';
+import { BlockedByUsers } from '~/server/services/user-preferences.service';
+import { amIBlockedByUser } from '~/server/services/user.service';
 
 export const moderateImageHandler = async ({
   input,
@@ -215,6 +217,11 @@ export const getInfiniteImagesHandler = async ({
   input: GetInfiniteImagesOutput;
   ctx: Context;
 }) => {
+  const blockedByUsers = (await BlockedByUsers.getCached({ userId: ctx.user?.id })).map(
+    (u) => u.id
+  );
+  if (blockedByUsers.length) input.excludedUserIds = blockedByUsers;
+
   try {
     return await getAllImages({
       ...input,
@@ -261,6 +268,12 @@ export const getImagesAsPostsInfiniteHandler = async ({
     const pinnedPosts = modelGallerySettings?.pinnedPosts ?? {};
     const versionPinnedPosts =
       pinnedPosts && input.modelVersionId ? pinnedPosts[input.modelVersionId] ?? [] : [];
+
+    const blockedByUsers = (await BlockedByUsers.getCached({ userId: ctx.user?.id })).map(
+      (u) => u.id
+    );
+    if (blockedByUsers.length)
+      input.excludedUserIds = [...(input.excludedUserIds ?? []), ...blockedByUsers];
 
     if (versionPinnedPosts.length && !cursor) {
       const { items: pinnedPostsImages } = await getAllImages({
@@ -443,6 +456,11 @@ export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ct
       userId: ctx.user?.id,
       isModerator: ctx.user?.isModerator,
     });
+
+    if (ctx.user && !ctx.user.isModerator) {
+      const blocked = await amIBlockedByUser({ userId: ctx.user.id, targetUserId: result.user.id });
+      if (blocked) throw throwNotFoundError();
+    }
 
     return result;
   } catch (error) {

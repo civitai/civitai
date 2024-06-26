@@ -365,6 +365,7 @@ export async function getAllHiddenForUser({
     hiddenTags: [...hiddenTags.map((tag) => ({ ...tag, hidden: true })), ...moderatedTags],
     blockedUsers: blockedUsers.map((user) => ({ ...user, hidden: true })),
   } as HiddenPreferenceTypes;
+
   return result;
 }
 

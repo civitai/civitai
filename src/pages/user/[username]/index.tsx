@@ -12,34 +12,20 @@ import {
 } from '~/components/Profile/profile.utils';
 import { ProfileSectionSchema, ProfileSectionType } from '~/server/schema/user-profile.schema';
 import { userPageQuerySchema } from '~/server/schema/user.schema';
-import { amIBlockedByUser } from '~/server/services/user.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
-  useSession: true,
-  resolver: async ({ ssg, ctx, session }) => {
+  resolver: async ({ ssg, ctx }) => {
     const { username, id } = userPageQuerySchema.parse(ctx.params);
     if (username) {
       await ssg?.user.getCreator.prefetch({ username });
     }
 
-    if (session && session.user && !session.user.isModerator) {
-      const blocked = await amIBlockedByUser({
-        userId: session.user.id,
-        targetUsername: username,
-        targetUserId: id,
-      });
-      if (blocked) return { notFound: true };
-    }
-
     return {
-      props: removeEmpty({
-        id,
-        username,
-      }),
+      props: removeEmpty({ id, username }),
     };
   },
 });

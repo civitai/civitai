@@ -542,6 +542,7 @@ export const getAllImages = async ({
   techniques,
   baseModels,
   collectionTagId,
+  excludedUserIds,
 }: GetInfiniteImagesOutput & {
   userId?: number;
   user?: SessionUser;
@@ -742,6 +743,10 @@ export const getAllImages = async ({
           ${Prisma.raw(sort === ImageSort.Random ? 'ORDER BY "randomId" DESC' : '')}
         )`
     );
+  }
+
+  if (excludedUserIds?.length) {
+    AND.push(Prisma.sql`i."userId" NOT IN (${Prisma.join(excludedUserIds)})`);
   }
 
   const isGallery = modelId || modelVersionId || reviewId || username;

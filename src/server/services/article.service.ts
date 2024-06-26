@@ -46,6 +46,8 @@ import { createImage, deleteImageById } from '~/server/services/image.service';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
+import { BlockedByUsers } from '~/server/services/user-preferences.service';
+import { amIBlockedByUser } from '~/server/services/user.service';
 
 type ArticleRaw = {
   id: number;
@@ -224,6 +226,11 @@ export const getArticles = async ({
         AND ${Prisma.join(collectionItemModelsRawAND, ' AND ')})`
       );
     }
+
+    const blockedByUsers = (await BlockedByUsers.getCached({ userId: sessionUser?.id })).map(
+      (u) => u.id
+    );
+    if (blockedByUsers.length) excludedUserIds = [...(excludedUserIds ?? []), ...blockedByUsers];
 
     if (!isOwnerRequest) {
       if (!!excludedUserIds?.length) {
@@ -586,18 +593,25 @@ export const getCivitaiEvents = async () => {
 };
 
 export type ArticleGetById = AsyncReturnType<typeof getArticleById>;
-export const getArticleById = async ({ id, user }: GetByIdInput & { user?: SessionUser }) => {
+export const getArticleById = async ({
+  id,
+  userId,
+  isModerator,
+}: GetByIdInput & { userId?: number; isModerator?: boolean }) => {
   try {
-    const isMod = user?.isModerator ?? false;
     const article = await dbRead.article.findFirst({
       where: {
         id,
-        OR: !isMod ? [{ publishedAt: { not: null } }, { userId: user?.id }] : undefined,
+        OR: !isModerator ? [{ publishedAt: { not: null } }, { userId }] : undefined,
       },
       select: articleDetailSelect,
     });
 
     if (!article) throw throwNotFoundError(`No article with id ${id}`);
+    if (userId && !isModerator) {
+      const blocked = await amIBlockedByUser({ userId, targetUserId: article.userId });
+      if (blocked) throw throwNotFoundError(`No article with id ${id}`);
+    }
 
     const articleCategories = await getCategoryTags('article');
     const attachments: Awaited<ReturnType<typeof getFilesByEntity>> = await getFilesByEntity({

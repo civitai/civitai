@@ -31,6 +31,7 @@ import {
   BlockedUsers,
   HiddenUsers,
 } from '~/server/services/user-preferences.service';
+import { amIBlockedByUser } from '~/server/services/user.service';
 
 export type InfiniteCommentResults = AsyncReturnType<typeof getInfiniteCommentsV2Handler>;
 export type InfiniteCommentV2Model = InfiniteCommentResults['comments'][0];
@@ -75,7 +76,18 @@ export const getInfiniteCommentsV2Handler = async ({
 
 export const getCommentHandler = async ({ ctx, input }: { ctx: Context; input: GetByIdInput }) => {
   try {
-    return await getComment({ ...input });
+    const comment = await getComment({ ...input });
+    if (!comment) throw throwNotFoundError(`No comment with id ${input.id}`);
+
+    if (ctx.user && !ctx.user.isModerator) {
+      const blocked = await amIBlockedByUser({
+        userId: ctx.user.id,
+        targetUserId: comment.user.id,
+      });
+      if (blocked) throw throwNotFoundError();
+    }
+
+    return comment;
   } catch (error) {
     throw throwDbError(error);
   }
