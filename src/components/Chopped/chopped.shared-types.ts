@@ -3,11 +3,11 @@ import { Difference } from '~/utils/object-helpers';
 
 export interface ServerToClientEvents {
   kicked: () => void;
-  error: (msg: { msg: string }) => void;
+  error: (msg: string) => void;
   updateGlobal: (global: GlobalState) => void;
   updateGame: (game: GameState) => void;
   patchGame: (game: Difference[]) => void;
-  setUserId: (userId: string) => void;
+  setUserId: (user: { userId: string; token: string }) => void;
   message: (msg: string) => void;
 }
 
@@ -24,6 +24,8 @@ export interface ClientToServerEvents {
   continue: (callback: (res: { success: boolean; msg?: string }) => void) => void;
   submit: (image: string, callback: (res: { success: boolean; msg?: string }) => void) => void;
   gameAgain: () => void;
+  reconnect: (token: string) => void;
+  retry: () => void;
 }
 
 export type ClientToServerEvent = keyof ClientToServerEvents;
@@ -74,6 +76,7 @@ export type Round = {
   themeId: string;
   duration: number; // seconds
   submissions: Submission[];
+  submissionsOpenedAt?: number; // timestamp
   showcaseIds?: string[]; // the submission Ids to display (shuffled and popped)
   judgeId?: string;
   judgeStatus?: JudgeStatus;
@@ -99,9 +102,9 @@ export type Submission = {
 
 export type User = {
   id: string;
-  status: 'missing' | 'playing' | 'eliminated' | 'winner' | 'viewer';
+  status: 'playing' | 'eliminated' | 'winner' | 'viewer';
+  connected?: boolean;
   name: string;
-  socketId?: string; // Backend only
 };
 
 export type NewGame = {
@@ -110,6 +113,8 @@ export type NewGame = {
   name: string;
   includeAudio: boolean;
   viewOnly: boolean;
+  maxPlayers: number;
+  code?: string;
 };
 
 export type JoinGame = {
