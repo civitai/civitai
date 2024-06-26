@@ -62,6 +62,7 @@ import { toolRouter } from '~/server/routers/tool.router';
 import { cosmeticShopRouter } from '~/server/routers/cosmetic-shop.router';
 import { techniqueRouter } from '~/server/routers/technique.router';
 import { modRouter } from '~/server/routers/moderator';
+import { recommendersRouter } from './recommenders.router';
 
 export const appRouter = router({
   account: accountRouter,
@@ -94,6 +95,7 @@ export const appRouter = router({
   post: postRouter,
   question: questionRouter,
   reaction: reactionRouter,
+  recommenders: recommendersRouter,
   report: reportRouter,
   resourceReview: resourceReviewRouter,
   signals: signalsRouter,

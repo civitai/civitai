@@ -60,6 +60,7 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { Announcements } from '~/components/Announcements/Announcements';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { AssociatedModels } from '~/components/AssociatedModels/AssociatedModels';
+import {AssociatedRecommendedModels} from '~/components/AssociatedRecommendedModels/AssociatedRecommendedModels'
 import {
   InteractiveTipBuzzButton,
   useBuzzTippingStore,
@@ -986,22 +987,38 @@ export default function ModelDetailsV2({
         ) : null}
       </Container>
       {canLoadBelowTheFold && (isOwner || model.hasSuggestedResources) && (
-        <AssociatedModels
-          fromId={model.id}
-          type="Suggested"
-          label={
-            <Group spacing={8} noWrap>
-              Suggested Resources{' '}
-              <InfoPopover>
-                <Text size="sm" weight={400}>
-                  These are resources suggested by the creator of this model. They may be related to
-                  this model or created by the same user.
-                </Text>
-              </InfoPopover>
-            </Group>
-          }
-          ownerId={model.user.id}
-        />
+        <Stack>
+          <AssociatedModels
+            fromId={model.id}
+            type="Suggested"
+            label={
+              <Group spacing={8} noWrap>
+                Suggested Resources{' '}
+                <InfoPopover>
+                  <Text size="sm" weight={400}>
+                    These are resources suggested by the creator of this model. They may be related to
+                    this model or created by the same user.
+                  </Text>
+                </InfoPopover>
+              </Group>
+            }
+            ownerId={model.user.id}
+          />
+          <AssociatedRecommendedModels 
+            fromId={latestVersion?.id}
+            label={
+              <Group spacing={8} noWrap>
+                Recommended Resources{' '}
+                <InfoPopover>
+                  <Text size="sm" weight={400}>
+                    These are resources often used along this one or share features that go well together.
+                  </Text>
+                </InfoPopover>
+              </Group>
+            }
+            ownerId={model.user.id}
+          />
+        </Stack>
       )}
       {canLoadBelowTheFold &&
         (!model.locked ? (
