@@ -30,7 +30,7 @@ import {
   IconLayoutSidebarRightExpand,
   IconPhoto,
   IconShare3,
-  TablerIconsProps,
+  IconProps,
 } from '@tabler/icons-react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -89,7 +89,7 @@ const sharedActionIconProps: Partial<Omit<ActionIconProps, 'children'>> = {
   className: 'h-9 w-9 rounded-full',
 };
 
-const sharedIconProps: TablerIconsProps = {
+const sharedIconProps: IconProps = {
   size: 18,
   stroke: 2,
   color: 'white',

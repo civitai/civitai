@@ -11,7 +11,7 @@ const DISABLED = false;
 // --------------------------------
 // Setup Socket
 // --------------------------------
-const socket: SocketClient = io(env.NEXT_PUBLIC_CHOPPED_ENDPOINT, {
+const socket: SocketClient = io(env.NEXT_PUBLIC_CHOPPED_ENDPOINT!, {
   path: '/socketio',
   autoConnect: false,
 });

@@ -8,7 +8,7 @@ import {
   IconBrandTwitch,
   IconBrandX,
   IconBrandYoutube,
-  TablerIconsProps,
+  IconProps,
 } from '@tabler/icons-react';
 import { useIsLive } from '~/hooks/useIsLive';
 
@@ -31,7 +31,7 @@ type Props = ActionIconProps & {
   include?: SocialOption[];
 };
 
-const SocialIcons: Record<SocialOption, (props: TablerIconsProps) => JSX.Element> = {
+const SocialIcons: Record<SocialOption, (props: IconProps) => JSX.Element> = {
   github: IconBrandGithub,
   discord: IconBrandDiscord,
   twitter: IconBrandX,

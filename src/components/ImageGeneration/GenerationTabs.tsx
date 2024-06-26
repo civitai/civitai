@@ -1,5 +1,5 @@
 import { Tooltip, ActionIcon, CloseButton, SegmentedControl } from '@mantine/core';
-import { IconArrowsDiagonal, IconBrush, IconGridDots, TablerIconsProps } from '@tabler/icons-react';
+import { IconArrowsDiagonal, IconBrush, IconGridDots, IconProps } from '@tabler/icons-react';
 import { Feed } from './Feed';
 import { Queue } from './Queue';
 import { GenerationPanelView, generationPanel, useGenerationStore } from '~/store/generation.store';
@@ -88,7 +88,7 @@ export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean })
 type Tabs = Record<
   GenerationPanelView,
   {
-    Icon: (props: TablerIconsProps) => JSX.Element;
+    Icon: (props: IconProps) => JSX.Element;
     label: string;
     Component: React.FC;
   }

@@ -1,77 +1,25 @@
+import { Alert, Box, BoxProps, Button, Group, Progress, Stack, Text, Title } from '@mantine/core';
+import { Dropzone } from '@mantine/dropzone';
+import { IconBrush, IconSend } from '@tabler/icons-react';
+import React, { DragEvent, useEffect, useState } from 'react';
 import {
-  ActionIcon,
-  Button,
-  Card,
-  Container,
-  Group,
-  Stack,
-  Title,
-  Text,
-  Select,
-  Alert,
-  Input,
-  TextInput,
-  NumberInput,
-  Box,
-  Progress,
-  BoxProps,
-  MantineColor,
-  ThemeIcon,
-  ThemeIconProps,
-} from '@mantine/core';
-import {
-  IconArrowLeft,
-  IconBrush,
-  IconCheck,
-  IconHeartFilled,
-  IconPlayerPlayFilled,
-  IconPlayerStop,
-  IconPlayerStopFilled,
-  IconPlus,
-  IconSend,
-  IconThumbDownFilled,
-  IconThumbUpFilled,
-  IconX,
-} from '@tabler/icons-react';
-import React, { useState, useEffect, DragEvent, useRef } from 'react';
-import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
-import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
-import {
-  GameState,
-  GlobalState,
-  JoinGame,
-  Judge,
-  NewGame,
-  RoundStatus,
-  Submission,
-  Theme,
-} from '~/components/Chopped/chopped.shared-types';
-import {
-  ComputeCost,
-  dummyImage,
-  useChoppedStore,
-  useChoppedUserId,
-  useIsHost,
-} from '~/components/Chopped/chopped.utils';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { getRandom, shuffle } from '~/utils/array-helpers';
-import { getRandomInt, numberWithCommas } from '~/utils/number-helpers';
-import { trpc } from '~/utils/trpc';
-import { useBase64Audio } from '~/server/utils/audio-utils';
-import {
-  ChoppedJudgeReaction,
-  ChoppedUserSubmission,
-  ChoppedLayout,
   ChoppedJudgeComment,
+  ChoppedJudgeReaction,
+  ChoppedLayout,
   ChoppedRetryButton,
+  ChoppedUserSubmission,
 } from '~/components/Chopped/chopped.components';
 import { useChoppedServer } from '~/components/Chopped/chopped.connection';
-import { generationPanel } from '~/store/generation.store';
-import { parseAIR } from '~/utils/string-helpers';
-import { Dropzone, DropzoneProps } from '@mantine/dropzone';
+import { Judge, RoundStatus, Theme } from '~/components/Chopped/chopped.shared-types';
+import { useChoppedStore, useChoppedUserId, useIsHost } from '~/components/Chopped/chopped.utils';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
+import { generationPanel } from '~/store/generation.store';
+import { getRandom } from '~/utils/array-helpers';
 import { fetchBlob, getBase64 } from '~/utils/file-utils';
 import { resizeImage } from '~/utils/image-utils';
+import { getRandomInt, numberWithCommas } from '~/utils/number-helpers';
+import { parseAIR } from '~/utils/string-helpers';
 
 export function Playing() {
   const roundNumber = useChoppedStore((state) => state.game!.round + 1);

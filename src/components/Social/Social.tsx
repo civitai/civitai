@@ -1,6 +1,6 @@
 import { Button, ButtonProps } from '@mantine/core';
 import {
-  TablerIconsProps,
+  IconProps,
   IconBrandDiscord,
   IconBrandGithub,
   IconBrandGoogle,
@@ -14,7 +14,7 @@ type SocialProps = Partial<
     BuiltInProviderType,
     {
       label?: React.ReactNode;
-      Icon?: React.FunctionComponent<TablerIconsProps>;
+      Icon?: React.FunctionComponent<IconProps>;
       Button?: React.FunctionComponent<ButtonProps>;
     }
   >
