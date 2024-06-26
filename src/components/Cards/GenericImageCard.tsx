@@ -1,6 +1,6 @@
 import { useCardStyles } from '~/components/Cards/Cards.styles';
 import { FeedCard } from '~/components/Cards/FeedCard';
-import { EdgeMedia, shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { DEFAULT_EDGE_IMAGE_WIDTH, constants } from '~/server/common/constants';
 import { ImageProps } from '~/components/ImageViewer/ImageViewer';
@@ -9,6 +9,7 @@ import { truncate } from 'lodash-es';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { VideoMetadata } from '~/server/schema/media.schema';
+import { shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
 
 export function GenericImageCard({
   image: image,
@@ -99,10 +100,7 @@ export function GenericImageCard({
                           ? DEFAULT_EDGE_IMAGE_WIDTH * originalAspectRatio
                           : DEFAULT_EDGE_IMAGE_WIDTH
                       }
-                      anim={shouldAnimateByDefault({
-                        type: image.type,
-                        metadata: image.metadata as VideoMetadata,
-                      })}
+                      anim={shouldAnimateByDefault(image)}
                       placeholder="empty"
                       className={sharedClasses.image}
                       wrapperProps={{ style: { height: '100%', width: '100%' } }}

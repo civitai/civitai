@@ -2,7 +2,7 @@ import { createStyles, Group, keyframes, Stack, Text, UnstyledButton } from '@ma
 import React from 'react';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
-import { EdgeMedia, shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useRouter } from 'next/router';
 import { BountyGetEntries } from '~/types/router';
@@ -18,6 +18,7 @@ import { truncate } from 'lodash-es';
 import { constants } from '~/server/common/constants';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { VideoMetadata } from '~/server/schema/media.schema';
+import { shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
 
 const IMAGE_CARD_WIDTH = 450;
 
@@ -148,10 +149,7 @@ export function BountyEntryCard({ data, currency, renderActions }: Props) {
                       width={IMAGE_CARD_WIDTH}
                       className={classes.image}
                       wrapperProps={{ style: { height: 'calc(100% - 60px)' } }}
-                      anim={shouldAnimateByDefault({
-                        type: image.type,
-                        metadata: image.metadata as VideoMetadata,
-                      })}
+                      anim={shouldAnimateByDefault(image)}
                     />
                   ) : (
                     <MediaHash {...image} />

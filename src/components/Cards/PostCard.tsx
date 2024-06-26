@@ -2,7 +2,7 @@ import { Group, Stack, Text, UnstyledButton } from '@mantine/core';
 import React from 'react';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
-import { EdgeMedia, shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { PostsInfiniteModel } from '~/server/services/post.service';
@@ -18,6 +18,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
 import { CosmeticEntity } from '@prisma/client';
 import { VideoMetadata } from '~/server/schema/media.schema';
+import { shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
 
 const IMAGE_CARD_WIDTH = 332;
 
@@ -74,10 +75,7 @@ export function PostCard({ data }: Props) {
                         ? truncate(image.meta.prompt, { length: constants.altTruncateLength })
                         : image.name ?? undefined
                     }
-                    anim={shouldAnimateByDefault({
-                      type: image.type,
-                      metadata: image.metadata as VideoMetadata,
-                    })}
+                    anim={shouldAnimateByDefault(image)}
                     type={image.type}
                     width={IMAGE_CARD_WIDTH}
                     placeholder="empty"
