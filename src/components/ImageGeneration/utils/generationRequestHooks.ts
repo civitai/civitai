@@ -11,7 +11,7 @@ import { SignalMessages } from '~/server/common/enums';
 import { TextToImageStepMetadata } from '~/server/schema/orchestrator/textToImage.schema';
 import { workflowQuerySchema } from '~/server/schema/orchestrator/workflows.schema';
 import { UpdateWorkflowStepParams } from '~/server/services/orchestrator/orchestrator.schema';
-import { getTextToImageRequests } from '~/server/services/orchestrator/textToImage';
+import { getTextToImageRequests } from '~/server/services/orchestrator/textToImage/textToImage';
 import { orchestratorCompletedStatuses } from '~/shared/constants/generation.constants';
 import { createDebouncer } from '~/utils/debouncer';
 import { showErrorNotification } from '~/utils/notifications';

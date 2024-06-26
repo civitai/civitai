@@ -8,7 +8,7 @@ import {
   createTextToImage,
   whatIfTextToImage,
   getTextToImageRequests,
-} from '~/server/services/orchestrator/textToImage';
+} from '~/server/services/orchestrator/textToImage/textToImage';
 import { cancelWorkflow, deleteWorkflow } from '~/server/services/orchestrator/workflows';
 import { guardedProcedure, middleware, protectedProcedure, router } from '~/server/trpc';
 import { edgeCacheIt } from '~/server/middleware.trpc';

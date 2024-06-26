@@ -7,7 +7,7 @@ import { textToImageWhatIfSchema } from '~/server/schema/orchestrator/textToImag
 import { getBaseModelSetType } from '~/shared/constants/generation.constants';
 import { trpc } from '~/utils/trpc';
 
-import { TextToImageWhatIf } from '~/server/services/orchestrator/textToImage';
+import { TextToImageWhatIf } from '~/server/services/orchestrator/textToImage/textToImage';
 import { UseTRPCQueryResult } from '@trpc/react-query/shared';
 import { isDefined } from '~/utils/type-guards';
 

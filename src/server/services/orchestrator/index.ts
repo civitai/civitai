@@ -1,4 +1,4 @@
-import { formatTextToImageResponses } from '~/server/services/orchestrator/textToImage';
+import { formatTextToImageResponses } from '~/server/services/orchestrator/textToImage/textToImage';
 
 export type NormalizedTextToImageResponse = AsyncReturnType<
   typeof formatTextToImageResponses

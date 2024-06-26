@@ -3,7 +3,7 @@ import { getTemporaryUserApiKey } from '~/server/services/api-key.service';
 import {
   formatTextToImageResponses,
   getTextToImageRequests,
-} from '~/server/services/orchestrator/textToImage';
+} from '~/server/services/orchestrator/textToImage/textToImage';
 import { queryWorkflows } from '~/server/services/orchestrator/workflows';
 import { getEncryptedCookie, setEncryptedCookie } from '~/server/utils/cookie-encryption';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
