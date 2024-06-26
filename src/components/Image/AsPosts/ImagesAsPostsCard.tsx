@@ -29,7 +29,7 @@ import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
-import { EdgeMedia, shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useImagesAsPostsInfiniteContext } from '~/components/Image/AsPosts/ImagesAsPostsInfinite';
 import { useGallerySettings } from '~/components/Image/AsPosts/gallery.utils';
 import { OnsiteIndicator } from '~/components/Image/Indicators/OnsiteIndicator';
@@ -49,6 +49,7 @@ import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMen
 import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { showSuccessNotification } from '~/utils/notifications';
 import { VideoMetadata } from '~/server/schema/media.schema';
+import { shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
 
 export function ImagesAsPostsCard({
   data,
@@ -348,10 +349,7 @@ export function ImagesAsPostsCard({
                                 placeholder="empty"
                                 className={classes.image}
                                 wrapperProps={{ style: { zIndex: 1 } }}
-                                anim={shouldAnimateByDefault({
-                                  type: image.type,
-                                  metadata: image.metadata as VideoMetadata,
-                                })}
+                                anim={shouldAnimateByDefault(image)}
                                 fadeIn
                               />
                             )}
@@ -488,10 +486,7 @@ export function ImagesAsPostsCard({
                                           placeholder="empty"
                                           className={classes.image}
                                           wrapperProps={{ style: { zIndex: 1 } }}
-                                          anim={shouldAnimateByDefault({
-                                            type: image.type,
-                                            metadata: image.metadata as VideoMetadata,
-                                          })}
+                                          anim={shouldAnimateByDefault(image)}
                                           fadeIn
                                         />
                                       )}

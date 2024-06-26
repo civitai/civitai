@@ -4,6 +4,7 @@ import { useHotkeys, useOs } from '@mantine/hooks';
 import { truncate } from 'lodash-es';
 import { useState, useEffect, useRef } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { shouldDisplayHtmlControls } from '~/components/EdgeMedia/EdgeMedia.util';
 import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProvider';
 import { ConnectProps, ImageGuardContent } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
@@ -124,7 +125,9 @@ function ImageContent({ image }: { image: ImagesInfiniteModel } & ConnectProps) 
               controls
               quality={90}
               original={image.type === 'video' ? true : undefined}
-              // fadeIn
+              // For those vids with HTML5 controls, we'll assume audio-on by defualt
+              muted={!shouldDisplayHtmlControls(image)}
+              html5Controls={shouldDisplayHtmlControls(image)}
             />
           )}
         </div>

@@ -15,7 +15,7 @@ import React from 'react';
 // import { z } from 'zod';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
-import { EdgeMedia, shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
@@ -53,6 +53,7 @@ import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuIte
 import { IconNose } from '~/components/SVG/IconNose';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import { VideoMetadata } from '~/server/schema/media.schema';
+import { shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
 
 const IMAGE_CARD_WIDTH = 450;
 
