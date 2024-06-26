@@ -4,7 +4,6 @@ import {
   formatTextToImageResponses,
   getTextToImageRequests,
 } from '~/server/services/orchestrator/textToImage';
-import { TextToImageResponse } from '~/server/services/orchestrator/types';
 import { queryWorkflows } from '~/server/services/orchestrator/workflows';
 import { getEncryptedCookie, setEncryptedCookie } from '~/server/utils/cookie-encryption';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
