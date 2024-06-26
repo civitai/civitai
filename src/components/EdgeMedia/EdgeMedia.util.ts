@@ -10,11 +10,11 @@ export function shouldAnimateByDefault({
   metadata?: MixedObject | null;
 }) {
   const parsed = videoMetadataSchema.safeParse(metadata);
-  if (!parsed.success) return false;
+  if (!parsed.success) return undefined;
 
   const meta = parsed.data;
 
-  if (type !== 'video' || !meta || !meta.duration) return false;
+  if (type !== 'video' || !meta || !meta.duration) return undefined;
 
   return meta.duration <= MAX_ANIMATION_DURATION_SECONDS;
 }
