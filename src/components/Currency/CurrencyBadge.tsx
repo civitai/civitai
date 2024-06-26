@@ -10,7 +10,7 @@ import {
   useMantineTheme,
 } from '@mantine/core';
 import { Currency } from '@prisma/client';
-import { IconBolt, IconCurrencyDollar, TablerIconsProps } from '@tabler/icons-react';
+import { IconBolt, IconCurrencyDollar, IconProps } from '@tabler/icons-react';
 import { formatCurrencyForDisplay, numberWithCommas } from '~/utils/number-helpers';
 import { CurrencyConfig } from '~/server/common/constants';
 

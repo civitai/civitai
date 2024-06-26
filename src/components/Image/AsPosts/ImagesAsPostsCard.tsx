@@ -21,7 +21,7 @@ import {
   IconMessage,
   IconPinned,
   IconPinnedOff,
-  TablerIconsProps,
+  IconProps,
   IconPinFilled,
 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
@@ -552,7 +552,7 @@ function PinnedIndicator({
   iconProps,
   className,
   ...themeIconProps
-}: Omit<ThemeIconProps, 'children'> & { iconProps?: TablerIconsProps }) {
+}: Omit<ThemeIconProps, 'children'> & { iconProps?: IconProps }) {
   const { classes, cx } = useStyles();
 
   return (

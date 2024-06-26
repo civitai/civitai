@@ -66,6 +66,7 @@ import {
 import { bytesToKB } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
+import { createImageElement, resizeImage } from '~/utils/image-utils'
 
 const AutoTagModal = dynamic(() => import('./TrainingAutoTagModal').then((m) => m.AutoTagModal));
 
@@ -75,9 +76,8 @@ export const blankTagStr = '@@none@@';
 
 const useStyles = createStyles((theme) => ({
   imgOverlay: {
-    borderBottom: `1px solid ${
-      theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2]
-    }`,
+    borderBottom: `1px solid ${theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2]
+      }`,
     position: 'relative',
     '&:hover .trashIcon': {
       display: 'flex',
@@ -105,14 +105,6 @@ const minWidth = 256;
 const minHeight = 256;
 const maxWidth = 2048;
 const maxHeight = 2048;
-
-const createImage = (url: string): Promise<HTMLImageElement> =>
-  new Promise((resolve, reject) => {
-    const image = new Image();
-    image.addEventListener('load', () => resolve(image));
-    image.addEventListener('error', (error) => reject(error));
-    image.src = url;
-  });
 
 export const getCaptionAsList = (capt: string) => {
   return capt
@@ -223,7 +215,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
 
   const getResizedImgUrl = async (data: FileWithPath | Blob, type: string): Promise<string> => {
     const imgUrl = URL.createObjectURL(data);
-    const img = await createImage(imgUrl);
+    const img = await createImageElement(imgUrl);
     let { width, height } = img;
 
     // both w and h must be less than the max
@@ -278,9 +270,8 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
   const showResizeWarnings = () => {
     if (showImgResizeDown.current) {
       showWarningNotification({
-        title: `${showImgResizeDown.current} image${
-          showImgResizeDown.current === 1 ? '' : 's'
-        } resized down`,
+        title: `${showImgResizeDown.current} image${showImgResizeDown.current === 1 ? '' : 's'
+          } resized down`,
         message: `Max image dimensions are ${maxWidth}w and ${maxHeight}h.`,
         autoClose: false,
       });
@@ -288,9 +279,8 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     }
     if (showImgResizeUp.current) {
       showWarningNotification({
-        title: `${showImgResizeUp.current} image${
-          showImgResizeUp.current === 1 ? '' : 's'
-        } resized up`,
+        title: `${showImgResizeUp.current} image${showImgResizeUp.current === 1 ? '' : 's'
+          } resized up`,
         message: `Min image dimensions are ${minWidth}w or ${minHeight}h.`,
         autoClose: false,
       });
@@ -611,8 +601,8 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                     ownRights && shareDataset
                       ? ModelFileVisibility.Public
                       : ownRights
-                      ? ModelFileVisibility.Sensitive
-                      : ModelFileVisibility.Private,
+                        ? ModelFileVisibility.Sensitive
+                        : ModelFileVisibility.Private,
                   metadata,
                 });
               } catch (e: unknown) {
@@ -664,8 +654,8 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
             ownRights && shareDataset
               ? ModelFileVisibility.Public
               : ownRights
-              ? ModelFileVisibility.Sensitive
-              : ModelFileVisibility.Private,
+                ? ModelFileVisibility.Sensitive
+                : ModelFileVisibility.Private,
         });
         setZipping(false);
       }
@@ -764,8 +754,8 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                   totalCaptioned === 0
                     ? theme.colors.red[5]
                     : totalCaptioned < imageList.length
-                    ? theme.colors.orange[5]
-                    : theme.colors.green[5]
+                      ? theme.colors.orange[5]
+                      : theme.colors.green[5]
                 }
               >
                 {`${totalCaptioned} / ${imageList.length} captioned`}
@@ -859,9 +849,8 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                       autoCaptioning.total) *
                     100
                   }
-                  label={`${autoCaptioning.successes + autoCaptioning.fails.length} / ${
-                    autoCaptioning.total
-                  }`}
+                  label={`${autoCaptioning.successes + autoCaptioning.fails.length} / ${autoCaptioning.total
+                    }`}
                   size="xl"
                   radius="xl"
                   striped

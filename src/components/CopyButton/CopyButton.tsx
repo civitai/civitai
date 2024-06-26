@@ -1,6 +1,6 @@
 import { CopyButtonProps, MantineColor } from '@mantine/core';
 import { useClipboard } from '@mantine/hooks';
-import { TablerIconsProps, IconCheck, IconCopy } from '@tabler/icons-react';
+import { IconProps, IconCheck, IconCopy } from '@tabler/icons-react';
 
 export function CopyButton({
   children,
@@ -10,7 +10,7 @@ export function CopyButton({
   children(payload: {
     copied: boolean;
     copy(): void;
-    Icon: (props: TablerIconsProps) => JSX.Element;
+    Icon: (props: IconProps) => JSX.Element;
     color?: MantineColor;
   }): React.ReactElement;
   value: string | (() => string);

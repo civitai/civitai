@@ -9,7 +9,7 @@ import {
   ModelVersionSponsorshipSettingsType,
   ReviewReactions,
 } from '@prisma/client';
-import { IconBolt, IconCurrencyDollar, TablerIconsProps } from '@tabler/icons-react';
+import { IconBolt, IconCurrencyDollar, IconProps } from '@tabler/icons-react';
 import { ModelSort } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
 import { Generation } from '~/server/services/generation/generation.types';
@@ -698,7 +698,7 @@ export const modelVersionSponsorshipSettingsTypeOptions: Record<
 export const CurrencyConfig: Record<
   Currency,
   {
-    icon: (props: TablerIconsProps) => JSX.Element;
+    icon: (props: IconProps) => JSX.Element;
     color: (theme: MantineTheme) => string;
     fill?: (theme: MantineTheme) => string | string;
   }

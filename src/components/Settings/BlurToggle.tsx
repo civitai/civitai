@@ -1,5 +1,5 @@
 import { ActionIcon } from '@mantine/core';
-import { IconEye, IconEyeOff, TablerIconsProps } from '@tabler/icons-react';
+import { IconEye, IconEyeOff, IconProps } from '@tabler/icons-react';
 import { useState } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
@@ -34,7 +34,7 @@ export function BlurToggle({ children, iconProps = {} }: BlurToggleProps) {
 }
 
 type BlurToggleProps = {
-  iconProps?: TablerIconsProps;
+  iconProps?: IconProps;
   children?: ({
     icon,
     toggle,

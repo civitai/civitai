@@ -4,7 +4,7 @@ import {
   IconThumbDownFilled,
   IconThumbUp,
   IconThumbUpFilled,
-  TablerIconsProps,
+  IconProps,
 } from '@tabler/icons-react';
 
 export function ThumbsUpIcon({ filled, ...iconProps }: Props) {
@@ -33,4 +33,4 @@ export function ThumbsDownIcon({ filled, ...iconProps }: Props) {
   );
 }
 
-type Props = TablerIconsProps & { filled?: boolean };
+type Props = IconProps & { filled?: boolean };

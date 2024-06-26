@@ -9,7 +9,7 @@ import {
   createStyles,
   Badge,
 } from '@mantine/core';
-import { TablerIconsProps } from '@tabler/icons-react';
+import { IconProps } from '@tabler/icons-react';
 import Link from 'next/link';
 import React from 'react';
 
@@ -112,7 +112,7 @@ export function HomeStyleSegmentedControl({
 
 export type DataItem = {
   url: string;
-  icon: (props?: TablerIconsProps) => React.ReactNode;
+  icon: (props?: IconProps) => React.ReactNode;
   disabled?: boolean;
   count?: number | string;
   label?: string;

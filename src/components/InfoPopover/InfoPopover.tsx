@@ -6,7 +6,7 @@ import {
   PopoverProps,
   Text,
 } from '@mantine/core';
-import { IconInfoCircle, TablerIconsProps } from '@tabler/icons-react';
+import { IconInfoCircle, IconProps } from '@tabler/icons-react';
 import React, { forwardRef } from 'react';
 
 export const InfoPopover = forwardRef<HTMLButtonElement, Props>(
@@ -37,6 +37,6 @@ type Props = PopoverProps & {
     React.HTMLAttributes<HTMLButtonElement> & ActionIconProps,
     'children' | 'onClick'
   >;
-  iconProps?: TablerIconsProps;
+  iconProps?: IconProps;
   type?: 'hover' | 'click';
 };
