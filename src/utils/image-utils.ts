@@ -3,7 +3,7 @@ import { encode } from 'blurhash';
 import arrayBufferToBuffer from 'arraybuffer-to-buffer';
 
 import { getClampedSize } from '~/utils/blurhash';
-import { fetchBlob } from '~/utils/file-utils'
+import { fetchBlob } from '~/utils/file-utils';
 
 // deprecated?
 export async function imageToBlurhash(url: string) {
@@ -20,14 +20,13 @@ export async function imageToBlurhash(url: string) {
   return { hash: '', width: 0, height: 0 };
 }
 
-
 export async function createImageElement(src: string | Blob | File) {
-  const objectUrl = typeof src === 'string' ? src : URL.createObjectURL(src)
+  const objectUrl = typeof src === 'string' ? src : URL.createObjectURL(src);
   return new Promise<HTMLImageElement>((resolve, reject) => {
     const image = new Image();
     image.addEventListener('load', () => {
-      resolve(image)
-      URL.revokeObjectURL(objectUrl)
+      resolve(image);
+      // URL.revokeObjectURL(objectUrl)
     });
     image.addEventListener('error', (error) => reject(error));
     image.src = objectUrl;
@@ -39,18 +38,23 @@ export async function resizeImage(
   options: {
     maxHeight?: number;
     maxWidth?: number;
-    onResize?: (args: { width: number; height: number; }) => void;
+    onResize?: (args: { width: number; height: number }) => void;
   } = {}
 ) {
   const blob = await fetchBlob(src);
-  if (!blob) throw new Error('failed to load image blob')
+  if (!blob) throw new Error('failed to load image blob');
 
   // const url = URL.createObjectURL(blob);
   const img = await createImageElement(blob);
 
   const { maxWidth = img.width, maxHeight = img.height, onResize } = options;
 
-  const { width, height, mutated } = calculateAspectRatioFit(img.width, img.height, maxWidth, maxHeight);
+  const { width, height, mutated } = calculateAspectRatioFit(
+    img.width,
+    img.height,
+    maxWidth,
+    maxHeight
+  );
   if (!mutated) return blob;
 
   const canvas = document.createElement('canvas');
@@ -65,12 +69,11 @@ export async function resizeImage(
     canvas.toBlob((file) => {
       if (!file) reject();
       else {
-        onResize?.({ width, height })
-        resolve(file)
+        onResize?.({ width, height });
+        resolve(file);
       }
-    }, blob.type)
-  })
-
+    }, blob.type);
+  });
 }
 
 /**
