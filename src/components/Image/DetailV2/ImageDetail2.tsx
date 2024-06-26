@@ -190,7 +190,7 @@ export function ImageDetail2() {
   return (
     <>
       <Meta
-        title={`Image posted by ${image.user.username}`}
+        title={`${image?.type === 'video' ? 'Video' : 'Image'} posted by ${image.user.username}`}
         images={image}
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/images/${image.id}`, rel: 'canonical' }]}
         deIndex={nsfw || !!image.needsReview || image.availability === Availability.Unsearchable}
