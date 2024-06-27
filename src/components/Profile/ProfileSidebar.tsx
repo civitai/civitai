@@ -42,6 +42,7 @@ import { formatDate } from '~/utils/date-helpers';
 import { sortDomainLinks } from '~/utils/domain-link';
 import { trpc } from '~/utils/trpc';
 import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
+import { BadgeCosmetic } from '~/server/selectors/cosmetic.selector';
 
 const mapSize: Record<
   'mobile' | 'desktop',
@@ -103,9 +104,9 @@ export function ProfileSidebar({ username, className }: { username: string; clas
       !user
         ? []
         : user.cosmetics
-          .map((c) => c.cosmetic)
-          .filter((c) => c.type === CosmeticType.Badge && !!c.data)
-          .reverse(),
+            .map((c) => c.cosmetic)
+            .filter((c) => c.type === CosmeticType.Badge && !!c.data)
+            .reverse(),
     [user]
   );
 
@@ -324,15 +325,19 @@ export function ProfileSidebar({ username, className }: { username: string; clas
                       <Text size="sm" align="center" weight={500}>
                         {award.name}
                       </Text>
-                      {award.videoUrl && <Anchor
-                        href={award.videoUrl}
-                        size="xs"
-                        opacity={0.9}
-                        mt={4}
-                        target="_blank"
-                      >
-                        <span style={{ display: 'flex', alignItems: 'center' }}>How it was made <IconExternalLink size={14} style={{ marginLeft: 4 }} /></span>
-                      </Anchor>}
+                      {award.videoUrl && (
+                        <Anchor
+                          href={award.videoUrl}
+                          size="xs"
+                          opacity={0.9}
+                          mt={4}
+                          target="_blank"
+                        >
+                          <span style={{ display: 'flex', alignItems: 'center' }}>
+                            How it was made <IconExternalLink size={14} style={{ marginLeft: 4 }} />
+                          </span>
+                        </Anchor>
+                      )}
                     </Stack>
                   </Popover.Dropdown>
                 </Popover>
