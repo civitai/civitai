@@ -4,7 +4,7 @@ import {
   IconCaretRightFilled,
   IconDeviceGamepad,
   IconEyeExclamation,
-  TablerIconsProps,
+  IconProps,
 } from '@tabler/icons-react';
 import { useBrowsingModeContext } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { BrowsingLevelsGrouped } from '~/components/BrowsingLevel/BrowsingLevelsGrouped';
@@ -29,7 +29,7 @@ export function BrowsingModeIcon({ iconProps = {} }: BrowsingModeIconProps) {
   );
 }
 type BrowsingModeIconProps = {
-  iconProps?: TablerIconsProps;
+  iconProps?: IconProps;
   closeMenu?: () => void;
 };
 

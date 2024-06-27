@@ -1,8 +1,9 @@
 import { dbRead } from '~/server/db/client';
+import { ToolMetadata } from '~/server/schema/tool.schema';
 
 export type ToolModel = AsyncReturnType<typeof getAllTools>[number];
 export async function getAllTools() {
-  return await dbRead.tool.findMany({
+  const tools = await dbRead.tool.findMany({
     select: {
       id: true,
       name: true,
@@ -11,9 +12,15 @@ export async function getAllTools() {
       priority: true,
       domain: true,
       description: true,
+      metadata: true,
     },
     where: { enabled: true },
   });
+
+  return tools.map((t) => ({
+    ...t,
+    metadata: (t.metadata || {}) as ToolMetadata,
+  }));
 }
 
 export async function getToolByName(name: string) {

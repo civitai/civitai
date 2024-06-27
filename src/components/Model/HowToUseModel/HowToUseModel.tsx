@@ -1,6 +1,6 @@
 import { Text, TextProps, Tooltip } from '@mantine/core';
 import { ModelType } from '@prisma/client';
-import { IconInfoSquareRounded, TablerIconsProps } from '@tabler/icons-react';
+import { IconInfoSquareRounded, IconProps } from '@tabler/icons-react';
 
 const instructions: Partial<Record<ModelType, string>> = {
   [ModelType.Checkpoint]: '#fine-tuned-model-checkpoints-dreambooth-models',
@@ -53,4 +53,4 @@ export const HowToButton = ({
   );
 };
 
-type HowToButtonProps = TablerIconsProps & { href: string; tooltip?: string; size?: number };
+type HowToButtonProps = IconProps & { href: string; tooltip?: string; size?: number };

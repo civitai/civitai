@@ -8,6 +8,8 @@ import { IconCategory, IconPhoto } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
+import { VideoMetadata } from '~/server/schema/media.schema';
+import { shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
 
 export function GenericImageCard({
   image: image,
@@ -79,8 +81,8 @@ export function GenericImageCard({
                 <>
                   {!disabled && (
                     <>
-                      <ImageGuard2.BlurToggle className="absolute top-2 left-2 z-10" />
-                      <ImageContextMenu image={image} className="absolute top-2 right-2 z-10" />
+                      <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
+                      <ImageContextMenu image={image} className="absolute right-2 top-2 z-10" />
                     </>
                   )}
                   {safe ? (
@@ -98,6 +100,7 @@ export function GenericImageCard({
                           ? DEFAULT_EDGE_IMAGE_WIDTH * originalAspectRatio
                           : DEFAULT_EDGE_IMAGE_WIDTH
                       }
+                      anim={shouldAnimateByDefault(image)}
                       placeholder="empty"
                       className={sharedClasses.image}
                       wrapperProps={{ style: { height: '100%', width: '100%' } }}

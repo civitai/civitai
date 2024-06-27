@@ -93,6 +93,7 @@ export function BuzzTransactionButton({
           width: '100%',
         },
       }}
+      size={size}
       disabled={buttonProps.disabled || !!error}
     >
       <Group spacing="md" position="apart" noWrap w="100%">

@@ -50,12 +50,13 @@ import Link from 'next/link';
 import { BackButton } from '~/components/BackButton/BackButton';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { ImageMetaProps } from '~/server/schema/image.schema';
-import { formatDate } from '~/utils/date-helpers';
+import { formatDate, secondsAsMinutes } from '~/utils/date-helpers';
 import { CollectionReviewSort } from '~/server/common/enums';
 import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
 import { truncate } from 'lodash-es';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import dayjs from 'dayjs';
 
 type StoreState = {
   selected: Record<number, boolean>;
@@ -270,14 +271,21 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
                     className={cx(sharedClasses.contentOverlay, sharedClasses.top)}
                     noWrap
                   >
-                    <Group spacing={4}>
-                      <ImageGuard2.BlurToggle />
-                      {collectionItem.status && (
-                        <Badge variant="filled" color={badgeColor[collectionItem.status]}>
-                          {collectionItem.status}
+                    <Stack spacing={4}>
+                      <Group spacing={4}>
+                        <ImageGuard2.BlurToggle />
+                        {collectionItem.status && (
+                          <Badge variant="filled" color={badgeColor[collectionItem.status]}>
+                            {collectionItem.status}
+                          </Badge>
+                        )}
+                      </Group>
+                      {image.type === 'video' && image?.metadata?.duration && (
+                        <Badge variant="filled" color="gray" size="xs">
+                          {secondsAsMinutes(image?.metadata?.duration)}
                         </Badge>
                       )}
-                    </Group>
+                    </Stack>
                   </Group>
                   {safe ? (
                     <EdgeMedia
