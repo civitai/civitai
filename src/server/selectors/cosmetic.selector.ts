@@ -9,6 +9,7 @@ export const simpleCosmeticSelect = Prisma.validator<Prisma.CosmeticSelect>()({
   type: true,
   source: true,
   data: true,
+  videoUrl: true,
 });
 
 const simpleCosmetic = Prisma.validator<Prisma.CosmeticDefaultArgs>()({
@@ -29,7 +30,7 @@ export type SimpleCosmetic = Omit<
 };
 
 export type BadgeCosmetic = Omit<SimpleCosmetic, 'data'> & {
-  data: { url?: string; animated?: boolean };
+  data: { url?: string; animated?: boolean, videoUrl?: string };
   entityImage?: ImageProps;
 };
 export type NamePlateCosmetic = Omit<SimpleCosmetic, 'data'> & {

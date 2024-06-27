@@ -1993,6 +1993,7 @@ model Cosmetic {
   id                  Int                         @id @default(autoincrement())
   name                String
   description         String?
+  videoUrl            String?
   type                CosmeticType
   source              CosmeticSource
   permanentUnlock     Boolean
