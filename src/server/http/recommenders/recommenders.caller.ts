@@ -22,7 +22,7 @@ class RecommenderCaller extends HttpCaller {
     return RecommenderCaller.instance;
   }
 
-  async getResourceRecommendationForResource(params:Recommenders.RecommendationRequest) {
+  async getResourceRecommendationForResource(params: Recommenders.RecommendationRequest) {
     const response = await this.getRaw(`/recommendations/${params.modelVersionId}`);
     const json = await response.json();
     return Recommenders.RecommendationResponseSchema.parse(json);

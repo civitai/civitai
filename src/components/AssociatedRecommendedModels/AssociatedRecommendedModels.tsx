@@ -27,11 +27,14 @@ export function AssociatedRecommendedModels({
 
   const browsingLevel = useBrowsingLevelDebounced();
   const { data, isLoading } = trpc.recommenders.getResourceRecommendations.useQuery({
-    modelVersionId: fromId
+    modelVersionId: fromId,
+    browsingLevel,
   });
 
+  console.log(data);
+
   const handleManageClick = () => {
-    console.info("Let the user opt-out of this")
+    console.info('Let the user opt-out of this');
     //openContext('associateModels', { fromId, type });
   };
 
@@ -64,15 +67,13 @@ export function AssociatedRecommendedModels({
             ) : data?.length ? (
               <MasonryCarousel
                 data={data}
-                render={({ data, ...props }) =>
-                  (
-                    <ModelCategoryCard
-                      data={data}
-                      {...props}
-                      data-activity="follow-suggestion:model"
-                    />
-                  ) 
-                }
+                render={({ data, ...props }) => (
+                  <ModelCategoryCard
+                    data={data}
+                    {...props}
+                    data-activity="follow-suggestion:model"
+                  />
+                )}
                 height={columnWidth}
                 itemId={(x) => x}
               />
