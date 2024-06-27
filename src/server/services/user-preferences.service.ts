@@ -600,6 +600,9 @@ async function toggleBlockUser({
   targetUserId: number;
   setTo?: boolean;
 }): Promise<HiddenPreferencesDiff> {
+  if (targetUserId === userId) throw new Error('Cannot block yourself');
+  if (targetUserId === -1) throw new Error('Cannot block civitai account');
+
   const engagement = await dbWrite.userEngagement.findUnique({
     where: { userId_targetUserId: { userId, targetUserId } },
     select: { type: true },
