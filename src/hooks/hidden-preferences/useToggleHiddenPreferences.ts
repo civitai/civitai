@@ -35,6 +35,7 @@ export const useToggleHiddenPreferences = () => {
             hiddenUsers: [],
             hiddenTags: [],
             blockedUsers: [],
+            blockedByUsers: [],
           }
         ) =>
           produce(old, (draft) => {
@@ -70,6 +71,7 @@ export const useUpdateHiddenPreferences = () => {
           hiddenUsers: [],
           hiddenTags: [],
           blockedUsers: [],
+          blockedByUsers: [],
         }
       ) =>
         produce(old, (draft) => {
