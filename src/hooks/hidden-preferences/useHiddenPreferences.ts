@@ -13,6 +13,7 @@ export const useQueryHiddenPreferences = () => {
         hiddenTags: [],
         hiddenUsers: [],
         blockedUsers: [],
+        blockedByUsers: [],
       },
     [data]
   );
