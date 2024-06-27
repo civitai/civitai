@@ -27,6 +27,8 @@ export function GeneratedImageActions({
   iconSize?: number;
 }) {
   const { images } = useGetTextToImageRequests();
+  const selectableImages = images.filter((x) => x.status === 'succeeded');
+  const selectableImageIds = [...new Set(selectableImages.map((x) => x.id))];
   const {
     selected,
     isMutating,
@@ -36,17 +38,21 @@ export function GeneratedImageActions({
     zipping,
   } = useGeneratedImageActions();
 
-  const imagesCount = images.length;
+  const imagesCount = selectableImageIds.length;
   const selectedCount = selected.length;
 
-  const allChecked = imagesCount === selectedCount;
+  const allChecked = imagesCount > 0 && selectedCount >= imagesCount;
   const indeterminate = selectedCount > 0 && !allChecked;
 
   const handleCheckboxClick = (checked: boolean) => {
     if (!checked) orchestratorImageSelect.setSelected([]);
     else
       orchestratorImageSelect.setSelected(
-        images.map(({ workflowId, stepName, id }) => ({ workflowId, stepName, imageId: id }))
+        selectableImages.map(({ workflowId, stepName, id }) => ({
+          workflowId,
+          stepName,
+          imageId: id,
+        }))
       );
   };
 

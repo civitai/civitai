@@ -61,6 +61,10 @@ export function GeneratedImage({
     imageId: image.id,
   });
 
+  // if (request.id.indexOf('-') !== request.id.lastIndexOf('-')) {
+  //   console.log({ workflowId: request.id, stepName: step.name, imageId: image.id, selected });
+  // }
+
   const toggleSelect = (checked?: boolean) =>
     orchestratorImageSelect.toggle(
       {
