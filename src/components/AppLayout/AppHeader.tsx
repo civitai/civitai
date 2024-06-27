@@ -793,10 +793,10 @@ export function AppHeader({
     { icon: IconBrandReddit, href: 'https://www.reddit.com/r/civitai/' },
     { icon: IconBrandX, href: 'https://twitter.com/civitai' },
     { icon: IconBrandTwitch, href: 'https://www.twitch.tv/civitai' },
-    { icon: IconBrandInstagram, href: 'https://www.instagram.com/civitaiofficial/' },
+    { icon: IconBrandInstagram, href: 'https://www.instagram.com/hellocivitai/' },
     { icon: IconBrandGithub, href: 'https://github.com/civitai' },
     { icon: IconBrandYoutube, href: 'https://www.youtube.com/@civitai' },
-    { icon: IconBrandTiktok, href: 'https://www.tiktok.com/@civitai' },
+    { icon: IconBrandTiktok, href: 'https://www.tiktok.com/@hellocivitai' },
   ];
 
   const footerLinks = [
