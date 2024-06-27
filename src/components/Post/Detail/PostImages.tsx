@@ -8,6 +8,8 @@ import {
   Alert,
   Group,
   Text,
+  Badge,
+  Tooltip,
 } from '@mantine/core';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { Reactions } from '~/components/Reaction/Reactions';
@@ -22,6 +24,7 @@ import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMen
 import { PostContestCollectionInfoAlert } from '~/components/Post/Detail/PostContestCollectionInfoAlert';
 import { PostContestCollectionItem } from '~/types/router';
 import { shouldDisplayHtmlControls } from '~/components/EdgeMedia/EdgeMedia.util';
+import { CollectionItemStatus } from '@prisma/client';
 
 const maxWidth = 700;
 const maxInitialImages = 20;
@@ -61,6 +64,9 @@ export function PostImages({
       {_images.map((image) => {
         const width = image.width ?? maxWidth;
         const imageCollectionItem = collectionItems?.find((item) => item.imageId === image.id);
+        const showImageCollectionBadge =
+          imageCollectionItem?.tag &&
+          (isOwner || isModerator || imageCollectionItem.status === CollectionItemStatus.ACCEPTED);
 
         return (
           <Fragment key={image.id}>
@@ -86,7 +92,14 @@ export function PostImages({
               <ImageGuard2 image={image} connectType="post" connectId={postId}>
                 {(safe) => (
                   <>
-                    <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
+                    <Group spacing={4} className="absolute left-2 top-2 z-10">
+                      <ImageGuard2.BlurToggle />
+                      {showImageCollectionBadge && (
+                        <Badge variant="filled" color="gray">
+                          {imageCollectionItem?.tag?.name}
+                        </Badge>
+                      )}
+                    </Group>
                     <ImageContextMenu image={image} className="absolute right-2 top-2 z-10" />
                     <RoutedDialogLink name="imageDetail" state={{ imageId: image.id, images }}>
                       {!safe ? (
@@ -164,7 +177,7 @@ const useStyles = createStyles((theme) => ({
   },
   reactionsWithControls: {
     bottom: 'initial',
-    top: '4px',
-    left: '50px',
+    top: '32px',
+    left: '8px',
   },
 }));

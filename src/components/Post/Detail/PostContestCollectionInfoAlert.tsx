@@ -29,10 +29,11 @@ export const PostContestCollectionInfoAlert = ({
   const tagDisplay = collectionItem?.tag ? (
     <>
       {' '}
-      on the category{' '}
+      for the{' '}
       <Text component="span" tt="capitalize" weight="bold">
         {collectionItem?.tag.name}
-      </Text>
+      </Text>{' '}
+      category
     </>
   ) : null;
 
