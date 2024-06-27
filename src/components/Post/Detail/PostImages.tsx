@@ -31,12 +31,14 @@ export function PostImages({
   isLoading,
   collectionItems,
   isOwner,
+  isModerator,
 }: {
   postId: number;
   images: ImagesInfiniteModel[];
   isLoading?: boolean;
   collectionItems?: PostContestCollectionItem[];
   isOwner?: boolean;
+  isModerator?: boolean;
 }) {
   const { classes, cx } = useStyles();
   const [showMore, setShowMore] = useState(false);
@@ -66,6 +68,7 @@ export function PostImages({
               isOwner={isOwner}
               collectionItem={imageCollectionItem}
               itemLabel="image"
+              isModerator={isModerator}
             />
             <Paper
               key={image.id}

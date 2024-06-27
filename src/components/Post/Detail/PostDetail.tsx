@@ -367,6 +367,7 @@ export function PostDetailContent({ postId }: Props) {
                   isLoading={imagesLoading}
                   collectionItems={collectionItems}
                   isOwner={currentUser?.id === post.user.id}
+                  isModerator={currentUser?.isModerator}
                 />
                 {hiddenExplained.hasHidden && !imagesLoading && (
                   <Paper component={Center} p="xl" mih={300} withBorder>
