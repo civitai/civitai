@@ -19,12 +19,17 @@ import {
   Switch,
   Text,
   Transition,
+  Table,
   UnstyledButton,
+  Modal,
   useMantineColorScheme,
+  Stack,
+  SimpleGrid,
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { Currency } from '@prisma/client';
 import {
+  IconEye,
   IconBarbell,
   IconBookmark,
   IconBookmarkEdit,
@@ -54,6 +59,17 @@ import {
   IconUsers,
   IconVideoPlus,
   IconWriting,
+  IconPointerQuestion,
+  IconBriefcase,
+  IconAd2,
+  IconBrandDiscord,
+  IconBrandReddit,
+  IconBrandX,
+  IconBrandTwitch,
+  IconBrandInstagram,
+  IconBrandGithub,
+  IconBrandYoutube,
+  IconBrandTiktok,
 } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
@@ -132,6 +148,7 @@ const useStyles = createStyles((theme) => ({
 
   dropdown: {
     position: 'absolute',
+    paddingBottom: '20px',
     top: HEADER_HEIGHT,
     left: 0,
     right: 0,
@@ -139,8 +156,9 @@ const useStyles = createStyles((theme) => ({
     borderTopRightRadius: 0,
     borderTopLeftRadius: 0,
     borderTopWidth: 0,
-    overflow: 'hidden',
+    overflow: 'auto',
     height: `calc(100% - ${HEADER_HEIGHT}px)`,
+    maxWidth: '100%',
 
     [containerQuery.largerThan('md')]: {
       display: 'none',
@@ -217,6 +235,7 @@ const useStyles = createStyles((theme) => ({
 
   mobileSearchWrapper: {
     height: '100%',
+    width: '100%',
   },
 
   dNone: {
@@ -263,6 +282,7 @@ export function AppHeader({
   const [burgerOpened, setBurgerOpened] = useState(false);
   const [userMenuOpened, setUserMenuOpened] = useState(false);
   const [userSwitching, setUserSwitching] = useState(false);
+  const [showBrowsingModeMenu, setShowBrowsingModeMenu] = useState(false);
   // const ref = useClickOutside(() => setBurgerOpened(false));
   const searchRef = useRef<HTMLInputElement>(null);
 
@@ -285,7 +305,7 @@ export function AppHeader({
         href: '/generate',
         visible: !isMuted,
         label: (
-          <Group align="center" spacing="xs">
+          <Group className="flex flex-col md:flex-row items-center gap-2 text-xs md:text-md">
             <IconBrush stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
             Generate images
           </Group>
@@ -297,7 +317,7 @@ export function AppHeader({
         visible: !isMuted,
         redirectReason: 'post-images',
         label: (
-          <Group align="center" spacing="xs">
+          <Group className="flex flex-col md:flex-row items-center gap-2 text-xs md:text-md">
             <IconPhotoUp stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
             Post images
           </Group>
@@ -309,7 +329,7 @@ export function AppHeader({
         visible: !isMuted,
         redirectReason: 'post-images',
         label: (
-          <Group align="center" spacing="xs">
+          <Group className="flex flex-col md:flex-row items-center gap-2 text-xs md:text-md">
             <IconVideoPlus stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
             Post videos
           </Group>
@@ -321,9 +341,9 @@ export function AppHeader({
         visible: !isMuted,
         redirectReason: 'upload-model',
         label: (
-          <Group align="center" spacing="xs">
+          <Group className="flex flex-col md:flex-row items-center gap-2 text-xs md:text-md">
             <IconUpload stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
-            Upload a model
+            Upload model
           </Group>
         ),
         rel: 'nofollow',
@@ -333,12 +353,14 @@ export function AppHeader({
         visible: !isMuted && features.imageTraining,
         redirectReason: 'train-model',
         label: (
-          <Group align="center" spacing="xs">
+          <Group className="flex flex-col md:flex-row items-center gap-2 text-xs md:text-md">
             <IconBarbell stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
-            <Text span inline>
-              Train a LoRA
-            </Text>
-            <CurrencyIcon currency={Currency.BUZZ} size={16} />
+            <Group className="gap-1 md:gap-2">
+              <Text span inline>
+                Train a LoRA
+              </Text>
+              <CurrencyIcon currency={Currency.BUZZ} size={16} />
+            </Group>
           </Group>
         ),
         rel: 'nofollow',
@@ -348,7 +370,7 @@ export function AppHeader({
         visible: !isMuted,
         redirectReason: 'create-article',
         label: (
-          <Group align="center" spacing="xs">
+          <Group className="flex flex-col md:flex-row items-center gap-2 text-xs md:text-md">
             <IconWriting stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
             Write an article
           </Group>
@@ -360,10 +382,12 @@ export function AppHeader({
         visible: !isMuted && features.bounties,
         redirectReason: 'create-bounty',
         label: (
-          <Group align="center" spacing="xs">
+          <Group className="flex flex-col md:flex-row items-center gap-2 text-xs md:text-md">
             <IconMoneybag stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
-            <Text>Create a bounty</Text>
-            <CurrencyIcon currency={Currency.BUZZ} size={16} />
+            <Group className="gap-1 md:gap-2">
+              <Text>Create a bounty</Text>
+              <CurrencyIcon currency={Currency.BUZZ} size={16} />
+            </Group>
           </Group>
         ),
         rel: 'nofollow',
@@ -373,7 +397,7 @@ export function AppHeader({
         visible: !isMuted && features.clubs,
         redirectReason: 'create-club',
         label: (
-          <Group align="center" spacing="xs">
+          <Group className="flex flex-col md:flex-row items-center gap-2 text-xs md:text-md">
             <IconClubs stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
             <Text>Create a club</Text>
           </Group>
@@ -383,13 +407,14 @@ export function AppHeader({
     ],
     [features.bounties, features.imageTraining, features.clubs, isMuted, theme]
   );
+
   const links = useMemo<MenuLink[]>(
     () => [
       {
         href: `/user/${currentUser?.username}`,
         visible: !!currentUser,
         label: (
-          <Group align="center" spacing="xs">
+          <Group align="center" spacing="xs" className="flex flex-col md:flex-row text-xs md:text-md">
             <IconUser stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
             Your profile
           </Group>
@@ -399,7 +424,7 @@ export function AppHeader({
         href: `/user/${currentUser?.username}/models?section=training`,
         visible: !!currentUser && features.imageTrainingResults,
         label: (
-          <Group align="center" spacing="xs">
+          <Group align="center" spacing="xs" className="flex flex-col md:flex-row text-xs md:text-md">
             <IconBarbell stroke={1.5} color={theme.colors.green[theme.fn.primaryShade()]} />
             Training
           </Group>
@@ -409,7 +434,7 @@ export function AppHeader({
         href: `/collections`,
         visible: !!currentUser,
         label: (
-          <Group align="center" spacing="xs">
+          <Group align="center" spacing="xs" className="flex flex-col md:flex-row text-xs md:text-md">
             <IconBookmark stroke={1.5} color={theme.colors.green[theme.fn.primaryShade()]} />
             My collections
           </Group>
@@ -417,9 +442,9 @@ export function AppHeader({
       },
       {
         href: `/collections/${bookmarkedModelsCollection?.id}`,
-        visible: !!currentUser,
+        visible: !!currentUser && !isMobile,
         label: (
-          <Group align="center" spacing="xs">
+          <Group align="center" spacing="xs" className="flex flex-col md:flex-row text-xs md:text-md">
             <ThumbsUpIcon stroke={1.5} color={theme.colors.green[theme.fn.primaryShade()]} />
             Liked models
           </Group>
@@ -429,7 +454,7 @@ export function AppHeader({
         href: `/collections/${bookmarkedArticlesCollection?.id}`,
         visible: !!currentUser && !!bookmarkedArticlesCollection,
         label: (
-          <Group align="center" spacing="xs">
+          <Group align="center" spacing="xs" className="flex flex-col md:flex-row text-xs md:text-md">
             <IconBookmarkEdit stroke={1.5} color={theme.colors.pink[theme.fn.primaryShade()]} />
             Bookmarked articles
           </Group>
@@ -440,7 +465,7 @@ export function AppHeader({
         as: '/bounties',
         visible: !!currentUser && features.bounties,
         label: (
-          <Group align="center" spacing="xs">
+          <Group align="center" spacing="xs" className="flex flex-col md:flex-row text-xs md:text-md">
             <IconMoneybag stroke={1.5} color={theme.colors.pink[theme.fn.primaryShade()]} />
             My bounties
           </Group>
@@ -451,7 +476,7 @@ export function AppHeader({
         as: '/clubs',
         visible: !!currentUser && features.clubs,
         label: (
-          <Group align="center" spacing="xs">
+          <Group align="center" spacing="xs" className="flex flex-col md:flex-row text-xs md:text-md">
             <IconClubs stroke={1.5} color={theme.colors.pink[theme.fn.primaryShade()]} />
             My clubs
           </Group>
@@ -461,7 +486,7 @@ export function AppHeader({
         href: '/user/buzz-dashboard',
         visible: !!currentUser && features.buzz,
         label: (
-          <Group align="center" spacing="xs">
+          <Group align="center" spacing="xs" className="flex flex-col md:flex-row text-xs md:text-md">
             <IconProgressBolt stroke={1.5} color={theme.colors.yellow[7]} />
             Buzz dashboard
           </Group>
@@ -469,9 +494,9 @@ export function AppHeader({
       },
       {
         href: '/user/vault',
-        visible: !!currentUser && features.vault,
+        visible: !!currentUser && features.vault && !isMobile,
         label: (
-          <Group align="center" spacing="xs">
+          <Group align="center" spacing="xs" className="flex flex-col md:flex-row text-xs md:text-md">
             <IconCloudLock stroke={1.5} color={theme.colors.yellow[7]} />
             My vault
           </Group>
@@ -479,13 +504,13 @@ export function AppHeader({
       },
       {
         href: '',
-        visible: !!currentUser,
+        visible: !!currentUser && !isMobile,
         label: <Divider my={4} />,
       },
       {
         href: '/leaderboard/overall',
         label: (
-          <Group align="center" spacing="xs">
+          <Group align="center" spacing="xs" className="flex flex-col md:flex-row text-xs md:text-md">
             <IconCrown stroke={1.5} color={theme.colors.yellow[theme.fn.primaryShade()]} />
             Leaderboard
           </Group>
@@ -493,8 +518,9 @@ export function AppHeader({
       },
       {
         href: '/product/link',
+        visible: !isMobile,
         label: (
-          <Group align="center" spacing="xs">
+          <Group align="center" spacing="xs" className="flex flex-col md:flex-row text-xs md:text-md">
             <IconLink stroke={1.5} />
             Download Link App
           </Group>
@@ -504,9 +530,19 @@ export function AppHeader({
         href: `/user/${currentUser?.username}/following`,
         visible: !!currentUser,
         label: (
-          <Group align="center" spacing="xs">
+          <Group align="center" spacing="xs" className="flex flex-col md:flex-row text-xs md:text-md">
             <IconUsers stroke={1.5} />
             Creators you follow
+          </Group>
+        ),
+      },
+      {
+        href: '',
+        visible: !!currentUser && isMobile,
+        label: (
+          <Group align="center" spacing="xs" className="flex flex-col md:flex-row text-xs md:text-md">
+            <IconEye stroke={1.5} />
+            Browsing mode
           </Group>
         ),
       },
@@ -514,28 +550,17 @@ export function AppHeader({
         href: '/user/downloads',
         visible: !!currentUser,
         label: (
-          <Group align="center" spacing="xs">
+          <Group align="center" spacing="xs" className="flex flex-col md:flex-row text-xs md:text-md">
             <IconHistory stroke={1.5} />
             Download history
           </Group>
         ),
       },
       {
-        href: `/login?returnUrl=${router.asPath}`,
-        visible: !currentUser,
-        label: (
-          <Group align="center" spacing="xs">
-            <IconUserCircle stroke={1.5} />
-            Sign In/Sign up
-          </Group>
-        ),
-        rel: 'nofollow',
-      },
-      {
         href: '/questions',
-        visible: !!currentUser && features.questions,
+        visible: !!currentUser && features.questions && !isMobile,
         label: (
-          <Group align="center" spacing="xs">
+          <Group align="center" spacing="xs" className="flex flex-col md:flex-row text-xs md:text-md">
             <IconInfoSquareRounded stroke={1.5} />
             Questions{' '}
             <Badge color="yellow" size="xs">
@@ -559,12 +584,23 @@ export function AppHeader({
               });
             }}
           >
-            <Group align="center" spacing="xs">
+            <Group align="center" spacing="xs" className="flex flex-col md:flex-row text-xs md:text-md">
               <IconPlayerPlayFilled stroke={1.5} />
               Getting Started
             </Group>
           </UnstyledButton>
         ),
+      },
+      {
+        href: `/login?returnUrl=${router.asPath}`,
+        visible: !currentUser,
+        label: (
+          <Group align="center" spacing="xs" className="flex flex-col md:flex-row text-xs md:text-md">
+            <IconUserCircle stroke={1.5} />
+            Sign In/Sign up
+          </Group>
+        ),
+        rel: 'nofollow',
       },
     ],
     [
@@ -583,37 +619,131 @@ export function AppHeader({
     ]
   );
 
-  const burgerMenuItems = useMemo(
-    () =>
-      mainActions
-        .concat([{ href: '', label: <Divider /> }, ...links])
-        .filter(({ visible }) => visible !== false)
-        .map((link, index) => {
-          const item = link.href ? (
-            <Link key={index} href={link.href} as={link.as} passHref>
-              <Anchor
-                variant="text"
-                className={cx(classes.link, { [classes.linkActive]: router.asPath === link.href })}
-                onClick={() => setBurgerOpened(false)}
-                rel={link.rel}
-              >
-                {link.label}
-              </Anchor>
-            </Link>
-          ) : (
-            <Fragment key={`separator-${index}`}>{link.label}</Fragment>
-          );
+  const visibleLinks = links.filter(({ visible }) => visible !== false);
+  const columnCount = 3
+  const rows = visibleLinks.reduce((acc, item, index) => {
+    const rowIndex = Math.floor(index / columnCount);
+    if (!acc[rowIndex]) acc[rowIndex] = [];
+    acc[rowIndex].push(item);
+    return acc;
+  }, [] as MenuLink[][]);
 
-          return link.redirectReason ? (
-            <LoginRedirect key={link.href} reason={link.redirectReason} returnUrl={link.href}>
-              {item}
-            </LoginRedirect>
-          ) : (
-            item
-          );
-        }),
+  if (rows.length > 0) {
+    const lastRow = rows[rows.length - 1];
+    while (lastRow.length < columnCount) {
+      lastRow.push({ href: '', label: '', visible: true });
+    }
+  }
+
+  const burgerMenuItems = useMemo(
+    () => (
+      <>
+        <Group spacing="xl" px="md" py="lg" sx={() => ({
+          maxWidth: "100%",
+          overflowX: 'auto',
+          overflowY: 'hidden',
+          flexWrap: 'nowrap',
+          scrollbarWidth: 'none',
+          msOverflowStyle: 'none',
+          '&::-webkit-scrollbar': {
+            display: 'none'
+          },
+          '& > *': {
+            flexShrink: 0,
+          },
+        })}>
+          {mainActions
+            .filter(({ visible }) => visible !== false)
+            .map((link, index) => {
+              const item = link.href ? (
+                <Button
+                  key={index}
+                  component={Link}
+                  href={link.href}
+                  as={link.as}
+                  variant="light"
+                  compact
+                  onClick={() => setBurgerOpened(false)}
+                  rel={link.rel}
+                >
+                  {link.label}
+                </Button>
+              ) : null;
+
+              return link.redirectReason && item ? (
+                <LoginRedirect key={link.href} reason={link.redirectReason} returnUrl={link.href}>
+                  {item as ReactElement}
+                </LoginRedirect>
+              ) : (
+                item
+              );
+            })}
+        </Group>
+
+        <Table
+          highlightOnHover
+          withBorder
+          withColumnBorders
+          sx={(theme) => ({
+            borderLeft: 'none',
+            borderRight: 'none',
+            '& td': {
+              paddingTop: '20px !important',
+              paddingBottom: '20px !important',
+            },
+          })}
+        >
+          <tbody>
+            {rows.map((row, rowIndex) => (
+              <tr key={rowIndex}>
+                {row.map((link, colIndex) => (
+                  <td key={colIndex} style={{ width: `${100 / columnCount}%` }}>
+                    {link.href ? (
+                      <Button
+                        component={Link}
+                        href={link.href}
+                        as={link.as}
+                        variant="subtle"
+                        compact
+                        onClick={() => setBurgerOpened(false)}
+                        rel={link.rel}
+                      >
+                        {link.label}
+                      </Button>
+                    ) : (
+                      <div
+                        onClick={() => setShowBrowsingModeMenu(!showBrowsingModeMenu)}
+                      >
+                        {link.label}
+                      </div>
+                    )}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </Table>
+
+        <Modal
+          opened={showBrowsingModeMenu}
+          onClose={() => setShowBrowsingModeMenu(false)}
+          withCloseButton={false}
+          centered
+          mx={16}
+        >
+          <BrowsingModeMenu
+            closeMenu={() => {
+              setShowBrowsingModeMenu(false);
+              setBurgerOpened(false);
+            }}
+          />
+        </Modal>
+
+      </>
+    ),
     [classes, setBurgerOpened, cx, links, mainActions, router.asPath]
   );
+
   const userMenuItems = useMemo(
     () =>
       links
@@ -636,6 +766,62 @@ export function AppHeader({
         ),
     [links]
   );
+
+  const additionalLinks = [
+    {
+      href: '/feedback',
+      label: 'Feature Request',
+      icon: IconPointerQuestion,
+      external: true,
+    },
+    {
+      href: '/content/careers',
+      label: 'Join Us',
+      icon: IconBriefcase,
+      external: true,
+    },
+    {
+      href: '/advertise-with-us',
+      label: 'Advertise',
+      icon: IconAd2,
+      external: true,
+    },
+  ];
+
+  const socialLinks = [
+    { icon: IconBrandDiscord, href: 'https://discord.gg/civitai' },
+    { icon: IconBrandReddit, href: 'https://www.reddit.com/r/civitai/' },
+    { icon: IconBrandX, href: 'https://twitter.com/civitai' },
+    { icon: IconBrandTwitch, href: 'https://www.twitch.tv/civitai' },
+    { icon: IconBrandInstagram, href: 'https://www.instagram.com/civitaiofficial/' },
+    { icon: IconBrandGithub, href: 'https://github.com/civitai' },
+    { icon: IconBrandYoutube, href: 'https://www.youtube.com/@civitai' },
+    { icon: IconBrandTiktok, href: 'https://www.tiktok.com/@civitai' },
+  ];
+
+  const footerLinks = [
+    {
+      label: 'Creators',
+      items: [
+        { name: 'Residency', href: 'https://air.civitai.com/' },
+        { name: 'Creators', href: '/creators-program' },
+        { name: 'API', href: 'https://github.com/civitai/civitai/wiki/REST-API-Reference' },
+        { name: 'Education', href: 'https://education.civitai.com/' },
+        { name: 'Safety Center', href: '/safety' }
+      ]
+    },
+    {
+      label: 'Docs',
+      items: [
+        { name: 'Terms of Service', href: '/content/tos' },
+        { name: 'Privacy', href: '/content/privacy' },
+        { name: 'Newsroom', href: '/newsroom' },
+        { name: 'Wiki', href: 'https://wiki.civitai.com/wiki/Main_Page' },
+        { name: 'Status', href: 'https://status.civitai.com/status/public' }
+      ]
+    },
+  ];
+
   const [showSearch, setShowSearch] = useState(false);
   const onSearchDone = () => setShowSearch(false);
 
@@ -699,7 +885,7 @@ export function AppHeader({
               }}
               compact
             >
-              Buy Buzz
+              Buy
             </Button>
           </Group>
         </Link>
@@ -956,16 +1142,13 @@ export function AppHeader({
           </Group>
         </Grid.Col>
         <Grid.Col span="auto" className={classes.burger}>
-          <Group spacing={4} noWrap>
-            {mobileCreateButton}
+          <Group spacing={12} noWrap>
             <ActionIcon onClick={() => setShowSearch(true)}>
               <IconSearch />
             </ActionIcon>
             {currentUser && <CivitaiLinkPopover />}
             {currentUser && <NotificationBell />}
-            {currentUser && features.chat && <ChatButton />}
             {/*{currentUser?.isModerator && <ModerationNav />}*/}
-            {currentUser && <ImpersonateButton />}
             <Burger
               opened={burgerOpened}
               onClick={() => setBurgerOpened(!burgerOpened)}
@@ -981,7 +1164,7 @@ export function AppHeader({
                     style={{ ...styles, borderLeft: 0, borderRight: 0 }}
                     radius={0}
                     sx={{ zIndex: 1002 }}
-                    // ref={ref}
+                  // ref={ref}
                   >
                     {userSwitching ? (
                       // TODO maybe move this to account switcher
@@ -994,61 +1177,119 @@ export function AppHeader({
                       </ScrollArea.Autosize>
                     ) : (
                       <>
-                        {/* Calculate maxHeight based off total viewport height minus header + footer + static menu options inside dropdown sizes */}
-                        <ScrollArea.Autosize maxHeight={'calc(100dvh - 135px)'}>
+                        <Group
+                          sx={{ display: 'flex', alignItems: 'center', padding: '10px', justifyContent: 'space-between' }}
+                          onClick={() => setUserSwitching(true)}
+                        >
                           {!!currentUser && (
                             <Group
-                              className={classes.link}
-                              w="100%"
-                              position="apart"
-                              sx={{ cursor: 'pointer' }}
-                              onClick={() => setUserSwitching(true)}
+                              p={4}
+                              pr={6}
+                              sx={{ cursor: 'pointer', boxShadow: '0 0 0 0.5px grey', borderRadius: '24px' }}
                             >
                               <UserAvatar user={creator ?? currentUser} withUsername />
-                              <IconChevronRight />
+                              <IconChevronRight size={18} />
                             </Group>
                           )}
-                          <BuzzMenuItem mx={0} mt={0} textSize="sm" withAbbreviation={false} />
-                          {burgerMenuItems}
-                          {currentUser && (
-                            <>
-                              <Divider />
-                              <Box px="md" pt="md">
-                                <BrowsingModeMenu closeMenu={() => setBurgerOpened(false)} />
+                          <BuzzMenuItem mx={0} bg="none" mt={0} textSize="sm" withAbbreviation={false} />
+                        </Group>
+                        <Divider />
+                        {burgerMenuItems}
+
+                        <Stack spacing={0}>
+                          {additionalLinks.map((link, index) => (
+                            <Fragment key={link.href}>
+                              <Box px="md">
+                                <UnstyledButton
+                                  component={Link}
+                                  href={link.href}
+                                  target={link.external ? "_blank" : undefined}
+                                  rel={link.external ? "noopener noreferrer" : undefined}
+                                >
+                                  <Group position="apart" py="md" noWrap>
+                                    <Group>
+                                      <link.icon size={20} stroke={1.5} />
+                                      <Text size="sm">{link.label}</Text>
+                                    </Group>
+                                    <IconChevronRight size={18} stroke={1.5} />
+                                  </Group>
+                                </UnstyledButton>
                               </Box>
-                            </>
-                          )}
-                        </ScrollArea.Autosize>
+                              {index < additionalLinks.length - 1 && <Divider />}
+                            </Fragment>
+                          ))}
+
+                          <Divider />
+                          <Box px="md">
+                            <Group position="apart" py="md" noWrap>
+                              <Group>
+                                {colorScheme === 'dark' ? (
+                                  <IconMoonStars size={20} stroke={1.5} />
+                                ) : (
+                                  <IconSun size={20} stroke={1.5} />
+                                )}
+                                <Text size="sm">Dark mode</Text>
+                              </Group>
+                              <Switch
+                                checked={colorScheme === 'dark'}
+                                onChange={() => toggleColorScheme()}
+                                size="sm"
+                              />
+                            </Group>
+                          </Box>
+
+                          <Divider />
+                          <Box px="md" py="md">
+                            <SimpleGrid cols={8} spacing="xs">
+                              {socialLinks.map((link, index) => (
+                                <ActionIcon
+                                  key={index}
+                                  component="a"
+                                  href={link.href}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  variant="subtle"
+                                >
+                                  <link.icon size={16} />
+                                </ActionIcon>
+                              ))}
+                            </SimpleGrid>
+                          </Box>
+
+                          <Divider />
+                          <Box px="md" py="xl">
+                            <SimpleGrid cols={2} spacing="md">
+                              {footerLinks.map((section, index) => (
+                                <div key={index}>
+                                  <Text weight={300} opacity={0.8} mb="xs" size='sm'>{section.label}</Text>
+                                  <Stack spacing="xs">
+                                    {section.items.map((item, itemIndex) => (
+                                      <Text
+                                        key={itemIndex}
+                                        component="a"
+                                        href={item.href}
+                                        size="xs"
+                                        sx={(theme) => ({
+                                          color: theme.colorScheme === 'dark' ? theme.colors.dark[0] : theme.colors.gray[7],
+                                          textDecoration: 'none',
+                                          '&:hover': {
+                                            textDecoration: 'underline',
+                                          },
+                                        })}
+                                      >
+                                        {item.name}
+                                      </Text>
+                                    ))}
+                                  </Stack>
+                                </div>
+                              ))}
+                            </SimpleGrid>
+                          </Box>
+                        </Stack>
 
                         <Group p="md" position="apart" grow>
-                          <ActionIcon
-                            variant="default"
-                            onClick={() => toggleColorScheme()}
-                            size="lg"
-                            sx={(theme) => ({
-                              color:
-                                theme.colorScheme === 'dark'
-                                  ? theme.colors.yellow[theme.fn.primaryShade()]
-                                  : theme.colors.blue[theme.fn.primaryShade()],
-                            })}
-                          >
-                            {colorScheme === 'dark' ? (
-                              <IconSun size={18} />
-                            ) : (
-                              <IconMoonStars size={18} />
-                            )}
-                          </ActionIcon>
                           {currentUser && (
                             <>
-                              {/* {currentUser?.showNsfw && (
-                            <BlurToggle iconProps={{ stroke: 1.5 }}>
-                              {({ icon, toggle }) => (
-                                <ActionIcon variant="default" size="lg" onClick={() => toggle()}>
-                                  {icon}
-                                </ActionIcon>
-                              )}
-                            </BlurToggle>
-                          )} */}
                               <Link href="/user/account">
                                 <ActionIcon
                                   variant="default"
@@ -1076,7 +1317,7 @@ export function AppHeader({
           </Group>
         </Grid.Col>
       </Grid>
-    </Header>
+    </Header >
   );
 }
 
