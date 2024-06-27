@@ -93,7 +93,7 @@ export const userWithProfileSelect = Prisma.validator<Prisma.UserSelect>()({
       followerCountAllTime: true,
       reactionCountAllTime: true,
       uploadCountAllTime: true,
-      // generationCountAllTime: true,
+      generationCountAllTime: true,
     },
   },
   profile: {

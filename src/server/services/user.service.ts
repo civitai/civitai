@@ -109,7 +109,7 @@ export const getUserCreator = async ({
           followerCountAllTime: true,
           reactionCountAllTime: true,
           uploadCountAllTime: true,
-          // generationCountAllTime: true,
+          generationCountAllTime: true,
         },
       },
       rank: {
@@ -180,8 +180,8 @@ export const getUsers = async ({ limit, query, email, ids, include }: GetAllUser
     SELECT ${Prisma.raw(select.join(','))}
     FROM "User" u
       ${Prisma.raw(
-        include?.includes('avatar') ? 'LEFT JOIN "Image" i ON i.id = u."profilePictureId"' : ''
-      )}
+    include?.includes('avatar') ? 'LEFT JOIN "Image" i ON i.id = u."profilePictureId"' : ''
+  )}
     WHERE ${ids && ids.length > 0 ? Prisma.sql`u.id IN (${Prisma.join(ids)})` : Prisma.sql`TRUE`}
       AND ${query ? Prisma.sql`u.username LIKE ${query + '%'}` : Prisma.sql`TRUE`}
       AND ${email ? Prisma.sql`u.email ILIKE ${email + '%'}` : Prisma.sql`TRUE`}
@@ -676,7 +676,7 @@ export const removeAllContent = async ({ id }: { id: number }) => {
     for (const image of images) {
       await deleteImageById({ id: image.id });
     }
-  } catch (e) {}
+  } catch (e) { }
   await dbWrite.image.deleteMany({ where: { userId: id } });
 
   await modelsSearchIndex.queueUpdate(
@@ -1147,8 +1147,8 @@ export const createUserReferral = async ({
     // Confirm userReferralCode is valid:
     const referralCode = !!userReferralCode
       ? await dbRead.userReferralCode.findFirst({
-          where: { code: userReferralCode, deletedAt: null },
-        })
+        where: { code: userReferralCode, deletedAt: null },
+      })
       : null;
 
     if (!referralCode && !source && !landingPage && !loginRedirectReason) {
