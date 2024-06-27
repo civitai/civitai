@@ -392,8 +392,8 @@ export async function getAllHiddenForUser({
     blockedUsers,
     blockedByUsers,
   } = refreshCache
-      ? await getAllHiddenForUserFresh({ userId })
-      : await getAllHiddenForUsersCached({ userId });
+    ? await getAllHiddenForUserFresh({ userId })
+    : await getAllHiddenForUsersCached({ userId });
 
   const result = {
     hiddenImages: [...images.map((id) => ({ id, hidden: true })), ...implicitImages],
