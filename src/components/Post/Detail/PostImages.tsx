@@ -21,6 +21,7 @@ import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { PostContestCollectionInfoAlert } from '~/components/Post/Detail/PostContestCollectionInfoAlert';
 import { PostContestCollectionItem } from '~/types/router';
+import { shouldDisplayHtmlControls } from '~/components/EdgeMedia/EdgeMedia.util';
 
 const maxWidth = 700;
 const maxInitialImages = 20;
@@ -37,7 +38,7 @@ export function PostImages({
   collectionItems?: PostContestCollectionItem[];
   isOwner?: boolean;
 }) {
-  const { classes } = useStyles();
+  const { classes, cx } = useStyles();
   const [showMore, setShowMore] = useState(false);
 
   if (isLoading)
@@ -109,12 +110,15 @@ export function PostImages({
                           width={width < maxWidth ? width : maxWidth}
                           // original={image.type === 'video'} -- Removed to fix site performance.
                           anim={safe}
+                          html5Controls={shouldDisplayHtmlControls(image)}
                         />
                       )}
                     </RoutedDialogLink>
                     <Reactions
                       p={4}
-                      className={classes.reactions}
+                      className={cx(classes.reactions, {
+                        [classes.reactionsWithControls]: shouldDisplayHtmlControls(image),
+                      })}
                       entityId={image.id}
                       entityType="image"
                       reactions={image.reactions}
@@ -154,5 +158,10 @@ const useStyles = createStyles((theme) => ({
         : theme.colors.gray[0],
     // backdropFilter: 'blur(13px) saturate(160%)',
     boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
+  },
+  reactionsWithControls: {
+    bottom: 'initial',
+    top: '4px',
+    left: '50px',
   },
 }));
