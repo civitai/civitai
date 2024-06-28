@@ -54,6 +54,7 @@ import { IconNose } from '~/components/SVG/IconNose';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import { VideoMetadata } from '~/server/schema/media.schema';
 import { shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
+import { getIsSdxl } from '~/shared/constants/generation.constants';
 
 const IMAGE_CARD_WIDTH = 450;
 
@@ -183,9 +184,8 @@ export function ModelCard({ data, forceInView }: Props) {
     data.publishedAt &&
     data.lastVersionAt > aDayAgo &&
     data.lastVersionAt.getTime() - data.publishedAt.getTime() > constants.timeCutOffs.updatedModel;
-  const isSDXL = [...baseModelSets.SDXL, ...baseModelSets.Pony].includes(
-    data.version?.baseModel as BaseModel
-  );
+  const isSDXL = getIsSdxl(data.version?.baseModel);
+
   const isPony = data.version?.baseModel === 'Pony';
   const isOdor = data.version?.baseModel === 'ODOR';
   const isArchived = data.mode === ModelModifier.Archived;

@@ -164,7 +164,8 @@ export function getBaseModelSetType(baseModel?: string, defaultType?: BaseModelS
   )?.[0] ?? defaultType) as BaseModelSetType;
 }
 
-export function getIsSdxl(baseModelSetType?: BaseModelSetType) {
+export function getIsSdxl(baseModel?: string) {
+  const baseModelSetType = getBaseModelSetType(baseModel);
   return (
     baseModelSetType === 'SDXL' ||
     baseModelSetType === 'Pony' ||

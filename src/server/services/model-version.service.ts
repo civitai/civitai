@@ -2,7 +2,7 @@ import { ModelStatus, ModelVersionEngagementType, Prisma, CommercialUse } from '
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { TRPCError } from '@trpc/server';
 import { SessionUser } from 'next-auth';
-import { BaseModel, baseModelSets, constants } from '~/server/common/constants';
+import { BaseModel, BaseModelSetType, baseModelSets, constants } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
 
 import { GetByIdInput } from '~/server/schema/base.schema';
@@ -528,7 +528,6 @@ export const deleteExplorationPrompt = async ({
   }
 };
 
-const baseModelSetsArray = Object.values(baseModelSets);
 export const getModelVersionsByModelType = async ({
   type,
   query,
@@ -537,8 +536,8 @@ export const getModelVersionsByModelType = async ({
 }: GetModelVersionByModelTypeProps) => {
   const sqlAnd = [Prisma.sql`mv.status = 'Published' AND m.type = ${type}::"ModelType"`];
   if (baseModel) {
-    const baseModelSet = baseModelSetsArray.find((x) => x.includes(baseModel as BaseModel));
-    if (baseModelSet)
+    const baseModelSet = baseModelSets[baseModel as BaseModelSetType] ?? [];
+    if (baseModelSet.length)
       sqlAnd.push(Prisma.sql`mv."baseModel" IN (${Prisma.join(baseModelSet, ',')})`);
   }
   if (query) {

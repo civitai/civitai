@@ -150,8 +150,9 @@ export const getGenerationResources = async (
         sqlAnd.push(Prisma.sql`m.name ILIKE ${pgQuery}`);
       }
       if (baseModel) {
-        const baseModelSet = baseModelSetsArray.find((x) => x.includes(baseModel as BaseModel));
-        if (baseModelSet)
+        // const baseModelSet = baseModelSetsArray.find((x) => x.includes(baseModel as BaseModel));
+        const baseModelSet = baseModelSets[baseModel as BaseModelSetType] ?? [];
+        if (baseModelSet.length)
           sqlAnd.push(Prisma.sql`mv."baseModel" IN (${Prisma.join(baseModelSet, ',')})`);
       }
 

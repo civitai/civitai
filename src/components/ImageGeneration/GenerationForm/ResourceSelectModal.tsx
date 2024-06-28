@@ -66,6 +66,7 @@ import { Generation } from '~/server/services/generation/generation.types';
 import { aDayAgo } from '~/utils/date-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import { ResourceSelectOptions } from './resource-select.types';
+import { getIsSdxl } from '~/shared/constants/generation.constants';
 
 type ResourceSelectModalProps = {
   title?: React.ReactNode;
@@ -320,9 +321,7 @@ function ResourceSelectCard({
   };
 
   const selectedVersion = data.versions.find((x) => x.id === selected);
-  const isSDXL = [...baseModelSets.SDXL, ...baseModelSets.Pony].includes(
-    selectedVersion?.baseModel as BaseModel
-  );
+  const isSDXL = getIsSdxl(selectedVersion?.baseModel);
   const isPony = selectedVersion?.baseModel === 'Pony';
   const isNew = data.publishedAt && data.publishedAt > aDayAgo;
   const isUpdated =

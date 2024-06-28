@@ -833,12 +833,13 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                       } else {
                         const mId = gVal.modelId;
                         const mvId = gVal.id;
-                        const mBase = gVal.baseModel as BaseModel;
-                        const castBase = [
-                          ...baseModelSets.SDXL,
-                          ...baseModelSets.SDXLDistilled,
-                          ...baseModelSets.Pony,
-                        ].includes(mBase)
+                        const castBase = (
+                          [
+                            ...baseModelSets.SDXL,
+                            ...baseModelSets.SDXLDistilled,
+                            ...baseModelSets.Pony,
+                          ] as string[]
+                        ).includes(gVal.baseModel)
                           ? 'sdxl'
                           : 'sd15';
                         const cLink = `civitai:${mId}@${mvId}`;
