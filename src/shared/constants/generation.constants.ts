@@ -1,5 +1,6 @@
 import { WorkflowStatus } from '@civitai/client';
 import { MantineColor } from '@mantine/core';
+import { ModelType } from '@prisma/client';
 import { Sampler, generation } from '~/server/common/constants';
 import { BaseModel, BaseModelSetType, baseModelSets } from '~/server/common/constants';
 import { ResourceData } from '~/server/redis/caches';
@@ -16,6 +17,7 @@ export const generationServiceCookie = {
   maxAge: 3600,
 };
 
+// #region [statuses]
 export const generationStatusColors: Record<WorkflowStatus, MantineColor> = {
   unassigned: 'yellow',
   preparing: 'yellow',
@@ -37,7 +39,9 @@ export const orchestratorPendingStatuses: WorkflowStatus[] = [
   'preparing',
   'scheduled',
 ];
+// #endregion
 
+// #region [injectable resources]
 export type InjectableResource = {
   id: number;
   triggerWord?: string;
@@ -86,6 +90,7 @@ export function getInjectablResources(baseModelSetType: BaseModelSetType) {
     draft: draftInjectableResources.find((x) => x.baseModelSetType === baseModelSetType),
   };
 }
+// #endregion
 
 export const samplersToSchedulers: Record<Sampler, string> = {
   'Euler a': 'EulerA',
@@ -155,16 +160,9 @@ export function getBaseModelSetType(baseModel?: string, defaultType?: BaseModelS
   defaultType ??= 'SD1';
   if (!baseModel) return defaultType;
   return (Object.entries(baseModelSets).find(
-    ([key, baseModels]) => key === baseModel || baseModels.includes(baseModel as BaseModel)
+    ([key, baseModels]) => key === baseModel || (baseModels as string[]).includes(baseModel)
   )?.[0] ?? defaultType) as BaseModelSetType;
 }
-
-export const getBaseModelSet = (baseModel?: string) => {
-  if (!baseModel) return undefined;
-  return Object.entries(baseModelSets).find(
-    ([key, set]) => key === baseModel || set.includes(baseModel as BaseModel)
-  )?.[1];
-};
 
 export function getIsSdxl(baseModelSetType?: BaseModelSetType) {
   return (
@@ -225,4 +223,196 @@ export function sanitizeTextToImageParams<T extends Partial<TextToImageParams>>(
   }
   return params;
 }
+// #endregion
+
+// #region [comfy]
+export const hiresWorkflow = {
+  '3': {
+    inputs: {
+      seed: 89848141647836,
+      steps: 12,
+      cfg: 8,
+      sampler_name: 'dpmpp_sde',
+      scheduler: 'normal',
+      denoise: 1,
+      model: ['16', 0],
+      positive: ['6', 0],
+      negative: ['7', 0],
+      latent_image: ['5', 0],
+    },
+    class_type: 'KSampler',
+    _meta: {
+      title: 'KSampler',
+    },
+  },
+  '5': {
+    inputs: {
+      width: 768,
+      height: 768,
+      batch_size: 1,
+    },
+    class_type: 'EmptyLatentImage',
+    _meta: {
+      title: 'Empty Latent Image',
+    },
+  },
+  '6': {
+    inputs: {
+      text: 'masterpiece HDR victorian portrait painting of woman, blonde hair, mountain nature, blue sky\n',
+      clip: ['16', 1],
+    },
+    class_type: 'CLIPTextEncode',
+    _meta: {
+      title: 'CLIP Text Encode (Prompt)',
+    },
+  },
+  '7': {
+    inputs: {
+      text: 'bad hands, text, watermark\n',
+      clip: ['16', 1],
+    },
+    class_type: 'CLIPTextEncode',
+    _meta: {
+      title: 'CLIP Text Encode (Prompt)',
+    },
+  },
+  '8': {
+    inputs: {
+      samples: ['3', 0],
+      vae: ['16', 2],
+    },
+    class_type: 'VAEDecode',
+    _meta: {
+      title: 'VAE Decode',
+    },
+  },
+  '9': {
+    inputs: {
+      filename_prefix: 'ComfyUI',
+      images: ['8', 0],
+    },
+    class_type: 'SaveImage',
+    _meta: {
+      title: 'Save Image',
+    },
+  },
+  '10': {
+    inputs: {
+      upscale_method: 'nearest-exact',
+      width: 1152,
+      height: 1152,
+      crop: 'disabled',
+      samples: ['3', 0],
+    },
+    class_type: 'LatentUpscale',
+    _meta: {
+      title: 'Upscale Latent',
+    },
+  },
+  '11': {
+    inputs: {
+      seed: 469771404043268,
+      steps: 14,
+      cfg: 8,
+      sampler_name: 'dpmpp_2m',
+      scheduler: 'simple',
+      denoise: 0.5,
+      model: ['16', 0],
+      positive: ['6', 0],
+      negative: ['7', 0],
+      latent_image: ['10', 0],
+    },
+    class_type: 'KSampler',
+    _meta: {
+      title: 'KSampler',
+    },
+  },
+  '12': {
+    inputs: {
+      filename_prefix: 'ComfyUI',
+      images: ['13', 0],
+    },
+    class_type: 'SaveImage',
+    _meta: {
+      title: 'Save Image',
+    },
+  },
+  '13': {
+    inputs: {
+      samples: ['11', 0],
+      vae: ['16', 2],
+    },
+    class_type: 'VAEDecode',
+    _meta: {
+      title: 'VAE Decode',
+    },
+  },
+  '16': {
+    inputs: {
+      ckpt_name: 'v2-1_768-ema-pruned.ckpt',
+    },
+    class_type: 'CheckpointLoaderSimple',
+    _meta: {
+      title: 'Load Checkpoint',
+    },
+  },
+};
+// #endregion
+
+// #region [config]
+
+// pixel upscaler vs latent upscaler
+// pixel upscalers trained on a style
+// latent upscalers trained on a base model type
+
+export type SupportedBaseModel = 'SD1' | 'SDXL' | 'Pony';
+export type BaseModelResourceTypes = typeof baseModelResourceTypes;
+export const baseModelResourceTypes = {
+  SD1: [
+    { type: ModelType.Checkpoint, baseModels: [...baseModelSets.SD1] },
+    { type: ModelType.TextualInversion, baseModels: [...baseModelSets.SD1] },
+    { type: ModelType.LORA, baseModels: [...baseModelSets.SD1] },
+    { type: ModelType.DoRA, baseModels: [...baseModelSets.SD1] },
+    { type: ModelType.LoCon, baseModels: [...baseModelSets.SD1] },
+    { type: ModelType.VAE, baseModels: [...baseModelSets.SD1] },
+    { type: ModelType.Upscaler, baseModels: [...baseModelSets.SD1] },
+  ],
+  SDXL: [
+    { type: ModelType.Checkpoint, baseModels: [...baseModelSets.SDXL] },
+    { type: ModelType.TextualInversion, baseModels: [...baseModelSets.SDXL, 'SD 1.5'] },
+    { type: ModelType.LORA, baseModels: [...baseModelSets.SDXL] },
+    { type: ModelType.DoRA, baseModels: [...baseModelSets.SDXL] },
+    { type: ModelType.LoCon, baseModels: [...baseModelSets.SDXL] },
+    { type: ModelType.VAE, baseModels: [...baseModelSets.SDXL] },
+    { type: ModelType.Upscaler, baseModels: [...baseModelSets.SDXL] },
+  ],
+  Pony: [
+    { type: ModelType.Checkpoint, baseModels: [...baseModelSets.Pony] },
+    { type: ModelType.TextualInversion, baseModels: ['SD 1.5'] },
+    {
+      type: ModelType.LORA,
+      baseModels: [...baseModelSets.Pony, 'SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
+    },
+    {
+      type: ModelType.DoRA,
+      baseModels: [...baseModelSets.Pony, 'SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
+    },
+    {
+      type: ModelType.LoCon,
+      baseModels: [...baseModelSets.Pony, 'SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
+    },
+  ],
+};
+
+/*
+<ResourcePicker>{({segments}) => {
+  const [segment1, segment2, segment3] = segments;
+
+  each segment has controls, changing any value updates the resource picker `resources` value
+
+  return <></>
+}}</ResourcePicker>
+
+*/
+
 // #endregion

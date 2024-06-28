@@ -371,6 +371,7 @@ export type BaseModelType = (typeof constants.baseModelTypes)[number];
 
 export type BaseModel = (typeof constants.baseModels)[number];
 
+export type BaseModelSetType = (typeof baseModelSetTypes)[number];
 export const baseModelSetTypes = [
   'SD1',
   'SD2',
@@ -385,8 +386,9 @@ export const baseModelSetTypes = [
   'HyDit1',
   'ODOR',
 ] as const;
-export type BaseModelSetType = (typeof baseModelSetTypes)[number];
-export const baseModelSets: Record<BaseModelSetType, BaseModel[]> = {
+
+const defineBaseModelSets = <T extends Record<BaseModelSetType, BaseModel[]>>(args: T) => args;
+export const baseModelSets = defineBaseModelSets({
   SD1: ['SD 1.4', 'SD 1.5', 'SD 1.5 LCM', 'SD 1.5 Hyper'],
   SD2: ['SD 2.0', 'SD 2.0 768', 'SD 2.1', 'SD 2.1 768', 'SD 2.1 Unclip'],
   SD3: ['SD 3'],
@@ -399,7 +401,7 @@ export const baseModelSets: Record<BaseModelSetType, BaseModel[]> = {
   SCascade: ['Stable Cascade'],
   Pony: ['Pony'],
   ODOR: ['ODOR'],
-};
+});
 
 type LicenseDetails = {
   url: string;

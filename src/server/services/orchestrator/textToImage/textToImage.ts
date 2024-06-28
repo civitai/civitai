@@ -387,7 +387,7 @@ export async function formatTextToImageResponses(
 
       return removeNulls({
         $type: 'textToImage',
-        name: step.name,
+        name: step.name ?? '$0',
         params: {
           baseModel,
           prompt,

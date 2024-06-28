@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { baseModelSetTypes, generation } from '~/server/common/constants';
+import { workflowResourceSchema } from '~/server/schema/orchestrator/workflows.schema';
 import { stripChecksAndEffects } from '~/utils/zod-helpers';
 
 // #region [step input]
@@ -24,11 +25,6 @@ export const textToImageParamsSchema = z.object({
   draft: z.boolean().optional(),
   aspectRatio: z.string(),
   baseModel: z.enum(baseModelSetTypes),
-});
-
-export const textToImageResourceSchema = z.object({
-  id: z.number(),
-  strength: z.number().default(1),
 });
 
 export const textToImageWhatIfSchema = stripChecksAndEffects(textToImageParamsSchema).extend({
@@ -75,7 +71,7 @@ export const textToImageStepMetadataSchema = z.object({
 
 export const textToImageCreateSchema = z.object({
   params: textToImageParamsSchema,
-  resources: textToImageResourceSchema.array().min(1, 'You must select at least one resource'),
+  resources: workflowResourceSchema.array().min(1, 'You must select at least one resource'),
   tags: z.string().array().default([]),
   metadata: textToImageStepMetadataSchema.optional(),
 });

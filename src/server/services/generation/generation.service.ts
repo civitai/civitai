@@ -50,7 +50,6 @@ import {
   formatGenerationResources,
   GenerationResource,
   getBaseModelSetType,
-  samplersToSchedulers,
 } from '~/shared/constants/generation.constants';
 import { findClosest } from '~/utils/number-helpers';
 import {

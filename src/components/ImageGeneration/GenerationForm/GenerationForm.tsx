@@ -80,17 +80,17 @@ import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
 import { useGenerationContext } from '~/components/ImageGeneration/GenerationProvider';
 import InputQuantity from '~/components/ImageGeneration/GenerationForm/InputQuantity';
 import Link from 'next/link';
-import {
-  textToImageParamsSchema,
-  textToImageResourceSchema,
-} from '~/server/schema/orchestrator/textToImage.schema';
+// import {
+//   textToImageParamsSchema,
+//   textToImageResourceSchema,
+// } from '~/server/schema/orchestrator/textToImage.schema';
 import { z } from 'zod';
 
-const schema = textToImageParamsSchema.extend({
-  model: textToImageResourceSchema.passthrough(),
-  resources: textToImageResourceSchema.passthrough().array().min(0).max(9),
-  vae: textToImageResourceSchema.passthrough().optional(),
-});
+// const schema = textToImageParamsSchema.extend({
+//   model: textToImageResourceSchema.passthrough(),
+//   resources: textToImageResourceSchema.passthrough().array().min(0).max(9),
+//   vae: textToImageResourceSchema.passthrough().optional(),
+// });
 
 // const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
 //   const { classes, cx, theme } = useStyles();

@@ -9,7 +9,6 @@ import { BaseModel, constants, generation, getGenerationConfig } from '~/server/
 import { imageSchema } from '~/server/schema/image.schema';
 import {
   textToImageParamsSchema,
-  textToImageResourceSchema,
   textToImageStepMetadataSchema,
 } from '~/server/schema/orchestrator/textToImage.schema';
 import { userTierSchema } from '~/server/schema/user.schema';
@@ -23,9 +22,10 @@ import { trpc } from '~/utils/trpc';
 import { generationStore, useGenerationStore } from '~/store/generation.store';
 import { auditPrompt } from '~/utils/metadata/audit';
 import { defaultsByTier } from '~/server/schema/generation.schema';
+import { workflowResourceSchema } from '~/server/schema/orchestrator/workflows.schema';
 
 // #region [schemas]
-const extendedTextToImageResourceSchema = textToImageResourceSchema.extend({
+const extendedTextToImageResourceSchema = workflowResourceSchema.extend({
   name: z.string(),
   trainedWords: z.string().array().default([]),
   modelId: z.number(),
@@ -133,7 +133,7 @@ function formatGenerationData(data: GenerationData): PartialFormData {
   const config = getGenerationConfig(baseModel);
 
   // if current checkpoint doesn't match baseModel, set checkpoint based on baseModel config
-  if (getBaseModelSetType(checkpoint?.modelType) !== baseModel) checkpoint = config.checkpoint;
+  if (getBaseModelSetType(checkpoint?.baseModel) !== baseModel) checkpoint = config.checkpoint;
   // if current vae doesn't match baseModel, set vae to undefined
   if (getBaseModelSetType(vae?.modelType) !== baseModel) vae = undefined;
   // filter out any additional resources that don't belong
@@ -212,6 +212,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
   useEffect(() => {
     if (storeData) {
       const data = formatGenerationData(storeData);
+      console.log({ storeData, data });
       setValues(data);
     } else if (responseData && !isFetching) {
       if (!input) return;
