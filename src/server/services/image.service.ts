@@ -90,6 +90,7 @@ import {
 } from './../schema/image.schema';
 import { collectionSelect } from '~/server/selectors/collection.selector';
 import { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
+import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -704,6 +705,15 @@ export const getAllImages = async ({
 
   // Filter to a specific collection and relevant status:
   if (collectionId) {
+    const permissions = await getUserCollectionPermissionsById({
+      userId,
+      isModerator,
+      id: collectionId,
+    });
+
+    // Check if user has access to collection
+    if (!permissions.read) return { nextCursor: undefined, items: [] };
+
     const displayOwnedItems = userId
       ? ` OR (ci."status" <> 'REJECTED' AND ci."addedById" = ${userId})`
       : '';
