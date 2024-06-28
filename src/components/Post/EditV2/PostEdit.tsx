@@ -1,3 +1,4 @@
+import { PostCollaboratorSelection } from '~/components/Post/EditV2/Collaborators/PostCollaborators';
 import { EditPostReviews } from '~/components/Post/EditV2/EditPostReviews';
 import { PostEditForm } from '~/components/Post/EditV2/PostEditForm';
 import { usePostEditStore, usePostPreviewContext } from '~/components/Post/EditV2/PostEditProvider';
@@ -15,7 +16,7 @@ export function PostEdit() {
     <div className="@container">
       <div className="flex flex-col gap-3 @sm:flex-row @sm:justify-center @sm:gap-6">
         <div
-          className="flex flex-col gap-3 flex-1 min-w-0"
+          className="flex min-w-0 flex-1 flex-col gap-3"
           style={showPreview ? { maxWidth: 700 } : undefined}
         >
           <PostEditForm />
@@ -31,6 +32,7 @@ export function PostEdit() {
         <div className="flex flex-col gap-3 @sm:w-72">
           <PostEditSidebar post={post} />
           <EditPostReviews post={post} />
+          <PostCollaboratorSelection post={post} />
         </div>
       </div>
     </div>

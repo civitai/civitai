@@ -148,12 +148,13 @@ export const imageRouter = router({
     .query(({ input, ctx }) => getImageRatingRequests({ ...input, user: ctx.user })),
   getGenerationData: publicProcedure
     .input(getByIdSchema)
-    .use(
-      edgeCacheIt({
-        ttl: CacheTTL.day, // Cache is purged on remove resource
-        tags: (i) => ['image-generation-data', `image-generation-data-${i.id}`],
-      })
-    )
+    // TODO: Add edgeCacheIt back after fixing the cache invalidation.
+    // .use(
+    //   edgeCacheIt({
+    //     ttl: CacheTTL.day, // Cache is purged on remove resource
+    //     tags: (i) => ['image-generation-data', `image-generation-data-${i.id}`],
+    //   })
+    // )
     .query(({ input }) => getImageGenerationData(input)),
 
   // #region [tools]

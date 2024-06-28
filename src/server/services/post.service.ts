@@ -541,6 +541,7 @@ export const updatePost = async ({
       detail: !!data.detail ? (data.detail.length > 0 ? data.detail : null) : undefined,
     },
   });
+  await preventReplicationLag('post', post.id);
 
   return post;
 };

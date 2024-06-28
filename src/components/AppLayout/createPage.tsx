@@ -5,6 +5,7 @@ import { UseFeatureFlagsReturn } from '~/providers/FeatureFlagsProvider';
 export type InnerLayoutOptions = {
   InnerLayout?: (page: { children: React.ReactElement }) => JSX.Element;
   withScrollArea?: boolean;
+  withFooter?: boolean;
   innerLayout?: (page: { children: React.ReactNode }) => JSX.Element; // this needs to go away
 };
 

@@ -1,10 +1,10 @@
-import { TablerIconsProps } from '@tabler/icons-react';
+import { IconProps } from '@tabler/icons-react';
 export function IconCivitai({
   size = 24,
   color = 'currentColor',
   stroke = 0,
   ...props
-}: TablerIconsProps) {
+}: IconProps) {
   return (
     <svg
       viewBox="0 0 178 178"

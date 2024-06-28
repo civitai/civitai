@@ -22,9 +22,9 @@ import { OnboardingSteps } from '~/server/common/enums';
 
 export function OnboardingContentExperience() {
   const { classes } = useStyles();
-  const { source } = useReferralsContext();
   const { next, isReturningUser } = useOnboardingWizardContext();
   const { mutate, isLoading } = useOnboardingStepCompleteMutation();
+  const { source } = useReferralsContext();
   const isProjectOdyssey = source === 'project_odyssey';
 
   const handleStepComplete = () => {

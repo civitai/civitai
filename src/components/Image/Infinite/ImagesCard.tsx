@@ -38,6 +38,8 @@ import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMen
 import { getIsPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
 import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
+import { VideoMetadata } from '~/server/schema/media.schema';
+import { shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
 
 export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height: number }) {
   const { ref, inView } = useInView({ rootMargin: '200% 0px' });
@@ -160,6 +162,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                                 })
                               : image.name ?? undefined
                           }
+                          anim={shouldAnimateByDefault(image)}
                           type={image.type}
                           width={450}
                           placeholder="empty"
@@ -291,10 +294,10 @@ const useStyles = createStyles((theme, _, getRef) => {
     },
     reactions: {
       borderRadius: theme.radius.sm,
-      background: theme.fn.rgba(
-        theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-        0.6
-      ),
+      background:
+        theme.colorScheme === 'dark'
+          ? theme.fn.rgba(theme.colors.dark[6], 0.6)
+          : theme.colors.gray[0],
       // backdropFilter: 'blur(5px) saturate(160%)',
       boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
       padding: 4,

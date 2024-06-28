@@ -174,10 +174,10 @@ export const CreatorCardV2 = ({
   withActions = true,
   cosmeticOverwrites,
   useEquippedCosmetics = true,
-  startDisplayOverwrite,
+  statDisplayOverwrite,
   subText,
   ...cardProps
-}: PropsV2) => {
+}: CreatorCardPropsV2) => {
   const { classes, theme } = useStyles();
   const { data } = trpc.user.getCreator.useQuery(
     { id: user.id },
@@ -231,7 +231,7 @@ export const CreatorCardV2 = ({
   const badge = cosmetics.find(({ cosmetic }) => cosmetic?.type === CosmeticType.Badge)?.cosmetic;
   const stats = creator?.stats;
   const displayStats = data
-    ? startDisplayOverwrite ??
+    ? statDisplayOverwrite ??
       ((data.publicSettings ?? {}) as UserPublicSettingsSchema)?.creatorCardStatsPreferences ??
       creatorCardStatsDefaults
     : // Avoid displaying stats until we load the data
@@ -436,17 +436,17 @@ type Props = {
   subText?: React.ReactNode;
 } & Omit<CardProps, 'children'>;
 
-type PropsV2 = Props & {
+export type CreatorCardPropsV2 = Props & {
   user: { id: number } & Partial<UserWithCosmetics>;
   tipBuzzEntityId?: number;
   tipBuzzEntityType?: string;
   withActions?: boolean;
   cosmeticOverwrites?: SimpleCosmetic[];
   useEquippedCosmetics?: boolean;
-  startDisplayOverwrite?: string[];
+  statDisplayOverwrite?: string[];
 } & Omit<CardProps, 'children'>;
 
-export const SmartCreatorCard = (props: PropsV2) => {
+export const SmartCreatorCard = (props: CreatorCardPropsV2) => {
   const featureFlags = useFeatureFlags();
 
   if (featureFlags.cosmeticShop) {

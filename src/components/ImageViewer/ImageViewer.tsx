@@ -14,6 +14,7 @@ import {
   WithClaimKey,
 } from '~/server/selectors/cosmetic.selector';
 import { removeEmpty } from '~/utils/object-helpers';
+import { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 
 type ImageGuardConnect = {
   entityType:
@@ -50,6 +51,7 @@ export interface ImageProps {
   user?: SimpleUser;
   cosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
   tags?: Array<{ id: number }> | number[];
+  metadata?: MixedObject | null;
 }
 
 type ImageViewerState = {

@@ -231,13 +231,12 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                       color="blue"
                       styles={(theme) => ({
                         root: {
-                          border: `1px solid ${
-                            errors.checkpointType
-                              ? theme.colors.red[theme.fn.primaryShade()]
-                              : theme.colorScheme === 'dark'
+                          border: `1px solid ${errors.checkpointType
+                            ? theme.colors.red[theme.fn.primaryShade()]
+                            : theme.colorScheme === 'dark'
                               ? theme.colors.dark[4]
                               : theme.colors.gray[4]
-                          }`,
+                            }`,
                           background: 'none',
                           height: 36,
                         },
@@ -418,7 +417,7 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                 />
                 <InputCheckbox
                   name="minor"
-                  label="Depicts a minor"
+                  label="Cannot be used for NSFW generation"
                   disabled={isLocked('minor')}
                   description={isLockedDescription('minor')}
                 />

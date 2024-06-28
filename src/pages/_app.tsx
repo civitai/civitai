@@ -103,7 +103,7 @@ function MyApp(props: CustomAppProps) {
       const withScrollArea = Component.options?.withScrollArea ?? true;
       return (
         <FeatureLayout conditional={Component.options?.features}>
-          <AppLayout>
+          <AppLayout withFooter={Component.options?.withFooter}>
             {/* <InnerLayout>
             {withScrollArea ? <ScrollAreaMain>{page}</ScrollAreaMain> : page}
           </InnerLayout> */}

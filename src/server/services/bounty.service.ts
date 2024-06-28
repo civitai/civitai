@@ -35,6 +35,7 @@ import {
   throwNotFoundError,
 } from '../utils/errorHandling';
 import { updateEntityFiles } from './file.service';
+import { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 
 export const getAllBounties = <TSelect extends Prisma.BountySelect>({
   input: {
@@ -587,6 +588,7 @@ export const getImagesForBounties = async ({
       nsfwLefel: image.nsfwLevel as NsfwLevel,
       tags: image.tags.map((t) => ({ id: t.tag.id, name: t.tag.name })),
       entityId,
+      metadata: image.metadata as ImageMetadata | VideoMetadata | null,
     })),
     'entityId'
   );

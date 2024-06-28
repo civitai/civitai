@@ -14,7 +14,7 @@ import {
   UnstyledButton,
   useMantineTheme,
 } from '@mantine/core';
-import { Availability, CollectionType } from '@prisma/client';
+import { Availability, CollectionType, EntityType } from '@prisma/client';
 import {
   IconAlertTriangle,
   IconBolt,
@@ -30,7 +30,7 @@ import {
   IconLayoutSidebarRightExpand,
   IconPhoto,
   IconShare3,
-  TablerIconsProps,
+  IconProps,
 } from '@tabler/icons-react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -66,6 +66,7 @@ import { InteractiveTipBuzzButton } from '~/components/Buzz/InteractiveTipBuzzBu
 import { DownloadImage } from '~/components/Image/DownloadImage';
 import { ImageContestCollectionDetails } from '~/components/Image/DetailV2/ImageContestCollectionDetails';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { EntityCollaboratorList } from '~/components/EntityCollaborator/EntityCollaboratorList';
 
 const sharedBadgeProps: Partial<Omit<BadgeProps, 'children'>> = {
   variant: 'filled',
@@ -88,7 +89,7 @@ const sharedActionIconProps: Partial<Omit<ActionIconProps, 'children'>> = {
   className: 'h-9 w-9 rounded-full',
 };
 
-const sharedIconProps: TablerIconsProps = {
+const sharedIconProps: IconProps = {
   size: 18,
   stroke: 2,
   color: 'white',
@@ -189,7 +190,7 @@ export function ImageDetail2() {
   return (
     <>
       <Meta
-        title={`Image posted by ${image.user.username}`}
+        title={`${image?.type === 'video' ? 'Video' : 'Image'} posted by ${image.user.username}`}
         images={image}
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/images/${image.id}`, rel: 'canonical' }]}
         deIndex={nsfw || !!image.needsReview || image.availability === Availability.Unsearchable}
@@ -360,6 +361,15 @@ export function ImageDetail2() {
                 tipBuzzEntityType="Image"
                 className="rounded-xl"
               />
+              {image.postId && (
+                <EntityCollaboratorList
+                  entityId={image.postId}
+                  entityType={EntityType.Post}
+                  creatorCardProps={{
+                    className: 'rounded-xl',
+                  }}
+                />
+              )}
               {image.needsReview && (
                 <AlertWithIcon
                   icon={<IconAlertTriangle />}
@@ -379,6 +389,8 @@ export function ImageDetail2() {
                 collapsible
                 nsfwLevel={image.nsfwLevel}
               />
+              <ImageProcess imageId={image.id} />
+              <ImageGenerationData imageId={image.id} />
               <Card className="flex flex-col gap-3 rounded-xl">
                 <Text className="flex items-center gap-2 text-xl font-semibold">
                   <IconBrandWechat />
@@ -386,13 +398,12 @@ export function ImageDetail2() {
                 </Text>
                 <ImageDetailComments imageId={image.id} userId={image.user.id} />
               </Card>
-              <ImageGenerationData imageId={image.id} />
-              <ImageProcess imageId={image.id} />
-              <ImageExternalMeta imageId={image.id} />
               <ImageContestCollectionDetails
                 imageId={image.id}
                 isOwner={image.user.id === currentUser?.id}
+                isModerator={currentUser?.isModerator}
               />
+              <ImageExternalMeta imageId={image.id} />
             </div>
           </ScrollArea>
         </div>

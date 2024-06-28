@@ -5,7 +5,12 @@ import React, { useEffect, useRef, useState } from 'react';
 type VideoProps = React.DetailedHTMLProps<
   React.VideoHTMLAttributes<HTMLVideoElement>,
   HTMLVideoElement
-> & { wrapperProps?: React.ComponentPropsWithoutRef<'div'>; contain?: boolean; fadeIn?: boolean };
+> & {
+  wrapperProps?: React.ComponentPropsWithoutRef<'div'>;
+  contain?: boolean;
+  fadeIn?: boolean;
+  html5Controls?: boolean;
+};
 
 export function EdgeVideo({
   src,
@@ -15,6 +20,7 @@ export function EdgeVideo({
   wrapperProps,
   contain,
   fadeIn,
+  html5Controls = false,
   ...props
 }: VideoProps) {
   const ref = useRef<HTMLVideoElement | null>(null);
@@ -56,12 +62,13 @@ export function EdgeVideo({
                 }
               : (e) => (e.currentTarget.style.opacity = '1')
           }
+          controls={html5Controls}
           {...props}
         >
           <source src={src?.replace('.mp4', '.webm')} type="video/webm" />
           <source src={src} type="video/mp4" />
         </video>
-        {controls && (
+        {controls && !html5Controls && (
           <div className={classes.controls}>
             {showAudioControl && (
               <ActionIcon

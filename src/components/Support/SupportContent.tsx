@@ -1,5 +1,5 @@
 import { Grid, Card, Text, Anchor, Stack, Group } from '@mantine/core';
-import { IconMail, IconQuestionMark, IconWand, TablerIconsProps } from '@tabler/icons-react';
+import { IconMail, IconQuestionMark, IconWand, IconProps } from '@tabler/icons-react';
 import { IconBook, IconBrandDiscord } from '@tabler/icons-react';
 import { AssistantChat } from '~/components/Assistant/AssistantChat';
 import { trpc } from '~/utils/trpc';
@@ -8,19 +8,19 @@ const SUPPORT_OPTIONS = [
   {
     title: 'Education Hub',
     description: 'Explore our Civitai and Generative AI tutorials & guides!',
-    icon: (props: TablerIconsProps) => <IconBook {...props} />,
+    icon: (props: IconProps) => <IconBook {...props} />,
     link: { label: 'Visit the Education Hub', href: '/education' },
   },
   {
     title: 'Discord Community',
     description: 'Get assistance from our knowledgeable Community!',
-    icon: (props: TablerIconsProps) => <IconBrandDiscord {...props} />,
+    icon: (props: IconProps) => <IconBrandDiscord {...props} />,
     link: { label: 'Join our Discord Community', href: '/discord' },
   },
   {
     title: 'Frenquently Asked Questions',
     description: 'Check out the FAQ and Known Issues list',
-    icon: (props: TablerIconsProps) => <IconQuestionMark {...props} />,
+    icon: (props: IconProps) => <IconQuestionMark {...props} />,
     link: {
       label: 'Civitai FAQ and Known Issues',
       href: 'https://education.civitai.com/civitai-faq',
@@ -29,13 +29,13 @@ const SUPPORT_OPTIONS = [
   {
     title: 'Report a Bug',
     description: 'Questions, bugs or errors? Reach out!',
-    icon: (props: TablerIconsProps) => <IconMail {...props} />,
+    icon: (props: IconProps) => <IconMail {...props} />,
     link: { label: 'Ticket portal', href: '/bugs' },
   },
   {
     title: 'Feature Requests',
     description: 'Civitai missing an essential feature? We’d love to hear!',
-    icon: (props: TablerIconsProps) => <IconWand {...props} />,
+    icon: (props: IconProps) => <IconWand {...props} />,
     link: { label: 'Suggest a feature', href: '/feedback' },
   },
 ];

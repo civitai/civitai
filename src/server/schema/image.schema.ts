@@ -94,10 +94,16 @@ export const imageGenerationSchema = z.object({
 export const imageMetaSchema = imageGenerationSchema.partial().passthrough();
 export const imageMetaOutput = imageGenerationSchema
   .extend({
-    comfy: z.preprocess(
-      (value) => (typeof value === 'string' ? JSON.parse(value) : value),
-      comfyMetaSchema.optional()
-    ),
+    comfy: z.preprocess((value) => {
+      if (typeof value !== 'string') return value;
+      try {
+        let rVal = value.replace('"workflow": undefined', '"workflow": {}');
+        rVal = rVal.replace('[NaN]', '[]');
+        return JSON.parse(rVal);
+      } catch {
+        return {};
+      }
+    }, comfyMetaSchema.optional()),
     controlNets: z.string().array().optional(),
     software: z.coerce.string().optional(),
     civitaiResources: z.any().optional(),
