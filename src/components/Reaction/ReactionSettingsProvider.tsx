@@ -3,6 +3,7 @@ import { useContext, createContext, ReactNode } from 'react';
 import { ReviewReactions } from '@prisma/client';
 
 type ReactionSettingsState = {
+  hideReactions?: boolean;
   hideReactionCount?: boolean;
   buttonStyling?: (
     reaction: ReviewReactions | 'AddReaction' | 'BuzzTip',

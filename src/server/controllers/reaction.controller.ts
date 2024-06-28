@@ -1,7 +1,7 @@
 import { toggleReaction } from './../services/reaction.service';
 import { ToggleReactionInput } from '~/server/schema/reaction.schema';
 import { Context } from '~/server/createContext';
-import { handleLogError, throwDbError } from '~/server/utils/errorHandling';
+import { handleLogError, throwBadRequestError, throwDbError } from '~/server/utils/errorHandling';
 import { dbRead } from '../db/client';
 import { ReactionType } from '../clickhouse/client';
 import { encouragementReward, goodContentReward } from '~/server/rewards';
@@ -9,6 +9,8 @@ import {
   NsfwLevelDeprecated,
   getNsfwLevelDeprecatedReverseMapping,
 } from '~/shared/constants/browsingLevel.constants';
+import { getContestsFromEntity } from '~/server/services/collection.service';
+import dayjs from 'dayjs';
 
 async function getTrackerEvent(input: ToggleReactionInput, result: 'removed' | 'created') {
   const shared = {
@@ -159,6 +161,27 @@ export const toggleReactionHandler = async ({
   input: ToggleReactionInput;
 }) => {
   try {
+    if (input.entityType === 'image') {
+      // We are only doing this for image contests for now. Because the user
+      // gets an instant feedback, this shouldn't have too bad an impact if any at all.
+      const contests = await getContestsFromEntity({
+        entityType: input.entityType,
+        entityId: input.entityId,
+      });
+
+      if (
+        contests.find(
+          (contest) =>
+            !!contest.metadata?.votingPeriodStart &&
+            dayjs(contest.metadata?.votingPeriodStart).isAfter(dayjs())
+        )
+      ) {
+        throw throwBadRequestError(
+          'Cannot react to an image in a contest before the voting period starts.'
+        );
+      }
+    }
+
     const result = await toggleReaction({ ...input, userId: ctx.user.id });
     const trackerEvent = await getTrackerEvent(input, result);
     if (trackerEvent) {

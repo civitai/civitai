@@ -59,9 +59,10 @@ import { getRandom } from '~/utils/array-helpers';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
-import { formatDate } from '~/utils/date-helpers';
+import { formatDate, isFutureDate } from '~/utils/date-helpers';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import {
+  contestCollectionReactionsHidden,
   isCollectionSubsmissionPeriod,
   useCollection,
 } from '~/components/Collections/collection.utils';
@@ -258,7 +259,12 @@ const ImageCollection = ({
               }}
             />
           )}
-          <ReactionSettingsProvider settings={{ hideReactionCount: isContestCollection }}>
+          <ReactionSettingsProvider
+            settings={{
+              hideReactionCount: isContestCollection,
+              hideReactions: contestCollectionReactionsHidden(collection),
+            }}
+          >
             <ImagesInfinite
               filters={{
                 ...filters,
