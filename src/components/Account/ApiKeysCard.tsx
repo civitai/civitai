@@ -1,6 +1,5 @@
 import { useDisclosure } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
-import { ApiKey } from '@prisma/client';
 import { trpc } from '~/utils/trpc';
 import {
   Text,
@@ -16,7 +15,7 @@ import {
   Center,
   Paper,
 } from '@mantine/core';
-import { IconPlus, IconCopy, IconTrash } from '@tabler/icons-react';
+import { IconPlus, IconTrash } from '@tabler/icons-react';
 import { formatDate } from '~/utils/date-helpers';
 import { ApiKeyModal } from '~/components/Account/ApiKeyModal';
 
