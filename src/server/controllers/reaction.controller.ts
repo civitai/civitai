@@ -11,6 +11,7 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import { getContestsFromEntity } from '~/server/services/collection.service';
 import dayjs from 'dayjs';
+import { isFutureDate } from '~/utils/date-helpers';
 
 async function getTrackerEvent(input: ToggleReactionInput, result: 'removed' | 'created') {
   const shared = {
@@ -173,7 +174,7 @@ export const toggleReactionHandler = async ({
         contests.find(
           (contest) =>
             !!contest.metadata?.votingPeriodStart &&
-            dayjs(contest.metadata?.votingPeriodStart).isAfter(dayjs())
+            isFutureDate(contest.metadata?.votingPeriodStart)
         )
       ) {
         throw throwBadRequestError(

@@ -201,7 +201,7 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                       name="metadata.votingPeriodStart"
                       label="When voting for this contest will start"
                       description="This will lock the ratings on these entries. Use with care. Leaving this blank makes it so that they're always reactable."
-                      placeholder="Select an voting period start date"
+                      placeholder="Select a voting period start date"
                       icon={<IconCalendar size={16} />}
                       clearable
                     />
