@@ -36,7 +36,7 @@ export const EntityCollaboratorList = ({
   if (isLoading) {
     return (
       <Center>
-        <Loader />
+        <Loader variant="bars" />
       </Center>
     );
   }

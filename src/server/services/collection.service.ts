@@ -1898,3 +1898,33 @@ export const getCollectionCoverImages = async ({
     }))
     .filter((itemImage) => !!(itemImage.image || itemImage.src));
 };
+
+type CollectionForMeta = { id: number; metadata: CollectionMetadataSchema | null };
+
+export const getContestsFromEntity = async ({
+  entityType,
+  entityId,
+}: {
+  entityType: 'post' | 'article' | 'model' | 'image';
+  entityId: number;
+}) => {
+  const entityToField = {
+    post: 'postId',
+    article: 'articleId',
+    model: 'modelId',
+    image: 'imageId',
+  };
+
+  if (!entityToField[entityType]) {
+    return [] as CollectionForMeta[];
+  }
+
+  const contestEntries = await dbRead.$queryRaw<CollectionForMeta[]>`
+    SELECT ci."collectionId" as "id", c."metadata"
+    FROM "CollectionItem" ci
+    JOIN "Collection" c ON c.id = ci."collectionId"
+    WHERE ci."${Prisma.raw(entityToField[entityType])}" = ${entityId} AND c."mode" = 'Contest'
+  `;
+
+  return contestEntries;
+};

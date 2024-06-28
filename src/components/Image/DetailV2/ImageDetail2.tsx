@@ -67,6 +67,8 @@ import { DownloadImage } from '~/components/Image/DownloadImage';
 import { ImageContestCollectionDetails } from '~/components/Image/DetailV2/ImageContestCollectionDetails';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { EntityCollaboratorList } from '~/components/EntityCollaborator/EntityCollaboratorList';
+import { contestCollectionReactionsHidden } from '~/components/Collections/collection.utils';
+import { useImageContestCollectionDetails } from '~/components/Image/image.utils';
 
 const sharedBadgeProps: Partial<Omit<BadgeProps, 'children'>> = {
   variant: 'filled',
@@ -110,6 +112,10 @@ export function ImageDetail2() {
     shareUrl,
     navigate,
   } = useImageDetailContext();
+  const { collectionItems = [], isLoading: loadingCollectionDetails } =
+    useImageContestCollectionDetails({
+      id: image?.id as number,
+    });
   const [sidebarOpen, setSidebarOpen] = useLocalStorage({
     key: `image-detail-open`,
     defaultValue: true,
@@ -276,6 +282,9 @@ export function ImageDetail2() {
                     <ReactionSettingsProvider
                       settings={{
                         hideReactionCount: false,
+                        hideReactions: collectionItems.some((ci) =>
+                          contestCollectionReactionsHidden(ci.collection)
+                        ),
                         buttonStyling: (reaction, hasReacted) => ({
                           radius: 'xl',
                           variant: 'light',
