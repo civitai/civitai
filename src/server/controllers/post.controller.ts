@@ -352,7 +352,6 @@ export const getPostHandler = async ({ input, ctx }: { input: GetByIdInput; ctx:
 
     if (ctx.user && !ctx.user.isModerator) {
       const blocked = await amIBlockedByUser({ userId: ctx.user.id, targetUserId: post.user.id });
-      console.log({ blocked });
       if (blocked) throw throwNotFoundError();
     }
 
